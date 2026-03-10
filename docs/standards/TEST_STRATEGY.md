@@ -470,11 +470,3 @@ Avoid these patterns in tests:
 | Skipping the refactor step | Accumulates tech debt rapidly | Refactor immediately after green |
 | Writing multiple tests before any green | Loses focus, hard to debug | One Red-Green-Refactor cycle at a time |
 
----
-
-## Changelog
-
-| Version | Date | Change |
-|---------|------|--------|
-| v0.2 | 2026-03-09 | Added TDD methodology (section 2), TDD anti-patterns, renumbered sections, linked from CLAUDE.md |
-| v0.1 | 2026-03-08 | Initial test strategy |

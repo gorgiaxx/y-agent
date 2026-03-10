@@ -555,26 +555,3 @@ Response: {
 | 4 | Should health checks run proactively (periodic) or reactively (only during thaw)? | Provider team | 2026-03-20 | Open |
 | 5 | How should the pool handle providers that support different model versions with different capabilities? | Provider team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | Unified LLMProvider trait for all backends | Callers should not know or care which provider handles their request |
-| D2 | 2026-03-04 | Error classification via pattern matching on HTTP status + message body | Uniform approach; avoids per-provider SDK dependency for error handling |
-| D3 | 2026-03-04 | Freeze duration varies by error type with exponential backoff | Different errors have different recovery times; adaptive backoff improves availability |
-| D4 | 2026-03-04 | Per-provider semaphore + global limit for concurrency | Prevents any single provider from being overwhelmed while capping total system load |
-| D5 | 2026-03-04 | Three-tier priority scheduling (Critical/Normal/Idle) | Ensures safety-critical requests always proceed; prevents background tasks from blocking user requests |
-| D6 | 2026-03-04 | Tag-based routing with multiple selection strategies | Flexible grouping; operators choose optimal strategy per workload |
-| D7 | 2026-03-04 | Multi-level proxy (provider > tag > global) | Supports mixed environments (some providers behind proxy, some direct, local providers no proxy) |
-| D8 | 2026-03-06 | Health check required before thaw (not just timer expiry) | Prevents re-activating a provider that is still unhealthy |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: provider types, LLMProvider trait, freeze mechanism, error classification, concurrency control, priority scheduling, tag routing, multi-level proxy, lease management |
-| v0.2 | 2026-03-06 | Restructured to standard design doc format; condensed implementation details; added Security, Performance, Rollout, Alternatives, Decision Log sections |

@@ -494,25 +494,3 @@ gantt
 | 3 | How should the audit trail handle high-frequency tool calls (e.g., 100 file_reads/second)? Sampling? | Integration team | 2026-04-03 | Open |
 | 4 | Should tools be able to opt out of audit logging for performance-sensitive operations? | Integration team | 2026-03-27 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | Strict responsibility separation: Tools = business logic, Runtime = isolation | Prevents security bypass; each layer has a single concern |
-| D2 | 2026-03-04 | Tools construct RuntimeContext from Manifest, not from user input | Prevents capability escalation via prompt injection |
-| D3 | 2026-03-04 | Four-layer capability checking (declaration, whitelist, matching, enforcement) | Defense in depth; single layer bypass does not compromise security |
-| D4 | 2026-03-04 | Capability denials never silently degrade | Silent degradation masks security issues; explicit failure is safer |
-| D5 | 2026-03-04 | Whitelist-only capability model | Fail-closed default; explicit grants prevent unexpected access |
-| D6 | 2026-03-06 | Direct in-process integration (no service boundary) | Single-process application; service boundary adds complexity without benefit |
-| D7 | 2026-03-06 | Typed errors per layer for clear attribution | Enables targeted error handling and meaningful user messages |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: integration architecture, 3 execution patterns, capability checking pipeline, image whitelist mechanism, resource limit flow, audit integration, error handling, performance optimization |
-| v0.2 | 2026-03-06 | Restructured to standard design doc format; condensed implementation details; added Security, Performance, Rollout, Alternatives, Decision Log sections |

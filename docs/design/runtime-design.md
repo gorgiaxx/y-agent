@@ -552,26 +552,3 @@ Structured JSON log entries containing:
 | 4 | Should container logs be stored persistently or only in-memory? | Runtime team | 2026-03-27 | Open |
 | 5 | Should SshRuntime support connection pooling for frequently-accessed remote hosts? | Runtime team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | RuntimeAdapter as unified trait for all backends | Single interface; tools do not need to know which runtime executes their command |
-| D2 | 2026-03-04 | Capability-based permission model via Manifest declarations | Explicit, auditable permissions; no implicit access |
-| D3 | 2026-03-04 | Container image whitelist as core security mechanism | Prevents arbitrary image execution; configurable per deployment |
-| D4 | 2026-03-04 | Seven-layer security defense | Defense in depth: capability check, image whitelist, resource limits, network isolation, filesystem isolation, Linux capabilities, audit |
-| D5 | 2026-03-04 | Runtime is a "dumb" execution layer | Prevents business logic leaking into the security boundary; keeps the interface simple |
-| D6 | 2026-03-04 | Docker as default, NativeRuntime for dev, SshRuntime for remote | Covers production, development, and distributed use cases |
-| D7 | 2026-03-06 | bubblewrap for NativeRuntime sandboxing | Fine-grained namespace isolation without requiring Docker |
-| D8 | 2026-03-06 | Image digest verification optional but supported | Balance between security rigor and operational ease |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: RuntimeAdapter, capability model, Docker/Native/SSH runtimes, image whitelist, security layers, configuration, monitoring |
-| v0.2 | 2026-03-06 | Restructured to standard design doc format; condensed implementation details; added Security, Performance, Rollout, Alternatives, Decision Log sections |

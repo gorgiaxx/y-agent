@@ -600,30 +600,3 @@ max_tokens_per_instance = 50000
 | 4 | Should agent definitions support conditional tool availability (tool X available only in mode Y)? | Multi-agent team | 2026-03-27 | Open |
 | 5 | How should agent memory work -- should worker agents persist memories to long-term storage, or only to their session branch? | Multi-agent team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-06 | Agents are Orchestrator-integrated, not standalone crews | Reuses typed channels, checkpointing, and DAG scheduling; avoids duplicating state management |
-| D2 | 2026-03-06 | Ephemeral agent instances | Simplifies resource management; persistent agents deferred |
-| D3 | 2026-03-06 | Four context strategies: none, summary, filtered, full | Explicit control over cost and privacy at delegation boundaries |
-| D4 | 2026-03-06 | Any agent can manage (no dedicated Manager type) | More flexible than CrewAI's dedicated Manager; aligns with OpenCode's approach |
-| D5 | 2026-03-06 | Four behavioral modes: build, plan, explore, general | Proven pattern from OpenCode; modes configure tools and prompts without changing agent definition |
-| D6 | 2026-03-06 | Maximum delegation depth of 3 | Prevents circular/infinite delegation while allowing reasonable nesting (manager -> specialist -> helper) |
-| D7 | 2026-03-06 | `task` tool as the primary in-conversation delegation mechanism | Consistent with OpenCode and Oh-My-OpenCode patterns; agents delegate using the same tool interface as other operations |
-| D8 | 2026-03-06 | Add built-in `tool-engineer` agent definition | Specialized agent for tool-gap resolution; spawned by CapabilityGapMiddleware to create/refactor dynamic tools. Part of Agent Autonomy system (ref: agent-autonomy-design.md). |
-| D9 | 2026-03-07 | Add built-in `agent-architect` agent definition | Specialized agent for agent-gap resolution; spawned by CapabilityGapMiddleware to design/create dynamic agent definitions. Plan mode with no write access. Part of Agent Autonomy system (ref: agent-autonomy-design.md). |
-| D10 | 2026-03-07 | AgentRegistry supports dynamic agent registration | `register_dynamic_agent` and `update_dynamic_agent` APIs enable runtime agent creation; trust hierarchy (built-in > user-defined > dynamic) provides consistent risk scoring. |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-06 | Initial design: AgentDefinition, collaboration patterns, AgentPool, agent modes, orchestrator integration |
-| v0.2 | 2026-03-06 | Added Micro-Agent Pipeline pattern and Pipeline DSL |
-| v0.3 | 2026-03-06 | Added built-in agent definitions concept; added `tool-engineer` agent for capability-gap resolution; added to In Scope. Part of Agent Autonomy system (ref: agent-autonomy-design.md). |
-| v0.4 | 2026-03-07 | Added `agent-architect` built-in agent definition (plan mode, no write access) for agent-gap resolution; added Dynamic Agent Definitions concept (DynamicAgentDefinition, trust hierarchy, permission inheritance); updated `tool-engineer` and ToolGapMiddleware references to CapabilityGapMiddleware (unified). Part of Agent Autonomy system v0.2 (ref: agent-autonomy-design.md). |

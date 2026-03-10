@@ -696,28 +696,3 @@ stateDiagram-v2
 | 4 | What is the right default fail mode -- fail-open or fail-closed? Needs user research. | Safety team | 2026-04-15 | Open |
 | 5 | Should guardrails be composable (guardrail A's output feeds guardrail B's input) or independent (parallel evaluation)? | Safety team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-06 | Four safety mechanisms: Guardrails, LoopGuard, Taint, Permissions | Each addresses a distinct failure mode; combining them provides defense in depth |
-| D2 | 2026-03-06 | Guardrails implemented as middleware | Leverages existing Hook/Middleware system; no new execution pathway needed |
-| D3 | 2026-03-06 | Fail-open default for guardrails | Prioritizes availability for development; fail-closed available per-guardrail for production |
-| D4 | 2026-03-06 | Tag-based taint tracking | 90% safety benefit at minimal implementation and performance cost |
-| D5 | 2026-03-06 | Per-tool permission granularity | Balances precision with configuration manageability |
-| D6 | 2026-03-06 | Fingerprint-based loop detection | Zero-latency, zero-cost detection of the most common loop pattern |
-| D7 | 2026-03-06 | HITL escalation via Orchestrator interrupt/resume | Reuses existing protocol; no new async communication mechanism needed |
-| D8 | 2026-03-06 | Four permission levels: allow, notify, ask, deny | Extends OpenCode's three-level model (ask/allow/deny) with notify for low-risk awareness (inspired by tools-design.md dangerous tool handling) |
-| D9 | 2026-03-06 | Add redundant tool call detection as fourth LoopGuard pattern | Encourages agent to use read_experience for evidence recall instead of re-executing tools. Inspired by Memex(RL) redundancy penalty. Complements indexed experience memory. |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-06 | Initial design: guardrail framework, LoopGuard, taint tracking, permission model, HITL escalation, built-in guardrails |
-| v0.2 | 2026-03-06 | Added redundant tool call detection to LoopGuard (fourth pattern type). Suggests read_experience retrieval as alternative to re-execution. Inspired by Memex(RL) redundancy penalty design. |
-| v0.3 | 2026-03-07 | Added permission rules for agent meta-tools (`agent_create`, `agent_update`, `agent_deactivate` = "ask"; `agent_search` = "allow"); added dynamic agent operations as risk scoring factor. Part of Agent Autonomy v0.2 (ref: agent-autonomy-design.md). |

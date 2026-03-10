@@ -408,30 +408,3 @@ erDiagram
 | 4 | What is the maximum acceptable memory count before we need pruning or archival? | Memory team | 2026-05-01 |
 | 5 | Should the MCP memory tools expose short-term operations (compact/compress) or only long-term? | Memory team | 2026-04-01 |
 
----
-
-## Decision Log
-
-| Date | Decision | Context |
-|------|----------|---------|
-| 2026-03-04 | Adopt dual-protocol (gRPC + MCP) for Memory Service communication | Need high-performance internal IPC and standard third-party integration simultaneously |
-| 2026-03-04 | Use `when_to_use` as the embedding target instead of `content` | Shorter, more focused text produces better retrieval quality |
-| 2026-03-04 | Implement Read Barrier on recall rather than synchronous writes | Avoids blocking the agent loop while guaranteeing consistency for reads |
-| 2026-03-05 | Separate long-term and short-term memory into independent engines | Different lifecycles, storage backends, and access patterns justify separation |
-| 2026-03-06 | Default to local in-process backend; gRPC/MCP are opt-in | Simplifies MVP; most single-user deployments do not need cross-process overhead |
-| 2026-03-06 | Experience Store is an STM enhancement, not a separate tier | Avoids tier proliferation; session-scoped indexed archival belongs logically within STM. Cross-session knowledge goes to LTM via promotion. Inspired by Memex(RL). |
-| 2026-03-08 | LTM recall enhanced with intent-aware query decomposition and Search Orchestrator with multi-strategy fallback | Intent decomposition improves recall for compound queries; Search Orchestrator ensures retrieval availability under partial failures. See [memory-long-term-design.md](memory-long-term-design.md) for details. |
-| 2026-03-08 | LTM write path enhanced with two-phase deduplication (content-hash + LLM 4-action) | Zero-cost hash fast path catches exact dupes; LLM 4-action model (create/merge/skip/delete) handles semantic overlaps. See [memory-long-term-design.md](memory-long-term-design.md) for details. |
-
----
-
-## Changelog
-
-| Date | Version | Changes |
-|------|---------|---------|
-| 2026-03-04 | v0.1 | Initial draft with layered architecture, data model, and IPC design |
-| 2026-03-06 | v0.2 | Restructured to standard design doc format; replaced ASCII diagrams with Mermaid; removed implementation-level code; added required sections (failure handling, security, observability, rollout, alternatives, open questions, decision log) |
-| 2026-03-06 | v0.3 | Alignment: added Working Memory as third memory tier (pipeline-scoped, see micro-agent-pipeline-design.md); added Experience memory type for self-evolution pipeline (see skill-versioning-evolution-design.md); fixed STM participant naming to avoid collision with Working Memory |
-| 2026-03-06 | v0.4 | Added Experience Store as an STM enhancement for indexed experience memory (Memex-inspired). Updated memory tiers table. Experience Store provides agent-controlled, full-fidelity archival with exact dereference recovery via stable indices. |
-| 2026-03-06 | v0.5 | Updated Experience memory type: skill_id now nullable (for Skillless Experience Analysis); added evidence_entries with provenance tags (user_stated, user_correction, task_outcome, agent_observation). AutoSkill-inspired bias prevention. |
-| 2026-03-08 | v0.6 | Cross-referenced LTM enhancements from competitive analysis: intent-aware query decomposition (TypedQuery), Search Orchestrator with multi-strategy fallback, two-phase deduplication (content-hash + LLM 4-action). Updated recall flow diagram and failure handling. See [memory-long-term-design.md](memory-long-term-design.md) v0.3 for full details and [memory-context-feature-analysis.md](../research/memory-context-feature-analysis.md) for competitive analysis. |

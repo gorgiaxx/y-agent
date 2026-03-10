@@ -50,8 +50,6 @@ You are assisting with software design documentation.
 - Rollout and Rollback
 - Alternatives and Trade-offs
 - Open Questions
-- Decision Log
-- Changelog
 
 ## 5) Decision Quality
 
@@ -111,7 +109,7 @@ These design-phase realities must drive every design-document decision:
 
 ### 8.3 Follow This Template Strictly
 
-- All 14 required sections (Section 4) must be present.
+- All 13 required sections (Section 4) must be present.
 - Mermaid diagrams only; each with type rationale and legend.
 - Professional English, no emoji, no ASCII diagrams.
 - High-level design focus; minimal illustrative code only.
@@ -120,12 +118,6 @@ These design-phase realities must drive every design-document decision:
 
 - If a new design doc is created, add it to the Component Overview table and Related Documents section.
 - If a cross-cutting decision changed, update the Cross-Cutting Design Alignment table.
-- Bump version and add changelog entry.
-
-### 8.5 Version and Changelog Discipline
-
-- Bump the doc version on every substantive change.
-- Changelog entries must describe what changed and why (alignment, new feature, gap fix).
 
 ---
 
@@ -133,11 +125,9 @@ These design-phase realities must drive every design-document decision:
 
 ### 9.1 Adding a New Design Document
 
-- Create the doc following this template (all 14 sections from Section 4).
-- Register it in `DESIGN_OVERVIEW.md`: Component Overview table, Related Documents section, Decision Log.
+- Create the doc following this template (all 13 sections from Section 4).
 - If it introduces shared concepts, add entries to the Cross-Cutting Design Alignment table.
 - Update adjacent docs that need to reference the new module.
-- Bump `DESIGN_OVERVIEW.md` version and changelog.
 
 ### 9.2 Modifying a Shared Concept
 
@@ -146,21 +136,18 @@ Examples: adding a memory tier, adding a collaboration pattern, adding middlewar
 - Update the authoritative doc first.
 - Update all docs that reference the concept (use the Cross-Cutting Alignment table to find them).
 - Update `DESIGN_OVERVIEW.md` Cross-Cutting Alignment table if the resolution changed.
-- Bump version and changelog in every modified doc.
 
 ### 9.3 Resolving a Cross-Document Conflict
 
 - Determine which doc is authoritative (check the Cross-Cutting Alignment table or project history).
 - Update the non-authoritative doc to align.
 - Add or update the Cross-Cutting Alignment table entry with the resolution.
-- Document the resolution in the changelog of every affected doc.
 
 ### 9.4 Adding a Hook Point, Middleware, or Event Type
 
 - Define the hook/middleware/event in the module that owns the lifecycle (e.g., pipeline hooks in micro-agent-pipeline-design.md).
 - Register it in `hooks-plugin-design.md`: Hook Points table, Known Middleware Implementations table, or Event Types table.
 - If the hook/event is consumed by another module, update that module's doc.
-- Bump versions.
 
 ---
 
@@ -168,14 +155,13 @@ Examples: adding a memory tier, adding a collaboration pattern, adding middlewar
 
 Before completing any design document change, verify:
 
-- [ ] All 14 required sections present per Section 4
+- [ ] All 13 required sections present per Section 4
 - [ ] Mermaid diagrams syntactically valid with type rationale and legend
 - [ ] No emoji, no ASCII diagrams
 - [ ] Cross-references to other docs use correct file paths
 - [ ] Shared concepts consistent across all referencing docs
 - [ ] `DESIGN_OVERVIEW.md` Component Overview table reflects current state
 - [ ] `DESIGN_OVERVIEW.md` Cross-Cutting Alignment table up to date
-- [ ] Version bumped and changelog entry added in every modified doc
 - [ ] Open questions have owner and due date
 - [ ] Success criteria are measurable where applicable
 

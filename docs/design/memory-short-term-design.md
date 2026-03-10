@@ -510,27 +510,3 @@ The indexed summary is compact (typically 200-500 tokens), enabling the agent to
 | 7 | Should the indexed summary format be structured (JSON) or free-form text? | Memory team | 2026-04-01 |
 | 8 | How to handle compress_experience when the model is too weak to produce quality indexed summaries? Provide prompt templates? | Memory team | 2026-04-15 |
 
----
-
-## Decision Log
-
-| Date | Decision | Context |
-|------|----------|---------|
-| 2026-03-05 | Compact targets Tool messages only by default | Tool outputs are the dominant source of context overflow; compacting User/Assistant messages risks losing conversational coherence |
-| 2026-03-05 | Use gpt-4o-mini for Compress summaries | Cost and latency are critical; summary quality from gpt-4o-mini is sufficient for preserving key decisions and state |
-| 2026-03-05 | Auto mode defaults to CompactFirst priority | Lossless compression should always be attempted before lossy; this minimizes information loss and LLM cost |
-| 2026-03-05 | Grep provides keyword search, not semantic search (v0) | Semantic search over offloaded files requires an additional embedding index; keyword search is sufficient for MVP |
-| 2026-03-06 | Set default compact_ratio_threshold to 0.75 | Below 0.75, Compact alone has freed enough space; above 0.75, Compress is needed to make meaningful progress |
-| 2026-03-06 | Add IndexedExperience as fourth compression strategy (agent-controlled) | Inspired by Memex(RL); agent has superior task-semantic knowledge for deciding what to archive, how to index, and when to retrieve. System-triggered strategies remain as safety net. |
-| 2026-03-06 | Experience Store is session-scoped in-memory HashMap | Session-scoped eliminates persistence complexity; in-memory provides sub-millisecond dereference. Cross-session knowledge promoted to LTM separately. |
-| 2026-03-06 | compress_experience / read_experience exposed as first-class tools | Making memory operations explicit agent actions (not system heuristics) aligns with the Memex principle and y-agent's "explicit over implicit" design philosophy. |
-
----
-
-## Changelog
-
-| Date | Version | Changes |
-|------|---------|---------|
-| 2026-03-05 | v0.1 | Initial draft with Compact, Compress, Auto strategies, reload mechanisms, token counting, integration examples, and debug tooling |
-| 2026-03-06 | v0.2 | Restructured to standard design doc format; removed implementation-level code; replaced ASCII diagrams with Mermaid; added required sections (failure handling, security, performance, observability, rollout, alternatives, open questions, decision log) |
-| 2026-03-06 | v0.3 | Added IndexedExperience compression strategy and Experience Store, inspired by Memex(RL). Agent-controlled archival via compress_experience / read_experience tools. Added ExperienceStore and ExperienceEntry data models, comparison table, failure handling, observability signals. |

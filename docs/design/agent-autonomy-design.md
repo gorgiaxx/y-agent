@@ -958,32 +958,3 @@ enum ResolutionType {
 | 8 | Should deactivated dynamic agents be auto-reactivated if an AgentNotFound gap matches a deactivated agent's name? | Autonomy team | 2026-04-10 | Open |
 | 9 | Should dynamic agents support versioned rollback (revert to previous definition version)? | Autonomy team | 2026-04-17 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-06 | Dynamic tools always sandbox in Runtime | Defense in depth; agent-generated code is untrusted by nature; sandbox-by-default eliminates an entire class of security risks |
-| D2 | 2026-03-06 | Script-in-sandbox over WASM for dynamic tools | LLMs generate high-quality Python/shell; container isolation already available; WASM deferred until ecosystem matures |
-| D3 | 2026-03-06 | SQLite for WorkflowStore and DynamicToolStore | Consistent with checkpoint storage; rich query capability; transactional safety |
-| D4 | 2026-03-06 | Risk-based tool creation approval | Balances autonomy with safety; sandbox provides baseline containment; HITL for dangerous capabilities |
-| D5 | 2026-03-06 | CapabilityGapMiddleware for structural detection + LLM for semantic detection | Structural checks are fast and deterministic; LLM reasoning handles subtle HardcodedConstraint and CapabilityMismatch cases |
-| D6 | 2026-03-06 | Dedicated tool-engineer agent (not general agent) | Specialized system prompt and tool set produce higher quality tool implementations; clear separation of concerns |
-| D7 | 2026-03-06 | Three dynamic tool implementation types: Script, HttpApi, Composite | Covers the dominant patterns: custom logic (Script), API integration (HttpApi), tool composition (Composite) |
-| D8 | 2026-03-06 | ParameterSchema uses JSON Schema | Consistent with existing tool parameter validation; well-understood by LLMs; validates at bind time |
-| D9 | 2026-03-07 | Permission inheritance uses snapshot model | Creator's permissions captured at creation time; consistent with scheduled task permission model; avoids cascading permission revocation complexity |
-| D10 | 2026-03-07 | Three-tier trust hierarchy (built-in > user-defined > dynamic) | Mirrors the tool trust model; provides consistent risk scoring across tool and agent dimensions |
-| D11 | 2026-03-07 | Delegation depth limit for dynamic agents | Prevents unbounded recursive agent creation; default depth 2 allows one level of meta-agent creation |
-| D12 | 2026-03-07 | Dedicated agent-architect in plan mode (no write access) | Security separation: agent-architect designs definitions only; cannot execute code; reduces blast radius of agent-creation bugs |
-| D13 | 2026-03-07 | Soft-delete (deactivate) for dynamic agents | Preserves experience records and audit trail; enables reactivation; avoids data loss from hard-delete |
-| D14 | 2026-03-07 | Unified CapabilityGapMiddleware (replaces ToolGapMiddleware) | Single middleware handles both tool and agent gaps; consistent detection → resolution → HITL escalation flow; avoids middleware proliferation |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-06 | Initial design: Self-Orchestration Protocol, Dynamic Tool Lifecycle, Parameterized Scheduling, Capability-Gap Resolution, 7 meta-tools, tool-engineer agent definition |
-| v0.2 | 2026-03-07 | Added Dynamic Agent Lifecycle (5th subsystem): DynamicAgentDefinition with trust hierarchy, permission inheritance (snapshot model), delegation depth, three-stage validation pipeline, AgentGapMiddleware; added `agent-architect` built-in agent definition (plan mode, no write access); added 4 agent meta-tools (`agent_create`, `agent_update`, `agent_deactivate`, `agent_search`); renamed ToolGapMiddleware to CapabilityGapMiddleware (unified); added 3 agent gap types (AgentNotFound, CapabilityMismatch, ModeInappropriate); expanded ER diagram and data model with DynamicAgentDefinition, EffectivePermissions, agent gap types; added DynamicAgentStore; added Agent Gap Detection flow; updated Failure Handling, Security, Performance, Observability, and Rollout sections |

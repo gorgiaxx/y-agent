@@ -775,29 +775,3 @@ When a skill is re-imported (same source, new content):
 | 5 | Should skills support conditional sub-document loading (e.g., "load examples sub-document only if the agent is uncertain")? | Skills team | 2026-04-15 | Open |
 | 6 | What is the maximum acceptable tree depth for skill sub-documents before it becomes impractical for LLM navigation? | Skills team | 2026-03-27 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-06 | Skills are LLM-instruction-only; tool/API skills rejected | y-agent is not a provider shell; tools belong in the Tool System, agent behaviors in the Multi-Agent framework |
-| D2 | 2026-03-06 | Three-stage pipeline: ingest, transform, register | One-time import cost guarantees runtime quality; separates concerns between understanding, converting, and storing |
-| D3 | 2026-03-06 | LLM-assisted content analysis and decomposition | External skills are too diverse for rule-based processing; structured output schemas constrain LLM responses |
-| D4 | 2026-03-06 | Tree-indexed proprietary format with root + sub-documents | Prevents attention dilution; root under 2,000 tokens; sub-documents loaded on demand |
-| D5 | 2026-03-06 | Tool/script separation during transformation | Embedded tools bypass security pipeline; separation ensures consistent ToolExecutor enforcement |
-| D6 | 2026-03-06 | Cross-resource linkage replaces content duplication | Skills reference existing tools and skills by ID; reduces redundancy, improves maintainability |
-| D7 | 2026-03-06 | Safety screening before transformation | Prevents malicious content from entering the proprietary format; defense in depth with Guardrails framework |
-| D8 | 2026-03-06 | Lineage tracking for every transformed skill | Auditability requirement; enables re-transformation when pipeline improves |
-| D9 | 2026-03-06 | Proprietary format is the only registerable format | Runtime simplicity; all skills guaranteed to meet quality, safety, and structure standards |
-| D10 | 2026-03-06 | v0.1 Skill Hub and marketplace deferred | Ingestion pipeline replaces direct installation; marketplace model assumes skill quality, which we do not |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-06 | Initial design: SkillManifest, SkillRegistry, Knowledge Manager, Skill Hub, lifecycle states, hook-based integration |
-| v0.2 | 2026-03-06 | Major redesign: replaced direct-install model with three-stage pipeline (ingest, transform, register); skills are LLM-instruction-only; tree-indexed proprietary format; tool/script separation; cross-resource linkage; safety screening; removed Skill Hub and marketplace (deferred); removed tool bundling in skills |
-| v0.3 | 2026-03-06 | Added usage audit observability signals (injection_count, actual_usage_count, usage_rate) cross-referencing skill-versioning-evolution-design.md's Skill Usage Audit |

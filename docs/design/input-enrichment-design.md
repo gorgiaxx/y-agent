@@ -745,25 +745,3 @@ stateDiagram-v2
 | 5 | Should enrichment records count toward session message limits for compaction purposes? | Context team | 2026-03-27 | Open |
 | 6 | Should the heuristic pre-filter be configurable per agent, or global? | Context team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-09 | Pre-loop enrichment via ContextMiddleware at priority 50 | Enrichment before context assembly ensures all downstream stages benefit from refined input; no wasted tokens on vague queries |
-| D2 | 2026-03-09 | Input replacement instead of augmentation | LLMs are stateless; concatenating raw + enriched wastes tokens and dilutes attention. Replacement keeps context clean. Audit log preserves traceability. |
-| D3 | 2026-03-09 | Lightweight sub-agent (single LLM call) for analysis | Must be fast (< 2s) and cheap to avoid becoming a bottleneck; deep analysis belongs in the agent loop, not pre-loop enrichment |
-| D4 | 2026-03-09 | Structured clarification primitives (ChoiceList, Confirmation, ParameterRequest) | Higher parse reliability and lower user friction than free-form dialogue; maps directly to existing Orchestrator interrupt types |
-| D5 | 2026-03-09 | Reuse Orchestrator interrupt/resume for clarification | No new async communication mechanism; consistent UX across enrichment and other HITL interactions |
-| D6 | 2026-03-09 | EnrichmentPolicy with four modes (always, auto, never, first_only) | Balances thoroughness against friction; auto as default catches ambiguous inputs while skipping clear ones |
-| D7 | 2026-03-09 | Heuristic pre-filter before LLM analysis in auto mode | Eliminates 70%+ of messages without LLM cost; deterministic rules execute in microseconds |
-| D8 | 2026-03-09 | Maximum 3 clarification rounds per enrichment | Bounds user friction; remaining gaps delegated to agent loop for resolution during execution |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-09 | Initial design: TaskIntentAnalyzer, enrichment policy, interactive clarification via interrupt/resume, input replacement semantics, EnrichmentMiddleware at priority 50, audit log, heuristic pre-filter |

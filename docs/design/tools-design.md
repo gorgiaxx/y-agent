@@ -711,35 +711,3 @@ Every tool call generates an audit record containing:
 | 6 | Should tool_search support semantic (embedding-based) search in addition to keyword matching against manifest metadata? | Tools team | 2026-04-10 | Open |
 | 7 | Should ToolActivationSet inherit across session branches (child session inherits parent's activated tools)? | Tools team | 2026-04-10 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | Unified `Tool` trait for all tool types | Single interface simplifies executor; MCP and custom tools get the same pipeline (validation, rate limiting, audit) |
-| D2 | 2026-03-04 | `ToolManifest` declares capabilities, not the tool implementation | Clean separation: tools say what they need; Runtime enforces how |
-| D3 | 2026-03-04 | JSON Schema for parameter validation | Standard format compatible with LLM function calling and MCP protocol |
-| D4 | 2026-03-04 | Three tool types: built-in, MCP, custom | Covers all integration patterns: core functionality, external services, user extensions. Skill-bundled type removed after skills-knowledge-design.md v0.2 established skills as LLM-instruction-only (2026-03-06). |
-| D5 | 2026-03-04 | Rate limiting at tool level, not global | Different tools have different safety profiles; shell_exec needs stricter limits than file_read |
-| D6 | 2026-03-06 | MCP tools auto-discovered at startup | Reduces configuration burden; MCP servers are the source of truth for their tool schemas |
-| D7 | 2026-03-06 | Tools vs Runtime responsibility: tools handle business logic, Runtime handles isolation | Prevents security bypass; tools cannot skip capability checks by executing directly |
-| D8 | 2026-03-06 | Add compress_experience / read_experience as built-in ContextMemory tools | Agent-controlled context management via indexed experience archival; inspired by Memex(RL). Explicit agent action aligns with "explicit over implicit" principle. No Runtime isolation needed (in-process memory operations). |
-| D9 | 2026-03-06 | Tool Lazy Loading via tool_search meta-tool | Eagerly injecting all tool definitions wastes 8K-25K tokens and dilutes attention. Lazy loading with ToolIndex (names only) + tool_search (on-demand activation) + ToolActivationSet (session-scoped persistence) reduces tool schema tokens by 60-90%. Feature flag for rollback. |
-| D10 | 2026-03-06 | ToolActivationSet is session-scoped with LRU eviction | Session scope ensures activated tools persist across agent loop iterations without re-searching. Configurable ceiling (default 20) prevents unbounded growth. LRU eviction recovers budget when ceiling is reached. Always-active tools are never evicted. |
-| D11 | 2026-03-06 | Add Dynamic tool type with sandbox-by-default | Agent-created tools are untrusted by nature; mandatory Runtime sandbox eliminates host-process security risks. Three implementation types (Script, HttpApi, Composite) cover dominant patterns for LLM-generated tools. |
-| D12 | 2026-03-06 | Add `tool_create` and `tool_update` meta-tools | Enables agent-driven tool creation at runtime; completes the Agent Autonomy system's Dynamic Tool Lifecycle (ref: agent-autonomy-design.md) |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: Tool trait, ToolManifest, tool types, built-in tools, MCP integration, parameter validation, rate limiting, tool registry |
-| v0.2 | 2026-03-06 | Restructured to standard design doc format; condensed implementation details; added Security, Performance, Rollout, Alternatives, Decision Log sections |
-| v0.3 | 2026-03-06 | Alignment: removed Skill-bundled tool type (skills are now LLM-instruction-only per skills-knowledge-design.md v0.2); unified Dangerous Tool Handling with guardrails-hitl-design.md Permission Model; updated architecture diagram and ER model |
-| v0.4 | 2026-03-06 | Added compress_experience and read_experience as built-in ContextMemory tools for indexed experience memory (Memex-inspired). Added ContextMemory tool category and detailed tool descriptions. |
-| v0.5 | 2026-03-06 | Tool Lazy Loading: added ToolIndex (name-only catalog), tool_search meta-tool (keyword and name-based retrieval with auto-activation), ToolActivationSet (session-scoped activation with LRU eviction). Updated ToolRegistry with search, index, and definition operations. Added Meta tool category. Added Token Usage comparison, new observability metrics, and Eager vs Lazy alternatives analysis. |
-| v0.6 | 2026-03-06 | Dynamic Tool Lifecycle: added Dynamic tool type (fourth type alongside Built-in, MCP, Custom) with sandbox-by-default policy; added `tool_create` and `tool_update` meta-tools; added `register_dynamic_tool`, `update_dynamic_tool`, `list_dynamic_tools` to ToolRegistry; three implementation types (Script, HttpApi, Composite). Part of Agent Autonomy system (ref: agent-autonomy-design.md). |
-| v0.7 | 2026-03-07 | Added 4 agent meta-tools (`agent_create`, `agent_update`, `agent_deactivate`, `agent_search`) to Built-in Tools Catalog (Meta category). Part of Dynamic Agent Lifecycle in Agent Autonomy v0.2 (ref: agent-autonomy-design.md). |

@@ -761,24 +761,3 @@ Each pipeline execution creates a parent span. Each step creates a child span wi
 | 6 | Should the pipeline support conditional steps (e.g., skip Execute if Analyze determines no change needed)? | Pipeline team | 2026-04-01 | Open |
 | 7 | For multi-file operations, should there be a shared Working Memory across per-file sub-pipelines, or isolated instances? | Pipeline team | 2026-04-15 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-06 | Introduce Working Memory as a third memory tier (alongside STM and LTM) | Pipeline steps need structured, typed state sharing without session context accumulation. Neither STM (unstructured message buffer) nor LTM (persistent knowledge) serves this purpose. |
-| D2 | 2026-03-06 | Four cognitive categories for Working Memory (Perception, Structure, Analysis, Action) | Mirrors human information processing stages; provides developer guidance for pipeline step design; enables future category-based access control. |
-| D3 | 2026-03-06 | Stateless step execution (session discarded after each step) | Core innovation: prevents token accumulation across steps. State transfers through Working Memory, not session context. Enables weaker models to handle individual steps. |
-| D4 | 2026-03-06 | Atomic File Operations as new built-in tools | Line-level operations minimize token usage and prevent whole-file corruption. The `old`-content verification in `file_patch` prevents stale edits. |
-| D5 | 2026-03-06 | Micro-Agent Pipeline as a fourth collaboration pattern | Existing patterns (Sequential, Hierarchical, Peer-to-Peer) all maintain full session context per agent. The pipeline pattern's key differentiator is stateless steps with structured Working Memory. |
-| D6 | 2026-03-06 | Adaptive step merging based on model capability | Avoids one-size-fits-all: weaker models get more steps (simpler per step), stronger models get fewer steps (less overhead). Configurable, not mandatory. |
-| D7 | 2026-03-06 | Pipeline executed via Orchestrator DAG engine | Reuses existing scheduling, checkpointing, and interrupt/resume infrastructure. Working Memory categories map to typed channels. No parallel pipeline scheduler needed. |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-06 | Initial design: Working Memory with cognitive categories, Micro-Agent Pipeline pattern, Atomic File Operations, integration with Orchestrator/Multi-Agent/Memory/Hooks, adaptive step merging, 4 pre-built pipeline templates |

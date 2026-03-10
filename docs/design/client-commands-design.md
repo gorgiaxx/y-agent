@@ -420,23 +420,3 @@ Commands are independently registered in the `CommandRegistry`. Any command can 
 | 3 | Should custom commands be registerable via a plugin API or only via aliases? | Client team | 2026-04-03 | Open |
 | 4 | Should `/branch --from` support branching from a specific tool call result, not just messages? | Client team | 2026-03-27 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | Use `/` as command prefix | Familiar from chat applications; minimal conflict with natural language |
-| D2 | 2026-03-04 | Use `@` for file references and `#` for context references | Distinct prefixes avoid ambiguity; `@` is familiar from IDE file mentions |
-| D3 | 2026-03-04 | Support session tree operations (branch/merge/fork) | Enables exploratory workflows where users try multiple approaches from the same starting point |
-| D4 | 2026-03-04 | Share command vocabulary between CLI and TUI | Avoids user confusion; commands learned in one client work in the other |
-| D5 | 2026-03-06 | Support three merge strategies (append/interleave/summarize) | Different workflows need different merge semantics; no single strategy fits all cases |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: command categories, file/context references, session operations, aliases, batch mode |
-| v0.2 | 2026-03-06 | Restructured to standard design doc format; condensed implementation details; added Security, Rollout, Alternatives, Decision Log sections |

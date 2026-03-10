@@ -504,16 +504,3 @@ This enables:
 2. **Phase 1.5**: Create initial SQLite migrations in migrations/sqlite/
 3. **Begin Phase 2**: Start y-provider and y-storage implementation in parallel
 
----
-
-## Changelog
-
-
-| Version | Date       | Change                                                                                                                                                                                                                                                                           |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.4    | 2026-03-09 | Added User Input Enrichment to Phase 3.4 (Context Pipeline): EnrichmentMiddleware, TaskIntentAnalyzer, interactive clarification, input replacement semantics. Added `input-enrichment` feature flag. New design doc: input-enrichment-design.md. Updated DESIGN_OVERVIEW reference to v0.18. |
-| v0.3    | 2026-03-08 | Added memory/KB competitive analysis results (OpenViking, Claude-Mem, EdgeQuake) to Phase 4 scope: LTM two-phase dedup, structured observations, intent-aware recall, Search Orchestrator fallback, KB L0/L1/L2 progressive loading. Updated DESIGN_OVERVIEW reference to v0.17. |
-| v0.2    | 2026-03-08 | Phase 0 completed, Phase 1 partially completed (standards docs, workspace scaffold, CI/CD, DB schema)                                                                                                                                                                            |
-| v0.1    | 2026-03-08 | Initial project plan with 6-phase roadmap                                                                                                                                                                                                                                        |
-
-

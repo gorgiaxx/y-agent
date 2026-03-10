@@ -292,10 +292,3 @@ After each module is complete:
 | Native execution (echo) | P95 < 50ms | y-runtime |
 | Event bus dispatch (1000 events) | P95 < 10ms | y-hooks |
 
----
-
-## Changelog
-
-| Version | Date | Change |
-|---------|------|--------|
-| v0.1 | 2026-03-09 | Initial R&D plan with 14 module plans, ~438 tests, 37 benchmarks |

@@ -500,25 +500,3 @@ CLI and TUI support a `/debug` command that enables:
 | 3 | What is the maximum attachment size for ClientMessage? Should large files be uploaded separately? | Client team | 2026-03-20 | Open |
 | 4 | Should the OpenAI-compatible API endpoint support tool_choice parameter mapping? | Client team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | Define `ClientProtocol` as the unified interface for all client types | Ensures behavioral consistency; new clients only need to implement one trait |
-| D2 | 2026-03-04 | Use pluggable transport layer with URL-scheme-based selection | Allows offline operation (local), low-latency streaming (WebSocket), and broad compatibility (HTTP) without client-side changes |
-| D3 | 2026-03-04 | Support 5 client types: CLI, TUI, API, A2A, GUI | Covers interactive, programmatic, and multi-agent use cases |
-| D4 | 2026-03-04 | Sessions are client-agnostic and server-managed | Enables session continuity across different client types |
-| D5 | 2026-03-04 | A2A uses message signing with trust levels | Prevents unauthorized agent delegation; trust can be upgraded over time |
-| D6 | 2026-03-06 | Choose ratatui for TUI framework | Active ecosystem, immediate-mode rendering suits streaming, strong tokio integration |
-| D7 | 2026-03-06 | Hybrid transport (WebSocket + HTTP/SSE + Local) | Balances streaming performance with broad network compatibility |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: layered architecture, ClientProtocol trait, CLI/TUI/API/A2A/GUI clients, transport layer, configuration |
-| v0.2 | 2026-03-06 | Restructured to standard design doc format; condensed implementation details to high-level design; added Security, Rollout, Alternatives, Decision Log sections |

@@ -502,24 +502,3 @@ Response: {
 | 3 | Should debounce be disabled entirely for API clients to ensure lowest latency? | Scheduling team | 2026-03-20 | Open |
 | 4 | How should Steer mode handle messages that arrive while no tool calls are pending (pure LLM generation phase)? | Scheduling team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | Session Lane serialization for per-session concurrency control | Prevents JSONL corruption; enables cross-session parallelism |
-| D2 | 2026-03-04 | Five queue modes (Collect, Followup, Steer, SteerBacklog, Interrupt) | Each mode addresses a distinct multi-message pattern; no single mode fits all use cases |
-| D3 | 2026-03-04 | Steer injection at tool boundaries, not mid-tool | Avoids partial side effects from interrupted tool executions |
-| D4 | 2026-03-04 | Deduplication via message ID + content hash with 60s TTL | Prevents duplicate processing from network retries |
-| D5 | 2026-03-04 | Per-client default queue modes (CLI=Collect, TUI=Steer, API=Followup) | Matches the natural interaction style of each client type |
-| D6 | 2026-03-06 | Debounce with configurable delay (default 500ms) | Prevents rapid-fire messages from creating excessive runs; configurable for latency-sensitive clients |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: session lanes, queue modes, deduplication, debounce, abort controller, client integration |
-| v0.2 | 2026-03-06 | Restructured to standard design doc format; condensed implementation details; added Security, Performance, Rollout, Alternatives, Decision Log sections |

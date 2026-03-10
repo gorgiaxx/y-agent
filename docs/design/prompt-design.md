@@ -540,23 +540,3 @@ Each prompt assembly creates a `tracing` span `prompt.assemble` with attributes:
 | 3 | How should persona sections interact with skill-injected instructions? Priority ordering or explicit merge rules? | Prompt team | 2026-03-27 | Open |
 | 4 | Should the SectionStore support remote sections (fetched via HTTP) for shared team prompts? | Prompt team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-07 | Structured sections with lazy loading over monolithic prompt | Directly addresses the attention dilution concern raised in the project vision. Avoids ZeroClaw's "all textbooks" anti-pattern. Aligns with token efficiency principle (CLAUDE.md Section 3.4). |
-| D2 | 2026-03-07 | Prompt system lives inside BuildSystemPrompt ContextMiddleware | No new pipeline stages needed. BuildSystemPrompt's sole purpose is system prompt construction; the template system is its structured implementation. |
-| D3 | 2026-03-07 | Declarative TOML templates over procedural code | Enables non-programmer customization; supports hot reload; schema-validated. Aligns with "Explicit Over Implicit" principle (CLAUDE.md Section 3.3). |
-| D4 | 2026-03-07 | Mode overlays instead of per-mode templates | Avoids content duplication. A plan-mode agent and a build-mode agent share 80% of their prompt content; only the delta is expressed as an overlay. |
-| D5 | 2026-03-07 | Enum-based conditions over expression DSL | Simpler, safer, and sufficient for the known condition types. DSL deferred unless enum coverage proves inadequate. |
-| D6 | 2026-03-07 | Per-section token budgets with template-level ceiling | Defense in depth for token management: no single section can dominate, and the total cannot exceed the system prompt allocation from the Context Window Guard. |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-07 | Initial design: PromptSection, PromptTemplate, SectionStore, lazy loading, mode overlays, token budgets, template inheritance, built-in sections, integration with BuildSystemPrompt ContextMiddleware |

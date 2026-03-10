@@ -104,7 +104,7 @@ y-agent/
 
 ## 4) Risk Tiers (Review Depth Contract)
 
-- **Low risk**: Changelog updates, typo fixes, open question additions
+- **Low risk**: Typo fixes, open question additions
 - **Medium risk**: New design doc sections, performance targets, rollout phases, alternatives
 - **High risk**: Changes to shared concepts (permission model, memory tiers, collaboration patterns, middleware chains), modifications to `DESIGN_OVERVIEW.md` Cross-Cutting Alignment table, any change that affects multiple design docs simultaneously
 
@@ -121,9 +121,9 @@ Summary:
 1. Read target doc, `DESIGN_OVERVIEW.md`, and `DESIGN_RULE.md` before any edit.
 2. Check the Cross-Cutting Design Alignment table for relevant authoritative decisions.
 3. If modifying shared concepts, identify all affected docs and update them in the same change.
-4. Follow `DESIGN_RULE.md` Section 4 (14 required sections), Section 2 (diagram policy), Section 3 (abstraction level).
-5. Update `DESIGN_OVERVIEW.md` as needed (Component Overview, Cross-Cutting Alignment, Decision Log).
-6. Bump version and add changelog entry in every modified doc.
+4. Follow `DESIGN_RULE.md` Section 4 (13 required sections), Section 2 (diagram policy), Section 3 (abstraction level).
+5. Update `DESIGN_OVERVIEW.md` as needed (Component Overview, Cross-Cutting Alignment).
+6. Bump version in every modified doc.
 7. Run the validation checklist in `DESIGN_RULE.md` Section 10.
 
 ### 5.2 Implementation Changes (TDD Workflow)

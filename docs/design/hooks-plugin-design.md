@@ -577,31 +577,3 @@ drop_policy = "drop_oldest"
 | 4 | Should hook handlers receive a mutable `HookContext` for cross-handler communication within a single dispatch? | Hooks team | 2026-04-03 | Open |
 | 5 | Should plugins declare required hook points, and fail to load if those points are unavailable? | Hooks team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-06 | Three separate mechanisms: Hooks, Middleware, EventBus | Each serves a distinct purpose (observe, transform, notify); conflating them reduces clarity and safety |
-| D2 | 2026-03-06 | Trait objects for hook handlers | Enables open-ended extensibility required for third-party plugins |
-| D3 | 2026-03-06 | Channel-per-subscriber for EventBus | Prevents slow subscribers from blocking publishers or other subscribers |
-| D4 | 2026-03-06 | `libloading` for native plugins in v0 | Mature, high-performance; WASM deferred until WASI async stabilizes |
-| D5 | 2026-03-06 | 15 initial hook points across 7 modules | Covers the critical lifecycle events identified from competitor analysis (LangChain, Oh-My-OpenCode, CrewAI), plus context management |
-| D6 | 2026-03-06 | Hooks are read-only; middleware is mutable | Separation prevents accidental state mutation by observation-only handlers |
-| D7 | 2026-03-06 | Add `ContextMiddleware` chain for context assembly | Context-session module requires ordered, transformable context injection -- middleware is the correct mechanism. This replaces the previous standalone Hook System in context-session-design.md, unifying extensibility under y-hooks. |
-| D8 | 2026-03-06 | Add ToolGapMiddleware (now CapabilityGapMiddleware) and capability-gap hook points | Detects tool and agent capability gaps in the ToolMiddleware chain and triggers auto-resolution via tool-engineer/agent-architect agents or HITL escalation. Part of Agent Autonomy system (ref: agent-autonomy-design.md). |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-06 | Initial design: three extensibility mechanisms, 14 hook points, 4 middleware chains, EventBus, Plugin trait, native loading |
-| v0.2 | 2026-03-06 | Added `ContextMiddleware` chain for context assembly pipeline (5th middleware chain); added `context_overflow` hook point; added Context and Compaction events (`ContextOverflow`, `CanonicalSynced`, `SessionRepaired`, `CompactionFailed`); aligned with context-session-design.md v0.3 |
-| v0.3 | 2026-03-06 | Alignment: added 2 Micro-Agent Pipeline hook points (`pre_pipeline_step`, `post_pipeline_step`); added 5 Pipeline events; added Known Middleware Implementations table documenting guardrails (4 middleware), WorkingMemoryMiddleware, and built-in context providers; total hook points now 17 |
-| v0.4 | 2026-03-06 | Added `post_skill_injection` hook point for skill usage audit; added SkillUsageAuditMiddleware to Known Middleware Implementations (LlmMiddleware post); total hook points now 18. AutoSkill-inspired. |
-| v0.5 | 2026-03-06 | Added FileJournalMiddleware to Known Middleware Implementations (ToolMiddleware pre); captures file state before mutation for scope-based rollback. |
-| v0.6 | 2026-03-06 | Added ToolGapMiddleware to Known Middleware Implementations (ToolMiddleware post); added `tool_gap_detected` and `tool_gap_resolved` hook points; added 4 Autonomy events (ToolGapDetected, ToolGapResolved, DynamicToolRegistered, WorkflowTemplateCreated); total hook points now 20. Part of Agent Autonomy system (ref: agent-autonomy-design.md). |
-| v0.7 | 2026-03-07 | Renamed ToolGapMiddleware to CapabilityGapMiddleware (unified); added 4 agent lifecycle hook points (`agent_gap_detected`, `agent_gap_resolved`, `dynamic_agent_created`, `dynamic_agent_deactivated`); added 3 agent lifecycle events (AgentGapDetected, AgentGapResolved, DynamicAgentRegistered, DynamicAgentDeactivated); total hook points now 24. Part of Agent Autonomy v0.2 (ref: agent-autonomy-design.md). |

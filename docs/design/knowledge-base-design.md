@@ -1124,32 +1124,3 @@ The Knowledge Base registers two lifecycle hooks in the y-hooks system (see [hoo
 | 6 | How should the Knowledge Base interact with the future Knowledge Graph (Phase 2 of LTM)? | Knowledge + Memory team | 2026-05-01 | Open |
 | 7 | Should ingestion support incremental updates for APIs that provide change feeds (e.g., RSS, webhooks)? | Knowledge team | 2026-05-01 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-06 | Knowledge Base as a separate store sharing Memory Service infrastructure | Different ingestion, retrieval, and maintenance patterns from LTM justify separation; shared infrastructure avoids duplication |
-| D2 | 2026-03-06 | Agent-driven ingestion rather than dedicated daemon | Reuses existing agent orchestration, LLM access, guardrails, and observability; eliminates parallel infrastructure |
-| D3 | 2026-03-06 | Domain-triggered automatic context injection via ContextMiddleware at priority 350 | Ensures agents benefit from relevant knowledge without explicit search; complements explicit knowledge_search tool |
-| D4 | 2026-03-06 | Heading-based semantic chunking as default strategy | Preserves logical coherence within chunks; improves retrieval quality over fixed-size splitting |
-| D5 | 2026-03-06 | Summary field as embedding target (analogous to LTM's when_to_use) | Short, focused text produces better retrieval embeddings; full content stored as payload |
-| D6 | 2026-03-06 | Knowledge collections as logical grouping with per-collection config | Enables domain-scoped retrieval, per-collection freshness policies, and clean skill reference resolution |
-| D7 | 2026-03-06 | Skills reference knowledge collections by name, not individual chunks | Collection-level reference is stable across re-ingestion; chunk IDs may change when sources are updated |
-| D8 | 2026-03-06 | Separate token budget category for Knowledge in Context Window Guard | Prevents knowledge injection from starving other context categories (history, tools, bootstrap) |
-| D9 | 2026-03-06 | Reciprocal Rank Fusion (RRF) for hybrid search instead of weighted linear combination | RRF operates on ranks, not scores, avoiding the calibration problem between cosine similarity ([0,1]) and BM25 (unbounded). Parameter-free except for constant k=60 (standard). |
-| D10 | 2026-03-06 | BM25 for keyword search path | Industry-standard lexical retrieval with well-understood term weighting; language-aware tokenization handles Chinese (jieba/ICU) and English |
-| D11 | 2026-03-06 | HNSW with pre-filtering for vector search | Payload-filtered HNSW avoids scanning irrelevant partitions; Qdrant natively supports this pattern |
-| D12 | 2026-03-06 | Deep retrieval with LLM sub-query expansion and MMR diversity | Multi-round retrieval expands recall for complex planning queries; MMR prevents redundant chunks from dominating results |
-| D13 | 2026-03-08 | Multi-resolution content model (L0/L1/L2 progressive loading) | L0 (~100 tokens abstract) + L1 (~500 tokens overview) + L2 (full content) enables token-efficient progressive retrieval. Auto-injection uses L0 by default, saving ~90% tokens. Inspired by OpenViking's hierarchical context loading pattern. |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.2 | 2026-03-06 | Expanded Retrieval Engine Detail: added multi-dimensional index structures (HNSW, BM25 inverted index, domain prefix tree, freshness B-tree), query processing pipeline, detailed algorithm descriptions for vector search (HNSW + cosine), keyword search (BM25 with language-aware tokenization), hybrid search (Reciprocal Rank Fusion), multi-stage retrieval pipeline, Deep retrieval with LLM sub-query expansion and MMR diversity. Added RRF and MMR to Alternatives section. Added decisions D9-D12. |
-| v0.3 | 2026-03-08 | Added multi-resolution content model (L0/L1/L2 progressive loading): L0 abstract (~100 tokens), L1 overview (~500 tokens), L2 full content. Added `overview` field to Knowledge Entry data model. Updated knowledge_search and knowledge_lookup tools with `resolution` parameter. Updated InjectKnowledge middleware to use L0 default with auto-escalation. Added progressive loading flow diagram, token savings estimates, Alternatives section entry, and decision D13. Inspired by OpenViking's hierarchical context loading. See [memory-context-feature-analysis.md](../research/memory-context-feature-analysis.md). |
-| v0.1 | 2026-03-06 | Initial design: architecture, ingestion pipeline, source connectors, chunking, domain classification, retrieval engine, built-in tools (knowledge_search, knowledge_lookup, knowledge_ingest), InjectKnowledge ContextMiddleware, data model, boundary definitions with LTM/Skills/Experience Store, maintenance operations, observability |

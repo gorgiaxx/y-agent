@@ -800,33 +800,3 @@ Each phase is independently rollbackable:
 | 4 | For superstep mode, should cross-step channel reads see the previous step's committed state or the current step's pending writes? | Orchestrator team | 2026-03-27 | Open |
 | 5 | How should interrupt timeouts interact with workflow-level timeouts? Should an interrupted workflow's timeout pause? | Orchestrator team | 2026-04-03 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | Use DAG as the primary execution model | DAGs are intuitive for most orchestration patterns; more explicit than Pregel supersteps for typical use cases |
-| D2 | 2026-03-04 | TOML for workflow configuration | Human-readable, well-structured, good tooling support; avoids the complexity of a custom DSL for complex workflows |
-| D3 | 2026-03-04 | SQLite for checkpoint storage | Zero-dependency, sufficient for single-node; backend-agnostic trait allows future migration |
-| D4 | 2026-03-06 | Add typed channels with configurable reducers | Eliminates silent data loss from concurrent parallel writes; backward-compatible via LastValue default (ref: LangGraph channel model) |
-| D5 | 2026-03-06 | Add task-level pending writes for checkpoint granularity | Reduces recovery cost from O(all tasks) to O(failed + pending tasks); critical for cost-sensitive LLM workflows |
-| D6 | 2026-03-06 | Add 5 configurable stream modes | Different clients (CLI, API, debug UI) need different event granularity; one-size-fits-all EventBus is insufficient (ref: LangGraph StreamMode) |
-| D7 | 2026-03-06 | Elevate interrupts to workflow-level primitive | Task-type-based HumanApproval cannot handle dynamic runtime interrupts; workflow-level interrupts enable any task to pause execution (ref: LangGraph Interrupt protocol) |
-| D8 | 2026-03-06 | Add optional superstep execution model | Provides deterministic execution ordering and natural checkpoint boundaries for shared-state workflows; opt-in to avoid performance penalty for simple workflows |
-| D9 | 2026-03-06 | Add expression DSL shorthand for simple workflows | Reduces definition verbosity from ~50 lines to 1 line for simple flows; compiles to same internal representation, no architecture change (ref: FlowLLM flow_content) |
-| D10 | 2026-03-06 | Copy-on-execute workflow instance lifecycle | Each execution creates a fresh, isolated context from an immutable workflow template; prevents state leakage between concurrent runs (ref: FlowLLM per-request rebuild) |
-| D11 | 2026-03-06 | Add WorkflowStore for persistent template storage | Agent-created workflows need persistence for reuse across sessions and schedule bindings; SQLite backend consistent with checkpoint storage (ref: agent-autonomy-design.md) |
-| D12 | 2026-03-06 | Add ParameterSchema (JSON Schema) to workflow templates | Enables parameterized workflow reuse; same template bindable to multiple schedules with different parameter values; validated at execution time |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: DAG execution, TOML configuration, task types, data mapping, error handling, events, observability |
-| v0.2 | 2026-03-06 | Major revision: restructured to standard design doc format; integrated gap analysis enhancements (typed channels, pending writes, stream modes, superstep execution, expression DSL, interrupt/resume protocol); added Security, Rollout, Alternatives, Decision Log sections |
-| v0.3 | 2026-03-06 | Gap closure: added workflow instance lifecycle with copy-on-execute semantics, WorkflowInterrupt/ResumeCommand type definitions in data model, orchestrator public API surface |
-| v0.4 | 2026-03-06 | Added `FileRollback` failure strategy: built-in compensation for file-mutating tasks via File Journal integration; no custom compensation task required for file operations |
-| v0.5 | 2026-03-06 | Self-Orchestration: added WorkflowStore for persistent template storage; added `register_template`, `list_templates`, `get_template` to public API; added ParameterSchema (JSON Schema) for parameterized workflow templates. Part of Agent Autonomy system (ref: agent-autonomy-design.md). |

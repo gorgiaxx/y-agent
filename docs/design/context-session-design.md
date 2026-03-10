@@ -629,34 +629,3 @@ All events below are published through the y-hooks `EventBus` (see [hooks-plugin
 | 4 | Should memory recall use a dedicated embedding model or share the agent's LLM? | Context team | 2026-04-03 | Open |
 | 5 | What is the retention policy for tombstoned sessions? 30 days? 90 days? Configurable? | Context team | 2026-03-20 | Open |
 
----
-
-## Decision Log
-
-| # | Date | Decision | Rationale |
-|---|------|----------|-----------|
-| D1 | 2026-03-04 | Use tree structure for sessions | Supports branch/merge workflows and sub-agent delegation natively |
-| D2 | 2026-03-04 | Introduce Canonical Session for cross-channel continuity | Users expect the agent to remember conversations regardless of channel |
-| D3 | 2026-03-04 | Use ordered pipeline for context injection | Extensible; new context sources added without modifying core logic |
-| D4 | 2026-03-04 | LLM-driven compaction with strict identifier preservation | Preserves critical information while reclaiming context space |
-| D5 | 2026-03-04 | Hybrid memory recall (text + vector) | Balances precision (exact matches) and recall (semantic similarity) |
-| D6 | 2026-03-04 | JSONL for message persistence, SQLite for metadata | JSONL is append-friendly for message logs; SQLite enables fast queries on session structure |
-| D7 | 2026-03-06 | Context Window Guard with 5-category token budgeting | Explicit budgets prevent any single category from starving others |
-| D8 | 2026-03-06 | Session Repair as automatic pre-processing step | Handles corruption transparently; users never see inconsistent history |
-| D9 | 2026-03-06 | Context pipeline uses y-hooks `ContextMiddleware` instead of own hook system | Eliminates parallel hook infrastructure; context providers get the same middleware semantics (ordering, short-circuit, transformation) as all other y-hooks middleware chains. See [hooks-plugin-design.md](hooks-plugin-design.md). |
-| D10 | 2026-03-06 | Context Window Guard supports three trigger modes (auto, soft, hybrid) | Soft/hybrid modes expose context status to the agent, transforming compression from a system heuristic to a learnable agent skill. Inspired by Memex(RL) soft triggering mechanism. |
-| D11 | 2026-03-06 | Add InjectContextStatus as a context pipeline stage (priority 700) | Provides the agent with real-time token usage and threshold information, enabling proactive compress_experience calls at natural task boundaries. |
-| D12 | 2026-03-06 | InjectTools uses Tool Lazy Loading: ToolIndex + tool_search + ToolActivationSet | Replaces eager injection of all tool schemas. Reduces Tools Schema token usage from ~15K-25K to ~300-500 at session start. Full definitions loaded on demand via tool_search. Aligned with tools-design.md D9. |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-04 | Initial design: session tree, canonical session, hook system, compaction, context guard, session repair, memory recall |
-| v0.2 | 2026-03-06 | Restructured to standard design doc format; condensed implementation details; added Security, Performance, Rollout, Alternatives, Decision Log sections |
-| v0.3 | 2026-03-06 | **Breaking**: Replaced standalone Context Injection Hook System with Context Assembly Pipeline backed by y-hooks `ContextMiddleware` chain. Unified compaction hooks via `CompactionMiddleware`. Aligned events with y-hooks EventBus. Eliminated independent HookRegistry. |
-| v0.4 | 2026-03-06 | Added Context Window Guard trigger modes (auto/soft/hybrid) and InjectContextStatus pipeline stage. Inspired by Memex(RL) soft triggering mechanism: exposes context utilization to agent for proactive compression. |
-| v0.5 | 2026-03-06 | InjectTools stage updated for Tool Lazy Loading: injects ToolIndex (name-only list) + tool_search meta-tool + ToolActivationSet members instead of all tool schemas. Overflow recovery action 3 renamed from "Simplify tools" to "Evict tools" with ToolActivationSet-aware eviction. Tools Schema budget annotation updated. Aligned with tools-design.md v0.5. |
-| v0.6 | 2026-03-09 | Added EnrichInput stage at priority 50 in the Context Assembly Pipeline. This is the pre-loop user input enrichment mechanism: analyzes user input for ambiguity, triggers interactive clarification via interrupt/resume, and replaces original input with enriched version. New design doc: [input-enrichment-design.md](input-enrichment-design.md). |

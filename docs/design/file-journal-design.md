@@ -652,23 +652,3 @@ The File Journal is a pure addition with no modification to existing modules bey
 | Should the journal support manual "named checkpoints" that users create via CLI before risky operations? | TBD | 2026-03-20 | Open |
 | How should concurrent agent sessions sharing a workspace coordinate journal scopes? | TBD | Future | Deferred |
 
----
-
-## Decision Log
-
-| Date | Decision | Rationale | Alternatives Rejected |
-|------|----------|-----------|----------------------|
-| 2026-03-06 | Implement as ToolMiddleware, not tool-internal | Cross-cutting concern; follows y-agent's middleware-first architecture; zero tool code changes | Tool-internal backup (per-tool duplication), Orchestrator-level capture (too coarse) |
-| 2026-03-06 | Co-locate journal in Orchestrator's SQLite database | Enables transactional consistency between checkpoint and journal; single-file deployment | Separate SQLite file (consistency gap), PostgreSQL (unnecessary for local data) |
-| 2026-03-06 | Three-tier storage strategy (inline/blob/git-ref) | Balances storage efficiency, performance, and platform support | Inline-only (bloats DB for large files), Git-only (excludes non-git workspaces) |
-| 2026-03-06 | Fail-open on capture, fail-safe on rollback | Agent usability requires that journal failures never block tool execution; rollback safety requires that conflicts never silently overwrite user changes | Fail-closed on capture (blocks agent), force-overwrite on rollback (data loss risk) |
-| 2026-03-06 | SHA-256 for conflict detection | Reliable content comparison; detects any modification including third-party edits and IDE auto-formatting | Timestamp-based (unreliable across filesystems), size-based (misses content changes) |
-| 2026-03-06 | Inspired by AgentFS OverlayFS but not adopted | OverlayFS provides perfect isolation but requires FUSE/NFS, daemon process, and is Linux-centric; incompatible with y-agent's cross-platform, IDE-transparent requirements | Full VFS adoption, ptrace-based interception |
-
----
-
-## Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-06 | Initial design: FileJournalMiddleware, CaptureEngine with three-tier storage, RollbackEngine with conflict detection, Orchestrator and observability integration. Inspired by AgentFS OverlayFS copy-on-write patterns. |

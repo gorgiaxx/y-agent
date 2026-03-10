@@ -591,10 +591,3 @@ migrations/
 - Qdrant: collection snapshots via REST API
 - JSONL transcripts: included in filesystem backup
 
----
-
-## Changelog
-
-| Version | Date | Change |
-|---------|------|--------|
-| v0.1 | 2026-03-08 | Initial schema design covering SQLite, PostgreSQL, and Qdrant |

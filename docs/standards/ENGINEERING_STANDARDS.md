@@ -581,10 +581,3 @@ ci: add cargo-deny license check to pipeline
 - PR title becomes the squash commit message (follow format above)
 - Delete branch after merge
 
----
-
-## Changelog
-
-| Version | Date | Change |
-|---------|------|--------|
-| v0.1 | 2026-03-08 | Initial engineering standards |

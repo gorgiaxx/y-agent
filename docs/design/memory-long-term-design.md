@@ -531,28 +531,3 @@ Default weights: semantic = 0.6, time = 0.2, importance = 0.2.
 | 4 | Should users be able to pin memories (exempt from time decay)? | Product / Memory team | 2026-04-15 |
 | 5 | What minimum `confidence` threshold should be applied before storing a Personal memory? | Memory team | 2026-04-01 |
 
----
-
-## Decision Log
-
-| Date | Decision | Context |
-|------|----------|---------|
-| 2026-03-05 | Use three typed memory categories (Personal/Task/Tool) rather than a single generic store | Different extraction logic and recall behavior per type justifies the schema split |
-| 2026-03-05 | Embed `when_to_use` rather than `content` for vector indexing | Tested internally; shorter retrieval-oriented text produces better cosine similarity scores |
-| 2026-03-05 | Default recall strategy is Deep (3 rounds) | Provides highest recall quality for the typical low-QPS personal-agent workload |
-| 2026-03-05 | Contradiction resolution defaults to TimeEvolution when LLM is unavailable | Preserves both memories rather than silently dropping one |
-| 2026-03-06 | Set deduplication threshold at 0.9 cosine similarity | Empirically balances false positives vs. false negatives on a sample dataset |
-| 2026-03-08 | Adopt two-phase dedup: content-hash fast path + LLM 4-action model | Hash catches exact dupes at zero LLM cost; LLM 4-action (create/merge/skip/delete) handles semantic overlaps precisely. Inspired by Claude-Mem (hash) and OpenViking (LLM-judged actions) |
-| 2026-03-08 | Add structured observation schema for extraction output | Typed schema (title/facts/narrative/concepts/files) provides richer indexing surfaces and enables per-fact contradiction detection. Inspired by Claude-Mem's observation structure |
-| 2026-03-08 | Add intent-aware query decomposition (TypedQuery) for recall | Compound queries decomposed into typed sub-queries with context_type and priority; prevents single-embedding bottleneck. Inspired by OpenViking's IntentAnalyzer |
-| 2026-03-08 | Add Search Orchestrator with multi-strategy fallback | Automatic degradation (Vector -> Hybrid -> Keyword) ensures retrieval availability when subsystems degrade. Inspired by Claude-Mem's SearchOrchestrator pattern |
-
----
-
-## Changelog
-
-| Date | Version | Changes |
-|------|---------|---------|
-| 2026-03-05 | v0.1 | Initial draft with three memory types, extraction prompts, multi-dimensional index, recall strategies, and evolution mechanisms |
-| 2026-03-06 | v0.2 | Restructured to standard design doc format; replaced code-heavy sections with high-level descriptions and tables; added Mermaid diagrams; added required sections (failure handling, security, performance, observability, rollout, alternatives, open questions, decision log) |
-| 2026-03-08 | v0.3 | Added four features from competitive analysis (OpenViking, Claude-Mem, EdgeQuake): (1) two-phase deduplication (content-hash fast path + LLM 4-action semantic dedup); (2) structured observation schema for extraction output; (3) intent-aware query decomposition (TypedQuery) with optional LLM-based Intent Analyzer; (4) Search Orchestrator with multi-strategy fallback (Vector -> Hybrid -> Keyword). Updated component diagram, write/read flow diagrams, observability metrics, failure handling, alternatives table, and decision log. See [memory-context-feature-analysis.md](../research/memory-context-feature-analysis.md) for competitive analysis. |
