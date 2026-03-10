@@ -1,0 +1,23 @@
+[package]
+name = "y-hooks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hook system, middleware chains, async event bus, plugin loading"
+
+[dependencies]
+y-core = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

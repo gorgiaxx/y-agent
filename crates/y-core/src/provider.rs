@@ -1,0 +1,258 @@
+//! LLM provider traits and associated types.
+//!
+//! Design reference: providers-design.md
+//!
+//! The provider layer manages multiple LLM backends with tag-based routing,
+//! intelligent freeze/failover, and per-provider connection pooling.
+
+use std::pin::Pin;
+
+use async_trait::async_trait;
+use futures::Stream;
+use serde::{Deserialize, Serialize};
+
+use crate::error::ErrorSeverity;
+use crate::types::{Message, ProviderId, Timestamp, TokenUsage};
+
+// ---------------------------------------------------------------------------
+// Request / Response
+// ---------------------------------------------------------------------------
+
+/// Request to an LLM provider.
+#[derive(Debug, Clone)]
+pub struct ChatRequest {
+    pub messages: Vec<Message>,
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<u32>,
+    /// Sampling temperature (0.0 - 2.0).
+    pub temperature: Option<f32>,
+    /// Tool definitions available for this request.
+    pub tools: Vec<serde_json::Value>,
+    /// Stop sequences.
+    pub stop: Vec<String>,
+    /// Arbitrary provider-specific parameters.
+    pub extra: serde_json::Value,
+}
+
+/// Response from an LLM provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatResponse {
+    /// Provider-assigned response ID.
+    pub id: String,
+    /// Model that generated the response.
+    pub model: String,
+    /// Generated content (may be empty if tool calls are present).
+    pub content: Option<String>,
+    /// Tool calls requested by the model.
+    #[serde(default)]
+    pub tool_calls: Vec<crate::types::ToolCallRequest>,
+    /// Token usage.
+    pub usage: TokenUsage,
+    /// Why the model stopped generating.
+    pub finish_reason: FinishReason,
+}
+
+/// A single chunk in a streaming response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatStreamChunk {
+    /// Incremental content delta.
+    pub delta_content: Option<String>,
+    /// Incremental tool call delta.
+    pub delta_tool_calls: Vec<crate::types::ToolCallRequest>,
+    /// Present only in the final chunk.
+    pub usage: Option<TokenUsage>,
+    /// Present only in the final chunk.
+    pub finish_reason: Option<FinishReason>,
+}
+
+/// Reason the model stopped generating.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FinishReason {
+    Stop,
+    Length,
+    ToolUse,
+    ContentFilter,
+    Unknown,
+}
+
+/// Streaming response type: a pinned boxed stream of chunk results.
+pub type ChatStream =
+    Pin<Box<dyn Stream<Item = Result<ChatStreamChunk, ProviderError>> + Send + 'static>>;
+
+// ---------------------------------------------------------------------------
+// Provider metadata
+// ---------------------------------------------------------------------------
+
+/// Static metadata describing a configured provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderMetadata {
+    pub id: ProviderId,
+    pub provider_type: ProviderType,
+    pub model: String,
+    pub tags: Vec<String>,
+    pub max_concurrency: usize,
+    pub context_window: usize,
+    pub cost_per_1k_input: f64,
+    pub cost_per_1k_output: f64,
+}
+
+/// Supported provider backend types.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderType {
+    OpenAi,
+    Anthropic,
+    Ollama,
+    OpenRouter,
+    Custom,
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// Errors from LLM provider operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ProviderError {
+    #[error("rate limited by {provider}: retry after {retry_after_secs}s")]
+    RateLimited {
+        provider: String,
+        retry_after_secs: u64,
+    },
+
+    #[error("quota exhausted for {provider}")]
+    QuotaExhausted { provider: String },
+
+    #[error("authentication failed for {provider}")]
+    AuthenticationFailed { provider: String },
+
+    #[error("invalid API key for {provider}")]
+    KeyInvalid { provider: String },
+
+    #[error("server error from {provider}: {message}")]
+    ServerError { provider: String, message: String },
+
+    #[error("network error: {message}")]
+    NetworkError { message: String },
+
+    #[error("no provider available matching tags {tags:?}")]
+    NoProviderAvailable { tags: Vec<String> },
+
+    #[error("request cancelled")]
+    Cancelled,
+
+    #[error("response parse error: {message}")]
+    ParseError { message: String },
+
+    #[error("{message}")]
+    Other { message: String },
+}
+
+impl ProviderError {
+    /// Classify error severity for freeze duration decisions.
+    pub fn severity(&self) -> ErrorSeverity {
+        match self {
+            Self::AuthenticationFailed { .. }
+            | Self::KeyInvalid { .. }
+            | Self::QuotaExhausted { .. } => ErrorSeverity::Permanent,
+            Self::NoProviderAvailable { .. } => ErrorSeverity::UserActionRequired,
+            // All other errors are transient (rate limits, network, server, parse, etc.)
+            _ => ErrorSeverity::Transient,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Traits
+// ---------------------------------------------------------------------------
+
+/// A single LLM provider backend.
+///
+/// Implementations handle HTTP communication with a specific provider API
+/// (OpenAI, Anthropic, Ollama, etc.). They do not handle routing or failover;
+/// that is the responsibility of [`ProviderPool`].
+#[async_trait]
+pub trait LlmProvider: Send + Sync {
+    /// Send a chat completion request and wait for the full response.
+    async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError>;
+
+    /// Send a chat completion request and return a streaming response.
+    async fn chat_completion_stream(
+        &self,
+        request: &ChatRequest,
+    ) -> Result<ChatStream, ProviderError>;
+
+    /// Return static metadata for this provider.
+    fn metadata(&self) -> &ProviderMetadata;
+}
+
+/// Routing request specifying how to select a provider.
+#[derive(Debug, Clone, Default)]
+pub struct RouteRequest {
+    /// Required tags the provider must have.
+    pub required_tags: Vec<String>,
+    /// Preferred model (exact match, optional).
+    pub preferred_model: Option<String>,
+    /// Priority level.
+    pub priority: RoutePriority,
+}
+
+/// Request priority for provider selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RoutePriority {
+    /// Reserve 20% of concurrency budget for critical requests.
+    Critical,
+    #[default]
+    Normal,
+    /// Lowest priority, may be queued.
+    Idle,
+}
+
+/// Provider health and freeze status.
+#[derive(Debug, Clone)]
+pub struct ProviderStatus {
+    pub id: ProviderId,
+    pub is_frozen: bool,
+    pub frozen_since: Option<Timestamp>,
+    pub thaw_at: Option<Timestamp>,
+    pub freeze_reason: Option<String>,
+    pub active_requests: usize,
+    pub total_requests: u64,
+    pub total_errors: u64,
+}
+
+/// Manages a pool of LLM providers with routing, freeze/thaw, and failover.
+///
+/// The pool selects providers based on tags, availability, and priority.
+/// Failed providers are frozen with adaptive durations and thawed after
+/// health check verification.
+#[async_trait]
+pub trait ProviderPool: Send + Sync {
+    /// Send a request, routing to the best available provider.
+    async fn chat_completion(
+        &self,
+        request: &ChatRequest,
+        route: &RouteRequest,
+    ) -> Result<ChatResponse, ProviderError>;
+
+    /// Send a streaming request, routing to the best available provider.
+    async fn chat_completion_stream(
+        &self,
+        request: &ChatRequest,
+        route: &RouteRequest,
+    ) -> Result<ChatStream, ProviderError>;
+
+    /// Report an error from a specific provider (triggers freeze evaluation).
+    fn report_error(&self, provider_id: &ProviderId, error: &ProviderError);
+
+    /// Get the status of all providers.
+    async fn provider_statuses(&self) -> Vec<ProviderStatus>;
+
+    /// Manually freeze a provider.
+    async fn freeze(&self, provider_id: &ProviderId, reason: String);
+
+    /// Manually thaw a frozen provider (triggers health check first).
+    async fn thaw(&self, provider_id: &ProviderId) -> Result<(), ProviderError>;
+}

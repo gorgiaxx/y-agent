@@ -1,0 +1,67 @@
+### General OS / Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.log
+*.bak
+*.orig
+.idea/
+.vscode/
+*.code-workspace
+
+### Git / Patch helpers
+*.patch
+*.rej
+
+### Docs
+*.pdf
+
+### Rust / Cargo
+target/
+debug/
+**/*.rs.bk
+
+### Node / JS (if used)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+package-lock.json
+
+### Python (if used)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+### Build / Dist Artifacts
+dist/
+build/
+out/
+coverage/
+
+### Environment / Secrets
+.env
+.env.*
+!.env.example
+
+### Tooling / Misc
+.cache/
+.tox/
+.DS_Store?
+.cursor/
+.turbo/
+.parcel-cache/
+.eslintcache
+
+### Test
+
+migrations/postgres
+migrations/sqlite
+

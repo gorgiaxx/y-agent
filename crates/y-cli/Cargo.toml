@@ -1,0 +1,23 @@
+[package]
+name = "y-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI interface for y-agent"
+
+[[bin]]
+name = "y-agent"
+path = "src/main.rs"
+
+[dependencies]
+y-core = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

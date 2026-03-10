@@ -1,0 +1,25 @@
+[package]
+name = "y-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Session lifecycle manager: state machine, tree traversal, transcripts"
+
+[dependencies]
+y-core = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+y-storage = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"
+
+[lints]
+workspace = true
