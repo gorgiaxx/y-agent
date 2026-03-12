@@ -35,7 +35,7 @@ pub struct SystemService;
 impl SystemService {
     /// Gather system status report.
     pub async fn status(container: &ServiceContainer, version: &str) -> StatusReport {
-        let provider_count = container.provider_pool.provider_statuses().await.len();
+        let provider_count = container.provider_pool().await.provider_statuses().await.len();
         let tool_count = container.tool_registry.len().await;
         let runtime_backend = format!("{:?}", container.runtime_manager.backend());
 

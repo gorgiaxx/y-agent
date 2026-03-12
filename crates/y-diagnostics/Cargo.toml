@@ -7,7 +7,7 @@ description = "Diagnostics: trace store, cost intelligence, trace replay (Postgr
 
 [features]
 default = ["diagnostics_pg"]
-diagnostics_pg = ["y-storage/diagnostics_pg", "sqlx"]
+diagnostics_pg = ["y-storage/diagnostics_pg"]
 
 [dependencies]
 y-core = { workspace = true }
@@ -16,7 +16,7 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-sqlx = { workspace = true, optional = true }
+sqlx = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }

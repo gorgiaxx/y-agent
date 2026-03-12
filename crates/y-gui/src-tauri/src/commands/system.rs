@@ -3,6 +3,8 @@
 use serde::Serialize;
 use tauri::State;
 
+use y_core::session::SessionFilter;
+
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -29,12 +31,13 @@ pub struct SystemStatus {
 /// Get system status.
 #[tauri::command]
 pub async fn system_status(state: State<'_, AppState>) -> Result<SystemStatus, String> {
-    let provider_count = state.container.provider_pool.provider_count();
+    let provider_count = state.container.provider_pool().await.list_metadata().len();
 
+    let filter = SessionFilter::default();
     let session_count = state
         .container
         .session_manager
-        .list_sessions()
+        .list_sessions(&filter)
         .await
         .map(|s| s.len())
         .ok();

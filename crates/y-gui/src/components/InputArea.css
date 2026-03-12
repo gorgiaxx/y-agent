@@ -1,23 +1,24 @@
 .input-area {
   border-top: 1px solid var(--border);
-  padding: 12px 20px;
+  padding: var(--space-md) var(--space-lg);
   background: var(--surface-secondary);
+  flex-shrink: 0;
 }
 
 .input-container {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--space-sm);
   background: var(--surface-primary);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 8px 12px;
-  transition: border-color 0.15s ease;
+  border-radius: var(--radius-lg);
+  padding: 10px var(--space-md);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .input-container:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-glow);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.03);
 }
 
 .input-textarea {
@@ -26,11 +27,12 @@
   background: transparent;
   color: var(--text-primary);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
   resize: none;
   outline: none;
   font-family: inherit;
-  max-height: 200px;
+  max-height: 180px;
+  padding: 0;
 }
 
 .input-textarea::placeholder {
@@ -38,31 +40,31 @@
 }
 
 .input-textarea:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .btn-send {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--accent);
-  color: white;
+  color: #0f0f0f;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: opacity 0.15s ease, transform 0.12s ease;
 }
 
 .btn-send:hover:not(:disabled) {
-  background: var(--accent-hover);
-  transform: scale(1.05);
+  opacity: 0.85;
+  transform: scale(1.04);
 }
 
 .btn-send:disabled {
-  opacity: 0.3;
+  opacity: 0.25;
   cursor: not-allowed;
 }
 
@@ -71,4 +73,26 @@
   color: var(--text-muted);
   margin-top: 6px;
   text-align: right;
+  letter-spacing: 0.01em;
+}
+
+.btn-stop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-tertiary);
+  color: var(--error);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.1s ease;
+}
+
+.btn-stop:hover {
+  background: var(--error-subtle);
+  border-color: var(--error);
+  transform: scale(1.06);
 }

@@ -1,18 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Settings, Activity } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { InputArea } from './components/InputArea';
 import { StatusBar } from './components/StatusBar';
 import { SettingsOverlay } from './components/SettingsOverlay';
+import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { useChat } from './hooks/useChat';
 import { useSessions } from './hooks/useSessions';
 import { useConfig } from './hooks/useConfig';
+import { useDiagnostics } from './hooks/useDiagnostics';
+import { useWorkspaces } from './hooks/useWorkspaces';
 import type { SystemStatus } from './types';
 import './App.css';
 
 function App() {
-  const { messages, isStreaming, error, sendMessage, loadMessages, clearMessages } = useChat();
   const {
     sessions,
     activeSessionId,
@@ -21,13 +24,30 @@ function App() {
     deleteSession,
     refreshSessions,
   } = useSessions();
-  const { config, updateConfig } = useConfig();
+  const { messages, isStreaming, streamingSessionIds, error, sendMessage, cancelRun, loadMessages, clearMessages } =
+    useChat(activeSessionId);
+
+  const { config, updateConfig, loadSection, saveSection, reloadConfig } = useConfig();
+  const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
+    useDiagnostics(activeSessionId);
+  const {
+    workspaces,
+    sessionWorkspaceMap,
+    updateWorkspace,
+    deleteWorkspace,
+    assignSession,
+    unassignSession,
+    refreshWorkspaces,
+  } = useWorkspaces();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [diagExpanded, setDiagExpanded] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [lastModel, setLastModel] = useState<string | undefined>();
   const [lastTokens, setLastTokens] = useState<{ input: number; output: number } | undefined>();
   const [lastCost, setLastCost] = useState<number | undefined>();
+  const [lastContextWindow, setLastContextWindow] = useState<number | undefined>();
 
   // Load system status on mount.
   useEffect(() => {
@@ -45,13 +65,14 @@ function App() {
     }
   }, [activeSessionId, loadMessages, clearMessages]);
 
-  // Track last response metadata.
+  // Track last response metadata for status bar.
   useEffect(() => {
     const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
     if (lastAssistant) {
       setLastModel(lastAssistant.model);
       setLastTokens(lastAssistant.tokens);
       setLastCost(lastAssistant.cost);
+      setLastContextWindow(lastAssistant.context_window);
     }
   }, [messages]);
 
@@ -63,13 +84,17 @@ function App() {
         if (!session) return;
         sid = session.id;
       }
+      addUserMessage(message, sid);
       const result = await sendMessage(message, sid);
-      if (result && result.session_id !== activeSessionId) {
-        selectSession(result.session_id);
+      if (result) {
+        if (result.session_id !== activeSessionId) {
+          selectSession(result.session_id);
+        }
+        // Always refresh so auto-generated session titles appear immediately.
         refreshSessions();
       }
     },
-    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions],
+    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage],
   );
 
   const handleNewChat = useCallback(async () => {
@@ -90,31 +115,64 @@ function App() {
     [deleteSession, activeSessionId, clearMessages],
   );
 
+  // Called from WorkspaceDialog (embedded in Sidebar) with already-chosen name + path.
+  const handleCreateWorkspace = useCallback(
+    async (name: string, path: string) => {
+      try {
+        await invoke('workspace_create', { name, path });
+        await refreshWorkspaces();
+      } catch (e) {
+        console.error('Failed to create workspace:', e);
+      }
+    },
+    [refreshWorkspaces],
+  );
+
   return (
     <div className="app">
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
+        streamingSessionIds={streamingSessionIds}
+        workspaces={workspaces}
+        sessionWorkspaceMap={sessionWorkspaceMap}
         onSelectSession={selectSession}
         onNewChat={handleNewChat}
         onDeleteSession={handleDeleteSession}
+        onCreateWorkspace={handleCreateWorkspace}
+        onUpdateWorkspace={updateWorkspace}
+        onDeleteWorkspace={deleteWorkspace}
+        onAssignSession={assignSession}
+        onUnassignSession={unassignSession}
       />
 
       <main className="main-panel">
         <header className="main-header">
           <h1 className="app-title">y-agent</h1>
-          <button
-            className="btn-settings"
-            onClick={() => setSettingsOpen(true)}
-            title="Settings"
-          >
-            ⚙️
-          </button>
+          <div className="header-actions">
+            <button
+              className={`btn-header ${diagOpen ? 'active' : ''} ${isActive ? 'has-activity' : ''}`}
+              onClick={() => setDiagOpen(!diagOpen)}
+              title="Diagnostics"
+              id="btn-diagnostics"
+            >
+              <Activity size={16} />
+            </button>
+            <button
+              className="btn-header"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+              id="btn-settings"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
         </header>
 
         <ChatPanel messages={messages} isStreaming={isStreaming} error={error} />
         <InputArea
           onSend={handleSend}
+          onStop={cancelRun}
           disabled={isStreaming}
           sendOnEnter={config.send_on_enter}
         />
@@ -125,14 +183,33 @@ function App() {
           activeModel={lastModel}
           lastTokens={lastTokens}
           lastCost={lastCost}
+          contextWindow={lastContextWindow}
         />
       </main>
+
+      {diagOpen && (
+        <DiagnosticsPanel
+          entries={entries}
+          summary={summary}
+          isActive={isActive}
+          expanded={diagExpanded}
+          onToggleExpand={() => setDiagExpanded(!diagExpanded)}
+          onClear={clearDiagnostics}
+          onClose={() => {
+            setDiagOpen(false);
+            setDiagExpanded(false);
+          }}
+        />
+      )}
 
       {settingsOpen && (
         <SettingsOverlay
           config={config}
           onSave={updateConfig}
           onClose={() => setSettingsOpen(false)}
+          loadSection={loadSection}
+          saveSection={saveSection}
+          reloadConfig={reloadConfig}
         />
       )}
     </div>

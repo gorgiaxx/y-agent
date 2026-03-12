@@ -11,6 +11,8 @@
 
 use std::fmt;
 
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -31,7 +33,7 @@ use crate::cost::CostService;
 const MAX_TOOL_ITERATIONS: usize = 10;
 
 /// Record of a tool call executed during a turn.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ToolCallRecord {
     /// Tool name.
     pub name: String,
@@ -42,6 +44,62 @@ pub struct ToolCallRecord {
     /// Result content (serialised JSON string).
     pub result_content: String,
 }
+
+// ---------------------------------------------------------------------------
+// Turn progress events (for real-time observability)
+// ---------------------------------------------------------------------------
+
+/// Real-time progress event emitted during a turn's tool-call loop.
+///
+/// Presentation layers subscribe to these events via `execute_turn_with_progress`
+/// and translate them into their native event format (Tauri events, SSE, TUI
+/// redraws, etc.). No business logic should live in the presentation layer.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TurnEvent {
+    /// Emitted after each LLM response.
+    LlmResponse {
+        /// 1-based iteration counter.
+        iteration: usize,
+        /// Model that served this iteration.
+        model: String,
+        /// Input tokens for this call.
+        input_tokens: u64,
+        /// Output tokens for this call.
+        output_tokens: u64,
+        /// LLM call wall-clock duration (ms).
+        duration_ms: u64,
+        /// Cost for this single call (USD).
+        cost_usd: f64,
+        /// Names of tool calls requested by the LLM (empty if pure text).
+        tool_calls_requested: Vec<String>,
+        /// First 1 000 chars of the serialised messages sent to the LLM.
+        prompt_preview: String,
+        /// Assistant text returned by the LLM (or tool-call placeholder).
+        response_text: String,
+    },
+    /// Emitted after each tool execution.
+    ToolResult {
+        /// Tool name.
+        name: String,
+        /// Whether the tool succeeded.
+        success: bool,
+        /// Tool execution wall-clock duration (ms).
+        duration_ms: u64,
+        /// First 500 chars of the result content.
+        result_preview: String,
+    },
+    /// Emitted when the tool-call loop limit is hit.
+    LoopLimitHit {
+        /// Number of iterations attempted.
+        iterations: usize,
+        /// Maximum allowed.
+        max_iterations: usize,
+    },
+}
+
+/// Channel sender for turn progress events.
+pub type TurnEventSender = mpsc::UnboundedSender<TurnEvent>;
 
 /// Successful result of [`ChatService::execute_turn`].
 #[derive(Debug, Clone)]
@@ -75,6 +133,8 @@ pub enum TurnError {
     ContextError(String),
     /// Tool-call iteration limit exceeded.
     ToolLoopLimitExceeded,
+    /// The turn was explicitly cancelled by the caller.
+    Cancelled,
 }
 
 impl fmt::Display for TurnError {
@@ -85,6 +145,7 @@ impl fmt::Display for TurnError {
             TurnError::ToolLoopLimitExceeded => {
                 write!(f, "Tool call loop limit ({MAX_TOOL_ITERATIONS}) exceeded")
             }
+            TurnError::Cancelled => write!(f, "Cancelled"),
         }
     }
 }
@@ -105,6 +166,9 @@ pub struct TurnInput<'a> {
     pub turn_number: u32,
 }
 
+/// Token passed to `execute_turn_with_progress` to support mid-turn cancellation.
+pub type TurnCancellationToken = CancellationToken;
+
 // ---------------------------------------------------------------------------
 // ChatService
 // ---------------------------------------------------------------------------
@@ -117,10 +181,37 @@ pub struct TurnInput<'a> {
 pub struct ChatService;
 
 impl ChatService {
-    /// Execute a single chat turn with the full lifecycle.
+    /// Execute a single chat turn (no progress events).
     pub async fn execute_turn(
         container: &ServiceContainer,
         input: &TurnInput<'_>,
+    ) -> Result<TurnResult, TurnError> {
+        Self::execute_turn_inner(container, input, None, None).await
+    }
+
+    /// Execute a single chat turn with real-time progress events.
+    ///
+    /// The sender receives [`TurnEvent`] values that presentation layers
+    /// can translate into Tauri events, SSE payloads, TUI redraws, etc.
+    ///
+    /// Pass a [`TurnCancellationToken`] to support mid-turn cancellation.
+    /// When the token is cancelled the function returns `Err(TurnError::Cancelled)`
+    /// as soon as it is safe to do so (typically within one LLM HTTP round-trip).
+    pub async fn execute_turn_with_progress(
+        container: &ServiceContainer,
+        input: &TurnInput<'_>,
+        progress: TurnEventSender,
+        cancel: Option<TurnCancellationToken>,
+    ) -> Result<TurnResult, TurnError> {
+        Self::execute_turn_inner(container, input, Some(progress), cancel).await
+    }
+
+    /// Internal implementation shared by both entry points.
+    async fn execute_turn_inner(
+        container: &ServiceContainer,
+        input: &TurnInput<'_>,
+        progress: Option<TurnEventSender>,
+        cancel: Option<TurnCancellationToken>,
     ) -> Result<TurnResult, TurnError> {
         // 1. Assemble context pipeline (system prompt + status).
         let assembled = container
@@ -160,8 +251,21 @@ impl ChatService {
         let mut working_history: Vec<Message> = input.history.to_vec();
 
         loop {
+            // Check for cancellation at the top of every iteration.
+            if let Some(ref tok) = cancel {
+                if tok.is_cancelled() {
+                    return Err(TurnError::Cancelled);
+                }
+            }
+
             iteration += 1;
             if iteration > MAX_TOOL_ITERATIONS {
+                if let Some(ref tx) = progress {
+                    let _ = tx.send(TurnEvent::LoopLimitHit {
+                        iterations: iteration - 1,
+                        max_iterations: MAX_TOOL_ITERATIONS,
+                    });
+                }
                 if let Some(tid) = trace_id {
                     let _ = container
                         .diagnostics
@@ -172,6 +276,10 @@ impl ChatService {
             }
 
             let messages = Self::build_chat_messages(&assembled, &working_history);
+
+            // Compute the full serialised prompt sent to the LLM.
+            // No truncation -- the frontend code block is scrollable.
+            let prompt_preview = serde_json::to_string(&messages).unwrap_or_default();
 
             let request = ChatRequest {
                 messages,
@@ -192,11 +300,24 @@ impl ChatService {
             // calling provider_pool directly. The middleware chain should handle
             // guardrail validation, rate limiting, caching, and auditing.
             // See hooks-plugin-design.md §Middleware Chains → LlmMiddleware.
-            match container
-                .provider_pool
-                .chat_completion(&request, &route)
-                .await
-            {
+            let pool = container.provider_pool().await;
+            let llm_future = pool.chat_completion(&request, &route);
+
+            // Race the LLM call against the cancellation token so the user
+            // gets immediate feedback instead of waiting for the full HTTP
+            // round-trip to complete.
+            let llm_result = if let Some(ref tok) = cancel {
+                tokio::select! {
+                    res = llm_future => res,
+                    _ = tok.cancelled() => {
+                        return Err(TurnError::Cancelled);
+                    }
+                }
+            } else {
+                llm_future.await
+            };
+
+            match llm_result {
                 Ok(response) => {
                     let llm_elapsed_ms = llm_start.elapsed().as_millis() as u64;
                     let resp_input_tokens = u64::from(response.usage.input_tokens);
@@ -247,8 +368,27 @@ impl ChatService {
                         );
                     }
 
+                    // Gather tool call names for the progress event.
+                    let native_tc_names: Vec<String> =
+                        response.tool_calls.iter().map(|tc| tc.name.clone()).collect();
+
                     // Handle tool calls.
                     if !response.tool_calls.is_empty() {
+                        // Emit LlmResponse progress event (with requested tool calls).
+                        if let Some(ref tx) = progress {
+                            let _ = tx.send(TurnEvent::LlmResponse {
+                                iteration,
+                                model: response.model.clone(),
+                                input_tokens: resp_input_tokens,
+                                output_tokens: resp_output_tokens,
+                                duration_ms: llm_elapsed_ms,
+                                cost_usd: cost,
+                                tool_calls_requested: native_tc_names,
+                                prompt_preview: prompt_preview.clone(),
+                                response_text: response.content.clone().unwrap_or_default(),
+                            });
+                        }
+
                         let assistant_msg = Message {
                             message_id: y_core::types::generate_message_id(),
                             role: Role::Assistant,
@@ -286,6 +426,16 @@ impl ChatService {
                                 duration_ms: tool_elapsed_ms,
                                 result_content: result_content.clone(),
                             });
+
+                            // Emit ToolResult progress event.
+                            if let Some(ref tx) = progress {
+                                let _ = tx.send(TurnEvent::ToolResult {
+                                    name: tc.name.clone(),
+                                    success: tool_success,
+                                    duration_ms: tool_elapsed_ms,
+                                    result_preview: result_content.clone(),
+                                });
+                            }
 
                             // Diagnostics: record tool call observation.
                             if let Some(tid) = trace_id {
@@ -330,6 +480,25 @@ impl ChatService {
                         if let Some(ref text) = response.content {
                             let parse_result = parse_tool_calls(text);
                             if !parse_result.tool_calls.is_empty() {
+                                // Emit LlmResponse progress event for prompt-based.
+                                if let Some(ref tx) = progress {
+                                    let prompt_tc_names: Vec<String> = parse_result
+                                        .tool_calls
+                                        .iter()
+                                        .map(|ptc| ptc.name.clone())
+                                        .collect();
+                                    let _ = tx.send(TurnEvent::LlmResponse {
+                                        iteration,
+                                        model: response.model.clone(),
+                                        input_tokens: resp_input_tokens,
+                                        output_tokens: resp_output_tokens,
+                                        duration_ms: llm_elapsed_ms,
+                                        cost_usd: cost,
+                                        tool_calls_requested: prompt_tc_names,
+                                        prompt_preview: prompt_preview.clone(),
+                                        response_text: text.clone(),
+                                    });
+                                }
                                 // Record assistant message with original text.
                                 let assistant_msg = Message {
                                     message_id: y_core::types::generate_message_id(),
@@ -383,6 +552,16 @@ impl ChatService {
                                         duration_ms: tool_elapsed_ms,
                                         result_content: result_content.clone(),
                                     });
+
+                                    // Emit ToolResult progress event.
+                                    if let Some(ref tx) = progress {
+                                        let _ = tx.send(TurnEvent::ToolResult {
+                                            name: tc.name.clone(),
+                                            success: tool_success,
+                                            duration_ms: tool_elapsed_ms,
+                                            result_preview: result_content.clone(),
+                                        });
+                                    }
 
                                     // Diagnostics.
                                     if let Some(tid) = trace_id {
@@ -438,11 +617,27 @@ impl ChatService {
                     }
 
                     // No tool calls — text response.
-                    // Sanitize: strip any remaining <tool_call> XML from the
-                    // response so the user never sees raw protocol tags.
+                    // Emit LlmResponse progress event for final iteration.
                     let raw_content = response
                         .content
+                        .clone()
                         .unwrap_or_else(|| "(no content)".to_string());
+                    if let Some(ref tx) = progress {
+                        let _ = tx.send(TurnEvent::LlmResponse {
+                            iteration,
+                            model: response.model.clone(),
+                            input_tokens: resp_input_tokens,
+                            output_tokens: resp_output_tokens,
+                            duration_ms: llm_elapsed_ms,
+                            cost_usd: cost,
+                            tool_calls_requested: vec![],
+                            prompt_preview: prompt_preview.clone(),
+                            response_text: raw_content.clone(),
+                        });
+                    }
+
+                    // Sanitize: strip any remaining <tool_call> XML from the
+                    // response so the user never sees raw protocol tags.
                     let content = if tool_calling_mode == ToolCallingMode::PromptBased {
                         let stripped = strip_tool_call_blocks(&raw_content);
                         if stripped.is_empty() { raw_content } else { stripped }
@@ -493,7 +688,8 @@ impl ChatService {
                     }
 
                     let ctx_window = container
-                        .provider_pool
+                        .provider_pool()
+                        .await
                         .list_metadata()
                         .first()
                         .map_or(0, |m| m.context_window);

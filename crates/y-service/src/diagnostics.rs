@@ -74,7 +74,7 @@ impl DiagnosticsService {
             0
         };
 
-        let statuses = container.provider_pool.provider_statuses().await;
+        let statuses = container.provider_pool().await.provider_statuses().await;
         let active = statuses.iter().filter(|s| !s.is_frozen).count();
 
         HealthCheckResult {

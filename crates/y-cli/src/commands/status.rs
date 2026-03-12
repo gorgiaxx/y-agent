@@ -21,7 +21,7 @@ pub struct StatusReport {
 
 /// Run the status command.
 pub async fn run(services: &AppServices, mode: OutputMode) -> Result<()> {
-    let provider_count = services.provider_pool.provider_statuses().await.len();
+    let provider_count = services.provider_pool().await.provider_statuses().await.len();
     let tool_count = services.tool_registry.len().await;
     let runtime_backend = format!("{:?}", services.runtime_manager.backend());
 

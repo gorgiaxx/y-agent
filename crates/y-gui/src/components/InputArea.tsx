@@ -1,13 +1,15 @@
 import { useState, useRef, useCallback } from 'react';
+import { Square } from 'lucide-react';
 import './InputArea.css';
 
 interface InputAreaProps {
   onSend: (message: string) => void;
+  onStop?: () => void;
   disabled: boolean;
   sendOnEnter: boolean;
 }
 
-export function InputArea({ onSend, disabled, sendOnEnter }: InputAreaProps) {
+export function InputArea({ onSend, onStop, disabled, sendOnEnter }: InputAreaProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -50,17 +52,16 @@ export function InputArea({ onSend, disabled, sendOnEnter }: InputAreaProps) {
           disabled={disabled}
           rows={1}
         />
-        <button
-          className="btn-send"
-          onClick={handleSend}
-          disabled={disabled || !value.trim()}
-          title="Send message"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-        </button>
+        {disabled && onStop && (
+          <button
+            className="btn-stop"
+            onClick={onStop}
+            title="Stop generation"
+            id="btn-stop-generation"
+          >
+            <Square size={14} />
+          </button>
+        )}
       </div>
       <div className="input-hint">
         {sendOnEnter ? 'Enter to send, Shift+Enter for newline' : 'Shift+Enter to send'}

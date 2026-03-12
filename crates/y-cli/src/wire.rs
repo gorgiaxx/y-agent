@@ -44,7 +44,7 @@ mod tests {
         assert!(result.is_ok(), "wiring with default config should succeed");
 
         let services = result.unwrap();
-        let _ = &services.provider_pool;
+        let _ = services.provider_pool().await;
         let _ = &services.session_manager;
         let _ = &services.hook_system;
         let _ = &services.tool_registry;

@@ -36,6 +36,7 @@ repository = "https://github.com/gorgias/y-agent"
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 async-trait = "0.1"
 futures = "0.3"
 

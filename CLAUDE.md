@@ -22,6 +22,7 @@ Crates: `y-core` · `y-provider` · `y-agent` · `y-session` · `y-context` · `
 | 2.6 | **Fail Fast, Recover Cheap** | Checkpoint at task level; retry from failed step; freeze/thaw providers; compensation for side effects. |
 | 2.7 | **TDD** | Red → Green → Refactor. No production code without a preceding test. See `TEST_STRATEGY.md`. |
 | 2.8 | **English** | All docs, comments, commits in English. `VISION.md` is the sole exception. |
+| 2.9 | **No Emoji** | No emoji in any artifact: code, docs, comments, commits, diagrams, or agent output. Use plain text only. |
 
 ## 3) Repository Map
 
@@ -83,3 +84,7 @@ When uncertain → High.
 | `docs/plan/PROJECT_PLAN.md` | Implementation phases |
 | `docs/plan/R&D_PLAN.md` | Per-module R&D details |
 | `VISION.md` | Project vision (Chinese) |
+
+## 7) Formatting Constraints
+
+- **No emoji anywhere.** All repository content -- source code, documentation, comments, commit messages, Mermaid diagrams, log output, and AI-generated responses -- must be free of emoji characters. Use plain-text markers, ASCII symbols, or descriptive words instead.

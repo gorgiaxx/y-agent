@@ -1,0 +1,146 @@
+/* ============================================
+   y-agent GUI -- Global Design System
+   ============================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap');
+
+/* ---- CSS Variables: Dark Theme (default) ---- */
+:root,
+[data-theme="dark"] {
+  /* Surface hierarchy -- near-black, layered */
+  --surface-primary:   #0f0f0f;
+  --surface-secondary: #141414;
+  --surface-tertiary:  #1c1c1c;
+  --surface-hover:     rgba(255, 255, 255, 0.04);
+  --surface-code:      #1a1a1a;
+
+  /* Text hierarchy */
+  --text-primary:   #e8e6e1;
+  --text-secondary: #8a8680;
+  --text-muted:     #555250;
+
+  /* Accent -- warm gold, used sparingly */
+  --accent:        #c8b560;
+  --accent-hover:  #d4c26e;
+  --accent-subtle: rgba(200, 181, 96, 0.10);
+  --accent-glow:   rgba(200, 181, 96, 0.15);
+
+  /* Semantic */
+  --success:       #6fcf97;
+  --error:         #e57373;
+  --error-subtle:  rgba(229, 115, 115, 0.08);
+  --warning:       #f0c050;
+
+  /* Borders -- very subtle */
+  --border: rgba(255, 255, 255, 0.06);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.65);
+
+  /* Spacing */
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  16px;
+  --space-lg:  24px;
+  --space-xl:  40px;
+
+  /* Border radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+/* ---- CSS Variables: Light Theme ---- */
+[data-theme="light"] {
+  --surface-primary:   #ffffff;
+  --surface-secondary: #f5f4f1;
+  --surface-tertiary:  #edecea;
+  --surface-hover:     rgba(0, 0, 0, 0.04);
+  --surface-code:      #f0eeeb;
+
+  --text-primary:   #1a1917;
+  --text-secondary: #6b6560;
+  --text-muted:     #9c9894;
+
+  --accent:        #9a7c2a;
+  --accent-hover:  #7e6420;
+  --accent-subtle: rgba(154, 124, 42, 0.08);
+  --accent-glow:   rgba(154, 124, 42, 0.12);
+
+  --success:       #3a9d6b;
+  --error:         #c0392b;
+  --error-subtle:  rgba(192, 57, 43, 0.07);
+  --warning:       #c0880a;
+
+  --border: rgba(0, 0, 0, 0.07);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.07);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.09);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.12);
+}
+
+/* ---- Reset & Base ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 14px;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 400;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  letter-spacing: -0.01em;
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+}
+
+/* ---- Scrollbar -- thin and discreet ---- */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.20);
+}
+
+/* ---- Selection ---- */
+::selection {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}

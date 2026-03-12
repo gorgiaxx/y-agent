@@ -274,6 +274,14 @@ impl SessionStore for MockSessionStore {
         node.title = Some(title);
         Ok(())
     }
+
+    async fn delete(&self, id: &SessionId) -> Result<(), SessionError> {
+        let mut map = self.sessions.write().unwrap();
+        if map.remove(&id.to_string()).is_none() {
+            return Err(SessionError::NotFound { id: id.to_string() });
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

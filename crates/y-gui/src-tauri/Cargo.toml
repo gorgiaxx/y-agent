@@ -11,12 +11,13 @@ name = "y_gui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = "2.5"
+tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 # Tauri
-tauri = "2.10"
+tauri = { version = "2.10", features = [] }
 tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
 log = "0.4"
 
 # Serialization
@@ -25,9 +26,16 @@ serde_json = { workspace = true }
 
 # Async
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
+
+# Identifiers
+uuid = { workspace = true }
+
+# Config
+toml = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }
@@ -35,6 +43,14 @@ tracing = { workspace = true }
 # Internal crates
 y-service = { workspace = true }
 y-core = { workspace = true }
+y-provider = { workspace = true }
+y-diagnostics = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# HTTP client (for provider_test command)
+reqwest = { workspace = true }
 
 [lints]
 workspace = true

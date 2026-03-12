@@ -2,13 +2,16 @@
 //! event-bus subscriber for capturing runtime observations.
 //!
 //! All storage is abstracted behind the [`TraceStore`] trait.  An in-memory
-//! implementation is provided for testing; a `PostgreSQL` backend is available
-//! behind the `diagnostics_pg` feature flag via [`PgTraceStore`].
+//! implementation is provided for testing; a SQLite-backed implementation
+//! (`SqliteTraceStore`) is available via the `y-storage` crate for production
+//! use; a `PostgreSQL` backend is available behind the `diagnostics_pg`
+//! feature flag via [`PgTraceStore`].
 
 pub mod cost;
 pub mod pg_trace_store;
 pub mod replay;
 pub mod search;
+pub mod sqlite_trace_store;
 pub mod subscriber;
 pub mod trace_store;
 pub mod types;
@@ -17,6 +20,7 @@ pub mod types;
 pub use cost::CostIntelligence;
 pub use replay::TraceReplay;
 pub use search::{TraceSearch, TraceSearchQuery};
+pub use sqlite_trace_store::SqliteTraceStore;
 pub use subscriber::DiagnosticsSubscriber;
 pub use trace_store::{InMemoryTraceStore, TraceStore, TraceStoreError};
 pub use types::*;

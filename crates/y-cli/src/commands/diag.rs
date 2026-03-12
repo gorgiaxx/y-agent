@@ -353,7 +353,7 @@ async fn run_self_check(services: &AppServices, _mode: OutputMode) -> Result<()>
     }
 
     // 2. Provider status.
-    let statuses = services.provider_pool.provider_statuses().await;
+    let statuses = services.provider_pool().await.provider_statuses().await;
     let active = statuses.iter().filter(|s| !s.is_frozen).count();
     let frozen = statuses.len() - active;
     println!("  Providers:         {active} active, {frozen} frozen");

@@ -217,6 +217,19 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Hard-delete a session: removes the metadata row, clears transcript.
+    ///
+    /// This is irreversible. Any in-progress runs for this session should have
+    /// completed or been cancelled before calling this.
+    #[instrument(skip(self), fields(session_id = %id))]
+    pub async fn delete_session(&self, id: &SessionId) -> Result<(), SessionManagerError> {
+        // Remove message transcript first (best-effort; continue if it fails).
+        let _ = self.transcript_store.truncate(id, 0).await;
+        // Hard-delete the session metadata row.
+        self.session_store.delete(id).await?;
+        Ok(())
+    }
+
     /// Generate a session title by summarizing the conversation via agent delegation.
     ///
     /// Delegates to the `title-generator` built-in agent defined in

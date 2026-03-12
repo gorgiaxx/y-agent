@@ -150,6 +150,12 @@ pub trait SessionStore: Send + Sync {
 
     /// Update only the session title.
     async fn set_title(&self, id: &SessionId, title: String) -> Result<(), SessionError>;
+
+    /// Hard-delete a session and all its data from storage.
+    ///
+    /// This permanently removes the session metadata row. Transcript files
+    /// must be removed separately by the caller (they are not in the database).
+    async fn delete(&self, id: &SessionId) -> Result<(), SessionError>;
 }
 
 /// Read/write interface for session message transcripts (JSONL).

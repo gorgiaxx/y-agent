@@ -16,6 +16,9 @@ interface UseConfigReturn {
   config: GuiConfig;
   updateConfig: (updates: Partial<GuiConfig>) => Promise<void>;
   loading: boolean;
+  loadSection: (section: string) => Promise<string>;
+  saveSection: (section: string, content: string) => Promise<void>;
+  reloadConfig: () => Promise<string>;
 }
 
 export function useConfig(): UseConfigReturn {
@@ -55,5 +58,17 @@ export function useConfig(): UseConfigReturn {
     [config],
   );
 
-  return { config, updateConfig, loading };
+  const loadSection = useCallback(async (section: string): Promise<string> => {
+    return await invoke<string>('config_get_section', { section });
+  }, []);
+
+  const saveSection = useCallback(async (section: string, content: string): Promise<void> => {
+    await invoke('config_save_section', { section, content });
+  }, []);
+
+  const reloadConfig = useCallback(async (): Promise<string> => {
+    return await invoke<string>('config_reload');
+  }, []);
+
+  return { config, updateConfig, loading, loadSection, saveSection, reloadConfig };
 }

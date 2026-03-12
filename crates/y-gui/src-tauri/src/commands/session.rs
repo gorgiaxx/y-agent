@@ -3,7 +3,7 @@
 use serde::Serialize;
 use tauri::State;
 
-use y_core::session::{CreateSessionOptions, SessionType};
+use y_core::session::{CreateSessionOptions, SessionFilter, SessionType};
 use y_core::types::SessionId;
 
 use crate::state::AppState;
@@ -47,10 +47,11 @@ pub struct ToolCallBrief {
 /// List all sessions, sorted by last updated.
 #[tauri::command]
 pub async fn session_list(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
+    let filter = SessionFilter::default();
     let sessions = state
         .container
         .session_manager
-        .list_sessions()
+        .list_sessions(&filter)
         .await
         .map_err(|e| format!("Failed to list sessions: {e}"))?;
 
@@ -61,7 +62,7 @@ pub async fn session_list(state: State<'_, AppState>) -> Result<Vec<SessionInfo>
             title: s.title.clone(),
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
-            message_count: 0, // Will be populated if transcript is loaded
+            message_count: s.message_count as usize,
         })
         .collect();
 
@@ -126,14 +127,17 @@ pub async fn session_get_messages(
                 .map(|tc| ToolCallBrief {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
+                    arguments: tc.arguments.to_string(),
                 })
                 .collect(),
         })
         .collect())
 }
 
-/// Delete a session.
+/// Hard-delete a session from the database.
+///
+/// This permanently removes the session metadata and clears its transcript.
+/// Any in-progress runs for this session should have completed before calling this.
 #[tauri::command]
 pub async fn session_delete(
     state: State<'_, AppState>,

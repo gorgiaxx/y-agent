@@ -331,6 +331,9 @@ mod tests {
         async fn set_title(&self, _id: &SessionId, _title: String) -> Result<(), SessionError> {
             Ok(())
         }
+        async fn delete(&self, _id: &SessionId) -> Result<(), SessionError> {
+            Ok(())
+        }
     }
 
     #[async_trait::async_trait]

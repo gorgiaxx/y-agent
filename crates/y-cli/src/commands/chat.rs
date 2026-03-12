@@ -17,7 +17,7 @@ use crate::wire::AppServices;
 /// Run an interactive chat session.
 pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str) -> Result<()> {
     // Check if providers are available.
-    let provider_statuses = services.provider_pool.provider_statuses().await;
+    let provider_statuses = services.provider_pool().await.provider_statuses().await;
     if provider_statuses.is_empty() {
         output::print_warning("No LLM providers configured.");
         output::print_info(
@@ -134,7 +134,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                     println!("History: {} messages", history.len());
                     println!("Turn: {turn_number}");
                     println!("Tools: {}", services.tool_registry.len().await);
-                    let statuses = services.provider_pool.provider_statuses().await;
+                    let statuses = services.provider_pool().await.provider_statuses().await;
                     println!("Providers: {}", statuses.len());
                 }
                 "/undo" => {

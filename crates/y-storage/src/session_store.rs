@@ -256,6 +256,23 @@ impl SessionStore for SqliteSessionStore {
 
         Ok(())
     }
+
+    #[instrument(skip(self), fields(session_id = %id))]
+    async fn delete(&self, id: &SessionId) -> Result<(), SessionError> {
+        let result = sqlx::query("DELETE FROM session_metadata WHERE id = ?1")
+            .bind(id.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionError::StorageError {
+                message: e.to_string(),
+            })?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionError::NotFound { id: id.to_string() });
+        }
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

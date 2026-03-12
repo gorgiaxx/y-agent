@@ -88,7 +88,13 @@ pub fn builtin_section_store() -> SectionStore {
         content_source: ContentSource::Inline(
             "## Tool Usage Protocol\n\
              \n\
-             When you need to use a tool, output a <tool_call> block with <name> and <arguments> tags:\n\
+             Use tools ONLY when the user's request requires an action you cannot \
+             accomplish with plain text (e.g., reading files, running commands, searching \
+             code, modifying files). For greetings, general conversation, questions you \
+             can answer from context, or simple explanations, respond directly in text \
+             without calling any tool.\n\
+             \n\
+             When you do need a tool, output a <tool_call> block with <name> and <arguments> tags:\n\
              \n\
              <tool_call>\n\
              <name>tool_name</name>\n\
@@ -104,9 +110,9 @@ pub fn builtin_section_store() -> SectionStore {
              {\"result_key\": \"result_value\"}\n\
              </tool_result>\n\
              \n\
-             Important:\n\
-             - Always use tool_search to discover available tools before calling them.\n\
-             - Do not guess tool names or parameters — search first, then call.\n\
+             Tool discovery:\n\
+             - When you decide a tool is needed, use tool_search to discover available tools first.\n\
+             - Do not guess tool names or parameters -- search first, then call.\n\
              - You may include regular text before and after tool calls."
                 .into(),
         ),

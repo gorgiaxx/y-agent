@@ -127,7 +127,7 @@ impl TuiApp {
         self.ensure_current_session();
 
         // Initialize context_window from the default provider's metadata.
-        if let Some(meta) = self.services.provider_pool.list_metadata().first() {
+        if let Some(meta) = self.services.provider_pool().await.list_metadata().first() {
             self.state.context_window = meta.context_window;
         }
 

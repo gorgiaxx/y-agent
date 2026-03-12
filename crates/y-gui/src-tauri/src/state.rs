@@ -1,10 +1,12 @@
 //! Application state managed by Tauri.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use y_service::ServiceContainer;
 
@@ -44,6 +46,8 @@ pub struct AppState {
     pub gui_config: RwLock<GuiConfig>,
     /// Path to the user config directory (`~/.config/y-agent/`).
     pub config_dir: PathBuf,
+    /// In-flight LLM cancellation tokens keyed by run_id.
+    pub pending_runs: Mutex<HashMap<String, CancellationToken>>,
 }
 
 impl AppState {
@@ -54,6 +58,7 @@ impl AppState {
             container,
             gui_config: RwLock::new(gui_config),
             config_dir,
+            pending_runs: Mutex::new(HashMap::new()),
         }
     }
 }

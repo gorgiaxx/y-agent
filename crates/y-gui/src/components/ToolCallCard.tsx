@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Wrench, ChevronRight } from 'lucide-react';
 import type { ToolCallBrief } from '../types';
 import './ToolCallCard.css';
 
@@ -12,10 +13,10 @@ interface ToolCallCardProps {
 export function ToolCallCard({ toolCall, status = 'success', result, durationMs }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const statusIcon = {
-    running: '⏳',
-    success: '✓',
-    error: '✗',
+  const statusLabel = {
+    running: '...',
+    success: 'OK',
+    error: 'FAIL',
   }[status];
 
   const statusClass = `tool-status-${status}`;
@@ -23,13 +24,15 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs 
   return (
     <div className={`tool-call-card ${statusClass}`}>
       <div className="tool-call-header" onClick={() => setExpanded(!expanded)}>
-        <span className="tool-call-icon">🔧</span>
+        <span className="tool-call-icon"><Wrench size={12} /></span>
         <span className="tool-call-name">{toolCall.name}</span>
-        <span className={`tool-call-status ${statusClass}`}>{statusIcon}</span>
+        <span className={`tool-call-status ${statusClass}`}>{statusLabel}</span>
         {durationMs !== undefined && (
           <span className="tool-call-duration">{durationMs}ms</span>
         )}
-        <span className={`tool-call-expand ${expanded ? 'expanded' : ''}`}>▸</span>
+        <span className={`tool-call-expand ${expanded ? 'expanded' : ''}`}>
+          <ChevronRight size={12} />
+        </span>
       </div>
       {expanded && (
         <div className="tool-call-body">

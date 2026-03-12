@@ -2,91 +2,172 @@
 
 > A modular, extensible AI agent runtime written in Rust.
 
-## Features
+**Async-first** · **Model-agnostic** · **Full observability** · **WAL-based recoverability** · **Self-evolving skills**
 
-- **Modular Architecture** — 21 specialized crates with clean trait boundaries
-- **Multi-Provider LLM** — Provider pool with failover, routing, and streaming
-- **Context Management** — 7-stage middleware pipeline for prompt assembly
-- **Tool System** — Lazy-loaded tools with JSON Schema validation and LRU activation
-- **Memory** — Short-term, long-term, and working memory with semantic search
-- **Workflow Engine** — DAG-based orchestration with checkpointing and interrupt/resume
-- **Multi-Agent** — Session tree with parent/child delegation
-- **Guardrails** — Content filtering, PII detection, and safety checks as middleware
+---
+
+## Highlights
+
+- **22 Specialized Crates** — Clean trait boundaries with inward-pointing dependencies
+- **Multi-Provider LLM Pool** — Tag-based routing, automatic failover, provider freeze/thaw
+- **DAG Workflow Engine** — Typed channels, checkpointing, interrupt/resume protocol
+- **Lazy Tool System** — JSON Schema validation, LRU activation, dynamic tool creation at runtime
+- **Three-Tier Memory** — Short-term, long-term (Qdrant), and working memory with semantic search
+- **Multi-Agent Collaboration** — Session tree, parent/child delegation, 4 collaboration patterns
+- **Guardrails & Safety** — Content filtering, PII detection, loop detection, risk scoring as middleware
+- **Context Pipeline** — 7-stage middleware chain for token-budget-aware prompt assembly
+- **Skill Evolution** — Git-like versioning, experience capture, self-improvement with HITL approval
+- **Full Observability** — Span-based tracing, cost intelligence, trace replay (PostgreSQL)
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Clients["Client Layer"]
+        CLI["CLI\n(clap)"]
+        TUI["TUI\n(ratatui)"]
+        GUI["GUI\n(Tauri)"]
+        API["Web API\n(axum)"]
+    end
+
+    subgraph Service["Service Layer"]
+        ChatSvc["ChatService"]
+        CostSvc["CostService"]
+        SysSvc["SystemService"]
+    end
+
+    subgraph Core["Core Layer"]
+        Router["Request Router"]
+        Scheduler["Message Scheduler"]
+        Orchestrator["Agent Orchestrator"]
+        DAG["DAG Engine\n+ Typed Channels"]
+        Checkpoint["Checkpoint\nManager"]
+    end
+
+    subgraph Extensibility["Extensibility Layer"]
+        CtxMW["Context\nMiddleware"]
+        ToolMW["Tool\nMiddleware"]
+        LlmMW["LLM\nMiddleware"]
+        EventBus["Async\nEvent Bus"]
+    end
+
+    subgraph Execution["Execution Layer"]
+        Providers["Provider Pool\n(tag routing, failover)"]
+        ToolReg["Tool Registry\n(4 types, lazy loading)"]
+        AgentPool["Agent Pool\n(delegation)"]
+        Runtime["Runtime Manager"]
+        PromptSys["Prompt\nSystem"]
+        Docker["Docker"]
+        Native["Native"]
+        SSH["SSH"]
+    end
+
+    subgraph State ["State Layer"]
+        SessionMgr["Session\nManager"]
+        STM["Short-Term\nMemory"]
+        LTM["Long-Term\nMemory"]
+        WM["Working\nMemory"]
+        SkillReg["Skill\nRegistry"]
+        KB["Knowledge\nBase"]
+        Journal["File\nJournal"]
+    end
+
+    subgraph Infra ["Infrastructure"]
+        SQLite[("SQLite\n(operational)")]
+        PG[("PostgreSQL\n(diagnostics)")]
+        Qdrant[("Qdrant\n(vectors)")]
+    end
+
+    Clients --> Service
+    Service --> Router
+    Router --> Scheduler --> Orchestrator
+    Orchestrator --> DAG
+    DAG --> Checkpoint
+
+    Orchestrator --> CtxMW & ToolMW & LlmMW
+    EventBus -.-> PG
+
+    Orchestrator --> Providers
+    Orchestrator --> AgentPool
+    CtxMW --> PromptSys
+    ToolMW --> ToolReg
+    ToolReg --> Runtime
+    Runtime --> Docker & Native & SSH
+
+    CtxMW --> SessionMgr & STM & LTM & SkillReg & KB
+    DAG --> WM
+
+    SessionMgr & Checkpoint & Journal --> SQLite
+    LTM & KB --> Qdrant
+```
+
+### Layer Responsibilities
+
+| Layer | Purpose |
+|-------|---------|
+| **Client** | User-facing entry points — CLI, TUI, Tauri GUI, REST API — all thin wrappers over the Service layer |
+| **Service** | Shared business logic (`ChatService`, `CostService`, `SystemService`), consumed by every client |
+| **Core** | Request routing, message scheduling, DAG-based orchestration with typed channels and checkpointing |
+| **Extensibility** | Three middleware chains (Context, Tool, LLM), async event bus, lifecycle hooks |
+| **Execution** | LLM provider pool with failover, tool registry (4 types), agent delegation pool, sandboxed runtimes |
+| **State** | Session tree, three-tier memory (STM/LTM/WM), skill registry, knowledge base, file journal |
+| **Infrastructure** | SQLite (operational state), PostgreSQL (diagnostics/analytics), Qdrant (semantic vectors) |
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 
-- Rust 1.76+ (`rustup update stable`)
-- SQLite 3.35+ (embedded; CLI tool optional)
-- PostgreSQL 14+ (optional — diagnostics and analytics)
-- Qdrant (optional — vector search for memory/knowledge)
+- **Rust 1.76+** — `rustup update stable`
+- **SQLite 3.35+** — embedded; CLI tool optional
+- PostgreSQL 14+ *(optional — diagnostics/analytics)*
+- Qdrant *(optional — vector search for memory/knowledge)*
 
-### Build
+### Build & Run
 
 ```bash
+# Build
 cargo build --release
-```
 
-### Initialize
-
-Run the interactive setup wizard to detect dependencies, select an LLM provider, and generate all configuration files:
-
-```bash
+# Interactive setup (detects deps, selects provider, generates config)
 y-agent init
-```
 
-This will:
-1. Check environment dependencies (Rust, Docker, PostgreSQL, Qdrant, sqlx-cli)
-2. Guide you through LLM provider selection (OpenAI, Anthropic, DeepSeek, Groq, Together AI, Ollama, or a custom endpoint)
-3. Generate 8 configuration files in `config/`, a `.env` file, and `data/` directories
-
-See [Project Initialization](#project-initialization) below for full usage details.
-
-### Run
-
-```bash
-# Set your API key (provider-specific, shown after init)
+# Set your API key
 export OPENAI_API_KEY="sk-..."
 
-# Start a session
+# Start chatting
 y-agent chat
 ```
 
-### Test
+### Test & Bench
 
 ```bash
-# Run all tests (~1600+ tests)
-cargo test
-
-# Run a specific crate
-cargo test -p y-core
-
-# Run E2E integration tests
-cargo test -p y-cli --test chat_flow --test session_lifecycle
+cargo test                    # All tests
+cargo test -p y-core          # Single crate
+cargo bench                   # All benchmarks
 ```
 
-### Benchmark
-
-```bash
-# Run all benchmarks
-cargo bench
-
-# Run a specific benchmark
-cargo bench --bench hooks_bench
-```
+---
 
 ## Project Initialization
 
-The `y-agent init` command bootstraps a new project in one step. It runs before the configuration loader and requires no pre-existing files.
-
-### Interactive Mode (default)
+The `y-agent init` command bootstraps a new project in one step:
 
 ```bash
+# Interactive (default)
 y-agent init
+
+# Non-interactive (CI / scripting)
+y-agent init --non-interactive --provider openai
+y-agent init --non-interactive --provider anthropic --api-key-env MY_KEY
+y-agent init --non-interactive --provider ollama   # Local, no API key
 ```
 
-Sample session:
+<details>
+<summary>Sample interactive session</summary>
 
 ```
   y-agent v0.1.0 — Project Initialization
@@ -108,65 +189,44 @@ Sample session:
   Select LLM provider:
   > OpenAI (GPT-4o)
     Anthropic (Claude 3.5 Sonnet)
-    DeepSeek (Chat)
-    DeepSeek (Reasoner)
+    DeepSeek (Chat / Reasoner)
     Groq (Llama 3.1 70B)
     Together AI (Llama 3.1 70B)
     Ollama (Local — no API key needed)
     Custom (OpenAI-compatible endpoint)
 
-  API key environment variable name [OPENAI_API_KEY]: OPENAI_API_KEY
-  Add another provider? [y/N]: N
-
-  Created config/y-agent.toml
-  Created config/providers.toml (OpenAI GPT-4o)
-  Created config/storage.toml
-  Created config/session.toml
-  Created config/runtime.toml
-  Created config/hooks.toml
-  Created config/tools.toml
-  Created config/guardrails.toml
-  Created .env
-  Created data/
-  Created data/transcripts/
-
   Next steps:
   1. Set your API key:  export OPENAI_API_KEY="sk-..."
   2. Review config:     config/
-  3. Validate config:   y-agent config validate
-  4. Start chatting:    y-agent chat
+  3. Start chatting:    y-agent chat
 ```
-
-### Non-Interactive Mode (CI / scripting)
-
-```bash
-# Use a built-in provider preset
-y-agent init --non-interactive --provider openai
-
-# Override the API key env var name
-y-agent init --non-interactive --provider anthropic --api-key-env MY_CLAUDE_KEY
-
-# Use a custom OpenAI-compatible endpoint
-y-agent init --non-interactive --provider custom \
-  --model my-model \
-  --base-url https://api.example.com/v1 \
-  --api-key-env MY_API_KEY
-
-# Use Ollama (local, no API key required)
-y-agent init --non-interactive --provider ollama
-```
-
-### Available Flags
 
 | Flag | Description |
 |------|-------------|
-| `--provider <KEY>` | Provider preset: `openai`, `anthropic`, `deepseek`, `deepseek-reasoner`, `groq`, `together`, `ollama`, `custom` |
-| `--api-key-env <VAR>` | Override the API key environment variable name |
-| `--model <NAME>` | Model name (for `custom` provider) |
-| `--base-url <URL>` | Base URL (for `custom` provider) |
-| `--non-interactive` | Skip all interactive prompts; use defaults and flags |
-| `--dir <PATH>` | Target directory for generated files (default: `.`) |
-| `--force` | Overwrite existing config files without asking |
+| `--provider` `<KEY>` | `openai` · `anthropic` · `deepseek` · `deepseek-reasoner` · `groq` · `together` · `ollama` · `custom` |
+| `--api-key-env` `<VAR>` | Override the API key env var name |
+| `--model` `<NAME>` | Model name (for `custom`) |
+| `--base-url` `<URL>` | Base URL (for `custom`) |
+| `--non-interactive` | Skip all prompts; use defaults + flags |
+| `--dir` `<PATH>` | Target directory (default: `.`) |
+| `--force` | Overwrite existing config files |
+
+
+```
+./
+├── .env                       # API key placeholders
+├── config/
+│   ├── y-agent.toml           # Global settings
+│   ├── providers.toml         # LLM provider pool
+│   ├── storage.toml           # Database & transcript settings
+│   ├── session.toml           # Session tree, compaction, auto-archive
+│   ├── runtime.toml           # Docker/Native sandbox, resource limits
+│   ├── hooks.toml             # Middleware timeouts, event bus capacity
+│   ├── tools.toml             # Tool registry limits
+│   └── guardrails.toml        # Permission model, loop detection, risk scoring
+└── data/
+    └── transcripts/           # Session transcript storage
+```
 
 ### Provider Presets
 
@@ -178,163 +238,128 @@ y-agent init --non-interactive --provider ollama
 | `deepseek-reasoner` | DeepSeek | deepseek-reasoner | `DEEPSEEK_API_KEY` |
 | `groq` | Groq | Llama 3.1 70B | `GROQ_API_KEY` |
 | `together` | Together AI | Llama 3.1 70B | `TOGETHER_API_KEY` |
-| `ollama` | Ollama (local) | llama3.1 | (none) |
-| `custom` | Any OpenAI-compatible | (user-specified) | (user-specified) |
+| `ollama` | Ollama (local) | llama3.1 | *(none)* |
+| `custom` | Any OpenAI-compatible | *(user-specified)* | *(user-specified)* |
 
-### Generated Files
+---
 
-After running `init`, the following files and directories are created:
-
-```
-./
-├── .env                       # Environment variables (API key placeholders)
-├── config/
-│   ├── y-agent.toml           # Global settings (log level, output format)
-│   ├── providers.toml         # LLM provider pool (patched with your selection)
-│   ├── storage.toml           # Database and transcript settings
-│   ├── session.toml           # Session tree, compaction, auto-archive
-│   ├── runtime.toml           # Docker/Native sandbox, resource limits
-│   ├── hooks.toml             # Middleware timeouts, event bus capacity
-│   ├── tools.toml             # Tool registry limits
-│   └── guardrails.toml        # Permission model, loop detection, risk scoring
-└── data/
-    └── transcripts/           # Session transcript storage
-```
-
-### Re-Running Init
-
-Running `init` on an existing project will prompt before overwriting each file. Use `--force` to skip confirmation:
-
-```bash
-y-agent init --force
-```
-
-## Project Structure
+## Crate Map
 
 ```
 crates/
 ├── y-core/           # Trait definitions, shared types, error types
-├── y-agent/          # Unified agent: orchestrator, DAG engine, multi-agent pool, delegation
-├── y-cli/            # CLI binary, TUI (ratatui), config, wire format
+├── y-agent/          # Orchestrator, DAG engine, multi-agent pool, delegation
+├── y-service/        # Business layer — ChatService, CostService, SystemService
+├── y-cli/            # CLI + TUI (clap + ratatui)
+├── y-gui/            # Desktop GUI (Tauri)
+├── y-web/            # REST API server (axum)
+├── y-provider/       # LLM provider pool, routing, streaming
 ├── y-context/        # Context pipeline, token budget, memory integration
-├── y-diagnostics/    # Tracing, metrics, health checks (PostgreSQL)
-├── y-guardrails/     # Content filtering, PII, safety middleware
 ├── y-hooks/          # Middleware chains, event bus, plugin loading
-├── y-journal/        # File journal, rollback, conflict detection
-├── y-knowledge/      # Knowledge base chunking, indexing, retrieval
+├── y-tools/          # Tool registry, JSON Schema validation
 ├── y-mcp/            # MCP protocol client/server
 ├── y-prompt/         # Prompt sections, templates, TOML store
-├── y-provider/       # LLM provider pool, routing, streaming
+├── y-skills/         # Skill discovery, validation, manifest
+├── y-knowledge/      # Knowledge base chunking, indexing, retrieval
+├── y-session/        # Session tree, transcript, branching
+├── y-storage/        # SQLite/Postgres/Qdrant backends
 ├── y-runtime/        # Native/Docker/SSH sandbox execution
 ├── y-scheduler/      # Cron/interval scheduling, workflow triggers
-├── y-service/        # Business/service layer (shared by CLI, TUI, Web API)
-├── y-session/        # Session tree, transcript, branching
-├── y-skills/         # Skill discovery, validation, manifest
-├── y-storage/        # SQLite/Postgres/Qdrant backends
-├── y-test-utils/     # Mocks, fixtures, assertion helpers
-├── y-tools/          # Tool registry, JSON Schema validation
-└── y-web/            # HTTP REST API server (axum)
-docs/
-└── guides/           # User guides (configuration, tool/skill authoring, web API, architecture)
+├── y-guardrails/     # Content filtering, PII, safety middleware
+├── y-journal/        # File change journal, rollback engine
+├── y-diagnostics/    # Tracing, metrics, health checks (PostgreSQL)
+└── y-test-utils/     # Mocks, fixtures, assertion helpers
 ```
+
+---
 
 ## Documentation
 
-| Guide | Description |
-|-------|-------------|
-| [Configuration](docs/guides/CONFIGURATION.md) | Environment variables, config files, provider setup |
-| [Tool Authoring](docs/guides/TOOL_AUTHORING.md) | How to create custom tools |
-| [Skill Authoring](docs/guides/SKILL_AUTHORING.md) | How to create agent skills |
-| [Architecture](docs/guides/ARCHITECTURE.md) | Contributor architecture overview |
+Detailed guides are located under `docs/`. Key references:
+
+| Document | Purpose |
+|----------|---------|
+| `docs/design/` | Per-subsystem design documents |
+| `docs/standards/` | Engineering standards, test strategy, schema |
+| `docs/plan/` | Project and per-module R&D plans |
+| `DESIGN_OVERVIEW.md` | Authoritative cross-cutting alignment index |
+| `DESIGN_RULE.md` | Design document standards and validation checklist |
 
 ## Deployment
 
 ### Docker Quick Start
 
 ```bash
-# Initialize project (generates .env and config files)
-y-agent init
-
-# Or manually: cp .env.example .env && edit .env with your API key
-
-# Start the full stack (y-agent + PostgreSQL + Qdrant)
-docker compose up -d
-
-# Check service health
-./scripts/health-check.sh
-
-# View logs
-docker compose logs -f y-agent
+y-agent init                        # Generate .env + config
+docker compose up -d                # Start full stack (y-agent + PG + Qdrant)
+./scripts/health-check.sh           # Verify health
+docker compose logs -f y-agent      # Follow logs
 ```
-
-### Production Deployment
-
-y-agent supports automated deployment via GitHub Actions:
-
-1. **Configure GitHub Secrets** in your repository settings:
-   - `DEPLOY_HOST` — Target server address
-   - `DEPLOY_USER` — SSH username
-   - `DEPLOY_SSH_KEY` — SSH private key
-   - `DEPLOY_PATH` — Deployment directory on server
-
-2. **Trigger a release** by pushing a version tag:
-   ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
-
-3. The pipeline will automatically:
-   - Run CI checks (clippy, tests, fmt, audit)
-   - Build multi-arch Docker images (`linux/amd64`, `linux/arm64`)
-   - Publish to GitHub Container Registry (`ghcr.io`)
-   - Build native binaries for 4 platforms
-   - Create a GitHub Release
-   - Deploy to production via SSH
 
 ### Native Install (No Docker)
 
 ```bash
-# Build from source and install to /usr/local/bin
 ./scripts/native-install.sh
-
-# Or customize the installation
+# Or customize:
 ./scripts/native-install.sh --prefix ~/.local --data-dir ~/y-agent-data
 ```
 
-This creates:
-- Binary at `$PREFIX/bin/y-agent`
-- Config at `~/.config/y-agent/config.toml` (from [`config/y-agent.example.toml`](config/y-agent.example.toml))
-- Data at `~/.local/share/y-agent/`
+Creates: binary at `$PREFIX/bin/y-agent`, config at `~/.config/y-agent/`, data at `~/.local/share/y-agent/`.
 
-### Manual Deployment
+### Production (GitHub Actions)
+
+Push a version tag to trigger the full pipeline:
 
 ```bash
-# Deploy a specific version (Docker-based)
-DEPLOY_DIR=/opt/y-agent ./scripts/deploy.sh v0.1.0
-
-# Deploy latest
-DEPLOY_DIR=/opt/y-agent ./scripts/deploy.sh latest
+git tag v0.1.0 && git push origin v0.1.0
 ```
 
-### Configuration
+The pipeline will:
+1. Run CI checks (clippy, tests, fmt, audit)
+2. Build multi-arch Docker images (`linux/amd64`, `linux/arm64`)
+3. Publish to GHCR (`ghcr.io`)
+4. Build native binaries for 4 platforms
+5. Create a GitHub Release
+6. Deploy to production via SSH
 
-Configuration files are split by concern in the `config/` directory:
+<details>
+<summary>Required GitHub Secrets</summary>
+
+| Secret | Description |
+|--------|-------------|
+| `DEPLOY_HOST` | Target server address |
+| `DEPLOY_USER` | SSH username |
+| `DEPLOY_SSH_KEY` | SSH private key |
+| `DEPLOY_PATH` | Deployment directory on server |
+
+</details>
+
+---
+
+## Configuration
+
+Configuration files are split by concern in `config/`:
 
 | File | Description |
 |------|-------------|
-| [`y-agent.toml`](config/y-agent.example.toml) | Global settings (log level, output format) |
-| [`providers.toml`](config/providers.example.toml) | LLM provider pool (API keys, models, routing tags) |
-| [`storage.toml`](config/storage.example.toml) | SQLite database, JSONL transcripts, migrations |
-| [`session.toml`](config/session.example.toml) | Session tree depth, compaction, auto-archive |
-| [`runtime.toml`](config/runtime.example.toml) | Docker/Native sandbox, image whitelist, resource limits |
-| [`hooks.toml`](config/hooks.example.toml) | Middleware timeouts, event bus capacity |
-| [`tools.toml`](config/tools.example.toml) | Tool registry limits, dynamic tool creation |
-| [`guardrails.toml`](config/guardrails.example.toml) | Permission model, loop detection, risk scoring |
+| `y-agent.toml` | Global settings (log level, output format) |
+| `providers.toml` | LLM provider pool (API keys, models, routing tags) |
+| `storage.toml` | SQLite database, JSONL transcripts, migrations |
+| `session.toml` | Session tree depth, compaction, auto-archive |
+| `runtime.toml` | Docker/Native sandbox, image whitelist, resource limits |
+| `hooks.toml` | Middleware timeouts, event bus capacity |
+| `tools.toml` | Tool registry limits, dynamic tool creation |
+| `guardrails.toml` | Permission model, loop detection, risk scoring |
 
-To generate all config files automatically, run `y-agent init`. To copy them manually instead:
 ```bash
+# Generate all config files automatically
+y-agent init
+
+# Or copy example files manually
 for f in config/*.example.toml; do cp "$f" "config/$(basename "$f" .example.toml).toml"; done
 ```
+
+---
 
 ## License
 

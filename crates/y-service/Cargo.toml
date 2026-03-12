@@ -23,6 +23,7 @@ y-skills = { workspace = true, features = ["skill_ingestion", "skill_safety_scre
 
 anyhow = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

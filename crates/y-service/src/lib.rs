@@ -26,7 +26,7 @@ pub mod system;
 pub mod tool_search_orchestrator;
 
 // Re-export primary types for convenience.
-pub use chat::{ChatService, ToolCallRecord, TurnError, TurnInput, TurnResult};
+pub use chat::{ChatService, ToolCallRecord, TurnError, TurnEvent, TurnEventSender, TurnInput, TurnResult};
 pub use config::ServiceConfig;
 pub use container::ServiceContainer;
 pub use cost::CostService;

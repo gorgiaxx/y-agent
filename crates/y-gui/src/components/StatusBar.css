@@ -2,30 +2,33 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 20px;
-  background: var(--surface-tertiary);
+  padding: 5px var(--space-lg);
+  background: var(--surface-secondary);
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-muted);
+  flex-shrink: 0;
+  letter-spacing: 0.01em;
 }
 
 .status-left,
 .status-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .status-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .status-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .status-dot.success {
@@ -34,8 +37,50 @@
 
 .status-model {
   font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: 0.02em;
 }
 
 .status-version {
-  opacity: 0.6;
+  opacity: 0.5;
+  font-size: 10px;
+}
+
+/* Token usage ratio + mini progress bar */
+.status-tokens {
+  gap: 6px;
+}
+
+.status-token-ratio {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.status-token-pct {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.status-token-bar {
+  display: inline-block;
+  width: 40px;
+  height: 4px;
+  background: var(--surface-tertiary);
+  border-radius: 99px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.status-token-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width 0.4s ease;
+}
+
+.status-token-fill.warn {
+  background: var(--warning, #f0c050);
 }

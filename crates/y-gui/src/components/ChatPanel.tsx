@@ -1,4 +1,5 @@
 import { useRef, useEffect } from 'react';
+import { Sparkles, AlertTriangle } from 'lucide-react';
 import type { Message } from '../types';
 import { MessageBubble } from './MessageBubble';
 import './ChatPanel.css';
@@ -21,7 +22,9 @@ export function ChatPanel({ messages, isStreaming, error }: ChatPanelProps) {
     return (
       <div className="chat-panel">
         <div className="chat-empty">
-          <div className="chat-empty-icon">✨</div>
+          <div className="chat-empty-icon">
+            <Sparkles size={32} />
+          </div>
           <h3 className="chat-empty-title">Welcome to y-agent</h3>
           <p className="chat-empty-subtitle">
             Start a conversation by typing a message below.
@@ -51,7 +54,7 @@ export function ChatPanel({ messages, isStreaming, error }: ChatPanelProps) {
 
         {error && (
           <div className="chat-error">
-            <span className="error-icon">⚠️</span>
+            <span className="error-icon"><AlertTriangle size={14} /></span>
             <span className="error-text">{error}</span>
           </div>
         )}
