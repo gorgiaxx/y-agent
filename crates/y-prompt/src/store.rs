@@ -156,7 +156,7 @@ mod tests {
         store.register(inline_section("a", "A", 100));
         store.register(inline_section("b", "B", 200));
         let mut ids = store.section_ids();
-        ids.sort();
+        ids.sort_unstable();
         assert_eq!(ids, vec!["a", "b"]);
     }
 }

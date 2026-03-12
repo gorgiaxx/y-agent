@@ -1,4 +1,4 @@
-//! SQLite migration runner using sqlx.
+//! `SQLite` migration runner using sqlx.
 
 use std::path::Path;
 
@@ -7,7 +7,7 @@ use tracing::info;
 
 use crate::error::StorageError;
 
-/// Run all pending SQLite migrations from the given directory.
+/// Run all pending `SQLite` migrations from the given directory.
 ///
 /// Uses sqlx's migration system with versioned `.up.sql` and `.down.sql` files.
 pub async fn run_migrations(pool: &SqlitePool, migrations_dir: &Path) -> Result<(), StorageError> {
@@ -29,7 +29,7 @@ pub async fn run_migrations(pool: &SqlitePool, migrations_dir: &Path) -> Result<
     Ok(())
 }
 
-/// Run all pending SQLite migrations using embedded migrations.
+/// Run all pending `SQLite` migrations using embedded migrations.
 ///
 /// This is the preferred method as it embeds migrations into the binary,
 /// removing the need for a migrations directory at runtime.
@@ -51,7 +51,7 @@ mod tests {
     use super::*;
     use crate::config::StorageConfig;
     use crate::pool::create_pool;
-    use sqlx::Row;
+    
 
     async fn setup_pool_with_migrations() -> SqlitePool {
         let config = StorageConfig::in_memory();

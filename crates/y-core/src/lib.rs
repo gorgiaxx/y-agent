@@ -7,6 +7,7 @@
 //!
 //! | Module | Key Traits | Design Reference |
 //! |--------|-----------|-----------------|
+//! | [`agent`] | `AgentDelegator`, `ContextStrategyHint`, `DelegationOutput` | multi-agent-design.md, AGENT_AUTONOMY.md |
 //! | [`types`] | Shared IDs, `Message`, `TokenUsage` | - |
 //! | [`error`] | `ClassifiedError`, `Redactable` | - |
 //! | [`provider`] | `LlmProvider`, `ProviderPool` | providers-design.md |
@@ -17,8 +18,11 @@
 //! | [`checkpoint`] | `CheckpointStorage` | orchestrator-design.md |
 //! | [`hook`] | `Middleware`, `HookHandler`, `EventSubscriber` | hooks-plugin-design.md |
 //! | [`skill`] | `SkillRegistry` | skills-knowledge-design.md |
+//! | [`embedding`] | `EmbeddingProvider` | memory-architecture-design.md |
 
+pub mod agent;
 pub mod checkpoint;
+pub mod embedding;
 pub mod error;
 pub mod hook;
 pub mod memory;

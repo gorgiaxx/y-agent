@@ -57,11 +57,12 @@ y-prompt/src/
 ```
 y-mcp/src/
   lib.rs              — Public API
-  client.rs           — McpClient: connects to MCP servers
-  tool_adapter.rs     — McpToolAdapter: wraps MCP tools as y-core Tool trait
-  memory_adapter.rs   — McpMemoryAdapter: wraps MCP memory as MemoryClient
-  transport.rs        — Transport layer (stdio, HTTP)
-  discovery.rs        — Server/tool discovery
+  client.rs           — McpClient: connects to MCP servers                         ✅ implemented
+  error.rs            — McpError                                                   ✅ implemented
+  tool_adapter.rs     — McpToolAdapter: wraps MCP tools as y-core Tool trait        ✅ implemented
+  memory_adapter.rs   — McpMemoryAdapter: wraps MCP memory as MemoryClient         ❌ NOT YET IMPLEMENTED
+  transport.rs        — Transport layer (stdio, HTTP)                              ✅ implemented
+  discovery.rs        — Server/tool discovery                                      ✅ implemented
 ```
 
 ### Key Tests

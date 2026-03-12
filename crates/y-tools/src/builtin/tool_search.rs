@@ -1,8 +1,13 @@
 //! `tool_search` meta-tool: allows the LLM to search for and activate tools.
 //!
 //! This is the primary mechanism for lazy tool loading. The LLM sees
-//! a compact index of all tools and calls `tool_search` to retrieve
-//! full definitions for the tools it needs.
+//! a compact taxonomy root and calls `tool_search` to retrieve full
+//! definitions for the tools it needs.
+//!
+//! Supports three discovery modes:
+//! - `category` — browse the taxonomy tree by category path
+//! - `tool` — get the full schema of a specific tool by name
+//! - `query` — keyword search across all tools
 
 use async_trait::async_trait;
 
@@ -14,8 +19,8 @@ use y_core::types::ToolName;
 
 /// The `tool_search` meta-tool.
 ///
-/// When invoked by the LLM with a search query, it returns matching tool
-/// definitions from the registry, which are then added to the active set.
+/// When invoked by the LLM, it returns matching tool definitions from
+/// the registry, which are then added to the active set.
 pub struct ToolSearchTool {
     def: ToolDefinition,
 }
@@ -32,20 +37,25 @@ impl ToolSearchTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("tool_search"),
-            description: "Search for available tools by keyword or category. Returns full tool definitions that can be used in subsequent calls.".into(),
+            description: "Search for available tools by category, keyword, or specific tool name. \
+                Returns tool definitions that can be used in subsequent calls."
+                .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search query to match tool names and descriptions"
+                        "description": "Keyword search query to match tool names and descriptions"
                     },
                     "category": {
                         "type": "string",
-                        "description": "Optional category filter (e.g., 'filesystem', 'network', 'shell')"
+                        "description": "Category path to browse (e.g., 'file', 'shell', 'meta')"
+                    },
+                    "tool": {
+                        "type": "string",
+                        "description": "Specific tool name to retrieve full schema for"
                     }
-                },
-                "required": ["query"]
+                }
             }),
             result_schema: None,
             category: ToolCategory::Custom,
@@ -65,20 +75,36 @@ impl Default for ToolSearchTool {
 #[async_trait]
 impl Tool for ToolSearchTool {
     async fn execute(&self, input: ToolInput) -> Result<ToolOutput, ToolError> {
-        let query = input.arguments["query"]
-            .as_str()
-            .ok_or_else(|| ToolError::ValidationError {
-                message: "missing 'query' parameter".into(),
-            })?;
+        let query = input.arguments.get("query").and_then(|v| v.as_str());
+        let category = input.arguments.get("category").and_then(|v| v.as_str());
+        let tool = input.arguments.get("tool").and_then(|v| v.as_str());
 
-        // The actual search is performed externally by the orchestrator,
-        // which has access to the registry. This tool just validates input
-        // and returns a placeholder indicating the search should be performed.
+        // At least one parameter must be provided.
+        if query.is_none() && category.is_none() && tool.is_none() {
+            return Err(ToolError::ValidationError {
+                message: "at least one of 'query', 'category', or 'tool' must be provided".into(),
+            });
+        }
+
+        // Determine the search action type for the orchestrator.
+        let action = if tool.is_some() {
+            "get_tool"
+        } else if category.is_some() {
+            "browse_category"
+        } else {
+            "search"
+        };
+
+        // The actual search/lookup is performed externally by the orchestrator,
+        // which has access to the registry and taxonomy. This tool validates
+        // input and returns a descriptor indicating what should be performed.
         Ok(ToolOutput {
             success: true,
             content: serde_json::json!({
-                "action": "search",
+                "action": action,
                 "query": query,
+                "category": category,
+                "tool": tool,
                 "status": "pending"
             }),
             warnings: vec![],
@@ -107,7 +133,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_search_returns_results_placeholder() {
+    async fn test_tool_search_with_query() {
         let tool = ToolSearchTool::new();
         let input = make_input(serde_json::json!({"query": "file"}));
         let output = tool.execute(input).await.unwrap();
@@ -116,7 +142,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_search_missing_query_fails() {
+    async fn test_tool_search_with_category() {
+        let tool = ToolSearchTool::new();
+        let input = make_input(serde_json::json!({"category": "file"}));
+        let output = tool.execute(input).await.unwrap();
+        assert_eq!(output.content["action"], "browse_category");
+        assert_eq!(output.content["category"], "file");
+    }
+
+    #[tokio::test]
+    async fn test_tool_search_with_tool_name() {
+        let tool = ToolSearchTool::new();
+        let input = make_input(serde_json::json!({"tool": "file_read"}));
+        let output = tool.execute(input).await.unwrap();
+        assert_eq!(output.content["action"], "get_tool");
+        assert_eq!(output.content["tool"], "file_read");
+    }
+
+    #[tokio::test]
+    async fn test_tool_search_no_params_fails() {
         let tool = ToolSearchTool::new();
         let input = make_input(serde_json::json!({}));
         let result = tool.execute(input).await;
@@ -130,5 +174,11 @@ mod tests {
         assert_eq!(def.category, ToolCategory::Custom);
         assert_eq!(def.tool_type, ToolType::BuiltIn);
         assert!(!def.is_dangerous);
+        // Should have query, category, and tool properties.
+        let props = def.parameters["properties"].as_object().unwrap();
+        assert!(props.contains_key("query"));
+        assert!(props.contains_key("category"));
+        assert!(props.contains_key("tool"));
     }
 }
+

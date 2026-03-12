@@ -1,4 +1,4 @@
-//! JSONL-based TranscriptStore implementation.
+//! JSONL-based `TranscriptStore` implementation.
 
 use std::path::{Path, PathBuf};
 
@@ -131,6 +131,49 @@ impl TranscriptStore for JsonlTranscriptStore {
 
         Ok(count)
     }
+
+    #[instrument(skip(self), fields(session_id = %session_id, keep_count = keep_count))]
+    async fn truncate(
+        &self,
+        session_id: &SessionId,
+        keep_count: usize,
+    ) -> Result<usize, SessionError> {
+        let all = self.read_all(session_id).await?;
+        if keep_count >= all.len() {
+            return Ok(0);
+        }
+
+        let removed = all.len() - keep_count;
+        let kept = &all[..keep_count];
+
+        // Atomic rewrite: write to temp file, then rename.
+        let path = self.transcript_path(session_id);
+        let tmp_path = path.with_extension("jsonl.tmp");
+
+        let mut content = String::new();
+        for msg in kept {
+            let line =
+                serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
+                    message: format!("serialize message: {e}"),
+                })?;
+            content.push_str(&line);
+            content.push('\n');
+        }
+
+        tokio::fs::write(&tmp_path, content.as_bytes())
+            .await
+            .map_err(|e| SessionError::TranscriptError {
+                message: format!("write temp transcript: {e}"),
+            })?;
+
+        tokio::fs::rename(&tmp_path, &path)
+            .await
+            .map_err(|e| SessionError::TranscriptError {
+                message: format!("rename temp transcript: {e}"),
+            })?;
+
+        Ok(removed)
+    }
 }
 
 /// Read all messages from a JSONL file.
@@ -171,6 +214,7 @@ mod tests {
 
     fn test_message(content: &str) -> Message {
         Message {
+            message_id: y_core::types::generate_message_id(),
             role: Role::User,
             content: content.to_string(),
             tool_call_id: None,

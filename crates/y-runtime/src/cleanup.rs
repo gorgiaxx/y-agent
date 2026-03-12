@@ -30,7 +30,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_all_succeeds() {
-        let native = NativeRuntime::new(RuntimeConfig::default());
+        let native = NativeRuntime::new(RuntimeConfig::default(), None);
         cleanup_all(&[&native]).await;
         // No assertion needed — just verify it doesn't panic.
     }

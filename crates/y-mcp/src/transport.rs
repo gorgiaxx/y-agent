@@ -79,7 +79,19 @@ impl McpTransport for StdioTransport {
 }
 
 /// Placeholder HTTP/SSE transport (deferred to Phase 5).
-pub struct HttpTransport;
+pub struct HttpTransport {
+    #[allow(dead_code)]
+    url: String,
+}
+
+impl HttpTransport {
+    /// Create a new HTTP transport pointing at the given URL.
+    pub fn new(url: &str) -> Self {
+        Self {
+            url: url.to_string(),
+        }
+    }
+}
 
 #[async_trait]
 impl McpTransport for HttpTransport {
@@ -128,7 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_transport_not_implemented() {
-        let transport = HttpTransport;
+        let transport = HttpTransport::new("http://localhost:3000");
         let req = JsonRpcRequest::new(1, "tools/list", None);
         let result = transport.send(req).await;
         assert!(matches!(result, Err(McpError::TransportError { .. })));

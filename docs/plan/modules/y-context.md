@@ -5,6 +5,7 @@
 **Priority**: High — assembles the LLM prompt from all context sources
 **Design References**: `context-session-design.md`, `prompt-design.md`, `input-enrichment-design.md`
 **Depends On**: `y-core`, `y-hooks` (ContextMiddleware chain), `y-session`
+**Last Audited**: 2026-03-10
 
 ---
 
@@ -33,24 +34,27 @@ y-context
 
 ```
 y-context/src/
-  lib.rs              — Public API: ContextPipeline
-  error.rs            — ContextError
-  config.rs           — ContextConfig (token budgets per category, compaction threshold)
-  pipeline.rs         — ContextPipeline: drives the Context middleware chain
-  budget.rs           — TokenBudget: category-based allocation and enforcement
-  compaction.rs       — CompactionStrategy: message summarization, sliding window
-  section.rs          — PromptSection: structured prompt units with metadata
-  middleware/
-    mod.rs            — Built-in ContextMiddleware implementations
-    build_system.rs   — BuildSystemPrompt (priority 100)
-    inject_memory.rs  — InjectMemory (priority 300)
-    inject_knowledge.rs — InjectKnowledge (priority 350)
-    inject_skills.rs  — InjectSkills (priority 400)
-    inject_tools.rs   — InjectTools (priority 500)
-    load_history.rs   — LoadHistory (priority 600)
-    inject_status.rs  — InjectContextStatus (priority 700)
-    enrich_input.rs   — EnrichInput (priority 50, feature: input_enrichment)
+  lib.rs              — Public API: ContextPipeline, ContextWindowGuard, CompactionEngine, RecallStore
+  pipeline.rs         — ContextPipeline: drives ordered ContextProvider list        ✅ implemented
+  guard.rs            — ContextWindowGuard: token budget with 3 trigger modes       ✅ implemented (≈ planned budget.rs)
+  compaction.rs       — CompactionEngine: message summarization, sliding window     ✅ implemented
+  recall.rs           — RecallStore: memory recall via hybrid text/vector search    ✅ implemented (new)
+  repair.rs           — repair_history: session history repair                      ✅ implemented (new)
+  memory/
+    mod.rs            — Memory integration submodule                                ✅ implemented (new)
+    deduplication.rs  — Content-hash + semantic dedup                               ✅ implemented
+    ltm_client.rs     — Long-term memory client                                     ✅ implemented
+    stm_client.rs     — Short-term memory client                                    ✅ implemented
+    working_memory.rs — Pipeline-scoped working memory                              ✅ implemented
+    query.rs          — Memory query construction                                   ✅ implemented
+    recall_middleware.rs — Memory recall as context middleware                       ✅ implemented
+    search_orchestrator.rs — Multi-strategy search fallback                         ✅ implemented
 ```
+
+> **Audit note (2026-03-10):** The original plan specified 8 separate middleware files under `middleware/`. The implementation instead uses a `ContextProvider` trait with ordered providers, which achieves the same 7-stage pipeline semantics but with a simpler architecture. `budget.rs` was merged into `guard.rs` as `ContextWindowGuard` with `TokenBudget`. `section.rs` was merged into `pipeline.rs` as `ContextItem`. Memory modules (LTM/STM/WM, dedup, search orchestrator) were co-located under `memory/` rather than in a separate `y-memory` crate.
+>
+> **Planned but not yet independently implemented middleware files:**
+> `build_system.rs`, `inject_memory.rs`, `inject_knowledge.rs`, `inject_skills.rs`, `inject_tools.rs`, `load_history.rs`, `inject_status.rs`, `enrich_input.rs`
 
 ---
 
@@ -74,12 +78,16 @@ TEST_LOCATION: #[cfg(test)] in same file
 | T-CTX-001-05 | `test_budget_remaining_after_multiple_allocations` | 3 sequential allocations | `remaining()` correct |
 | T-CTX-001-06 | `test_budget_release_frees_tokens` | Allocate then release | Tokens available again |
 
-#### Task: T-CTX-002 — PromptSection
+> **Audit note:** `budget.rs` was merged into `guard.rs`. Tests should reference `guard.rs` (`ContextWindowGuard`, `TokenBudget`).
+
+#### Task: T-CTX-002 — ContextItem (was PromptSection)
 
 ```
-FILE: crates/y-context/src/section.rs
+FILE: crates/y-context/src/pipeline.rs
 TEST_LOCATION: #[cfg(test)] in same file
 ```
+
+> **Audit note:** `section.rs` was merged into `pipeline.rs`. `PromptSection` is now `ContextItem`.
 
 | Test ID | Test Name | Behavior | Assertion |
 |---------|-----------|----------|-----------|
@@ -119,12 +127,14 @@ TEST_LOCATION: #[cfg(test)] in same file
 | T-CTX-004-04 | `test_pipeline_skips_empty_sections` | No memories available | Memory section omitted |
 | T-CTX-004-05 | `test_pipeline_abort_on_budget_exceeded` | Cannot fit within budget even after compaction | Error |
 
-#### Task: T-CTX-005 — Built-in middleware implementations
+#### Task: T-CTX-005 — Built-in context providers (was middleware)
 
 ```
-FILE: crates/y-context/src/middleware/*.rs
-TEST_LOCATION: #[cfg(test)] in each file
+FILE: crates/y-context/src/pipeline.rs (ContextProvider implementations)
+TEST_LOCATION: #[cfg(test)] in each file, or integration tests
 ```
+
+> **Audit note:** The 8 planned middleware files under `middleware/` are not independently implemented. The `ContextProvider` trait in `pipeline.rs` serves the same role. Individual providers (BuildSystemPrompt, InjectMemory, etc.) are planned as future ContextProvider implementations.
 
 | Test ID | Test Name | Behavior | Assertion |
 |---------|-----------|----------|-----------|
@@ -169,20 +179,23 @@ FILE: crates/y-context/tests/
 
 ## 5. Implementation Tasks
 
-| Task ID | Task | Description | Priority |
-|---------|------|-------------|----------|
-| I-CTX-001 | `TokenBudget` | Category-based token allocation and tracking | High |
-| I-CTX-002 | `PromptSection` | Structured prompt unit with metadata | High |
-| I-CTX-003 | `ContextPipeline` | Drives Context middleware chain, assembles final prompt | High |
-| I-CTX-004 | `BuildSystemPrompt` middleware | System prompt construction (priority 100) | High |
-| I-CTX-005 | `InjectMemory` middleware | Memory recall and injection (priority 300) | High |
-| I-CTX-006 | `InjectTools` middleware | Tool index/definition injection (priority 500) | High |
-| I-CTX-007 | `LoadHistory` middleware | Session history loading with compaction (priority 600) | High |
-| I-CTX-008 | `CompactionStrategy` | Sliding window + summary compaction | High |
-| I-CTX-009 | `InjectKnowledge` middleware | Knowledge base injection (priority 350) | Medium |
-| I-CTX-010 | `InjectSkills` middleware | Skill injection (priority 400) | Medium |
-| I-CTX-011 | `InjectContextStatus` middleware | Context metadata injection (priority 700) | Medium |
-| I-CTX-012 | `EnrichInput` middleware | Input enrichment (priority 50, feature-gated) | Medium |
+| Task ID | Task | Description | Priority | Status |
+|---------|------|-------------|----------|--------|
+| I-CTX-001 | `TokenBudget` / `ContextWindowGuard` | Token monitoring with 3 trigger modes | High | ✅ Done (in `guard.rs`) |
+| I-CTX-002 | `ContextItem` | Structured context unit (was PromptSection) | High | ✅ Done (in `pipeline.rs`) |
+| I-CTX-003 | `ContextPipeline` | Drives ContextProvider chain, assembles final prompt | High | ✅ Done |
+| I-CTX-004 | `BuildSystemPrompt` provider | System prompt construction (priority 100) | High | ❌ Planned |
+| I-CTX-005 | `InjectMemory` provider | Memory recall and injection (priority 300) | High | ⚠️ Partial (via `memory/recall_middleware.rs`) |
+| I-CTX-006 | `InjectTools` provider | Tool index/definition injection (priority 500) | High | ❌ Planned |
+| I-CTX-007 | `LoadHistory` provider | Session history loading with compaction (priority 600) | High | ❌ Planned |
+| I-CTX-008 | `CompactionEngine` | Sliding window + summary compaction | High | ✅ Done |
+| I-CTX-009 | `InjectKnowledge` provider | Knowledge base injection (priority 350) | Medium | ❌ Planned |
+| I-CTX-010 | `InjectSkills` provider | Skill injection (priority 400) | Medium | ❌ Planned |
+| I-CTX-011 | `InjectContextStatus` provider | Context metadata injection (priority 700) | Medium | ❌ Planned |
+| I-CTX-012 | `EnrichInput` provider | Input enrichment (priority 50, feature-gated) | Medium | ❌ Planned |
+| I-CTX-013 | `RecallStore` | Hybrid text/vector memory recall | High | ✅ Done (new) |
+| I-CTX-014 | `repair_history` | Session history repair utilities | Medium | ✅ Done (new) |
+| I-CTX-015 | Memory integration (`memory/`) | LTM/STM/WM clients, dedup, search orchestrator | High | ✅ Done (new) |
 
 ---
 

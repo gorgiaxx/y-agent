@@ -15,6 +15,30 @@ use crate::error::ErrorSeverity;
 use crate::types::{Message, ProviderId, Timestamp, TokenUsage};
 
 // ---------------------------------------------------------------------------
+// Tool calling mode
+// ---------------------------------------------------------------------------
+
+/// How tool calling is communicated to the LLM.
+///
+/// Design reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallingMode {
+    /// Tool calling via system prompt text protocol (universal, works with any LLM).
+    ///
+    /// The LLM is taught to emit `<tool_call>` XML tags in its text output.
+    /// The `tools` field in [`ChatRequest`] is left empty; providers do not send
+    /// tool definitions in the HTTP request body.
+    #[default]
+    PromptBased,
+    /// Tool calling via provider-native API fields (`OpenAI` `tools`, Anthropic `tools`).
+    ///
+    /// Tool definitions are sent in the HTTP request body and tool calls are
+    /// extracted from provider-specific response fields.
+    Native,
+}
+
+// ---------------------------------------------------------------------------
 // Request / Response
 // ---------------------------------------------------------------------------
 
@@ -27,8 +51,12 @@ pub struct ChatRequest {
     pub max_tokens: Option<u32>,
     /// Sampling temperature (0.0 - 2.0).
     pub temperature: Option<f32>,
-    /// Tool definitions available for this request.
+    /// Nucleus sampling top-p (0.0 - 1.0).
+    pub top_p: Option<f32>,
+    /// Tool definitions available for this request (only used in [`ToolCallingMode::Native`]).
     pub tools: Vec<serde_json::Value>,
+    /// How tool calling is communicated to the LLM.
+    pub tool_calling_mode: ToolCallingMode,
     /// Stop sequences.
     pub stop: Vec<String>,
     /// Arbitrary provider-specific parameters.
@@ -51,6 +79,12 @@ pub struct ChatResponse {
     pub usage: TokenUsage,
     /// Why the model stopped generating.
     pub finish_reason: FinishReason,
+    /// Raw HTTP request payload sent to the LLM provider (for diagnostics).
+    #[serde(skip)]
+    pub raw_request: Option<serde_json::Value>,
+    /// Raw HTTP response payload received from the LLM provider (for diagnostics).
+    #[serde(skip)]
+    pub raw_response: Option<serde_json::Value>,
 }
 
 /// A single chunk in a streaming response.
@@ -104,7 +138,9 @@ pub struct ProviderMetadata {
 pub enum ProviderType {
     OpenAi,
     Anthropic,
+    Gemini,
     Ollama,
+    Azure,
     OpenRouter,
     Custom,
 }

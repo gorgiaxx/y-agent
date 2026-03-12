@@ -2,9 +2,9 @@
 
 > Multi-provider LLM management with intelligent freeze, concurrency, and routing for y-agent
 
-**Version**: v0.2
+**Version**: v0.3
 **Created**: 2026-03-04
-**Updated**: 2026-03-06
+**Updated**: 2026-03-10
 **Status**: Draft
 
 ---
@@ -355,26 +355,109 @@ struct PriorityScheduler {
 
 ### Multi-Level Proxy
 
+#### Design Motivation
+
+Each provider instance builds its own `reqwest::Client` with an independently resolved proxy. This is critical because:
+
+1. **Different providers may require different network paths.** Cloud providers (OpenAI, Anthropic, Gemini) often need a SOCKS5/HTTP proxy to reach external APIs, while local providers (Ollama) must bypass all proxies.
+2. **Regional routing.** Providers tagged for specific regions (e.g., `china`) may need a region-specific proxy to achieve acceptable latency.
+3. **Proxy isolation.** A failing proxy only affects the providers routed through it; other providers continue unimpeded.
+
+#### Default Protocol: SOCKS5
+
+The **default proxy protocol is SOCKS5** (`socks5://` or `socks5h://`). Rationale:
+
+| Factor | SOCKS5 | HTTP CONNECT |
+|--------|--------|-------------|
+| **Protocol support** | TCP-level; works with any protocol including WebSocket | HTTP/HTTPS only |
+| **DNS resolution** | `socks5h://` delegates DNS to proxy (avoids local DNS leak) | DNS resolved locally unless proxy supports remote DNS |
+| **Authentication** | Username/password built into protocol | Basic or NTLM via Proxy-Authorization header |
+| **Performance** | Minimal overhead; direct TCP tunnel | Extra HTTP handshake per connection |
+| **Privacy** | No protocol-level metadata leak | Proxy sees Host header in CONNECT |
+
+When no protocol scheme is specified in the proxy URL, the system prepends `socks5://` as the default. HTTP proxies (`http://`, `https://`) are fully supported when explicitly configured.
+
+#### Cascade Resolution
+
 Proxy configuration cascades from provider to tag to global:
 
 | Level | Scope | Override Behavior |
 |-------|-------|-------------------|
 | **Provider** | Single provider instance | Highest priority; overrides tag and global |
-| **Tag** | All providers with a given tag | Overrides global |
+| **Tag** | All providers with a given tag | Overrides global; first matching tag wins |
 | **Global** | All providers without specific proxy | Lowest priority; default fallback |
 
-Example configuration:
+Resolution algorithm:
+
+1. If a **provider-level** entry exists for this provider ID:
+   - If `enabled = false` → no proxy (bypass all levels).
+   - If `url` is set → use it.
+2. If a **tag-level** entry exists for any of this provider's tags (first match):
+   - If `enabled = false` → no proxy.
+   - If `url` is set → use it.
+3. If a **global** entry exists:
+   - If `enabled = false` → no proxy.
+   - If `url` is set → use it.
+4. Otherwise → no proxy (direct connection).
+
+#### Proxy Configuration
 
 ```toml
+[proxy]
+# Default protocol when scheme is omitted. Supported: "socks5", "socks5h", "http", "https".
+default_scheme = "socks5"
+
 [proxy.global]
 url = "socks5://proxy.company.com:1080"
+# Optional authentication (stored in credential store, not in TOML directly).
+# auth_env = "PROXY_AUTH"  # Format: "username:password"
 
 [proxy.tags.china]
 url = "http://cn-proxy.company.com:8080"
 
+[proxy.tags.us]
+url = "socks5h://us-proxy.company.com:1080"  # DNS resolved at proxy side
+
 [proxy.providers.ollama-local]
-enabled = false  # Local provider, no proxy
+enabled = false  # Local provider, no proxy needed
+
+[proxy.providers.azure-eastus]
+url = "socks5://azure-proxy.company.com:1080"  # Dedicated proxy for Azure
 ```
+
+#### Per-Provider Client Construction
+
+Each provider instance receives its resolved proxy URL at construction time and builds an independent HTTP client:
+
+```rust
+// During ProviderPoolImpl::from_config():
+for provider_cfg in &config.providers {
+    let proxy_url = config.resolve_proxy_url(&provider_cfg.id, &provider_cfg.tags);
+    let provider = match provider_cfg.provider_type.as_str() {
+        "openai_compatible" => OpenAiProvider::new(
+            &provider_cfg.id,
+            &provider_cfg.model,
+            api_key,
+            provider_cfg.base_url.clone(),
+            proxy_url,   // <-- independently resolved per provider
+            provider_cfg.tags.clone(),
+            provider_cfg.max_concurrency,
+            provider_cfg.context_window,
+        ),
+        // ... other provider types
+    };
+}
+```
+
+#### Proxy Failure Handling
+
+| Scenario | Handling |
+|----------|---------|
+| Proxy connection refused | Classified as `NetworkError`; provider frozen with short duration (2 min) |
+| Proxy authentication failure | Classified as `NetworkError`; logged with specific proxy auth warning |
+| Proxy timeout | Same as network timeout; 10s default |
+| `socks5h://` DNS resolution failure at proxy | Classified as `NetworkError`; provider frozen |
+| Provider works without proxy but proxy is configured | No auto-bypass; operator must set `enabled = false` to skip proxy |
 
 ---
 

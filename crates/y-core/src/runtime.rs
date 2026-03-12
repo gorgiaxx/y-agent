@@ -183,6 +183,28 @@ pub struct ResourceUsage {
     pub cpu_time: Option<Duration>,
 }
 
+/// Handle for a spawned long-running process.
+#[derive(Debug, Clone)]
+pub struct ProcessHandle {
+    /// Unique identifier for the spawned process.
+    pub id: String,
+    /// Which backend is managing this process.
+    pub backend: RuntimeBackend,
+}
+
+/// Status of a spawned long-running process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessStatus {
+    /// Process is still running.
+    Running,
+    /// Process completed with an exit code.
+    Completed { exit_code: i32 },
+    /// Process failed with an error.
+    Failed { error: String },
+    /// Status cannot be determined.
+    Unknown,
+}
+
 // ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
@@ -232,6 +254,9 @@ pub enum RuntimeError {
     #[error("container error: {message}")]
     ContainerError { message: String },
 
+    #[error("path traversal attempt on: {path}")]
+    PathTraversalAttempt { path: String },
+
     #[error("{message}")]
     Other { message: String },
 }
@@ -251,6 +276,9 @@ pub enum RuntimeError {
 /// enforces them through a 7-layer security model.
 #[async_trait]
 pub trait RuntimeAdapter: Send + Sync {
+    /// Human-readable name identifying this runtime backend.
+    fn name(&self) -> &'static str;
+
     /// Execute a command in an isolated environment.
     async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError>;
 
@@ -262,4 +290,25 @@ pub trait RuntimeAdapter: Send + Sync {
 
     /// Clean up resources (containers, temp files, etc.).
     async fn cleanup(&self) -> Result<(), RuntimeError>;
+
+    /// Spawn a long-running process and return a handle for management.
+    async fn spawn(&self, _request: ExecutionRequest) -> Result<ProcessHandle, RuntimeError> {
+        Err(RuntimeError::Other {
+            message: "spawn not supported by this backend".into(),
+        })
+    }
+
+    /// Kill a previously spawned process.
+    async fn kill(&self, _handle: &ProcessHandle) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Other {
+            message: "kill not supported by this backend".into(),
+        })
+    }
+
+    /// Query the status of a previously spawned process.
+    async fn status(&self, _handle: &ProcessHandle) -> Result<ProcessStatus, RuntimeError> {
+        Err(RuntimeError::Other {
+            message: "status not supported by this backend".into(),
+        })
+    }
 }

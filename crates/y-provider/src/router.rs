@@ -1,8 +1,11 @@
-//! Tag-based provider routing.
+//! Tag-based provider routing with pluggable selection strategies.
+//!
+//! Design reference: providers-design.md §Tag-Based Routing
 
 use std::sync::Arc;
 
-use y_core::provider::{LlmProvider, ProviderError, RouteRequest, RoutePriority};
+use serde::{Deserialize, Serialize};
+use y_core::provider::{LlmProvider, ProviderError, RoutePriority, RouteRequest};
 
 use crate::freeze::FreezeManager;
 
@@ -23,6 +26,27 @@ impl std::fmt::Debug for RoutableProvider {
     }
 }
 
+/// Strategy for selecting among equally-qualified providers.
+///
+/// After tag/freeze filtering, this strategy determines which candidate
+/// provider handles the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionStrategy {
+    /// Select providers in declaration order (first match wins).
+    /// This is the legacy behavior.
+    #[default]
+    Priority,
+    /// Random selection among candidates.
+    Random,
+    /// Select the provider with the most available concurrency permits.
+    LeastLoaded,
+    /// Round-robin across candidates.
+    RoundRobin,
+    /// Select the cheapest provider by `cost_per_1k_input`.
+    CostOptimized,
+}
+
 /// Tag-based router that selects a provider from a pool.
 ///
 /// Routing criteria (in order):
@@ -30,18 +54,34 @@ impl std::fmt::Debug for RoutableProvider {
 /// 2. Provider must match ALL required tags
 /// 3. Preferred model gets priority if specified
 /// 4. Priority-based concurrency reservation
-/// 5. Round-robin among equal candidates
+/// 5. Selection strategy among equal candidates
 pub struct TagBasedRouter {
     /// Counter for round-robin distribution.
     next_index: std::sync::atomic::AtomicUsize,
+    /// The selection strategy to use.
+    strategy: SelectionStrategy,
 }
 
 impl TagBasedRouter {
-    /// Create a new router.
+    /// Create a new router with default (Priority) strategy.
     pub fn new() -> Self {
         Self {
             next_index: std::sync::atomic::AtomicUsize::new(0),
+            strategy: SelectionStrategy::default(),
         }
+    }
+
+    /// Create a new router with the specified selection strategy.
+    pub fn with_strategy(strategy: SelectionStrategy) -> Self {
+        Self {
+            next_index: std::sync::atomic::AtomicUsize::new(0),
+            strategy,
+        }
+    }
+
+    /// Get the current selection strategy.
+    pub fn strategy(&self) -> SelectionStrategy {
+        self.strategy
     }
 
     /// Select the best provider for the given route request.
@@ -101,13 +141,56 @@ impl TagBasedRouter {
             }
         }
 
-        // Step 3: Round-robin among remaining candidates.
-        let counter = self
-            .next_index
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let idx = candidates[counter % candidates.len()];
+        // Step 3: Apply selection strategy among remaining candidates.
+        self.apply_strategy(providers, &candidates)
+    }
 
-        Ok(idx)
+    /// Apply the configured selection strategy to the candidate list.
+    fn apply_strategy(
+        &self,
+        providers: &[RoutableProvider],
+        candidates: &[usize],
+    ) -> Result<usize, ProviderError> {
+        match self.strategy {
+            SelectionStrategy::Priority => {
+                // First candidate in declaration order.
+                Ok(candidates[0])
+            }
+            SelectionStrategy::Random => {
+                // Use a simple pseudo-random index based on the atomic counter and time.
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos() as usize;
+                Ok(candidates[seed % candidates.len()])
+            }
+            SelectionStrategy::LeastLoaded => {
+                // Select the provider with the most available permits.
+                Ok(*candidates
+                    .iter()
+                    .max_by_key(|&&idx| providers[idx].concurrency_semaphore.available_permits())
+                    .expect("candidates is non-empty"))
+            }
+            SelectionStrategy::RoundRobin => {
+                let counter = self
+                    .next_index
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(candidates[counter % candidates.len()])
+            }
+            SelectionStrategy::CostOptimized => {
+                // Select the cheapest provider by input token cost.
+                Ok(*candidates
+                    .iter()
+                    .min_by(|&&a, &&b| {
+                        let cost_a = providers[a].provider.metadata().cost_per_1k_input;
+                        let cost_b = providers[b].provider.metadata().cost_per_1k_input;
+                        cost_a
+                            .partial_cmp(&cost_b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .expect("candidates is non-empty"))
+            }
+        }
     }
 }
 
@@ -145,14 +228,35 @@ mod tests {
                 },
             }
         }
+
+        fn with_cost(id: &str, model: &str, tags: Vec<&str>, cost_input: f64) -> Self {
+            Self {
+                meta: ProviderMetadata {
+                    id: y_core::types::ProviderId::from_string(id),
+                    provider_type: ProviderType::OpenAi,
+                    model: model.into(),
+                    tags: tags.into_iter().map(String::from).collect(),
+                    max_concurrency: 5,
+                    context_window: 128_000,
+                    cost_per_1k_input: cost_input,
+                    cost_per_1k_output: 0.03,
+                },
+            }
+        }
     }
 
     #[async_trait]
     impl LlmProvider for MockProvider {
-        async fn chat_completion(&self, _request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+        ) -> Result<ChatResponse, ProviderError> {
             unimplemented!("mock")
         }
-        async fn chat_completion_stream(&self, _request: &ChatRequest) -> Result<ChatStream, ProviderError> {
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+        ) -> Result<ChatStream, ProviderError> {
             unimplemented!("mock")
         }
         fn metadata(&self) -> &ProviderMetadata {
@@ -169,15 +273,33 @@ mod tests {
         }
     }
 
+    fn make_routable_with_cost(
+        id: &str,
+        model: &str,
+        tags: Vec<&str>,
+        cost: f64,
+    ) -> RoutableProvider {
+        RoutableProvider {
+            provider: Arc::new(MockProvider::with_cost(id, model, tags, cost)),
+            freeze_manager: Arc::new(FreezeManager::new(30, 3600)),
+            concurrency_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
+            max_concurrency: 5,
+        }
+    }
+
     fn make_frozen_routable(id: &str, model: &str, tags: Vec<&str>) -> RoutableProvider {
         let rp = make_routable(id, model, tags);
         rp.freeze_manager.freeze("test freeze".into(), None);
         rp
     }
 
+    // -----------------------------------------------------------------------
+    // Existing tests (adapted for backward compatibility)
+    // -----------------------------------------------------------------------
+
     #[test]
     fn test_routing_selects_by_single_tag() {
-        let router = TagBasedRouter::new();
+        let router = TagBasedRouter::with_strategy(SelectionStrategy::Priority);
         let providers = vec![
             make_routable("p1", "gpt-4", vec!["reasoning"]),
             make_routable("p2", "gpt-3.5", vec!["fast"]),
@@ -194,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_routing_selects_by_multiple_tags() {
-        let router = TagBasedRouter::new();
+        let router = TagBasedRouter::with_strategy(SelectionStrategy::Priority);
         let providers = vec![
             make_routable("p1", "gpt-4", vec!["reasoning"]),
             make_routable("p2", "claude", vec!["fast", "code"]),
@@ -207,8 +329,8 @@ mod tests {
         };
 
         let idx = router.select(&providers, &route).unwrap();
-        // Both p2 and p3 match, round-robin selects first candidate.
-        assert!(idx == 1 || idx == 2);
+        // Priority strategy selects first matching candidate (p2 at index 1).
+        assert_eq!(idx, 1);
     }
 
     #[test]
@@ -222,7 +344,10 @@ mod tests {
         };
 
         let result = router.select(&providers, &route);
-        assert!(matches!(result, Err(ProviderError::NoProviderAvailable { .. })));
+        assert!(matches!(
+            result,
+            Err(ProviderError::NoProviderAvailable { .. })
+        ));
     }
 
     #[test]
@@ -262,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_routing_round_robin_among_equal_candidates() {
-        let router = TagBasedRouter::new();
+        let router = TagBasedRouter::with_strategy(SelectionStrategy::RoundRobin);
         let providers = vec![
             make_routable("p1", "gpt-4", vec!["general"]),
             make_routable("p2", "gpt-4", vec!["general"]),
@@ -280,7 +405,10 @@ mod tests {
             selections.insert(idx);
         }
         // Should have distributed across at least 2 of the 3.
-        assert!(selections.len() >= 2, "should distribute load: {selections:?}");
+        assert!(
+            selections.len() >= 2,
+            "should distribute load: {selections:?}"
+        );
     }
 
     #[test]
@@ -288,7 +416,7 @@ mod tests {
         let router = TagBasedRouter::new();
         // Create a provider with 0 available permits.
         let rp = RoutableProvider {
-            provider: Arc::new(MockProvider::new("p1", "gpt-4", vec!["gen".into()])),
+            provider: Arc::new(MockProvider::new("p1", "gpt-4", vec!["gen"])),
             freeze_manager: Arc::new(FreezeManager::new(30, 3600)),
             concurrency_semaphore: Arc::new(tokio::sync::Semaphore::new(0)),
             max_concurrency: 5,
@@ -302,6 +430,135 @@ mod tests {
         };
 
         let result = router.select(&providers, &route);
-        assert!(matches!(result, Err(ProviderError::NoProviderAvailable { .. })));
+        assert!(matches!(
+            result,
+            Err(ProviderError::NoProviderAvailable { .. })
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Selection strategy specific tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_strategy_priority_selects_first() {
+        let router = TagBasedRouter::with_strategy(SelectionStrategy::Priority);
+        let providers = vec![
+            make_routable("p1", "gpt-4", vec!["gen"]),
+            make_routable("p2", "gpt-4", vec!["gen"]),
+            make_routable("p3", "gpt-4", vec!["gen"]),
+        ];
+
+        let route = RouteRequest {
+            required_tags: vec!["gen".into()],
+            ..Default::default()
+        };
+
+        // Priority always returns the first candidate.
+        for _ in 0..5 {
+            let idx = router.select(&providers, &route).unwrap();
+            assert_eq!(
+                idx, 0,
+                "Priority strategy should always select first candidate"
+            );
+        }
+    }
+
+    #[test]
+    fn test_strategy_least_loaded() {
+        let router = TagBasedRouter::with_strategy(SelectionStrategy::LeastLoaded);
+        // p1 has 1 permit, p2 has 10 permits => should pick p2.
+        let providers = vec![
+            RoutableProvider {
+                provider: Arc::new(MockProvider::new("p1", "gpt-4", vec!["gen"])),
+                freeze_manager: Arc::new(FreezeManager::new(30, 3600)),
+                concurrency_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+                max_concurrency: 10,
+            },
+            RoutableProvider {
+                provider: Arc::new(MockProvider::new("p2", "gpt-4", vec!["gen"])),
+                freeze_manager: Arc::new(FreezeManager::new(30, 3600)),
+                concurrency_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+                max_concurrency: 10,
+            },
+        ];
+
+        let route = RouteRequest {
+            required_tags: vec!["gen".into()],
+            ..Default::default()
+        };
+
+        let idx = router.select(&providers, &route).unwrap();
+        assert_eq!(idx, 1, "LeastLoaded should select p2 with more permits");
+    }
+
+    #[test]
+    fn test_strategy_cost_optimized() {
+        let router = TagBasedRouter::with_strategy(SelectionStrategy::CostOptimized);
+        let providers = vec![
+            make_routable_with_cost("p1", "gpt-4", vec!["gen"], 0.03),
+            make_routable_with_cost("p2", "gpt-4o-mini", vec!["gen"], 0.001),
+            make_routable_with_cost("p3", "claude", vec!["gen"], 0.015),
+        ];
+
+        let route = RouteRequest {
+            required_tags: vec!["gen".into()],
+            ..Default::default()
+        };
+
+        let idx = router.select(&providers, &route).unwrap();
+        assert_eq!(idx, 1, "CostOptimized should select cheapest provider p2");
+    }
+
+    #[test]
+    fn test_strategy_round_robin_distribution() {
+        let router = TagBasedRouter::with_strategy(SelectionStrategy::RoundRobin);
+        let providers = vec![
+            make_routable("p1", "gpt-4", vec!["gen"]),
+            make_routable("p2", "gpt-4", vec!["gen"]),
+        ];
+
+        let route = RouteRequest {
+            required_tags: vec!["gen".into()],
+            ..Default::default()
+        };
+
+        let first = router.select(&providers, &route).unwrap();
+        let second = router.select(&providers, &route).unwrap();
+        // Two consecutive calls should select different providers.
+        assert_ne!(first, second, "RoundRobin should alternate providers");
+    }
+
+    #[test]
+    fn test_strategy_serialization() {
+        assert_eq!(
+            serde_json::to_string(&SelectionStrategy::Priority).unwrap(),
+            "\"priority\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SelectionStrategy::LeastLoaded).unwrap(),
+            "\"least_loaded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SelectionStrategy::CostOptimized).unwrap(),
+            "\"cost_optimized\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SelectionStrategy::RoundRobin).unwrap(),
+            "\"round_robin\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SelectionStrategy::Random).unwrap(),
+            "\"random\""
+        );
+    }
+
+    #[test]
+    fn test_strategy_deserialization() {
+        let s: SelectionStrategy = serde_json::from_str("\"least_loaded\"").unwrap();
+        assert_eq!(s, SelectionStrategy::LeastLoaded);
+
+        let s: SelectionStrategy = serde_json::from_str("\"cost_optimized\"").unwrap();
+        assert_eq!(s, SelectionStrategy::CostOptimized);
     }
 }

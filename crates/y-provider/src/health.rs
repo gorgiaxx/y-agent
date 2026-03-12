@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tracing::instrument;
 
-use y_core::provider::{ChatRequest, LlmProvider, ProviderError};
+use y_core::provider::{ChatRequest, LlmProvider, ProviderError, ToolCallingMode};
 use y_core::types::Message;
 
 use crate::freeze::FreezeManager;
@@ -31,6 +31,7 @@ impl HealthChecker {
     pub async fn check(&self, provider: &Arc<dyn LlmProvider>) -> Result<(), ProviderError> {
         let request = ChatRequest {
             messages: vec![Message {
+                message_id: y_core::types::generate_message_id(),
                 role: y_core::types::Role::User,
                 content: "ping".to_string(),
                 tool_call_id: None,
@@ -41,7 +42,9 @@ impl HealthChecker {
             model: None,
             max_tokens: Some(1),
             temperature: Some(0.0),
+            top_p: None,
             tools: vec![],
+            tool_calling_mode: ToolCallingMode::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
         };

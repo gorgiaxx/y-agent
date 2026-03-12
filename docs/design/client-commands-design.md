@@ -2,9 +2,9 @@
 
 > Command system for CLI/TUI interaction in y-agent
 
-**Version**: v0.2
+**Version**: v0.3
 **Created**: 2026-03-04
-**Updated**: 2026-03-06
+**Updated**: 2026-03-10
 **Status**: Draft
 
 ---
@@ -222,20 +222,216 @@ Built-in single-character aliases for common commands:
 
 Users can define custom aliases via `/alias <name> <command>`.
 
-### TUI Keyboard Shortcuts
+### TUI Interaction Design
+
+The TUI client provides a ratatui-based terminal interface for extended interactive sessions. It shares the full `/`-command vocabulary with the CLI, but adds spatial navigation, multi-panel layout, and keyboard-driven workflows optimized for long-running agent interactions.
+
+#### Panel Layout
+
+```mermaid
+flowchart LR
+    subgraph TUI["TUI Layout"]
+        direction TB
+        subgraph TopRow["Main Area"]
+            direction LR
+            Sidebar["Sidebar Panel\n(sessions / agents)"]
+            Chat["Chat Panel\n(conversation + streaming)"]
+        end
+        StatusBar["Status Bar\n(session, agent, model, tokens, connection)"]
+        Input["Input Area\n(multi-line editor + completion overlay)"]
+    end
+```
+
+**Diagram rationale**: Flowchart chosen to show the spatial arrangement and nesting of TUI panels.
+
+**Legend**:
+- **Sidebar Panel**: Toggleable left panel displaying session list or agent list; collapsed by default on narrow terminals (< 100 columns).
+- **Chat Panel**: Primary content area showing the conversation transcript with streaming token rendering.
+- **Status Bar**: Single-line bar at the bottom of the main area showing current session, active agent, model, token usage, and connection state.
+- **Input Area**: Multi-line text editor at the bottom with auto-expanding height (1-6 lines) and completion overlay.
+
+#### Panel Sizing
+
+| Panel | Default Size | Resize Behavior |
+|-------|-------------|-----------------|
+| **Sidebar** | 28 columns (fixed) | Toggleable via `Tab`; hidden on terminals < 100 columns wide |
+| **Chat** | Remaining width | Fills all horizontal space not used by sidebar |
+| **Status Bar** | 1 line (fixed) | Always visible; content truncated with ellipsis on narrow terminals |
+| **Input Area** | 1-6 lines (auto) | Grows with input content; maximum height capped at 30% of terminal height |
+
+#### Focus Model and Navigation
+
+The TUI uses a focus-based navigation model. Exactly one panel holds focus at any time; the focused panel receives keyboard input and is visually highlighted with a border accent.
+
+```mermaid
+stateDiagram-v2
+    [*] --> InputFocus: TUI launch
+    InputFocus --> SidebarFocus: Tab (sidebar visible)
+    SidebarFocus --> InputFocus: Tab / Esc / Enter
+    InputFocus --> ChatFocus: Ctrl+Up
+    ChatFocus --> InputFocus: Esc / i / Enter
+    ChatFocus --> SidebarFocus: Tab (sidebar visible)
+    SidebarFocus --> ChatFocus: Ctrl+Up
+```
+
+**Diagram rationale**: State diagram chosen to show focus transitions between panels triggered by keyboard shortcuts.
+
+**Legend**:
+- **InputFocus**: Default state; user types messages or commands. Most time is spent here.
+- **ChatFocus**: User scrolls through conversation history, selects messages for copying or branching.
+- **SidebarFocus**: User navigates session or agent list for switching.
+
+#### TUI Interaction Modes
+
+The TUI operates in four mutually exclusive modes that determine how keyboard input is interpreted:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Normal: TUI launch
+    Normal --> Command: type "/"
+    Command --> Normal: Esc / Enter (execute)
+    Normal --> Search: Ctrl+R or Ctrl+F
+    Search --> Normal: Esc / Enter (select)
+    Normal --> Select: Ctrl+Up (enter chat scroll)
+    Select --> Normal: Esc / i (return to input)
+    Command --> Search: Ctrl+R (search within commands)
+    Search --> Command: Esc (back to command input)
+```
+
+**Diagram rationale**: State diagram chosen to show the mutually exclusive interaction modes and their transitions.
+
+**Legend**:
+- **Normal**: Default mode. Typing goes to the input editor; keyboard shortcuts are active.
+- **Command**: Activated by typing `/` in the input area. A command palette overlay appears with filtered command list and argument hints.
+- **Search**: Activated by `Ctrl+R` (history search) or `Ctrl+F` (conversation search). An incremental search overlay filters results as the user types.
+- **Select**: Activated by scrolling into the chat panel. Enables message selection for copy, branch, or context addition.
+
+#### Keyboard Shortcuts
+
+Shortcuts are grouped by the context in which they are active.
+
+**Global (active in all modes):**
 
 | Shortcut | Action |
 |----------|--------|
-| Ctrl+N | New session |
-| Ctrl+L | List sessions |
-| Ctrl+O | Switch session |
-| Ctrl+A | Select agent |
-| Ctrl+H | Help |
-| Ctrl+C | Cancel current operation |
-| Ctrl+D | Exit |
-| Ctrl+R | Search command history |
-| Tab | Auto-complete |
-| Esc | Return to chat panel |
+| Ctrl+C | Cancel current LLM operation (sends cancel to server) |
+| Ctrl+D | Exit TUI (prompts confirmation if operation in progress) |
+| Ctrl+Q | Quit immediately without confirmation |
+
+**Normal Mode (Input Focus):**
+
+| Shortcut | Action |
+|----------|--------|
+| Enter | Send message (single-line); insert newline in multi-line mode |
+| Shift+Enter | Force newline (multi-line input toggle) |
+| Tab | Toggle sidebar visibility; if completion overlay is open, accept completion |
+| Ctrl+Up | Move focus to chat panel (enter Select mode) |
+| Ctrl+N | Create new session (equivalent to `/new`) |
+| Ctrl+O | Open session switcher overlay (fuzzy search over session list) |
+| Ctrl+A | Open agent selector overlay |
+| Ctrl+R | Open command history search |
+| Ctrl+F | Open conversation search |
+| Ctrl+H | Toggle help overlay |
+| Ctrl+L | Clear chat viewport (scroll to bottom; history preserved) |
+| Ctrl+P | Open command palette (equivalent to typing `/`) |
+| Ctrl+T | Toggle timestamps in chat messages |
+| Ctrl+E | Export current session (equivalent to `/export`) |
+| Up/Down | Navigate input history (when input is single-line and empty) |
+
+**Command Mode (Command Palette Open):**
+
+| Shortcut | Action |
+|----------|--------|
+| Up/Down | Navigate filtered command list |
+| Tab | Accept selected command; move to argument input |
+| Enter | Execute selected command with current arguments |
+| Esc | Close command palette; return to Normal mode |
+| Ctrl+R | Switch to history search within command palette |
+
+**Search Mode:**
+
+| Shortcut | Action |
+|----------|--------|
+| Up/Down | Navigate search results |
+| Enter | Select result (insert into input or jump to message) |
+| Esc | Close search; return to previous mode |
+| Ctrl+N / Ctrl+P | Next / previous result (alternative to Up/Down) |
+
+**Select Mode (Chat Panel Focus):**
+
+| Shortcut | Action |
+|----------|--------|
+| Up/Down | Scroll message by message |
+| PgUp/PgDn | Scroll by page |
+| Home/End | Jump to first / last message |
+| y | Yank (copy) selected message content to clipboard |
+| b | Branch from selected message (equivalent to `/branch --from`) |
+| a | Add selected message content to input area |
+| Enter / Esc / i | Return to input (Normal mode) |
+
+**Sidebar Focus (Session/Agent List):**
+
+| Shortcut | Action |
+|----------|--------|
+| Up/Down | Navigate list items |
+| Enter | Switch to selected session or agent |
+| d | Delete selected session (with confirmation) |
+| n | Create new session |
+| / | Filter list (inline search) |
+| Tab / Esc | Return focus to input area |
+
+#### Command Palette
+
+The command palette is a floating overlay that appears when the user types `/` in Normal mode or presses `Ctrl+P`. It provides filtered command discovery with inline documentation.
+
+**Behavior**:
+
+1. **Activation**: Typing `/` opens the palette anchored above the input area.
+2. **Filtering**: Each subsequent keystroke narrows the command list using fuzzy matching. For example, `/sw` matches `/switch`, `/stats`, `/status`.
+3. **Preview**: The selected command shows a one-line description and argument synopsis in a preview bar below the list.
+4. **Argument completion**: After selecting a command, the palette transitions to argument mode. For `/switch`, it lists sessions; for `/agent select`, it lists agents; for `/model select`, it lists models. Each with fuzzy search.
+5. **Execution**: Pressing `Enter` executes the command. The palette closes and the result appears in the chat panel or status bar.
+6. **Dismissal**: `Esc` closes the palette without executing.
+
+#### Streaming Render Behavior
+
+During token-level streaming from the server, the chat panel renders incoming tokens with the following rules:
+
+| Aspect | Behavior |
+|--------|----------|
+| **Token append** | Each `ClientEvent::Assistant` delta is appended to the current message bubble in real time |
+| **Scroll lock** | If the user has scrolled up (Select mode), new tokens do NOT auto-scroll; a "New content below" indicator appears |
+| **Auto-scroll** | If the chat panel is at the bottom, it auto-scrolls to show new tokens |
+| **Frame batching** | Rapid token events are batched into single frame renders (target: 60fps / 16ms per frame) to avoid flickering |
+| **Thinking display** | `ClientEvent::Thinking` tokens render in a collapsible, dimmed block above the response |
+| **Tool execution** | `ClientEvent::Tool` events render as inline status cards showing tool name, phase (running/complete/error), and result preview |
+| **Cancel feedback** | On `Ctrl+C`, the current streaming message is marked with a "cancelled" indicator and the partial content is preserved |
+
+#### Sidebar Panel Interactions
+
+The sidebar has two views, toggled by a tab bar at the top of the sidebar:
+
+**Session List View:**
+- Displays sessions sorted by last activity (most recent first).
+- Each entry shows: truncated label (or session ID), message count, last activity timestamp.
+- Active session is highlighted with a distinct accent.
+- Inline search (`/` in sidebar focus) filters sessions by label or ID.
+
+**Agent List View:**
+- Displays available agents with their mode (build/plan/explore/general).
+- Each entry shows: agent name, mode badge, model name.
+- Active agent is highlighted.
+- Selecting an agent switches the current session to use that agent.
+
+#### TUI-Specific Failure Handling
+
+| Scenario | Handling |
+|----------|--------|
+| Terminal resize during streaming | Re-render layout immediately; preserve scroll position, input buffer, and streaming state |
+| Terminal too small (< 60 columns or < 15 rows) | Display a centered "Terminal too small" message; suppress all panel rendering |
+| Clipboard access failure | Display warning in status bar; fall back to internal yank buffer |
+| Sidebar data stale (session list) | Auto-refresh on sidebar focus; show spinner during refresh |
+| Connection lost during TUI session | Status bar shows "Disconnected" with reconnect countdown; input area remains active for queuing messages |
 
 ### Batch and Pipe Modes
 

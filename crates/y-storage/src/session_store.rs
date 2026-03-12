@@ -1,4 +1,4 @@
-//! SQLite-backed SessionStore implementation.
+//! SQLite-backed `SessionStore` implementation.
 
 use async_trait::async_trait;
 use sqlx::SqlitePool;
@@ -31,19 +31,20 @@ impl SessionStore for SqliteSessionStore {
     #[instrument(skip(self), fields(session_type = ?options.session_type))]
     async fn create(&self, options: CreateSessionOptions) -> Result<SessionNode, SessionError> {
         let id = SessionId::new();
-        let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+        let now_str = chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
 
         // Determine root_id, depth, and path based on parent.
         let (root_id, depth, path_json) = if let Some(ref parent_id) = options.parent_id {
             let parent = self.get(parent_id).await?;
             let mut path = parent.path.clone();
             path.push(parent.id.clone());
-            let path_strs: Vec<&str> = path.iter().map(|p| p.as_str()).collect();
-            let path_json = serde_json::to_string(&path_strs).map_err(|e| {
-                SessionError::StorageError {
+            let path_strs: Vec<&str> = path.iter().map(y_core::types::SessionId::as_str).collect();
+            let path_json =
+                serde_json::to_string(&path_strs).map_err(|e| SessionError::StorageError {
                     message: format!("serialize path: {e}"),
-                }
-            })?;
+                })?;
             (parent.root_id.clone(), parent.depth + 1, path_json)
         } else {
             // Root session: path is empty, root_id is self.
@@ -61,7 +62,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(id.as_str())
         .bind(options.parent_id.as_ref().map(SessionId::as_str))
         .bind(root_id.as_str())
-        .bind(depth as i64)
+        .bind(i64::from(depth))
         .bind(&path_json)
         .bind(session_type_str)
         .bind(options.agent_id.as_ref().map(AgentId::as_str))
@@ -93,9 +94,7 @@ impl SessionStore for SqliteSessionStore {
 
         match row {
             Some(r) => r.into_session_node(),
-            None => Err(SessionError::NotFound {
-                id: id.to_string(),
-            }),
+            None => Err(SessionError::NotFound { id: id.to_string() }),
         }
     }
 
@@ -142,7 +141,9 @@ impl SessionStore for SqliteSessionStore {
                 message: e.to_string(),
             })?;
 
-        rows.into_iter().map(SessionRow::into_session_node).collect()
+        rows.into_iter()
+            .map(SessionRow::into_session_node)
+            .collect()
     }
 
     #[instrument(skip(self), fields(session_id = %id, new_state = ?state))]
@@ -163,9 +164,7 @@ impl SessionStore for SqliteSessionStore {
         })?;
 
         if result.rows_affected() == 0 {
-            return Err(SessionError::NotFound {
-                id: id.to_string(),
-            });
+            return Err(SessionError::NotFound { id: id.to_string() });
         }
 
         Ok(())
@@ -188,8 +187,8 @@ impl SessionStore for SqliteSessionStore {
               WHERE id = ?4",
         )
         .bind(title.as_deref())
-        .bind(token_count as i64)
-        .bind(message_count as i64)
+        .bind(i64::from(token_count))
+        .bind(i64::from(message_count))
         .bind(id.as_str())
         .execute(&self.pool)
         .await
@@ -198,9 +197,7 @@ impl SessionStore for SqliteSessionStore {
         })?;
 
         if result.rows_affected() == 0 {
-            return Err(SessionError::NotFound {
-                id: id.to_string(),
-            });
+            return Err(SessionError::NotFound { id: id.to_string() });
         }
 
         Ok(())
@@ -220,7 +217,9 @@ impl SessionStore for SqliteSessionStore {
             message: e.to_string(),
         })?;
 
-        rows.into_iter().map(SessionRow::into_session_node).collect()
+        rows.into_iter()
+            .map(SessionRow::into_session_node)
+            .collect()
     }
 
     #[instrument(skip(self), fields(session_id = %id))]
@@ -234,6 +233,28 @@ impl SessionStore for SqliteSessionStore {
         }
 
         Ok(ancestors)
+    }
+
+    #[instrument(skip(self), fields(session_id = %id))]
+    async fn set_title(&self, id: &SessionId, title: String) -> Result<(), SessionError> {
+        let result = sqlx::query(
+            r"UPDATE session_metadata
+              SET title = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              WHERE id = ?2",
+        )
+        .bind(&title)
+        .bind(id.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionError::StorageError {
+            message: e.to_string(),
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionError::NotFound { id: id.to_string() });
+        }
+
+        Ok(())
     }
 }
 
@@ -269,13 +290,9 @@ impl SessionRow {
         let session_type = str_to_session_type(&self.session_type)?;
         let state = str_to_state(&self.state)?;
 
-        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now());
+        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
-        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now());
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
         Ok(SessionNode {
             id: SessionId::from_string(self.id),
@@ -287,8 +304,12 @@ impl SessionRow {
             state,
             agent_id: self.agent_id.map(AgentId::from_string),
             title: self.title,
+            channel: None,
+            label: None,
             token_count: self.token_count as u32,
             message_count: self.message_count as u32,
+            last_compaction: None,
+            compaction_count: 0,
             created_at,
             updated_at,
         })
@@ -456,9 +477,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_get_not_found() {
         let store = setup().await;
-        let result = store
-            .get(&SessionId::from_string("nonexistent"))
-            .await;
+        let result = store.get(&SessionId::from_string("nonexistent")).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
     }
@@ -476,10 +495,7 @@ mod tests {
             .await
             .unwrap();
 
-        store
-            .set_state(&s1.id, SessionState::Paused)
-            .await
-            .unwrap();
+        store.set_state(&s1.id, SessionState::Paused).await.unwrap();
 
         let _s2 = store
             .create(CreateSessionOptions {

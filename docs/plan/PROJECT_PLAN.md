@@ -74,7 +74,7 @@ gantt
     Memory system (STM + LTM)           :p4a, after p3d, 14d
     Skills and knowledge                :p4b, after p3b, 14d
     Guardrails (y-guardrails)           :p4c, after p3a, 10d
-    Multi-agent (y-multi-agent)         :p4d, after p3a, 14d
+    Multi-agent (y-agent)               :p4d, after p3a, 14d
 
     section Phase 5 - Integration
     CLI (y-cli)                         :p5a, after p4a, 7d
@@ -475,32 +475,4 @@ This enables:
 | LLM API breaking changes                            | Medium     | Medium | Provider trait abstraction isolates impact; freeze mechanism handles runtime failures           |
 | SQLite performance limits at scale                  | Low        | Medium | Schema design includes migration path to PostgreSQL for operational data                        |
 | Single-developer throughput bottleneck              | High       | High   | Prioritize Phase 2 modules by dependency criticality; defer non-blocking features               |
-
-
----
-
-## Progress Tracking
-
-### Phase 0: Design Housekeeping -- COMPLETED
-
-- File naming standardization (6 renames)
-- DESIGN_OVERVIEW.md v0.18 sync (v0.16 file naming, v0.17 memory/KB enhancements, v0.18 input enrichment)
-- CLAUDE.md updated
-- competitive-analysis.md moved to docs/research/
-- Memory/KB competitive analysis (OpenViking, Claude-Mem, EdgeQuake) -- 6 features adopted into 3 design docs
-
-### Phase 1: Engineering Foundation -- IN PROGRESS
-
-- 1.1 Engineering Standards (docs/standards/ENGINEERING_STANDARDS.md v0.1)
-- 1.2 Test Strategy (docs/standards/TEST_STRATEGY.md v0.1)
-- 1.3 Workspace Scaffolding (20 crates, cargo check/clippy/fmt green)
-- 1.5 Database Schema Design (docs/standards/DATABASE_SCHEMA.md v0.1)
-- 1.6 CI/CD Pipeline (.github/workflows/ci.yml)
-- 1.4 Core Trait Definitions (y-core) -- NEXT
-
-## Immediate Next Steps
-
-1. **Phase 1.4**: Define core traits in y-core (RuntimeAdapter, Tool, LlmProvider, MemoryClient, etc.)
-2. **Phase 1.5**: Create initial SQLite migrations in migrations/sqlite/
-3. **Begin Phase 2**: Start y-provider and y-storage implementation in parallel
 

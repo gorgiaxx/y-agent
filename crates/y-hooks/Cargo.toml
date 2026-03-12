@@ -3,7 +3,15 @@ name = "y-hooks"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Hook system, middleware chains, async event bus, plugin loading"
+description = "Hook system, middleware chains, async event bus, hook handlers"
+
+[features]
+default = ["hooks_enabled", "event_bus", "middleware_chains", "hook_handlers"]
+hooks_enabled = []
+event_bus = []
+middleware_chains = []
+hook_handlers = ["dep:reqwest", "dep:regex"]
+llm_hooks = ["dep:y-provider", "hook_handlers"]
 
 [dependencies]
 y-core = { workspace = true }
@@ -15,9 +23,19 @@ uuid = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 futures = { workspace = true }
+reqwest = { workspace = true, optional = true }
+regex = { version = "1", optional = true }
+y-provider = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+criterion = { workspace = true }
+async-trait = { workspace = true }
+toml = "0.8"
+
+[[bench]]
+name = "hooks_bench"
+harness = false
 
 [lints]
 workspace = true

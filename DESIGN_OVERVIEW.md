@@ -28,8 +28,8 @@ Existing agent frameworks (LangChain, AutoGPT) lack critical capabilities for pr
 ### Design Goals
 
 
-| Goal                 | Description                                            |
-| -------------------- | ------------------------------------------------------ |
+| Goal | Description |
+| --- | --- |
 | **High Performance** | Rust implementation with async-first architecture      |
 | **Extensibility**    | Modular design with MCP protocol support               |
 | **Observability**    | Complete execution logging and state tracking          |
@@ -72,7 +72,7 @@ Existing agent frameworks (LangChain, AutoGPT) lack critical capabilities for pr
 ### Architecture Principles
 
 | # | Principle | Application | Rationale |
-|---|-----------|-------------|----------|
+| --- | --- | --- | --- |
 | P1 | **Layered isolation** | Six horizontal layers: Client, Core, Extensibility, Execution, State, Infrastructure | Each layer depends only on the layer below it; no upward or lateral coupling |
 | P2 | **Trait-first abstractions** | Every cross-boundary contract is a Rust trait (`RuntimeAdapter`, `Tool`, `MemoryClient`, `CheckpointStorage`) | Enables backend substitution (SQLite to Postgres, Docker to K8s) without touching consumers |
 | P3 | **Declarative over imperative** | Agent definitions (TOML), workflow definitions (TOML/Expression DSL), prompt templates (TOML), guardrail rules (TOML), skill manifests | Non-developer operators can customize behavior; hot-reloadable without rebuild |
@@ -107,7 +107,7 @@ flowchart TB
         ToolMiddleware["Tool Middleware Chain"]
         LlmMiddleware["LLM Middleware Chain"]
         EventBus["Async Event Bus"]
-        Plugins["Plugin Loader"]
+        HookHandlers["Hook Handlers (cmd/http)"]
     end
 
     subgraph Execution["Execution Layer"]
@@ -185,7 +185,7 @@ flowchart TB
 
 - **Client Layer**: User-facing entry points (CLI, API, TUI).
 - **Core Layer**: Request routing, message scheduling, DAG-based orchestration engine with typed channels, checkpoint/recovery, and interrupt/resume protocol.
-- **Extensibility Layer**: Hook system with three middleware chains (Context, Tool, LLM), async event bus, and plugin loading. All cross-cutting concerns (guardrails, gap detection, skill audit, file journaling) are implemented as middleware.
+- **Extensibility Layer**: Hook system with three middleware chains (Context, Tool, LLM), async event bus, and command/HTTP hook handlers. All cross-cutting concerns (guardrails, gap detection, skill audit, file journaling) are implemented as middleware.
 - **Execution Layer**: LLM provider pool with tag-based routing and failover, tool registry with lazy loading, three runtime backends (Docker/Native/SSH) behind the `RuntimeAdapter` trait, multi-agent pool, and structured prompt assembly.
 - **State Layer**: Session tree with JSONL persistence, three-tier memory (STM/LTM/Working Memory), indexed experience store, skill registry with Git-like versioning, external knowledge base, and file journal for mutation tracking.
 - **Infrastructure Layer**: Dual-database persistence (SQLite for operational state, PostgreSQL for diagnostics/analytics), pluggable vector store (Qdrant default) for semantic retrieval, scheduled task engine.
@@ -193,7 +193,7 @@ flowchart TB
 ### Technology Stack
 
 | Concern | Choice | Rationale | Reference |
-|---------|--------|-----------|----------|
+| --- | --- | --- | --- |
 | **Language** | Rust | Performance-critical; memory safety without GC; async-first | - |
 | **Async runtime** | Tokio | Industry-standard Rust async runtime; non-blocking I/O | [orchestrator-design.md](docs/design/orchestrator-design.md) |
 | **Operational database** | SQLite (WAL mode) | Zero-dependency; sufficient for single-node; checkpoints, sessions, workflows, file journal, tool/agent/schedule stores | [orchestrator-design.md](docs/design/orchestrator-design.md), [context-session-design.md](docs/design/context-session-design.md) |
@@ -220,7 +220,7 @@ flowchart TB
 Each persistent store has a single owner and a well-defined data lifecycle:
 
 | Store | Backend | Owner Module | Data Lifecycle | Contents |
-|-------|---------|-------------|---------------|----------|
+| --- | --- | --- | --- | --- |
 | **Checkpoint Store** | SQLite (WAL) | Orchestrator | Per-workflow; retained for recovery window | Committed/pending channel state, task outputs, interrupt metadata |
 | **Session Store** | JSONL + SQLite | Session Manager | Per-session; branching via session tree | Message transcripts (JSONL), session tree metadata (SQLite) |
 | **WorkflowStore** | SQLite | Orchestrator | Created by agent or user; versioned | Workflow templates, ParameterSchema, tags |
@@ -240,7 +240,7 @@ Each persistent store has a single owner and a well-defined data lifecycle:
 The following table documents the primary interaction patterns between major modules. Each row represents a caller; each column represents a callee. The cell describes the integration mechanism.
 
 | Caller | Orchestrator | Tool Registry | Memory | Session | Runtime | Hooks/Middleware |
-|--------|-------------|---------------|--------|---------|---------|------------------|
+| --- | --- | --- | --- | --- | --- | --- |
 | **Orchestrator** | -- | `execute_tool()` via ToolExecutor | `recall()` / `remember()` via CtxMiddleware | `get_context()` / `append()` | (indirect, via Tools) | Drives all 3 middleware chains |
 | **Tool Registry** | `register_template()` for workflow tools | -- | `compress_experience()` / `read_experience()` for context memory tools | (none) | `execute()` via RuntimeAdapter | `ToolMiddleware` chain wraps every execution |
 | **Agent Pool** | `execute()` for delegation | `tool_search()` / `tool_create()` | Context injection via middleware | Session fork for sub-agent | (indirect, via Tools) | CtxMiddleware for context assembly |
@@ -249,9 +249,8 @@ The following table documents the primary interaction patterns between major mod
 
 ### Component Overview
 
-
-| Component                    | Responsibility                                                                                                                                                               | Design Doc                                                                               |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Component | Responsibility | Design Doc |
+| --- | --- | --- |
 | Provider Pool                | LLM provider management, tag-based routing, intelligent freeze/failover, connection pooling via `reqwest::Client`                                                           | [providers-design.md](docs/design/providers-design.md)                                   |
 | Agent Orchestrator           | DAG-based task scheduling, typed state channels with reducers, dual execution model (eager/superstep), task-level checkpointing (SQLite WAL), interrupt/resume protocol, WorkflowStore | [orchestrator-design.md](docs/design/orchestrator-design.md)                             |
 | Session Manager              | Session tree (SQLite metadata + JSONL transcripts), context assembly via ContextMiddleware chain, compaction, context status injection, soft/hybrid trigger modes            | [context-session-design.md](docs/design/context-session-design.md)                       |
@@ -262,7 +261,7 @@ The following table documents the primary interaction patterns between major mod
 | Client Layer                 | CLI (clap), API Server, TUI (ratatui); 5 stream modes (None/Values/Updates/Messages/Debug)                                                                                  | [client-layer-design.md](docs/design/client-layer-design.md)                             |
 | Message Scheduler            | Per-session lane serialization (prevents JSONL corruption), cross-session parallelism, 4 queue modes                                                                        | [message-scheduling-design.md](docs/design/message-scheduling-design.md)                 |
 | Diagnostics                  | PostgreSQL-backed trace store, span-based tracing, cost intelligence, semantic trace search, trace replay                                                                    | [diagnostics-observability-design.md](docs/design/diagnostics-observability-design.md)       |
-| Hook/Middleware/Plugin       | 3 middleware chains (Context, Tool, LLM), 24 lifecycle hooks, async event bus (Tokio bounded channels), WASM/dylib plugin loading                                           | [hooks-plugin-design.md](docs/design/hooks-plugin-design.md)                             |
+| Hook/Middleware/Event        | 3 middleware chains (Context, Tool, LLM), 24 lifecycle hooks, async event bus (Tokio bounded channels), command/HTTP hook handlers                                            | [hooks-plugin-design.md](docs/design/hooks-plugin-design.md)                             |
 | Skills and Knowledge         | Multi-format ingestion pipeline, LLM-assisted transformation, tree-indexed proprietary format (< 2,000 token roots), atomic skill registry                                  | [skills-knowledge-design.md](docs/design/skills-knowledge-design.md)                     |
 | Skill Versioning and Evolution | Content-addressable store with JSONL reflog, experience capture with evidence provenance, pattern extraction, self-improvement pipeline with HITL approval gate             | [skill-versioning-evolution-design.md](docs/design/skill-versioning-evolution-design.md) |
 | Multi-Agent Collaboration    | TOML-based AgentDefinition, 4 modes (build/plan/explore/general), 4 collaboration patterns, DelegationProtocol, AgentPool, 2 built-in agents (tool-engineer, agent-architect) | [multi-agent-design.md](docs/design/multi-agent-design.md)                               |
@@ -272,6 +271,7 @@ The following table documents the primary interaction patterns between major mod
 | File Journal                 | FileJournalMiddleware (ToolMiddleware pre), three-tier storage (inline SQLite BLOB < 256KB, external blob 256KB-10MB, git-ref for tracked files), scope-based rollback, Orchestrator CompensationTask integration | [file-journal-design.md](docs/design/file-journal-design.md)                             |
 | Prompt System                | PromptSection units with lazy loading and conditions, PromptTemplate with mode overlays and template inheritance, per-section token budgets, TOML-based SectionStore; drives BuildSystemPrompt ContextMiddleware at priority 100 | [prompt-design.md](docs/design/prompt-design.md)                                         |
 | Agent Autonomy               | 5 subsystems: self-orchestration (WorkflowStore + workflow meta-tools), dynamic tool lifecycle (tool_create, sandbox validation), parameterized scheduling (JSON Schema ParameterSchema), capability-gap resolution (CapabilityGapMiddleware, tool-engineer, agent-architect), dynamic agent lifecycle (agent_create/update/deactivate/search, permission inheritance, three-tier trust hierarchy) | [agent-autonomy-design.md](docs/design/agent-autonomy-design.md)                         |
+| Chat Checkpoint              | Turn-level checkpoint/rollback: `Message.message_id`, `TranscriptStore.truncate`, `ChatCheckpoint`/`ChatCheckpointStore` traits, `SqliteChatCheckpointStore`, `ChatCheckpointManager` (create/rollback/list), `/undo` + `/checkpoints` CLI commands, File Journal scope integration | [chat-checkpoint-design.md](docs/design/chat-checkpoint-design.md)                       |
 
 
 ---
@@ -373,8 +373,8 @@ erDiagram
 ## Failure Handling and Edge Cases
 
 
-| Scenario                     | Handling Strategy                                   | Reference                                                                |
-| ---------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
+| Scenario | Handling Strategy | Reference |
+| --- | --- | --- |
 | Provider rate limit          | Intelligent freeze with configurable duration       | [providers-design.md#freeze](docs/design/providers-design.md#4-冻结机制)     |
 | Provider auth failure        | Permanent freeze until manual intervention          | [providers-design.md#freeze](docs/design/providers-design.md#4-冻结机制)     |
 | Tool execution timeout       | Configurable timeout with graceful termination      | [tools-design.md](docs/design/tools-design.md)                           |
@@ -388,8 +388,8 @@ erDiagram
 ## Security and Permissions
 
 
-| Concern                  | Approach                                                        | Reference                                                          |
-| ------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Concern | Approach | Reference |
+| --- | --- | --- |
 | Tool execution isolation | Container-based runtime with capability model                   | [runtime-design.md](docs/design/runtime-design.md)                 |
 | File system access       | Whitelist-based path restrictions                               | [runtime-design.md](docs/design/runtime-design.md)                 |
 | Network access           | Configurable network policies per tool                          | [tools-design.md](docs/design/tools-design.md)                     |
@@ -415,8 +415,8 @@ erDiagram
 ### Bottlenecks and Mitigations
 
 
-| Bottleneck            | Mitigation                                 |
-| --------------------- | ------------------------------------------ |
+| Bottleneck | Mitigation |
+| --- | --- |
 | LLM API latency       | Provider pool with parallel fallback       |
 | Context serialization | Streaming compression, incremental updates |
 | Tool execution        | Concurrent execution with resource limits  |
@@ -427,8 +427,8 @@ erDiagram
 ## Observability
 
 
-| Capability         | Implementation                                       | Reference                                                                          |
-| ------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Capability | Implementation | Reference |
+| --- | --- | --- |
 | Execution tracing  | Lightweight span-based tracing with trace replay     | [diagnostics-observability-design.md](docs/design/diagnostics-observability-design.md) |
 | Metrics collection | Token usage, latency, error rates, cost intelligence | [diagnostics-observability-design.md](docs/design/diagnostics-observability-design.md) |
 | Health checks      | Provider, storage, and runtime health probes         | [diagnostics-observability-design.md](docs/design/diagnostics-observability-design.md) |
@@ -442,8 +442,8 @@ erDiagram
 ### Implementation Phases
 
 
-| Phase | Focus                                                                   | Duration  |
-| ----- | ----------------------------------------------------------------------- | --------- |
+| Phase | Focus | Duration |
+| --- | --- | --- |
 | 1     | Core infrastructure: Provider Pool, Session Manager, basic Orchestrator | 4-6 weeks |
 | 2     | Feature completion: Memory, Tools, MCP, Skills, Hooks                   | 4-6 weeks |
 | 3     | Advanced features: RAG, Compaction, Recovery, Runtime isolation         | 4-6 weeks |
@@ -462,7 +462,7 @@ erDiagram
 
 
 | Decision | Chosen | Alternative | Rationale | Reference |
-|----------|--------|-------------|-----------|-----------|
+| --- | --- | --- | --- | --- |
 | Language | Rust | Python, TypeScript | Performance critical; memory safety without GC; async-first via Tokio | - |
 | Operational database | SQLite (WAL) | PostgreSQL, Redis | Zero-dependency for single-node; WAL for crash recovery; sufficient for all operational stores (checkpoints, sessions, workflows, journals, schedules) | [orchestrator-design.md](docs/design/orchestrator-design.md) |
 | Analytics database | PostgreSQL | SQLite, ClickHouse | Reuses existing infrastructure; GIN for full-text search; JSONB for trace data; ClickHouse overkill for personal research | [diagnostics-observability-design.md](docs/design/diagnostics-observability-design.md) |
@@ -487,8 +487,8 @@ erDiagram
 ## Open Questions
 
 
-| Question                                      | Owner | Due Date | Status   |
-| --------------------------------------------- | ----- | -------- | -------- |
+| Question | Owner | Due Date | Status |
+| --- | --- | --- | --- |
 | RAG backend selection (Qdrant vs Milvus)      | TBD   | Phase 3  | Resolved (Qdrant chosen; pluggable via trait) |
 | MCP server discovery mechanism                | TBD   | Phase 2  | Open     |
 | Multi-user session isolation model            | TBD   | Future   | Deferred |
@@ -500,8 +500,8 @@ erDiagram
 The following table documents key integration decisions that span multiple design documents. When documents disagree, this table reflects the authoritative resolution.
 
 
-| Topic                                         | Resolution                                                                                                                                                                                                                                                                                    | Authoritative Doc                                                                                                                                                              | Superseded By                                                                                                     |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Topic | Resolution | Authoritative Doc | Superseded By |
+| --- | --- | --- | --- |
 | **Tool permission model**                     | Unified Permission Model (allow/notify/ask/deny) with risk scoring                                                                                                                                                                                                                            | [guardrails-hitl-design.md](docs/design/guardrails-hitl-design.md)                                                                                                             | tools-design.md's standalone Dangerous Tool Handling (now an input signal to guardrails, not a standalone system) |
 | **Skill-tool bundling**                       | Skills are LLM-instruction-only; embedded tools extracted and registered separately in Tool Registry                                                                                                                                                                                          | [skills-knowledge-design.md](docs/design/skills-knowledge-design.md)                                                                                                           | tools-design.md's Skill-bundled tool type (removed in v0.3)                                                       |
 | **Memory tiers**                              | Three tiers: Long-Term (persistent), Short-Term (session), Working Memory (pipeline-scoped)                                                                                                                                                                                                   | [memory-architecture-design.md](docs/design/memory-architecture-design.md) + [micro-agent-pipeline-design.md](docs/design/micro-agent-pipeline-design.md)                                    | memory-architecture-design.md v0.2's two-tier model                                                                      |
@@ -531,6 +531,7 @@ The following table documents key integration decisions that span multiple desig
 | **Knowledge Base L0/L1/L2 progressive loading** | Knowledge entries stored at three resolution levels: L0 abstract (~100 tokens), L1 overview (~500 tokens), L2 full content. Retrieval returns L0 by default; agents load L1/L2 on demand. InjectKnowledge middleware uses L0 default with auto-escalation to L1 if budget allows. knowledge_search and knowledge_lookup tools accept `resolution` parameter. Saves ~90% tokens for auto-injection. | [knowledge-base-design.md](docs/design/knowledge-base-design.md) | N/A (new; inspired by OpenViking L0/L1/L2 hierarchical context loading) |
 | **Prompt assembly ownership**                 | Prompt composition (sections, templates, lazy loading, mode overlays) is owned by prompt-design.md and executed inside the `BuildSystemPrompt` ContextMiddleware (priority 100). Other pipeline stages (InjectBootstrap, InjectSkills, InjectTools) remain independent -- they do not modify the system prompt, they add separate context items. AgentDefinition references a PromptTemplate; agent modes drive mode overlays. | [prompt-design.md](docs/design/prompt-design.md) + [context-session-design.md](docs/design/context-session-design.md) + [multi-agent-design.md](docs/design/multi-agent-design.md) | N/A (new) |
 | **User input enrichment**                     | EnrichInput ContextMiddleware (priority 50) runs before all other pipeline stages. TaskIntentAnalyzer sub-agent detects ambiguous/incomplete user input, triggers interactive clarification via Orchestrator interrupt/resume, and replaces original input with enriched version. Replacement (not augmentation) preserves context window tokens. Heuristic pre-filter avoids LLM calls for clear inputs. Four policy modes (always/auto/never/first_only) configurable per agent or session. | [input-enrichment-design.md](docs/design/input-enrichment-design.md) + [context-session-design.md](docs/design/context-session-design.md) + [orchestrator-design.md](docs/design/orchestrator-design.md) | N/A (new) |
+| **Agent autonomy**                            | All LLM reasoning operations (including internal: compaction, enrichment, title generation, gap assessment, pattern extraction) are agent delegations through `AgentPool`. No module may define ad-hoc LLM traits or hardcode prompts. Cross-module invocation via `AgentDelegator` trait in `y-core`. 8 built-in system agents defined in catalog. Three-tier trust hierarchy (built-in > user-defined > dynamic) with permission inheritance (snapshot model). | [multi-agent-design.md](docs/design/multi-agent-design.md) + [AGENT_AUTONOMY.md](docs/standards/AGENT_AUTONOMY.md) + [agent-autonomy-design.md](docs/design/agent-autonomy-design.md) | Ad-hoc LLM traits in individual modules (e.g., `CompactionLlm` in y-context, `generate_title` in y-session) |
 
 
 ---
@@ -543,9 +544,9 @@ y-agent/
 │   ├── y-core/           # Core abstractions, traits (RuntimeAdapter, Tool, MemoryClient, CheckpointStorage)
 │   ├── y-provider/       # Provider Pool: tag-based routing, failover, connection pooling (reqwest)
 │   ├── y-session/        # Session Manager: session tree (SQLite metadata + JSONL transcripts)
-│   ├── y-agent/          # Agent Orchestrator: DAG engine, typed channels, checkpointing (SQLite WAL)
+│   ├── y-agent/          # Unified Agent: orchestrator (DAG engine, channels, checkpointing) + agent lifecycle (definitions, registry, pool, delegation)
 │   ├── y-context/        # Memory System: STM, LTM (Qdrant), Working Memory, Experience Store
-│   ├── y-hooks/          # Hook system, 3 middleware chains, async event bus (Tokio channels), plugin loading
+│   ├── y-hooks/          # Hook system, 3 middleware chains, async event bus (Tokio channels), command/HTTP hook handlers
 │   ├── y-tools/          # Tool Registry: 4 types, lazy loading, JSON Schema validation (jsonschema crate)
 │   ├── y-mcp/            # MCP protocol support for third-party tools and memory
 │   ├── y-skills/         # Skill ingestion, transformation, registry, versioning (content-addressable + reflog)
@@ -553,12 +554,14 @@ y-agent/
 │   ├── y-storage/        # Persistence layer: SQLite backends, JSONL writers, blob storage
 │   ├── y-runtime/        # Runtime: DockerRuntime, NativeRuntime (bubblewrap), SshRuntime
 │   ├── y-scheduler/      # Scheduled Tasks: cron/interval, ParameterSchema (JSON Schema)
-│   ├── y-multi-agent/    # Multi-Agent: AgentDefinition (TOML), delegation, AgentPool, agent-architect
 │   ├── y-guardrails/     # Guardrails, LoopGuard, taint tracking, risk scoring, HITL escalation
 │   ├── y-knowledge/      # Knowledge Base: external ingestion (PDF/web/API), Qdrant indexing
 │   ├── y-journal/        # File Journal: FileJournalMiddleware, three-tier storage, RollbackEngine
 │   ├── y-diagnostics/    # Diagnostics: trace store (PostgreSQL), cost intelligence, trace replay
-│   └── y-cli/            # CLI (clap) + TUI (ratatui); 5 stream modes
+│   ├── y-service/        # Business/service layer: ChatService, CostService, SystemService (shared by CLI, TUI, Web API)
+│   ├── y-web/            # HTTP REST API server (axum): thin presentation layer on top of y-service
+│   ├── y-test-utils/     # Test utilities: mocks, fixtures, assertion helpers
+│   └── y-cli/            # CLI (clap) + TUI (ratatui): thin presentation layer on top of y-service
 ├── config/               # TOML configuration files (providers, agents, prompts, guardrails, image whitelist)
 └── docs/design/          # Detailed design documents
 ```
@@ -584,7 +587,7 @@ y-agent/
 
 ### Extensibility and Safety
 
-- [Hook/Middleware/Plugin Design](docs/design/hooks-plugin-design.md) - Lifecycle hooks, middleware chains, event bus, plugin API
+- [Hook/Middleware/Event Design](docs/design/hooks-plugin-design.md) - Lifecycle hooks, middleware chains, event bus, command/HTTP hook handlers
 - [Skills & Knowledge Design](docs/design/skills-knowledge-design.md) - Skill ingestion pipeline, LLM-assisted transformation, atomic skill registry
 - [Skill Versioning & Evolution Design](docs/design/skill-versioning-evolution-design.md) - Git-like version control, experience capture, self-improvement pipeline
 - [Multi-Agent Collaboration Design](docs/design/multi-agent-design.md) - Agent definitions, delegation, collaboration patterns

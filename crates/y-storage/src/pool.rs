@@ -1,4 +1,4 @@
-//! SQLite connection pool factory with WAL mode configuration.
+//! `SQLite` connection pool factory with WAL mode configuration.
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
@@ -7,7 +7,7 @@ use tracing::info;
 use crate::config::StorageConfig;
 use crate::error::StorageError;
 
-/// Create a SQLite connection pool configured per storage config.
+/// Create a `SQLite` connection pool configured per storage config.
 ///
 /// Applies WAL mode, foreign keys, and busy timeout PRAGMAs.
 pub async fn create_pool(config: &StorageConfig) -> Result<SqlitePool, StorageError> {

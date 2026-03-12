@@ -1,9 +1,9 @@
 //! Session configuration.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Configuration for the session manager.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionConfig {
     /// Maximum tree depth for branching sessions.
@@ -21,6 +21,10 @@ pub struct SessionConfig {
     /// Whether to auto-archive sessions when merged.
     #[serde(default = "default_auto_archive_merged")]
     pub auto_archive_merged: bool,
+
+    /// Number of user messages between title re-summarization (0 = disabled).
+    #[serde(default = "default_title_summarize_interval")]
+    pub title_summarize_interval: u32,
 }
 
 fn default_max_depth() -> u32 {
@@ -39,6 +43,10 @@ fn default_auto_archive_merged() -> bool {
     true
 }
 
+fn default_title_summarize_interval() -> u32 {
+    3
+}
+
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
@@ -46,6 +54,7 @@ impl Default for SessionConfig {
             max_active_per_root: default_max_active_per_root(),
             compaction_threshold: default_compaction_threshold(),
             auto_archive_merged: default_auto_archive_merged(),
+            title_summarize_interval: default_title_summarize_interval(),
         }
     }
 }
@@ -61,5 +70,6 @@ mod tests {
         assert_eq!(config.max_active_per_root, 50);
         assert_eq!(config.compaction_threshold, 100_000);
         assert!(config.auto_archive_merged);
+        assert_eq!(config.title_summarize_interval, 3);
     }
 }

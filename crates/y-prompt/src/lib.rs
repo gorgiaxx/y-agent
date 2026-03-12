@@ -20,12 +20,14 @@
 //! to true. This saves 60-90% of token usage compared to monolithic prompts.
 
 pub mod budget;
+pub mod builtins;
 pub mod section;
 pub mod store;
 pub mod template;
 
 // Re-export primary types.
 pub use budget::{estimate_tokens, truncate_to_budget};
+pub use builtins::{builtin_section_store, default_template};
 pub use section::{
     ContentSource, PromptContext, PromptSection, SectionCategory, SectionCondition, SectionId,
     TemplateId,

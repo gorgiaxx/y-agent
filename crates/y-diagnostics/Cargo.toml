@@ -3,14 +3,20 @@ name = "y-diagnostics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Diagnostics: trace store, cost intelligence, trace replay"
+description = "Diagnostics: trace store, cost intelligence, trace replay (PostgreSQL-backed)"
+
+[features]
+default = ["diagnostics_pg"]
+diagnostics_pg = ["y-storage/diagnostics_pg", "sqlx"]
 
 [dependencies]
 y-core = { workspace = true }
+y-storage = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+sqlx = { workspace = true, optional = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }

@@ -5,6 +5,7 @@
 **Priority**: Critical — the orchestrator is the central execution engine
 **Design References**: `orchestrator-design.md`
 **Depends On**: `y-core`, `y-hooks`, `y-provider`, `y-storage`, `y-context`
+**Last Audited**: 2026-03-10
 
 ---
 
@@ -35,18 +36,21 @@ y-agent-core
 
 ```
 y-agent-core/src/
-  lib.rs              — Public API: Orchestrator, AgentLoop
-  error.rs            — OrchestratorError
-  config.rs           — OrchestratorConfig (max_steps, timeout, retry policy)
-  orchestrator.rs     — Orchestrator: main execution coordinator
-  agent_loop.rs       — AgentLoop: LLM ↔ Tool loop with turn management
-  dag.rs              — DagEngine: task dependency graph, topological execution
-  channel.rs          — TypedChannel: state channels with reducers
-  checkpoint_mgr.rs   — CheckpointManager: committed/pending coordination
-  interrupt.rs        — InterruptProtocol: pause/resume, HITL integration
-  expression.rs       — ExpressionDSL: basic expression parser for workflow definitions
-  compensation.rs     — CompensationManager: rollback for side-effect-bearing operations
+  lib.rs              — Public API: WorkflowExecutor, TaskDag, Channel, CheckpointStore, InterruptManager
+  dag.rs              — TaskDag: task dependency graph, topological execution          ✅ implemented
+  channel.rs          — Channel / WorkflowContext: typed state channels with reducers  ✅ implemented
+  checkpoint.rs       — CheckpointStore: committed/pending checkpoint persistence      ✅ implemented
+  executor.rs         — WorkflowExecutor: DAG execution with checkpointing             ⚠️ placeholder (synchronous)
+  interrupt.rs        — InterruptManager: pause/resume, HITL integration               ✅ implemented
+  orchestrator.rs     — Orchestrator: main execution coordinator                       ❌ NOT YET IMPLEMENTED
+  agent_loop.rs       — AgentLoop: LLM ↔ Tool loop with turn management               ❌ NOT YET IMPLEMENTED
+  expression.rs       — ExpressionDSL: basic expression parser for workflow defs       ❌ NOT YET IMPLEMENTED
+  compensation.rs     — CompensationManager: rollback for side-effect operations       ❌ NOT YET IMPLEMENTED
+  error.rs            — OrchestratorError                                              ❌ NOT YET IMPLEMENTED
+  config.rs           — OrchestratorConfig (max_steps, timeout, retry policy)          ❌ NOT YET IMPLEMENTED
 ```
+
+> **Audit note (2026-03-10):** The original `checkpoint_mgr.rs` was implemented as `checkpoint.rs` with `CheckpointStore`. The planned `orchestrator.rs` and `agent_loop.rs` are subsumed by the current `executor.rs`, which is a placeholder (synchronous, no actual LLM/tool loop). Full async orchestration is deferred to a later phase.
 
 ---
 
@@ -88,10 +92,10 @@ TEST_LOCATION: #[cfg(test)] in same file
 | T-ORCH-002-05 | `test_channel_type_safety` | Write string, read as int | Type error |
 | T-ORCH-002-06 | `test_channel_serialization_for_checkpoint` | Serialize channel state | JSON captures value + version |
 
-#### Task: T-ORCH-003 — CheckpointManager
+#### Task: T-ORCH-003 — CheckpointStore
 
 ```
-FILE: crates/y-agent-core/src/checkpoint_mgr.rs
+FILE: crates/y-agent-core/src/checkpoint.rs
 TEST_LOCATION: #[cfg(test)] in same file (with mock CheckpointStorage)
 ```
 
@@ -119,10 +123,10 @@ TEST_LOCATION: #[cfg(test)] in same file
 | T-ORCH-004-04 | `test_interrupt_timeout` | Interrupt with no resume | Configurable timeout, then fail/escalate |
 | T-ORCH-004-05 | `test_interrupt_checkpoint_saved` | Trigger interrupt | Checkpoint status = Interrupted |
 
-#### Task: T-ORCH-005 — AgentLoop
+#### Task: T-ORCH-005 — AgentLoop ❌ NOT YET IMPLEMENTED
 
 ```
-FILE: crates/y-agent-core/src/agent_loop.rs
+FILE: crates/y-agent-core/src/agent_loop.rs (planned)
 TEST_LOCATION: #[cfg(test)] in same file
 ```
 
@@ -136,10 +140,10 @@ TEST_LOCATION: #[cfg(test)] in same file
 | T-ORCH-005-06 | `test_agent_loop_llm_error_handled` | LLM returns error | Error propagated, no infinite retry |
 | T-ORCH-005-07 | `test_agent_loop_checkpoint_per_step` | 3 turns | 3 checkpoints saved |
 
-#### Task: T-ORCH-006 — Expression DSL (basic)
+#### Task: T-ORCH-006 — Expression DSL (basic) ❌ NOT YET IMPLEMENTED
 
 ```
-FILE: crates/y-agent-core/src/expression.rs
+FILE: crates/y-agent-core/src/expression.rs (planned)
 TEST_LOCATION: #[cfg(test)] in same file
 ```
 
@@ -168,16 +172,16 @@ FILE: crates/y-agent-core/tests/
 
 ## 5. Implementation Tasks
 
-| Task ID | Task | Description | Priority |
-|---------|------|-------------|----------|
-| I-ORCH-001 | `DagEngine` | Topological sort, parallel execution, dependency tracking | High |
-| I-ORCH-002 | `TypedChannel` | State channels with reducers, versioning, serialization | High |
-| I-ORCH-003 | `CheckpointManager` | Committed/pending coordination with `CheckpointStorage` | High |
-| I-ORCH-004 | `AgentLoop` | LLM ↔ Tool loop, turn management, max_steps | High |
-| I-ORCH-005 | `InterruptProtocol` | Pause/resume, HITL data, timeout | High |
-| I-ORCH-006 | `Orchestrator` | Top-level coordinator, wires all components | High |
-| I-ORCH-007 | `ExpressionDSL` | Basic expression parser for workflow definitions | Medium |
-| I-ORCH-008 | `CompensationManager` | Rollback for failed side-effect operations | Medium |
+| Task ID | Task | Description | Priority | Status |
+|---------|------|-------------|----------|--------|
+| I-ORCH-001 | `TaskDag` | Topological sort, parallel execution, dependency tracking | High | ✅ Done |
+| I-ORCH-002 | `Channel` / `WorkflowContext` | State channels with reducers, versioning, serialization | High | ✅ Done |
+| I-ORCH-003 | `CheckpointStore` | Committed/pending checkpoint persistence | High | ✅ Done |
+| I-ORCH-004 | `AgentLoop` | LLM ↔ Tool loop, turn management, max_steps | High | ❌ Planned |
+| I-ORCH-005 | `InterruptManager` | Pause/resume, HITL data, timeout | High | ✅ Done |
+| I-ORCH-006 | `WorkflowExecutor` | DAG execution coordinator (currently placeholder) | High | ⚠️ Placeholder |
+| I-ORCH-007 | `ExpressionDSL` | Basic expression parser for workflow definitions | Medium | ❌ Planned |
+| I-ORCH-008 | `CompensationManager` | Rollback for failed side-effect operations | Medium | ❌ Planned |
 
 ---
 

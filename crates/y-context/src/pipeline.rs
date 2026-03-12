@@ -1,6 +1,7 @@
 //! Context assembly pipeline: ordered sequence of context providers.
 
 use async_trait::async_trait;
+use y_core::types::SessionId;
 
 /// A context item contributed by a pipeline stage.
 #[derive(Debug, Clone)]
@@ -27,11 +28,27 @@ pub enum ContextCategory {
     Status,
 }
 
+/// Request context passed into the pipeline so stages can access
+/// session, user query, agent mode, and enabled tools.
+#[derive(Debug, Clone, Default)]
+pub struct ContextRequest {
+    /// Active session identifier.
+    pub session_id: Option<SessionId>,
+    /// Current user query / message.
+    pub user_query: String,
+    /// Agent mode (e.g. "general", "build", "plan", "explore").
+    pub agent_mode: String,
+    /// Tool names currently enabled for the agent.
+    pub tools_enabled: Vec<String>,
+}
+
 /// Assembled context ready for the LLM.
 #[derive(Debug, Clone, Default)]
 pub struct AssembledContext {
     /// All context items in pipeline order.
     pub items: Vec<ContextItem>,
+    /// Optional request context that pipeline stages can read.
+    pub request: Option<ContextRequest>,
 }
 
 impl AssembledContext {
@@ -99,7 +116,18 @@ impl ContextPipeline {
 
     /// Run all providers in priority order.
     pub async fn assemble(&self) -> Result<AssembledContext, ContextPipelineError> {
-        let mut ctx = AssembledContext::default();
+        self.assemble_with_request(None).await
+    }
+
+    /// Run all providers with a request context available to each stage.
+    pub async fn assemble_with_request(
+        &self,
+        request: Option<ContextRequest>,
+    ) -> Result<AssembledContext, ContextPipelineError> {
+        let mut ctx = AssembledContext {
+            items: Vec::new(),
+            request,
+        };
         for provider in &self.providers {
             tracing::debug!(provider = %provider.name(), priority = provider.priority(), "running context provider");
             // Fail-open: log error but continue with other providers.
@@ -197,7 +225,7 @@ mod tests {
 
         #[async_trait]
         impl ContextProvider for FailingProvider {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "failing"
             }
             fn priority(&self) -> u32 {

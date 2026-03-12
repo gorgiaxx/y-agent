@@ -402,7 +402,7 @@ sequenceDiagram
 **Legend**:
 - **Context Manager** orchestrates the flow by invoking the `ContextMiddleware` chain.
 - **ContextMiddleware Chain** executes built-in and third-party context providers in priority order.
-- **CompactionMiddleware Chain** wraps compaction, allowing plugins to preserve data or alter strategy.
+- **CompactionMiddleware Chain** wraps compaction, allowing middleware to preserve data or alter strategy.
 - Both middleware chains are managed by y-hooks (see [hooks-plugin-design.md](hooks-plugin-design.md)).
 
 ---
@@ -485,7 +485,7 @@ erDiagram
 | **Compaction audit trail** | Every compaction logs: original message count, summary hash, tokens saved, model used |
 | **Sensitive data in summaries** | Strict identifier policy preserves but does not add sensitive data; optional redaction hook can scrub PII before persistence |
 | **Session deletion** | Tombstone state preserves metadata for audit; message content deleted after configurable retention period |
-| **Pipeline security** | Context providers execute as y-hooks middleware (in-process). Third-party providers follow the same trust model as y-hooks plugins (see [hooks-plugin-design.md](hooks-plugin-design.md) security model). |
+| **Pipeline security** | Context providers execute as y-hooks middleware (in-process). Third-party extensions follow the same trust model as y-hooks hook handlers (see [hooks-plugin-design.md](hooks-plugin-design.md) security model). |
 
 ---
 
@@ -560,7 +560,7 @@ All events below are published through the y-hooks `EventBus` (see [hooks-plugin
 - **Session Tree**: New sessions automatically use tree structure. Existing flat sessions treated as root nodes with no children.
 - **Compaction**: Backward-compatible; sessions without compaction history start fresh.
 - **Canonical Session**: Opt-in via config flag `context.canonical.enabled`. No impact on single-channel users.
-- **Context Pipeline**: Built-in context providers registered by default at standard priorities. Custom providers registered via y-hooks `PluginRegistrar` (see [hooks-plugin-design.md](hooks-plugin-design.md)).
+- **Context Pipeline**: Built-in context providers registered by default at standard priorities. Custom providers registered via y-hooks middleware chain API (see [hooks-plugin-design.md](hooks-plugin-design.md)).
 
 ### Rollback Plan
 

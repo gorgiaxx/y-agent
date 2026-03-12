@@ -301,6 +301,8 @@ Always prefer parameterization over hardcoding. Every value that might vary acro
 
 The Dynamic Agent Lifecycle enables agents to create, update, deactivate, and search sub-agent definitions at runtime. This is the "agent manages agent" meta-capability that makes the y-agent system truly self-evolving.
 
+> **Autonomy Standard**: All dynamic agent operations follow the Agent Autonomy Standard ([AGENT_AUTONOMY.md](../../docs/standards/AGENT_AUTONOMY.md)), which defines the unified agent invocation protocol, permission inheritance rules, validation pipelines, and prompt management requirements. The standard also establishes that all internal LLM reasoning operations (compaction, enrichment, gap assessment) must be expressed as agent delegations — see the Built-in System Agent Catalog in [multi-agent-design.md](multi-agent-design.md#built-in-system-agent-catalog).
+
 #### Core Concepts
 
 | Concept | Description |

@@ -1,0 +1,40 @@
+[package]
+name = "y-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tauri v2 desktop GUI for y-agent"
+
+[lib]
+name = "y_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = "2.5"
+
+[dependencies]
+# Tauri
+tauri = "2.10"
+tauri-plugin-log = "2"
+log = "0.4"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }
+
+# Internal crates
+y-service = { workspace = true }
+y-core = { workspace = true }
+
+[lints]
+workspace = true

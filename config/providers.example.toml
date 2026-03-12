@@ -1,0 +1,186 @@
+# ==============================================================================
+# y-agent — LLM Provider Pool Configuration
+# ==============================================================================
+
+# Freeze duration before retrying a failed provider (seconds).
+default_freeze_duration_secs = 60
+
+# Maximum freeze duration cap for exponential backoff (seconds).
+max_freeze_duration_secs = 3600
+
+# Health check interval for frozen providers (seconds).
+health_check_interval_secs = 30
+
+# Provider selection strategy.
+# Options: "priority" (default), "random", "least_loaded", "round_robin", "cost_optimized"
+# selection_strategy = "priority"
+
+# Global concurrency limit across all providers (optional).
+# When set, requests must acquire both a global and per-provider permit.
+# max_global_concurrency = 20
+
+# ==============================================================================
+# Provider Definitions
+#
+# Each [[providers]] entry defines one LLM provider backend.
+# For OpenAI-compatible APIs (DeepSeek, Groq, Together AI, etc.),
+# set provider_type = "openai" and override base_url.
+#
+# API Key: set `api_key` directly, or use `api_key_env` to read
+# from an environment variable (fallback).
+# ==============================================================================
+
+[[providers]]
+id = "openai-main"
+provider_type = "openai"
+model = "gpt-4o"
+tags = ["reasoning", "general"]
+max_concurrency = 3
+context_window = 128000
+cost_per_1k_input = 0.005
+cost_per_1k_output = 0.015
+api_key = "sk-your-openai-key-here"
+# api_key_env = "OPENAI_API_KEY"   # alternative: read from env var
+# base_url = "https://api.openai.com/v1"
+# temperature = 0.4     # per-provider default (0.0-2.0), optional
+# top_p = 0.95          # per-provider default (0.0-1.0), optional
+
+# --- Custom Provider (OpenAI-compatible) ------------------------------------
+# Use provider_type = "custom" for any OpenAI-compatible endpoint
+# (e.g., vLLM, LLaMA.cpp server, LiteLLM, local inference servers).
+# Requires base_url. Uses the same API format as openai/openai_compatible.
+
+# [[providers]]
+# id = "custom-vllm"
+# provider_type = "custom"
+# model = "meta-llama/Llama-3.1-8B-Instruct"
+# tags = ["local", "fast"]
+# max_concurrency = 4
+# context_window = 32768
+# api_key = "not-needed"
+# base_url = "http://localhost:8000/v1"
+# temperature = 0.4
+# top_p = 0.95
+
+# --- DeepSeek (OpenAI-compatible) --------------------------------------------
+
+# [[providers]]
+# id = "deepseek-main"
+# provider_type = "openai"
+# model = "deepseek-chat"
+# tags = ["reasoning", "code", "general"]
+# max_concurrency = 3
+# context_window = 65536
+# cost_per_1k_input = 0.00014
+# cost_per_1k_output = 0.00028
+# api_key = "sk-your-deepseek-key-here"
+# base_url = "https://api.deepseek.com/v1"
+
+# [[providers]]
+# id = "deepseek-reasoner"
+# provider_type = "openai"
+# model = "deepseek-reasoner"
+# tags = ["reasoning", "deep-thinking"]
+# max_concurrency = 2
+# context_window = 65536
+# cost_per_1k_input = 0.00055
+# cost_per_1k_output = 0.0022
+# api_key = "sk-your-deepseek-key-here"
+# base_url = "https://api.deepseek.com/v1"
+
+# --- Anthropic ---------------------------------------------------------------
+
+# [[providers]]
+# id = "anthropic-main"
+# provider_type = "anthropic"
+# model = "claude-3-5-sonnet-20241022"
+# tags = ["reasoning", "code"]
+# max_concurrency = 3
+# context_window = 200000
+# cost_per_1k_input = 0.003
+# cost_per_1k_output = 0.015
+# api_key = "sk-ant-your-anthropic-key-here"
+
+# --- Google Gemini -----------------------------------------------------------
+
+# [[providers]]
+# id = "gemini-main"
+# provider_type = "gemini"
+# model = "gemini-2.0-flash"
+# tags = ["fast", "general"]
+# max_concurrency = 5
+# context_window = 1000000
+# cost_per_1k_input = 0.0
+# cost_per_1k_output = 0.0
+# api_key = "AIza-your-gemini-key-here"
+# # base_url = "https://generativelanguage.googleapis.com/v1beta"
+
+# [[providers]]
+# id = "gemini-pro"
+# provider_type = "gemini"
+# model = "gemini-2.5-pro-preview-06-05"
+# tags = ["reasoning", "capable"]
+# max_concurrency = 3
+# context_window = 1000000
+# cost_per_1k_input = 0.00125
+# cost_per_1k_output = 0.01
+# api_key = "AIza-your-gemini-key-here"
+
+# --- Ollama (Local) ----------------------------------------------------------
+
+# [[providers]]
+# id = "ollama-local"
+# provider_type = "ollama"
+# model = "llama3.1:8b"
+# tags = ["local", "fast", "free"]
+# max_concurrency = 3
+# context_window = 32768
+# # Ollama is free (local), no API key needed.
+# api_key = "not-needed"
+# # base_url = "http://localhost:11434"
+
+# --- Azure OpenAI ------------------------------------------------------------
+
+# [[providers]]
+# id = "azure-gpt4o"
+# provider_type = "azure"
+# model = "gpt-4o"
+# tags = ["reasoning", "general"]
+# max_concurrency = 5
+# context_window = 128000
+# cost_per_1k_input = 0.005
+# cost_per_1k_output = 0.015
+# api_key = "your-azure-api-key-here"
+# # base_url must include the full deployment path:
+# base_url = "https://your-resource.openai.azure.com/openai/deployments/gpt-4o"
+
+# ==============================================================================
+# Proxy Configuration (Multi-Level)
+#
+# Cascade priority: provider-specific > tag-level > global.
+# Default protocol: SOCKS5 (when no scheme specified in URL).
+# Supports: socks5://, socks5h:// (DNS at proxy), http://, https://.
+# Set enabled = false to bypass proxy for specific providers (e.g., local Ollama).
+# ==============================================================================
+
+# [proxy]
+# # Default scheme prepended when proxy URL has no scheme (e.g., "proxy.com:1080").
+# # Supported: "socks5" (default), "socks5h", "http", "https".
+# default_scheme = "socks5"
+
+# [proxy.global]
+# url = "socks5://proxy.company.com:1080"
+# # Optional: env var containing proxy credentials as "username:password".
+# # auth_env = "PROXY_AUTH"
+
+# [proxy.tags.china]
+# url = "http://cn-proxy.company.com:8080"
+
+# [proxy.tags.us]
+# url = "socks5h://us-proxy.company.com:1080"  # DNS resolved at proxy side
+
+# [proxy.providers.ollama-local]
+# enabled = false  # Local provider, no proxy needed
+
+# [proxy.providers.azure-eastus]
+# url = "socks5://azure-proxy.company.com:1080"

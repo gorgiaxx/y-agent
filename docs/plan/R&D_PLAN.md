@@ -43,7 +43,7 @@ This document is the master index for the y-agent R&D plan. It provides an AI-au
 
 | Module | Plan Document | Priority | Key Deliverables |
 |--------|--------------|----------|-----------------|
-| y-agent-core | [y-agent-core.md](modules/y-agent-core.md) | Critical | DAG engine, typed channels, checkpoint recovery, agent loop, interrupt/resume |
+| y-agent (orchestrator) | [y-agent (orchestrator).md](modules/y-agent (orchestrator).md) | Critical | DAG engine, typed channels, checkpoint recovery, agent loop, interrupt/resume |
 | y-tools | [y-tools.md](modules/y-tools.md) | High | Tool registry, lazy loading, JSON Schema validation, LRU activation |
 | y-runtime | [y-runtime.md](modules/y-runtime.md) | High | Docker/Native adapters, capability enforcement, image whitelist |
 | y-context | [y-context.md](modules/y-context.md) | High | Context pipeline, token budgets, compaction, 7 middleware stages |
@@ -60,7 +60,7 @@ This document is the master index for the y-agent R&D plan. It provides an AI-au
 | y-skills | [y-skills.md](modules/y-skills.md) | Medium | Skill registry, version control, TOML manifests, lazy sub-docs |
 | y-knowledge | [y-knowledge.md](modules/y-knowledge.md) | Medium | L0/L1/L2 chunking, Qdrant indexing, hybrid retrieval |
 | y-guardrails | [y-guardrails.md](modules/y-guardrails.md) | High | Permission model, LoopGuard, taint tracking, HITL |
-| y-multi-agent | [y-multi-agent.md](modules/y-multi-agent.md) | Medium | Agent pool, delegation, Sequential/Hierarchical patterns |
+| y-agent | [y-agent.md](modules/y-agent.md) | Medium | Agent pool, delegation, Sequential/Hierarchical patterns |
 
 ### Phase 5 — Integration and Release
 
@@ -85,9 +85,9 @@ All test IDs follow the pattern: `T-{MODULE}-{GROUP}-{SEQ}`
 | T-TOOL | y-tools |
 | T-RT | y-runtime |
 | T-CTX | y-context |
-| T-ORCH | y-agent-core |
+| T-ORCH | y-agent (orchestrator) |
 | T-GUARD | y-guardrails |
-| T-MA | y-multi-agent |
+| T-MA | y-agent |
 | T-SKILL | y-skills |
 | T-KB | y-knowledge |
 | T-MEM | y-memory |
@@ -117,9 +117,9 @@ All implementation task IDs follow: `I-{MODULE}-{SEQ}`
 | I-TOOL | y-tools |
 | I-RT | y-runtime |
 | I-CTX | y-context |
-| I-ORCH | y-agent-core |
+| I-ORCH | y-agent (orchestrator) |
 | I-GUARD | y-guardrails |
-| I-MA | y-multi-agent |
+| I-MA | y-agent |
 | I-SKILL | y-skills |
 | I-KB | y-knowledge |
 | I-MEM | y-memory |
@@ -145,9 +145,9 @@ All implementation task IDs follow: `I-{MODULE}-{SEQ}`
 | y-tools | ~22 | 4 | ~26 | 5 benchmarks |
 | y-runtime | ~23 | 5 | ~28 | 4 benchmarks |
 | y-context | ~25 | 4 | ~29 | 4 benchmarks |
-| y-agent-core | ~27 | 5 | ~32 | 4 benchmarks |
+| y-agent (orchestrator) | ~27 | 5 | ~32 | 4 benchmarks |
 | y-guardrails | ~22 | 4 | ~26 | N/A |
-| y-multi-agent | ~14 | 3 | ~17 | N/A |
+| y-agent | ~14 | 3 | ~17 | N/A |
 | y-skills | ~15 | 3 | ~18 | N/A |
 | y-knowledge | ~12 | 3 | ~15 | N/A |
 | y-memory | ~20 | 5 | ~25 | N/A |
@@ -185,7 +185,7 @@ Phase 3 (Execution — depends on Phase 2):
   ├── y-journal           ← File journal (depends: y-hooks, y-storage)
   ├── y-scheduler         ← Scheduled tasks (depends: y-storage)
   ├── y-context           ← Context pipeline (depends: y-hooks, y-session)
-  └── y-agent-core        ← Orchestrator (depends: y-provider, y-storage, y-context, y-hooks)
+  └── y-agent (orchestrator)        ← Orchestrator (depends: y-provider, y-storage, y-context, y-hooks)
 
 Phase 4 (Intelligence — depends on Phase 3):
   ├── y-memory (STM)      ← Experience store (depends: y-storage)
@@ -194,7 +194,7 @@ Phase 4 (Intelligence — depends on Phase 3):
   ├── y-skills            ← Skill registry (depends: y-storage, y-hooks)
   ├── y-knowledge         ← Knowledge base (depends: y-hooks)
   ├── y-guardrails        ← Guardrail middleware (depends: y-hooks)
-  └── y-multi-agent       ← Multi-agent (depends: y-agent-core, y-session)
+  └── y-agent       ← Multi-agent (depends: y-agent (orchestrator), y-session)
 
 Phase 5 (Integration):
   ├── y-cli               ← CLI binary (depends: all)
@@ -266,9 +266,9 @@ After each module is complete:
 | y-tools | 80% | 90% |
 | y-runtime | 75% | 85% |
 | y-context | 80% | 90% |
-| y-agent-core | 75% | 85% |
+| y-agent (orchestrator) | 75% | 85% |
 | y-guardrails | 80% | 90% |
-| y-multi-agent | 75% | 85% |
+| y-agent | 75% | 85% |
 | y-skills | 80% | 90% |
 | y-knowledge | 75% | 85% |
 | y-cli | 70% | 80% |
@@ -288,7 +288,7 @@ After each module is complete:
 | Context assembly (7 middleware) | P95 < 50ms | y-context |
 | Provider routing (10 providers) | P95 < 1ms | y-provider |
 | JSON Schema validation | P95 < 1ms | y-tools |
-| DAG topological sort (50 nodes) | P95 < 1ms | y-agent-core |
+| DAG topological sort (50 nodes) | P95 < 1ms | y-agent (orchestrator) |
 | Native execution (echo) | P95 < 50ms | y-runtime |
 | Event bus dispatch (1000 events) | P95 < 10ms | y-hooks |
 

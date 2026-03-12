@@ -15,9 +15,11 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 y-storage = { workspace = true }
+y-test-utils = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
 

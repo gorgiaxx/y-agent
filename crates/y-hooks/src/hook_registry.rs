@@ -1,6 +1,7 @@
 //! Hook handler registration and dispatch.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -10,12 +11,44 @@ use y_core::hook::{HookData, HookHandler, HookPoint};
 
 use crate::error::HookError;
 
+/// Metrics counters for hook dispatch.
+#[derive(Debug, Default)]
+pub struct HookRegistryMetrics {
+    /// Total dispatch calls.
+    pub dispatches: AtomicU64,
+    /// Total handler invocations across all dispatches.
+    pub handler_invocations: AtomicU64,
+    /// Total handler errors (panics).
+    pub handler_errors: AtomicU64,
+}
+
+impl HookRegistryMetrics {
+    /// Get a snapshot of all metrics.
+    pub fn snapshot(&self) -> HookRegistryMetricsSnapshot {
+        HookRegistryMetricsSnapshot {
+            dispatches: self.dispatches.load(Ordering::Relaxed),
+            handler_invocations: self.handler_invocations.load(Ordering::Relaxed),
+            handler_errors: self.handler_errors.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Point-in-time snapshot of hook registry metrics.
+#[derive(Debug, Clone)]
+pub struct HookRegistryMetricsSnapshot {
+    pub dispatches: u64,
+    pub handler_invocations: u64,
+    pub handler_errors: u64,
+}
+
 /// Registry for lifecycle hook handlers.
 ///
 /// Handlers are read-only observers dispatched by hook point.
+/// Handlers are dispatched in registration order within each hook point.
 /// Handler panics are caught and logged; they do not propagate.
 pub struct HookRegistry {
     handlers: RwLock<HashMap<HookPoint, Vec<Arc<dyn HookHandler>>>>,
+    metrics: HookRegistryMetrics,
 }
 
 impl HookRegistry {
@@ -23,13 +56,14 @@ impl HookRegistry {
     pub fn new() -> Self {
         Self {
             handlers: RwLock::new(HashMap::new()),
+            metrics: HookRegistryMetrics::default(),
         }
     }
 
     /// Register a hook handler.
     ///
     /// The handler will be invoked for all hook points returned by
-    /// `handler.hook_points()`.
+    /// `handler.hook_points()`. Handlers are dispatched in registration order.
     pub async fn register(&self, handler: Arc<dyn HookHandler>) -> Result<(), HookError> {
         let points = handler.hook_points();
         if points.is_empty() {
@@ -46,12 +80,25 @@ impl HookRegistry {
         Ok(())
     }
 
+    /// Unregister all handlers for a given hook point.
+    ///
+    /// Returns the number of handlers removed.
+    pub async fn unregister_all(&self, point: HookPoint) -> usize {
+        let mut map = self.handlers.write().await;
+        match map.remove(&point) {
+            Some(handlers) => handlers.len(),
+            None => 0,
+        }
+    }
+
     /// Dispatch a hook event to all registered handlers for that hook point.
     ///
     /// Handler panics are caught and logged. Dispatch continues even if
     /// individual handlers fail.
     #[instrument(skip(self, data), fields(hook_point = %data.hook_point))]
     pub async fn dispatch(&self, data: &HookData) {
+        self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
+
         let map = self.handlers.read().await;
         let handlers = match map.get(&data.hook_point) {
             Some(h) => h.clone(),
@@ -61,12 +108,18 @@ impl HookRegistry {
 
         let hook_point = data.hook_point;
         for handler in handlers {
+            self.metrics
+                .handler_invocations
+                .fetch_add(1, Ordering::Relaxed);
             let data_clone = data.clone();
             let handle = tokio::spawn(async move {
                 handler.handle(&data_clone).await;
             });
 
             if let Err(e) = handle.await {
+                self.metrics
+                    .handler_errors
+                    .fetch_add(1, Ordering::Relaxed);
                 tracing::error!(
                     hook_point = %hook_point,
                     error = %e,
@@ -86,6 +139,11 @@ impl HookRegistry {
     pub async fn total_registrations(&self) -> usize {
         let map = self.handlers.read().await;
         map.values().map(Vec::len).sum()
+    }
+
+    /// Get the metrics counters.
+    pub fn metrics(&self) -> &HookRegistryMetrics {
+        &self.metrics
     }
 }
 

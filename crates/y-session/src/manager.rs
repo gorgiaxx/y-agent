@@ -1,9 +1,10 @@
-//! SessionManager — high-level facade for session lifecycle management.
+//! `SessionManager` — high-level facade for session lifecycle management.
 
 use std::sync::Arc;
 
 use tracing::instrument;
 
+use y_core::agent::{AgentDelegator, ContextStrategyHint};
 use y_core::session::{
     CreateSessionOptions, SessionFilter, SessionNode, SessionState, SessionStore, TranscriptStore,
 };
@@ -205,6 +206,66 @@ impl SessionManager {
         Ok(self.session_store.ancestors(session_id).await?)
     }
 
+    /// Update only the session title.
+    #[instrument(skip(self), fields(session_id = %id))]
+    pub async fn update_title(
+        &self,
+        id: &SessionId,
+        title: String,
+    ) -> Result<(), SessionManagerError> {
+        self.session_store.set_title(id, title).await?;
+        Ok(())
+    }
+
+    /// Generate a session title by summarizing the conversation via agent delegation.
+    ///
+    /// Delegates to the `title-generator` built-in agent defined in
+    /// `config/agents/title-generator.toml`. The agent's system prompt,
+    /// model preferences, and temperature are managed externally.
+    #[instrument(skip(self, delegator, messages), fields(session_id = %session_id))]
+    pub async fn generate_title(
+        &self,
+        delegator: &dyn AgentDelegator,
+        session_id: &SessionId,
+        messages: &[Message],
+    ) -> Result<String, SessionManagerError> {
+        // Take at most the last 6 messages to keep the input compact.
+        let context: Vec<_> = messages
+            .iter()
+            .rev()
+            .take(6)
+            .rev()
+            .map(|m| serde_json::json!({ "role": format!("{:?}", m.role), "content": m.content }))
+            .collect();
+
+        let input = serde_json::json!({ "messages": context });
+
+        let output = delegator
+            .delegate("title-generator", input, ContextStrategyHint::None)
+            .await
+            .map_err(|e| SessionManagerError::Other {
+                message: format!("title generation delegation failed: {e}"),
+            })?;
+
+        let title = output
+            .text
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+
+        if title.is_empty() {
+            return Err(SessionManagerError::Other {
+                message: "title-generator agent returned empty title".into(),
+            });
+        }
+
+        // Persist the generated title.
+        self.update_title(session_id, title.clone()).await?;
+
+        Ok(title)
+    }
+
     /// Check if a session should trigger compaction.
     pub fn should_compact(&self, session: &SessionNode) -> bool {
         session.token_count >= self.config.compaction_threshold
@@ -248,6 +309,7 @@ mod tests {
 
     fn test_msg(content: &str) -> Message {
         Message {
+            message_id: y_core::types::generate_message_id(),
             role: Role::User,
             content: content.into(),
             tool_call_id: None,

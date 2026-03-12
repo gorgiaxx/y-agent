@@ -1,0 +1,52 @@
+# Default tool taxonomy for y-agent.
+#
+# Hierarchical categories for lazy tool discovery via the `tool_search`
+# meta-tool. Only category names and descriptions are injected into the
+# system prompt (~100 tokens). Full tool schemas are loaded on demand.
+#
+# Reference: docs/standards/TOOL_CALL_PROTOCOL.md
+
+[categories.file]
+label = "File Management"
+description = "Read, write, list, search, and manage files"
+
+[categories.file.subcategories.read]
+label = "File Reading"
+description = "Read file contents"
+tools = ["file_read", "file_list"]
+
+[categories.file.subcategories.write]
+label = "File Writing"
+description = "Create or modify files"
+tools = ["file_write"]
+
+[categories.file.subcategories.search]
+label = "File Search"
+description = "Search across file contents"
+tools = ["file_search"]
+
+[categories.shell]
+label = "Shell"
+description = "Execute shell commands"
+tools = ["shell_exec"]
+
+[categories.network]
+label = "Network"
+description = "HTTP requests, DNS, connectivity"
+
+[categories.memory]
+label = "Memory & Knowledge"
+description = "Store, recall, and search knowledge"
+
+[categories.search]
+label = "Search & Retrieval"
+description = "Search and retrieve information"
+
+[categories.agent]
+label = "Agent & Workflow"
+description = "Delegate to sub-agents, manage workflows"
+
+[categories.meta]
+label = "Meta Tools"
+description = "Tool management tools"
+tools = ["tool_search"]

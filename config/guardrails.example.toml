@@ -1,0 +1,33 @@
+# ==============================================================================
+# y-agent — Guardrails & Safety Configuration
+# ==============================================================================
+
+# Global default permission for tools: "allow" | "notify" | "ask" | "deny"
+default_permission = "notify"
+
+# Whether tools marked as dangerous auto-escalate to "ask".
+dangerous_auto_ask = true
+
+# --- Per-tool Permission Overrides -------------------------------------------
+# Uncomment and customize as needed.
+
+# [tool_permissions]
+# "file_write" = "ask"
+# "shell_exec" = "deny"
+# "web_search" = "allow"
+
+# --- Loop Detection ----------------------------------------------------------
+
+[loop_guard]
+# max_iterations = 50
+# similarity_threshold = 0.95
+
+# --- Risk Scoring ------------------------------------------------------------
+
+[risk]
+# high_risk_threshold = 0.8
+
+# --- HITL Escalation ---------------------------------------------------------
+
+[hitl]
+# auto_approve_low_risk = true

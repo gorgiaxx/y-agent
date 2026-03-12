@@ -1,0 +1,12 @@
+# ==============================================================================
+# y-agent — Hook System Configuration (Middleware & Event Bus)
+# ==============================================================================
+
+# Per-middleware timeout in milliseconds.
+middleware_timeout_ms = 30000
+
+# Event bus channel capacity per subscriber.
+event_channel_capacity = 1024
+
+# Maximum number of event subscribers.
+max_subscribers = 64

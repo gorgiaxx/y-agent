@@ -1,4 +1,4 @@
-//! Provider pool implementation — the main ProviderPool trait impl.
+//! Provider pool implementation — the main `ProviderPool` trait impl.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +13,8 @@ use y_core::provider::{
 use y_core::types::ProviderId;
 
 use crate::config::ProviderPoolConfig;
-
+use crate::error::ProviderPoolError;
+use crate::error_classifier;
 
 use crate::freeze::FreezeManager;
 use crate::health::HealthChecker;
@@ -23,11 +24,13 @@ use crate::router::{RoutableProvider, TagBasedRouter};
 /// Concrete implementation of the `ProviderPool` trait.
 ///
 /// Manages a set of LLM providers with tag-based routing, freeze/thaw,
-/// per-provider concurrency limits, and metrics tracking.
+/// per-provider concurrency limits, global concurrency limit, and metrics tracking.
 pub struct ProviderPoolImpl {
     providers: Vec<ProviderEntry>,
     router: TagBasedRouter,
     health_checker: HealthChecker,
+    /// Global concurrency semaphore (across all providers).
+    global_semaphore: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 /// An entry in the pool combining provider, freeze state, semaphore, and metrics.
@@ -72,11 +75,96 @@ impl ProviderPoolImpl {
             })
             .collect();
 
+        let global_semaphore = config
+            .max_global_concurrency
+            .map(|limit| Arc::new(tokio::sync::Semaphore::new(limit)));
+
         Self {
             providers: entries,
-            router: TagBasedRouter::new(),
+            router: TagBasedRouter::with_strategy(config.selection_strategy),
             health_checker: HealthChecker::new(Duration::from_secs(10)),
+            global_semaphore,
         }
+    }
+
+    /// Create a new pool from a `ProviderPoolConfig`.
+    ///
+    /// Validates the config, resolves API keys and proxy URLs per provider,
+    /// constructs the appropriate provider backend for each entry, and
+    /// delegates to [`from_providers`](Self::from_providers).
+    pub fn from_config(config: &ProviderPoolConfig) -> Result<Self, ProviderPoolError> {
+        config.validate()?;
+
+        let mut providers: Vec<Arc<dyn LlmProvider>> = Vec::with_capacity(config.providers.len());
+
+        for cfg in &config.providers {
+            let api_key = cfg.resolve_api_key().unwrap_or_default();
+            let proxy_url = config.resolve_proxy_url(&cfg.id, &cfg.tags);
+
+            let provider: Arc<dyn LlmProvider> = match cfg.provider_type.as_str() {
+                "openai" | "openai_compatible" | "custom" => {
+                    Arc::new(crate::providers::openai::OpenAiProvider::new(
+                        &cfg.id,
+                        &cfg.model,
+                        api_key,
+                        cfg.base_url.clone(),
+                        proxy_url,
+                        cfg.tags.clone(),
+                        cfg.max_concurrency,
+                        cfg.context_window,
+                    ))
+                }
+                "anthropic" => Arc::new(crate::providers::anthropic::AnthropicProvider::new(
+                    &cfg.id,
+                    &cfg.model,
+                    api_key,
+                    cfg.base_url.clone(),
+                    proxy_url,
+                    cfg.tags.clone(),
+                    cfg.max_concurrency,
+                    cfg.context_window,
+                )),
+                "gemini" => Arc::new(crate::providers::gemini::GeminiProvider::new(
+                    &cfg.id,
+                    &cfg.model,
+                    api_key,
+                    cfg.base_url.clone(),
+                    proxy_url,
+                    cfg.tags.clone(),
+                    cfg.max_concurrency,
+                    cfg.context_window,
+                )),
+                "ollama" => Arc::new(crate::providers::ollama::OllamaProvider::new(
+                    &cfg.id,
+                    &cfg.model,
+                    api_key,
+                    cfg.base_url.clone(),
+                    proxy_url,
+                    cfg.tags.clone(),
+                    cfg.max_concurrency,
+                    cfg.context_window,
+                )),
+                "azure" => Arc::new(crate::providers::azure::AzureOpenAiProvider::new(
+                    &cfg.id,
+                    &cfg.model,
+                    api_key,
+                    cfg.base_url.clone(),
+                    proxy_url,
+                    cfg.tags.clone(),
+                    cfg.max_concurrency,
+                    cfg.context_window,
+                )),
+                unknown => {
+                    return Err(ProviderPoolError::Config {
+                        message: format!("unknown provider_type: \"{unknown}\""),
+                    });
+                }
+            };
+
+            providers.push(provider);
+        }
+
+        Ok(Self::from_providers(providers, config))
     }
 
     /// Build the routable providers list for the router.
@@ -101,8 +189,17 @@ impl ProviderPoolImpl {
 
     /// Get metrics for a specific provider.
     pub fn provider_metrics(&self, provider_id: &ProviderId) -> Option<SharedMetrics> {
-        self.find_entry(provider_id)
-            .map(|e| Arc::clone(&e.metrics))
+        self.find_entry(provider_id).map(|e| Arc::clone(&e.metrics))
+    }
+
+    /// Return metadata for all registered providers.
+    ///
+    /// Used by the TUI to query context window sizes and model names.
+    pub fn list_metadata(&self) -> Vec<y_core::provider::ProviderMetadata> {
+        self.providers
+            .iter()
+            .map(|e| e.provider.metadata().clone())
+            .collect()
     }
 }
 
@@ -118,7 +215,16 @@ impl ProviderPool for ProviderPoolImpl {
         let idx = self.router.select(&routable, route)?;
         let entry = &self.providers[idx];
 
-        // Acquire semaphore permit for concurrency control.
+        // Acquire global semaphore permit if configured.
+        let _global_permit = if let Some(ref sem) = self.global_semaphore {
+            Some(sem.acquire().await.map_err(|_| ProviderError::Other {
+                message: "global semaphore closed".into(),
+            })?)
+        } else {
+            None
+        };
+
+        // Acquire per-provider semaphore permit for concurrency control.
         let _permit = entry
             .semaphore
             .acquire()
@@ -131,9 +237,13 @@ impl ProviderPool for ProviderPoolImpl {
 
         match &result {
             Ok(response) => {
-                entry
-                    .metrics
-                    .record_success(response.usage.input_tokens, response.usage.output_tokens);
+                let meta = entry.provider.metadata();
+                entry.metrics.record_success_with_cost(
+                    response.usage.input_tokens,
+                    response.usage.output_tokens,
+                    meta.cost_per_1k_input,
+                    meta.cost_per_1k_output,
+                );
             }
             Err(e) => {
                 entry.metrics.record_error();
@@ -154,6 +264,15 @@ impl ProviderPool for ProviderPoolImpl {
         let idx = self.router.select(&routable, route)?;
         let entry = &self.providers[idx];
 
+        // Acquire global semaphore permit if configured.
+        let _global_permit = if let Some(ref sem) = self.global_semaphore {
+            Some(sem.acquire().await.map_err(|_| ProviderError::Other {
+                message: "global semaphore closed".into(),
+            })?)
+        } else {
+            None
+        };
+
         let _permit = entry
             .semaphore
             .acquire()
@@ -172,45 +291,47 @@ impl ProviderPool for ProviderPoolImpl {
 
     fn report_error(&self, provider_id: &ProviderId, error: &ProviderError) {
         if let Some(entry) = self.find_entry(provider_id) {
-            use y_core::error::ErrorSeverity;
-            match error.severity() {
-                ErrorSeverity::Permanent => {
-                    entry
-                        .freeze_manager
-                        .freeze_permanent(format!("{error}"));
-                    tracing::warn!(
-                        provider_id = %provider_id,
-                        error = %error,
-                        "provider permanently frozen"
-                    );
-                }
-                ErrorSeverity::Transient => {
-                    if let ProviderError::RateLimited {
-                        retry_after_secs, ..
-                    } = error
-                    {
-                        entry.freeze_manager.freeze_with_retry_after(
-                            format!("{error}"),
-                            Duration::from_secs(*retry_after_secs),
-                        );
-                    } else {
-                        entry
-                            .freeze_manager
-                            .freeze(format!("{error}"), None);
-                    }
-                    tracing::info!(
-                        provider_id = %provider_id,
-                        error = %error,
-                        "provider frozen (transient error)"
-                    );
-                }
-                ErrorSeverity::UserActionRequired => {
-                    tracing::error!(
-                        provider_id = %provider_id,
-                        error = %error,
-                        "provider error requires user action"
-                    );
-                }
+            // Use the error classifier (P1-5) for freeze decisions.
+            let std_error = error_classifier::classify_provider_error(error);
+
+            if !std_error.should_freeze() {
+                tracing::debug!(
+                    provider_id = %provider_id,
+                    error = %error,
+                    classification = ?std_error,
+                    "error does not warrant provider freeze"
+                );
+                return;
+            }
+
+            if std_error.is_permanent() {
+                entry.freeze_manager.freeze_permanent(format!("{error}"));
+                tracing::warn!(
+                    provider_id = %provider_id,
+                    error = %error,
+                    classification = ?std_error,
+                    "provider permanently frozen"
+                );
+            } else if let Some(duration) = std_error.freeze_duration() {
+                entry
+                    .freeze_manager
+                    .freeze(format!("{error}"), Some(duration));
+                tracing::info!(
+                    provider_id = %provider_id,
+                    error = %error,
+                    classification = ?std_error,
+                    freeze_secs = duration.as_secs(),
+                    "provider frozen with error-type-specific duration"
+                );
+            } else {
+                // Fallback: adaptive freeze.
+                entry.freeze_manager.freeze(format!("{error}"), None);
+                tracing::info!(
+                    provider_id = %provider_id,
+                    error = %error,
+                    classification = ?std_error,
+                    "provider frozen (adaptive duration)"
+                );
             }
         }
     }
@@ -229,8 +350,7 @@ impl ProviderPool for ProviderPoolImpl {
                     frozen_since: None, // Instant doesn't convert directly to Timestamp
                     thaw_at: None,
                     freeze_reason: freeze_status.reason,
-                    active_requests: entry.max_concurrency
-                        - entry.semaphore.available_permits(),
+                    active_requests: entry.max_concurrency - entry.semaphore.available_permits(),
                     total_requests: metrics.total_requests,
                     total_errors: metrics.total_errors,
                 }
@@ -327,6 +447,8 @@ mod tests {
                     cache_write_tokens: None,
                 },
                 finish_reason: FinishReason::Stop,
+                raw_request: None,
+                raw_response: None,
             })
         }
 
@@ -345,15 +467,19 @@ mod tests {
     fn test_config() -> ProviderPoolConfig {
         ProviderPoolConfig {
             providers: vec![],
+            proxy: Default::default(),
             default_freeze_duration_secs: 30,
             max_freeze_duration_secs: 3600,
             health_check_interval_secs: 60,
+            selection_strategy: Default::default(),
+            max_global_concurrency: None,
         }
     }
 
     fn test_request() -> ChatRequest {
         ChatRequest {
             messages: vec![y_core::types::Message {
+                message_id: String::new(),
                 role: y_core::types::Role::User,
                 content: "test".into(),
                 tool_call_id: None,
@@ -364,7 +490,9 @@ mod tests {
             model: None,
             max_tokens: Some(100),
             temperature: None,
+            top_p: None,
             tools: vec![],
+            tool_calling_mode: ToolCallingMode::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
         }
@@ -386,7 +514,10 @@ mod tests {
         let _ = pool.chat_completion(&test_request(), &route).await;
         let after = pool.providers[0].semaphore.available_permits();
 
-        assert_eq!(before, after, "semaphore permits should be released after completion");
+        assert_eq!(
+            before, after,
+            "semaphore permits should be released after completion"
+        );
     }
 
     #[tokio::test]
@@ -405,7 +536,10 @@ mod tests {
         let _ = pool.chat_completion(&test_request(), &route).await;
         let after = pool.providers[0].semaphore.available_permits();
 
-        assert_eq!(before, after, "semaphore permits should be released even on error");
+        assert_eq!(
+            before, after,
+            "semaphore permits should be released even on error"
+        );
     }
 
     #[tokio::test]
@@ -449,7 +583,10 @@ mod tests {
         };
 
         let result = pool.chat_completion(&test_request(), &route).await;
-        assert!(matches!(result, Err(ProviderError::NoProviderAvailable { .. })));
+        assert!(matches!(
+            result,
+            Err(ProviderError::NoProviderAvailable { .. })
+        ));
     }
 
     #[tokio::test]
@@ -486,5 +623,169 @@ mod tests {
         assert_eq!(statuses.len(), 1);
         assert!(!statuses[0].is_frozen);
         assert_eq!(statuses[0].total_requests, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // from_config() tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_from_config_creates_providers() {
+        use crate::config::{ProviderConfig, ProxyEntry};
+
+        let config = ProviderPoolConfig {
+            providers: vec![
+                ProviderConfig {
+                    id: "openai-1".into(),
+                    provider_type: "openai".into(),
+                    model: "gpt-4o".into(),
+                    tags: vec!["general".into()],
+                    max_concurrency: 3,
+                    context_window: 128_000,
+                    cost_per_1k_input: 0.005,
+                    cost_per_1k_output: 0.015,
+                    api_key: Some("sk-test".into()),
+                    api_key_env: None,
+                    base_url: None,
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                },
+                ProviderConfig {
+                    id: "anthropic-1".into(),
+                    provider_type: "anthropic".into(),
+                    model: "claude-3-opus".into(),
+                    tags: vec!["reasoning".into()],
+                    max_concurrency: 3,
+                    context_window: 200_000,
+                    cost_per_1k_input: 0.015,
+                    cost_per_1k_output: 0.075,
+                    api_key: Some("sk-ant-test".into()),
+                    api_key_env: None,
+                    base_url: None,
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                },
+                ProviderConfig {
+                    id: "gemini-1".into(),
+                    provider_type: "gemini".into(),
+                    model: "gemini-2.0-flash".into(),
+                    tags: vec!["fast".into()],
+                    max_concurrency: 5,
+                    context_window: 1_000_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    api_key: Some("AIza-test".into()),
+                    api_key_env: None,
+                    base_url: None,
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                },
+                ProviderConfig {
+                    id: "ollama-local".into(),
+                    provider_type: "ollama".into(),
+                    model: "llama3.1:8b".into(),
+                    tags: vec!["local".into()],
+                    max_concurrency: 3,
+                    context_window: 32_768,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    api_key: None,
+                    api_key_env: None,
+                    base_url: None,
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                },
+                ProviderConfig {
+                    id: "azure-1".into(),
+                    provider_type: "azure".into(),
+                    model: "gpt-4o".into(),
+                    tags: vec!["cloud".into()],
+                    max_concurrency: 5,
+                    context_window: 128_000,
+                    cost_per_1k_input: 0.005,
+                    cost_per_1k_output: 0.015,
+                    api_key: Some("azure-key".into()),
+                    api_key_env: None,
+                    base_url: Some("https://res.openai.azure.com/openai/deployments/gpt-4o".into()),
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                },
+            ],
+            proxy: crate::config::ProxyConfig {
+                providers: {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert(
+                        "ollama-local".into(),
+                        ProxyEntry {
+                            url: None,
+                            enabled: false,
+                            auth_env: None,
+                        },
+                    );
+                    m
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let pool = ProviderPoolImpl::from_config(&config).expect("should create pool");
+        assert_eq!(pool.providers.len(), 5);
+
+        // Verify provider types via metadata.
+        let ids: Vec<String> = pool
+            .providers
+            .iter()
+            .map(|e| e.provider.metadata().id.to_string())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "openai-1",
+                "anthropic-1",
+                "gemini-1",
+                "ollama-local",
+                "azure-1"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_from_config_empty_fails() {
+        let config = ProviderPoolConfig::default();
+        let result = ProviderPoolImpl::from_config(&config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_config_unknown_type_fails() {
+        use crate::config::ProviderConfig;
+        let config = ProviderPoolConfig {
+            providers: vec![ProviderConfig {
+                id: "unknown-1".into(),
+                provider_type: "supermodel".into(),
+                model: "best".into(),
+                tags: vec![],
+                max_concurrency: 5,
+                context_window: 128_000,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                api_key: None,
+                api_key_env: None,
+                base_url: None,
+                temperature: None,
+                top_p: None,
+                tool_calling_mode: None,
+            }],
+            ..Default::default()
+        };
+
+        let err = ProviderPoolImpl::from_config(&config).unwrap_err();
+        assert!(err.to_string().contains("supermodel"));
     }
 }

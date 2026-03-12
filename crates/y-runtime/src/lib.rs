@@ -16,21 +16,37 @@
 //!
 //! Tools declare their capability requirements; the runtime enforces them.
 //! Tools never handle their own security — that is always the runtime's job.
+//!
+//! # Observability
+//!
+//! - [`AuditTrail`]: Structured, append-only log of all runtime operations
+//! - [`ResourceMonitor`]: Tracks CPU, memory, disk, tasks with threshold alerts
 
+pub mod audit;
 pub mod capability;
 pub mod cleanup;
 pub mod config;
 pub mod docker;
 pub mod error;
+pub mod image_whitelist;
+pub mod integration;
 pub mod manager;
 pub mod native;
+pub mod resource_monitor;
+pub mod security_policy;
 pub mod ssh;
 
 // Re-export primary types.
+pub use audit::{AuditEntry, AuditEventType, AuditOutcome, AuditTrail};
 pub use capability::CapabilityChecker;
 pub use config::RuntimeConfig;
 pub use docker::DockerRuntime;
 pub use error::RuntimeModuleError;
+pub use image_whitelist::{ImageWhitelist, WhitelistEntry};
 pub use manager::RuntimeManager;
 pub use native::NativeRuntime;
+pub use resource_monitor::{
+    ResourceMonitor, ResourceSnapshot, ResourceThresholds, ResourceViolation,
+};
+pub use security_policy::{SecurityPolicy, SecurityProfile};
 pub use ssh::SshRuntime;

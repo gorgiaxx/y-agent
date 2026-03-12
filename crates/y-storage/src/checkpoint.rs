@@ -1,4 +1,4 @@
-//! SQLite-backed CheckpointStorage implementation.
+//! SQLite-backed `CheckpointStorage` implementation.
 
 use async_trait::async_trait;
 use sqlx::SqlitePool;
@@ -340,13 +340,9 @@ impl CheckpointRow {
                 message: format!("parse versions_seen: {e}"),
             })?;
 
-        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now());
+        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
-        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now());
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
         Ok(WorkflowCheckpoint {
             workflow_id: WorkflowId::from_string(self.workflow_id),

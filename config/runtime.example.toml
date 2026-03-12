@@ -1,0 +1,43 @@
+# ==============================================================================
+# y-agent — Runtime & Security Configuration
+# ==============================================================================
+
+# Default execution backend: "docker" | "native" | "ssh"
+default_backend = "docker"
+
+# Whether shell execution is allowed.
+allow_shell = false
+
+# Whether host filesystem access is allowed.
+allow_host_access = false
+
+# Whether to allow pulling new container images at runtime.
+allow_image_pull = false
+
+# --- Resource Limits ---------------------------------------------------------
+
+# Default memory limit (bytes). 512 MB.
+default_memory_bytes = 536870912
+
+# Default CPU quota (1.0 = 1 core).
+default_cpu_quota = 1.0
+
+# Default execution timeout (e.g. "30s", "5m").
+default_timeout = "30s"
+
+# Maximum output size (bytes). 10 MB.
+default_max_output_bytes = 10485760
+
+# --- Image Whitelist ---------------------------------------------------------
+# Only these container images are allowed for tool execution.
+# Empty list = deny all dynamic images.
+
+image_whitelist = ["python:3.12-slim", "node:20-slim"]
+
+# --- Network & Filesystem Whitelist ------------------------------------------
+
+# Whitelisted external domains for network access from tools.
+allowed_domains = []
+
+# Whitelisted filesystem mount paths.
+allowed_mounts = []

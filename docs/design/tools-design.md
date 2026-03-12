@@ -61,11 +61,13 @@ AI agents interact with the outside world through tools: reading files, executin
 - Tool Lazy Loading: `ToolIndex` (name-only catalog), `tool_search` meta-tool (on-demand definition retrieval), `ToolActivationSet` (session-scoped activation tracking)
 - Dynamic Tool Lifecycle: agent-driven tool creation via `tool_create` / `tool_update` meta-tools, DynamicToolDefinition format, sandbox-by-default validation pipeline (see [agent-autonomy-design.md](agent-autonomy-design.md))
 
+- LLM tool call protocol: prompt-based tool calling format, XML-tag parsing, dual-mode (PromptBased/Native) support (see [TOOL_CALL_PROTOCOL.md](../standards/TOOL_CALL_PROTOCOL.md))
+- Hierarchical tool taxonomy: tree-structured tool discovery via multi-level categories (see [tool-search-design.md](tool-search-design.md))
+
 ### Out of Scope
 
 - Runtime isolation implementation (see [runtime-design.md](runtime-design.md))
 - Runtime-Tools integration details (see [runtime-tools-integration-design.md](runtime-tools-integration-design.md))
-- LLM tool call parsing and function calling format
 - Custom tool plugin SDK (deferred)
 - WASM tool runtime (deferred)
 

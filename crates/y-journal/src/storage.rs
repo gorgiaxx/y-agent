@@ -231,7 +231,7 @@ mod tests {
                 storage_strategy: StorageStrategy::Inline,
                 original_content: None,
                 original_mode: None,
-                created_at: i as i64,
+                created_at: i64::from(i),
                 rolled_back: false,
             });
         }

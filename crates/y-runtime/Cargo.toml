@@ -8,15 +8,24 @@ description = "Runtime: DockerRuntime, NativeRuntime, SshRuntime"
 [dependencies]
 y-core = { workspace = true }
 async-trait = { workspace = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+bollard = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+toml.workspace = true
+
+[features]
+sandbox_bwrap = []
+runtime_docker = ["bollard", "futures-util"]
+runtime_docker_integration_test = ["runtime_docker"]
 
 [lints]
 workspace = true

@@ -115,6 +115,14 @@ impl MiddlewareChain {
     pub fn middleware_names(&self) -> Vec<&str> {
         self.entries.iter().map(|e| e.middleware.name()).collect()
     }
+
+    /// Get a middleware by name (for diagnostics).
+    pub fn get_middleware(&self, name: &str) -> Option<&Arc<dyn Middleware>> {
+        self.entries
+            .iter()
+            .find(|e| e.middleware.name() == name)
+            .map(|e| &e.middleware)
+    }
 }
 
 impl std::fmt::Debug for MiddlewareChain {

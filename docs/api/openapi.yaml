@@ -1,0 +1,544 @@
+openapi: "3.1.0"
+info:
+  title: y-agent Web API
+  version: 0.1.0
+  description: |
+    RESTful API for y-agent — exposes the same business logic as CLI/TUI.
+    All endpoints return JSON. Errors follow RFC 7807 Problem Details.
+  contact:
+    name: y-agent team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+tags:
+  - name: System
+    description: Health checks and system status
+  - name: Sessions
+    description: Session lifecycle management
+  - name: Chat
+    description: Chat turn execution
+  - name: Agents
+    description: Agent registry queries
+  - name: Tools
+    description: Tool registry queries
+  - name: Diagnostics
+    description: Trace queries and health checks
+
+paths:
+  # ──────────────── System ────────────────
+  /health:
+    get:
+      operationId: healthCheck
+      tags: [System]
+      summary: Liveness probe
+      description: Returns 200 if the server is running. Suitable for k8s liveness probes.
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1/status:
+    get:
+      operationId: systemStatus
+      tags: [System]
+      summary: Full system status report
+      description: Returns provider, tool, runtime, and diagnostics status.
+      responses:
+        "200":
+          description: System status report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthReport"
+
+  # ──────────────── Sessions ────────────────
+  /api/v1/sessions:
+    get:
+      operationId: listSessions
+      tags: [Sessions]
+      summary: List all sessions
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [Active, Archived, All]
+          description: Filter sessions by state (default All)
+      responses:
+        "200":
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionInfo"
+    post:
+      operationId: createSession
+      tags: [Sessions]
+      summary: Create a new session
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+
+  /api/v1/sessions/{session_id}:
+    get:
+      operationId: getSession
+      tags: [Sessions]
+      summary: Get session details
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/sessions/{session_id}/archive:
+    post:
+      operationId: archiveSession
+      tags: [Sessions]
+      summary: Archive a session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/sessions/{session_id}/branch:
+    post:
+      operationId: branchSession
+      tags: [Sessions]
+      summary: Branch from an existing session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BranchRequest"
+      responses:
+        "201":
+          description: Branch created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/sessions/{session_id}/messages:
+    get:
+      operationId: listMessages
+      tags: [Sessions]
+      summary: List messages in a session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: last
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Return only the last N messages
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────── Chat ────────────────
+  /api/v1/chat:
+    post:
+      operationId: chatTurn
+      tags: [Chat]
+      summary: Execute a single chat turn
+      description: |
+        Sends a user message and returns the assistant response.
+        Handles tool calling internally. This is a synchronous (blocking)
+        endpoint — the response is returned after the full turn completes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Chat turn completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  # ──────────────── Agents ────────────────
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      tags: [Agents]
+      summary: List registered agent definitions
+      responses:
+        "200":
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentInfo"
+
+  # ──────────────── Tools ────────────────
+  /api/v1/tools:
+    get:
+      operationId: listTools
+      tags: [Tools]
+      summary: List registered tools
+      responses:
+        "200":
+          description: List of tools
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolInfo"
+
+  # ──────────────── Diagnostics ────────────────
+  /api/v1/diagnostics/traces:
+    get:
+      operationId: listTraces
+      tags: [Diagnostics]
+      summary: List recent traces
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: string
+          description: Filter by session ID
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 1000
+      responses:
+        "200":
+          description: List of traces
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TraceInfo"
+
+  /api/v1/diagnostics/traces/{trace_id}:
+    get:
+      operationId: getTrace
+      tags: [Diagnostics]
+      summary: Get a trace with observations
+      parameters:
+        - name: trace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Trace detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TraceDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+# ═══════════════════════════════════════════════
+# Components
+# ═══════════════════════════════════════════════
+components:
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+  schemas:
+    # ── Error ──
+    ApiError:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Error code (e.g. "not_found", "bad_request")
+        message:
+          type: string
+          description: Human-readable error message
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    # ── Health ──
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+
+    HealthReport:
+      type: object
+      required: [status, diagnostics]
+      properties:
+        status:
+          $ref: "#/components/schemas/StatusReport"
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticsHealth"
+
+    StatusReport:
+      type: object
+      properties:
+        version:
+          type: string
+        providers_registered:
+          type: integer
+        tools_registered:
+          type: integer
+        runtime_backend:
+          type: string
+        storage_status:
+          type: string
+
+    DiagnosticsHealth:
+      type: object
+      properties:
+        trace_store_ok:
+          type: boolean
+        recent_trace_count:
+          type: integer
+        active_providers:
+          type: integer
+        frozen_providers:
+          type: integer
+        pg_feature_enabled:
+          type: boolean
+
+    # ── Session ──
+    SessionInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        state:
+          type: string
+        session_type:
+          type: string
+        title:
+          type: string
+          nullable: true
+        message_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          nullable: true
+
+    BranchRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          nullable: true
+
+    # ── Message ──
+    Message:
+      type: object
+      properties:
+        message_id:
+          type: string
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          type: string
+        tool_call_id:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+    # ── Chat ──
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: User message content
+        session_id:
+          type: string
+          nullable: true
+          description: Session ID to continue (auto-creates if omitted)
+
+    ChatResponse:
+      type: object
+      required: [content, model, session_id]
+      properties:
+        content:
+          type: string
+          description: Assistant response text
+        model:
+          type: string
+        session_id:
+          type: string
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        cost_usd:
+          type: number
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCallRecord"
+        iterations:
+          type: integer
+
+    ToolCallRecord:
+      type: object
+      properties:
+        name:
+          type: string
+        success:
+          type: boolean
+        duration_ms:
+          type: integer
+        result_content:
+          type: string
+
+    # ── Agent ──
+    AgentInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mode:
+          type: string
+        description:
+          type: string
+
+    # ── Tool ──
+    ToolInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+
+    # ── Diagnostics ──
+    TraceInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        total_cost_usd:
+          type: number
+        total_input_tokens:
+          type: integer
+        total_output_tokens:
+          type: integer
+        total_duration_ms:
+          type: integer
+          nullable: true
+
+    TraceDetail:
+      type: object
+      properties:
+        trace:
+          $ref: "#/components/schemas/TraceInfo"
+        observations:
+          type: array
+          items:
+            type: object

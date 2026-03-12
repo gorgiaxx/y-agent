@@ -1,0 +1,46 @@
+# ==============================================================================
+# y-agent — Tool Registry Configuration
+# ==============================================================================
+
+# Maximum number of active (fully-loaded) tools per session.
+max_active = 20
+
+# Maximum search results for tool_search.
+search_limit = 10
+
+# Whether agents can create tools dynamically at runtime.
+allow_dynamic_tools = false
+
+# ==============================================================================
+# MCP Server Configuration
+#
+# Each [[mcp_servers]] entry defines a Model Context Protocol server.
+# Tools from MCP servers are automatically discovered at startup and
+# registered with the naming convention: mcp_{server}_{tool}
+# ==============================================================================
+
+# --- Filesystem MCP Server (stdio transport) --------------------------------
+
+# [[mcp_servers]]
+# name = "filesystem"
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+# enabled = true
+
+# --- GitHub MCP Server (stdio transport) ------------------------------------
+
+# [[mcp_servers]]
+# name = "github"
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# enabled = true
+
+# --- Custom HTTP MCP Server ------------------------------------------------
+
+# [[mcp_servers]]
+# name = "custom"
+# transport = "http"
+# url = "http://localhost:3000"
+# enabled = true

@@ -6,9 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use y_core::tool::{
-    Tool, ToolCategory, ToolDefinition, ToolError, ToolIndexEntry, ToolRegistry,
-};
+use y_core::tool::{Tool, ToolCategory, ToolDefinition, ToolError, ToolIndexEntry, ToolRegistry};
 use y_core::types::ToolName;
 
 use crate::config::ToolRegistryConfig;
@@ -63,7 +61,9 @@ impl ToolRegistryImpl {
 
         inner.index.add(&definition);
         inner.tools.insert(definition.name.clone(), tool);
-        inner.definitions.insert(definition.name.clone(), definition);
+        inner
+            .definitions
+            .insert(definition.name.clone(), definition);
         Ok(())
     }
 
@@ -113,6 +113,17 @@ impl ToolRegistryImpl {
     pub async fn is_empty(&self) -> bool {
         self.inner.read().await.tools.is_empty()
     }
+
+    /// Get all registered tool definitions.
+    pub async fn get_all_definitions(&self) -> Vec<ToolDefinition> {
+        self.inner
+            .read()
+            .await
+            .definitions
+            .values()
+            .cloned()
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -147,7 +158,9 @@ impl ToolRegistry for ToolRegistryImpl {
             });
         }
         inner.index.add(&definition);
-        inner.definitions.insert(definition.name.clone(), definition);
+        inner
+            .definitions
+            .insert(definition.name.clone(), definition);
         Ok(())
     }
 
@@ -229,7 +242,10 @@ mod tests {
         let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
         let (tool, def) = make_tool("file_read");
         reg.register_tool(tool, def).await.unwrap();
-        assert!(reg.get_tool(&ToolName::from_string("file_read")).await.is_some());
+        assert!(reg
+            .get_tool(&ToolName::from_string("file_read"))
+            .await
+            .is_some());
         assert_eq!(reg.len().await, 1);
     }
 
@@ -251,7 +267,10 @@ mod tests {
         ToolRegistry::unregister(&reg, &ToolName::from_string("file_read"))
             .await
             .unwrap();
-        assert!(reg.get_tool(&ToolName::from_string("file_read")).await.is_none());
+        assert!(reg
+            .get_tool(&ToolName::from_string("file_read"))
+            .await
+            .is_none());
         assert_eq!(reg.len().await, 0);
     }
 
@@ -264,7 +283,10 @@ mod tests {
         }
         let results = reg.search_tools("file", None).await;
         assert_eq!(results.len(), 2);
-        let names: Vec<String> = results.iter().map(|r| r.name.as_str().to_string()).collect();
+        let names: Vec<String> = results
+            .iter()
+            .map(|r| r.name.as_str().to_string())
+            .collect();
         assert!(names.contains(&"file_read".to_string()));
         assert!(names.contains(&"file_write".to_string()));
     }

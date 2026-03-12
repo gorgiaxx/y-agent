@@ -43,10 +43,7 @@ pub struct RuntimeConfig {
     pub default_cpu_quota: f64,
 
     /// Default execution timeout.
-    #[serde(
-        default = "default_timeout",
-        with = "humantime_serde_compat"
-    )]
+    #[serde(default = "default_timeout", with = "humantime_serde_compat")]
     pub default_timeout: Duration,
 
     /// Maximum output size in bytes (10 MB).
@@ -56,6 +53,10 @@ pub struct RuntimeConfig {
     /// Whether to allow pulling new container images.
     #[serde(default)]
     pub allow_image_pull: bool,
+
+    /// Allowed working directory paths for native execution (empty = allow all).
+    #[serde(default)]
+    pub allowed_paths: Vec<String>,
 }
 
 fn default_backend() -> RuntimeBackend {
@@ -92,29 +93,122 @@ impl Default for RuntimeConfig {
             default_timeout: default_timeout(),
             default_max_output_bytes: default_max_output(),
             allow_image_pull: false,
+            allowed_paths: vec![],
         }
     }
 }
 
-/// Helper module for Duration serialization (seconds as u64).
+/// Helper module for Duration serialization.
+///
+/// Accepts both human-readable strings ("30s", "5m", "1h30m") and plain
+/// integer seconds (30) on deserialization. Serializes as a human-readable
+/// string (e.g. "30s").
 mod humantime_serde_compat {
+    use std::fmt;
     use std::time::Duration;
 
-    use serde::{self, Deserialize, Deserializer, Serializer};
+    use serde::{self, de, Deserializer, Serializer};
 
     pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_u64(duration.as_secs())
+        // Emit human-readable string for config roundtrip.
+        let secs = duration.as_secs();
+        if secs % 3600 == 0 && secs > 0 {
+            serializer.serialize_str(&format!("{}h", secs / 3600))
+        } else if secs % 60 == 0 && secs > 0 {
+            serializer.serialize_str(&format!("{}m", secs / 60))
+        } else {
+            serializer.serialize_str(&format!("{secs}s"))
+        }
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let secs = u64::deserialize(deserializer)?;
-        Ok(Duration::from_secs(secs))
+        struct DurationVisitor;
+
+        impl de::Visitor<'_> for DurationVisitor {
+            type Value = Duration;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a duration string (e.g. \"30s\", \"5m\", \"1h\") or integer seconds")
+            }
+
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Duration, E> {
+                Ok(Duration::from_secs(v))
+            }
+
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Duration, E> {
+                if v < 0 {
+                    return Err(E::custom("duration cannot be negative"));
+                }
+                Ok(Duration::from_secs(v as u64))
+            }
+
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Duration, E> {
+                parse_duration(v).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_any(DurationVisitor)
+    }
+
+    /// Parse a simple human-readable duration string.
+    ///
+    /// Supported formats: `"30s"`, `"5m"`, `"1h"`, `"1h30m"`, `"300"` (bare
+    /// seconds). Each segment is a number followed by a unit suffix
+    /// (`h`/`m`/`s`). A bare number without suffix is treated as seconds.
+    fn parse_duration(s: &str) -> Result<Duration, String> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err("empty duration string".into());
+        }
+
+        // Bare integer (no suffix) → seconds.
+        if let Ok(secs) = s.parse::<u64>() {
+            return Ok(Duration::from_secs(secs));
+        }
+
+        let mut total_secs: u64 = 0;
+        let mut chars = s.chars().peekable();
+
+        while chars.peek().is_some() {
+            // Accumulate digits.
+            let mut num_str = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_digit() {
+                    num_str.push(c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+
+            if num_str.is_empty() {
+                return Err(format!("expected a number in duration: \"{s}\""));
+            }
+
+            let n: u64 = num_str
+                .parse()
+                .map_err(|_| format!("invalid number in duration: \"{num_str}\""))?;
+
+            // Read unit suffix.
+            match chars.next() {
+                Some('h') => total_secs += n * 3600,
+                Some('m') => total_secs += n * 60,
+                Some('s') => total_secs += n,
+                Some(c) => return Err(format!("unknown duration unit '{c}' in \"{s}\"")),
+                None => {
+                    // Trailing bare number — treat as seconds.
+                    total_secs += n;
+                }
+            }
+        }
+
+        Ok(Duration::from_secs(total_secs))
     }
 }
 
@@ -147,5 +241,49 @@ mod tests {
         assert_eq!(deserialized.default_backend, RuntimeBackend::Docker);
         assert!(deserialized.image_whitelist.contains("python:3.11"));
         assert!(deserialized.allow_shell);
+    }
+
+    #[test]
+    fn test_toml_duration_string() {
+        let toml_str = r#"
+default_timeout = "30s"
+"#;
+        let config: RuntimeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_toml_duration_integer() {
+        let toml_str = r"
+default_timeout = 60
+";
+        let config: RuntimeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_toml_duration_minutes() {
+        let toml_str = r#"
+default_timeout = "5m"
+"#;
+        let config: RuntimeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_timeout, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_toml_duration_compound() {
+        let toml_str = r#"
+default_timeout = "1h30m"
+"#;
+        let config: RuntimeConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_timeout, Duration::from_secs(5400));
+    }
+
+    #[test]
+    fn test_duration_parse_invalid() {
+        let toml_str = r#"
+default_timeout = "abc"
+"#;
+        assert!(toml::from_str::<RuntimeConfig>(toml_str).is_err());
     }
 }

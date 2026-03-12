@@ -29,6 +29,9 @@ pub enum StorageError {
     #[error("pool exhausted: {message}")]
     PoolExhausted { message: String },
 
+    #[error("connection error: {message}")]
+    Connection { message: String },
+
     #[error("{message}")]
     Other { message: String },
 }
@@ -37,7 +40,7 @@ impl ClassifiedError for StorageError {
     fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Self::Database { .. } | Self::PoolExhausted { .. }
+            Self::Database { .. } | Self::PoolExhausted { .. } | Self::Connection { .. }
         )
     }
 
@@ -51,13 +54,16 @@ impl ClassifiedError for StorageError {
             Self::TranscriptIo { .. } => "STORAGE_TRANSCRIPT_IO",
             Self::StaleCheckpoint { .. } => "STORAGE_STALE_CHECKPOINT",
             Self::PoolExhausted { .. } => "STORAGE_POOL_EXHAUSTED",
+            Self::Connection { .. } => "STORAGE_CONNECTION_ERROR",
             Self::Other { .. } => "STORAGE_OTHER",
         }
     }
 
     fn severity(&self) -> ErrorSeverity {
         match self {
-            Self::Database { .. } | Self::PoolExhausted { .. } => ErrorSeverity::Transient,
+            Self::Database { .. } | Self::PoolExhausted { .. } | Self::Connection { .. } => {
+                ErrorSeverity::Transient
+            }
             Self::Config { .. } => ErrorSeverity::UserActionRequired,
             _ => ErrorSeverity::Permanent,
         }

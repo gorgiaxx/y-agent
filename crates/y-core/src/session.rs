@@ -28,8 +28,16 @@ pub struct SessionNode {
     /// Agent that owns this session (if any).
     pub agent_id: Option<AgentId>,
     pub title: Option<String>,
+    /// Channel identifier (e.g., "cli", "tui", "api").
+    pub channel: Option<String>,
+    /// User-defined label for categorization.
+    pub label: Option<String>,
     pub token_count: u32,
     pub message_count: u32,
+    /// When the last compaction was performed.
+    pub last_compaction: Option<Timestamp>,
+    /// Number of compactions performed on this session.
+    pub compaction_count: u32,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -139,6 +147,9 @@ pub trait SessionStore: Send + Sync {
 
     /// Get the full ancestor path from root to this session.
     async fn ancestors(&self, id: &SessionId) -> Result<Vec<SessionNode>, SessionError>;
+
+    /// Update only the session title.
+    async fn set_title(&self, id: &SessionId, title: String) -> Result<(), SessionError>;
 }
 
 /// Read/write interface for session message transcripts (JSONL).
@@ -159,4 +170,64 @@ pub trait TranscriptStore: Send + Sync {
 
     /// Count messages in a session transcript.
     async fn message_count(&self, session_id: &SessionId) -> Result<usize, SessionError>;
+
+    /// Truncate the transcript, keeping only the first `keep_count` messages.
+    /// Returns the number of messages removed.
+    async fn truncate(
+        &self,
+        session_id: &SessionId,
+        keep_count: usize,
+    ) -> Result<usize, SessionError>;
 }
+
+// ---------------------------------------------------------------------------
+// Chat checkpoint types
+// ---------------------------------------------------------------------------
+
+/// A checkpoint record linking a chat turn to a File Journal scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatCheckpoint {
+    /// Unique checkpoint identifier.
+    pub checkpoint_id: String,
+    /// Session this checkpoint belongs to.
+    pub session_id: SessionId,
+    /// Turn number (1-indexed, incremented per user message).
+    pub turn_number: u32,
+    /// Number of messages in transcript BEFORE this turn started.
+    /// Truncating to this count restores the pre-turn state.
+    pub message_count_before: u32,
+    /// File Journal scope ID associated with this turn.
+    pub journal_scope_id: String,
+    /// Whether this checkpoint has been invalidated (by a rollback past it).
+    pub invalidated: bool,
+    /// Timestamp when checkpoint was created.
+    pub created_at: Timestamp,
+}
+
+/// Persistent storage for chat checkpoints.
+#[async_trait]
+pub trait ChatCheckpointStore: Send + Sync {
+    /// Save a checkpoint record.
+    async fn save(&self, checkpoint: &ChatCheckpoint) -> Result<(), SessionError>;
+
+    /// Load a checkpoint by ID.
+    async fn load(&self, checkpoint_id: &str) -> Result<ChatCheckpoint, SessionError>;
+
+    /// List checkpoints for a session, ordered by turn_number descending.
+    async fn list_by_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<ChatCheckpoint>, SessionError>;
+
+    /// Get the latest non-invalidated checkpoint for a session.
+    async fn latest(&self, session_id: &SessionId)
+        -> Result<Option<ChatCheckpoint>, SessionError>;
+
+    /// Invalidate all checkpoints after a given turn number.
+    async fn invalidate_after(
+        &self,
+        session_id: &SessionId,
+        turn_number: u32,
+    ) -> Result<u32, SessionError>;
+}
+

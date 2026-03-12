@@ -4,7 +4,7 @@ members = [
     "crates/y-core",
     "crates/y-provider",
     "crates/y-session",
-    "crates/y-agent-core",
+
     "crates/y-context",
     "crates/y-hooks",
     "crates/y-tools",
@@ -14,13 +14,17 @@ members = [
     "crates/y-storage",
     "crates/y-runtime",
     "crates/y-scheduler",
-    "crates/y-multi-agent",
+
+    "crates/y-agent",
     "crates/y-guardrails",
     "crates/y-knowledge",
     "crates/y-journal",
     "crates/y-diagnostics",
+    "crates/y-service",
+    "crates/y-web",
     "crates/y-cli",
     "crates/y-test-utils",
+    "crates/y-gui/src-tauri",
 ]
 
 [workspace.package]
@@ -47,48 +51,72 @@ anyhow = "1"
 # Logging / Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 
 # Identifiers
 uuid = { version = "1", features = ["v4", "serde"] }
 
+# Hashing
+sha2 = "0.10"
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+croner = "2"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "uuid", "chrono", "json"] }
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "sqlite",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "socks"] }
+
+# Web API
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Docker
+bollard = "0.18"
+futures-util = "0.3"
 
 # JSON Schema validation
 jsonschema = "0.28"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
+criterion = { version = "0.5", features = ["async_tokio"] }
 
-# Testing
-mockall = "0.13"
+# TUI
+ratatui = "0.28"
+crossterm = "0.28"
+tui-textarea = "0.6"
+unicode-width = "0.2"
 
 # Internal crates
 y-core = { path = "crates/y-core" }
 y-provider = { path = "crates/y-provider" }
 y-session = { path = "crates/y-session" }
-y-agent-core = { path = "crates/y-agent-core" }
+
 y-context = { path = "crates/y-context" }
 y-hooks = { path = "crates/y-hooks" }
 y-tools = { path = "crates/y-tools" }
-y-mcp = { path = "crates/y-mcp" }
-y-skills = { path = "crates/y-skills" }
-y-prompt = { path = "crates/y-prompt" }
 y-storage = { path = "crates/y-storage" }
 y-runtime = { path = "crates/y-runtime" }
-y-scheduler = { path = "crates/y-scheduler" }
-y-multi-agent = { path = "crates/y-multi-agent" }
+
+y-agent = { path = "crates/y-agent" }
 y-guardrails = { path = "crates/y-guardrails" }
-y-knowledge = { path = "crates/y-knowledge" }
-y-journal = { path = "crates/y-journal" }
+y-skills = { path = "crates/y-skills" }
+y-prompt = { path = "crates/y-prompt" }
 y-diagnostics = { path = "crates/y-diagnostics" }
-y-cli = { path = "crates/y-cli" }
+y-service = { path = "crates/y-service" }
+y-web = { path = "crates/y-web" }
 y-test-utils = { path = "crates/y-test-utils" }
 
 [workspace.lints.clippy]

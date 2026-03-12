@@ -2,16 +2,16 @@
 
 > Agent definition, delegation protocols, collaboration patterns, and concurrency management for y-agent
 
-**Version**: v0.4
+**Version**: v0.5
 **Created**: 2026-03-06
-**Updated**: 2026-03-07
+**Updated**: 2026-03-11
 **Status**: Draft
 
 ---
 
 ## TL;DR
 
-The Multi-Agent Collaboration framework elevates agents from simple orchestrator task executors to first-class entities with defined roles, specialized capabilities, and structured collaboration protocols. An **AgentDefinition** (TOML) declares an agent's role, model preferences, available tools, skills, system instructions, and behavioral **mode** (build, plan, explore, general). The framework supports four collaboration patterns: **Sequential Pipeline** (agents process in order), **Hierarchical Delegation** (a manager agent decomposes tasks and delegates to worker agents), **Peer-to-Peer** (agents communicate through shared channels), and **Micro-Agent Pipeline** (stateless step agents communicate through structured Working Memory slots; see [micro-agent-pipeline-design.md](micro-agent-pipeline-design.md)). A **Delegation Protocol** governs how agents request work from each other, share context, and collect results. An **AgentPool** manages agent instance lifecycle with configurable concurrency limits and resource isolation. Agents integrate with the existing Orchestrator as a first-class executor type (`AgentExecutor`), enabling workflows to mix LLM calls, tool executions, and agent delegations in a single DAG. This design draws on CrewAI's Crew/Manager model, DeerFlow's SubagentExecutor with concurrency limits, OpenCode's Task tool with agent modes, and Oh-My-OpenCode's multi-model category routing.
+The Multi-Agent Collaboration framework elevates agents from simple orchestrator task executors to first-class entities with defined roles, specialized capabilities, and structured collaboration protocols. An **AgentDefinition** (TOML) declares an agent's role, model preferences, available tools, skills, system instructions, and behavioral **mode** (build, plan, explore, general). The framework supports four collaboration patterns: **Sequential Pipeline** (agents process in order), **Hierarchical Delegation** (a manager agent decomposes tasks and delegates to worker agents), **Peer-to-Peer** (agents communicate through shared channels), and **Micro-Agent Pipeline** (stateless step agents communicate through structured Working Memory slots; see [micro-agent-pipeline-design.md](micro-agent-pipeline-design.md)). A **Delegation Protocol** governs how agents request work from each other, share context, and collect results. An **AgentPool** manages agent instance lifecycle with configurable concurrency limits and resource isolation. Agents integrate with the existing Orchestrator as a first-class executor type (`AgentExecutor`), enabling workflows to mix LLM calls, tool executions, and agent delegations in a single DAG. Crucially, the framework establishes an **Agent Autonomy Model**: every LLM reasoning operation in y-agent — including internal operations like context compaction, input enrichment, and capability-gap assessment — is expressed as an agent delegation through the unified framework. Agents can autonomously create and manage other agents at runtime via meta-tools (`agent_create`, `agent_update`, `agent_deactivate`), forming a hierarchical trust tree with permission inheritance and trust tiers. This makes the agent framework the **sole entry point** for all LLM reasoning, ensuring uniform observability, guardrails, and resource management. Full autonomy standard: [AGENT_AUTONOMY.md](../../docs/standards/AGENT_AUTONOMY.md). This design draws on CrewAI's Crew/Manager model, DeerFlow's SubagentExecutor with concurrency limits, OpenCode's Task tool with agent modes, and Oh-My-OpenCode's multi-model category routing.
 
 ---
 
@@ -256,6 +256,133 @@ The `agent-architect` agent is spawned by the CapabilityGapMiddleware when an ag
 **Dynamic Agent Definitions**: In addition to static (TOML-defined) and built-in agents, the AgentRegistry supports runtime-created **DynamicAgentDefinition** entries. These are created via `agent_create`, validated through a three-stage pipeline (schema, permissions, safety screening), and stored in the `DynamicAgentStore`. Dynamic agents follow a trust hierarchy (`built-in` > `user-defined` > `dynamic`) and inherit permissions from their creator via a snapshot model. See [agent-autonomy-design.md](agent-autonomy-design.md) for full details.
 
 Full agent definitions and resolution protocols: [agent-autonomy-design.md](agent-autonomy-design.md).
+
+### Agent Autonomy Model
+
+The multi-agent framework is not just a collaboration tool — it is the **sole mechanism** through which y-agent performs LLM reasoning. This is the Agent Autonomy Model: every LLM call, whether user-facing or internal, is an agent delegation.
+
+#### Autonomy Principle
+
+Traditional agent frameworks treat sub-agents as a user-facing feature while internal operations (compaction, enrichment, assessment) use ad-hoc LLM abstractions. y-agent rejects this split. The autonomy principle is:
+
+> **All LLM reasoning operations in y-agent are agent delegations through the AgentPool.** No module may bypass the multi-agent framework to call the ProviderPool directly.
+
+This ensures:
+- **Uniform observability**: Every LLM call — including a compaction summary — generates trace spans, token metrics, and cost records
+- **Uniform guardrails**: The LLM middleware chain (rate limiting, content filtering, taint tracking) applies to all reasoning
+- **Uniform resource management**: AgentPool concurrency limits manage all LLM usage, preventing internal operations from starving user-facing agents
+- **Self-evolution readiness**: When agents manage their own sub-agents, the system can optimize, replace, or retire internal agents based on performance data
+
+#### Agent Trust Tree
+
+```mermaid
+flowchart TB
+    subgraph BuiltIn["Built-in Agents (Highest Trust)"]
+        SysAgents["System Sub-Agents"]
+        SelfGov["Autonomy Agents"]
+    end
+
+    subgraph UserDef["User-Defined Agents (Medium Trust)"]
+        UserAgents["Custom Agents (TOML)"]
+    end
+
+    subgraph Dynamic["Dynamic Agents (Lowest Trust)"]
+        DynAgents["Runtime-Created Agents"]
+    end
+
+    Root["Root Agent (User Session)"] --> SysAgents
+    Root --> SelfGov
+    Root --> UserAgents
+    SelfGov -->|"agent_create"| DynAgents
+    UserAgents -->|"task tool"| DynAgents
+
+    SysAgents --- CS["compaction-summarizer"]
+    SysAgents --- XS["context-summarizer"]
+    SysAgents --- TIA["task-intent-analyzer"]
+    SysAgents --- PE["pattern-extractor"]
+    SysAgents --- CA["capability-assessor"]
+
+    SelfGov --- TE["tool-engineer"]
+    SelfGov --- AA["agent-architect"]
+```
+
+**Diagram type rationale**: Flowchart chosen to show the trust hierarchy and autonomy relationships between agent categories.
+
+**Legend**:
+- **Built-in Agents**: Highest trust; compiled into binary or shipped as TOML. Divided into system sub-agents (internal operations) and autonomy agents (meta-capabilities).
+- **User-Defined Agents**: Medium trust; created by users via TOML configuration.
+- **Dynamic Agents**: Lowest trust; created at runtime by other agents via `agent_create`, subject to permission inheritance.
+- Arrows show delegation and creation relationships.
+
+#### Built-in System Agent Catalog
+
+These agents handle internal LLM reasoning tasks that were historically implemented as ad-hoc LLM calls within individual modules. Moving them to the agent framework ensures they receive full observability, guardrails, and resource management.
+
+| Agent | Owner Module | Purpose | Mode | Tools | Model Tier |
+|-------|-------------|---------|------|-------|------------|
+| `compaction-summarizer` | y-context | Summarize conversation history during compaction overflow recovery | explore | None | Fast/cheap |
+| `context-summarizer` | y-agent | Summarize parent conversation context for `Summary` context strategy in delegation | explore | None | Fast/cheap |
+| `title-generator` | y-session | Generate a concise session title from conversation messages | explore | None | Fast/cheap |
+| `task-intent-analyzer` | y-context | Analyze user input for ambiguity/incompleteness; propose clarifications (EnrichInput middleware) | plan | None | Balanced |
+| `tool-engineer` | y-agent | Create, modify, and refactor dynamic tools in response to tool capability gaps | build | `tool_create`, `tool_update`, `tool_search`, `file_read`, `file_write`, `shell_exec` | High-capability |
+| `agent-architect` | y-agent | Design and create sub-agent definitions in response to agent capability gaps | plan | `agent_create`, `agent_update`, `agent_deactivate`, `agent_search`, `tool_search`, `file_read` | High-capability |
+| `pattern-extractor` | y-skills | Extract improvement patterns from experience records for skill self-evolution | plan | `file_read` | High-capability |
+| `capability-assessor` | y-hooks | Assess tool/agent capability mismatch (LLM-assisted gap detection for `CapabilityMismatch` and `HardcodedConstraint`) | plan | `tool_search`, `agent_search` | Balanced |
+
+**Design rationale**: System sub-agents (summarizers, analyzers) use `explore` or `plan` mode with no tool access and fast/cheap models. This keeps their token cost minimal while still routing through the full agent framework for observability. Autonomy agents (`tool-engineer`, `agent-architect`) require higher-capability models and tool access because they produce artifacts.
+
+#### Cross-Module Invocation Protocol
+
+Modules in peer crates (e.g., `y-context`, `y-skills`) cannot depend on `y-agent` directly (crate dependency direction must be inward toward `y-core`). The invocation protocol uses a trait in `y-core`:
+
+```rust
+/// Defined in y-core — the interface for any module to request agent delegation.
+#[async_trait]
+pub trait AgentDelegator: Send + Sync {
+    /// Delegate a reasoning task to a named built-in agent.
+    ///
+    /// The caller provides the agent name and structured input data.
+    /// The agent controls its own prompt — the framework handles agent lookup,
+    /// prompt construction (from AgentDefinition + input data), instance creation,
+    /// context injection, middleware chains, and result collection.
+    async fn delegate(
+        &self,
+        agent_name: &str,
+        input: serde_json::Value,
+        context_strategy: ContextStrategyHint,
+    ) -> Result<DelegationOutput, DelegationError>;
+}
+
+/// Hint for context sharing (lightweight version for cross-crate use).
+pub enum ContextStrategyHint {
+    None,
+    Summary,
+    Filtered,
+    Full,
+}
+
+/// Result of a delegation.
+pub struct DelegationOutput {
+    pub text: String,
+    pub tokens_used: u32,
+    pub duration_ms: u64,
+}
+```
+
+At startup, `y-cli` wires `AgentPool` (which implements `AgentDelegator`) into all modules that need it via dependency injection. For example, `CompactionEngine` receives an `Arc<dyn AgentDelegator>` instead of defining its own `CompactionLlm` trait. The `AgentPool` resolves the agent's `AgentDefinition`, formats the input data via the agent's prompt template, and executes the delegation.
+
+#### Autonomy Invariants
+
+| Invariant | Enforcement |
+|-----------|------------|
+| No direct `ProviderPool` calls outside agent context | Code review checklist; lint rule (future) |
+| No hardcoded prompt strings in `.rs` files | Code review checklist; prompts in TOML |
+| All system sub-agents registered at startup | `AgentRegistry` initialization in `y-cli` |
+| Dynamic agents cannot exceed creator's permissions | `agent_create` validation pipeline |
+| Delegation depth prevents infinite recursion | Depth counter decremented per level; rejected at 0 |
+| All agent delegations emit trace spans | Guaranteed by `AgentPool.delegate()` implementation |
+
+Full autonomy standard: [AGENT_AUTONOMY.md](../../docs/standards/AGENT_AUTONOMY.md).
 
 ### Integration with Orchestrator
 

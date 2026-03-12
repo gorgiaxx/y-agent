@@ -1,0 +1,31 @@
+# ==============================================================================
+# y-agent — Storage Configuration (SQLite + PostgreSQL)
+# ==============================================================================
+
+# ── SQLite (Operational State) ──────────────────────────────────
+
+# Path to the SQLite database file. Use ":memory:" for in-memory (testing).
+db_path = "data/y-agent.db"
+
+# Connection pool size.
+pool_size = 5
+
+# Enable WAL mode (recommended for concurrency).
+wal_enabled = true
+
+# Busy timeout in milliseconds.
+busy_timeout_ms = 5000
+
+# Directory for JSONL session transcripts.
+transcript_dir = "data/transcripts"
+
+# Path to migrations directory.
+migrations_dir = "migrations"
+
+# ── PostgreSQL (Diagnostics) ────────────────────────────────────
+
+# Connection URL for PostgreSQL diagnostics backend.
+postgres_url = "postgres://y_agent:y_agent@localhost:5432/y_agent"
+
+# PostgreSQL connection pool size.
+pg_pool_size = 5

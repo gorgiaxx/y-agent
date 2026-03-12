@@ -1,24 +1,21 @@
-//! Cron-style schedule trigger.
+//! Cron-style schedule trigger using the `croner` crate for full
+//! 5-field cron expression parsing.
 
 use chrono::{DateTime, Utc};
+use croner::Cron;
 use serde::{Deserialize, Serialize};
 
 /// A cron-based schedule trigger.
 ///
 /// Supports standard 5-field cron expressions (minute, hour, day-of-month,
-/// month, day-of-week). Full cron parsing is deferred to a future phase;
-/// this implementation provides a simplified "every N hours" approach
-/// for the initial version.
+/// month, day-of-week) plus extended syntax (`L`, `#`, `W`) via `croner`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronSchedule {
-    /// Cron expression string (e.g., "0 2 * * *").
+    /// Cron expression string (e.g., `"0 9 * * MON"`).
     pub expression: String,
     /// Timezone for evaluation (default: UTC).
     #[serde(default = "default_tz")]
     pub timezone: String,
-    /// Computed interval in seconds (simplified; full cron parsing deferred).
-    #[serde(skip)]
-    interval_secs: Option<u64>,
 }
 
 fn default_tz() -> String {
@@ -28,60 +25,41 @@ fn default_tz() -> String {
 impl CronSchedule {
     /// Create a new cron schedule with the given expression.
     pub fn new(expression: &str) -> Self {
-        let interval_secs = Self::parse_simple(expression);
         Self {
             expression: expression.to_string(),
             timezone: "UTC".into(),
-            interval_secs,
         }
+    }
+
+    /// Create a cron schedule with a specific timezone.
+    #[must_use]
+    pub fn with_timezone(mut self, tz: &str) -> Self {
+        self.timezone = tz.to_string();
+        self
+    }
+
+    /// Parse the cron expression into a `Cron` instance.
+    fn parsed(&self) -> Option<Cron> {
+        Cron::new(&self.expression).parse().ok()
+    }
+
+    /// Validate whether the cron expression is parseable.
+    pub fn is_valid(&self) -> bool {
+        self.parsed().is_some()
     }
 
     /// Get the next fire time after `after`.
     ///
-    /// For the simplified implementation, computes based on parsed interval.
+    /// Returns `None` if the expression is invalid or has no future occurrence.
     pub fn next_fire(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        self.interval_secs
-            .and_then(|secs| i64::try_from(secs).ok())
-            .map(|secs| after + chrono::Duration::seconds(secs))
+        let cron = self.parsed()?;
+        cron.find_next_occurrence(&after, false).ok()
     }
 
-    /// Simple parser: extracts interval from common patterns.
-    ///
-    /// Supports:
-    /// - `"0 * * * *"` → every hour (3600s)
-    /// - `"0 */N * * *"` → every N hours
-    /// - `"*/N * * * *"` → every N minutes
-    fn parse_simple(expr: &str) -> Option<u64> {
-        let parts: Vec<&str> = expr.split_whitespace().collect();
-        if parts.len() != 5 {
-            return None;
-        }
-
-        // "*/N * * * *" → every N minutes.
-        if parts[0].starts_with("*/") {
-            if let Ok(n) = parts[0][2..].parse::<u64>() {
-                return Some(n * 60);
-            }
-        }
-
-        // "0 */N * * *" → every N hours.
-        if parts[0] == "0" && parts[1].starts_with("*/") {
-            if let Ok(n) = parts[1][2..].parse::<u64>() {
-                return Some(n * 3600);
-            }
-        }
-
-        // "0 * * * *" → every hour.
-        if parts[0] == "0" && parts[1] == "*" {
-            return Some(3600);
-        }
-
-        // "0 N * * *" → daily at hour N (24h interval).
-        if parts[0] == "0" && parts[2] == "*" && parts[3] == "*" && parts[4] == "*" {
-            return Some(86400); // 24 hours.
-        }
-
-        None
+    /// Check whether a given `DateTime` matches the cron expression.
+    pub fn matches(&self, time: &DateTime<Utc>) -> bool {
+        self.parsed()
+            .is_some_and(|c| c.is_time_matching(time).unwrap_or(false))
     }
 }
 
@@ -90,36 +68,71 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cron_every_hour() {
-        let cron = CronSchedule::new("0 * * * *");
-        assert_eq!(cron.interval_secs, Some(3600));
-    }
-
-    #[test]
-    fn test_cron_every_n_minutes() {
-        let cron = CronSchedule::new("*/15 * * * *");
-        assert_eq!(cron.interval_secs, Some(900)); // 15 * 60
-    }
-
-    #[test]
-    fn test_cron_daily() {
-        let cron = CronSchedule::new("0 2 * * *");
-        assert_eq!(cron.interval_secs, Some(86400));
-    }
-
-    #[test]
-    fn test_cron_next_fire() {
-        let cron = CronSchedule::new("0 * * * *");
-        let now = Utc::now();
-        let next = cron.next_fire(now).unwrap();
-        assert!(next > now);
-        assert_eq!((next - now).num_seconds(), 3600);
+    fn test_cron_valid_expression() {
+        let cron = CronSchedule::new("0 9 * * MON");
+        assert!(cron.is_valid());
     }
 
     #[test]
     fn test_cron_invalid_expression() {
-        let cron = CronSchedule::new("invalid");
-        assert!(cron.interval_secs.is_none());
+        let cron = CronSchedule::new("invalid cron expr!!");
+        assert!(!cron.is_valid());
         assert!(cron.next_fire(Utc::now()).is_none());
+    }
+
+    #[test]
+    fn test_cron_next_fire_basic() {
+        let cron = CronSchedule::new("* * * * *"); // every minute
+        let now = Utc::now();
+        let next = cron.next_fire(now).unwrap();
+        assert!(next > now);
+        // Should be within 60 seconds.
+        let diff = (next - now).num_seconds();
+        assert!(diff <= 60, "Expected <=60s but got {diff}s");
+    }
+
+    #[test]
+    fn test_cron_next_fire_hourly() {
+        let cron = CronSchedule::new("0 * * * *"); // every hour at :00
+        let now = Utc::now();
+        let next = cron.next_fire(now).unwrap();
+        assert!(next > now);
+        assert_eq!(next.format("%M").to_string(), "00");
+    }
+
+    #[test]
+    fn test_cron_next_fire_daily() {
+        let cron = CronSchedule::new("0 2 * * *"); // daily at 02:00
+        let now = Utc::now();
+        let next = cron.next_fire(now).unwrap();
+        assert!(next > now);
+        assert_eq!(next.format("%H:%M").to_string(), "02:00");
+    }
+
+    #[test]
+    fn test_cron_next_fire_day_of_week() {
+        let cron = CronSchedule::new("0 9 * * 1"); // every Monday at 09:00
+        let now = Utc::now();
+        let next = cron.next_fire(now).unwrap();
+        assert!(next > now);
+        // chrono: Monday = 1 in ISO weekday format (%u)
+        assert_eq!(next.format("%u").to_string(), "1");
+        assert_eq!(next.format("%H:%M").to_string(), "09:00");
+    }
+
+    #[test]
+    fn test_cron_every_n_minutes() {
+        let cron = CronSchedule::new("*/15 * * * *"); // every 15 minutes
+        assert!(cron.is_valid());
+        let now = Utc::now();
+        let next = cron.next_fire(now).unwrap();
+        assert!(next > now);
+    }
+
+    #[test]
+    fn test_cron_with_timezone() {
+        let cron = CronSchedule::new("0 9 * * *").with_timezone("Asia/Shanghai");
+        assert_eq!(cron.timezone, "Asia/Shanghai");
+        assert!(cron.is_valid());
     }
 }

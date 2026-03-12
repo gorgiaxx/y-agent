@@ -1,0 +1,150 @@
+//! Session command handlers — list, create, get messages, delete.
+
+use serde::Serialize;
+use tauri::State;
+
+use y_core::session::{CreateSessionOptions, SessionType};
+use y_core::types::SessionId;
+
+use crate::state::AppState;
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
+/// Session info returned to the frontend.
+#[derive(Debug, Serialize, Clone)]
+pub struct SessionInfo {
+    pub id: String,
+    pub title: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub message_count: usize,
+}
+
+/// A message in the session transcript.
+#[derive(Debug, Serialize, Clone)]
+pub struct MessageInfo {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub timestamp: String,
+    pub tool_calls: Vec<ToolCallBrief>,
+}
+
+/// Brief tool call info for display.
+#[derive(Debug, Serialize, Clone)]
+pub struct ToolCallBrief {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+/// List all sessions, sorted by last updated.
+#[tauri::command]
+pub async fn session_list(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
+    let sessions = state
+        .container
+        .session_manager
+        .list_sessions()
+        .await
+        .map_err(|e| format!("Failed to list sessions: {e}"))?;
+
+    let mut infos: Vec<SessionInfo> = sessions
+        .into_iter()
+        .map(|s| SessionInfo {
+            id: s.id.0.clone(),
+            title: s.title.clone(),
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+            message_count: 0, // Will be populated if transcript is loaded
+        })
+        .collect();
+
+    // Sort by updated_at descending (newest first).
+    infos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    Ok(infos)
+}
+
+/// Create a new session.
+#[tauri::command]
+pub async fn session_create(
+    state: State<'_, AppState>,
+    title: Option<String>,
+) -> Result<SessionInfo, String> {
+    let session = state
+        .container
+        .session_manager
+        .create_session(CreateSessionOptions {
+            parent_id: None,
+            session_type: SessionType::Main,
+            agent_id: None,
+            title,
+        })
+        .await
+        .map_err(|e| format!("Failed to create session: {e}"))?;
+
+    Ok(SessionInfo {
+        id: session.id.0.clone(),
+        title: session.title.clone(),
+        created_at: session.created_at.to_rfc3339(),
+        updated_at: session.updated_at.to_rfc3339(),
+        message_count: 0,
+    })
+}
+
+/// Get all messages in a session.
+#[tauri::command]
+pub async fn session_get_messages(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<MessageInfo>, String> {
+    let sid = SessionId(session_id);
+
+    let messages = state
+        .container
+        .session_manager
+        .read_transcript(&sid)
+        .await
+        .map_err(|e| format!("Failed to read transcript: {e}"))?;
+
+    Ok(messages
+        .iter()
+        .map(|m| MessageInfo {
+            id: m.message_id.clone(),
+            role: format!("{:?}", m.role).to_lowercase(),
+            content: m.content.clone(),
+            timestamp: m.timestamp.to_rfc3339(),
+            tool_calls: m
+                .tool_calls
+                .iter()
+                .map(|tc| ToolCallBrief {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                })
+                .collect(),
+        })
+        .collect())
+}
+
+/// Delete a session.
+#[tauri::command]
+pub async fn session_delete(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .delete_session(&sid)
+        .await
+        .map_err(|e| format!("Failed to delete session: {e}"))?;
+    Ok(())
+}

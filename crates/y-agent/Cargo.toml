@@ -1,0 +1,25 @@
+[package]
+name = "y-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unified Agent Framework: orchestrator (DAG engine, channels, checkpointing) + agent lifecycle (definitions, registry, pool, delegation)"
+
+[dependencies]
+y-core = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

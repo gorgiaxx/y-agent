@@ -1,0 +1,74 @@
+services:
+  y-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/gorgias/y-agent:latest
+    container_name: y-agent
+    restart: unless-stopped
+    ports:
+      - "${Y_AGENT_PORT:-8080}:8080"
+    volumes:
+      - y_agent_data:/app/data
+      - ./config:/app/config:ro
+    environment:
+      - Y_DATA_DIR=/app/data
+      - Y_CONFIG_DIR=/app/config
+      - Y_PROVIDER_API_KEY=${Y_PROVIDER_API_KEY}
+      - Y_POSTGRES_URL=postgres://${POSTGRES_USER:-yagent}:${POSTGRES_PASSWORD:-yagent}@postgres:5432/${POSTGRES_DB:-yagent_diagnostics}
+      - Y_QDRANT_URL=http://qdrant:6334
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: y-agent-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-yagent}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-yagent}
+      - POSTGRES_DB=${POSTGRES_DB:-yagent_diagnostics}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yagent}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.8.4
+    container_name: y-agent-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+volumes:
+  y_agent_data:
+    driver: local
+  pgdata:
+    driver: local
+  qdrant_data:
+    driver: local

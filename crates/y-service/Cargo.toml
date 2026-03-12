@@ -1,0 +1,46 @@
+[package]
+name = "y-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Business/service layer for y-agent — shared by CLI, TUI, and future Web API"
+
+[dependencies]
+y-core = { workspace = true }
+y-agent = { workspace = true }
+y-provider = { workspace = true }
+y-session = { workspace = true }
+y-context = { workspace = true }
+y-hooks = { workspace = true }
+y-tools = { workspace = true }
+y-storage = { workspace = true }
+y-runtime = { workspace = true }
+y-guardrails = { workspace = true }
+
+y-prompt = { workspace = true }
+y-diagnostics = { workspace = true }
+y-skills = { workspace = true, features = ["skill_ingestion", "skill_safety_screening"] }
+
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+[features]
+default = []
+diagnostics_pg = ["y-storage/diagnostics_pg", "y-diagnostics/diagnostics_pg"]
+hook_handlers = ["y-hooks/hook_handlers"]
+llm_hooks = ["y-hooks/llm_hooks"]
+
+[dev-dependencies]
+y-test-utils = { workspace = true }
+tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

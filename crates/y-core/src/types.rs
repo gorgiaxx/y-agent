@@ -106,9 +106,17 @@ pub enum Role {
     Tool,
 }
 
+/// Generate a new unique message ID.
+pub fn generate_message_id() -> String {
+    Uuid::new_v4().to_string()
+}
+
 /// A single message in a conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
+    /// Unique message identifier for checkpoint addressing.
+    #[serde(default = "generate_message_id")]
+    pub message_id: String,
     pub role: Role,
     pub content: String,
     /// Tool call ID (when role = Tool, this links to the originating call).

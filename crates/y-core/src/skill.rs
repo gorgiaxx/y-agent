@@ -18,6 +18,129 @@ use crate::types::{SkillId, Timestamp};
 // Skill types
 // ---------------------------------------------------------------------------
 
+/// Skill classification type per design.
+///
+/// Determines whether a skill is accepted, rejected, or partially accepted
+/// during the ingestion pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillClassificationType {
+    /// Pure LLM reasoning instructions (no external tools).
+    LlmReasoning,
+    /// Wraps an external API call.
+    ApiCall,
+    /// Wraps tool execution.
+    ToolWrapper,
+    /// Agent behavior instructions (delegation, multi-step).
+    AgentBehavior,
+    /// Mix of reasoning and tool/API usage.
+    Hybrid,
+}
+
+impl std::fmt::Display for SkillClassificationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::LlmReasoning => "llm_reasoning",
+            Self::ApiCall => "api_call",
+            Self::ToolWrapper => "tool_wrapper",
+            Self::AgentBehavior => "agent_behavior",
+            Self::Hybrid => "hybrid",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Skill lifecycle state per design.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillState {
+    /// External skill submitted for ingestion.
+    Submitted,
+    /// Ingestion pipeline analyzing content.
+    Analyzing,
+    /// Classification complete, awaiting filter decision.
+    Classified,
+    /// Rejected by filter gate or safety screener.
+    Rejected,
+    /// Accepted, transformation in progress.
+    Transforming,
+    /// Transformation complete, awaiting registration.
+    Transformed,
+    /// Registered in skill registry.
+    Registered,
+    /// Actively selected for agent use.
+    Active,
+    /// Deprecated (replaced by newer version).
+    Deprecated,
+}
+
+impl std::fmt::Display for SkillState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Submitted => "submitted",
+            Self::Analyzing => "analyzing",
+            Self::Classified => "classified",
+            Self::Rejected => "rejected",
+            Self::Transforming => "transforming",
+            Self::Transformed => "transformed",
+            Self::Registered => "registered",
+            Self::Active => "active",
+            Self::Deprecated => "deprecated",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Skill classification metadata (maps to `[skill.classification]` in manifest).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillClassification {
+    /// Classification type.
+    #[serde(rename = "type")]
+    pub skill_type: SkillClassificationType,
+    /// Domain tags (e.g., `writing`, `chinese`, `editing`).
+    #[serde(default)]
+    pub domain: Vec<String>,
+    /// Whether this skill is atomic (does one thing well).
+    #[serde(default = "default_true")]
+    pub atomic: bool,
+}
+
+/// Skill constraint metadata (maps to `[skill.constraints]` in manifest).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillConstraints {
+    pub max_input_tokens: Option<u32>,
+    pub max_output_tokens: Option<u32>,
+    pub requires_language: Option<String>,
+}
+
+/// Skill safety flags (maps to `[skill.safety]` in manifest).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSafetyConfig {
+    #[serde(default)]
+    pub allows_external_calls: bool,
+    #[serde(default)]
+    pub allows_file_operations: bool,
+    #[serde(default)]
+    pub allows_code_execution: bool,
+    #[serde(default)]
+    pub max_delegation_depth: u32,
+}
+
+/// Cross-resource references (maps to `[skill.references]` in manifest).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillReferences {
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub knowledge_bases: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// A skill manifest (the root document, capped at 2,000 tokens).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillManifest {
@@ -41,12 +164,45 @@ pub struct SkillManifest {
     pub token_estimate: u32,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+
+    // --- Design-aligned extended fields (all optional for backward compat) ---
+    /// Skill classification metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<SkillClassification>,
+    /// Skill constraint metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<SkillConstraints>,
+    /// Skill safety configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety: Option<SkillSafetyConfig>,
+    /// Cross-resource references.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub references: Option<SkillReferences>,
+    /// Author or generator of this skill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Original source format (e.g., "markdown", "toml").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_format: Option<String>,
+    /// SHA-256 hash of the original source content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hash: Option<String>,
+    /// Lifecycle state of this skill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<SkillState>,
+    /// Path to the root document file (design-aligned, relative to skill dir).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_path: Option<String>,
 }
 
 /// Reference to a sub-document within a skill.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubDocumentRef {
+    /// Unique identifier for this sub-document.
     pub id: String,
+    /// File path relative to skill directory (e.g., `details/tone-guidelines.md`).
+    #[serde(default)]
+    pub path: String,
     pub title: String,
     /// When to load this sub-document.
     pub load_condition: String,

@@ -44,6 +44,9 @@ pub struct ScheduleContext {
 }
 
 /// Schedule executor that manages trigger-to-execution translation.
+///
+/// In Phase S3 this becomes async with `WorkflowDispatcher` trait and
+/// concurrency policy enforcement.
 pub struct ScheduleExecutor {
     executions: Vec<ScheduleExecution>,
     next_sequence: std::collections::HashMap<String, u64>,
@@ -58,7 +61,7 @@ impl ScheduleExecutor {
         }
     }
 
-    /// Execute a schedule (placeholder — integrates with Orchestrator in Phase 5).
+    /// Execute a schedule (placeholder — integrates with Orchestrator in Phase S3/S8).
     ///
     /// Returns the execution ID.
     pub fn trigger_execution(&mut self, schedule: &Schedule, store: &mut ScheduleStore) -> String {
@@ -117,18 +120,12 @@ mod tests {
         let mut executor = ScheduleExecutor::new();
         let mut store = ScheduleStore::new();
 
-        let schedule = Schedule {
-            id: "daily-cleanup".into(),
-            name: "Daily Cleanup".into(),
-            enabled: true,
-            trigger: TriggerConfig::Interval {
-                interval_secs: 3600,
-            },
-            workflow_id: "cleanup-wf".into(),
-            parameter_values: serde_json::json!({}),
-            created_at: Utc::now(),
-            last_fire: None,
-        };
+        let schedule = Schedule::new(
+            "daily-cleanup",
+            "Daily Cleanup",
+            TriggerConfig::Interval { interval_secs: 3600 },
+            "cleanup-wf",
+        );
         store.register(schedule.clone());
 
         let exec_id = executor.trigger_execution(&schedule, &mut store);
@@ -145,16 +142,12 @@ mod tests {
         let mut executor = ScheduleExecutor::new();
         let mut store = ScheduleStore::new();
 
-        let schedule = Schedule {
-            id: "test".into(),
-            name: "Test".into(),
-            enabled: true,
-            trigger: TriggerConfig::Interval { interval_secs: 60 },
-            workflow_id: "wf".into(),
-            parameter_values: serde_json::json!({}),
-            created_at: Utc::now(),
-            last_fire: None,
-        };
+        let schedule = Schedule::new(
+            "test",
+            "Test",
+            TriggerConfig::Interval { interval_secs: 60 },
+            "wf",
+        );
         store.register(schedule.clone());
 
         executor.trigger_execution(&schedule, &mut store);

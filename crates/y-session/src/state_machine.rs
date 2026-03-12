@@ -26,17 +26,12 @@ impl StateMachine {
         matches!(
             (from, to),
             // Active → anything except itself
-            (SessionState::Active, SessionState::Paused)
-                | (SessionState::Active, SessionState::Archived)
-                | (SessionState::Active, SessionState::Merged)
-                | (SessionState::Active, SessionState::Tombstone)
-                // Paused → Active (resume), Archived, Tombstone
-                | (SessionState::Paused, SessionState::Active)
-                | (SessionState::Paused, SessionState::Archived)
-                | (SessionState::Paused, SessionState::Tombstone)
-                // Archived & Merged → Tombstone only
-                | (SessionState::Archived, SessionState::Tombstone)
-                | (SessionState::Merged, SessionState::Tombstone)
+            (SessionState::Active,
+SessionState::Paused | SessionState::Archived | SessionState::Merged |
+SessionState::Tombstone) |
+(SessionState::Paused,
+SessionState::Active | SessionState::Archived | SessionState::Tombstone) |
+(SessionState::Archived | SessionState::Merged, SessionState::Tombstone)
         )
     }
 

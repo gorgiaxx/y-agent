@@ -77,6 +77,7 @@ impl SectionCondition {
             Self::ModeIs(mode) => ctx.agent_mode == *mode,
             Self::ModeNot(mode) => ctx.agent_mode != *mode,
             Self::HasSkill(skill) => ctx.active_skills.contains(skill),
+            Self::HasTool(tool) if tool == "*" => !ctx.available_tools.is_empty(),
             Self::HasTool(tool) => ctx.available_tools.contains(tool),
             Self::ConfigFlag(key) => ctx.config_flags.get(key).copied().unwrap_or(false),
             Self::And(conditions) => conditions.iter().all(|c| c.evaluate(ctx)),
@@ -190,6 +191,21 @@ mod tests {
             SectionCondition::HasTool("web_search".into()),
         ]);
         assert!(!cond_fail.evaluate(&ctx));
+    }
+
+    #[test]
+    fn test_condition_has_tool_wildcard_true() {
+        let ctx = build_ctx(); // has file_read, file_write
+        assert!(SectionCondition::HasTool("*".into()).evaluate(&ctx));
+    }
+
+    #[test]
+    fn test_condition_has_tool_wildcard_false() {
+        let ctx = PromptContext {
+            available_tools: vec![],
+            ..build_ctx()
+        };
+        assert!(!SectionCondition::HasTool("*".into()).evaluate(&ctx));
     }
 
     #[test]

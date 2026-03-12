@@ -7,8 +7,7 @@
 use async_trait::async_trait;
 
 use y_core::runtime::{
-    ExecutionRequest, ExecutionResult, RuntimeAdapter, RuntimeBackend, RuntimeError,
-    RuntimeHealth,
+    ExecutionRequest, ExecutionResult, RuntimeAdapter, RuntimeBackend, RuntimeError, RuntimeHealth,
 };
 
 /// SSH runtime backend (placeholder — deferred to Phase 5).
@@ -29,6 +28,10 @@ impl Default for SshRuntime {
 
 #[async_trait]
 impl RuntimeAdapter for SshRuntime {
+    fn name(&self) -> &'static str {
+        "ssh"
+    }
+
     async fn execute(&self, _request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError> {
         Err(RuntimeError::RuntimeNotAvailable {
             backend: RuntimeBackend::Ssh,

@@ -1,0 +1,450 @@
+//! Hierarchical tool taxonomy for prompt-based tool discovery.
+//!
+//! Provides a tree-structured taxonomy of tool categories loaded from TOML.
+//! The LLM sees only the compact root summary (~100 tokens) and uses
+//! `tool_search` to drill into categories or find specific tools.
+//!
+//! Design reference: `docs/design/tool-search-design.md`,
+//!                    `docs/standards/TOOL_CALL_PROTOCOL.md`
+
+use std::collections::HashMap;
+use std::fmt;
+
+use serde::Deserialize;
+
+/// A tool name reference within the taxonomy.
+pub type ToolName = String;
+
+/// Error type for taxonomy operations.
+#[derive(Debug)]
+pub enum TaxonomyError {
+    /// TOML parsing failed.
+    ParseError(String),
+    /// No categories defined.
+    EmptyTaxonomy,
+}
+
+impl fmt::Display for TaxonomyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TaxonomyError::ParseError(msg) => write!(f, "taxonomy parse error: {msg}"),
+            TaxonomyError::EmptyTaxonomy => write!(f, "taxonomy has no categories"),
+        }
+    }
+}
+
+impl std::error::Error for TaxonomyError {}
+
+/// Hierarchical tool taxonomy.
+///
+/// Loaded from a TOML configuration. Provides compact summaries for prompt
+/// injection and drill-down navigation for the `tool_search` meta-tool.
+#[derive(Debug, Clone)]
+pub struct ToolTaxonomy {
+    categories: HashMap<String, TaxonomyCategory>,
+}
+
+/// A top-level taxonomy category.
+#[derive(Debug, Clone)]
+pub struct TaxonomyCategory {
+    /// Human-readable label.
+    pub label: String,
+    /// Description of what tools in this category do.
+    pub description: String,
+    /// Sub-categories within this category.
+    pub subcategories: HashMap<String, TaxonomySubcategory>,
+    /// Tools directly in this category (not in a subcategory).
+    pub tools: Vec<ToolName>,
+}
+
+/// A sub-category within a taxonomy category.
+#[derive(Debug, Clone)]
+pub struct TaxonomySubcategory {
+    /// Human-readable label.
+    pub label: String,
+    /// Description.
+    pub description: String,
+    /// Tools in this sub-category.
+    pub tools: Vec<ToolName>,
+}
+
+// ---------------------------------------------------------------------------
+// TOML deserialization types (internal)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct TomlTaxonomy {
+    categories: HashMap<String, TomlCategory>,
+}
+
+#[derive(Deserialize)]
+struct TomlCategory {
+    label: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    subcategories: HashMap<String, TomlSubcategory>,
+    #[serde(default)]
+    tools: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct TomlSubcategory {
+    label: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    tools: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Implementation
+// ---------------------------------------------------------------------------
+
+impl ToolTaxonomy {
+    /// Parse a taxonomy from a TOML string.
+    pub fn from_toml(config: &str) -> Result<Self, TaxonomyError> {
+        let parsed: TomlTaxonomy =
+            toml::from_str(config).map_err(|e| TaxonomyError::ParseError(e.to_string()))?;
+
+        if parsed.categories.is_empty() {
+            return Err(TaxonomyError::EmptyTaxonomy);
+        }
+
+        let categories = parsed
+            .categories
+            .into_iter()
+            .map(|(key, cat)| {
+                let subcategories = cat
+                    .subcategories
+                    .into_iter()
+                    .map(|(sk, sc)| {
+                        (
+                            sk,
+                            TaxonomySubcategory {
+                                label: sc.label,
+                                description: sc.description,
+                                tools: sc.tools,
+                            },
+                        )
+                    })
+                    .collect();
+
+                (
+                    key,
+                    TaxonomyCategory {
+                        label: cat.label,
+                        description: cat.description,
+                        subcategories,
+                        tools: cat.tools,
+                    },
+                )
+            })
+            .collect();
+
+        Ok(Self { categories })
+    }
+
+    /// Generate a compact root summary for prompt injection.
+    ///
+    /// This should be ~100 tokens — category names and one-line descriptions.
+    pub fn root_summary(&self) -> String {
+        let mut lines = Vec::new();
+        lines.push("## Tool Categories\n".to_string());
+        lines.push(
+            "Use `tool_search` with a category or keyword to discover tools.\n".to_string(),
+        );
+        lines.push("| Category | Description |".to_string());
+        lines.push("|----------|-------------|".to_string());
+
+        let mut keys: Vec<&String> = self.categories.keys().collect();
+        keys.sort();
+
+        for key in keys {
+            let cat = &self.categories[key];
+            lines.push(format!("| {} | {} |", key, cat.description));
+        }
+
+        lines.join("\n")
+    }
+
+    /// Get detailed info for a specific category (subcategories + tools).
+    pub fn category_detail(&self, category: &str) -> Option<String> {
+        let cat = self.categories.get(category)?;
+        let mut lines = Vec::new();
+        lines.push(format!("## {} ({})\n", cat.label, category));
+        lines.push(cat.description.clone());
+
+        if !cat.tools.is_empty() {
+            lines.push(format!("\nTools: {}", cat.tools.join(", ")));
+        }
+
+        if !cat.subcategories.is_empty() {
+            lines.push("\nSubcategories:".to_string());
+            let mut sub_keys: Vec<&String> = cat.subcategories.keys().collect();
+            sub_keys.sort();
+            for sk in sub_keys {
+                let sub = &cat.subcategories[sk];
+                let tools_str = if sub.tools.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — tools: {}", sub.tools.join(", "))
+                };
+                lines.push(format!("- **{}** ({}): {}{}", sub.label, sk, sub.description, tools_str));
+            }
+        }
+
+        Some(lines.join("\n"))
+    }
+
+    /// Search for tools matching a keyword query.
+    ///
+    /// Searches category labels, descriptions, subcategory labels/descriptions,
+    /// and tool names. Returns matching tool names.
+    pub fn search(&self, query: &str) -> Vec<ToolName> {
+        let query_lower = query.to_lowercase();
+        let mut results = Vec::new();
+
+        for cat in self.categories.values() {
+            // Check direct tools.
+            for tool in &cat.tools {
+                if tool.to_lowercase().contains(&query_lower) && !results.contains(tool) {
+                    results.push(tool.clone());
+                }
+            }
+
+            // Check category-level match → return all tools in category.
+            let cat_match = cat.label.to_lowercase().contains(&query_lower)
+                || cat.description.to_lowercase().contains(&query_lower);
+
+            if cat_match {
+                for tool in &cat.tools {
+                    if !results.contains(tool) {
+                        results.push(tool.clone());
+                    }
+                }
+                for sub in cat.subcategories.values() {
+                    for tool in &sub.tools {
+                        if !results.contains(tool) {
+                            results.push(tool.clone());
+                        }
+                    }
+                }
+            }
+
+            // Check subcategory-level match.
+            for sub in cat.subcategories.values() {
+                let sub_match = sub.label.to_lowercase().contains(&query_lower)
+                    || sub.description.to_lowercase().contains(&query_lower);
+
+                for tool in &sub.tools {
+                    if (sub_match || tool.to_lowercase().contains(&query_lower))
+                        && !results.contains(tool)
+                    {
+                        results.push(tool.clone());
+                    }
+                }
+            }
+        }
+
+        results.sort();
+        results
+    }
+
+    /// Get all tool names in a category (including subcategories).
+    pub fn tools_in_category(&self, category: &str) -> Vec<ToolName> {
+        let Some(cat) = self.categories.get(category) else {
+            return Vec::new();
+        };
+
+        let mut tools = cat.tools.clone();
+        for sub in cat.subcategories.values() {
+            tools.extend(sub.tools.iter().cloned());
+        }
+        tools.sort();
+        tools.dedup();
+        tools
+    }
+
+    /// Get the number of top-level categories.
+    pub fn category_count(&self) -> usize {
+        self.categories.len()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_TOML: &str = r#"
+[categories.file]
+label = "File Management"
+description = "Read, write, search, and manage files"
+
+[categories.file.subcategories.read]
+label = "File Reading"
+description = "Read file contents"
+tools = ["file_read", "file_list"]
+
+[categories.file.subcategories.write]
+label = "File Writing"
+description = "Create or modify files"
+tools = ["file_write"]
+
+[categories.file.subcategories.search]
+label = "File Search"
+description = "Search across files"
+tools = ["file_search"]
+
+[categories.shell]
+label = "Shell"
+description = "Execute shell commands"
+tools = ["shell_exec"]
+
+[categories.meta]
+label = "Meta Tools"
+description = "Tool management tools"
+tools = ["tool_search"]
+"#;
+
+    #[test]
+    fn test_from_toml_parses_categories() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        assert_eq!(taxonomy.category_count(), 3);
+    }
+
+    #[test]
+    fn test_from_toml_empty_categories_is_error() {
+        let toml = "[categories]\n";
+        let result = ToolTaxonomy::from_toml(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_toml_invalid_toml_is_error() {
+        let result = ToolTaxonomy::from_toml("not valid toml {{{");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("parse error"));
+    }
+
+    #[test]
+    fn test_root_summary_contains_all_categories() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let summary = taxonomy.root_summary();
+        assert!(summary.contains("file"));
+        assert!(summary.contains("shell"));
+        assert!(summary.contains("meta"));
+        assert!(summary.contains("Tool Categories"));
+        assert!(summary.contains("tool_search"));
+    }
+
+    #[test]
+    fn test_root_summary_is_compact() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let summary = taxonomy.root_summary();
+        // Rough token estimate: ~4 chars per token, should be well under 200 tokens.
+        let estimated_tokens = summary.len() / 4;
+        assert!(
+            estimated_tokens < 200,
+            "root summary too large: ~{estimated_tokens} tokens"
+        );
+    }
+
+    #[test]
+    fn test_category_detail_existing() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let detail = taxonomy.category_detail("file").unwrap();
+        assert!(detail.contains("File Management"));
+        assert!(detail.contains("File Reading"));
+        assert!(detail.contains("file_read"));
+        assert!(detail.contains("file_write"));
+    }
+
+    #[test]
+    fn test_category_detail_with_direct_tools() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let detail = taxonomy.category_detail("shell").unwrap();
+        assert!(detail.contains("shell_exec"));
+    }
+
+    #[test]
+    fn test_category_detail_nonexistent() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        assert!(taxonomy.category_detail("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_search_by_tool_name() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("file_read");
+        assert!(results.contains(&"file_read".to_string()));
+    }
+
+    #[test]
+    fn test_search_by_category_description() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("shell commands");
+        assert!(results.contains(&"shell_exec".to_string()));
+    }
+
+    #[test]
+    fn test_search_by_subcategory_description() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("Read file contents");
+        assert!(results.contains(&"file_read".to_string()));
+        assert!(results.contains(&"file_list".to_string()));
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("FILE");
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_search_no_duplicates() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("file");
+        let unique: std::collections::HashSet<_> = results.iter().collect();
+        assert_eq!(results.len(), unique.len());
+    }
+
+    #[test]
+    fn test_search_no_results() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("quantum_entanglement");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_tools_in_category() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let tools = taxonomy.tools_in_category("file");
+        assert!(tools.contains(&"file_read".to_string()));
+        assert!(tools.contains(&"file_write".to_string()));
+        assert!(tools.contains(&"file_list".to_string()));
+        assert!(tools.contains(&"file_search".to_string()));
+    }
+
+    #[test]
+    fn test_tools_in_category_nonexistent() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let tools = taxonomy.tools_in_category("nonexistent");
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn test_taxonomy_error_display() {
+        let e = TaxonomyError::ParseError("bad toml".into());
+        assert!(e.to_string().contains("bad toml"));
+
+        let e = TaxonomyError::EmptyTaxonomy;
+        assert!(e.to_string().contains("no categories"));
+    }
+}

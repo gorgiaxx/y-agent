@@ -1,0 +1,29 @@
+# ==============================================================================
+# y-agent — Global Configuration
+#
+# This is the main entry point config. y-agent loads all TOML files from the
+# config/ directory and merges them into a single configuration.
+#
+# Configuration precedence (highest → lowest):
+#   1. CLI arguments        (--log-level debug)
+#   2. Environment variables (Y_AGENT_LOG_LEVEL=debug)
+#   3. User config dir      (~/.config/y-agent/)
+#   4. Project config dir   (./config/)
+#   5. Built-in defaults
+#
+# Files in config/:
+#   y-agent.toml        — Global settings (this file)
+#   providers.toml      — LLM provider pool & individual providers
+#   storage.toml        — SQLite database & JSONL transcripts
+#   session.toml        — Session tree & compaction
+#   runtime.toml        — Execution backends & security policies
+#   hooks.toml          — Middleware & event bus
+#   tools.toml          — Tool registry & lazy loading
+#   guardrails.toml     — Permissions, loop detection, risk scoring
+# ==============================================================================
+
+# Log level: trace | debug | info | warn | error
+log_level = "info"
+
+# Output format: plain | json | table
+output_format = "plain"
