@@ -1,9 +1,10 @@
 # Chat Bubble Actions and Session History Tree Plan
 
-**Version**: v0.1
+**Version**: v0.2
 **Created**: 2026-03-12
-**Status**: Draft
-**Owner**: y-gui, y-cli (Tauri commands), y-storage (schema)
+**Updated**: 2026-03-13
+**Status**: Draft (updated to match current codebase)
+**Owner**: y-gui (Tauri commands + frontend), y-service (chat logic), y-storage (schema), y-core (traits)
 
 ---
 
@@ -31,20 +32,24 @@ boundary of a rolled-back segment.
 
 ## 2. Concepts and Terminology
 
-**Checkpoint**: A named snapshot of the conversation state at a specific message
-boundary.  Concretely, a checkpoint captures the ordered list of message IDs
-(and their content hashes) that formed the LLM context at that point in time.
+**Checkpoint**: A turn-level record linking a chat turn to the conversation
+state and workspace file state.  Concretely, a checkpoint stores the
+`turn_number`, the `message_count_before` the turn started (for transcript
+truncation), and a `journal_scope_id` (for File Journal workspace rollback).
+Defined in `y-core::session::ChatCheckpoint` and stored via
+`y-storage::SqliteChatCheckpointStore`.
 
-**Branch**: A divergence point in the message sequence.  When a user edits or
-undoes a message, the subsequent messages are not deleted; they become a
-soft-deleted (tombstoned) branch that can be restored.
+**Rollback**: When a user edits or undoes a message, the JSONL transcript is
+truncated to `message_count_before` and workspace files are restored via the
+File Journal scope.  In Phase 1 messages after the rollback point are
+physically removed (not soft-deleted).  Phase 2 introduces soft-delete for
+branch recovery.
 
-**Active path**: The linear sequence of non-tombstoned messages that the user
-currently sees in the chat panel.
+**Active path**: The linear sequence of messages remaining in the JSONL
+transcript after any rollback, which the user currently sees in the chat panel.
 
-**Restore divider**: A UI-only sentinel rendered between the last active message
-and the first tombstoned message of a recoverable branch, with a clickable
-"restore" affordance.
+**Restore divider**: (Phase 2) A UI-only sentinel rendered at the boundary of a
+rolled-back segment, with a clickable "restore" affordance.
 
 ---
 
@@ -53,7 +58,7 @@ and the first tombstoned message of a recoverable branch, with a clickable
 | Priority | Item |
 |----------|------|
 | P0 | Copy button on user message bubbles (UI only, no backend) |
-| P0 | Checkpoint model: define what a checkpoint is in the service/storage layer |
+| P0 | Checkpoint model: already implemented in y-core, y-storage, y-service |
 | P1 | Undo action: roll active path back to previous checkpoint |
 | P1 | Edit action: prepopulate input box; resend triggers undo-then-send |
 | P2 | Session history tree: soft-delete tombstoned branches, persist all checkpoints |
@@ -88,92 +93,115 @@ of the bubble presenting the three actions.
 
 ### 4.2 Props threading
 
-`MessageBubble` currently receives only `message`.  The Edit and Undo handlers
-need `sessionId` and message index.  Two options:
+`MessageBubble` currently receives only `message` (via `MessageBubbleProps`).
+The Edit and Undo handlers need `sessionId` and message index.  Two options:
 
-- **Option A**: Thread `sessionId` + `onEdit(content)` + `onUndo(messageId)`
-  down from `ChatPanel` via `MessageBubble`.
-- **Option B**: Use a React context owned by `ChatPanel`.
+- **Option A**: Thread `onEdit(content)` + `onUndo(messageId)` down from
+  `App.tsx` -> `ChatPanel` -> `MessageBubble` as callback props.
+- **Option B**: Use a React context owned by `App.tsx` or `ChatPanel`.
 
 Option A is simpler and preferred at this stage; no context overhead.
 
-`ChatPanel.tsx` already receives `sessionId` and `useChat` return values.  It
-will pass the callbacks down.
+`ChatPanel.tsx` currently receives `{ messages, isStreaming, isLoading, error }`
+-- it does NOT receive `sessionId`.  The `sessionId` and `useChat` return
+values are managed by `App.tsx`.  To thread callbacks, either `ChatPanel` props
+must be extended or `App.tsx` must wrap callbacks and pass them through
+`ChatPanel` to `MessageBubble`.
 
 ---
 
-## 5. Phase 1 -- Checkpoint Model (P0/P1 Backend)
+## 5. Phase 1 -- Checkpoint Model (P0/P1 Backend) -- ALREADY IMPLEMENTED
 
 ### 5.1 What is a checkpoint?
 
 For the chat use-case (not the orchestrator workflow use-case), a checkpoint is
-a lightweight record that answers: "what was the ordered list of active message
-IDs at time T for session S?"
+a turn-level record that links a session's message count to a File Journal
+scope, enabling both conversation rollback (via transcript truncation) and
+workspace file rollback (via the File Journal).
 
 This is distinct from `orchestrator_checkpoints` which checkpoints workflow
-DAG state.  A new table is introduced.
+DAG state.
 
-### 5.2 New SQLite table: `chat_checkpoints`
+The checkpoint model is already implemented across three crates:
+- **`y-core::session::ChatCheckpoint`** -- struct and `ChatCheckpointStore` trait
+- **`y-storage::SqliteChatCheckpointStore`** -- SQLite-backed storage
+- **`y-service::ChatCheckpointManager`** -- service-layer orchestration
+
+### 5.2 SQLite table: `chat_checkpoints` (migration 010)
+
+Already created by `migrations/sqlite/010_chat_checkpoints.up.sql`:
 
 ```sql
-CREATE TABLE chat_checkpoints (
-    id              TEXT PRIMARY KEY,         -- UUID
-    session_id      TEXT NOT NULL REFERENCES session_metadata(id),
-    sequence        INTEGER NOT NULL,         -- Monotonically increasing per session
-    message_ids     TEXT NOT NULL,            -- JSON array of message IDs in active order
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+CREATE TABLE IF NOT EXISTS chat_checkpoints (
+    checkpoint_id         TEXT PRIMARY KEY,
+    session_id            TEXT NOT NULL,
+    turn_number           INTEGER NOT NULL,
+    message_count_before  INTEGER NOT NULL,
+    journal_scope_id      TEXT NOT NULL,
+    invalidated           INTEGER NOT NULL DEFAULT 0,
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CONSTRAINT unique_session_turn UNIQUE (session_id, turn_number)
 );
 
-CREATE INDEX idx_cc_session_seq ON chat_checkpoints(session_id, sequence DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_cp_session
+    ON chat_checkpoints(session_id, turn_number DESC);
 ```
 
-A checkpoint is written:
-- After every successful LLM completion (i.e., after the assistant message is
-  committed to the transcript).
-- After every user message is committed (before the LLM call starts).
+A checkpoint is written by `ChatCheckpointManager` (via `ChatService`) once
+per user turn, before the LLM call starts.  The `message_count_before` field
+captures the transcript length at that point so rollback can truncate back.
 
-### 5.3 Message soft-delete
+### 5.3 Rollback mechanism (Phase 1)
 
-Messages must survive undo/edit operations so branches can be restored.  The
-message model (currently stored in JSONL transcripts per session) needs a
-`status` field.  Two approaches:
+In Phase 1, rollback uses **transcript truncation**, not soft-delete:
 
-- **Approach A**: Add `"status": "active" | "tombstone"` to the JSONL record.
-  Query layer filters tombstoned records by default.
-- **Approach B**: Move messages to SQLite with an explicit `status` column.
+1. `TranscriptStore::truncate(session_id, keep_count)` physically removes
+   messages from the JSONL file, keeping only the first `keep_count` messages.
+2. `ChatCheckpointStore::invalidate_after(session_id, turn_number)` marks
+   later checkpoints as invalidated.
+3. File Journal restores workspace files to the pre-turn state using the
+   `journal_scope_id`.
 
-Approach B is recommended for Phase 2 (history tree).  For Phase 1, Approach A
-(JSONL annotation) is sufficient and avoids a large schema migration.
+This is simpler than tombstoning but means rolled-back messages are lost.
+Phase 2 (history tree) will introduce soft-delete to preserve branches.
 
-The `session_get_messages` Tauri command must be updated to filter tombstoned
-messages unless explicitly requested.
+The `session_get_messages` Tauri command does not need changes for Phase 1
+since truncation physically removes rolled-back messages.
 
-### 5.4 Tauri commands (new)
+### 5.4 Tauri commands (new -- to be added)
+
+These commands must be added to `crates/y-gui/src-tauri/src/commands/chat.rs`
+and registered in `crates/y-gui/src-tauri/src/lib.rs` via
+`tauri::generate_handler![]`.
 
 | Command | Signature | Description |
 |---------|-----------|-------------|
-| `chat_checkpoint_list` | `(session_id: String) -> Vec<Checkpoint>` | Return all checkpoints for session, ordered by `sequence DESC`. |
-| `chat_undo` | `(session_id: String, target_checkpoint_id: String) -> UndoResult` | Tombstone messages after checkpoint, write new checkpoint. |
-| `chat_get_messages_with_status` | `(session_id: String) -> Vec<MessageWithStatus>` | Return all messages including tombstoned, for history tree UI. |
+| `chat_checkpoint_list` | `(session_id: String) -> Vec<ChatCheckpoint>` | Return all checkpoints for session, ordered by `turn_number DESC`. Delegates to `ChatCheckpointStore::list_by_session`. |
+| `chat_undo` | `(session_id: String, target_checkpoint_id: String) -> UndoResult` | Truncate transcript to checkpoint's `message_count_before`, invalidate later checkpoints, restore files via journal scope. |
+| `chat_get_messages_with_status` | `(session_id: String) -> Vec<MessageWithStatus>` | (Phase 2 only) Return all messages including soft-deleted, for history tree UI. |
 
 `UndoResult` carries:
-- `new_active_message_ids: Vec<String>` -- what to display
-- `restored_checkpoint_sequence: i64`
+- `remaining_message_count: usize` -- messages remaining after truncation
+- `restored_turn_number: u32` -- the turn we rolled back to
+- `files_restored: u32` -- number of workspace files restored via journal
 
 ### 5.5 Service layer: undo semantics
 
 When the user clicks Undo on message M:
-1. Service resolves the checkpoint immediately preceding M's checkpoint
-   (i.e., `sequence = M_checkpoint.sequence - 1`).
-2. Tombstone M and all messages after M in the active path.
-3. Write a new checkpoint with the pre-M message IDs.
-4. Return the new active message list.
+1. Service resolves the checkpoint for M's turn via
+   `ChatCheckpointStore::load(checkpoint_id)`.
+2. Truncate the JSONL transcript to `checkpoint.message_count_before` messages
+   via `TranscriptStore::truncate(session_id, message_count_before)`.
+3. Invalidate all checkpoints after this turn via
+   `ChatCheckpointStore::invalidate_after(session_id, turn_number)`.
+4. Restore workspace files via File Journal using `journal_scope_id`.
+5. Return the remaining message count.
 
 When the user clicks Edit on message M and then sends:
-1. Steps 1-3 above to roll back to before M.
+1. Steps 1-4 above to roll back to before M.
 2. The new message text is sent as a fresh user message (same as `chat_send`
    but starting from the rolled-back context).
-3. A new user-message checkpoint is written after commit; LLM is called.
+3. A new checkpoint is created for the new turn; LLM is called.
 
 The service must NOT call `chat_send` a second time for the optimistic message;
 the edit flow replaces the optimistic update.
@@ -196,14 +224,16 @@ value.  The input box value is lifted state in `ChatPanel` (or `App.tsx`).
 
 ### 6.2 Edit flow at send time
 
-`InputArea.tsx` currently calls `sendMessage(message, sessionId)`.  When
+`InputArea.tsx` currently calls `onSend(message)` -- a callback prop provided
+by `App.tsx`.  The parent component invokes `useChat.sendMessage(message,
+sessionId, providerId?)` which calls the `chat_send` Tauri command.  When
 sending in edit mode, the flow is:
 
-1. Call `chat_undo` to tombstone back to the relevant checkpoint.
+1. Call `chat_undo` to truncate back to the relevant checkpoint.
 2. Then call `chat_send` with the edited content.
 
 The edit session state (which message is being edited, which checkpoint to undo
-to) is carried in a `pendingEdit` state object in `useChat` or `ChatPanel`.
+to) is carried in a `pendingEdit` state object in `useChat` or `App.tsx`.
 
 If the user clears the input box or navigates away, `pendingEdit` is discarded
 (edit is cancelled, undo is NOT executed -- the original conversation is
@@ -265,17 +295,19 @@ behind a new restore divider.  This preserves full bidirectional recoverability.
 ### 7.5 SQLite changes for Phase 2
 
 The JSONL transcript approach becomes unwieldy for tree queries.  In Phase 2,
-messages are migrated to SQLite:
+messages are migrated to SQLite.  The next available migration number is
+`012` (migrations up to `011_diagnostics` already exist).
 
 ```sql
+-- migrations/sqlite/012_chat_messages.up.sql
 CREATE TABLE chat_messages (
     id              TEXT PRIMARY KEY,
-    session_id      TEXT NOT NULL REFERENCES session_metadata(id),
+    session_id      TEXT NOT NULL,
     role            TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool')),
     content         TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'active'
                         CHECK (status IN ('active', 'tombstone')),
-    checkpoint_id   TEXT REFERENCES chat_checkpoints(id),  -- checkpoint after which this msg was active
+    checkpoint_id   TEXT REFERENCES chat_checkpoints(checkpoint_id),
     model           TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
@@ -327,6 +359,10 @@ applicable.
    context.  This requires the LLM message-count calculation to use the active
    message list, not the full transcript.
 
+5. The current Phase 1 rollback physically removes messages via transcript
+   truncation.  This means once undone, the old branch is lost.  Is this
+   acceptable for Phase 1, or should we implement soft-delete from the start?
+
 ---
 
 ## 10. Dependency Map
@@ -336,18 +372,20 @@ Phase 0 (Copy UI)
   |-- no backend dependency
 
 Phase 1 (Undo + Edit)
-  |-- requires: chat_checkpoints table (migration)
-  |-- requires: JSONL status field annotation
-  |-- requires: chat_undo Tauri command
-  |-- requires: useChat update
+  |-- requires: chat_checkpoints table (migration 010 -- DONE)
+  |-- requires: ChatCheckpoint struct + store trait (y-core -- DONE)
+  |-- requires: SqliteChatCheckpointStore (y-storage -- DONE)
+  |-- requires: ChatCheckpointManager (y-service -- DONE)
+  |-- requires: chat_undo Tauri command (src-tauri/commands/chat.rs)
+  |-- requires: useChat undoMessage + editMessage additions
   |-- requires: MessageBubble UserActionBar with real callbacks
-  |-- requires: ChatPanel pendingEdit state
+  |-- requires: App.tsx / ChatPanel pendingEdit state
 
 Phase 2 (History Tree)
   |-- requires: Phase 1 complete
-  |-- requires: chat_messages SQLite table (migration)
-  |-- requires: chat_get_messages_with_status command
-  |-- requires: chat_restore_branch command
+  |-- requires: chat_messages SQLite table (migration 012+)
+  |-- requires: chat_get_messages_with_status Tauri command
+  |-- requires: chat_restore_branch Tauri command
   |-- requires: RestoreDivider component
 
 Phase 3 (Keyboard + a11y)
@@ -367,10 +405,10 @@ Phase 3 (Keyboard + a11y)
 - Send two messages to a session.  Click Undo on the second message.  Verify
   only the first message remains visible.
 - Send two messages.  Click Edit on the second.  Verify input box is populated.
-  Send a new message.  Verify the original second message is tombstoned and the
-  new message appears.
-- Verify a new row exists in `chat_checkpoints` for each commit (inspectable
-  via SQLite CLI: `sqlite3 y-agent.db "SELECT * FROM chat_checkpoints ORDER BY sequence DESC LIMIT 5;"`).
+  Send a new message.  Verify the original second message is removed (truncated)
+  and the new message appears.
+- Verify a new row exists in `chat_checkpoints` for each turn (inspectable
+  via SQLite CLI: `sqlite3 y-agent.db "SELECT * FROM chat_checkpoints ORDER BY turn_number DESC LIMIT 5;"`).
 
 ### Phase 2
 - Undo a message.  Verify the restore divider appears.
@@ -389,15 +427,18 @@ Phase 3 (Keyboard + a11y)
 
 | File | Phase | Change Type |
 |------|-------|-------------|
-| `crates/y-gui/src/components/MessageBubble.tsx` | 0, 1 | Modify |
-| `crates/y-gui/src/components/MessageBubble.css` | 0, 1 | Modify |
-| `crates/y-gui/src/components/ChatPanel.tsx` | 1, 2 | Modify |
-| `crates/y-gui/src/hooks/useChat.ts` | 1, 2 | Modify |
+| `crates/y-gui/src/components/MessageBubble.tsx` | 0, 1 | Modify (add UserActionBar) |
+| `crates/y-gui/src/components/MessageBubble.css` | 0, 1 | Modify (user action bar styles) |
+| `crates/y-gui/src/components/ChatPanel.tsx` | 1, 2 | Modify (thread callbacks, add RestoreDivider) |
+| `crates/y-gui/src/hooks/useChat.ts` | 1, 2 | Modify (add undoMessage, editMessage) |
 | `crates/y-gui/src/components/RestoreDivider.tsx` | 2 | New |
 | `crates/y-gui/src/components/RestoreDivider.css` | 2 | New |
-| `crates/y-cli/src/commands/init.rs` | 1, 2 | Modify (new Tauri commands) |
-| `migrations/sqlite/007_chat_checkpoints.up.sql` | 1 | New |
-| `migrations/sqlite/007_chat_checkpoints.down.sql` | 1 | New |
-| `migrations/sqlite/008_chat_messages.up.sql` | 2 | New |
-| `migrations/sqlite/008_chat_messages.down.sql` | 2 | New |
-| `docs/standards/DATABASE_SCHEMA.md` | 1, 2 | Modify (add new tables) |
+| `crates/y-gui/src-tauri/src/commands/chat.rs` | 1, 2 | Modify (add chat_undo, chat_checkpoint_list) |
+| `crates/y-gui/src-tauri/src/lib.rs` | 1, 2 | Modify (register new Tauri commands) |
+| `crates/y-core/src/session.rs` | -- | Already done (ChatCheckpoint, ChatCheckpointStore) |
+| `crates/y-storage/src/checkpoint_chat.rs` | -- | Already done (SqliteChatCheckpointStore) |
+| `crates/y-service/src/container.rs` | -- | Already done (ChatCheckpointManager) |
+| `migrations/sqlite/010_chat_checkpoints.up.sql` | -- | Already done |
+| `migrations/sqlite/012_chat_messages.up.sql` | 2 | New |
+| `migrations/sqlite/012_chat_messages.down.sql` | 2 | New |
+| `docs/standards/DATABASE_SCHEMA.md` | 2 | Modify (add chat_messages table) |

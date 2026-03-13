@@ -10,6 +10,7 @@ system_prompt = "You are a Tool Engineer. Your role is to design and implement n
 skills = []
 preferred_models = []
 fallback_models = []
+provider_tags = ["general"]
 max_iterations = 30
 max_tool_calls = 100
 timeout_secs = 600

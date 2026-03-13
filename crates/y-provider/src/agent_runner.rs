@@ -88,6 +88,7 @@ impl SingleTurnRunner {
     fn build_route(config: &AgentRunConfig) -> RouteRequest {
         RouteRequest {
             preferred_model: config.preferred_models.first().cloned(),
+            required_tags: config.provider_tags.clone(),
             ..Default::default()
         }
     }
@@ -150,6 +151,7 @@ mod tests {
             input: serde_json::json!({"data": "hello world"}),
             preferred_models: vec!["gpt-4o-mini".to_string()],
             fallback_models: vec![],
+            provider_tags: vec!["general".to_string()],
             temperature: Some(0.5),
             max_tokens: Some(100),
             timeout_secs: 10,
@@ -178,6 +180,7 @@ mod tests {
             input: serde_json::Value::String("plain text input".to_string()),
             preferred_models: vec![],
             fallback_models: vec![],
+            provider_tags: vec![],
             temperature: None,
             max_tokens: None,
             timeout_secs: 10,
@@ -198,6 +201,7 @@ mod tests {
             input: serde_json::json!(null),
             preferred_models: vec!["claude-3-haiku".to_string()],
             fallback_models: vec![],
+            provider_tags: vec!["title".to_string()],
             temperature: None,
             max_tokens: None,
             timeout_secs: 10,

@@ -10,6 +10,7 @@ system_prompt = "You are a Pattern Extractor. Analyze agent experience records a
 skills = []
 preferred_models = ["gpt-4o", "claude-3-5-sonnet"]
 fallback_models = ["gpt-4o-mini"]
+provider_tags = ["general"]
 temperature = 0.2
 max_iterations = 15
 max_tool_calls = 30

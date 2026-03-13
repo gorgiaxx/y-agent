@@ -10,6 +10,7 @@ system_prompt = "You are a Compaction Summarizer. Your role is to produce concis
 skills = []
 preferred_models = ["gpt-4o-mini", "claude-3-haiku"]
 fallback_models = ["gpt-4o"]
+provider_tags = ["general"]
 temperature = 0.2
 max_iterations = 5
 max_tool_calls = 0

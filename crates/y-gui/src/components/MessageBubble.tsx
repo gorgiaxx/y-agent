@@ -9,6 +9,9 @@ import {
   Share2,
   ThumbsUp,
   ThumbsDown,
+  Pencil,
+  Undo2,
+  RefreshCw,
 } from 'lucide-react';
 import type { Message } from '../types';
 import { ToolCallCard } from './ToolCallCard';
@@ -16,6 +19,9 @@ import './MessageBubble.css';
 
 interface MessageBubbleProps {
   message: Message;
+  onEdit?: (content: string) => void;
+  onUndo?: (messageId: string) => void;
+  onResend?: (content: string) => void;
 }
 
 /** CSS-styled letter avatar instead of emoji. */
@@ -127,12 +133,104 @@ function ActionBar({ content }: { content: string }) {
   );
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+/** Action bar shown on hover for user messages: Copy, Edit, Resend, Undo. */
+function UserActionBar({
+  content,
+  messageId,
+  onEdit,
+  onUndo,
+  onResend,
+}: {
+  content: string;
+  messageId: string;
+  onEdit?: (content: string) => void;
+  onUndo?: (messageId: string) => void;
+  onResend?: (content: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [content]);
+
+  const handleEdit = useCallback(() => {
+    if (onEdit) {
+      onEdit(content);
+    } else {
+      console.warn('[MessageBubble] Edit handler not yet connected');
+    }
+  }, [content, onEdit]);
+
+  const handleUndo = useCallback(() => {
+    if (onUndo) {
+      onUndo(messageId);
+    } else {
+      console.warn('[MessageBubble] Undo handler not yet connected');
+    }
+  }, [messageId, onUndo]);
+
+  const handleResend = useCallback(() => {
+    if (onResend) {
+      onResend(content);
+    } else {
+      console.warn('[MessageBubble] Resend handler not yet connected');
+    }
+  }, [content, onResend]);
+
+  return (
+    <div className="message-actions user-action-bar">
+      <button className="action-btn" onClick={handleCopy} title="Copy message" aria-label="Copy message">
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+        <span className="action-label">{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+
+      <button className="action-btn" onClick={handleEdit} title="Edit message" aria-label="Edit message">
+        <Pencil size={14} />
+        <span className="action-label">Edit</span>
+      </button>
+
+      <button className="action-btn" onClick={handleResend} title="Resend message" aria-label="Resend message">
+        <RefreshCw size={14} />
+        <span className="action-label">Resend</span>
+      </button>
+
+      <button className="action-btn" onClick={handleUndo} title="Undo to this point" aria-label="Undo to this point">
+        <Undo2 size={14} />
+        <span className="action-label">Undo</span>
+      </button>
+    </div>
+  );
+}
+
+export function MessageBubble({ message, onEdit, onUndo, onResend }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
 
+  // Phase 3: Keyboard shortcut handler for user messages.
+  const handleBubbleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!isUser) return;
+      if (e.altKey && e.key === 'e') {
+        e.preventDefault();
+        if (onEdit) onEdit(message.content);
+      } else if (e.altKey && e.key === 'z') {
+        e.preventDefault();
+        if (onUndo) onUndo(message.id);
+      }
+    },
+    [isUser, message.content, message.id, onEdit, onUndo],
+  );
+
   return (
-    <div className={`message-bubble ${message.role}`}>
+    <div
+      className={`message-bubble ${message.role}`}
+      tabIndex={isUser ? 0 : undefined}
+      onKeyDown={isUser ? handleBubbleKeyDown : undefined}
+      aria-label={isUser ? `Your message: ${message.content.slice(0, 60)}` : undefined}
+    >
       <Avatar role={message.role} />
       <div className="message-body">
         <div className="message-header">
@@ -187,8 +285,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Action bar -- only for non-user messages */}
-        {!isUser && <ActionBar content={message.content} />}
+        {/* Action bar */}
+        {isUser
+          ? <UserActionBar content={message.content} messageId={message.id} onEdit={onEdit} onUndo={onUndo} onResend={onResend} />
+          : <ActionBar content={message.content} />
+        }
 
         <div className="message-footer">
           <span className="message-time">

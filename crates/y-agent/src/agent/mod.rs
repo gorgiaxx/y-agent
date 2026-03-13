@@ -34,6 +34,6 @@ pub use config::MultiAgentConfig;
 pub use definition::{AgentDefinition, AgentMode, ContextStrategy};
 pub use delegation::DelegationProtocol;
 pub use error::MultiAgentError;
-pub use pool::AgentPool;
+pub use pool::{ActiveDelegation, AgentPool, DelegationTracker};
 pub use registry::AgentRegistry;
 pub use trust::TrustTier;

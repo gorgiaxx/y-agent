@@ -1,0 +1,37 @@
+[skill]
+name = "humanizer-zh"
+version = "1.0.0"
+description = "Remove AI writing artifacts from Chinese text, producing natural and human-like prose"
+author = "y-agent-builtin"
+source_format = "markdown"
+created = "2026-03-13T12:00:00Z"
+
+[skill.classification]
+type = "llm_reasoning"
+domain = ["writing", "chinese", "editing"]
+atomic = true
+
+[skill.constraints]
+max_input_tokens = 8000
+max_output_tokens = 8000
+requires_language = "zh"
+
+[skill.root]
+path = "root.md"
+token_count = 750
+
+[skill.tree]
+sub_documents = [
+    { path = "details/tone-guidelines.md", title = "Tone and style guidelines for natural Chinese", token_count = 600 },
+]
+
+[skill.references]
+tools = []
+skills = []
+knowledge_bases = []
+
+[skill.safety]
+allows_external_calls = false
+allows_file_operations = false
+allows_code_execution = false
+max_delegation_depth = 0

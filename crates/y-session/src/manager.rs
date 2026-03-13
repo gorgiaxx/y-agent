@@ -284,6 +284,11 @@ impl SessionManager {
         session.token_count >= self.config.compaction_threshold
     }
 
+    /// Get a reference to the underlying transcript store.
+    pub fn transcript_store(&self) -> &dyn TranscriptStore {
+        &*self.transcript_store
+    }
+
     /// Get the session configuration.
     pub fn config(&self) -> &SessionConfig {
         &self.config

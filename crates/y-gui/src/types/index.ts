@@ -166,6 +166,43 @@ export interface TurnMeta {
   context_window: number;
 }
 
+/** Result of a chat undo operation (from `chat_undo`). */
+export interface UndoResult {
+  remaining_message_count: number;
+  restored_turn_number: number;
+  files_restored: number;
+}
+
+/** Checkpoint info returned by `chat_checkpoint_list`. */
+export interface ChatCheckpointInfo {
+  checkpoint_id: string;
+  session_id: string;
+  turn_number: number;
+  message_count_before: number;
+  created_at: string;
+}
+
+/** Message with active/tombstone status (from `chat_get_messages_with_status`). */
+export interface MessageWithStatus {
+  id: string;
+  role: string;
+  content: string;
+  status: 'active' | 'tombstone';
+  checkpoint_id?: string;
+  model?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+  context_window?: number;
+  created_at: string;
+}
+
+/** Result of a branch restoration (from `chat_restore_branch`). */
+export interface RestoreResult {
+  tombstoned_count: number;
+  restored_count: number;
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -176,4 +213,64 @@ export interface GuiConfig {
   send_on_enter: boolean;
   window_width: number;
   window_height: number;
+}
+
+// ---------------------------------------------------------------------------
+// Observability (live system snapshots)
+// ---------------------------------------------------------------------------
+
+/** Point-in-time snapshot of the entire system (from `observability_snapshot`). */
+export interface SystemSnapshot {
+  timestamp: string;
+  providers: ProviderSnapshot[];
+  agents: AgentPoolSnapshot;
+  scheduler: SchedulerQueueSnapshot | null;
+}
+
+/** Per-provider combined state: metadata + freeze + concurrency + metrics. */
+export interface ProviderSnapshot {
+  id: string;
+  model: string;
+  provider_type: string;
+  tags: string[];
+  is_frozen: boolean;
+  freeze_reason: string | null;
+  max_concurrency: number;
+  active_requests: number;
+  total_requests: number;
+  total_errors: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  estimated_cost_usd: number;
+  error_rate: number;
+}
+
+/** Aggregate agent pool state. */
+export interface AgentPoolSnapshot {
+  total_instances: number;
+  active_instances: number;
+  available_slots: number;
+  instances: AgentInstanceSnapshot[];
+}
+
+/** Per-instance snapshot of a running agent. */
+export interface AgentInstanceSnapshot {
+  instance_id: string;
+  agent_name: string;
+  state: string;
+  delegation_id: string | null;
+  iterations: number;
+  tool_calls: number;
+  tokens_used: number;
+  elapsed_ms: number;
+  delegation_depth: number;
+}
+
+/** Priority scheduler queue snapshot. */
+export interface SchedulerQueueSnapshot {
+  active_critical: number;
+  active_normal: number;
+  active_idle: number;
+  total_capacity: number;
+  critical_reserve_pct: number;
 }

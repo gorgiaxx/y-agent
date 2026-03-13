@@ -1,5 +1,6 @@
 //! Provider pool implementation — the main `ProviderPool` trait impl.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,6 +41,11 @@ struct ProviderEntry {
     semaphore: Arc<tokio::sync::Semaphore>,
     max_concurrency: usize,
     metrics: SharedMetrics,
+    /// Explicit counter for active in-flight requests (including streaming).
+    /// The semaphore is released when `chat_completion_stream` returns, but
+    /// the stream may still be consumed. This counter is decremented only
+    /// after the request/stream is fully complete.
+    active_requests: Arc<AtomicUsize>,
 }
 
 impl std::fmt::Debug for ProviderPoolImpl {
@@ -47,6 +53,18 @@ impl std::fmt::Debug for ProviderPoolImpl {
         f.debug_struct("ProviderPoolImpl")
             .field("provider_count", &self.providers.len())
             .finish()
+    }
+}
+
+/// RAII guard that decrements a provider's active-request counter on drop.
+///
+/// Used to track streaming requests: the guard is moved into the wrapped
+/// stream and lives until the stream is fully consumed or dropped.
+struct ActiveRequestGuard(Arc<AtomicUsize>);
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -71,6 +89,7 @@ impl ProviderPoolImpl {
                     semaphore: Arc::new(tokio::sync::Semaphore::new(max_conc)),
                     max_concurrency: max_conc,
                     metrics: Arc::new(ProviderMetrics::new()),
+                    active_requests: Arc::new(AtomicUsize::new(0)),
                 }
             })
             .collect();
@@ -201,6 +220,17 @@ impl ProviderPoolImpl {
             .map(|e| e.provider.metadata().clone())
             .collect()
     }
+
+    /// Return a snapshot of metrics for all providers.
+    ///
+    /// Each entry pairs the provider ID with its current metrics snapshot.
+    /// Avoids N+1 lookups when building observability reports.
+    pub fn all_metrics(&self) -> Vec<(y_core::types::ProviderId, crate::metrics::MetricsSnapshot)> {
+        self.providers
+            .iter()
+            .map(|e| (e.provider.metadata().id.clone(), e.metrics.snapshot()))
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -233,7 +263,13 @@ impl ProviderPool for ProviderPoolImpl {
                 message: "semaphore closed".into(),
             })?;
 
+        // Track active request for observability.
+        entry.active_requests.fetch_add(1, Ordering::Relaxed);
+
         let result = entry.provider.chat_completion(request).await;
+
+        // Decrement active counter after request completes.
+        entry.active_requests.fetch_sub(1, Ordering::Relaxed);
 
         match result {
             Ok(mut response) => {
@@ -282,17 +318,48 @@ impl ProviderPool for ProviderPoolImpl {
                 message: "semaphore closed".into(),
             })?;
 
+        // Track active request for observability (decremented when stream is
+        // fully consumed or dropped, via ActiveRequestGuard).
+        entry.active_requests.fetch_add(1, Ordering::Relaxed);
+        let guard = ActiveRequestGuard(Arc::clone(&entry.active_requests));
+
         // For streaming, we record the request but can't easily track tokens
         // until the stream completes. Token tracking for streams happens
         // at the caller level (the orchestrator reads the final chunk).
         entry.metrics.record_success(0, 0);
 
         let meta = entry.provider.metadata();
-        let mut stream_response = entry.provider.chat_completion_stream(request).await?;
-        stream_response.provider_id = Some(meta.id.clone());
-        stream_response.model = meta.model.clone();
-        stream_response.context_window = meta.context_window;
-        Ok(stream_response)
+        let stream_result = entry.provider.chat_completion_stream(request).await;
+
+        match stream_result {
+            Ok(mut stream_response) => {
+                stream_response.provider_id = Some(meta.id.clone());
+                stream_response.model = meta.model.clone();
+                stream_response.context_window = meta.context_window;
+
+                // Wrap the inner stream so `guard` is held until the stream
+                // is fully consumed or dropped.
+                let inner = stream_response.stream;
+                stream_response.stream = Box::pin(futures::stream::unfold(
+                    (inner, Some(guard)),
+                    |(mut s, g)| async move {
+                        use futures::StreamExt;
+                        match s.next().await {
+                            Some(item) => Some((item, (s, g))),
+                            None => None,
+                        }
+                    },
+                ));
+
+                Ok(stream_response)
+            }
+            Err(e) => {
+                entry.metrics.record_error();
+                self.report_error(&meta.id, &e);
+                // guard drops here, decrementing active_requests
+                Err(e)
+            }
+        }
     }
 
     fn report_error(&self, provider_id: &ProviderId, error: &ProviderError) {
@@ -356,7 +423,7 @@ impl ProviderPool for ProviderPoolImpl {
                     frozen_since: None, // Instant doesn't convert directly to Timestamp
                     thaw_at: None,
                     freeze_reason: freeze_status.reason,
-                    active_requests: entry.max_concurrency - entry.semaphore.available_permits(),
+                    active_requests: entry.active_requests.load(Ordering::Relaxed),
                     total_requests: metrics.total_requests,
                     total_errors: metrics.total_errors,
                 }

@@ -132,9 +132,67 @@ InstanceState::Completed | InstanceState::Failed | InstanceState::Interrupted)
             Ok(())
         } else {
             Err(MultiAgentError::Other {
-                message: format!("invalid state transition: {:?} → {:?}", self.state, next),
+                message: format!("invalid state transition: {:?} -> {:?}", self.state, next),
             })
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Delegation tracker -- observability for delegated agent executions
+// ---------------------------------------------------------------------------
+
+/// A currently-active delegated agent execution.
+#[derive(Debug, Clone)]
+pub struct ActiveDelegation {
+    /// Unique ID for this delegation.
+    pub id: String,
+    /// Name of the agent being executed (e.g. "title-generator").
+    pub agent_name: String,
+    /// When this delegation started.
+    pub start_time: Instant,
+}
+
+/// Tracks active delegated agent executions.
+///
+/// `AgentPool::delegate()` bypasses the pool's `instances` HashMap and
+/// calls `AgentRunner::run()` directly. This tracker provides interior-
+/// mutable bookkeeping so that observability can see those executions.
+#[derive(Debug, Default)]
+pub struct DelegationTracker {
+    active: std::sync::RwLock<Vec<ActiveDelegation>>,
+}
+
+impl DelegationTracker {
+    /// Create a new empty tracker.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a delegation as starting. Returns the delegation ID.
+    fn register(&self, agent_name: &str) -> String {
+        let id = Uuid::new_v4().to_string();
+        let entry = ActiveDelegation {
+            id: id.clone(),
+            agent_name: agent_name.to_string(),
+            start_time: Instant::now(),
+        };
+        if let Ok(mut active) = self.active.write() {
+            active.push(entry);
+        }
+        id
+    }
+
+    /// Deregister a delegation by its ID.
+    fn deregister(&self, id: &str) {
+        if let Ok(mut active) = self.active.write() {
+            active.retain(|d| d.id != id);
+        }
+    }
+
+    /// Snapshot of all active delegations.
+    pub fn active_delegations(&self) -> Vec<ActiveDelegation> {
+        self.active.read().map(|v| v.clone()).unwrap_or_default()
     }
 }
 
@@ -157,6 +215,8 @@ pub struct AgentPool {
     /// Optional runner for executing agent LLM calls.
     /// Injected at startup via `set_runner()`.
     runner: Option<Arc<dyn AgentRunner>>,
+    /// Tracks active delegations for observability.
+    delegation_tracker: Arc<DelegationTracker>,
 }
 
 impl std::fmt::Debug for AgentPool {
@@ -178,6 +238,7 @@ impl AgentPool {
             concurrency_semaphore: Semaphore::new(max),
             registry: Arc::new(RwLock::new(AgentRegistry::new())),
             runner: None,
+            delegation_tracker: Arc::new(DelegationTracker::new()),
         }
     }
 
@@ -190,6 +251,7 @@ impl AgentPool {
             concurrency_semaphore: Semaphore::new(max),
             registry,
             runner: None,
+            delegation_tracker: Arc::new(DelegationTracker::new()),
         }
     }
 
@@ -330,6 +392,11 @@ impl AgentPool {
     pub fn count(&self) -> usize {
         self.instances.len()
     }
+
+    /// Get the shared delegation tracker for observability.
+    pub fn delegation_tracker(&self) -> &Arc<DelegationTracker> {
+        &self.delegation_tracker
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +431,7 @@ impl AgentDelegator for AgentPool {
         // Step 2: Build AgentRunConfig from definition
         let runner = self.runner.as_ref().ok_or_else(|| DelegationError::DelegationFailed {
             message: format!(
-                "no AgentRunner configured — cannot execute agent '{agent_name}'. \
+                "no AgentRunner configured -- cannot execute agent '{agent_name}'. \
                  Call AgentPool::set_runner() at startup.",
             ),
         })?;
@@ -375,16 +442,24 @@ impl AgentDelegator for AgentPool {
             input,
             preferred_models: definition.preferred_models.clone(),
             fallback_models: definition.fallback_models.clone(),
+            provider_tags: definition.provider_tags.clone(),
             temperature: definition.temperature,
             #[allow(clippy::cast_possible_truncation)]
             max_tokens: Some(definition.max_context_tokens as u32),
             timeout_secs: definition.timeout_secs,
         };
 
+        // Register for observability before execution.
+        let delegation_id = self.delegation_tracker.register(agent_name);
+
         // Step 3: Execute via runner
-        let output = runner.run(config).await?;
+        let result = runner.run(config).await;
+
+        // Deregister after completion (success or failure).
+        self.delegation_tracker.deregister(&delegation_id);
 
         // Step 4: Map to DelegationOutput
+        let output = result?;
         Ok(DelegationOutput {
             text: output.text,
             tokens_used: output.tokens_used,
@@ -413,6 +488,7 @@ mod tests {
             skills: vec![],
             preferred_models: vec![],
             fallback_models: vec![],
+            provider_tags: vec![],
             temperature: None,
             top_p: None,
             max_iterations: 20,

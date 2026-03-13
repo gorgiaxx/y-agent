@@ -3,6 +3,7 @@
 pub mod chat;
 pub mod config;
 pub mod diagnostics;
+pub mod observability;
 pub mod session;
 pub mod system;
 pub mod workspace;

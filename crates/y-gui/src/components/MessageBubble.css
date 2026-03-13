@@ -317,6 +317,11 @@
   opacity: 1;
 }
 
+/* User action bar: right-aligned to match user bubble direction */
+.user-action-bar {
+  justify-content: flex-end;
+}
+
 .message-actions:has(.feedback-btn.active) {
   opacity: 1;
 }

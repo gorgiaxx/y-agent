@@ -2,16 +2,30 @@ import { useRef, useEffect } from 'react';
 import { Sparkles, AlertTriangle } from 'lucide-react';
 import type { Message } from '../types';
 import { MessageBubble } from './MessageBubble';
+import { RestoreDivider } from './RestoreDivider';
 import './ChatPanel.css';
+
+/** A tombstoned segment for rendering restore dividers. */
+export interface TombstonedSegment {
+  checkpointId: string;
+  count: number;
+  /** Index in the active message list where this divider should appear (before this index). */
+  insertBeforeIndex: number;
+}
 
 interface ChatPanelProps {
   messages: Message[];
   isStreaming: boolean;
   isLoading: boolean;
   error: string | null;
+  onEditMessage?: (content: string, messageId: string) => void;
+  onUndoMessage?: (messageId: string) => void;
+  onResendMessage?: (content: string, messageId: string) => void;
+  tombstonedSegments?: TombstonedSegment[];
+  onRestoreBranch?: (checkpointId: string) => void;
 }
 
-export function ChatPanel({ messages, isStreaming, isLoading, error }: ChatPanelProps) {
+export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessage, onUndoMessage, onResendMessage, tombstonedSegments, onRestoreBranch }: ChatPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new messages.
@@ -50,9 +64,45 @@ export function ChatPanel({ messages, isStreaming, isLoading, error }: ChatPanel
   return (
     <div className="chat-panel">
       <div className="chat-messages">
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
+          {(() => {
+            // Build a display list interleaving messages and restore dividers.
+            const elements: React.ReactNode[] = [];
+            const segmentMap = new Map<number, TombstonedSegment>();
+            if (tombstonedSegments) {
+              for (const seg of tombstonedSegments) {
+                segmentMap.set(seg.insertBeforeIndex, seg);
+              }
+            }
+            messages.forEach((msg, idx) => {
+              const seg = segmentMap.get(idx);
+              if (seg && onRestoreBranch) {
+                elements.push(
+                  <RestoreDivider
+                    key={`divider-${seg.checkpointId}`}
+                    checkpointId={seg.checkpointId}
+                    tombstonedCount={seg.count}
+                    onRestore={onRestoreBranch}
+                  />
+                );
+              }
+              elements.push(
+                <MessageBubble key={msg.id} message={msg} onEdit={(content) => onEditMessage?.(content, msg.id)} onUndo={onUndoMessage} onResend={(content) => onResendMessage?.(content, msg.id)} />
+              );
+            });
+            // Check for a trailing divider (after all messages).
+            const trailingSeg = segmentMap.get(messages.length);
+            if (trailingSeg && onRestoreBranch) {
+              elements.push(
+                <RestoreDivider
+                  key={`divider-${trailingSeg.checkpointId}`}
+                  checkpointId={trailingSeg.checkpointId}
+                  tombstonedCount={trailingSeg.count}
+                  onRestore={onRestoreBranch}
+                />
+              );
+            }
+            return elements;
+          })()}
 
         {isStreaming && !messages.some((m) => m.id.startsWith('streaming-')) && (
           <div className="streaming-indicator">

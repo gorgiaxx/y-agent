@@ -88,6 +88,7 @@ pub async fn run(action: &AgentAction, services: &AppServices, mode: OutputMode)
                 skills: vec![],
                 preferred_models: vec![],
                 fallback_models: vec![],
+                provider_tags: vec![],
                 temperature: None,
                 top_p: None,
                 max_iterations: 20,

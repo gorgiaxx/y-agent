@@ -137,6 +137,9 @@ pub struct AgentRunConfig {
     pub preferred_models: Vec<String>,
     /// Fallback models if preferred are unavailable.
     pub fallback_models: Vec<String>,
+    /// Provider routing tags (e.g. ["general"], ["title"]).
+    /// Used as `required_tags` in `RouteRequest` for provider selection.
+    pub provider_tags: Vec<String>,
     /// Sampling temperature override (from agent definition).
     pub temperature: Option<f64>,
     /// Maximum tokens to generate.
@@ -284,6 +287,7 @@ mod tests {
             input: serde_json::json!({"messages": ["hello"]}),
             preferred_models: vec!["gpt-4o-mini".to_string()],
             fallback_models: vec!["gpt-4o".to_string()],
+            provider_tags: vec!["title".to_string()],
             temperature: Some(0.3),
             max_tokens: Some(30),
             timeout_secs: 30,

@@ -371,3 +371,432 @@ pub async fn session_last_turn_meta(
 
     Ok(Some(meta))
 }
+
+// ---------------------------------------------------------------------------
+// Chat undo (rollback) command
+// ---------------------------------------------------------------------------
+
+/// Result of an undo (rollback) operation.
+#[derive(Debug, Serialize, Clone)]
+pub struct UndoResult {
+    /// Messages remaining in the transcript after truncation.
+    pub remaining_message_count: usize,
+    /// Turn number the session was rolled back to.
+    pub restored_turn_number: u32,
+    /// Number of file journal scopes that need rollback (for info).
+    pub files_restored: u32,
+}
+
+/// Roll the conversation back to a specific checkpoint.
+///
+/// Truncates the JSONL transcript to the checkpoint's `message_count_before`,
+/// invalidates all checkpoints from that turn onward, and returns summary info.
+#[tauri::command]
+pub async fn chat_undo(
+    state: State<'_, AppState>,
+    session_id: String,
+    checkpoint_id: String,
+) -> Result<UndoResult, String> {
+    let sid = SessionId(session_id.clone());
+    let result = state
+        .container
+        .chat_checkpoint_manager
+        .rollback_to(&sid, &checkpoint_id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    // Clear stale turn-meta cache so the status bar refreshes.
+    if let Ok(mut cache) = state.turn_meta_cache.lock() {
+        cache.remove(&session_id);
+    }
+
+    Ok(UndoResult {
+        remaining_message_count: result.messages_removed, // messages_removed is what was cut
+        restored_turn_number: result.rolled_back_to_turn,
+        files_restored: result.scopes_rolled_back.len() as u32,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Chat resend command
+// ---------------------------------------------------------------------------
+
+/// Resend a user message by keeping it in the transcript and only removing
+/// the assistant reply + subsequent tool messages. Then re-run the LLM.
+///
+/// Unlike undo + send, this preserves the original user message (same ID,
+/// same timestamp) so the conversation history remains consistent.
+///
+/// Events emitted: same as `chat_send` (`chat:started`, `chat:progress`,
+/// `chat:complete`, `chat:error`).
+#[tauri::command]
+pub async fn chat_resend(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    checkpoint_id: String,
+    provider_id: Option<String>,
+) -> Result<ChatStarted, String> {
+    let sid = SessionId(session_id.clone());
+
+    // 1. Load the checkpoint to find message_count_before.
+    let checkpoint = state
+        .container
+        .chat_checkpoint_manager
+        .checkpoint_store()
+        .load(&checkpoint_id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    // 2. Partial truncation: keep user message (message_count_before + 1),
+    //    remove assistant reply and any tool messages after it.
+    let keep_count = checkpoint.message_count_before as usize + 1;
+    state
+        .container
+        .session_manager
+        .transcript_store()
+        .truncate(&sid, keep_count)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    // 3. Invalidate this checkpoint and all newer ones.
+    state
+        .container
+        .chat_checkpoint_manager
+        .checkpoint_store()
+        .invalidate_after(&sid, checkpoint.turn_number.saturating_sub(1))
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    // 4. Read transcript (now ends with the original user message).
+    let history = state
+        .container
+        .session_manager
+        .read_transcript(&sid)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if history.is_empty() {
+        return Err("transcript is empty after truncation".into());
+    }
+
+    let user_input = history.last().unwrap().content.clone();
+    let turn_number = history.len() as u32;
+    let session_uuid = uuid::Uuid::parse_str(&session_id)
+        .unwrap_or_else(|_| uuid::Uuid::new_v4());
+
+    // 5. Build run_id and emit chat:started.
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let result_sid = session_id.clone();
+    let result_run_id = run_id.clone();
+
+    let _ = app.emit("chat:started", ChatStartedPayload {
+        run_id: run_id.clone(),
+        session_id: session_id.clone(),
+    });
+
+    // Register cancellation token.
+    let cancel_token = CancellationToken::new();
+    if let Ok(mut runs) = state.pending_runs.lock() {
+        runs.insert(run_id.clone(), cancel_token.clone());
+    }
+
+    // Clear stale turn-meta cache.
+    if let Ok(mut cache) = state.turn_meta_cache.lock() {
+        cache.remove(&session_id);
+    }
+
+    // 6. Spawn LLM worker (same pattern as chat_send).
+    let container = state.container.clone();
+    let sid_clone = sid.clone();
+    let run_id_clone = run_id.clone();
+    let turn_meta_cache = Arc::clone(&state.turn_meta_cache);
+    let cancel_clone = cancel_token.clone();
+
+    tokio::spawn(async move {
+        let input = y_service::TurnInput {
+            user_input: &user_input,
+            session_id: sid_clone.clone(),
+            session_uuid,
+            history: &history,
+            turn_number,
+            provider_id: provider_id.clone(),
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let app_progress = app.clone();
+        let run_id_progress = run_id_clone.clone();
+        let progress_task = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                let _ = app_progress.emit("chat:progress", ProgressPayload {
+                    run_id: run_id_progress.clone(),
+                    event,
+                });
+            }
+        });
+
+        match ChatService::execute_turn_with_progress(
+            &container,
+            &input,
+            tx,
+            Some(cancel_clone),
+        )
+        .await
+        {
+            Ok(result) => {
+                let meta = TurnMeta {
+                    provider_id: result.provider_id.clone(),
+                    model: result.model.clone(),
+                    input_tokens: result.input_tokens,
+                    output_tokens: result.output_tokens,
+                    cost_usd: result.cost_usd,
+                    context_window: result.context_window,
+                };
+                if let Ok(mut cache) = turn_meta_cache.lock() {
+                    cache.insert(sid_clone.0.clone(), meta);
+                }
+
+                let _ = app.emit(
+                    "chat:complete",
+                    ChatCompletePayload {
+                        run_id: run_id_clone,
+                        content: result.content,
+                        model: result.model,
+                        provider_id: result.provider_id,
+                        input_tokens: result.input_tokens,
+                        output_tokens: result.output_tokens,
+                        cost_usd: result.cost_usd,
+                        tool_calls: result
+                            .tool_calls_executed
+                            .iter()
+                            .map(|tc| ToolCallInfo {
+                                name: tc.name.clone(),
+                                success: tc.success,
+                                duration_ms: tc.duration_ms,
+                            })
+                            .collect(),
+                        iterations: result.iterations,
+                        context_window: result.context_window,
+                    },
+                );
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "chat:error",
+                    ChatErrorPayload {
+                        run_id: run_id_clone,
+                        error: e.to_string(),
+                    },
+                );
+            }
+        }
+
+        let _ = progress_task.await;
+    });
+
+    Ok(ChatStarted {
+        session_id: result_sid,
+        run_id: result_run_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Chat checkpoint list command
+// ---------------------------------------------------------------------------
+
+/// Info about a single chat checkpoint (for the frontend).
+#[derive(Debug, Serialize, Clone)]
+pub struct ChatCheckpointInfo {
+    pub checkpoint_id: String,
+    pub session_id: String,
+    pub turn_number: u32,
+    pub message_count_before: u32,
+    pub created_at: String,
+}
+
+/// List all non-invalidated checkpoints for a session, ordered by turn number DESC.
+#[tauri::command]
+pub async fn chat_checkpoint_list(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<ChatCheckpointInfo>, String> {
+    let sid = SessionId(session_id);
+    let checkpoints = state
+        .container
+        .chat_checkpoint_manager
+        .list_checkpoints(&sid)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    Ok(checkpoints
+        .into_iter()
+        .map(|cp| ChatCheckpointInfo {
+            checkpoint_id: cp.checkpoint_id,
+            session_id: cp.session_id.0,
+            turn_number: cp.turn_number,
+            message_count_before: cp.message_count_before,
+            created_at: cp.created_at.to_rfc3339(),
+        })
+        .collect())
+}
+
+/// Find the correct checkpoint for resending a user message.
+///
+/// Takes a session ID and the user message content, finds the matching
+/// user message in the transcript by content, and returns the checkpoint
+/// whose `message_count_before` matches that message's index.
+///
+/// This consolidates the multi-step checkpoint lookup that the frontend
+/// previously did (session_get_messages + chat_checkpoint_list + index
+/// matching) into a single atomic backend call.
+#[tauri::command]
+pub async fn chat_find_checkpoint_for_resend(
+    state: State<'_, AppState>,
+    session_id: String,
+    user_message_content: String,
+) -> Result<Option<ChatCheckpointInfo>, String> {
+    let sid = SessionId(session_id);
+
+    // 1. Read transcript to find the user message's index.
+    let messages = state
+        .container
+        .session_manager
+        .read_transcript(&sid)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    // Find the last user message matching the content (in case of duplicates,
+    // the most recent one is the one the user intends to resend).
+    let message_index = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, m)| m.role == y_core::types::Role::User && m.content == user_message_content)
+        .map(|(idx, _)| idx);
+
+    let message_index = match message_index {
+        Some(idx) => idx,
+        None => return Ok(None),
+    };
+
+    // 2. List non-invalidated checkpoints.
+    let checkpoints = state
+        .container
+        .chat_checkpoint_manager
+        .list_checkpoints(&sid)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    // 3. Find checkpoint whose message_count_before matches this message's index.
+    let matched = checkpoints
+        .iter()
+        .find(|cp| cp.message_count_before as usize == message_index)
+        .or_else(|| checkpoints.first()); // fallback: most recent checkpoint
+
+    Ok(matched.map(|cp| ChatCheckpointInfo {
+        checkpoint_id: cp.checkpoint_id.clone(),
+        session_id: cp.session_id.0.clone(),
+        turn_number: cp.turn_number,
+        message_count_before: cp.message_count_before,
+        created_at: cp.created_at.to_rfc3339(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Chat messages with status (Phase 2 — session history tree)
+// ---------------------------------------------------------------------------
+
+/// A message with its active/tombstone status for the frontend.
+#[derive(Debug, Serialize, Clone)]
+pub struct MessageWithStatus {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub status: String,
+    pub checkpoint_id: Option<String>,
+    pub model: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cost_usd: Option<f64>,
+    pub context_window: Option<i64>,
+    pub created_at: String,
+}
+
+/// Get all messages for a session, including tombstoned ones, with status.
+#[tauri::command]
+pub async fn chat_get_messages_with_status(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<MessageWithStatus>, String> {
+    use y_core::session::ChatMessageStore;
+
+    let sid = SessionId(session_id);
+    let records = state
+        .container
+        .chat_message_store
+        .list_by_session(&sid)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    Ok(records
+        .into_iter()
+        .map(|r| {
+            let status = match r.status {
+                y_core::session::ChatMessageStatus::Active => "active".to_string(),
+                y_core::session::ChatMessageStatus::Tombstone => "tombstone".to_string(),
+            };
+            MessageWithStatus {
+                id: r.id,
+                role: r.role,
+                content: r.content,
+                status,
+                checkpoint_id: r.checkpoint_id,
+                model: r.model,
+                input_tokens: r.input_tokens,
+                output_tokens: r.output_tokens,
+                cost_usd: r.cost_usd,
+                context_window: r.context_window,
+                created_at: r.created_at.to_rfc3339(),
+            }
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Chat restore branch (Phase 2)
+// ---------------------------------------------------------------------------
+
+/// Result of a branch restoration.
+#[derive(Debug, Serialize, Clone)]
+pub struct RestoreResult {
+    pub tombstoned_count: u32,
+    pub restored_count: u32,
+}
+
+/// Swap the active and tombstoned branches at a checkpoint boundary.
+#[tauri::command]
+pub async fn chat_restore_branch(
+    state: State<'_, AppState>,
+    session_id: String,
+    checkpoint_id: String,
+) -> Result<RestoreResult, String> {
+    use y_core::session::ChatMessageStore;
+
+    let sid = SessionId(session_id.clone());
+    let (tombstoned_count, restored_count) = state
+        .container
+        .chat_message_store
+        .swap_branches(&sid, &checkpoint_id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    // Clear stale turn-meta cache.
+    if let Ok(mut cache) = state.turn_meta_cache.lock() {
+        cache.remove(&session_id);
+    }
+
+    Ok(RestoreResult {
+        tombstoned_count,
+        restored_count,
+    })
+}

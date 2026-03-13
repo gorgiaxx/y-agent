@@ -19,7 +19,7 @@ use y_core::types::ToolName;
 use y_diagnostics::{DiagnosticsSubscriber, TraceStore};
 use y_guardrails::GuardrailManager;
 use y_hooks::HookSystem;
-use y_agent::{AgentPool, AgentRegistry, MultiAgentConfig};
+use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
 use y_prompt::{builtin_section_store, default_template, PromptContext};
 use y_provider::providers::anthropic::AnthropicProvider;
 use y_provider::providers::azure::AzureOpenAiProvider;
@@ -30,7 +30,7 @@ use y_provider::ProviderPoolImpl;
 use y_provider::SingleTurnRunner;
 use y_runtime::RuntimeManager;
 use y_session::{ChatCheckpointManager, SessionManager};
-use y_storage::{SqliteChatCheckpointStore, SqliteSessionStore, SqliteWorkflowStore};
+use y_storage::{SqliteChatCheckpointStore, SqliteChatMessageStore, SqliteSessionStore, SqliteWorkflowStore};
 use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 use y_skills::SkillRegistryImpl;
 
@@ -81,6 +81,10 @@ pub struct ServiceContainer {
     /// Agent delegator for delegating tasks to agents (wired through `AgentPool` + `SingleTurnRunner`).
     pub agent_delegator: Arc<dyn AgentDelegator>,
 
+    /// Shared delegation tracker: records active delegations from `agent_delegator`
+    /// so observability can see them even though they bypass pool instance tracking.
+    pub delegation_tracker: Arc<DelegationTracker>,
+
     /// Workflow store for persistent workflow templates.
     pub workflow_store: SqliteWorkflowStore,
 
@@ -102,6 +106,9 @@ pub struct ServiceContainer {
     /// Shared dynamic tool schemas — updated when tools are activated
     /// via `tool_search`, read by `InjectTools` at context assembly time.
     pub dynamic_tool_schemas: Arc<RwLock<Vec<String>>>,
+
+    /// Chat message store for session history tree (Phase 2).
+    pub chat_message_store: Arc<SqliteChatMessageStore>,
 }
 
 impl ServiceContainer {
@@ -149,6 +156,9 @@ impl ServiceContainer {
             chat_checkpoint_store,
             Arc::clone(&session_store),
         );
+
+        // 5c. Chat message store (Phase 2 — session history tree).
+        let chat_message_store = Arc::new(SqliteChatMessageStore::new(pool.clone()));
 
         // 6. Hook system.
         #[allow(unused_mut)]
@@ -231,6 +241,10 @@ tools = ["tool_search"]
         ));
         agent_pool.set_runner(runner);
 
+        // Extract the delegation tracker *before* the pool is consumed by Arc::new().
+        // This is the tracker that `delegate()` will write to.
+        let delegation_tracker = Arc::clone(agent_pool.delegation_tracker());
+
         let agent_delegator: Arc<dyn AgentDelegator> = Arc::new(agent_pool);
         // Create a second pool with the same config and runner for service-level use.
         let mut agent_pool_for_services = AgentPool::new(MultiAgentConfig::default());
@@ -260,6 +274,7 @@ tools = ["tool_search"]
             agent_registry,
             agent_pool: agent_pool_for_services,
             agent_delegator,
+            delegation_tracker,
             workflow_store,
             prompt_context,
             diagnostics,
@@ -267,6 +282,7 @@ tools = ["tool_search"]
             tool_activation_set,
             tool_taxonomy,
             dynamic_tool_schemas,
+            chat_message_store,
         })
     }
 

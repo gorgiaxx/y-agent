@@ -177,6 +177,11 @@ impl ChatCheckpointManager {
         })
     }
 
+    /// Get a reference to the underlying checkpoint store.
+    pub fn checkpoint_store(&self) -> &dyn ChatCheckpointStore {
+        &*self.checkpoint_store
+    }
+
     /// List available (non-invalidated) checkpoints for a session.
     pub async fn list_checkpoints(
         &self,

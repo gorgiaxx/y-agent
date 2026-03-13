@@ -980,7 +980,10 @@ impl ChatService {
                     new_messages.push(assistant_msg);
 
                     // Checkpoint.
-                    let msg_count_before = input.history.len() as u32;
+                    // `input.history` includes the user message appended by
+                    // `prepare_turn`, so subtract 1 to get the count *before*
+                    // the turn started (i.e. before the user message).
+                    let msg_count_before = input.history.len().saturating_sub(1) as u32;
                     let turn = input.turn_number + 1;
                     let scope_id = format!("turn-{}-{}", input.session_id.0, turn);
                     if let Err(e) = container

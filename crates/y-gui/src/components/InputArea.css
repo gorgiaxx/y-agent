@@ -101,3 +101,41 @@
   border-color: var(--error);
   transform: scale(1.06);
 }
+
+/* ---- Edit mode banner ---- */
+
+.edit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 6px var(--space-md);
+  margin-bottom: var(--space-sm);
+  background: rgba(200, 181, 96, 0.08);
+  border: 1px solid rgba(200, 181, 96, 0.18);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.edit-banner-text {
+  flex: 1;
+  letter-spacing: 0.01em;
+}
+
+.edit-banner-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.edit-banner-dismiss:hover {
+  background: rgba(200, 181, 96, 0.15);
+}

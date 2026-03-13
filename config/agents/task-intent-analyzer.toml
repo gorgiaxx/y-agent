@@ -10,6 +10,7 @@ system_prompt = "You are a Task Intent Analyzer. Analyze the user's request and 
 skills = []
 preferred_models = ["gpt-4o", "claude-3-5-sonnet"]
 fallback_models = ["gpt-4o-mini"]
+provider_tags = ["general"]
 temperature = 0.1
 max_iterations = 5
 max_tool_calls = 0

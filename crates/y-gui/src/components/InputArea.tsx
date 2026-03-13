@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
-import { Square } from 'lucide-react';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { Square, X } from 'lucide-react';
 import { ProviderSelector } from './ProviderSelector';
 import type { ProviderInfo } from '../types';
+import type { PendingEdit } from '../hooks/useChat';
 import './InputArea.css';
 
 interface InputAreaProps {
@@ -12,6 +13,8 @@ interface InputAreaProps {
   providers: ProviderInfo[];
   selectedProviderId: string;
   onSelectProvider: (id: string) => void;
+  pendingEdit?: PendingEdit | null;
+  onCancelEdit?: () => void;
 }
 
 export function InputArea({
@@ -22,6 +25,8 @@ export function InputArea({
   providers,
   selectedProviderId,
   onSelectProvider,
+  pendingEdit,
+  onCancelEdit,
 }: InputAreaProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -52,8 +57,34 @@ export function InputArea({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   };
 
+  // When entering edit mode, populate the textarea with the message content.
+  useEffect(() => {
+    if (pendingEdit) {
+      setValue(pendingEdit.content);
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        // Auto-resize for the new content.
+        textareaRef.current.style.height = 'auto';
+        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+      }
+    }
+  }, [pendingEdit]);
+
   return (
     <div className="input-area">
+      {pendingEdit && (
+        <div className="edit-banner">
+          <span className="edit-banner-text">Editing message -- sending will undo context to this point</span>
+          <button
+            className="edit-banner-dismiss"
+            onClick={onCancelEdit}
+            title="Cancel edit"
+            aria-label="Cancel edit"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <div className="input-container">
         <textarea
           ref={textareaRef}

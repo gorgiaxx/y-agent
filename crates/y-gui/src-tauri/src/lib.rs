@@ -83,6 +83,12 @@ pub fn run() {
             commands::chat::chat_send,
             commands::chat::chat_cancel,
             commands::chat::session_last_turn_meta,
+            commands::chat::chat_undo,
+            commands::chat::chat_checkpoint_list,
+            commands::chat::chat_get_messages_with_status,
+            commands::chat::chat_restore_branch,
+            commands::chat::chat_resend,
+            commands::chat::chat_find_checkpoint_for_resend,
             // Sessions
             commands::session::session_list,
             commands::session::session_create,
@@ -90,6 +96,8 @@ pub fn run() {
             commands::session::session_delete,
             // Diagnostics
             commands::diagnostics::diagnostics_get_by_session,
+            // Observability
+            commands::observability::observability_snapshot,
             // Config
             commands::config::config_get,
             commands::config::config_set_section,

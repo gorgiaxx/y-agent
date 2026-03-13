@@ -1,16 +1,18 @@
 import { useState, useEffect, useCallback, startTransition } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Settings, Activity } from 'lucide-react';
+import { Settings, Activity, Eye } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { InputArea } from './components/InputArea';
 import { StatusBar } from './components/StatusBar';
 import { SettingsOverlay } from './components/SettingsOverlay';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
+import { ObservabilityPanel } from './components/ObservabilityPanel';
 import { useChat } from './hooks/useChat';
 import { useSessions } from './hooks/useSessions';
 import { useConfig } from './hooks/useConfig';
 import { useDiagnostics } from './hooks/useDiagnostics';
+import { useObservability } from './hooks/useObservability';
 import { useWorkspaces } from './hooks/useWorkspaces';
 import type { SystemStatus, ProviderInfo, TurnMeta } from './types';
 import './App.css';
@@ -24,8 +26,25 @@ function App() {
     deleteSession,
     refreshSessions,
   } = useSessions();
-  const { messages, isStreaming, isLoadingMessages, streamingSessionIds, error, sendMessage, cancelRun, loadMessages, clearMessages } =
-    useChat(activeSessionId);
+  const {
+    messages,
+    isStreaming,
+    isLoadingMessages,
+    streamingSessionIds,
+    error,
+    opStatus,
+    pendingEdit,
+    sendMessage,
+    cancelRun,
+    loadMessages,
+    clearMessages,
+    editMessage,
+    cancelEdit,
+    editAndResend,
+    undoToMessage,
+    resendLastTurn,
+    restoreBranch,
+  } = useChat(activeSessionId);
 
   const { config, updateConfig, loadSection, saveSection, reloadConfig } = useConfig();
   const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
@@ -42,7 +61,10 @@ function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
+  const [obsOpen, setObsOpen] = useState(false);
+  const [obsExpanded, setObsExpanded] = useState(false);
   const [diagExpanded, setDiagExpanded] = useState(false);
+  const { snapshot: obsSnapshot, loading: obsLoading } = useObservability(obsOpen);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState('auto');
@@ -85,10 +107,6 @@ function App() {
   }, [activeSessionId, loadMessages, clearMessages]);
 
   // Track last response metadata for status bar.
-  // Two sources:
-  //   1. When session changes: query backend cache (persists across switches).
-  //   2. When a new assistant message arrives in the current session: use message metadata.
-  // Both paths write the same four state variables.
   const applyMeta = useCallback((meta: TurnMeta | null) => {
     startTransition(() => {
       if (meta) {
@@ -128,6 +146,10 @@ function App() {
     }
   }, [messages]);
 
+  // ------------------------------------------------------------------
+  // Handlers -- thin delegation to useChat
+  // ------------------------------------------------------------------
+
   const handleSend = useCallback(
     async (message: string) => {
       let sid = activeSessionId;
@@ -136,18 +158,66 @@ function App() {
         if (!session) return;
         sid = session.id;
       }
-      addUserMessage(message, sid);
+
       const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
+
+      // If in edit mode, use the transactional editAndResend.
+      if (pendingEdit) {
+        addUserMessage(message, sid);
+        const result = await editAndResend(sid, message, providerArg);
+        if (result) {
+          if (result.session_id !== activeSessionId) {
+            selectSession(result.session_id);
+          }
+          refreshSessions();
+        }
+        return;
+      }
+
+      // Normal send.
+      addUserMessage(message, sid);
       const result = await sendMessage(message, sid, providerArg);
       if (result) {
         if (result.session_id !== activeSessionId) {
           selectSession(result.session_id);
         }
-        // Always refresh so auto-generated session titles appear immediately.
         refreshSessions();
       }
     },
-    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage, selectedProviderId],
+    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage, selectedProviderId, pendingEdit, editAndResend],
+  );
+
+  const handleEditMessage = useCallback((content: string, messageId: string) => {
+    editMessage(messageId, content);
+  }, [editMessage]);
+
+  const handleUndoMessage = useCallback(
+    async (messageId: string) => {
+      if (!activeSessionId) return;
+      await undoToMessage(activeSessionId, messageId);
+    },
+    [activeSessionId, undoToMessage],
+  );
+
+  const handleCancelEdit = useCallback(() => {
+    cancelEdit();
+  }, [cancelEdit]);
+
+  const handleRestoreBranch = useCallback(
+    async (checkpointId: string) => {
+      if (!activeSessionId) return;
+      await restoreBranch(activeSessionId, checkpointId);
+    },
+    [activeSessionId, restoreBranch],
+  );
+
+  const handleResendMessage = useCallback(
+    async (content: string, messageId: string) => {
+      if (!activeSessionId) return;
+      const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
+      await resendLastTurn(activeSessionId, messageId, content, providerArg);
+    },
+    [activeSessionId, resendLastTurn, selectedProviderId],
   );
 
   const handleNewChat = useCallback(async () => {
@@ -168,7 +238,6 @@ function App() {
     [deleteSession, activeSessionId, clearMessages],
   );
 
-  // Called from WorkspaceDialog (embedded in Sidebar) with already-chosen name + path.
   const handleCreateWorkspace = useCallback(
     async (name: string, path: string) => {
       try {
@@ -180,6 +249,9 @@ function App() {
     },
     [refreshWorkspaces],
   );
+
+  // Determine if input should be disabled: streaming OR a compound operation is in progress.
+  const inputDisabled = isStreaming || (opStatus !== 'idle' && opStatus !== 'sending');
 
   return (
     <div className="app">
@@ -212,6 +284,14 @@ function App() {
               <Activity size={16} />
             </button>
             <button
+              className={`btn-header ${obsOpen ? 'active' : ''}`}
+              onClick={() => setObsOpen(!obsOpen)}
+              title="Observability"
+              id="btn-observability"
+            >
+              <Eye size={16} />
+            </button>
+            <button
               className="btn-header"
               onClick={() => setSettingsOpen(true)}
               title="Settings"
@@ -222,15 +302,17 @@ function App() {
           </div>
         </header>
 
-        <ChatPanel messages={messages} isStreaming={isStreaming} isLoading={isLoadingMessages} error={error} />
+        <ChatPanel messages={messages} isStreaming={isStreaming} isLoading={isLoadingMessages} error={error} onEditMessage={handleEditMessage} onUndoMessage={handleUndoMessage} onResendMessage={handleResendMessage} onRestoreBranch={handleRestoreBranch} />
         <InputArea
           onSend={handleSend}
           onStop={cancelRun}
-          disabled={isStreaming}
+          disabled={inputDisabled}
           sendOnEnter={config.send_on_enter}
           providers={providers}
           selectedProviderId={selectedProviderId}
           onSelectProvider={setSelectedProviderId}
+          pendingEdit={pendingEdit}
+          onCancelEdit={handleCancelEdit}
         />
         <StatusBar
           providerCount={systemStatus?.provider_count ?? 0}
@@ -254,6 +336,19 @@ function App() {
           onClose={() => {
             setDiagOpen(false);
             setDiagExpanded(false);
+          }}
+        />
+      )}
+
+      {obsOpen && (
+        <ObservabilityPanel
+          snapshot={obsSnapshot}
+          loading={obsLoading}
+          expanded={obsExpanded}
+          onToggleExpand={() => setObsExpanded(!obsExpanded)}
+          onClose={() => {
+            setObsOpen(false);
+            setObsExpanded(false);
           }}
         />
       )}

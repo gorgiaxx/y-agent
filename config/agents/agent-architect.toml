@@ -10,6 +10,7 @@ system_prompt = "You are an Agent Architect. Your role is to design new agent de
 skills = []
 preferred_models = []
 fallback_models = []
+provider_tags = ["general"]
 max_iterations = 20
 max_tool_calls = 50
 timeout_secs = 300

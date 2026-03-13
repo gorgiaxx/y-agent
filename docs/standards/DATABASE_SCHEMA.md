@@ -279,6 +279,32 @@ CREATE INDEX idx_experience_skill ON stm_experience_store(skill_id);
 CREATE UNIQUE INDEX idx_experience_slot ON stm_experience_store(session_id, slot_index);
 ```
 
+### 3.9 Chat Messages (Session History Tree)
+
+**Source**: [CHAT_BUBBLE_ACTIONS_PLAN.md](../plan/CHAT_BUBBLE_ACTIONS_PLAN.md) (Phase 2)
+
+```sql
+-- Chat messages with soft-delete (tombstone) support for branch recovery.
+CREATE TABLE chat_messages (
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL,
+    role            TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool')),
+    content         TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'tombstone')),
+    checkpoint_id   TEXT REFERENCES chat_checkpoints(checkpoint_id),
+    model           TEXT,
+    input_tokens    INTEGER,
+    output_tokens   INTEGER,
+    cost_usd        REAL,
+    context_window  INTEGER,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX idx_cm_session_status ON chat_messages(session_id, status);
+CREATE INDEX idx_cm_session_created ON chat_messages(session_id, created_at);
+```
+
 ---
 
 ## 4. PostgreSQL Schema (Diagnostics)

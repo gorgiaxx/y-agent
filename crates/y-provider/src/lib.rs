@@ -48,5 +48,5 @@ pub use providers::gemini::GeminiProvider;
 pub use providers::ollama::OllamaProvider;
 pub use providers::openai::OpenAiProvider;
 pub use router::{SelectionStrategy, TagBasedRouter};
-pub use scheduler::PriorityScheduler;
+pub use scheduler::{PriorityScheduler, SchedulerSnapshot};
 pub use agent_runner::SingleTurnRunner;

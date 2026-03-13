@@ -20,6 +20,7 @@ pub mod config;
 pub mod container;
 pub mod cost;
 pub mod diagnostics;
+pub mod observability;
 pub mod skill_evolution;
 pub mod skill_ingestion;
 pub mod system;
@@ -34,6 +35,10 @@ pub use config::ServiceConfig;
 pub use container::ServiceContainer;
 pub use cost::CostService;
 pub use diagnostics::{DiagnosticsService, HistoricalEntry};
+pub use observability::{
+    AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
+    SchedulerQueueSnapshot, SystemSnapshot,
+};
 pub use skill_evolution::{
     CapturedExperience, ExperienceCaptureSubscriber, SkillInjectionTracker,
     SkillUsageAuditSubscriber, UsageMetrics,

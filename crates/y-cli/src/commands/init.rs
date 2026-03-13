@@ -489,6 +489,113 @@ const CONFIG_TEMPLATES: &[(&str, &str)] = &[
     ("guardrails.toml", EXAMPLE_GUARDRAILS),
 ];
 
+// ---------------------------------------------------------------------------
+// Built-in skills (embedded at compile time)
+// ---------------------------------------------------------------------------
+
+/// A file within a built-in skill directory.
+struct BuiltinSkillFile {
+    /// Relative path within the skill directory (e.g., "skill.toml", "details/tone-guidelines.md").
+    relative_path: &'static str,
+    /// File content.
+    content: &'static str,
+}
+
+/// A complete built-in skill with all its files.
+struct BuiltinSkill {
+    /// Skill directory name (kebab-case).
+    name: &'static str,
+    /// All files belonging to this skill.
+    files: &'static [BuiltinSkillFile],
+}
+
+const BUILTIN_SKILLS: &[BuiltinSkill] = &[
+    BuiltinSkill {
+        name: "humanizer-zh",
+        files: &[
+            BuiltinSkillFile {
+                relative_path: "skill.toml",
+                content: include_str!("../../../../builtin-skills/humanizer-zh/skill.toml"),
+            },
+            BuiltinSkillFile {
+                relative_path: "root.md",
+                content: include_str!("../../../../builtin-skills/humanizer-zh/root.md"),
+            },
+            BuiltinSkillFile {
+                relative_path: "details/tone-guidelines.md",
+                content: include_str!("../../../../builtin-skills/humanizer-zh/details/tone-guidelines.md"),
+            },
+        ],
+    },
+    BuiltinSkill {
+        name: "code-review-rust",
+        files: &[
+            BuiltinSkillFile {
+                relative_path: "skill.toml",
+                content: include_str!("../../../../builtin-skills/code-review-rust/skill.toml"),
+            },
+            BuiltinSkillFile {
+                relative_path: "root.md",
+                content: include_str!("../../../../builtin-skills/code-review-rust/root.md"),
+            },
+            BuiltinSkillFile {
+                relative_path: "details/error-handling-patterns.md",
+                content: include_str!("../../../../builtin-skills/code-review-rust/details/error-handling-patterns.md"),
+            },
+            BuiltinSkillFile {
+                relative_path: "details/unsafe-review-checklist.md",
+                content: include_str!("../../../../builtin-skills/code-review-rust/details/unsafe-review-checklist.md"),
+            },
+        ],
+    },
+];
+
+/// Seed built-in skills into the user's skills store.
+///
+/// Only installs skills that don't already exist (won't overwrite user modifications).
+/// Returns the list of skill names that were seeded.
+pub fn seed_builtin_skills(data_dir: &Path) -> Result<Vec<String>> {
+    let skills_dir = data_dir.join("skills");
+    std::fs::create_dir_all(&skills_dir)
+        .with_context(|| format!("creating skills directory: {}", skills_dir.display()))?;
+
+    let mut seeded = Vec::new();
+
+    for skill in BUILTIN_SKILLS {
+        let skill_dir = skills_dir.join(skill.name);
+
+        // Skip if already exists (don't overwrite user modifications).
+        if skill_dir.exists() {
+            continue;
+        }
+
+        // Write all files for this skill.
+        for file in skill.files {
+            let file_path = skill_dir.join(file.relative_path);
+
+            // Ensure parent directories exist (e.g., details/).
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating dir: {}", parent.display()))?;
+            }
+
+            std::fs::write(&file_path, file.content)
+                .with_context(|| format!("writing {}", file_path.display()))?;
+        }
+
+        // Create empty lineage.toml (required by standard).
+        std::fs::write(
+            skill_dir.join("lineage.toml"),
+            "# Transformation lineage (builtin skill)\n",
+        )
+        .with_context(|| format!("writing lineage.toml for {}", skill.name))?;
+
+        seeded.push(skill.name.to_string());
+    }
+
+    Ok(seeded)
+}
+
 /// Ensure required directories exist.
 ///
 /// - `base` is the config directory (`~/.config/y-agent/`) — config files live
@@ -911,6 +1018,25 @@ pub async fn run(args: &InitArgs) -> Result<()> {
                 output::print_warning(&format!("PostgreSQL diagnostics init skipped: {e}"));
                 output::print_info("Diagnostics will use in-memory storage until PG is available");
             }
+        }
+    }
+
+    // --- Step 6c: Seed built-in skills ---
+    match seed_builtin_skills(&data_dir) {
+        Ok(seeded) => {
+            if seeded.is_empty() {
+                output::print_info("Built-in skills already installed");
+            } else {
+                output::print_success(&format!(
+                    "Seeded {} built-in skill(s): {}",
+                    seeded.len(),
+                    seeded.join(", ")
+                ));
+            }
+        }
+        Err(e) => {
+            output::print_warning(&format!("Built-in skills seeding failed: {e}"));
+            output::print_info("You can manually copy skills later");
         }
     }
 

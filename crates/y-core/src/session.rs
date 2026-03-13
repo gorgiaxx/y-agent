@@ -237,3 +237,75 @@ pub trait ChatCheckpointStore: Send + Sync {
     ) -> Result<u32, SessionError>;
 }
 
+// ---------------------------------------------------------------------------
+// Chat message store (Phase 2 — session history tree)
+// ---------------------------------------------------------------------------
+
+/// Status of a chat message in the history tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatMessageStatus {
+    Active,
+    Tombstone,
+}
+
+/// A persisted chat message record stored in SQLite (Phase 2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessageRecord {
+    pub id: String,
+    pub session_id: SessionId,
+    pub role: String,
+    pub content: String,
+    pub status: ChatMessageStatus,
+    pub checkpoint_id: Option<String>,
+    pub model: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cost_usd: Option<f64>,
+    pub context_window: Option<i64>,
+    pub created_at: Timestamp,
+}
+
+/// Persistent storage for chat messages supporting soft-delete and branch recovery.
+#[async_trait]
+pub trait ChatMessageStore: Send + Sync {
+    /// Insert a new message.
+    async fn insert(&self, record: &ChatMessageRecord) -> Result<(), SessionError>;
+
+    /// List all messages for a session (both active and tombstoned), ordered by created_at.
+    async fn list_by_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<ChatMessageRecord>, SessionError>;
+
+    /// List only active messages for a session, ordered by created_at.
+    async fn list_active(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<ChatMessageRecord>, SessionError>;
+
+    /// Tombstone (soft-delete) all messages after a given checkpoint.
+    /// Returns the number of messages tombstoned.
+    async fn tombstone_after(
+        &self,
+        session_id: &SessionId,
+        checkpoint_id: &str,
+    ) -> Result<u32, SessionError>;
+
+    /// Restore previously tombstoned messages that belong to a given checkpoint.
+    /// Returns the number of messages restored.
+    async fn restore_tombstoned(
+        &self,
+        session_id: &SessionId,
+        checkpoint_id: &str,
+    ) -> Result<u32, SessionError>;
+
+    /// Swap branches: tombstone currently active messages after the checkpoint,
+    /// and restore the tombstoned ones. Returns (tombstoned_count, restored_count).
+    async fn swap_branches(
+        &self,
+        session_id: &SessionId,
+        checkpoint_id: &str,
+    ) -> Result<(u32, u32), SessionError>;
+}
+

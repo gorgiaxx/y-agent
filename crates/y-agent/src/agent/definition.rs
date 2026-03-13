@@ -79,6 +79,10 @@ pub struct AgentDefinition {
     /// Fallback models when preferred are unavailable.
     #[serde(default)]
     pub fallback_models: Vec<String>,
+    /// Provider routing tags (e.g. ["general"], ["title"]).
+    /// Used as `required_tags` in RouteRequest for provider selection.
+    #[serde(default)]
+    pub provider_tags: Vec<String>,
     /// Temperature setting for LLM calls.
     #[serde(default)]
     pub temperature: Option<f64>,
@@ -238,6 +242,7 @@ system_prompt = ""
             skills: vec![],
             preferred_models: vec![],
             fallback_models: vec![],
+            provider_tags: vec![],
             temperature: None,
             top_p: None,
             max_iterations: 20,
