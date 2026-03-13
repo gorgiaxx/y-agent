@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStream, ChatStreamChunk, FinishReason, LlmProvider,
+    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
     ProviderError, ProviderMetadata, ProviderType,
 };
 use y_core::types::ToolCallRequest;
@@ -260,6 +260,7 @@ impl LlmProvider for AzureOpenAiProvider {
             finish_reason,
             raw_request,
             raw_response: Some(raw_response),
+            provider_id: None,
         })
     }
 
@@ -267,8 +268,9 @@ impl LlmProvider for AzureOpenAiProvider {
     async fn chat_completion_stream(
         &self,
         request: &ChatRequest,
-    ) -> Result<ChatStream, ProviderError> {
+    ) -> Result<ChatStreamResponse, ProviderError> {
         let body = self.build_request_body(request, true);
+        let raw_request = serde_json::to_value(&body).ok();
 
         let response = self
             .client
@@ -391,7 +393,13 @@ impl LlmProvider for AzureOpenAiProvider {
             },
         );
 
-        Ok(Box::pin(stream))
+        Ok(ChatStreamResponse {
+            stream: Box::pin(stream),
+            raw_request,
+            provider_id: None,
+            model: String::new(),
+            context_window: 0,
+        })
     }
 
     fn metadata(&self) -> &ProviderMetadata {
@@ -532,9 +540,9 @@ struct AzureRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
+    temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    top_p: Option<f32>,
+    top_p: Option<f64>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<StreamOptions>,

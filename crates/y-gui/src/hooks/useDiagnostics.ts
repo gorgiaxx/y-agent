@@ -10,7 +10,7 @@
 // was reset on restart) we leave the buffer empty; live events populate it
 // on the next run.
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import type {
@@ -121,11 +121,6 @@ async function initialiseBus() {
         ...prev,
         runToSession: { ...prev.runToSession, [run_id]: session_id },
         activeRuns: new Set([...prev.activeRuns, run_id]),
-        // Clear existing entries for this session so live events start fresh.
-        sessionEntries: {
-          ...prev.sessionEntries,
-          [session_id]: [],
-        },
       };
       return next;
     });
@@ -307,7 +302,7 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
   const isActive = activeSessionId
     ? [...localState.activeRuns].some((rid) => localState.runToSession[rid] === activeSessionId)
     : false;
-  const summary = computeSummary(entries);
+  const summary = useMemo(() => computeSummary(entries), [entries]);
 
   return { entries, summary, isActive, clear, addUserMessage };
 }

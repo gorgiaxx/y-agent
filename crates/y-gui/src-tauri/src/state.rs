@@ -10,6 +10,30 @@ use tokio_util::sync::CancellationToken;
 
 use y_service::ServiceContainer;
 
+// ---------------------------------------------------------------------------
+// Per-session turn metadata (last completed turn)
+// ---------------------------------------------------------------------------
+
+/// Cached metadata for the last completed LLM turn in a session.
+///
+/// Stored in memory in `AppState` so the frontend can restore the status bar
+/// when switching between sessions without re-running the turn.
+#[derive(Debug, Clone, Serialize)]
+pub struct TurnMeta {
+    /// Provider ID that handled the turn (e.g. "custom-main").
+    pub provider_id: Option<String>,
+    /// Model name used (e.g. "gpt-4o").
+    pub model: String,
+    /// Number of input tokens consumed.
+    pub input_tokens: u64,
+    /// Number of output tokens generated.
+    pub output_tokens: u64,
+    /// Estimated cost in USD.
+    pub cost_usd: f64,
+    /// Provider context-window size in tokens.
+    pub context_window: usize,
+}
+
 /// GUI-specific configuration (persisted to `gui.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -48,6 +72,11 @@ pub struct AppState {
     pub config_dir: PathBuf,
     /// In-flight LLM cancellation tokens keyed by run_id.
     pub pending_runs: Mutex<HashMap<String, CancellationToken>>,
+    /// Last completed turn metadata keyed by session_id string.
+    ///
+    /// Arc-wrapped so the spawned chat task can clone it and write after a
+    /// successful turn without holding a reference to `AppState`.
+    pub turn_meta_cache: Arc<Mutex<HashMap<String, TurnMeta>>>,
 }
 
 impl AppState {
@@ -59,6 +88,7 @@ impl AppState {
             gui_config: RwLock::new(gui_config),
             config_dir,
             pending_runs: Mutex::new(HashMap::new()),
+            turn_meta_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

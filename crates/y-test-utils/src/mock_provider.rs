@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStream, ChatStreamChunk, FinishReason, LlmProvider,
+    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
     ProviderError, ProviderMetadata, ProviderType,
 };
 use y_core::types::{ProviderId, TokenUsage};
@@ -124,13 +124,14 @@ impl LlmProvider for MockProvider {
             finish_reason: FinishReason::Stop,
             raw_request: None,
             raw_response: None,
+            provider_id: None,
         })
     }
 
     async fn chat_completion_stream(
         &self,
         request: &ChatRequest,
-    ) -> Result<ChatStream, ProviderError> {
+    ) -> Result<ChatStreamResponse, ProviderError> {
         let count = self.call_count.fetch_add(1, Ordering::Relaxed);
         let text = self.next_response(request, count)?;
         let chunk = ChatStreamChunk {
@@ -139,7 +140,13 @@ impl LlmProvider for MockProvider {
             usage: None,
             finish_reason: Some(FinishReason::Stop),
         };
-        Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
+        Ok(ChatStreamResponse {
+            stream: Box::pin(stream::iter(vec![Ok(chunk)])),
+            raw_request: None,
+            provider_id: None,
+            model: String::new(),
+            context_window: 0,
+        })
     }
 
     fn metadata(&self) -> &ProviderMetadata {

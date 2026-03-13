@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use tracing::instrument;
 
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStream, LlmProvider, ProviderError, ProviderPool,
+    ChatRequest, ChatResponse, ChatStreamResponse, LlmProvider, ProviderError, ProviderPool,
     ProviderStatus, RouteRequest,
 };
 use y_core::types::ProviderId;
@@ -235,8 +235,8 @@ impl ProviderPool for ProviderPoolImpl {
 
         let result = entry.provider.chat_completion(request).await;
 
-        match &result {
-            Ok(response) => {
+        match result {
+            Ok(mut response) => {
                 let meta = entry.provider.metadata();
                 entry.metrics.record_success_with_cost(
                     response.usage.input_tokens,
@@ -244,14 +244,15 @@ impl ProviderPool for ProviderPoolImpl {
                     meta.cost_per_1k_input,
                     meta.cost_per_1k_output,
                 );
+                response.provider_id = Some(meta.id.clone());
+                Ok(response)
             }
             Err(e) => {
                 entry.metrics.record_error();
-                self.report_error(&entry.provider.metadata().id, e);
+                self.report_error(&entry.provider.metadata().id, &e);
+                Err(e)
             }
         }
-
-        result
     }
 
     #[instrument(skip(self, request), fields(tags = ?route.required_tags))]
@@ -259,7 +260,7 @@ impl ProviderPool for ProviderPoolImpl {
         &self,
         request: &ChatRequest,
         route: &RouteRequest,
-    ) -> Result<ChatStream, ProviderError> {
+    ) -> Result<ChatStreamResponse, ProviderError> {
         let routable = self.routable_providers();
         let idx = self.router.select(&routable, route)?;
         let entry = &self.providers[idx];
@@ -286,7 +287,12 @@ impl ProviderPool for ProviderPoolImpl {
         // at the caller level (the orchestrator reads the final chunk).
         entry.metrics.record_success(0, 0);
 
-        entry.provider.chat_completion_stream(request).await
+        let meta = entry.provider.metadata();
+        let mut stream_response = entry.provider.chat_completion_stream(request).await?;
+        stream_response.provider_id = Some(meta.id.clone());
+        stream_response.model = meta.model.clone();
+        stream_response.context_window = meta.context_window;
+        Ok(stream_response)
     }
 
     fn report_error(&self, provider_id: &ProviderId, error: &ProviderError) {
@@ -449,13 +455,14 @@ mod tests {
                 finish_reason: FinishReason::Stop,
                 raw_request: None,
                 raw_response: None,
+                provider_id: None,
             })
         }
 
         async fn chat_completion_stream(
             &self,
             _request: &ChatRequest,
-        ) -> Result<ChatStream, ProviderError> {
+        ) -> Result<ChatStreamResponse, ProviderError> {
             unimplemented!("mock streaming")
         }
 

@@ -13,7 +13,17 @@ import './DiagnosticsPanel.css';
 // inherits the container's background (set via customStyle) instead of
 // painting the theme's own dark color over individual token spans.
 const oneDarkNoBackground = Object.fromEntries(
-  Object.entries(oneDark).map(([k, v]) => [k, { ...(v as object), background: undefined, backgroundColor: undefined }])
+  Object.entries(oneDark).map(([k, v]) => [
+    k,
+    {
+      ...(v as object),
+      background: undefined,
+      backgroundColor: undefined,
+      // Strip overflowX so the theme does not create its own nested scroll
+      // container on the <code> element -- we control scrolling via customStyle.
+      overflowX: undefined,
+    },
+  ])
 ) as typeof oneDark;
 
 interface DiagnosticsPanelProps {
@@ -87,8 +97,8 @@ function WrapToggle({ wrapped, onToggle }: { wrapped: boolean; onToggle: () => v
 
 function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: string }) {
   const [expanded, setExpanded] = useState(false);
-  const [promptBeautified, setPromptBeautified] = useState(false);
-  const [responseBeautified, setResponseBeautified] = useState(false);
+  const [promptBeautified, setPromptBeautified] = useState(true);
+  const [responseBeautified, setResponseBeautified] = useState(true);
   const [promptWrapped, setPromptWrapped] = useState(true);
   const [responseWrapped, setResponseWrapped] = useState(true);
   const hasToolCalls = event.tool_calls_requested.length > 0;
@@ -201,15 +211,16 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
                     style={oneDarkNoBackground}
                     language="json"
                     PreTag="div"
+                    wrapLongLines={promptWrapped}
+                    codeTagProps={{ style: { whiteSpace: promptWrapped ? 'pre-wrap' : 'pre' } }}
                     customStyle={{
                       margin: 0,
                       padding: '8px',
                       fontSize: '11px',
                       lineHeight: '1.5',
-                      whiteSpace: promptWrapped ? 'pre-wrap' : 'pre',
+                      overflow: 'auto',
+                      maxHeight: '320px',
                     }}
-                    wrapLines={promptWrapped}
-                    wrapLongLines={promptWrapped}
                   >
                     {displayPrompt ?? ''}
                   </SyntaxHighlighter>
@@ -242,15 +253,16 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
                     style={oneDarkNoBackground}
                     language="json"
                     PreTag="div"
+                    wrapLongLines={responseWrapped}
+                    codeTagProps={{ style: { whiteSpace: responseWrapped ? 'pre-wrap' : 'pre' } }}
                     customStyle={{
                       margin: 0,
                       padding: '8px',
                       fontSize: '11px',
                       lineHeight: '1.5',
-                      whiteSpace: responseWrapped ? 'pre-wrap' : 'pre',
+                      overflow: 'auto',
+                      maxHeight: '320px',
                     }}
-                    wrapLines={responseWrapped}
-                    wrapLongLines={responseWrapped}
                   >
                     {displayResponse ?? ''}
                   </SyntaxHighlighter>
@@ -268,7 +280,7 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
 
 function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: string }) {
   const [expanded, setExpanded] = useState(false);
-  const [beautified, setBeautified] = useState(false);
+  const [beautified, setBeautified] = useState(true);
   const [resultWrapped, setResultWrapped] = useState(true);
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -349,15 +361,16 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
                     style={oneDarkNoBackground}
                     language="json"
                     PreTag="div"
+                    wrapLongLines={resultWrapped}
+                    codeTagProps={{ style: { whiteSpace: resultWrapped ? 'pre-wrap' : 'pre' } }}
                     customStyle={{
                       margin: 0,
                       padding: '8px',
                       fontSize: '11px',
                       lineHeight: '1.5',
-                      whiteSpace: resultWrapped ? 'pre-wrap' : 'pre',
+                      overflow: 'auto',
+                      maxHeight: '320px',
                     }}
-                    wrapLines={resultWrapped}
-                    wrapLongLines={resultWrapped}
                   >
                     {displayResult ?? ''}
                   </SyntaxHighlighter>

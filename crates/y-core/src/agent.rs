@@ -138,7 +138,7 @@ pub struct AgentRunConfig {
     /// Fallback models if preferred are unavailable.
     pub fallback_models: Vec<String>,
     /// Sampling temperature override (from agent definition).
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     /// Maximum tokens to generate.
     pub max_tokens: Option<u32>,
     /// Timeout for the entire run in seconds.

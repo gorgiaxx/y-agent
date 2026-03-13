@@ -11,6 +11,7 @@
 
 use std::fmt;
 
+use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -19,7 +20,7 @@ use uuid::Uuid;
 use y_context::{AssembledContext, ContextCategory};
 use y_core::provider::{ChatRequest, ProviderPool, RouteRequest, ToolCallingMode};
 use y_core::tool::ToolInput;
-use y_core::types::{Message, Role, SessionId, ToolCallRequest, ToolName};
+use y_core::types::{Message, ProviderId, Role, SessionId, ToolCallRequest, ToolName};
 use y_tools::{format_tool_result, parse_tool_calls, strip_tool_call_blocks};
 
 use crate::container::ServiceContainer;
@@ -96,6 +97,15 @@ pub enum TurnEvent {
         /// Maximum allowed.
         max_iterations: usize,
     },
+    /// Incremental text delta from the LLM stream.
+    ///
+    /// Emitted during streaming so presentation layers can display text
+    /// as it arrives (typewriter effect). Only sent when a progress
+    /// channel is provided (i.e., `execute_turn_with_progress`).
+    StreamDelta {
+        /// Incremental text content from the LLM.
+        content: String,
+    },
 }
 
 /// Channel sender for turn progress events.
@@ -108,6 +118,8 @@ pub struct TurnResult {
     pub content: String,
     /// Model that served the final request.
     pub model: String,
+    /// Provider ID that served the final request.
+    pub provider_id: Option<String>,
     /// Cumulative input tokens across all LLM iterations.
     pub input_tokens: u64,
     /// Cumulative output tokens across all LLM iterations.
@@ -164,10 +176,105 @@ pub struct TurnInput<'a> {
     pub history: &'a [Message],
     /// Current turn number for checkpoint creation.
     pub turn_number: u32,
+    /// User-selected provider ID. None means auto (pool assigns).
+    pub provider_id: Option<String>,
 }
 
 /// Token passed to `execute_turn_with_progress` to support mid-turn cancellation.
 pub type TurnCancellationToken = CancellationToken;
+
+// ---------------------------------------------------------------------------
+// Turn preparation (session resolve + message persist + TurnInput assembly)
+// ---------------------------------------------------------------------------
+
+/// Request to prepare a chat turn before execution.
+#[derive(Debug)]
+pub struct PrepareTurnRequest {
+    /// Existing session ID (`None` = create a new `Main` session).
+    pub session_id: Option<SessionId>,
+    /// User message text.
+    pub user_input: String,
+    /// Provider to route to (`None` = default routing).
+    pub provider_id: Option<String>,
+}
+
+/// A fully prepared turn, ready for `execute_turn()` or
+/// `execute_turn_with_progress()`.
+///
+/// Owns all data needed for turn execution so callers do not need to
+/// manage lifetimes of intermediate results (history, session_uuid, etc.).
+#[derive(Debug)]
+pub struct PreparedTurn {
+    /// The resolved (or newly created) session ID.
+    pub session_id: SessionId,
+    /// UUID form of the session ID (for diagnostics tracing).
+    pub session_uuid: Uuid,
+    /// Full transcript history (includes the just-appended user message).
+    pub history: Vec<Message>,
+    /// Turn number derived from history length.
+    pub turn_number: u32,
+    /// User input (owned copy).
+    pub user_input: String,
+    /// Provider routing preference.
+    pub provider_id: Option<String>,
+    /// Whether this was a newly created session.
+    pub session_created: bool,
+}
+
+impl PreparedTurn {
+    /// Build a borrowing [`TurnInput`] from this prepared turn.
+    pub fn as_turn_input(&self) -> TurnInput<'_> {
+        TurnInput {
+            user_input: &self.user_input,
+            session_id: self.session_id.clone(),
+            session_uuid: self.session_uuid,
+            history: &self.history,
+            turn_number: self.turn_number,
+            provider_id: self.provider_id.clone(),
+        }
+    }
+}
+
+/// Errors that can occur during turn preparation.
+#[derive(Debug, thiserror::Error)]
+pub enum PrepareTurnError {
+    /// The requested session was not found.
+    #[error("session not found: {0}")]
+    SessionNotFound(String),
+    /// Failed to create a new session.
+    #[error("failed to create session: {0}")]
+    SessionCreationFailed(String),
+    /// Failed to persist the user message to the session transcript.
+    #[error("failed to persist user message: {0}")]
+    PersistFailed(String),
+    /// Failed to read the session transcript.
+    #[error("failed to read transcript: {0}")]
+    TranscriptReadFailed(String),
+}
+
+// ---------------------------------------------------------------------------
+// Turn metadata summary
+// ---------------------------------------------------------------------------
+
+/// Metadata summary of the last completed turn in a session.
+///
+/// Returned by [`ChatService::get_last_turn_meta`] so frontends can restore
+/// status-bar information when switching between sessions.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TurnMetaSummary {
+    /// Provider that served the turn.
+    pub provider_id: Option<String>,
+    /// Model name.
+    pub model: String,
+    /// Input tokens consumed.
+    pub input_tokens: u64,
+    /// Output tokens generated.
+    pub output_tokens: u64,
+    /// Total cost in USD.
+    pub cost_usd: f64,
+    /// Context window size of the serving provider.
+    pub context_window: usize,
+}
 
 // ---------------------------------------------------------------------------
 // ChatService
@@ -204,6 +311,137 @@ impl ChatService {
         cancel: Option<TurnCancellationToken>,
     ) -> Result<TurnResult, TurnError> {
         Self::execute_turn_inner(container, input, Some(progress), cancel).await
+    }
+
+    /// Prepare a turn: resolve/create session, persist user message, read
+    /// transcript, compute turn number, and assemble all data needed for
+    /// `execute_turn()`.
+    ///
+    /// The returned [`PreparedTurn`] owns all intermediate data. Callers
+    /// use [`PreparedTurn::as_turn_input()`] to obtain the borrowing
+    /// [`TurnInput`] expected by `execute_turn*`.
+    pub async fn prepare_turn(
+        container: &ServiceContainer,
+        request: PrepareTurnRequest,
+    ) -> Result<PreparedTurn, PrepareTurnError> {
+        use y_core::session::{CreateSessionOptions, SessionType};
+        use y_core::types::{generate_message_id, now};
+
+        // 1. Resolve or create session.
+        let (session_id, session_created) = match request.session_id {
+            Some(sid) => {
+                container
+                    .session_manager
+                    .get_session(&sid)
+                    .await
+                    .map_err(|e| PrepareTurnError::SessionNotFound(e.to_string()))?;
+                (sid, false)
+            }
+            None => {
+                let session = container
+                    .session_manager
+                    .create_session(CreateSessionOptions {
+                        parent_id: None,
+                        session_type: SessionType::Main,
+                        agent_id: None,
+                        title: None,
+                    })
+                    .await
+                    .map_err(|e| PrepareTurnError::SessionCreationFailed(e.to_string()))?;
+                (session.id, true)
+            }
+        };
+
+        // 2. Build and persist the user message.
+        let user_msg = Message {
+            message_id: generate_message_id(),
+            role: Role::User,
+            content: request.user_input.clone(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: now(),
+            metadata: serde_json::Value::Null,
+        };
+        let _ = container
+            .session_manager
+            .append_message(&session_id, &user_msg)
+            .await
+            .map_err(|e| PrepareTurnError::PersistFailed(e.to_string()))?;
+
+        // 3. Read full transcript (includes the just-appended user message).
+        let history = container
+            .session_manager
+            .read_transcript(&session_id)
+            .await
+            .map_err(|e| PrepareTurnError::TranscriptReadFailed(e.to_string()))?;
+
+        // 4. Derive turn number and session UUID.
+        let turn_number = u32::try_from(history.len()).unwrap_or(u32::MAX);
+        let session_uuid = Uuid::parse_str(session_id.as_str())
+            .unwrap_or_else(|_| Uuid::new_v4());
+
+        Ok(PreparedTurn {
+            session_id,
+            session_uuid,
+            history,
+            turn_number,
+            user_input: request.user_input,
+            provider_id: request.provider_id,
+            session_created,
+        })
+    }
+
+    /// Look up metadata for the last completed LLM turn in a session.
+    ///
+    /// Queries the diagnostics store for the most recent trace belonging to
+    /// the session, extracts the model from the last Generation observation,
+    /// and resolves `context_window` from the provider pool by model match.
+    ///
+    /// Returns `None` if no trace data exists for this session.
+    pub async fn get_last_turn_meta(
+        container: &ServiceContainer,
+        session_id: &str,
+    ) -> Result<Option<TurnMetaSummary>, String> {
+        let session_uuid = match Uuid::parse_str(session_id) {
+            Ok(u) => u,
+            Err(_) => return Ok(None),
+        };
+
+        let store = container.diagnostics.store();
+        let traces = store
+            .list_traces_by_session(&session_uuid.to_string(), 1)
+            .await
+            .unwrap_or_default();
+
+        let trace = match traces.first() {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        let observations = store.get_observations(trace.id).await.unwrap_or_default();
+        let last_gen = observations
+            .iter()
+            .rev()
+            .find(|o| o.obs_type == y_diagnostics::ObservationType::Generation);
+
+        let model = last_gen
+            .and_then(|o| o.model.clone())
+            .unwrap_or_default();
+
+        let pool = container.provider_pool().await;
+        let metadata_list = pool.list_metadata();
+        let matched = metadata_list.iter().find(|m| m.model == model);
+        let context_window = matched.map(|m| m.context_window).unwrap_or(0);
+        let provider_id = matched.map(|m| m.id.to_string());
+
+        Ok(Some(TurnMetaSummary {
+            provider_id,
+            model,
+            input_tokens: trace.total_input_tokens,
+            output_tokens: trace.total_output_tokens,
+            cost_usd: trace.total_cost_usd,
+            context_window,
+        }))
     }
 
     /// Internal implementation shared by both entry points.
@@ -247,6 +485,8 @@ impl ChatService {
         let mut cumulative_cost: f64 = 0.0;
         #[allow(unused_assignments)]
         let mut final_model = String::new();
+        #[allow(unused_assignments)]
+        let mut final_provider_id: Option<String> = None;
 
         let mut working_history: Vec<Message> = input.history.to_vec();
 
@@ -277,9 +517,9 @@ impl ChatService {
 
             let messages = Self::build_chat_messages(&assembled, &working_history);
 
-            // Compute the full serialised prompt sent to the LLM.
-            // No truncation -- the frontend code block is scrollable.
-            let prompt_preview = serde_json::to_string(&messages).unwrap_or_default();
+            // Fallback prompt preview from internal messages; will be replaced
+            // by the real HTTP request body (`raw_request`) after the LLM call.
+            let prompt_preview_fallback = serde_json::to_string(&messages).unwrap_or_default();
 
             let request = ChatRequest {
                 messages,
@@ -293,7 +533,13 @@ impl ChatService {
                 extra: serde_json::Value::Null,
             };
 
-            let route = RouteRequest::default();
+            let route = RouteRequest {
+                preferred_provider_id: input
+                    .provider_id
+                    .as_ref()
+                    .map(|id| ProviderId::from_string(id)),
+                ..RouteRequest::default()
+            };
             let llm_start = std::time::Instant::now();
 
             // TODO(middleware): Route this through LlmMiddleware chain before
@@ -301,20 +547,31 @@ impl ChatService {
             // guardrail validation, rate limiting, caching, and auditing.
             // See hooks-plugin-design.md §Middleware Chains → LlmMiddleware.
             let pool = container.provider_pool().await;
-            let llm_future = pool.chat_completion(&request, &route);
 
-            // Race the LLM call against the cancellation token so the user
-            // gets immediate feedback instead of waiting for the full HTTP
-            // round-trip to complete.
-            let llm_result = if let Some(ref tok) = cancel {
-                tokio::select! {
-                    res = llm_future => res,
-                    _ = tok.cancelled() => {
-                        return Err(TurnError::Cancelled);
-                    }
-                }
+            // When a progress channel exists, use streaming so presentation
+            // layers can display text as it arrives. Otherwise use the
+            // simpler non-streaming path.
+            let llm_result = if progress.is_some() {
+                Self::call_llm_streaming(
+                    &*pool,
+                    &request,
+                    &route,
+                    progress.as_ref(),
+                    cancel.as_ref(),
+                )
+                .await
             } else {
-                llm_future.await
+                let llm_future = pool.chat_completion(&request, &route);
+                if let Some(ref tok) = cancel {
+                    tokio::select! {
+                        res = llm_future => res,
+                        _ = tok.cancelled() => {
+                            return Err(TurnError::Cancelled);
+                        }
+                    }
+                } else {
+                    llm_future.await
+                }
             };
 
             match llm_result {
@@ -328,17 +585,64 @@ impl ChatService {
                     cumulative_output_tokens += resp_output_tokens;
                     cumulative_cost += cost;
                     final_model = response.model.clone();
+                    final_provider_id =
+                        response.provider_id.as_ref().map(|id| id.to_string());
+
+                    // Use the real HTTP request body for the prompt preview so
+                    // diagnostics show the actual payload sent to the provider
+                    // (standard OpenAI format) rather than the internal Message
+                    // struct which carries extra fields like message_id,
+                    // timestamp, and metadata.
+                    let prompt_preview = response
+                        .raw_request
+                        .as_ref()
+                        .map(|v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()))
+                        .unwrap_or_else(|| prompt_preview_fallback.clone());
+
+                    // Use the full raw HTTP response JSON for the response text
+                    // so diagnostics show the actual payload received from the
+                    // provider rather than just the extracted content string.
+                    let response_text_raw = response
+                        .raw_response
+                        .as_ref()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| {
+                            serde_json::json!({
+                                "content": response.content.clone().unwrap_or_default(),
+                                "model": response.model,
+                                "usage": {
+                                    "input_tokens": resp_input_tokens,
+                                    "output_tokens": resp_output_tokens,
+                                }
+                            }).to_string()
+                        });
 
                     // Diagnostics: record generation observation using raw HTTP payloads.
+                    // In the streaming path, raw_request/raw_response are None.
+                    // Fall back to the internal messages JSON (prompt_preview_fallback)
+                    // and a synthetic output so the diagnostics panel shows useful
+                    // data after a restart instead of null.
                     if let Some(tid) = trace_id {
                         let diag_input = response
                             .raw_request
                             .clone()
-                            .unwrap_or(serde_json::Value::Null);
+                            .unwrap_or_else(|| {
+                                serde_json::from_str(&prompt_preview_fallback)
+                                    .unwrap_or(serde_json::Value::Null)
+                            });
                         let diag_output = response
                             .raw_response
                             .clone()
-                            .unwrap_or(serde_json::Value::Null);
+                            .unwrap_or_else(|| {
+                                serde_json::json!({
+                                    "content": response.content.clone().unwrap_or_default(),
+                                    "model": response.model,
+                                    "usage": {
+                                        "input_tokens": resp_input_tokens,
+                                        "output_tokens": resp_output_tokens,
+                                    }
+                                })
+                            });
 
                         let gen_id = container
                             .diagnostics
@@ -385,7 +689,7 @@ impl ChatService {
                                 cost_usd: cost,
                                 tool_calls_requested: native_tc_names,
                                 prompt_preview: prompt_preview.clone(),
-                                response_text: response.content.clone().unwrap_or_default(),
+                                response_text: response_text_raw.clone(),
                             });
                         }
 
@@ -496,7 +800,7 @@ impl ChatService {
                                         cost_usd: cost,
                                         tool_calls_requested: prompt_tc_names,
                                         prompt_preview: prompt_preview.clone(),
-                                        response_text: text.clone(),
+                                        response_text: response_text_raw.clone(),
                                     });
                                 }
                                 // Record assistant message with original text.
@@ -632,7 +936,7 @@ impl ChatService {
                             cost_usd: cost,
                             tool_calls_requested: vec![],
                             prompt_preview: prompt_preview.clone(),
-                            response_text: raw_content.clone(),
+                            response_text: response_text_raw.clone(),
                         });
                     }
 
@@ -687,16 +991,20 @@ impl ChatService {
                         tracing::warn!(error = %e, "failed to create chat checkpoint");
                     }
 
-                    let ctx_window = container
-                        .provider_pool()
-                        .await
-                        .list_metadata()
-                        .first()
-                        .map_or(0, |m| m.context_window);
+                    let metadata_list = container.provider_pool().await.list_metadata();
+                    let ctx_window = if let Some(ref pid) = final_provider_id {
+                        metadata_list
+                            .iter()
+                            .find(|m| m.id.to_string() == *pid)
+                            .map_or(0, |m| m.context_window)
+                    } else {
+                        metadata_list.first().map_or(0, |m| m.context_window)
+                    };
 
                     return Ok(TurnResult {
                         content,
                         model: final_model,
+                        provider_id: final_provider_id,
                         input_tokens: cumulative_input_tokens,
                         output_tokens: cumulative_output_tokens,
                         context_window: ctx_window,
@@ -707,6 +1015,10 @@ impl ChatService {
                     });
                 }
                 Err(e) => {
+                    // Convert streaming cancellation into TurnError::Cancelled.
+                    if matches!(e, y_core::provider::ProviderError::Cancelled) {
+                        return Err(TurnError::Cancelled);
+                    }
                     if let Some(tid) = trace_id {
                         let _ = container
                             .diagnostics
@@ -766,7 +1078,7 @@ impl ChatService {
             .collect()
     }
 
-    /// Execute a single tool call from an LLM response.
+    /// Execute a tool call from an LLM response — delegated from the main loop.
     ///
     /// Special handling for `tool_search`: delegates to [`ToolSearchOrchestrator`]
     /// which performs real taxonomy/registry lookups and activates discovered tools
@@ -836,6 +1148,141 @@ impl ChatService {
         // - CapabilityGapMiddleware (tool gap resolution)
         // See hooks-plugin-design.md §Middleware Chains → ToolMiddleware.
         tool.execute(input).await
+    }
+
+    // -----------------------------------------------------------------------
+    // Streaming LLM call helper
+    // -----------------------------------------------------------------------
+
+    /// Call the LLM via streaming and emit `TurnEvent::StreamDelta` events for
+    /// each incremental text chunk. Returns a fully assembled `ChatResponse`
+    /// equivalent to the non-streaming path.
+    ///
+    /// Supports mid-stream cancellation via the optional `CancellationToken`.
+    async fn call_llm_streaming(
+        pool: &dyn y_core::provider::ProviderPool,
+        request: &y_core::provider::ChatRequest,
+        route: &y_core::provider::RouteRequest,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<y_core::provider::ChatResponse, y_core::provider::ProviderError> {
+        use y_core::provider::{ChatResponse, FinishReason, ProviderError};
+        use y_core::types::TokenUsage;
+
+        // The provider captures the raw HTTP request body it serialized.
+        // We receive it here via ChatStreamResponse so diagnostics stores
+        // the exact payload sent over the wire.
+        let stream_response = pool.chat_completion_stream(request, route).await?;
+        let raw_request = stream_response.raw_request;
+        let provider_id = stream_response.provider_id;
+        let model_name = stream_response.model;
+        let mut stream = stream_response.stream;
+
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        let mut usage = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+        };
+        let mut finish_reason = FinishReason::Stop;
+
+        loop {
+            // Check cancellation between chunks.
+            if let Some(tok) = cancel {
+                if tok.is_cancelled() {
+                    return Err(ProviderError::Cancelled);
+                }
+            }
+
+            let chunk_result = if let Some(tok) = cancel {
+                tokio::select! {
+                    next = stream.next() => next,
+                    _ = tok.cancelled() => {
+                        return Err(ProviderError::Cancelled);
+                    }
+                }
+            } else {
+                stream.next().await
+            };
+
+            match chunk_result {
+                Some(Ok(chunk)) => {
+                    // Emit text delta to presentation layers.
+                    if let Some(ref delta) = chunk.delta_content {
+                        if !delta.is_empty() {
+                            content.push_str(delta);
+                            if let Some(tx) = progress {
+                                let _ = tx.send(TurnEvent::StreamDelta {
+                                    content: delta.clone(),
+                                });
+                            }
+                        }
+                    }
+
+                    // Collect tool calls on finish.
+                    if !chunk.delta_tool_calls.is_empty() {
+                        tool_calls.extend(chunk.delta_tool_calls);
+                    }
+
+                    // Capture usage from the final chunk.
+                    if let Some(u) = chunk.usage {
+                        usage = u;
+                    }
+
+                    if let Some(fr) = chunk.finish_reason {
+                        finish_reason = fr;
+                    }
+                }
+                Some(Err(e)) => {
+                    return Err(e);
+                }
+                None => {
+                    // Stream ended.
+                    break;
+                }
+            }
+        }
+
+        // Streaming has no single HTTP response body. We assemble a
+        // synthetic response from the accumulated chunks for diagnostics.
+        let finish_reason_str = match finish_reason {
+            FinishReason::Stop => "stop",
+            FinishReason::Length => "length",
+            FinishReason::ToolUse => "tool_calls",
+            FinishReason::ContentFilter => "content_filter",
+            FinishReason::Unknown => "stop",
+        };
+        let raw_response = serde_json::json!({
+            "id": "",
+            "object": "chat.completion",
+            "model": model_name,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                },
+                "finish_reason": finish_reason_str,
+            }],
+            "usage": {
+                "prompt_tokens": usage.input_tokens,
+                "completion_tokens": usage.output_tokens,
+            }
+        });
+
+        Ok(ChatResponse {
+            id: String::new(),
+            model: model_name,
+            content: if content.is_empty() { None } else { Some(content) },
+            tool_calls,
+            usage,
+            finish_reason,
+            raw_request,
+            raw_response: Some(raw_response),
+            provider_id,
+        })
     }
 }
 
@@ -937,5 +1384,142 @@ mod tests {
         assert!(TurnError::ToolLoopLimitExceeded
             .to_string()
             .contains("10"));
+    }
+
+    // -----------------------------------------------------------------------
+    // prepare_turn tests
+    // -----------------------------------------------------------------------
+
+    async fn make_test_container() -> (crate::container::ServiceContainer, tempfile::TempDir) {
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let mut config = crate::config::ServiceConfig::default();
+        config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: tmpdir.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let container = crate::container::ServiceContainer::from_config(&config)
+            .await
+            .expect("test container should build");
+        (container, tmpdir)
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_creates_new_session() {
+        let (container, _tmp) = make_test_container().await;
+        let request = PrepareTurnRequest {
+            session_id: None,
+            user_input: "hello".into(),
+            provider_id: None,
+        };
+        let prepared = ChatService::prepare_turn(&container, request)
+            .await
+            .expect("prepare_turn should succeed");
+        assert!(prepared.session_created);
+        assert!(!prepared.session_id.as_str().is_empty());
+        assert!(!prepared.history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_resolves_existing_session() {
+        use y_core::session::{CreateSessionOptions, SessionType};
+
+        let (container, _tmp) = make_test_container().await;
+        let session = container
+            .session_manager
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: None,
+            })
+            .await
+            .unwrap();
+
+        let request = PrepareTurnRequest {
+            session_id: Some(session.id.clone()),
+            user_input: "hello".into(),
+            provider_id: None,
+        };
+        let prepared = ChatService::prepare_turn(&container, request)
+            .await
+            .expect("should resolve existing session");
+        assert!(!prepared.session_created);
+        assert_eq!(prepared.session_id, session.id);
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_invalid_session_returns_not_found() {
+        let (container, _tmp) = make_test_container().await;
+        let request = PrepareTurnRequest {
+            session_id: Some(SessionId("nonexistent-id".into())),
+            user_input: "hello".into(),
+            provider_id: None,
+        };
+        let err = ChatService::prepare_turn(&container, request)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PrepareTurnError::SessionNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_persists_user_message() {
+        let (container, _tmp) = make_test_container().await;
+        let request = PrepareTurnRequest {
+            session_id: None,
+            user_input: "test message".into(),
+            provider_id: None,
+        };
+        let prepared = ChatService::prepare_turn(&container, request)
+            .await
+            .unwrap();
+
+        // History should contain at least the user message.
+        let last = prepared.history.last().expect("history should not be empty");
+        assert_eq!(last.role, Role::User);
+        assert_eq!(last.content, "test message");
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_as_turn_input_matches() {
+        let (container, _tmp) = make_test_container().await;
+        let request = PrepareTurnRequest {
+            session_id: None,
+            user_input: "hello".into(),
+            provider_id: Some("test-provider".into()),
+        };
+        let prepared = ChatService::prepare_turn(&container, request)
+            .await
+            .unwrap();
+        let input = prepared.as_turn_input();
+        assert_eq!(input.user_input, "hello");
+        assert_eq!(input.session_id, prepared.session_id);
+        assert_eq!(input.session_uuid, prepared.session_uuid);
+        assert_eq!(input.turn_number, prepared.turn_number);
+        assert_eq!(input.provider_id, Some("test-provider".into()));
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_turn_number_equals_history_len() {
+        let (container, _tmp) = make_test_container().await;
+        let request = PrepareTurnRequest {
+            session_id: None,
+            user_input: "first".into(),
+            provider_id: None,
+        };
+        let p1 = ChatService::prepare_turn(&container, request).await.unwrap();
+        assert_eq!(p1.turn_number, p1.history.len() as u32);
+
+        // Second message in same session.
+        let request2 = PrepareTurnRequest {
+            session_id: Some(p1.session_id.clone()),
+            user_input: "second".into(),
+            provider_id: None,
+        };
+        let p2 = ChatService::prepare_turn(&container, request2).await.unwrap();
+        assert_eq!(p2.turn_number, p2.history.len() as u32);
+        assert!(p2.turn_number > p1.turn_number);
     }
 }

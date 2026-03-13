@@ -7,16 +7,29 @@ import './ChatPanel.css';
 interface ChatPanelProps {
   messages: Message[];
   isStreaming: boolean;
+  isLoading: boolean;
   error: string | null;
 }
 
-export function ChatPanel({ messages, isStreaming, error }: ChatPanelProps) {
+export function ChatPanel({ messages, isStreaming, isLoading, error }: ChatPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new messages.
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isStreaming]);
+
+  if (isLoading) {
+    return (
+      <div className="chat-panel">
+        <div className="chat-skeleton">
+          <div className="skeleton-row skeleton-row--short" />
+          <div className="skeleton-row skeleton-row--long" />
+          <div className="skeleton-row skeleton-row--medium" />
+        </div>
+      </div>
+    );
+  }
 
   if (messages.length === 0 && !isStreaming) {
     return (
@@ -41,7 +54,7 @@ export function ChatPanel({ messages, isStreaming, error }: ChatPanelProps) {
           <MessageBubble key={msg.id} message={msg} />
         ))}
 
-        {isStreaming && (
+        {isStreaming && !messages.some((m) => m.id.startsWith('streaming-')) && (
           <div className="streaming-indicator">
             <div className="typing-dots">
               <span />
@@ -50,6 +63,10 @@ export function ChatPanel({ messages, isStreaming, error }: ChatPanelProps) {
             </div>
             <span className="streaming-text">Thinking...</span>
           </div>
+        )}
+
+        {isStreaming && messages.some((m) => m.id.startsWith('streaming-')) && (
+          <div className="streaming-cursor" />
         )}
 
         {error && (

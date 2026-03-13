@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::Manager;
-use tracing::{info, warn};
 
 use y_service::{ServiceConfig, ServiceContainer};
 
@@ -38,115 +37,6 @@ fn state_dir() -> Option<PathBuf> {
     state_home.map(|s| s.join("y-agent"))
 }
 
-/// Config file basenames (without `.toml` extension) mapping to `ServiceConfig` fields.
-const CONFIG_SECTIONS: &[&str] = &[
-    "providers",
-    "storage",
-    "session",
-    "runtime",
-    "hooks",
-    "tools",
-    "guardrails",
-];
-
-/// Load `ServiceConfig` from per-section TOML files in the user config directory.
-///
-/// Mirrors the CLI's `ConfigLoader` behaviour: reads `providers.toml`,
-/// `storage.toml`, `session.toml`, etc. from `~/.config/y-agent/`.
-fn load_service_config(config_dir: &std::path::Path) -> ServiceConfig {
-    let mut config = ServiceConfig::default();
-
-    if !config_dir.is_dir() {
-        warn!(
-            path = %config_dir.display(),
-            "Config directory not found; using defaults"
-        );
-        return config;
-    }
-
-    for section in CONFIG_SECTIONS {
-        let path = config_dir.join(format!("{section}.toml"));
-        if !path.exists() {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "Failed to read config file; skipping"
-                );
-                continue;
-            }
-        };
-
-        match *section {
-            "providers" => match toml::from_str(&content) {
-                Ok(v) => config.providers = v,
-                Err(e) => warn!(file = "providers.toml", error = %e, "Parse error"),
-            },
-            "storage" => match toml::from_str(&content) {
-                Ok(v) => config.storage = v,
-                Err(e) => warn!(file = "storage.toml", error = %e, "Parse error"),
-            },
-            "session" => match toml::from_str(&content) {
-                Ok(v) => config.session = v,
-                Err(e) => warn!(file = "session.toml", error = %e, "Parse error"),
-            },
-            "runtime" => match toml::from_str(&content) {
-                Ok(v) => config.runtime = v,
-                Err(e) => warn!(file = "runtime.toml", error = %e, "Parse error"),
-            },
-            "hooks" => match toml::from_str(&content) {
-                Ok(v) => config.hooks = v,
-                Err(e) => warn!(file = "hooks.toml", error = %e, "Parse error"),
-            },
-            "tools" => match toml::from_str(&content) {
-                Ok(v) => config.tools = v,
-                Err(e) => warn!(file = "tools.toml", error = %e, "Parse error"),
-            },
-            "guardrails" => match toml::from_str(&content) {
-                Ok(v) => config.guardrails = v,
-                Err(e) => warn!(file = "guardrails.toml", error = %e, "Parse error"),
-            },
-            _ => {}
-        }
-    }
-
-    // Resolve relative storage paths against the XDG state directory,
-    // mirroring the CLI's `resolve_storage_paths()`.
-    resolve_storage_paths(&mut config);
-
-    info!(
-        providers = config.providers.providers.len(),
-        db_path = %config.storage.db_path,
-        "Loaded service configuration"
-    );
-
-    config
-}
-
-/// Resolve relative `db_path` / `transcript_dir` against `~/.local/state/y-agent/`.
-fn resolve_storage_paths(config: &mut ServiceConfig) {
-    let base_dir = match state_dir() {
-        Some(dir) => dir,
-        None => return,
-    };
-
-    if config.storage.db_path != ":memory:" {
-        let db = PathBuf::from(&config.storage.db_path);
-        if db.is_relative() {
-            config.storage.db_path = base_dir.join(&db).to_string_lossy().to_string();
-        }
-    }
-
-    if config.storage.transcript_dir.is_relative() {
-        config.storage.transcript_dir = base_dir.join(&config.storage.transcript_dir);
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -169,7 +59,10 @@ pub fn run() {
                 .expect("Failed to create Tokio runtime");
 
             let container = rt.block_on(async {
-                let config = load_service_config(&config_path);
+                let config = ServiceConfig::load_from_directory(
+                    &config_path,
+                    state_dir().as_deref(),
+                );
                 ServiceContainer::from_config(&config)
                     .await
                     .expect("Failed to initialize ServiceContainer")
@@ -189,6 +82,7 @@ pub fn run() {
             // Chat
             commands::chat::chat_send,
             commands::chat::chat_cancel,
+            commands::chat::session_last_turn_meta,
             // Sessions
             commands::session::session_list,
             commands::session::session_create,
@@ -208,6 +102,8 @@ pub fn run() {
             // System
             commands::system::system_status,
             commands::system::health_check,
+            commands::system::provider_list,
+            commands::system::toggle_devtools,
             // Workspaces
             commands::workspace::workspace_list,
             commands::workspace::workspace_create,

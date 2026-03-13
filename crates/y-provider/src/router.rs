@@ -132,7 +132,21 @@ impl TagBasedRouter {
             });
         }
 
-        // Step 2: Prefer exact model match if specified.
+        // Step 2: Prefer exact provider ID match if specified (highest priority).
+        if let Some(ref preferred_id) = route.preferred_provider_id {
+            for &idx in &candidates {
+                if providers[idx].provider.metadata().id == *preferred_id {
+                    return Ok(idx);
+                }
+            }
+            // The requested provider exists but is not among candidates
+            // (frozen, wrong tags, or at capacity).
+            return Err(ProviderError::NoProviderAvailable {
+                tags: route.required_tags.clone(),
+            });
+        }
+
+        // Step 3: Prefer exact model match if specified.
         if let Some(ref preferred) = route.preferred_model {
             for &idx in &candidates {
                 if providers[idx].provider.metadata().model == *preferred {
@@ -141,7 +155,7 @@ impl TagBasedRouter {
             }
         }
 
-        // Step 3: Apply selection strategy among remaining candidates.
+        // Step 4: Apply selection strategy among remaining candidates.
         self.apply_strategy(providers, &candidates)
     }
 
@@ -256,7 +270,7 @@ mod tests {
         async fn chat_completion_stream(
             &self,
             _request: &ChatRequest,
-        ) -> Result<ChatStream, ProviderError> {
+        ) -> Result<ChatStreamResponse, ProviderError> {
             unimplemented!("mock")
         }
         fn metadata(&self) -> &ProviderMetadata {

@@ -474,4 +474,37 @@ impl TraceStore for SqliteTraceStore {
 
         Ok(rows.into_iter().filter_map(TraceRow::into_trace).collect())
     }
+
+    async fn get_observations_by_trace_ids(
+        &self,
+        trace_ids: &[Uuid],
+    ) -> Result<Vec<Observation>, TraceStoreError> {
+        if trace_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build a single query with IN (...) placeholders.
+        let placeholders: Vec<String> = (1..=trace_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect();
+        let sql = format!(
+            "SELECT id, trace_id, parent_id, session_id, obs_type, name, status, model, \
+             input_tokens, output_tokens, cost_usd, input, output, metadata, sequence, \
+             started_at, completed_at \
+             FROM diag_observations WHERE trace_id IN ({}) ORDER BY sequence ASC",
+            placeholders.join(", ")
+        );
+
+        let mut query = sqlx::query_as::<_, ObsRow>(&sql);
+        for id in trace_ids {
+            query = query.bind(id.to_string());
+        }
+
+        let rows: Vec<ObsRow> = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| storage_err(format!("get_observations_by_trace_ids: {e}")))?;
+
+        Ok(rows.into_iter().filter_map(ObsRow::into_observation).collect())
+    }
 }

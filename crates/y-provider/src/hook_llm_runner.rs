@@ -75,6 +75,7 @@ impl HookLlmRunner for ProviderPoolHookLlmRunner {
         let route = RouteRequest {
             required_tags: vec![],
             preferred_model: model.map(std::string::ToString::to_string),
+            preferred_provider_id: None,
             priority: RoutePriority::Normal,
         };
 
@@ -106,7 +107,7 @@ impl std::fmt::Debug for ProviderPoolHookLlmRunner {
 mod tests {
     use super::*;
     use y_core::provider::{
-        ChatResponse, ChatStream, FinishReason, ProviderError, ProviderStatus,
+        ChatResponse, ChatStreamResponse, FinishReason, ProviderError, ProviderStatus,
     };
     use y_core::types::{ProviderId, TokenUsage};
 
@@ -128,7 +129,7 @@ mod tests {
             &self,
             _request: &ChatRequest,
             _route: &RouteRequest,
-        ) -> Result<ChatStream, ProviderError> {
+        ) -> Result<ChatStreamResponse, ProviderError> {
             unimplemented!("not needed for hook tests")
         }
 
@@ -152,6 +153,7 @@ mod tests {
             finish_reason: FinishReason::Stop,
             raw_request: None,
             raw_response: None,
+            provider_id: None,
         }
     }
 
@@ -165,6 +167,7 @@ mod tests {
             finish_reason: FinishReason::Stop,
             raw_request: None,
             raw_response: None,
+            provider_id: None,
         }
     }
 
@@ -210,6 +213,7 @@ mod tests {
                 finish_reason: FinishReason::Stop,
                 raw_request: None,
                 raw_response: None,
+                provider_id: None,
             },
         });
         let runner = ProviderPoolHookLlmRunner::new(pool);

@@ -65,6 +65,7 @@ pub fn make_chat_response(content: &str) -> ChatResponse {
         finish_reason: FinishReason::Stop,
         raw_request: None,
         raw_response: None,
+        provider_id: None,
     }
 }
 

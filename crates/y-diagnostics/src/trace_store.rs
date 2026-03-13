@@ -63,6 +63,23 @@ pub trait TraceStore: Send + Sync {
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<Trace>, TraceStoreError>;
+
+    /// Get observations for multiple traces in a single batch.
+    ///
+    /// Returns all observations belonging to any of the supplied trace IDs.
+    /// The default implementation falls back to per-id calls; backends can
+    /// override with a single efficient query (e.g. `WHERE trace_id IN (...)`).
+    async fn get_observations_by_trace_ids(
+        &self,
+        trace_ids: &[Uuid],
+    ) -> Result<Vec<Observation>, TraceStoreError> {
+        let mut all = Vec::new();
+        for id in trace_ids {
+            let obs = self.get_observations(*id).await?;
+            all.extend(obs);
+        }
+        Ok(all)
+    }
 }
 
 /// Blanket impl so `Arc<T>` also implements `TraceStore`.
@@ -106,6 +123,12 @@ impl<T: TraceStore + ?Sized> TraceStore for std::sync::Arc<T> {
         limit: usize,
     ) -> Result<Vec<Trace>, TraceStoreError> {
         (**self).list_traces_by_session(session_id, limit).await
+    }
+    async fn get_observations_by_trace_ids(
+        &self,
+        trace_ids: &[Uuid],
+    ) -> Result<Vec<Observation>, TraceStoreError> {
+        (**self).get_observations_by_trace_ids(trace_ids).await
     }
 }
 
@@ -241,6 +264,20 @@ impl TraceStore for InMemoryTraceStore {
         results.sort_by(|a, b| b.started_at.cmp(&a.started_at));
         results.truncate(limit);
         Ok(results)
+    }
+
+    async fn get_observations_by_trace_ids(
+        &self,
+        trace_ids: &[Uuid],
+    ) -> Result<Vec<Observation>, TraceStoreError> {
+        let map = self.observations.read().unwrap();
+        let mut all = Vec::new();
+        for id in trace_ids {
+            if let Some(obs) = map.get(id) {
+                all.extend(obs.iter().cloned());
+            }
+        }
+        Ok(all)
     }
 }
 

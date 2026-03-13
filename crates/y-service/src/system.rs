@@ -2,6 +2,7 @@
 
 use y_core::provider::ProviderPool;
 use y_core::runtime::RuntimeAdapter;
+use y_provider::ProviderPoolConfig;
 
 use crate::container::ServiceContainer;
 
@@ -27,6 +28,32 @@ pub struct HealthReport {
     pub status: StatusReport,
     /// Diagnostics health.
     pub diagnostics: crate::diagnostics::HealthCheckResult,
+}
+
+/// Summary of a configured provider.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProviderInfo {
+    /// Unique provider identifier.
+    pub id: String,
+    /// Model name configured for this provider.
+    pub model: String,
+    /// Provider backend type (e.g. "openai", "anthropic").
+    pub provider_type: String,
+}
+
+/// Request to test a provider configuration.
+#[derive(Debug, Clone)]
+pub struct ProviderTestRequest {
+    /// Provider type identifier.
+    pub provider_type: String,
+    /// Model to test.
+    pub model: String,
+    /// Direct API key value.
+    pub api_key: String,
+    /// Environment variable name holding the API key.
+    pub api_key_env: String,
+    /// Optional base URL override.
+    pub base_url: Option<String>,
 }
 
 /// System-level service for status and health reporting.
@@ -55,6 +82,116 @@ impl SystemService {
         HealthReport {
             status,
             diagnostics,
+        }
+    }
+
+    /// List all configured providers with their metadata.
+    pub async fn list_providers(container: &ServiceContainer) -> Vec<ProviderInfo> {
+        let pool = container.provider_pool().await;
+        pool.list_metadata()
+            .iter()
+            .map(|m| ProviderInfo {
+                id: m.id.to_string(),
+                model: m.model.clone(),
+                provider_type: format!("{:?}", m.provider_type),
+            })
+            .collect()
+    }
+
+    /// Hot-reload the provider pool from a TOML config string.
+    ///
+    /// Parses the TOML into `ProviderPoolConfig` and delegates to
+    /// `container.reload_providers()`. Returns the count of active providers.
+    pub async fn reload_providers_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<usize, String> {
+        let pool_config: ProviderPoolConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse providers config: {e}"))?;
+        container.reload_providers(&pool_config).await;
+        let count = container.provider_pool().await.list_metadata().len();
+        Ok(count)
+    }
+
+    /// Test an LLM provider by sending a minimal probe request.
+    ///
+    /// Providers using OpenAI-compatible REST are actively tested via a
+    /// single-token chat completion. Other types return Ok immediately.
+    pub async fn test_provider(request: ProviderTestRequest) -> Result<String, String> {
+        let effective_key = if !request.api_key.is_empty() {
+            request.api_key.clone()
+        } else if !request.api_key_env.is_empty() {
+            std::env::var(&request.api_key_env)
+                .map_err(|_| format!("Environment variable '{}' is not set", request.api_key_env))?
+        } else {
+            return Err("No API key configured (set 'API Key' or 'API Key Env Var')".into());
+        };
+
+        match request.provider_type.as_str() {
+            "openai" | "openai-compat" | "azure" | "ollama" | "deepseek" => {
+                let resolved_base = request.base_url.as_deref().unwrap_or_else(|| {
+                    match request.provider_type.as_str() {
+                        "azure" => "https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT",
+                        "ollama" => "http://localhost:11434/v1",
+                        "deepseek" => "https://api.deepseek.com/v1",
+                        _ => "https://api.openai.com/v1",
+                    }
+                });
+
+                let url = format!("{}/chat/completions", resolved_base.trim_end_matches('/'));
+
+                let body = serde_json::json!({
+                    "model": request.model,
+                    "max_tokens": 1,
+                    "messages": [{ "role": "user", "content": "ping" }]
+                });
+
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(15))
+                    .build()
+                    .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+                let response = client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {effective_key}"))
+                    .header("Content-Type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Network error: {e}"))?;
+
+                let status = response.status();
+
+                if status.is_success() {
+                    return Ok("Connection successful -- provider responded normally".into());
+                }
+
+                let body_text = response.text().await.unwrap_or_default();
+                let detail: String = serde_json::from_str::<serde_json::Value>(&body_text)
+                    .ok()
+                    .and_then(|v| {
+                        v.pointer("/error/message")
+                            .and_then(|m| m.as_str())
+                            .map(|s| s.to_owned())
+                    })
+                    .unwrap_or_else(|| body_text.chars().take(200).collect());
+
+                if status == reqwest::StatusCode::UNAUTHORIZED
+                    || status == reqwest::StatusCode::FORBIDDEN
+                {
+                    return Err(format!("Authentication failed: {detail}"));
+                }
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    return Err(format!("Rate limited by provider: {detail}"));
+                }
+
+                Err(format!("Provider returned HTTP {status}: {detail}"))
+            }
+            _ => Ok(format!(
+                "Configuration accepted (active connection test is not yet implemented \
+                 for provider type '{}')",
+                request.provider_type
+            )),
         }
     }
 }

@@ -3,7 +3,7 @@
 // Tauri event listeners are registered in a module-level singleton so
 // React StrictMode double-mount never creates duplicate handlers.
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, startTransition } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
@@ -12,15 +12,17 @@ import type {
   ChatCompletePayload,
   ChatErrorPayload,
   ChatStartedPayload,
+  ProgressPayload,
 } from '../types';
 
 interface UseChatReturn {
   messages: Message[];
   isStreaming: boolean;
+  isLoadingMessages: boolean;
   streamingSessionIds: Set<string>;
   activeRunId: string | null;
   error: string | null;
-  sendMessage: (message: string, sessionId: string) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
@@ -41,7 +43,8 @@ type ChatBusSubscriber = (event: ChatBusEvent) => void;
 type ChatBusEvent =
   | { type: 'started'; run_id: string; session_id: string }
   | { type: 'complete'; payload: ChatCompletePayload }
-  | { type: 'error'; payload: ChatErrorPayload };
+  | { type: 'error'; payload: ChatErrorPayload }
+  | { type: 'stream_delta'; run_id: string; session_id: string; content: string };
 
 let chatBusInitialised = false;
 const chatBusState: ChatBusState = {
@@ -88,6 +91,23 @@ async function initialiseChatBus() {
     notifyChatSubscribers({ type: 'error', payload: e.payload });
   });
   chatUnlistenFns.push(u2);
+
+  // Listen for chat:progress events to forward stream_delta events.
+  const u3 = await listen<ProgressPayload>('chat:progress', (e) => {
+    const { run_id, event } = e.payload;
+    if (event.type === 'stream_delta') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'stream_delta',
+          run_id,
+          session_id,
+          content: event.content,
+        });
+      }
+    }
+  });
+  chatUnlistenFns.push(u3);
 }
 
 // Kick off immediately so events are never missed due to mount timing.
@@ -103,6 +123,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     new Set(chatBusState.streamingSessions),
   );
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   // Track the active run_id for the currently viewed session (for cancel).
   const activeRunIdRef = useRef<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -122,12 +143,45 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         activeRunIdRef.current = event.run_id;
         setActiveRunId(event.run_id);
         console.log('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
+      } else if (event.type === 'stream_delta') {
+        // Append incremental text to the streaming assistant message.
+        if (event.session_id === loadedSessionRef.current) {
+          setMessages((prev) => {
+            const streamingId = `streaming-${event.session_id}`;
+            const lastIdx = prev.findIndex((m) => m.id === streamingId);
+            if (lastIdx >= 0) {
+              // Append to existing streaming message.
+              const updated = [...prev];
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                content: updated[lastIdx].content + event.content,
+              };
+              return updated;
+            }
+            // Create a new streaming message.
+            return [
+              ...prev,
+              {
+                id: streamingId,
+                role: 'assistant' as const,
+                content: event.content,
+                timestamp: new Date().toISOString(),
+                tool_calls: [],
+                _streaming: true,
+              } as Message,
+            ];
+          });
+        }
       } else if (event.type === 'complete') {
         const payload = event.payload;
         const sessionId = chatBusState.runToSession[payload.run_id];
 
         if (sessionId && sessionId === loadedSessionRef.current) {
           setMessages((prev) => {
+            // Remove the streaming placeholder if present.
+            const streamingId = `streaming-${sessionId}`;
+            const filtered = prev.filter((m) => m.id !== streamingId);
+
             const newMsg: Message = {
               id: `assistant-${payload.run_id}`,
               role: 'assistant' as const,
@@ -139,13 +193,14 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                 arguments: '',
               })),
               model: payload.model,
+              provider_id: payload.provider_id,
               tokens: { input: payload.input_tokens, output: payload.output_tokens },
               cost: payload.cost_usd,
               context_window: payload.context_window,
             };
             // Avoid duplicate: don't append if identical run_id already present.
-            if (prev.some((m) => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
+            if (filtered.some((m) => m.id === newMsg.id)) return filtered;
+            return [...filtered, newMsg];
           });
         }
 
@@ -158,6 +213,15 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       } else if (event.type === 'error') {
         const payload = event.payload;
         const sessionId = chatBusState.runToSession[payload.run_id];
+
+        // Remove the streaming placeholder on error too.
+        if (sessionId && sessionId === loadedSessionRef.current) {
+          setMessages((prev) => {
+            const streamingId = `streaming-${sessionId}`;
+            return prev.filter((m) => m.id !== streamingId);
+          });
+        }
+
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
         if (activeRunIdRef.current === payload.run_id) {
           activeRunIdRef.current = null;
@@ -179,7 +243,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   }, []);
 
   const sendMessage = useCallback(
-    async (message: string, sessionId: string): Promise<ChatStarted | null> => {
+    async (message: string, sessionId: string, providerId?: string): Promise<ChatStarted | null> => {
       setError(null);
 
       // Register the session as the loaded one so chat:complete can append
@@ -199,7 +263,11 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       ]);
 
       try {
-        const result = await invoke<ChatStarted>('chat_send', { message, sessionId });
+        const result = await invoke<ChatStarted>('chat_send', {
+          message,
+          sessionId,
+          providerId: providerId ?? null,
+        });
         return result;
       } catch (e) {
         setError(String(e));
@@ -212,22 +280,45 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   );
 
   const loadMessages = useCallback(async (sessionId: string) => {
-    // Do not reload if a run is currently in progress for this session --
-    // the optimistic messages + chat:complete listener handle the display.
-    const hasActiveRun = [...chatBusState.pendingRuns].some(
-      (rid) => chatBusState.runToSession[rid] === sessionId,
-    );
-    if (hasActiveRun) return;
-
+    // Always update the loaded-session ref so that incoming chat:complete /
+    // stream_delta events for this session are correctly applied.
     loadedSessionRef.current = sessionId;
+
+    // Wrap state mutations in startTransition so React treats them as
+    // low-priority updates.  The sidebar's activeSessionId re-render
+    // (high priority) commits and paints first; the chat panel update
+    // renders separately afterwards, preventing the sidebar focus from
+    // appearing stuck on the old session.
+    startTransition(() => {
+      setMessages([]);
+      setIsLoadingMessages(true);
+    });
+
     try {
       const msgs = await invoke<Message[]>('session_get_messages', { sessionId });
       // Only set if we're still loading the same session.
       if (loadedSessionRef.current === sessionId) {
-        setMessages(msgs);
+        // If a run is currently streaming for this session, preserve the
+        // streaming placeholder message so the user sees incremental text.
+        const streamingId = `streaming-${sessionId}`;
+        startTransition(() => {
+          setMessages((prev) => {
+            const existingStreaming = prev.find((m) => m.id === streamingId);
+            if (existingStreaming) {
+              return [...msgs, existingStreaming];
+            }
+            return msgs;
+          });
+        });
       }
     } catch (e) {
       setError(String(e));
+    } finally {
+      if (loadedSessionRef.current === sessionId) {
+        startTransition(() => {
+          setIsLoadingMessages(false);
+        });
+      }
     }
   }, []);
 
@@ -275,6 +366,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   return {
     messages,
     isStreaming,
+    isLoadingMessages,
     streamingSessionIds,
     activeRunId,
     error,

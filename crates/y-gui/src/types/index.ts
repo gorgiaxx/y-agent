@@ -29,6 +29,7 @@ export interface Message {
   timestamp: string;
   tool_calls: ToolCallBrief[];
   model?: string;
+  provider_id?: string;
   tokens?: { input: number; output: number };
   cost?: number;
   context_window?: number;
@@ -59,6 +60,7 @@ export interface ChatCompletePayload {
   run_id: string;
   content: string;
   model: string;
+  provider_id?: string;
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
@@ -116,7 +118,13 @@ export interface UserMessageEvent {
   content: string;
 }
 
-export type TurnEvent = LlmResponseEvent | ToolResultEvent | LoopLimitEvent | UserMessageEvent;
+export interface StreamDeltaEvent {
+  type: 'stream_delta';
+  /** Incremental text content from the LLM. */
+  content: string;
+}
+
+export type TurnEvent = LlmResponseEvent | ToolResultEvent | LoopLimitEvent | UserMessageEvent | StreamDeltaEvent;
 
 export interface ProgressPayload {
   run_id: string;
@@ -139,6 +147,23 @@ export interface SystemStatus {
   healthy: boolean;
   provider_count: number;
   session_count: number | null;
+}
+
+/** Summary of a configured LLM provider (from `provider_list` command). */
+export interface ProviderInfo {
+  id: string;
+  model: string;
+  provider_type: string;
+}
+
+/** Last-turn metadata cached per session by the backend (from `session_last_turn_meta`). */
+export interface TurnMeta {
+  provider_id: string | null;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  context_window: number;
 }
 
 // ---------------------------------------------------------------------------

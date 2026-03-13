@@ -50,9 +50,9 @@ pub struct ChatRequest {
     /// Maximum tokens to generate.
     pub max_tokens: Option<u32>,
     /// Sampling temperature (0.0 - 2.0).
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     /// Nucleus sampling top-p (0.0 - 1.0).
-    pub top_p: Option<f32>,
+    pub top_p: Option<f64>,
     /// Tool definitions available for this request (only used in [`ToolCallingMode::Native`]).
     pub tools: Vec<serde_json::Value>,
     /// How tool calling is communicated to the LLM.
@@ -85,6 +85,9 @@ pub struct ChatResponse {
     /// Raw HTTP response payload received from the LLM provider (for diagnostics).
     #[serde(skip)]
     pub raw_response: Option<serde_json::Value>,
+    /// Provider that served this response (set by the pool after routing).
+    #[serde(default)]
+    pub provider_id: Option<ProviderId>,
 }
 
 /// A single chunk in a streaming response.
@@ -114,6 +117,21 @@ pub enum FinishReason {
 /// Streaming response type: a pinned boxed stream of chunk results.
 pub type ChatStream =
     Pin<Box<dyn Stream<Item = Result<ChatStreamChunk, ProviderError>> + Send + 'static>>;
+
+/// Wrapper returned by streaming methods, bundling the chunk stream with the
+/// raw HTTP request body that was sent to the provider (for diagnostics).
+pub struct ChatStreamResponse {
+    /// The SSE/streaming chunk stream.
+    pub stream: ChatStream,
+    /// Raw HTTP request body serialized by the provider (for diagnostics).
+    pub raw_request: Option<serde_json::Value>,
+    /// Provider that served this streaming request (set by the pool after routing).
+    pub provider_id: Option<ProviderId>,
+    /// Model name from the serving provider's metadata.
+    pub model: String,
+    /// Context window size of the serving provider (tokens).
+    pub context_window: usize,
+}
 
 // ---------------------------------------------------------------------------
 // Provider metadata
@@ -218,7 +236,7 @@ pub trait LlmProvider: Send + Sync {
     async fn chat_completion_stream(
         &self,
         request: &ChatRequest,
-    ) -> Result<ChatStream, ProviderError>;
+    ) -> Result<ChatStreamResponse, ProviderError>;
 
     /// Return static metadata for this provider.
     fn metadata(&self) -> &ProviderMetadata;
@@ -229,6 +247,8 @@ pub trait LlmProvider: Send + Sync {
 pub struct RouteRequest {
     /// Required tags the provider must have.
     pub required_tags: Vec<String>,
+    /// Preferred provider by ID (exact match, highest priority).
+    pub preferred_provider_id: Option<ProviderId>,
     /// Preferred model (exact match, optional).
     pub preferred_model: Option<String>,
     /// Priority level.
@@ -278,7 +298,7 @@ pub trait ProviderPool: Send + Sync {
         &self,
         request: &ChatRequest,
         route: &RouteRequest,
-    ) -> Result<ChatStream, ProviderError>;
+    ) -> Result<ChatStreamResponse, ProviderError>;
 
     /// Report an error from a specific provider (triggers freeze evaluation).
     fn report_error(&self, provider_id: &ProviderId, error: &ProviderError);

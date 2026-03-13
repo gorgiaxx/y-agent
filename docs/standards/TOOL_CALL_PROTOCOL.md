@@ -2,8 +2,9 @@
 
 > Provider-agnostic tool calling via prompt engineering
 
-**Version**: v0.1
+**Version**: v0.2
 **Created**: 2026-03-12
+**Updated**: 2026-03-13
 **Status**: Draft
 
 ---
@@ -19,7 +20,7 @@ y-agent uses a **prompt-based tool calling protocol** that works with any LLM re
 | Principle | Rationale |
 |-----------|-----------|
 | **Provider-agnostic** | Tool calling works via prompt instructions, not API-specific fields. Any LLM that follows instructions can use tools. |
-| **Lazy loading** | Only a taxonomy root (~100 tokens) is injected initially. Full tool schemas are loaded on demand via `tool_search`. |
+| **Two-tier visibility** | Core tools (Tier 1) are always available with schemas in the prompt. Extended tools (Tier 2) are loaded on demand via `tool_search`. |
 | **Explicit format** | XML tags are unambiguous, easy to parse, and well-understood by all major LLMs. |
 | **Dual mode** | `PromptBased` (default, universal) and `Native` (for providers with mature native tool calling) coexist via configuration. |
 | **Fail gracefully** | Malformed tool call tags are treated as regular text, not errors. |
@@ -104,9 +105,10 @@ The body is always a JSON object. On success, the structure depends on the tool.
 
 ## 4. Tool Search Protocol
 
-Tools are NOT eagerly listed in the prompt. Instead, the LLM sees:
-1. A **taxonomy root** — category names and descriptions (~100 tokens)
-2. The `tool_search` meta-tool — the only tool whose full schema is always available
+Tools use a **two-tier visibility model**:
+
+1. **Tier 1 (Core Tools)** -- Always available in the prompt with compact schemas. The LLM can call these directly without searching.
+2. **Tier 2 (Extended Tools)** -- Discovered via `tool_search`. The LLM sees a taxonomy root (~100 tokens) and must search before calling.
 
 ### Search by Category
 
@@ -147,9 +149,26 @@ Once a tool is retrieved via `tool_search`, its full schema is added to the **To
 
 ---
 
-## 5. Taxonomy Root (Prompt Injection)
+## 5. Two-Tier Prompt Injection
 
-The following is injected into the system prompt to inform the LLM of available tool categories:
+### 5.1 Tier 1: Core Tool Schemas
+
+The following core tools are always listed in the system prompt with compact schemas. This eliminates the common failure mode where LLMs guess familiar Unix command names (e.g., `ls`, `cat`, `grep`) instead of using registered tool names.
+
+| Tool | Description | Required Args |
+|------|-------------|---------------|
+| `file_read` | Read file contents | `{"path": "<filepath>"}` |
+| `file_write` | Write content to a file (creates dirs) | `{"path": "<filepath>", "content": "<text>"}` |
+| `file_list` | List directory contents | `{"path": "<dirpath>"}` |
+| `file_search` | Search for text pattern in files | `{"pattern": "<text>", "path": "<dirpath>"}` |
+| `shell_exec` | Execute a shell command | `{"command": "<cmd>"}` |
+
+The prompt also includes an explicit instruction:
+> IMPORTANT: Use ONLY these exact tool names. Do NOT invent tool names like 'ls', 'cat', 'grep', or 'mkdir'. For shell operations not covered above, use shell_exec.
+
+### 5.2 Tier 2: Taxonomy Root
+
+For extended tools, the taxonomy root is injected to inform the LLM of available categories:
 
 ```
 ## Tool Categories
@@ -158,18 +177,13 @@ You have access to tools organized in the following categories. Use `tool_search
 
 | Category | Description |
 |----------|-------------|
-| file | File management — read, write, list, search files |
+| file | File management -- read, write, list, search files |
 | shell | Shell command execution |
 | network | HTTP requests, DNS, connectivity |
 | memory | Store and recall knowledge |
 | search | Search and retrieval |
 | agent | Sub-agent delegation, workflow management |
 | meta | Tool management (search, create) |
-
-To use a tool:
-1. Call `tool_search` with a category or keyword to find the right tool
-2. Review the tool's schema from the search result
-3. Call the tool with the required arguments
 ```
 
 ---
@@ -295,10 +309,11 @@ tool_calling_mode = "native"  # Override for this provider only
 | Component | PromptBased | Native (current) |
 |-----------|------------|-------------------|
 | Tool protocol section | ~200 tokens | 0 |
-| Taxonomy root | ~100 tokens | 0 |
+| Tier 1 core tool schemas | ~300 tokens | 0 |
+| Taxonomy root (Tier 2) | ~100 tokens | 0 |
 | Flat tool index | 0 | ~50 tokens |
 | Tool definitions in API | 0 | 5,000-25,000 tokens |
 | Activated tool schemas (per tool) | ~100-300 tokens | 0 (in API field) |
-| **Total (initial turn, 50 tools)** | **~300 tokens** | **~5,000-25,000 tokens** |
+| **Total (initial turn, 50 tools)** | **~600 tokens** | **~5,000-25,000 tokens** |
 
-Savings: **60-95%** on initial turns. After tool activation, costs converge but prompt-based remains more efficient because only used tools are loaded.
+Savings: **60-95%** on initial turns. The Tier 1 core tools add ~300 tokens vs. the original lazy-only approach, but eliminate the most common failure mode (LLMs guessing non-existent tool names). After tool activation, costs converge but prompt-based remains more efficient because only used tools are loaded.

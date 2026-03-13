@@ -232,6 +232,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 session_uuid,
                 history: &history,
                 turn_number,
+                provider_id: None,
             };
 
             match orchestrator::execute_turn(services, &turn_input).await {

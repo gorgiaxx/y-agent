@@ -1,4 +1,4 @@
-# CLAUDE.md — y-agent Engineering Protocol
+# y-agent Engineering Protocol
 
 Scope: entire repository. All rules are mandatory.
 
@@ -23,6 +23,7 @@ Crates: `y-core` · `y-provider` · `y-agent` · `y-session` · `y-context` · `
 | 2.7 | **TDD** | Red → Green → Refactor. No production code without a preceding test. See `TEST_STRATEGY.md`. |
 | 2.8 | **English** | All docs, comments, commits in English. `VISION.md` is the sole exception. |
 | 2.9 | **No Emoji** | No emoji in any artifact: code, docs, comments, commits, diagrams, or agent output. Use plain text only. |
+| 2.10 | **Service-Layer Ownership** | All business logic lives in `y-service`; `y-cli`, `y-web`, GUI (Tauri) are thin presentation layers -- they handle I/O, rendering, and user interaction only. No domain logic in presentation crates. |
 
 ## 3) Repository Map
 

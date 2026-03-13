@@ -89,12 +89,12 @@ pub struct ProviderConfig {
     /// Default sampling temperature for this provider (0.0 - 2.0).
     /// Applied to requests that do not specify a temperature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
 
     /// Default nucleus sampling top-p for this provider (0.0 - 1.0).
     /// Applied to requests that do not specify a `top_p`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f32>,
+    pub top_p: Option<f64>,
 
     /// Tool calling mode override for this provider.
     /// `None` means use the global default (Native).

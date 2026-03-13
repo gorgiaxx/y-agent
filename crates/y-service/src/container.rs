@@ -32,8 +32,10 @@ use y_runtime::RuntimeManager;
 use y_session::{ChatCheckpointManager, SessionManager};
 use y_storage::{SqliteChatCheckpointStore, SqliteSessionStore, SqliteWorkflowStore};
 use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
+use y_skills::SkillRegistryImpl;
 
 use crate::config::ServiceConfig;
+use crate::skill_ingestion::SkillIngestionService;
 
 /// Embedded default taxonomy TOML (compiled into binary).
 const DEFAULT_TAXONOMY_TOML: &str = include_str!("../../../config/tool_taxonomy.toml");
@@ -290,6 +292,21 @@ tools = ["tool_search"]
             "Provider pool hot-reloaded"
         );
     }
+
+    /// Construct a [`SkillIngestionService`] wired to this container's
+    /// agent delegator.
+    ///
+    /// The caller supplies the skill registry; the delegator comes from
+    /// the container.
+    pub fn skill_ingestion_service(
+        &self,
+        registry: Arc<RwLock<SkillRegistryImpl>>,
+    ) -> SkillIngestionService {
+        SkillIngestionService::new(
+            Arc::clone(&self.agent_delegator),
+            registry,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -533,5 +550,16 @@ mod tests {
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
         assert_eq!(sc.context_pipeline.provider_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_skill_ingestion_service_factory() {
+        let mut config = ServiceConfig::default();
+        config.storage.db_path = ":memory:".to_string();
+
+        let sc = ServiceContainer::from_config(&config).await.unwrap();
+        let registry = Arc::new(RwLock::new(y_skills::SkillRegistryImpl::new()));
+        let _service = sc.skill_ingestion_service(registry);
+        // Construction succeeds -- delegator is correctly wired.
     }
 }

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo } from '../types';
 import { WorkspaceDialog } from './WorkspaceDialog';
@@ -56,8 +56,11 @@ export function Sidebar({
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Sorted workspaces by name (alphabetically).
-  const sortedWorkspaces = [...workspaces].sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+  const sortedWorkspaces = useMemo(
+    () => [...workspaces].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+    ),
+    [workspaces],
   );
 
   // Default: only the first workspace (alphabetically) is expanded.
@@ -86,20 +89,25 @@ export function Sidebar({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const filtered = sessions.filter((s) => {
-    if (!searchQuery) return true;
+  const filtered = useMemo(() => {
+    if (!searchQuery) return sessions;
     const q = searchQuery.toLowerCase();
-    return s.title?.toLowerCase().includes(q) || s.id.toLowerCase().includes(q);
-  });
+    return sessions.filter(
+      (s) => s.title?.toLowerCase().includes(q) || s.id.toLowerCase().includes(q),
+    );
+  }, [sessions, searchQuery]);
 
   // Group sessions by workspace, sorted alphabetically.
-  const groups: { workspace: WorkspaceInfo | null; sessions: SessionInfo[] }[] = sortedWorkspaces.map(
-    (ws) => ({
-      workspace: ws,
-      sessions: filtered.filter((s) => sessionWorkspaceMap[s.id] === ws.id),
-    }),
-  );
-  const ungrouped = filtered.filter((s) => !sessionWorkspaceMap[s.id]);
+  const { groups, ungrouped } = useMemo(() => {
+    const g: { workspace: WorkspaceInfo | null; sessions: SessionInfo[] }[] = sortedWorkspaces.map(
+      (ws) => ({
+        workspace: ws,
+        sessions: filtered.filter((s) => sessionWorkspaceMap[s.id] === ws.id),
+      }),
+    );
+    const u = filtered.filter((s) => !sessionWorkspaceMap[s.id]);
+    return { groups: g, ungrouped: u };
+  }, [sortedWorkspaces, filtered, sessionWorkspaceMap]);
 
   const renderSessionItem = (session: SessionInfo) => {
     const isStreaming = streamingSessionIds.has(session.id);

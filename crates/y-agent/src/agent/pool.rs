@@ -375,8 +375,7 @@ impl AgentDelegator for AgentPool {
             input,
             preferred_models: definition.preferred_models.clone(),
             fallback_models: definition.fallback_models.clone(),
-            #[allow(clippy::cast_possible_truncation)]
-            temperature: definition.temperature.map(|t| t as f32),
+            temperature: definition.temperature,
             #[allow(clippy::cast_possible_truncation)]
             max_tokens: Some(definition.max_context_tokens as u32),
             timeout_secs: definition.timeout_secs,

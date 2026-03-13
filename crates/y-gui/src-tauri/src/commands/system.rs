@@ -4,6 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use y_core::session::SessionFilter;
+use y_service::{ProviderInfo, SystemService};
 
 use crate::state::AppState;
 
@@ -31,7 +32,7 @@ pub struct SystemStatus {
 /// Get system status.
 #[tauri::command]
 pub async fn system_status(state: State<'_, AppState>) -> Result<SystemStatus, String> {
-    let provider_count = state.container.provider_pool().await.list_metadata().len();
+    let provider_count = SystemService::list_providers(&state.container).await.len();
 
     let filter = SessionFilter::default();
     let session_count = state
@@ -54,4 +55,28 @@ pub async fn system_status(state: State<'_, AppState>) -> Result<SystemStatus, S
 #[tauri::command]
 pub async fn health_check() -> Result<String, String> {
     Ok("ok".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Provider list
+// ---------------------------------------------------------------------------
+
+/// List all configured providers (id, model, type) for the frontend selector.
+#[tauri::command]
+pub async fn provider_list(state: State<'_, AppState>) -> Result<Vec<ProviderInfo>, String> {
+    Ok(SystemService::list_providers(&state.container).await)
+}
+
+// ---------------------------------------------------------------------------
+// DevTools
+// ---------------------------------------------------------------------------
+
+/// Toggle the WebView developer tools (Ctrl+Shift+I shortcut handler).
+#[tauri::command]
+pub async fn toggle_devtools(window: tauri::WebviewWindow) {
+    if window.is_devtools_open() {
+        window.close_devtools();
+    } else {
+        window.open_devtools();
+    }
 }

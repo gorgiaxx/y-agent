@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { Square } from 'lucide-react';
+import { ProviderSelector } from './ProviderSelector';
+import type { ProviderInfo } from '../types';
 import './InputArea.css';
 
 interface InputAreaProps {
@@ -7,9 +9,20 @@ interface InputAreaProps {
   onStop?: () => void;
   disabled: boolean;
   sendOnEnter: boolean;
+  providers: ProviderInfo[];
+  selectedProviderId: string;
+  onSelectProvider: (id: string) => void;
 }
 
-export function InputArea({ onSend, onStop, disabled, sendOnEnter }: InputAreaProps) {
+export function InputArea({
+  onSend,
+  onStop,
+  disabled,
+  sendOnEnter,
+  providers,
+  selectedProviderId,
+  onSelectProvider,
+}: InputAreaProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -63,8 +76,16 @@ export function InputArea({ onSend, onStop, disabled, sendOnEnter }: InputAreaPr
           </button>
         )}
       </div>
-      <div className="input-hint">
-        {sendOnEnter ? 'Enter to send, Shift+Enter for newline' : 'Shift+Enter to send'}
+      <div className="input-footer">
+        <ProviderSelector
+          providers={providers}
+          selectedProviderId={selectedProviderId}
+          onSelect={onSelectProvider}
+          disabled={disabled}
+        />
+        <div className="input-hint">
+          {sendOnEnter ? 'Enter to send, Shift+Enter for newline' : 'Shift+Enter to send'}
+        </div>
       </div>
     </div>
   );

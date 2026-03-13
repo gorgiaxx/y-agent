@@ -26,14 +26,19 @@ pub mod system;
 pub mod tool_search_orchestrator;
 
 // Re-export primary types for convenience.
-pub use chat::{ChatService, ToolCallRecord, TurnError, TurnEvent, TurnEventSender, TurnInput, TurnResult};
+pub use chat::{
+    ChatService, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ToolCallRecord, TurnError,
+    TurnEvent, TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
+};
 pub use config::ServiceConfig;
 pub use container::ServiceContainer;
 pub use cost::CostService;
-pub use diagnostics::DiagnosticsService;
+pub use diagnostics::{DiagnosticsService, HistoricalEntry};
 pub use skill_evolution::{
     CapturedExperience, ExperienceCaptureSubscriber, SkillInjectionTracker,
     SkillUsageAuditSubscriber, UsageMetrics,
 };
 pub use skill_ingestion::{ImportDecision, ImportError, ImportResult, SkillIngestionService};
-pub use system::{HealthReport, StatusReport, SystemService};
+pub use system::{
+    HealthReport, ProviderInfo, ProviderTestRequest, StatusReport, SystemService,
+};

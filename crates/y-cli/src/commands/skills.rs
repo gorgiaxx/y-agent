@@ -228,10 +228,7 @@ pub async fn run(action: &SkillAction, services: &ServiceContainer, mode: Output
                 let registry = std::sync::Arc::new(
                     tokio::sync::RwLock::new(SkillRegistryImpl::with_store(store).await?),
                 );
-                let ingestion_service = y_service::SkillIngestionService::new(
-                    std::sync::Arc::clone(&services.agent_delegator),
-                    registry,
-                );
+                let ingestion_service = services.skill_ingestion_service(registry);
 
                 output::print_info(&format!("Importing skill from '{path}' (agent-assisted)..."));
 

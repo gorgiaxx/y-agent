@@ -110,13 +110,30 @@ pub fn builtin_section_store() -> SectionStore {
              {\"result_key\": \"result_value\"}\n\
              </tool_result>\n\
              \n\
-             Tool discovery:\n\
-             - When you decide a tool is needed, use tool_search to discover available tools first.\n\
-             - Do not guess tool names or parameters -- search first, then call.\n\
+             ## Core Tools (always available)\n\
+             \n\
+             You can call these tools directly without searching:\n\
+             \n\
+             | Tool | Description | Required Args |\n\
+             |------|-------------|---------------|\n\
+             | file_read | Read file contents | {\"path\": \"<filepath>\"} |\n\
+             | file_write | Write content to a file (creates dirs) | {\"path\": \"<filepath>\", \"content\": \"<text>\"} |\n\
+             | file_list | List directory contents | {\"path\": \"<dirpath>\"} |\n\
+             | file_search | Search for text pattern in files | {\"pattern\": \"<text>\", \"path\": \"<dirpath>\"} |\n\
+             | shell_exec | Execute a shell command | {\"command\": \"<cmd>\"} |\n\
+             \n\
+             IMPORTANT: Use ONLY these exact tool names. Do NOT invent tool names \
+             like 'ls', 'cat', 'grep', or 'mkdir'. For shell operations not covered above, \
+             use shell_exec.\n\
+             \n\
+             ## Extended Tools\n\
+             \n\
+             For capabilities beyond the core tools, use tool_search to discover additional tools:\n\
+             - Do not guess tool names for extended tools -- search first, then call.\n\
              - You may include regular text before and after tool calls."
                 .into(),
         ),
-        token_budget: 300,
+        token_budget: 600,
         priority: 450,
         condition: Some(SectionCondition::Always),
         category: SectionCategory::Behavioral,

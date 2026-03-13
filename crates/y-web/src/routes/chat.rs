@@ -5,11 +5,9 @@ use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::types::SessionId;
-use y_service::{ChatService, TurnInput};
+use y_service::{ChatService, PrepareTurnError, PrepareTurnRequest};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -69,68 +67,23 @@ async fn chat_turn(
         return Err(ApiError::BadRequest("message must not be empty".into()));
     }
 
-    // Resolve or create session.
-    let session_id = if let Some(ref sid) = body.session_id {
-        let id = SessionId(sid.clone());
-        // Verify the session exists.
-        let _ = state
-            .container
-            .session_manager
-            .get_session(&id)
-            .await
-            .map_err(|_| ApiError::NotFound(format!("session {sid} not found")))?;
-        id
-    } else {
-        let session = state
-            .container
-            .session_manager
-            .create_session(CreateSessionOptions {
-                parent_id: None,
-                session_type: SessionType::Main,
-                agent_id: None,
-                title: None,
-            })
-            .await
-            .map_err(|e| ApiError::Internal(format!("failed to create session: {e}")))?;
-        session.id
-    };
+    // Prepare turn: resolve/create session, persist user message, read transcript.
+    let prepared = ChatService::prepare_turn(
+        &state.container,
+        PrepareTurnRequest {
+            session_id: body.session_id.map(|s| SessionId(s)),
+            user_input: body.message,
+            provider_id: None,
+        },
+    )
+    .await
+    .map_err(|e| match e {
+        PrepareTurnError::SessionNotFound(msg) => ApiError::NotFound(msg),
+        other => ApiError::Internal(other.to_string()),
+    })?;
 
-    // Generate a UUID for diagnostics tracing.
-    let session_uuid = Uuid::new_v4();
-
-    // Persist the user message.
-    let user_msg = y_core::types::Message {
-        message_id: y_core::types::generate_message_id(),
-        role: y_core::types::Role::User,
-        content: body.message.clone(),
-        tool_call_id: None,
-        tool_calls: vec![],
-        timestamp: y_core::types::now(),
-        metadata: serde_json::Value::Null,
-    };
-    let _ = state
-        .container
-        .session_manager
-        .append_message(&session_id, &user_msg)
-        .await;
-
-    // Read current transcript for context.
-    let history = state
-        .container
-        .session_manager
-        .read_transcript(&session_id)
-        .await
-        .unwrap_or_default();
-
-    let turn_number = u32::try_from(history.len()).unwrap_or(u32::MAX);
-
-    let input = TurnInput {
-        user_input: &body.message,
-        session_id: session_id.clone(),
-        session_uuid,
-        history: &history,
-        turn_number,
-    };
+    let session_id = prepared.session_id.clone();
+    let input = prepared.as_turn_input();
 
     let result = ChatService::execute_turn(&state.container, &input)
         .await

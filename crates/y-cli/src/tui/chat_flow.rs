@@ -14,7 +14,7 @@ use crate::wire::AppServices;
 /// Events sent from the async LLM task back to the TUI event loop.
 #[derive(Debug)]
 pub enum ChatEvent {
-    /// LLM response completed — full content.
+    /// LLM response completed -- full content.
     Response {
         content: String,
         model: String,
@@ -28,6 +28,10 @@ pub enum ChatEvent {
         name: String,
         success: bool,
         duration_ms: u64,
+    },
+    /// Incremental text delta from the LLM stream.
+    StreamDelta {
+        content: String,
     },
     /// LLM request failed.
     Error(String),
@@ -183,10 +187,28 @@ pub fn submit_message(
             session_uuid,
             history: &history,
             turn_number: user_msg_count,
+            provider_id: None,
         };
 
-        match orchestrator::execute_turn(&services, &turn_input).await {
+        // Set up a progress channel to receive streaming deltas.
+        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Spawn a sub-task to forward StreamDelta events from the progress
+        // channel to the TUI event channel.
+        let tx_stream = tx.clone();
+        let progress_forwarder = tokio::spawn(async move {
+            while let Some(event) = progress_rx.recv().await {
+                if let y_service::TurnEvent::StreamDelta { content } = event {
+                    let _ = tx_stream.send(ChatEvent::StreamDelta { content }).await;
+                }
+            }
+        });
+
+        match orchestrator::execute_turn_streaming(&services, &turn_input, progress_tx).await {
             Ok(result) => {
+                // Wait for the progress forwarder to finish before emitting
+                // the final Response so all deltas arrive first.
+                let _ = progress_forwarder.await;
                 // Emit tool call events for TUI display.
                 for tc in &result.tool_calls_executed {
                     let _ = tx
@@ -290,6 +312,14 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                     let status = if success { "✓" } else { "✗" };
                     let info = format!("[tool: {name}] {status} ({duration_ms}ms)\n");
                     last.content.push_str(&info);
+                }
+            }
+        }
+        ChatEvent::StreamDelta { content } => {
+            // Append incremental text to the streaming assistant message.
+            if let Some(last) = state.messages.last_mut() {
+                if last.role == MessageRole::Assistant && last.is_streaming {
+                    last.content.push_str(&content);
                 }
             }
         }
