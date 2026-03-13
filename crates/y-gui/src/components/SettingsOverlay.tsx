@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, Plug, Info, X, Eye, EyeOff, RefreshCw, Plus } from 'lucide-react';
+import { Settings, Plug, Info, X, Eye, EyeOff, RefreshCw, Plus, FileText } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GuiConfig } from '../types';
 import './SettingsOverlay.css';
@@ -13,7 +13,7 @@ interface SettingsOverlayProps {
   reloadConfig: () => Promise<string>;
 }
 
-type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'about';
+type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'prompts' | 'about';
 
 // ---------------------------------------------------------------------------
 // Provider form types (mirrors Rust ProviderConfig)
@@ -566,6 +566,13 @@ export function SettingsOverlay({
   // Whether the unified Save Changes is currently writing.
   const [saving, setSaving] = useState(false);
 
+  // Prompt editor state.
+  const [promptFiles, setPromptFiles] = useState<string[]>([]);
+  const [activePromptTab, setActivePromptTab] = useState(0);
+  const [promptContent, setPromptContent] = useState('');
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [dirtyPrompts, setDirtyPrompts] = useState<Record<string, string>>({});
+
   // Unified save -- flush all pending changes to disk, then propagate GUI config.
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -603,6 +610,16 @@ export function SettingsOverlay({
       setTomlDraftsBySection({});
     }
 
+    // Save dirty prompt files.
+    for (const [filename, content] of Object.entries(dirtyPrompts)) {
+      try {
+        await invoke('prompt_save', { filename, content });
+      } catch (e) { errors.push(`prompt ${filename}: ${e}`); }
+    }
+    if (errors.length === 0) {
+      setDirtyPrompts({});
+    }
+
     setSaving(false);
 
     if (errors.length > 0) {
@@ -616,11 +633,11 @@ export function SettingsOverlay({
   }, [
     dirtyProviders, dirtySession, dirtyRuntime,
     providersList, providersMeta, sessionForm, runtimeForm,
-    tomlDraftsBySection, saveSection, localConfig, onSave, onClose,
+    tomlDraftsBySection, dirtyPrompts, saveSection, localConfig, onSave, onClose,
   ]);
 
   // Derive the active config section key from the active tab.
-  const selectedSection = (activeTab !== 'general' && activeTab !== 'about') ? activeTab : null;
+  const selectedSection = (activeTab !== 'general' && activeTab !== 'about' && activeTab !== 'prompts') ? activeTab : null;
 
   // Load section content when switching sections (for non-providers TOML editor).
   const doLoadSection = useCallback(
@@ -716,6 +733,45 @@ export function SettingsOverlay({
     }
   }, [loadSection]);
 
+  // Load prompt file list and first file content when switching to prompts tab.
+  const loadPromptFile = useCallback(async (filename: string) => {
+    setPromptLoading(true);
+    try {
+      const content = await invoke<string>('prompt_get', { filename });
+      setPromptContent(content);
+    } catch (e) {
+      setToast({ message: `Failed to load prompt: ${e}`, type: 'error' });
+    } finally {
+      setPromptLoading(false);
+    }
+  }, []);
+
+  const loadPromptFiles = useCallback(async () => {
+    setPromptLoading(true);
+    try {
+      const files = await invoke<string[]>('prompt_list');
+      setPromptFiles(files);
+      setActivePromptTab(0);
+      if (files.length > 0) {
+        // Check if there's a dirty draft for this file.
+        const firstFile = files[0];
+        if (dirtyPrompts[firstFile] !== undefined) {
+          setPromptContent(dirtyPrompts[firstFile]);
+          setPromptLoading(false);
+        } else {
+          await loadPromptFile(firstFile);
+        }
+      } else {
+        setPromptContent('');
+        setPromptLoading(false);
+      }
+    } catch (e) {
+      setToast({ message: `Failed to list prompts: ${e}`, type: 'error' });
+      setPromptLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadPromptFile]);
+
   useEffect(() => {
     if (activeTab === 'providers') {
       loadProviders();
@@ -723,10 +779,12 @@ export function SettingsOverlay({
       loadSessionForm();
     } else if (activeTab === 'runtime') {
       loadRuntimeForm();
+    } else if (activeTab === 'prompts') {
+      loadPromptFiles();
     } else if (selectedSection) {
       doLoadSection(activeTab);
     }
-  }, [activeTab, selectedSection, doLoadSection, loadProviders, loadSessionForm, loadRuntimeForm]);
+  }, [activeTab, selectedSection, doLoadSection, loadProviders, loadSessionForm, loadRuntimeForm, loadPromptFiles]);
 
   // Toggle sensitive field visibility.
   const handleToggleSensitive = useCallback(() => {
@@ -789,6 +847,24 @@ export function SettingsOverlay({
   const isProviderSection = activeTab === 'providers';
   const isSessionSection = activeTab === 'session';
   const isRuntimeSection = activeTab === 'runtime';
+  const isPromptsSection = activeTab === 'prompts';
+
+  // Handler: switch prompt sub-tab.
+  const handlePromptTabSwitch = useCallback(async (index: number) => {
+    setActivePromptTab(index);
+    const filename = promptFiles[index];
+    if (!filename) return;
+    // Use dirty draft if available, otherwise load from disk.
+    if (dirtyPrompts[filename] !== undefined) {
+      setPromptContent(dirtyPrompts[filename]);
+    } else {
+      await loadPromptFile(filename);
+    }
+  }, [promptFiles, dirtyPrompts, loadPromptFile]);
+
+  // Friendly label: strip "core_" prefix and ".txt" suffix.
+  const promptLabel = (filename: string) =>
+    filename.replace(/^core_/, '').replace(/\.txt$/, '');
 
   return (
     <div className="settings-backdrop" onClick={onClose}>
@@ -818,6 +894,14 @@ export function SettingsOverlay({
                 <span className="tab-label">{s.label}</span>
               </button>
             ))}
+            <div className="settings-tab-group-label">Prompts</div>
+            <button
+              className={`settings-tab ${activeTab === 'prompts' ? 'active' : ''}`}
+              onClick={() => setActiveTab('prompts')}
+            >
+              <span className="tab-icon"><FileText size={14} /></span>
+              <span className="tab-label">Prompts</span>
+            </button>
             <div className="settings-tab-separator" />
             <button
               className={`settings-tab ${activeTab === 'about' ? 'active' : ''}`}
@@ -1116,6 +1200,60 @@ export function SettingsOverlay({
                   )
                 )}
 
+              </div>
+            )}
+
+            {isPromptsSection && (
+              <div className="settings-section">
+                <div className="provider-header">
+                  <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+                    Prompts
+                  </h3>
+                </div>
+                {promptLoading && promptFiles.length === 0 ? (
+                  <div className="section-loading">Loading...</div>
+                ) : promptFiles.length === 0 ? (
+                  <div className="provider-empty">
+                    No prompt files found. Run&nbsp;<code>y-agent init</code>&nbsp;to seed defaults.
+                  </div>
+                ) : (
+                  <div className="provider-form-wrap">
+                    {/* Sub-tab bar — one tab per prompt file, no add/close */}
+                    <div className="provider-subtabs">
+                      {promptFiles.map((f, i) => (
+                        <button
+                          key={f}
+                          className={`provider-subtab ${activePromptTab === i ? 'active' : ''}`}
+                          onClick={() => handlePromptTabSwitch(i)}
+                        >
+                          <span className="provider-subtab-label">{promptLabel(f)}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Prompt content textarea */}
+                    {promptLoading ? (
+                      <div className="section-loading">Loading...</div>
+                    ) : (
+                      <div className="toml-editor-wrap">
+                        <textarea
+                          className="toml-editor prompt-editor"
+                          value={promptContent}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setPromptContent(val);
+                            const filename = promptFiles[activePromptTab];
+                            if (filename) {
+                              setDirtyPrompts((prev) => ({ ...prev, [filename]: val }));
+                            }
+                          }}
+                          spellCheck={false}
+                          placeholder="Empty prompt. Type content here."
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

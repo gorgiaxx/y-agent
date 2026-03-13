@@ -27,7 +27,10 @@ pub mod template;
 
 // Re-export primary types.
 pub use budget::{estimate_tokens, truncate_to_budget};
-pub use builtins::{builtin_section_store, default_template};
+pub use builtins::{
+    builtin_section_store, builtin_section_store_with_overrides, default_template,
+    BUILTIN_PROMPT_FILES,
+};
 pub use section::{
     ContentSource, PromptContext, PromptSection, SectionCategory, SectionCondition, SectionId,
     TemplateId,

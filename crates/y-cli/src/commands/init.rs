@@ -596,6 +596,35 @@ pub fn seed_builtin_skills(data_dir: &Path) -> Result<Vec<String>> {
     Ok(seeded)
 }
 
+/// Seed built-in prompt files into the user's config directory.
+///
+/// Creates `<config_dir>/prompts/` and writes each prompt file only if it
+/// does not already exist (preserving user modifications).
+/// Returns the list of prompt filenames that were seeded.
+pub fn seed_builtin_prompts(config_dir: &Path) -> Result<Vec<String>> {
+    let prompts_dir = config_dir.join("prompts");
+    std::fs::create_dir_all(&prompts_dir)
+        .with_context(|| format!("creating prompts directory: {}", prompts_dir.display()))?;
+
+    let mut seeded = Vec::new();
+
+    for &(filename, content) in y_prompt::BUILTIN_PROMPT_FILES {
+        let dest = prompts_dir.join(filename);
+
+        // Skip if already exists (don't overwrite user modifications).
+        if dest.exists() {
+            continue;
+        }
+
+        std::fs::write(&dest, content)
+            .with_context(|| format!("writing {}", dest.display()))?;
+
+        seeded.push(filename.to_string());
+    }
+
+    Ok(seeded)
+}
+
 /// Ensure required directories exist.
 ///
 /// - `base` is the config directory (`~/.config/y-agent/`) — config files live
@@ -1037,6 +1066,25 @@ pub async fn run(args: &InitArgs) -> Result<()> {
         Err(e) => {
             output::print_warning(&format!("Built-in skills seeding failed: {e}"));
             output::print_info("You can manually copy skills later");
+        }
+    }
+
+    // --- Step 6d: Seed built-in prompts ---
+    match seed_builtin_prompts(&base) {
+        Ok(seeded) => {
+            if seeded.is_empty() {
+                output::print_info("Built-in prompts already installed");
+            } else {
+                output::print_success(&format!(
+                    "Seeded {} built-in prompt(s) to {}/prompts/",
+                    seeded.len(),
+                    base.display()
+                ));
+            }
+        }
+        Err(e) => {
+            output::print_warning(&format!("Built-in prompts seeding failed: {e}"));
+            output::print_info("You can manually copy prompt files later");
         }
     }
 

@@ -1,203 +1,133 @@
 //! Built-in prompt sections and default template.
 //!
-//! Provides factory functions for the 9 built-in prompt sections defined in
+//! Provides factory functions for the 10 built-in prompt sections defined in
 //! `prompt-design.md` and a default `PromptTemplate` referencing them.
+//!
+//! Prompt content is loaded from `config/prompts/*.txt` at compile time via
+//! `include_str!`. At runtime, users can override any prompt by placing a
+//! `.txt` file with the same name in their XDG config prompts directory
+//! (`~/.config/y-agent/prompts/`).
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::section::{ContentSource, PromptSection, SectionCategory, SectionCondition};
 use crate::store::SectionStore;
 use crate::template::{ModeOverlay, PromptTemplate, SectionRef};
 
-/// Create a `SectionStore` populated with the 9 built-in prompt sections.
+// ---------------------------------------------------------------------------
+// Compile-time prompt content (embedded from config/prompts/*.txt)
+// ---------------------------------------------------------------------------
+
+const PROMPT_IDENTITY: &str = include_str!("../../../config/prompts/core_identity.txt");
+const PROMPT_DATETIME: &str = include_str!("../../../config/prompts/core_datetime.txt");
+const PROMPT_ENVIRONMENT: &str = include_str!("../../../config/prompts/core_environment.txt");
+const PROMPT_GUIDELINES: &str = include_str!("../../../config/prompts/core_guidelines.txt");
+const PROMPT_SAFETY: &str = include_str!("../../../config/prompts/core_safety.txt");
+const PROMPT_TOOL_PROTOCOL: &str = include_str!("../../../config/prompts/core_tool_protocol.txt");
+const PROMPT_TOOL_BEHAVIOR: &str = include_str!("../../../config/prompts/core_tool_behavior.txt");
+const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.txt");
+const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_planning.txt");
+const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
+
+/// Mapping from section ID to (compiled default content, override filename, token_budget, priority, condition, category).
+const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, ConditionTag)] = &[
+    ("core.identity",      PROMPT_IDENTITY,      "core_identity.txt",      200, 100, SectionCategoryTag::Identity,   ConditionTag::Always),
+    ("core.datetime",      PROMPT_DATETIME,       "core_datetime.txt",      50,  150, SectionCategoryTag::Context,    ConditionTag::Always),
+    ("core.environment",   PROMPT_ENVIRONMENT,    "core_environment.txt",   300, 200, SectionCategoryTag::Context,    ConditionTag::Always),
+    ("core.guidelines",    PROMPT_GUIDELINES,     "core_guidelines.txt",    500, 300, SectionCategoryTag::Behavioral, ConditionTag::Always),
+    ("core.safety",        PROMPT_SAFETY,         "core_safety.txt",        300, 400, SectionCategoryTag::Behavioral, ConditionTag::Always),
+    ("core.tool_protocol", PROMPT_TOOL_PROTOCOL,  "core_tool_protocol.txt", 600, 450, SectionCategoryTag::Behavioral, ConditionTag::Always),
+    ("core.tool_behavior", PROMPT_TOOL_BEHAVIOR,  "core_tool_behavior.txt", 300, 500, SectionCategoryTag::Behavioral, ConditionTag::HasToolWildcard),
+    ("core.persona",       PROMPT_PERSONA,        "core_persona.txt",       500, 250, SectionCategoryTag::Domain,     ConditionTag::PersonaEnabled),
+    ("core.planning",      PROMPT_PLANNING,       "core_planning.txt",      300, 350, SectionCategoryTag::Behavioral, ConditionTag::ModePlan),
+    ("core.exploration",   PROMPT_EXPLORATION,    "core_exploration.txt",   200, 350, SectionCategoryTag::Behavioral, ConditionTag::ModeExplore),
+];
+
+/// Internal tag for compact table — maps to `SectionCategory`.
+#[derive(Clone, Copy)]
+enum SectionCategoryTag { Identity, Context, Behavioral, Domain }
+
+impl SectionCategoryTag {
+    fn into_category(self) -> SectionCategory {
+        match self {
+            Self::Identity   => SectionCategory::Identity,
+            Self::Context    => SectionCategory::Context,
+            Self::Behavioral => SectionCategory::Behavioral,
+            Self::Domain     => SectionCategory::Domain,
+        }
+    }
+}
+
+/// Internal tag for compact table — maps to `Option<SectionCondition>`.
+#[derive(Clone, Copy)]
+enum ConditionTag { Always, HasToolWildcard, PersonaEnabled, ModePlan, ModeExplore }
+
+impl ConditionTag {
+    fn into_condition(self) -> Option<SectionCondition> {
+        match self {
+            Self::Always          => Some(SectionCondition::Always),
+            Self::HasToolWildcard => Some(SectionCondition::HasTool("*".into())),
+            Self::PersonaEnabled  => Some(SectionCondition::ConfigFlag("persona.enabled".into())),
+            Self::ModePlan        => Some(SectionCondition::ModeIs("plan".into())),
+            Self::ModeExplore     => Some(SectionCondition::ModeIs("explore".into())),
+        }
+    }
+}
+
+/// Create a `SectionStore` populated with the 10 built-in prompt sections.
 ///
-/// Sections use `ContentSource::Inline` with default content.
-/// Dynamic sections (`core.datetime`, `core.environment`) use placeholder
-/// content that the `BuildSystemPromptProvider` replaces at assembly time.
+/// Uses compiled-in default content. For override support, use
+/// [`builtin_section_store_with_overrides`].
 pub fn builtin_section_store() -> SectionStore {
+    builtin_section_store_with_overrides(None)
+}
+
+/// Create a `SectionStore` with built-in sections, optionally loading
+/// user overrides from `prompts_dir`.
+///
+/// For each section, if `prompts_dir` is `Some` and a corresponding `.txt`
+/// file exists there, the file content is used instead of the compiled default.
+/// This allows users to customise prompts by editing files in their XDG config
+/// directory (`~/.config/y-agent/prompts/`).
+pub fn builtin_section_store_with_overrides(prompts_dir: Option<&Path>) -> SectionStore {
     let mut store = SectionStore::new();
 
-    store.register(PromptSection {
-        id: "core.identity".into(),
-        content_source: ContentSource::Inline(
-            "You are y-agent, an AI assistant built for software engineering tasks. \
-             You are direct, precise, and helpful. You write clean, correct code and \
-             explain your reasoning clearly."
-                .into(),
-        ),
-        token_budget: 200,
-        priority: 100,
-        condition: Some(SectionCondition::Always),
-        category: SectionCategory::Identity,
-    });
+    for &(id, default_content, filename, token_budget, priority, cat_tag, cond_tag) in BUILTIN_SECTIONS {
+        // Try to load override from user's prompts directory.
+        let content = prompts_dir
+            .map(|dir| dir.join(filename))
+            .and_then(|path| {
+                std::fs::read_to_string(&path).ok()
+            })
+            .unwrap_or_else(|| default_content.to_string());
 
-    store.register(PromptSection {
-        id: "core.datetime".into(),
-        content_source: ContentSource::Inline("{{datetime}}".into()),
-        token_budget: 50,
-        priority: 150,
-        condition: Some(SectionCondition::Always),
-        category: SectionCategory::Context,
-    });
-
-    store.register(PromptSection {
-        id: "core.environment".into(),
-        content_source: ContentSource::Inline("{{environment}}".into()),
-        token_budget: 300,
-        priority: 200,
-        condition: Some(SectionCondition::Always),
-        category: SectionCategory::Context,
-    });
-
-    store.register(PromptSection {
-        id: "core.guidelines".into(),
-        content_source: ContentSource::Inline(
-            "Guidelines:\n\
-             - Read and understand existing code before making changes.\n\
-             - Follow existing patterns and conventions in the codebase.\n\
-             - Keep changes minimal and focused on the task at hand.\n\
-             - Prefer editing existing files over creating new ones.\n\
-             - Write clear, descriptive commit messages.\n\
-             - Do not introduce security vulnerabilities."
-                .into(),
-        ),
-        token_budget: 500,
-        priority: 300,
-        condition: Some(SectionCondition::Always),
-        category: SectionCategory::Behavioral,
-    });
-
-    store.register(PromptSection {
-        id: "core.safety".into(),
-        content_source: ContentSource::Inline(
-            "Safety rules:\n\
-             - Never execute destructive commands without explicit user confirmation.\n\
-             - Do not access, modify, or transmit sensitive data (API keys, credentials, personal information).\n\
-             - Refuse requests that could cause harm to systems or data.\n\
-             - When uncertain, ask the user for clarification before proceeding."
-                .into(),
-        ),
-        token_budget: 300,
-        priority: 400,
-        condition: Some(SectionCondition::Always),
-        category: SectionCategory::Behavioral,
-    });
-
-    store.register(PromptSection {
-        id: "core.tool_protocol".into(),
-        content_source: ContentSource::Inline(
-            "## Tool Usage Protocol\n\
-             \n\
-             Use tools ONLY when the user's request requires an action you cannot \
-             accomplish with plain text (e.g., reading files, running commands, searching \
-             code, modifying files). For greetings, general conversation, questions you \
-             can answer from context, or simple explanations, respond directly in text \
-             without calling any tool.\n\
-             \n\
-             When you do need a tool, output a <tool_call> block with <name> and <arguments> tags:\n\
-             \n\
-             <tool_call>\n\
-             <name>tool_name</name>\n\
-             <arguments>{\"param1\": \"value1\"}</arguments>\n\
-             </tool_call>\n\
-             \n\
-             You may include multiple <tool_call> blocks in a single response. \
-             Each will be executed in order.\n\
-             \n\
-             After each tool call, you will receive the result in a <tool_result> block:\n\
-             \n\
-             <tool_result name=\"tool_name\" success=\"true\">\n\
-             {\"result_key\": \"result_value\"}\n\
-             </tool_result>\n\
-             \n\
-             ## Core Tools (always available)\n\
-             \n\
-             You can call these tools directly without searching:\n\
-             \n\
-             | Tool | Description | Required Args |\n\
-             |------|-------------|---------------|\n\
-             | file_read | Read file contents | {\"path\": \"<filepath>\"} |\n\
-             | file_write | Write content to a file (creates dirs) | {\"path\": \"<filepath>\", \"content\": \"<text>\"} |\n\
-             | file_list | List directory contents | {\"path\": \"<dirpath>\"} |\n\
-             | file_search | Search for text pattern in files | {\"pattern\": \"<text>\", \"path\": \"<dirpath>\"} |\n\
-             | shell_exec | Execute a shell command | {\"command\": \"<cmd>\"} |\n\
-             \n\
-             IMPORTANT: Use ONLY these exact tool names. Do NOT invent tool names \
-             like 'ls', 'cat', 'grep', or 'mkdir'. For shell operations not covered above, \
-             use shell_exec.\n\
-             \n\
-             ## Extended Tools\n\
-             \n\
-             For capabilities beyond the core tools, use tool_search to discover additional tools:\n\
-             - Do not guess tool names for extended tools -- search first, then call.\n\
-             - You may include regular text before and after tool calls."
-                .into(),
-        ),
-        token_budget: 600,
-        priority: 450,
-        condition: Some(SectionCondition::Always),
-        category: SectionCategory::Behavioral,
-    });
-
-    store.register(PromptSection {
-        id: "core.tool_behavior".into(),
-        content_source: ContentSource::Inline(
-            "Tool usage:\n\
-             - Use the appropriate tool for each task.\n\
-             - Validate tool parameters before invocation.\n\
-             - Handle tool errors gracefully and report failures clearly.\n\
-             - Prefer read-only operations when gathering information."
-                .into(),
-        ),
-        token_budget: 300,
-        priority: 500,
-        condition: Some(SectionCondition::HasTool("*".into())),
-        category: SectionCategory::Behavioral,
-    });
-
-    store.register(PromptSection {
-        id: "core.persona".into(),
-        content_source: ContentSource::Inline(String::new()),
-        token_budget: 500,
-        priority: 250,
-        condition: Some(SectionCondition::ConfigFlag("persona.enabled".into())),
-        category: SectionCategory::Domain,
-    });
-
-    store.register(PromptSection {
-        id: "core.planning".into(),
-        content_source: ContentSource::Inline(
-            "You are in planning mode. Focus on:\n\
-             - Analyzing requirements and constraints before proposing solutions.\n\
-             - Breaking down complex tasks into clear, ordered steps.\n\
-             - Identifying risks, dependencies, and alternatives.\n\
-             - Presenting a structured plan for user approval before implementation."
-                .into(),
-        ),
-        token_budget: 300,
-        priority: 350,
-        condition: Some(SectionCondition::ModeIs("plan".into())),
-        category: SectionCategory::Behavioral,
-    });
-
-    store.register(PromptSection {
-        id: "core.exploration".into(),
-        content_source: ContentSource::Inline(
-            "You are in exploration mode. Focus on:\n\
-             - Searching broadly across the codebase to understand structure.\n\
-             - Reading files and tracing code paths to answer questions.\n\
-             - Summarizing findings concisely.\n\
-             - Do not make changes; only observe and report."
-                .into(),
-        ),
-        token_budget: 200,
-        priority: 350,
-        condition: Some(SectionCondition::ModeIs("explore".into())),
-        category: SectionCategory::Behavioral,
-    });
+        store.register(PromptSection {
+            id: id.into(),
+            content_source: ContentSource::Inline(content),
+            token_budget,
+            priority,
+            condition: cond_tag.into_condition(),
+            category: cat_tag.into_category(),
+        });
+    }
 
     store
 }
+
+/// List of all built-in prompt file names (for seeding into the user config dir).
+pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
+    ("core_identity.txt",      PROMPT_IDENTITY),
+    ("core_datetime.txt",      PROMPT_DATETIME),
+    ("core_environment.txt",   PROMPT_ENVIRONMENT),
+    ("core_guidelines.txt",    PROMPT_GUIDELINES),
+    ("core_safety.txt",        PROMPT_SAFETY),
+    ("core_tool_protocol.txt", PROMPT_TOOL_PROTOCOL),
+    ("core_tool_behavior.txt", PROMPT_TOOL_BEHAVIOR),
+    ("core_persona.txt",       PROMPT_PERSONA),
+    ("core_planning.txt",      PROMPT_PLANNING),
+    ("core_exploration.txt",   PROMPT_EXPLORATION),
+];
 
 /// Create the default `PromptTemplate` referencing the built-in sections.
 ///
@@ -285,6 +215,33 @@ mod tests {
             let content = store.load_content(id);
             assert!(content.is_ok(), "section {id} should have loadable content");
         }
+    }
+
+    #[test]
+    fn test_builtin_store_with_overrides_uses_defaults() {
+        // No override directory — should use compiled defaults.
+        let store = builtin_section_store_with_overrides(None);
+        let content = store.load_content("core.identity").unwrap();
+        assert!(content.contains("y-agent"));
+    }
+
+    #[test]
+    fn test_builtin_store_with_overrides_loads_file() {
+        // Create a temp dir with an override file.
+        let dir = std::env::temp_dir().join("y-agent-prompt-override-test");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("core_identity.txt"), "Custom identity prompt").unwrap();
+
+        let store = builtin_section_store_with_overrides(Some(&dir));
+        let content = store.load_content("core.identity").unwrap();
+        assert_eq!(content, "Custom identity prompt");
+
+        // Non-overridden section falls back to default.
+        let guidelines = store.load_content("core.guidelines").unwrap();
+        assert!(guidelines.contains("Guidelines"));
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

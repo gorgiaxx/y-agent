@@ -642,9 +642,9 @@ pub async fn chat_checkpoint_list(
 
 /// Find the correct checkpoint for resending a user message.
 ///
-/// Takes a session ID and the user message content, finds the matching
-/// user message in the transcript by content, and returns the checkpoint
-/// whose `message_count_before` matches that message's index.
+/// Tries to find the user message by `message_id` first, then falls back to
+/// content matching. Returns the checkpoint whose `message_count_before`
+/// matches that message's index in the transcript.
 ///
 /// This consolidates the multi-step checkpoint lookup that the frontend
 /// previously did (session_get_messages + chat_checkpoint_list + index
@@ -654,6 +654,7 @@ pub async fn chat_find_checkpoint_for_resend(
     state: State<'_, AppState>,
     session_id: String,
     user_message_content: String,
+    message_id: Option<String>,
 ) -> Result<Option<ChatCheckpointInfo>, String> {
     let sid = SessionId(session_id);
 
@@ -665,19 +666,42 @@ pub async fn chat_find_checkpoint_for_resend(
         .await
         .map_err(|e| format!("{e}"))?;
 
-    // Find the last user message matching the content (in case of duplicates,
-    // the most recent one is the one the user intends to resend).
-    let message_index = messages
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, m)| m.role == y_core::types::Role::User && m.content == user_message_content)
-        .map(|(idx, _)| idx);
+    // Try message_id first (precise), then fall back to content match (last occurrence).
+    let message_index = message_id
+        .as_ref()
+        .and_then(|mid| {
+            messages
+                .iter()
+                .enumerate()
+                .find(|(_, m)| &m.message_id == mid)
+                .map(|(idx, _)| idx)
+        })
+        .or_else(|| {
+            messages
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, m)| {
+                    m.role == y_core::types::Role::User && m.content == user_message_content
+                })
+                .map(|(idx, _)| idx)
+        });
 
     let message_index = match message_index {
         Some(idx) => idx,
-        None => return Ok(None),
+        None => {
+            tracing::warn!(
+                "chat_find_checkpoint_for_resend: user message not found in transcript"
+            );
+            return Ok(None);
+        }
     };
+
+    tracing::info!(
+        message_index,
+        message_id = message_id.as_deref().unwrap_or("none"),
+        "chat_find_checkpoint_for_resend: found user message"
+    );
 
     // 2. List non-invalidated checkpoints.
     let checkpoints = state
@@ -688,10 +712,19 @@ pub async fn chat_find_checkpoint_for_resend(
         .map_err(|e| format!("{e}"))?;
 
     // 3. Find checkpoint whose message_count_before matches this message's index.
+    //    Do NOT fallback to an arbitrary checkpoint -- returning the wrong one
+    //    would cause the resend to truncate to the wrong point.
     let matched = checkpoints
         .iter()
-        .find(|cp| cp.message_count_before as usize == message_index)
-        .or_else(|| checkpoints.first()); // fallback: most recent checkpoint
+        .find(|cp| cp.message_count_before as usize == message_index);
+
+    if matched.is_none() {
+        tracing::warn!(
+            message_index,
+            checkpoint_count = checkpoints.len(),
+            "chat_find_checkpoint_for_resend: no checkpoint matched message_count_before"
+        );
+    }
 
     Ok(matched.map(|cp| ChatCheckpointInfo {
         checkpoint_id: cp.checkpoint_id.clone(),

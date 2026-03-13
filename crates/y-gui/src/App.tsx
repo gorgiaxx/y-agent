@@ -46,7 +46,7 @@ function App() {
     restoreBranch,
   } = useChat(activeSessionId);
 
-  const { config, updateConfig, loadSection, saveSection, reloadConfig } = useConfig();
+  const { config, updateConfig, loadSection, saveSection, reloadConfig: rawReloadConfig } = useConfig();
   const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
     useDiagnostics(activeSessionId);
   const {
@@ -75,15 +75,20 @@ function App() {
     contextWindow?: number;
   }>({});
 
+  // Reusable: fetch the latest provider list from backend.
+  const refreshProviders = useCallback(() => {
+    invoke<ProviderInfo[]>('provider_list')
+      .then(setProviders)
+      .catch(console.error);
+  }, []);
+
   // Load system status and provider list on mount.
   useEffect(() => {
     invoke<SystemStatus>('system_status')
       .then(setSystemStatus)
       .catch(console.error);
-    invoke<ProviderInfo[]>('provider_list')
-      .then(setProviders)
-      .catch(console.error);
-  }, []);
+    refreshProviders();
+  }, [refreshProviders]);
 
   // Developer mode: Ctrl+Shift+I (or Cmd+Shift+I on macOS) toggles DevTools.
   useEffect(() => {
@@ -356,11 +361,20 @@ function App() {
       {settingsOpen && (
         <SettingsOverlay
           config={config}
-          onSave={updateConfig}
+          onSave={(updates) => {
+            updateConfig(updates);
+            // Refresh the provider dropdown after settings are saved.
+            refreshProviders();
+          }}
           onClose={() => setSettingsOpen(false)}
           loadSection={loadSection}
           saveSection={saveSection}
-          reloadConfig={reloadConfig}
+          reloadConfig={async () => {
+            const msg = await rawReloadConfig();
+            // After hot-reloading config, refresh provider list too.
+            refreshProviders();
+            return msg;
+          }}
         />
       )}
     </div>

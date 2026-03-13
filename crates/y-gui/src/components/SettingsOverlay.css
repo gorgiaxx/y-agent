@@ -249,7 +249,8 @@
   margin-bottom: var(--space-sm);
 }
 
-.settings-info code {
+.settings-info code,
+.provider-empty code {
   background: var(--surface-code);
   border: 1px solid var(--border);
   padding: 2px 6px;
@@ -934,5 +935,15 @@
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
   flex-shrink: 0;
+}
+
+/* ---- Prompt editor ---- */
+.prompt-editor {
+  min-height: 420px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 

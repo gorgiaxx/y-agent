@@ -107,6 +107,9 @@ pub fn run() {
             commands::config::config_save_section,
             commands::config::config_reload,
             commands::config::provider_test,
+            commands::config::prompt_list,
+            commands::config::prompt_get,
+            commands::config::prompt_save,
             // System
             commands::system::system_status,
             commands::system::health_check,

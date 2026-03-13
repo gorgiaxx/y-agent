@@ -20,7 +20,7 @@ use y_diagnostics::{DiagnosticsSubscriber, TraceStore};
 use y_guardrails::GuardrailManager;
 use y_hooks::HookSystem;
 use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
-use y_prompt::{builtin_section_store, default_template, PromptContext};
+use y_prompt::{builtin_section_store_with_overrides, default_template, PromptContext};
 use y_provider::providers::anthropic::AnthropicProvider;
 use y_provider::providers::azure::AzureOpenAiProvider;
 use y_provider::providers::gemini::GeminiProvider;
@@ -218,7 +218,7 @@ tools = ["tool_search"]
         let mut context_pipeline = ContextPipeline::new();
         context_pipeline.register(Box::new(BuildSystemPromptProvider::new(
             default_template(),
-            builtin_section_store(),
+            builtin_section_store_with_overrides(config.prompts_dir.as_deref()),
             Arc::clone(&prompt_context),
             SystemPromptConfig::default(),
         )));

@@ -17,6 +17,11 @@ pub use y_service::ServiceContainer as AppServices;
 /// Converts `YAgentConfig` → `ServiceConfig` and delegates to
 /// `ServiceContainer::from_config()`.
 pub async fn wire(config: &YAgentConfig) -> Result<AppServices> {
+    // Derive prompts override directory from the user config directory.
+    let prompts_dir = crate::config::dirs_user_config()
+        .map(|d| d.join("prompts"))
+        .filter(|d| d.is_dir());
+
     let service_config = y_service::ServiceConfig {
         providers: config.providers.clone(),
         storage: config.storage.clone(),
@@ -25,6 +30,7 @@ pub async fn wire(config: &YAgentConfig) -> Result<AppServices> {
         hooks: config.hooks.clone(),
         tools: config.tools.clone(),
         guardrails: config.guardrails.clone(),
+        prompts_dir,
     };
 
     AppServices::from_config(&service_config).await

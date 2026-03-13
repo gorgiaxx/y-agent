@@ -1,0 +1,7 @@
+Guidelines:
+- Read and understand existing code before making changes.
+- Follow existing patterns and conventions in the codebase.
+- Keep changes minimal and focused on the task at hand.
+- Prefer editing existing files over creating new ones.
+- Write clear, descriptive commit messages.
+- Do not introduce security vulnerabilities.

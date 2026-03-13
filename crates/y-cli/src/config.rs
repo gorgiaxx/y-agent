@@ -426,7 +426,7 @@ fn merge_config(target: &mut YAgentConfig, source: &YAgentConfig) {
 }
 
 /// Get the user config directory for y-agent.
-fn dirs_user_config() -> Option<PathBuf> {
+pub(crate) fn dirs_user_config() -> Option<PathBuf> {
     // Always use ~/.config/y-agent regardless of platform.
     home_dir().map(|h| h.join(".config").join("y-agent"))
 }

@@ -108,7 +108,7 @@ IMPORTANT: Output ONLY the JSON object, no markdown fencing, no explanation.
 skills = []
 preferred_models = ["gpt-4o", "claude-sonnet-4-20250514"]
 fallback_models = ["gpt-4o-mini"]
-provider_tags = ["general"]
+provider_tags = ["coding"]
 temperature = 0.2
 max_iterations = 3
 max_tool_calls = 0

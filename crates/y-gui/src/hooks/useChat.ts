@@ -266,8 +266,10 @@ async function findCheckpointForMessage(
     if (exactMatch) return exactMatch;
   }
 
-  // Fallback: return most recent checkpoint (already sorted DESC by turn_number).
-  return checkpoints[0];
+  // No match found -- do NOT fallback to an arbitrary checkpoint, as that
+  // would truncate to the wrong point and delete the user's messages.
+  console.warn(`[chat] findCheckpointForMessage: no checkpoint matched messageIndex=${messageIndex}, available:`, checkpoints.map(cp => `turn=${cp.turn_number} msg_before=${cp.message_count_before}`));
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,12 +427,35 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       } else if (event.type === 'error') {
         const payload = event.payload;
         const sessionId = chatBusState.runToSession[payload.run_id];
+        const isCancelled = payload.error === 'Cancelled';
 
         if (sessionId) {
-          setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
-            const streamingId = `streaming-${sessionId}`;
-            return prev.filter((m) => m.id !== streamingId);
-          });
+          if (isCancelled) {
+            // Stop/cancel: preserve any streamed content by finalizing the
+            // streaming message instead of deleting it. This keeps the
+            // partially-streamed text visible and treats the run as complete.
+            setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
+              const streamingId = `streaming-${sessionId}`;
+              return prev.map((m) => {
+                if (m.id === streamingId && m.content) {
+                  return {
+                    ...m,
+                    id: `cancelled-${payload.run_id}`,
+                    _streaming: undefined,
+                  } as Message;
+                }
+                // If streaming message has no content, remove it.
+                if (m.id === streamingId) return null;
+                return m;
+              }).filter(Boolean) as Message[];
+            });
+          } else {
+            // Non-cancel error: remove the streaming message entirely.
+            setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
+              const streamingId = `streaming-${sessionId}`;
+              return prev.filter((m) => m.id !== streamingId);
+            });
+          }
           syncVisible(sessionId);
         }
 
@@ -439,7 +464,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           activeRunIdRef.current = null;
           setActiveRunId(null);
         }
-        if (payload.error !== 'Cancelled') {
+        if (!isCancelled) {
           if (!sessionId || sessionId === activeSessionIdRef.current) {
             setError(payload.error);
           }
@@ -756,24 +781,25 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
           // 1. Find checkpoint: use backend atomic command (primary),
           //    fall back to frontend multi-step lookup if the backend command fails.
+          //    Resolve the messageId against freshMsgs to get a real backend UUID.
+          let resolvedId = messageId;
+          if (!freshMsgs.some((m) => m.id === messageId)) {
+            const match = freshMsgs.find((m) => m.role === 'user' && m.content === content);
+            if (match) {
+              console.log(`[chat] resendLastTurn: resolved stale id=${messageId} -> ${match.id}`);
+              resolvedId = match.id;
+            }
+          }
+
           let checkpoint: ChatCheckpointInfo | null = null;
           try {
             checkpoint = await invoke<ChatCheckpointInfo | null>(
               'chat_find_checkpoint_for_resend',
-              { sessionId, userMessageContent: content },
+              { sessionId, userMessageContent: content, messageId: resolvedId },
             );
             console.log('[chat] resendLastTurn: backend checkpoint result', checkpoint);
           } catch (backendErr) {
             console.warn('[chat] resendLastTurn: backend checkpoint lookup failed, using frontend fallback:', backendErr);
-            // Resolve stale message ID for frontend fallback.
-            let resolvedId = messageId;
-            if (!freshMsgs.some((m) => m.id === messageId)) {
-              const match = freshMsgs.find((m) => m.role === 'user' && m.content === content);
-              if (match) {
-                console.log(`[chat] resendLastTurn: resolved stale id=${messageId} -> ${match.id}`);
-                resolvedId = match.id;
-              }
-            }
             checkpoint = await findCheckpointForMessage(sessionId, resolvedId, sessionMessagesRef.current);
             console.log('[chat] resendLastTurn: frontend fallback checkpoint result', checkpoint);
           }
@@ -786,8 +812,12 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
           // 2. Remove the assistant reply from the cache.
           const keepCount = checkpoint.message_count_before + 1;
-          console.log(`[chat] resendLastTurn: keepCount=${keepCount}, total backend msgs=${freshMsgs.length}`);
-          setCachedMessages(sessionMessagesRef.current, sessionId, freshMsgs.slice(0, keepCount));
+          const keptMsgs = freshMsgs.slice(0, keepCount);
+          const removedMsgs = freshMsgs.slice(keepCount);
+          console.log(`[chat] resendLastTurn: checkpoint.message_count_before=${checkpoint.message_count_before}, keepCount=${keepCount}, total=${freshMsgs.length}`);
+          console.log('[chat] resendLastTurn: keeping:', keptMsgs.map(m => `[${m.role}] ${m.content.slice(0, 40)}...`));
+          console.log('[chat] resendLastTurn: removing:', removedMsgs.map(m => `[${m.role}] ${m.content.slice(0, 40)}...`));
+          setCachedMessages(sessionMessagesRef.current, sessionId, keptMsgs);
           syncVisible(sessionId);
 
           // 3. Backend resend: truncates transcript (keeps user msg), re-runs LLM.

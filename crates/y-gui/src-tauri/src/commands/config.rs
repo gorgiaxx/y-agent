@@ -179,3 +179,72 @@ pub async fn provider_test(
     })
     .await
 }
+
+// ---------------------------------------------------------------------------
+// Prompt file commands (plain-text files in <config_dir>/prompts/)
+// ---------------------------------------------------------------------------
+
+/// List all prompt `.txt` files in the prompts directory.
+///
+/// Returns a sorted list of filenames (e.g. `["core_identity.txt", ...]`).
+#[tauri::command]
+pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let prompts_dir = state.config_dir.join("prompts");
+    if !prompts_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut files: Vec<String> = std::fs::read_dir(&prompts_dir)
+        .map_err(|e| format!("Failed to read prompts directory: {e}"))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".txt") && entry.file_type().ok()?.is_file() {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// Read a single prompt file's content.
+#[tauri::command]
+pub async fn prompt_get(
+    state: State<'_, AppState>,
+    filename: String,
+) -> Result<String, String> {
+    // Validate: no path separators allowed.
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err("Invalid filename".into());
+    }
+
+    let path = state.config_dir.join("prompts").join(&filename);
+    if !path.exists() {
+        return Ok(String::new());
+    }
+
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {filename}: {e}"))
+}
+
+/// Save content to a single prompt file.
+#[tauri::command]
+pub async fn prompt_save(
+    state: State<'_, AppState>,
+    filename: String,
+    content: String,
+) -> Result<(), String> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err("Invalid filename".into());
+    }
+
+    let prompts_dir = state.config_dir.join("prompts");
+    std::fs::create_dir_all(&prompts_dir)
+        .map_err(|e| format!("Failed to create prompts dir: {e}"))?;
+
+    std::fs::write(prompts_dir.join(&filename), &content)
+        .map_err(|e| format!("Failed to write {filename}: {e}"))
+}

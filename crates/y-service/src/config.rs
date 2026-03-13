@@ -46,6 +46,11 @@ pub struct ServiceConfig {
 
     /// Guardrail/safety configuration.
     pub guardrails: GuardrailConfig,
+
+    /// Path to the user prompts override directory (`~/.config/y-agent/prompts/`).
+    /// When set, prompt files here take priority over compiled-in defaults.
+    #[serde(skip)]
+    pub prompts_dir: Option<PathBuf>,
 }
 
 /// Config file basenames (without `.toml` extension) mapping to `ServiceConfig` fields.
@@ -68,6 +73,12 @@ impl ServiceConfig {
     /// resolves relative storage paths against `state_dir` if provided.
     pub fn load_from_directory(config_dir: &Path, state_dir: Option<&Path>) -> Self {
         let mut config = Self::default();
+
+        // Set prompts override directory to <config_dir>/prompts/.
+        let prompts_dir = config_dir.join("prompts");
+        if prompts_dir.is_dir() {
+            config.prompts_dir = Some(prompts_dir);
+        }
 
         if !config_dir.is_dir() {
             warn!(

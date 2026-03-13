@@ -31,6 +31,21 @@ impl ChatCheckpointStore for SqliteChatCheckpointStore {
         turn = checkpoint.turn_number,
     ))]
     async fn save(&self, checkpoint: &ChatCheckpoint) -> Result<(), SessionError> {
+        // The table has UNIQUE(session_id, turn_number).  After a resend the
+        // old checkpoint for the same turn is invalidated but still occupies
+        // the unique slot.  Delete it first so the new INSERT succeeds.
+        sqlx::query(
+            r"DELETE FROM chat_checkpoints
+              WHERE session_id = ?1 AND turn_number = ?2 AND invalidated = 1",
+        )
+        .bind(checkpoint.session_id.as_str())
+        .bind(i64::from(checkpoint.turn_number))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionError::StorageError {
+            message: format!("delete invalidated checkpoint: {e}"),
+        })?;
+
         sqlx::query(
             r"INSERT INTO chat_checkpoints
               (checkpoint_id, session_id, turn_number, message_count_before,
