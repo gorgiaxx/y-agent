@@ -99,6 +99,11 @@ const chatBusState: ChatBusState = {
 const chatBusSubscribers = new Set<ChatBusSubscriber>();
 const chatUnlistenFns: UnlistenFn[] = [];
 
+// Track run IDs whose cancel has already been processed to prevent the
+// duplicate `chat:error` event (emitted by both `chat_cancel` and the
+// spawned LLM task) from re-entering the handler.
+const processedCancelledRuns = new Set<string>();
+
 function notifyChatSubscribers(event: ChatBusEvent) {
   for (const cb of chatBusSubscribers) {
     cb(event);
@@ -429,6 +434,24 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         const sessionId = chatBusState.runToSession[payload.run_id];
         const isCancelled = payload.error === 'Cancelled';
 
+        // Deduplicate cancel events: `chat_cancel` emits one immediately,
+        // and the spawned LLM task emits another when it detects the
+        // cancellation token. Skip the second one entirely.
+        if (isCancelled && processedCancelledRuns.has(payload.run_id)) {
+          // Already handled -- just ensure streaming state is cleared.
+          setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+          if (activeRunIdRef.current === payload.run_id) {
+            activeRunIdRef.current = null;
+            setActiveRunId(null);
+          }
+          return;
+        }
+        if (isCancelled) {
+          processedCancelledRuns.add(payload.run_id);
+          // Clean up after a delay so we don't leak memory.
+          setTimeout(() => processedCancelledRuns.delete(payload.run_id), 30_000);
+        }
+
         if (sessionId) {
           if (isCancelled) {
             // Stop/cancel: preserve any streamed content by finalizing the
@@ -449,6 +472,26 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                 return m;
               }).filter(Boolean) as Message[];
             });
+
+            // Reload from backend so the cache has real backend IDs
+            // (the cancelled assistant message only exists in the cache,
+            // the backend has the user message with its real UUID).
+            // This ensures subsequent resend/undo can find the message.
+            (async () => {
+              try {
+                const backendMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+                // Merge: keep backend messages + any cancelled assistant msg.
+                const cancelledMsg = getCachedMessages(sessionMessagesRef.current, sessionId)
+                  .find((m) => m.id === `cancelled-${payload.run_id}`);
+                const merged = cancelledMsg ? [...backendMsgs, cancelledMsg] : backendMsgs;
+                setCachedMessages(sessionMessagesRef.current, sessionId, merged);
+                if (activeSessionIdRef.current === sessionId) {
+                  startTransition(() => setVisibleMessages(merged));
+                }
+              } catch (e) {
+                console.error('[chat] cancel: failed to reload messages:', e);
+              }
+            })();
           } else {
             // Non-cancel error: remove the streaming message entirely.
             setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
@@ -727,7 +770,27 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           const checkpoint = await findCheckpointForMessage(sessionId, messageId, sessionMessagesRef.current);
           console.log('[chat] undoToMessage: checkpoint result', checkpoint);
           if (!checkpoint) {
-            console.warn('[chat] No checkpoint found for message', messageId);
+            // No checkpoint: this can happen after a cancelled run where
+            // the assistant message was never persisted. Fall back to
+            // direct transcript truncation.
+            console.warn('[chat] No checkpoint found for message', messageId, '-- trying direct truncation fallback');
+            const backendMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+            let targetIdx = backendMsgs.findIndex((m) => m.id === messageId);
+            if (targetIdx < 0) {
+              // Content-based fallback: match by role + content.
+              const cached = sessionMessagesRef.current.get(sessionId)?.find((cm) => cm.id === messageId);
+              if (cached) {
+                targetIdx = backendMsgs.findIndex((m) => m.role === cached.role && m.content === cached.content);
+              }
+            }
+            if (targetIdx >= 0) {
+              // Truncate to before this user message.
+              await invoke('session_truncate_messages', { sessionId, keepCount: targetIdx });
+              await loadMessages(sessionId);
+              setOp('idle');
+              return { remaining_message_count: targetIdx, restored_turn_number: 0, files_restored: 0 } as UndoResult;
+            }
+            console.warn('[chat] undoToMessage: fallback truncation also failed');
             setOp('idle');
             return null;
           }
@@ -805,7 +868,36 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           }
 
           if (!checkpoint) {
-            console.warn('[chat] No checkpoint found for resend');
+            // No checkpoint: this happens after a cancelled run where the
+            // assistant message was never persisted and no checkpoint was
+            // created. The backend transcript ends with the user message.
+            // We can simply truncate to remove that user message and
+            // re-send via chat_send.
+            console.warn('[chat] No checkpoint found for resend -- using direct re-send fallback');
+            let userIdx = freshMsgs.findIndex((m) => m.id === resolvedId);
+            if (userIdx < 0) {
+              userIdx = freshMsgs.findIndex((m) => m.role === 'user' && m.content === content);
+            }
+            if (userIdx >= 0) {
+              // Truncate to remove the user message.
+              await invoke('session_truncate_messages', {
+                sessionId,
+                keepCount: userIdx,
+              });
+              // Update cache to remove the user message and any cancelled assistant msg.
+              const keptMsgs = freshMsgs.slice(0, userIdx);
+              setCachedMessages(sessionMessagesRef.current, sessionId, keptMsgs);
+              syncVisible(sessionId);
+              // opStatus stays 'resending' -- the bus handler will set idle on complete/error.
+              const result = await invoke<ChatStarted>('chat_send', {
+                message: content,
+                sessionId,
+                providerId: providerId ?? null,
+              });
+              console.log('[chat] resendLastTurn: fallback chat_send result', result);
+              return result;
+            }
+            console.warn('[chat] resendLastTurn: fallback also failed, user message not found');
             setOp('idle');
             return null;
           }

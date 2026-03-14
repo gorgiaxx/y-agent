@@ -900,7 +900,7 @@ export function SettingsOverlay({
               onClick={() => setActiveTab('prompts')}
             >
               <span className="tab-icon"><FileText size={14} /></span>
-              <span className="tab-label">Prompts</span>
+              <span className="tab-label">Builtin Prompts</span>
             </button>
             <div className="settings-tab-separator" />
             <button
@@ -1207,7 +1207,7 @@ export function SettingsOverlay({
               <div className="settings-section">
                 <div className="provider-header">
                   <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                    Prompts
+                    Builtin Prompts
                   </h3>
                 </div>
                 {promptLoading && promptFiles.length === 0 ? (

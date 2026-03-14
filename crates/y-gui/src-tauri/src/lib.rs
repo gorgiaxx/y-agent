@@ -94,6 +94,7 @@ pub fn run() {
             commands::session::session_create,
             commands::session::session_get_messages,
             commands::session::session_delete,
+            commands::session::session_truncate_messages,
             // Diagnostics
             commands::diagnostics::diagnostics_get_by_session,
             // Observability

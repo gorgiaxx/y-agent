@@ -11,8 +11,13 @@
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .settings-overlay {
@@ -30,8 +35,15 @@
 }
 
 @keyframes slideUp {
-  from { transform: translateY(14px); opacity: 0; }
-  to   { transform: translateY(0);    opacity: 1; }
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /* ---- Header ---- */
@@ -190,9 +202,7 @@
   padding: 7px 30px 7px var(--space-sm);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface-primary)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23555250' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")
-    no-repeat right var(--space-sm) center;
+  background: var(--surface-primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23555250' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right var(--space-sm) center;
   background-size: 12px;
   color: var(--text-primary);
   font-size: 13px;
@@ -500,6 +510,7 @@
     opacity: 0;
     transform: translateX(-50%) translateY(6px);
   }
+
   to {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
@@ -605,8 +616,15 @@
 }
 
 @keyframes pf-slide-in {
-  from { opacity: 0; transform: translateY(-3px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .pf-row {
@@ -922,8 +940,13 @@
 
 /* Spinner for test-in-progress */
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pf-spinner {
@@ -939,11 +962,11 @@
 
 /* ---- Prompt editor ---- */
 .prompt-editor {
-  min-height: 420px;
+  min-height: 320px;
+  max-height: 4000px;
   font-family: inherit;
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
-

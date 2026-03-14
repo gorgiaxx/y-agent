@@ -1,4 +1,4 @@
-//! Session command handlers — list, create, get messages, delete.
+//! Session command handlers — list, create, get messages, delete, truncate.
 
 use serde::Serialize;
 use tauri::State;
@@ -150,5 +150,26 @@ pub async fn session_delete(
         .delete_session(&sid)
         .await
         .map_err(|e| format!("Failed to delete session: {e}"))?;
+    Ok(())
+}
+
+/// Truncate a session's transcript to keep only the first `keep_count` messages.
+///
+/// This is used by the frontend to handle undo/resend after a cancelled run
+/// where no checkpoint was created.
+#[tauri::command]
+pub async fn session_truncate_messages(
+    state: State<'_, AppState>,
+    session_id: String,
+    keep_count: usize,
+) -> Result<(), String> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .transcript_store()
+        .truncate(&sid, keep_count)
+        .await
+        .map_err(|e| format!("Failed to truncate transcript: {e}"))?;
     Ok(())
 }
