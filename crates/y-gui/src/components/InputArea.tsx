@@ -1,6 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Square, X } from 'lucide-react';
 import { ProviderSelector } from './ProviderSelector';
+import { CommandMenu } from './CommandMenu';
+import { filterCommands } from '../commands';
+import type { GuiCommandDef } from '../commands';
 import type { ProviderInfo } from '../types';
 import type { PendingEdit } from '../hooks/useChat';
 import './InputArea.css';
@@ -8,6 +11,7 @@ import './InputArea.css';
 interface InputAreaProps {
   onSend: (message: string) => void;
   onStop?: () => void;
+  onCommand?: (commandName: string) => boolean;
   disabled: boolean;
   sendOnEnter: boolean;
   providers: ProviderInfo[];
@@ -20,6 +24,7 @@ interface InputAreaProps {
 export function InputArea({
   onSend,
   onStop,
+  onCommand,
   disabled,
   sendOnEnter,
   providers,
@@ -29,20 +34,98 @@ export function InputArea({
   onCancelEdit,
 }: InputAreaProps) {
   const [value, setValue] = useState('');
+  const [commandMode, setCommandMode] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const resetInput = useCallback(() => {
+    setValue('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  }, []);
+
+  const exitCommandMode = useCallback(() => {
+    setCommandMode(false);
+    setCommandQuery('');
+    setSelectedCommandIndex(0);
+  }, []);
+
+  const handleCommandSelect = useCallback(
+    (cmd: GuiCommandDef) => {
+      exitCommandMode();
+      if (cmd.immediate) {
+        resetInput();
+        onCommand?.(cmd.name);
+      } else {
+        // For non-immediate commands, insert the command text for further argument editing.
+        setValue(`/${cmd.name} `);
+      }
+    },
+    [onCommand, resetInput, exitCommandMode],
+  );
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed || disabled) return;
-    onSend(trimmed);
-    setValue('');
-    // Reset textarea height.
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+
+    // Intercept slash commands.
+    if (trimmed.startsWith('/')) {
+      const parts = trimmed.slice(1).split(/\s+/);
+      const cmdName = parts[0];
+      if (cmdName && onCommand?.(cmdName)) {
+        resetInput();
+        exitCommandMode();
+        return;
+      }
     }
-  }, [value, disabled, onSend]);
+
+    onSend(trimmed);
+    resetInput();
+    exitCommandMode();
+  }, [value, disabled, onSend, onCommand, resetInput, exitCommandMode]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Command mode keyboard navigation.
+    if (commandMode) {
+      const filtered = filterCommands(commandQuery);
+
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedCommandIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedCommandIndex((i) => Math.min(filtered.length - 1, i + 1));
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        exitCommandMode();
+        resetInput();
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        if (filtered.length > 0) {
+          const idx = Math.min(selectedCommandIndex, filtered.length - 1);
+          handleCommandSelect(filtered[idx]);
+        }
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (filtered.length > 0) {
+          const idx = Math.min(selectedCommandIndex, filtered.length - 1);
+          handleCommandSelect(filtered[idx]);
+        }
+        return;
+      }
+    }
+
+    // Normal mode: Enter to send.
     if (sendOnEnter && e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -50,17 +133,29 @@ export function InputArea({
   };
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setValue(e.target.value);
+    const val = e.target.value;
+    setValue(val);
+
     // Auto-resize textarea.
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+
+    // Command mode detection: "/" at start, single-line only.
+    if (val.startsWith('/') && !val.includes('\n')) {
+      setCommandMode(true);
+      setCommandQuery(val.slice(1));
+      setSelectedCommandIndex(0);
+    } else {
+      if (commandMode) exitCommandMode();
+    }
   };
 
   // When entering edit mode, populate the textarea with the message content.
   useEffect(() => {
     if (pendingEdit) {
       setValue(pendingEdit.content);
+      exitCommandMode();
       if (textareaRef.current) {
         textareaRef.current.focus();
         // Auto-resize for the new content.
@@ -68,7 +163,7 @@ export function InputArea({
         textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
       }
     }
-  }, [pendingEdit]);
+  }, [pendingEdit, exitCommandMode]);
 
   return (
     <div className="input-area">
@@ -86,13 +181,25 @@ export function InputArea({
         </div>
       )}
       <div className="input-container">
+        {commandMode && (
+          <CommandMenu
+            query={commandQuery}
+            selectedIndex={selectedCommandIndex}
+            onSelect={handleCommandSelect}
+            onDismiss={() => {
+              exitCommandMode();
+              resetInput();
+            }}
+            onHover={setSelectedCommandIndex}
+          />
+        )}
         <textarea
           ref={textareaRef}
           className="input-textarea"
           value={value}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder={disabled ? 'Waiting for response...' : 'Type a message...'}
+          placeholder={disabled ? 'Waiting for response...' : 'Type a message... (/ for commands)'}
           disabled={disabled}
           rows={1}
         />
@@ -115,7 +222,11 @@ export function InputArea({
           disabled={disabled}
         />
         <div className="input-hint">
-          {sendOnEnter ? 'Enter to send, Shift+Enter for newline' : 'Shift+Enter to send'}
+          {commandMode
+            ? 'Up/Down to navigate, Enter to select, Esc to dismiss'
+            : sendOnEnter
+              ? 'Enter to send, Shift+Enter for newline'
+              : 'Shift+Enter to send'}
         </div>
       </div>
     </div>

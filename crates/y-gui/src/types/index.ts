@@ -33,6 +33,8 @@ export interface Message {
   tokens?: { input: number; output: number };
   cost?: number;
   context_window?: number;
+  /** Backend metadata (model info, tool results, usage). */
+  metadata?: Record<string, unknown>;
 }
 
 export interface ToolCallBrief {
@@ -274,3 +276,25 @@ export interface SchedulerQueueSnapshot {
   total_capacity: number;
   critical_reserve_pct: number;
 }
+
+// ---------------------------------------------------------------------------
+// Skills
+// ---------------------------------------------------------------------------
+
+/** Installed skill summary (from `skill_list`). */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  version: string;
+  tags: string[];
+  enabled: boolean;
+}
+
+/** Full skill detail (from `skill_get`). */
+export interface SkillDetail extends SkillInfo {
+  root_content: string;
+  author: string | null;
+  classification_type: string | null;
+  dir_path: string;
+}
+

@@ -110,6 +110,7 @@ pub fn run() {
             commands::config::provider_test,
             commands::config::prompt_list,
             commands::config::prompt_get,
+            commands::config::prompt_get_default,
             commands::config::prompt_save,
             // System
             commands::system::system_status,
@@ -124,6 +125,12 @@ pub fn run() {
             commands::workspace::workspace_session_map,
             commands::workspace::workspace_assign_session,
             commands::workspace::workspace_unassign_session,
+            // Skills
+            commands::skills::skill_list,
+            commands::skills::skill_get,
+            commands::skills::skill_uninstall,
+            commands::skills::skill_set_enabled,
+            commands::skills::skill_open_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -488,6 +488,11 @@ impl ChatService {
         #[allow(unused_assignments)]
         let mut final_provider_id: Option<String> = None;
 
+        // Accumulate text from all LLM iterations so the final persisted
+        // message contains content from every call (not just the last one).
+        // This preserves tool_call XML and intermediate text for the frontend.
+        let mut accumulated_content = String::new();
+
         let mut working_history: Vec<Message> = input.history.to_vec();
 
         loop {
@@ -702,6 +707,9 @@ impl ChatService {
                             timestamp: y_core::types::now(),
                             metadata: serde_json::json!({ "model": response.model }),
                         };
+                        // Accumulate intermediate assistant text for the final message.
+                        accumulated_content.push_str(&assistant_msg.content);
+                        accumulated_content.push('\n');
                         working_history.push(assistant_msg.clone());
                         new_messages.push(assistant_msg);
 
@@ -813,6 +821,10 @@ impl ChatService {
                                     timestamp: y_core::types::now(),
                                     metadata: serde_json::json!({ "model": response.model }),
                                 };
+                                // Accumulate intermediate assistant text (with tool_call XML)
+                                // for the final persisted message.
+                                accumulated_content.push_str(text);
+                                accumulated_content.push('\n');
                                 working_history.push(assistant_msg.clone());
                                 new_messages.push(assistant_msg);
 
@@ -956,10 +968,33 @@ impl ChatService {
                             .await;
                     }
 
+                    // Build the final content: if there were prior iterations,
+                    // prepend their accumulated text so the persisted message
+                    // contains the full multi-iteration content.
+                    let final_content = if accumulated_content.is_empty() {
+                        content.clone()
+                    } else {
+                        format!("{}{}", accumulated_content, content)
+                    };
+
+                    // Build tool_results metadata for frontend rendering after
+                    // session reload (so tool call cards persist).
+                    let tool_results_meta: Vec<serde_json::Value> = tool_calls_executed
+                        .iter()
+                        .map(|tc| {
+                            serde_json::json!({
+                                "name": tc.name,
+                                "success": tc.success,
+                                "duration_ms": tc.duration_ms,
+                                "result_preview": &tc.result_content[..tc.result_content.len().min(2000)],
+                            })
+                        })
+                        .collect();
+
                     let assistant_msg = Message {
                         message_id: y_core::types::generate_message_id(),
                         role: Role::Assistant,
-                        content: content.clone(),
+                        content: final_content,
                         tool_call_id: None,
                         tool_calls: vec![],
                         timestamp: y_core::types::now(),
@@ -968,7 +1003,8 @@ impl ChatService {
                             "usage": {
                                 "input_tokens": response.usage.input_tokens,
                                 "output_tokens": response.usage.output_tokens,
-                            }
+                            },
+                            "tool_results": tool_results_meta,
                         }),
                     };
 

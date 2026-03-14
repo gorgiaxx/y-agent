@@ -248,3 +248,22 @@ pub async fn prompt_save(
     std::fs::write(prompts_dir.join(&filename), &content)
         .map_err(|e| format!("Failed to write {filename}: {e}"))
 }
+
+/// Get the compiled-in default content for a prompt file.
+///
+/// Returns the built-in content for the given filename (e.g. `core_identity.txt`).
+/// Used by the "Restore" button in the GUI to reset user edits to defaults.
+#[tauri::command]
+pub async fn prompt_get_default(filename: String) -> Result<String, String> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err("Invalid filename".into());
+    }
+
+    for &(name, content) in y_prompt::BUILTIN_PROMPT_FILES {
+        if name == filename {
+            return Ok(content.to_string());
+        }
+    }
+
+    Err(format!("No built-in default for: {filename}"))
+}

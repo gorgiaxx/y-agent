@@ -16,7 +16,7 @@ interface UseSessionsReturn {
 }
 
 // Polling interval in ms -- keeps session titles and new sessions from the TUI in sync.
-const SESSION_POLL_INTERVAL_MS = 30_000;
+const SESSION_POLL_INTERVAL_MS = 5_000;
 
 export function useSessions(): UseSessionsReturn {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -44,6 +44,23 @@ export function useSessions(): UseSessionsReturn {
   useEffect(() => {
     const id = setInterval(refreshSessions, SESSION_POLL_INTERVAL_MS);
     return () => clearInterval(id);
+  }, [refreshSessions]);
+
+  // Refresh immediately when the window gains focus -- catches sessions
+  // created in the TUI while the GUI was in the background.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        refreshSessions();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    // Also handle OS-level window focus (e.g. Alt-Tab).
+    window.addEventListener('focus', refreshSessions);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', refreshSessions);
+    };
   }, [refreshSessions]);
 
   // Listen for title updates emitted by the GUI backend after LLM turns.

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, Plug, Info, X, Eye, EyeOff, RefreshCw, Plus, FileText } from 'lucide-react';
+import { Settings, Plug, Info, X, Eye, EyeOff, RefreshCw, Plus, FileText, RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GuiConfig } from '../types';
 import './SettingsOverlay.css';
@@ -862,6 +862,20 @@ export function SettingsOverlay({
     }
   }, [promptFiles, dirtyPrompts, loadPromptFile]);
 
+  // Handler: restore current prompt to its compiled-in default.
+  const handlePromptRestore = useCallback(async () => {
+    const filename = promptFiles[activePromptTab];
+    if (!filename) return;
+    try {
+      const defaultContent = await invoke<string>('prompt_get_default', { filename });
+      setPromptContent(defaultContent);
+      setDirtyPrompts((prev) => ({ ...prev, [filename]: defaultContent }));
+      setToast({ message: `Restored "${promptLabel(filename)}" to default`, type: 'success' });
+    } catch (e) {
+      setToast({ message: `Restore failed: ${e}`, type: 'error' });
+    }
+  }, [promptFiles, activePromptTab]);
+
   // Friendly label: strip "core_" prefix and ".txt" suffix.
   const promptLabel = (filename: string) =>
     filename.replace(/^core_/, '').replace(/\.txt$/, '');
@@ -1250,6 +1264,17 @@ export function SettingsOverlay({
                           spellCheck={false}
                           placeholder="Empty prompt. Type content here."
                         />
+                        <div className="prompt-editor-actions">
+                          <button
+                            type="button"
+                            className="btn-prompt-restore"
+                            onClick={handlePromptRestore}
+                            title="Restore to default"
+                          >
+                            <RotateCcw size={13} />
+                            <span>Restore Default</span>
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

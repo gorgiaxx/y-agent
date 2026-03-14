@@ -1051,7 +1051,7 @@ pub async fn run(args: &InitArgs) -> Result<()> {
     }
 
     // --- Step 6c: Seed built-in skills ---
-    match seed_builtin_skills(&data_dir) {
+    match seed_builtin_skills(&base) {
         Ok(seeded) => {
             if seeded.is_empty() {
                 output::print_info("Built-in skills already installed");

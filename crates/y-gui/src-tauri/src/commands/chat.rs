@@ -147,8 +147,13 @@ pub async fn chat_send(
 
         // Determine whether to generate a title after this turn.
         let title_interval = container.session_manager.config().title_summarize_interval;
-        let user_msg_count = ((prepared.turn_number as usize) + 1) / 2 + 1;
+        let user_msg_count = prepared
+            .history
+            .iter()
+            .filter(|m| m.role == y_core::types::Role::User)
+            .count();
         let should_generate_title = title_interval > 0
+            && user_msg_count > 0
             && (user_msg_count == 1 || user_msg_count % title_interval as usize == 0);
 
         // Set up progress channel -- forward TurnEvents as Tauri events.

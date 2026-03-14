@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight } from 'lucide-react';
+import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, MessageSquare, Zap, Puzzle } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo } from '../types';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import './Sidebar.css';
+
+export type ViewType = 'chat' | 'automation' | 'skills';
 
 interface SidebarProps {
   sessions: SessionInfo[];
@@ -10,6 +12,8 @@ interface SidebarProps {
   streamingSessionIds: Set<string>;
   workspaces: WorkspaceInfo[];
   sessionWorkspaceMap: Record<string, string>;
+  activeView: ViewType;
+  onSelectView: (view: ViewType) => void;
   onSelectSession: (id: string) => void;
   onNewChat: () => void;
   onDeleteSession: (id: string) => void;
@@ -39,6 +43,8 @@ export function Sidebar({
   streamingSessionIds,
   workspaces,
   sessionWorkspaceMap,
+  activeView,
+  onSelectView,
   onSelectSession,
   onNewChat,
   onDeleteSession,
@@ -203,124 +209,172 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      {/* Header */}
-      <div className="sidebar-header">
-        <h2 className="sidebar-title">Sessions</h2>
-        <div className="sidebar-header-actions">
-          <button
-            className="btn-new-chat"
-            onClick={() => setWsDialogOpen(true)}
-            title="New Workspace"
-          >
-            <FolderOpen size={15} />
-          </button>
-          <button className="btn-new-chat" onClick={onNewChat} title="New Chat">
-            <Plus size={16} />
-          </button>
-        </div>
+      {/* Navigation tabs */}
+      <div className="sidebar-nav">
+        <button
+          className={`sidebar-nav-btn ${activeView === 'chat' ? 'active' : ''}`}
+          onClick={() => onSelectView('chat')}
+          title="Sessions"
+        >
+          <MessageSquare size={16} />
+          <span className="sidebar-nav-label">Sessions</span>
+        </button>
+        <button
+          className={`sidebar-nav-btn ${activeView === 'automation' ? 'active' : ''}`}
+          onClick={() => onSelectView('automation')}
+          title="Automation"
+        >
+          <Zap size={16} />
+          <span className="sidebar-nav-label">Automation</span>
+        </button>
+        <button
+          className={`sidebar-nav-btn ${activeView === 'skills' ? 'active' : ''}`}
+          onClick={() => onSelectView('skills')}
+          title="Skills"
+        >
+          <Puzzle size={16} />
+          <span className="sidebar-nav-label">Skills</span>
+        </button>
       </div>
 
-      {/* Search */}
-      <div className="sidebar-search">
-        <input
-          type="text"
-          placeholder="Search sessions..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="search-input"
-        />
-      </div>
-
-      {/* Session list grouped by workspace */}
-      <div className="session-list">
-        {/* Workspace sections */}
-        {groups.map(({ workspace, sessions: wsSessions }) => {
-          if (!workspace) return null;
-          const isCollapsed = collapsedIds.has(workspace.id);
-          return (
-            <div key={workspace.id} className="workspace-section">
-              <div
-                className="workspace-label"
-                onMouseLeave={() => setOpenMenuId(null)}
+      {/* Sessions content (only when chat view is active) */}
+      {activeView === 'chat' && (
+        <>
+          {/* Header */}
+          <div className="sidebar-header">
+            {/* Search */}
+            <div className="sidebar-search">
+              <input
+                type="text"
+                placeholder="Search sessions..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="search-input"
+              />
+            </div>
+            <div className="sidebar-header-actions">
+              <button
+                className="btn-new-chat"
+                onClick={() => setWsDialogOpen(true)}
+                title="New Workspace"
               >
-                <button
-                  className="btn-workspace-collapse"
-                  onClick={() => toggleCollapsed(workspace.id)}
-                  title={isCollapsed ? 'Expand' : 'Collapse'}
-                  aria-expanded={!isCollapsed}
-                >
-                  <ChevronRight
-                    size={12}
-                    className={`workspace-chevron ${isCollapsed ? '' : 'workspace-chevron--open'}`}
-                  />
-                </button>
-                <FolderOpen size={11} className="workspace-icon" />
-                <span
-                  className="workspace-name"
-                  title={workspace.path}
-                  onClick={() => toggleCollapsed(workspace.id)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {workspace.name}
-                </span>
-                <button
-                  className="btn-workspace-menu"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setOpenMenuId(openMenuId === workspace.id ? null : workspace.id);
-                  }}
-                  title="Workspace options"
-                >
-                  <MoreHorizontal size={12} />
-                </button>
-                {openMenuId === workspace.id && (
-                  <div className="workspace-context-menu" ref={menuRef}>
+                <FolderOpen size={15} />
+              </button>
+              <button className="btn-new-chat" onClick={onNewChat} title="New Chat">
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Session list grouped by workspace */}
+          <div className="session-list">
+            {/* Workspace sections */}
+            {groups.map(({ workspace, sessions: wsSessions }) => {
+              if (!workspace) return null;
+              const isCollapsed = collapsedIds.has(workspace.id);
+              return (
+                <div key={workspace.id} className="workspace-section">
+                  <div
+                    className="workspace-label"
+                    onMouseLeave={() => setOpenMenuId(null)}
+                  >
                     <button
-                      className="context-menu-item"
-                      onClick={() => {
-                        setEditingWorkspace(workspace);
-                        setOpenMenuId(null);
-                      }}
+                      className="btn-workspace-collapse"
+                      onClick={() => toggleCollapsed(workspace.id)}
+                      title={isCollapsed ? 'Expand' : 'Collapse'}
+                      aria-expanded={!isCollapsed}
                     >
-                      <Pencil size={11} />
-                      Rename
+                      <ChevronRight
+                        size={12}
+                        className={`workspace-chevron ${isCollapsed ? '' : 'workspace-chevron--open'}`}
+                      />
                     </button>
+                    <FolderOpen size={11} className="workspace-icon" />
+                    <span
+                      className="workspace-name"
+                      title={workspace.path}
+                      onClick={() => toggleCollapsed(workspace.id)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {workspace.name}
+                    </span>
                     <button
-                      className="context-menu-item context-menu-item--danger"
-                      onClick={() => {
-                        onDeleteWorkspace(workspace.id);
-                        setOpenMenuId(null);
+                      className="btn-workspace-menu"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(openMenuId === workspace.id ? null : workspace.id);
                       }}
+                      title="Workspace options"
                     >
-                      <Trash2 size={11} />
-                      Delete workspace
+                      <MoreHorizontal size={12} />
                     </button>
+                    {openMenuId === workspace.id && (
+                      <div className="workspace-context-menu" ref={menuRef}>
+                        <button
+                          className="context-menu-item"
+                          onClick={() => {
+                            setEditingWorkspace(workspace);
+                            setOpenMenuId(null);
+                          }}
+                        >
+                          <Pencil size={11} />
+                          Rename
+                        </button>
+                        <button
+                          className="context-menu-item context-menu-item--danger"
+                          onClick={() => {
+                            onDeleteWorkspace(workspace.id);
+                            setOpenMenuId(null);
+                          }}
+                        >
+                          <Trash2 size={11} />
+                          Delete workspace
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {!isCollapsed && wsSessions.map(renderSessionItem)}
+                </div>
+              );
+            })}
+
+            {/* Ungrouped sessions */}
+            {ungrouped.length > 0 && (
+              <div className="workspace-section">
+                {workspaces.length > 0 && (
+                  <div className="workspace-label workspace-label--general">
+                    <span className="workspace-name">General</span>
                   </div>
                 )}
-              </div>
-              {!isCollapsed && wsSessions.map(renderSessionItem)}
-            </div>
-          );
-        })}
-
-        {/* Ungrouped sessions */}
-        {ungrouped.length > 0 && (
-          <div className="workspace-section">
-            {workspaces.length > 0 && (
-              <div className="workspace-label workspace-label--general">
-                <span className="workspace-name">General</span>
+                {ungrouped.map(renderSessionItem)}
               </div>
             )}
-            {ungrouped.map(renderSessionItem)}
-          </div>
-        )}
 
-        {filtered.length === 0 && (
-          <div className="session-empty">
-            {searchQuery ? 'No matching sessions' : 'No sessions yet'}
+            {filtered.length === 0 && (
+              <div className="session-empty">
+                {searchQuery ? 'No matching sessions' : 'No sessions yet'}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
+
+      {/* Automation placeholder */}
+      {activeView === 'automation' && (
+        <div className="sidebar-placeholder">
+          <Zap size={32} className="sidebar-placeholder-icon" />
+          <p className="sidebar-placeholder-text">Coming soon</p>
+        </div>
+      )}
+
+      {/* Skills view — content is in the main panel */}
+      {activeView === 'skills' && (
+        <div className="sidebar-placeholder">
+          <Puzzle size={32} className="sidebar-placeholder-icon" />
+          <p className="sidebar-placeholder-text">Skill management</p>
+          <p className="sidebar-placeholder-sub">View and manage installed skills in the main panel</p>
+        </div>
+      )}
 
       {/* Workspace creation dialog */}
       {wsDialogOpen && (

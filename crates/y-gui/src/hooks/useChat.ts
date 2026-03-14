@@ -41,6 +41,14 @@ export type ChatOpStatus =
   | 'resending'
   | 'restoring';
 
+/** Tracked tool result from a progress event. */
+export interface ToolResultRecord {
+  name: string;
+  success: boolean;
+  durationMs: number;
+  resultPreview: string;
+}
+
 interface UseChatReturn {
   messages: Message[];
   isStreaming: boolean;
@@ -52,6 +60,8 @@ interface UseChatReturn {
   opStatus: ChatOpStatus;
   /** Pending edit info (for InputArea banner). */
   pendingEdit: PendingEdit | null;
+  /** Tool results from the current streaming run (for inline cards). */
+  toolResults: ToolResultRecord[];
   sendMessage: (message: string, sessionId: string, providerId?: string) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
@@ -88,7 +98,8 @@ type ChatBusEvent =
   | { type: 'started'; run_id: string; session_id: string }
   | { type: 'complete'; payload: ChatCompletePayload }
   | { type: 'error'; payload: ChatErrorPayload }
-  | { type: 'stream_delta'; run_id: string; session_id: string; content: string };
+  | { type: 'stream_delta'; run_id: string; session_id: string; content: string }
+  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; result_preview: string };
 
 let chatBusInitialised = false;
 const chatBusState: ChatBusState = {
@@ -151,6 +162,18 @@ async function initialiseChatBus() {
           run_id,
           session_id,
           content: event.content,
+        });
+      }
+    } else if (event.type === 'tool_result') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'tool_result',
+          session_id,
+          name: event.name,
+          success: event.success,
+          duration_ms: event.duration_ms,
+          result_preview: event.result_preview,
         });
       }
     }
@@ -307,6 +330,10 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   // Pending edit state (exposed to InputArea for banner).
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
 
+  // Per-session tool results from progress events (for inline tool call cards).
+  const toolResultsRef = useRef(new Map<string, ToolResultRecord[]>());
+  const [visibleToolResults, setVisibleToolResults] = useState<ToolResultRecord[]>([]);
+
   // Keep a ref in sync with activeSessionId.
   const activeSessionIdRef = useRef<string | null>(activeSessionId);
   useEffect(() => {
@@ -337,6 +364,11 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
         activeRunIdRef.current = event.run_id;
         setActiveRunId(event.run_id);
+        // Clear tool results for the new run.
+        toolResultsRef.current.set(event.session_id, []);
+        if (event.session_id === activeSessionIdRef.current) {
+          setVisibleToolResults([]);
+        }
         console.log('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
       } else if (event.type === 'stream_delta') {
         const sid = event.session_id;
@@ -370,13 +402,39 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         console.log(`[chat] complete: run_id=${payload.run_id}, session=${sessionId}, opStatus=${opStatusRef.current}`);
 
         if (sessionId) {
-          // Reload from backend to get messages with real backend IDs.
-          // CRITICAL: we must await this reload and update the cache/visible
-          // BEFORE transitioning opStatus to idle, so that subsequent
-          // operations (resend, edit) see consistent message IDs.
+          // Merge streaming content with backend messages.
+          // The streaming-{sid} message accumulates text from ALL LLM
+          // iterations in the tool-call loop. The backend only persists
+          // the final assistant message. We merge: use backend messages
+          // as the authoritative source for IDs/metadata, but preserve
+          // the full accumulated streaming content so multi-iteration
+          // text (e.g. "I'll check" + analysis) is not lost.
           (async () => {
             try {
               const msgs = await invoke<Message[]>('session_get_messages', { sessionId });
+
+              // Grab the accumulated streaming content before overwriting.
+              const streamingId = `streaming-${sessionId}`;
+              const cachedMessages = getCachedMessages(sessionMessagesRef.current, sessionId);
+              const streamingMsg = cachedMessages.find((m) => m.id === streamingId);
+              const accumulatedContent = streamingMsg?.content ?? '';
+
+              // If there was accumulated streaming content and the backend
+              // has a final assistant message, check if the streaming content
+              // carries extra text from prior tool-call iterations.
+              if (accumulatedContent && msgs.length > 0) {
+                const lastMsg = msgs[msgs.length - 1];
+                if (lastMsg.role === 'assistant' && accumulatedContent.length > lastMsg.content.length) {
+                  // The streaming content has more text (from earlier
+                  // iterations). Use it as the display content but keep
+                  // the backend message's metadata.
+                  msgs[msgs.length - 1] = {
+                    ...lastMsg,
+                    content: accumulatedContent,
+                  };
+                }
+              }
+
               setCachedMessages(sessionMessagesRef.current, sessionId, msgs);
               if (activeSessionIdRef.current === sessionId) {
                 startTransition(() => {
@@ -416,6 +474,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               }
             }
           })();
+
         } else {
           // No session to reload -- transition immediately.
           if (opStatusRef.current !== 'idle') {
@@ -516,6 +575,21 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         // Return to idle on error too.
         if (opStatusRef.current !== 'idle') {
           setOp('idle');
+        }
+      } else if (event.type === 'tool_result') {
+        // Accumulate tool results for inline card rendering.
+        const sid = event.session_id;
+        const record: ToolResultRecord = {
+          name: event.name,
+          success: event.success,
+          durationMs: event.duration_ms,
+          resultPreview: event.result_preview,
+        };
+        const existing = toolResultsRef.current.get(sid) ?? [];
+        existing.push(record);
+        toolResultsRef.current.set(sid, existing);
+        if (sid === activeSessionIdRef.current) {
+          setVisibleToolResults([...existing]);
         }
       }
     };
@@ -978,6 +1052,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     error,
     opStatus,
     pendingEdit,
+    toolResults: visibleToolResults,
     sendMessage,
     cancelRun,
     loadMessages,

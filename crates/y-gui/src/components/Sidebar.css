@@ -8,6 +8,80 @@
   height: 100%;
 }
 
+/* ---- Navigation tabs ---- */
+.sidebar-nav {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sidebar-nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 0 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  font-family: inherit;
+}
+
+.sidebar-nav-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.sidebar-nav-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.sidebar-nav-label {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---- Placeholder views ---- */
+.sidebar-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+}
+
+.sidebar-placeholder-icon {
+  color: var(--text-muted);
+  opacity: 0.25;
+}
+
+.sidebar-placeholder-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.sidebar-placeholder-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin: 0;
+  text-align: center;
+  line-height: 1.4;
+}
+
 /* ---- Header ---- */
 .sidebar-header {
   display: flex;
@@ -56,8 +130,7 @@
 
 /* ---- Search ---- */
 .sidebar-search {
-  padding: var(--space-sm) var(--space-md);
-  border-bottom: 1px solid var(--border);
+  margin-right: 5px;
 }
 
 .search-input {
@@ -208,8 +281,15 @@
 }
 
 @keyframes ws-fade-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .context-menu-section {
@@ -280,7 +360,9 @@
 
 /* ---- Spinner ---- */
 @keyframes session-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .session-spinner {

@@ -40,8 +40,26 @@
   letter-spacing: 0.03em;
 }
 
-.tool-status-success .tool-call-status { color: var(--success); }
-.tool-status-error   .tool-call-status { color: var(--error); }
+.tool-call-status-icon {
+  display: flex;
+  align-items: center;
+}
+
+.tool-status-success .tool-call-status,
+.tool-status-success .tool-call-status-icon { color: var(--success); }
+.tool-status-error   .tool-call-status,
+.tool-status-error   .tool-call-status-icon { color: var(--error); }
+.tool-status-running .tool-call-status,
+.tool-status-running .tool-call-status-icon { color: var(--text-muted); }
+
+.tool-status-spinner {
+  animation: tool-spin 1s linear infinite;
+}
+
+@keyframes tool-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 .tool-status-running .tool-call-status {
   animation: pulse 1.4s ease-in-out infinite;
@@ -106,4 +124,8 @@
   word-break: break-word;
   color: var(--text-primary);
   line-height: 1.55;
+}
+
+.tool-result-stderr {
+  color: var(--error, #ef4444);
 }

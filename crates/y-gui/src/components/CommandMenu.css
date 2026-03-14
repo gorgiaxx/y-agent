@@ -1,0 +1,99 @@
+/* ---- Command Menu: floating palette above InputArea ---- */
+
+.command-menu {
+  position: absolute;
+  bottom: calc(100% + var(--space-sm));
+  left: 0;
+  right: 0;
+  background: var(--surface-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 50;
+  padding: var(--space-xs) 0;
+  animation: commandMenuSlideUp 0.15s ease-out;
+}
+
+@keyframes commandMenuSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---- Category header ---- */
+
+.command-menu-category {
+  padding: var(--space-xs) var(--space-md);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.command-menu-group + .command-menu-group .command-menu-category {
+  margin-top: var(--space-xs);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-sm);
+}
+
+/* ---- Menu item ---- */
+
+.command-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-md);
+  cursor: pointer;
+  transition: background 0.1s ease;
+  border-left: 2px solid transparent;
+}
+
+.command-menu-item:hover,
+.command-menu-item.selected {
+  background: var(--surface-hover);
+}
+
+.command-menu-item.selected {
+  border-left-color: var(--accent);
+}
+
+.command-menu-name {
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.command-menu-alias {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.command-menu-desc {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-left: auto;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Empty state ---- */
+
+.command-menu-empty {
+  padding: var(--space-md);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}

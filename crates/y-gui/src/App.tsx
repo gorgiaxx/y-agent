@@ -2,18 +2,21 @@ import { useState, useEffect, useCallback, startTransition } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Settings, Activity, Eye } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
+import type { ViewType } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { InputArea } from './components/InputArea';
 import { StatusBar } from './components/StatusBar';
 import { SettingsOverlay } from './components/SettingsOverlay';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { ObservabilityPanel } from './components/ObservabilityPanel';
+import { SkillsPanel } from './components/SkillsPanel';
 import { useChat } from './hooks/useChat';
 import { useSessions } from './hooks/useSessions';
 import { useConfig } from './hooks/useConfig';
 import { useDiagnostics } from './hooks/useDiagnostics';
 import { useObservability } from './hooks/useObservability';
 import { useWorkspaces } from './hooks/useWorkspaces';
+import { useSkills } from './hooks/useSkills';
 import type { SystemStatus, ProviderInfo, TurnMeta } from './types';
 import './App.css';
 
@@ -44,6 +47,7 @@ function App() {
     undoToMessage,
     resendLastTurn,
     restoreBranch,
+    toolResults,
   } = useChat(activeSessionId);
 
   const { config, updateConfig, loadSection, saveSection, reloadConfig: rawReloadConfig } = useConfig();
@@ -59,12 +63,14 @@ function App() {
     refreshWorkspaces,
   } = useWorkspaces();
 
+  const [activeView, setActiveView] = useState<ViewType>('chat');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
   const [obsOpen, setObsOpen] = useState(false);
   const [obsExpanded, setObsExpanded] = useState(false);
   const [diagExpanded, setDiagExpanded] = useState(false);
   const { snapshot: obsSnapshot, loading: obsLoading } = useObservability(obsOpen);
+  const { skills, loading: skillsLoading, getSkillDetail, uninstallSkill, setEnabled: setSkillEnabled, openFolder: openSkillFolder } = useSkills();
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState('auto');
@@ -255,6 +261,52 @@ function App() {
     [refreshWorkspaces],
   );
 
+  // ------------------------------------------------------------------
+  // Slash-command handler -- maps command names to existing GUI actions
+  // ------------------------------------------------------------------
+
+  const handleCommand = useCallback(
+    (commandName: string): boolean => {
+      switch (commandName) {
+        case 'new':
+          handleNewChat();
+          return true;
+        case 'clear':
+          clearMessages();
+          return true;
+        case 'settings':
+          setSettingsOpen(true);
+          return true;
+        case 'diagnostics':
+          setDiagOpen((prev) => !prev);
+          return true;
+        case 'observability':
+          setObsOpen((prev) => !prev);
+          return true;
+        case 'status':
+          invoke<SystemStatus>('system_status')
+            .then(setSystemStatus)
+            .catch(console.error);
+          return true;
+        case 'help':
+          // Phase 1 placeholder: open settings as a stand-in.
+          setSettingsOpen(true);
+          return true;
+        case 'export':
+          // Phase 1 placeholder: log to console until export UI is built.
+          console.log('Export command triggered -- not yet implemented');
+          return true;
+        case 'model':
+          // Phase 1 placeholder: open settings on the providers tab.
+          setSettingsOpen(true);
+          return true;
+        default:
+          return false;
+      }
+    },
+    [handleNewChat, clearMessages],
+  );
+
   // Determine if input should be disabled: streaming OR a compound operation is in progress.
   const inputDisabled = isStreaming || (opStatus !== 'idle' && opStatus !== 'sending');
 
@@ -266,8 +318,10 @@ function App() {
         streamingSessionIds={streamingSessionIds}
         workspaces={workspaces}
         sessionWorkspaceMap={sessionWorkspaceMap}
-        onSelectSession={selectSession}
-        onNewChat={handleNewChat}
+        activeView={activeView}
+        onSelectView={setActiveView}
+        onSelectSession={(id) => { setActiveView('chat'); selectSession(id); }}
+        onNewChat={() => { setActiveView('chat'); handleNewChat(); }}
         onDeleteSession={handleDeleteSession}
         onCreateWorkspace={handleCreateWorkspace}
         onUpdateWorkspace={updateWorkspace}
@@ -278,24 +332,28 @@ function App() {
 
       <main className="main-panel">
         <header className="main-header">
-          <h1 className="app-title">y-agent</h1>
+          <h1 className="app-title">{activeView === 'skills' ? 'Skills' : 'y-agent'}</h1>
           <div className="header-actions">
-            <button
-              className={`btn-header ${diagOpen ? 'active' : ''} ${isActive ? 'has-activity' : ''}`}
-              onClick={() => setDiagOpen(!diagOpen)}
-              title="Diagnostics"
-              id="btn-diagnostics"
-            >
-              <Activity size={16} />
-            </button>
-            <button
-              className={`btn-header ${obsOpen ? 'active' : ''}`}
-              onClick={() => setObsOpen(!obsOpen)}
-              title="Observability"
-              id="btn-observability"
-            >
-              <Eye size={16} />
-            </button>
+            {activeView === 'chat' && (
+              <>
+                <button
+                  className={`btn-header ${diagOpen ? 'active' : ''} ${isActive ? 'has-activity' : ''}`}
+                  onClick={() => setDiagOpen(!diagOpen)}
+                  title="Diagnostics"
+                  id="btn-diagnostics"
+                >
+                  <Activity size={16} />
+                </button>
+                <button
+                  className={`btn-header ${obsOpen ? 'active' : ''}`}
+                  onClick={() => setObsOpen(!obsOpen)}
+                  title="Observability"
+                  id="btn-observability"
+                >
+                  <Eye size={16} />
+                </button>
+              </>
+            )}
             <button
               className="btn-header"
               onClick={() => setSettingsOpen(true)}
@@ -307,27 +365,43 @@ function App() {
           </div>
         </header>
 
-        <ChatPanel messages={messages} isStreaming={isStreaming} isLoading={isLoadingMessages} error={error} onEditMessage={handleEditMessage} onUndoMessage={handleUndoMessage} onResendMessage={handleResendMessage} onRestoreBranch={handleRestoreBranch} />
-        <InputArea
-          onSend={handleSend}
-          onStop={cancelRun}
-          disabled={inputDisabled}
-          sendOnEnter={config.send_on_enter}
-          providers={providers}
-          selectedProviderId={selectedProviderId}
-          onSelectProvider={setSelectedProviderId}
-          pendingEdit={pendingEdit}
-          onCancelEdit={handleCancelEdit}
-        />
-        <StatusBar
-          providerCount={systemStatus?.provider_count ?? 0}
-          sessionCount={systemStatus?.session_count ?? null}
-          version={systemStatus?.version ?? '0.1.0'}
-          activeModel={statusBarMeta.provider}
-          lastTokens={statusBarMeta.tokens}
-          lastCost={statusBarMeta.cost}
-          contextWindow={statusBarMeta.contextWindow}
-        />
+        {activeView === 'chat' && (
+          <>
+            <ChatPanel messages={messages} isStreaming={isStreaming} isLoading={isLoadingMessages} error={error} onEditMessage={handleEditMessage} onUndoMessage={handleUndoMessage} onResendMessage={handleResendMessage} onRestoreBranch={handleRestoreBranch} toolResults={toolResults} />
+            <InputArea
+              onSend={handleSend}
+              onStop={cancelRun}
+              onCommand={handleCommand}
+              disabled={inputDisabled}
+              sendOnEnter={config.send_on_enter}
+              providers={providers}
+              selectedProviderId={selectedProviderId}
+              onSelectProvider={setSelectedProviderId}
+              pendingEdit={pendingEdit}
+              onCancelEdit={handleCancelEdit}
+            />
+            <StatusBar
+              providerCount={systemStatus?.provider_count ?? 0}
+              sessionCount={systemStatus?.session_count ?? null}
+              version={systemStatus?.version ?? '0.1.0'}
+              activeModel={statusBarMeta.provider}
+              lastTokens={statusBarMeta.tokens}
+              lastCost={statusBarMeta.cost}
+              contextWindow={statusBarMeta.contextWindow}
+            />
+          </>
+        )}
+
+        {activeView === 'skills' && (
+          <SkillsPanel
+            skills={skills}
+            loading={skillsLoading}
+            onGetDetail={getSkillDetail}
+            onUninstall={uninstallSkill}
+            onSetEnabled={setSkillEnabled}
+            onOpenFolder={openSkillFolder}
+          />
+        )}
       </main>
 
       {diagOpen && (

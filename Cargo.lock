@@ -7619,8 +7619,10 @@ dependencies = [
  "uuid",
  "y-core",
  "y-diagnostics",
+ "y-prompt",
  "y-provider",
  "y-service",
+ "y-skills",
 ]
 
 [[package]]

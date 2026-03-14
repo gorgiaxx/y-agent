@@ -970,3 +970,31 @@
   white-space: pre-wrap;
   word-wrap: break-word;
 }
+
+/* Prompt editor actions (Restore button) */
+.prompt-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-prompt-restore {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 5px var(--space-sm);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.btn-prompt-restore:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.12);
+}

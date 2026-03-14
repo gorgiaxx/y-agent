@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -14,7 +14,9 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import type { Message } from '../types';
+import type { ToolResultRecord } from '../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
+import { processStreamContent, type ContentSegment } from '../hooks/useStreamContent';
 import './MessageBubble.css';
 
 interface MessageBubbleProps {
@@ -22,6 +24,8 @@ interface MessageBubbleProps {
   onEdit?: (content: string) => void;
   onUndo?: (messageId: string) => void;
   onResend?: (content: string) => void;
+  /** Tool results from progress events (only provided for streaming messages). */
+  toolResults?: ToolResultRecord[];
 }
 
 /** CSS-styled letter avatar instead of emoji. */
@@ -33,6 +37,28 @@ function Avatar({ role }: { role: string }) {
     </div>
   );
 }
+
+/** Shared markdown renderer config. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const markdownComponents: any = {
+  code({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: unknown }) {
+    const match = /language-(\w+)/.exec(className || '');
+    const codeText = String(children).replace(/\n$/, '');
+
+    if (match) {
+      return (
+        <CodeBlock language={match[1]}>{codeText}</CodeBlock>
+      );
+    }
+
+    // Inline code
+    return (
+      <code className="inline-code" {...props}>
+        {children}
+      </code>
+    );
+  },
+};
 
 /** Fenced code block with language label and copy button. */
 function CodeBlock({
@@ -205,9 +231,68 @@ function UserActionBar({
   );
 }
 
-export function MessageBubble({ message, onEdit, onUndo, onResend }: MessageBubbleProps) {
+/** Render a markdown text segment. */
+function MarkdownSegment({ text }: { text: string }) {
+  if (!text.trim()) return null;
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {text}
+    </ReactMarkdown>
+  );
+}
+
+export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
+  const isStreamingMsg = message.id.startsWith('streaming-');
+
+  // Process content to extract text segments and tool call blocks.
+  // Applied to ALL assistant messages (streaming AND completed) so that
+  // accumulated multi-iteration content with tool_call XML renders properly.
+  const streamResult = useMemo(() => {
+    if (isUser) return null;
+    // Only process if content might contain tool_call XML.
+    if (!message.content.includes('<tool_call') && !message.content.includes('<tool_cal')) {
+      return null;
+    }
+    return processStreamContent(message.content);
+  }, [isUser, message.content]);
+
+  // Build the tool results lookup by matching order.
+  // Sources: (1) live progress events via toolResults prop, (2) metadata from backend.
+  const toolResultsMap = useMemo(() => {
+    if (!streamResult) return new Map<number, ToolResultRecord>();
+
+    // Determine the source of tool results: live prop or persisted metadata.
+    let results: ToolResultRecord[] | undefined = toolResults;
+    if (!results || results.length === 0) {
+      // Fallback: extract from message metadata (after session reload).
+      const metaResults = message.metadata?.tool_results;
+      if (Array.isArray(metaResults)) {
+        results = (metaResults as Array<Record<string, unknown>>).map((tr) => ({
+          name: String(tr.name ?? ''),
+          success: Boolean(tr.success),
+          durationMs: Number(tr.duration_ms ?? 0),
+          resultPreview: String(tr.result_preview ?? ''),
+        }));
+      }
+    }
+
+    if (!results || results.length === 0) return new Map<number, ToolResultRecord>();
+
+    const map = new Map<number, ToolResultRecord>();
+    let resultIdx = 0;
+    streamResult.segments.forEach((seg, segIdx) => {
+      if (seg.type === 'tool_call' && resultIdx < results!.length) {
+        // Match by name for safety.
+        if (results![resultIdx].name === seg.toolCall.name) {
+          map.set(segIdx, results![resultIdx]);
+        }
+        resultIdx++;
+      }
+    });
+    return map;
+  }, [toolResults, streamResult, message.metadata]);
 
   // Phase 3: Keyboard shortcut handler for user messages.
   const handleBubbleKeyDown = useCallback(
@@ -223,6 +308,51 @@ export function MessageBubble({ message, onEdit, onUndo, onResend }: MessageBubb
     },
     [isUser, message.content, message.id, onEdit, onUndo],
   );
+
+  /** Render inline content segments (text + tool calls). */
+  const renderSegments = (segments: ContentSegment[], hasPending: boolean) => {
+    const elements: React.ReactNode[] = [];
+
+    segments.forEach((seg, idx) => {
+      if (seg.type === 'text') {
+        elements.push(
+          <MarkdownSegment key={`text-${idx}`} text={seg.text} />
+        );
+      } else if (seg.type === 'tool_call') {
+        const result = toolResultsMap.get(idx);
+        const status = result
+          ? (result.success ? 'success' : 'error')
+          : (isStreamingMsg ? 'running' : 'success');
+        elements.push(
+          <ToolCallCard
+            key={`tc-${idx}`}
+            toolCall={{
+              id: `tc-${idx}`,
+              name: seg.toolCall.name,
+              arguments: seg.toolCall.arguments,
+            }}
+            status={status}
+            result={result?.resultPreview}
+            durationMs={result?.durationMs}
+          />
+        );
+      }
+    });
+
+    // Show pending indicator when buffering an incomplete tool_call tag.
+    if (hasPending && isStreamingMsg) {
+      elements.push(
+        <div key="pending" className="tool-call-pending">
+          <div className="tool-call-pending-dots">
+            <span /><span /><span />
+          </div>
+          <span className="tool-call-pending-text">Calling tool…</span>
+        </div>
+      );
+    }
+
+    return elements;
+  };
 
   return (
     <div
@@ -247,30 +377,17 @@ export function MessageBubble({ message, onEdit, onUndo, onResend }: MessageBubb
           <div className="message-content user-plain">
             {message.content}
           </div>
+        ) : streamResult ? (
+          /* Assistant message with tool_call segments: render inline. */
+          <div className="message-content markdown-body">
+            {renderSegments(streamResult.segments, streamResult.hasPendingToolCall)}
+          </div>
         ) : (
-          /* Assistant / system messages render as markdown */
+          /* Assistant / system messages without tool calls: plain markdown. */
           <div className="message-content markdown-body">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
-              components={{
-                code({ className, children, ...props }) {
-                  const match = /language-(\w+)/.exec(className || '');
-                  const codeText = String(children).replace(/\n$/, '');
-
-                  if (match) {
-                    return (
-                      <CodeBlock language={match[1]}>{codeText}</CodeBlock>
-                    );
-                  }
-
-                  // Inline code
-                  return (
-                    <code className="inline-code" {...props}>
-                      {children}
-                    </code>
-                  );
-                },
-              }}
+              components={markdownComponents}
             >
               {message.content}
             </ReactMarkdown>

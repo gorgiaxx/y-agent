@@ -30,6 +30,9 @@ pub struct MessageInfo {
     pub content: String,
     pub timestamp: String,
     pub tool_calls: Vec<ToolCallBrief>,
+    /// Arbitrary metadata (model info, tool results, usage, etc.).
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub metadata: serde_json::Value,
 }
 
 /// Brief tool call info for display.
@@ -130,6 +133,7 @@ pub async fn session_get_messages(
                     arguments: tc.arguments.to_string(),
                 })
                 .collect(),
+            metadata: m.metadata.clone(),
         })
         .collect())
 }

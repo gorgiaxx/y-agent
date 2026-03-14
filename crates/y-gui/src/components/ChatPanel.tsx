@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { Sparkles, AlertTriangle } from 'lucide-react';
 import type { Message } from '../types';
+import type { ToolResultRecord } from '../hooks/useChat';
 import { MessageBubble } from './MessageBubble';
 import { RestoreDivider } from './RestoreDivider';
 import './ChatPanel.css';
@@ -23,9 +24,10 @@ interface ChatPanelProps {
   onResendMessage?: (content: string, messageId: string) => void;
   tombstonedSegments?: TombstonedSegment[];
   onRestoreBranch?: (checkpointId: string) => void;
+  toolResults?: ToolResultRecord[];
 }
 
-export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessage, onUndoMessage, onResendMessage, tombstonedSegments, onRestoreBranch }: ChatPanelProps) {
+export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessage, onUndoMessage, onResendMessage, tombstonedSegments, onRestoreBranch, toolResults }: ChatPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new messages.
@@ -86,7 +88,14 @@ export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessa
                 );
               }
               elements.push(
-                <MessageBubble key={msg.id} message={msg} onEdit={(content) => onEditMessage?.(content, msg.id)} onUndo={onUndoMessage} onResend={(content) => onResendMessage?.(content, msg.id)} />
+                <MessageBubble
+                  key={msg.id}
+                  message={msg}
+                  onEdit={(content) => onEditMessage?.(content, msg.id)}
+                  onUndo={onUndoMessage}
+                  onResend={(content) => onResendMessage?.(content, msg.id)}
+                  toolResults={msg.id.startsWith('streaming-') ? toolResults : undefined}
+                />
               );
             });
             // Check for a trailing divider (after all messages).
