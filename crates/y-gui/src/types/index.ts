@@ -126,7 +126,13 @@ export interface StreamDeltaEvent {
   content: string;
 }
 
-export type TurnEvent = LlmResponseEvent | ToolResultEvent | LoopLimitEvent | UserMessageEvent | StreamDeltaEvent;
+export interface StreamReasoningDeltaEvent {
+  type: 'stream_reasoning_delta';
+  /** Incremental reasoning/thinking text from the LLM. */
+  content: string;
+}
+
+export type TurnEvent = LlmResponseEvent | ToolResultEvent | LoopLimitEvent | UserMessageEvent | StreamDeltaEvent | StreamReasoningDeltaEvent;
 
 export interface ProgressPayload {
   run_id: string;
@@ -296,5 +302,23 @@ export interface SkillDetail extends SkillInfo {
   author: string | null;
   classification_type: string | null;
   dir_path: string;
+}
+
+/** File/directory entry within a skill directory (from `skill_get_files`). */
+export interface SkillFileEntry {
+  path: string;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  children?: SkillFileEntry[];
+}
+
+/** Result of a skill import operation (from `skill_import`). */
+export interface SkillImportResult {
+  decision: 'accepted' | 'rejected' | 'partial_accept';
+  classification: string;
+  skill_id: string | null;
+  error: string | null;
+  security_issues: string[];
 }
 

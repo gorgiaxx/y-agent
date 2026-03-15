@@ -12,7 +12,8 @@ use tokio::sync::Semaphore;
 use tracing::instrument;
 
 use y_core::runtime::{
-    ExecutionRequest, ExecutionResult, RuntimeAdapter, RuntimeBackend, RuntimeError, RuntimeHealth,
+    CommandRunner, ExecutionRequest, ExecutionResult, ProcessCapability, RuntimeAdapter,
+    RuntimeBackend, RuntimeCapability, RuntimeError, RuntimeHealth,
 };
 
 use crate::audit::AuditTrail;
@@ -22,6 +23,7 @@ use crate::docker::DockerRuntime;
 use crate::native::NativeRuntime;
 use crate::resource_monitor::ResourceMonitor;
 use crate::security_policy::SecurityPolicy;
+use crate::ssh::SshRuntime;
 
 /// Default maximum concurrent executions.
 const DEFAULT_MAX_CONCURRENT: usize = 10;
@@ -42,6 +44,7 @@ pub struct RuntimeManager {
     config: RuntimeConfig,
     native: NativeRuntime,
     docker: DockerRuntime,
+    ssh: SshRuntime,
     #[allow(dead_code)]
     audit_trail: Option<Arc<AuditTrail>>,
     /// Global concurrency limiter.
@@ -57,11 +60,13 @@ impl RuntimeManager {
     pub fn new(config: RuntimeConfig, audit_trail: Option<Arc<AuditTrail>>) -> Self {
         let native = NativeRuntime::new(config.clone(), audit_trail.clone());
         let docker = DockerRuntime::with_audit(config.clone(), audit_trail.clone());
+        let ssh = SshRuntime::new(config.ssh.clone());
         let security_policy = SecurityPolicy::from_config(&config);
         Self {
             config,
             native,
             docker,
+            ssh,
             audit_trail,
             concurrency_semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
             resource_monitor: Arc::new(ResourceMonitor::with_defaults()),
@@ -126,8 +131,8 @@ impl RuntimeManager {
     fn get_adapter(&self, backend: &RuntimeBackend) -> &dyn RuntimeAdapter {
         match backend {
             RuntimeBackend::Docker => &self.docker,
-            // SSH not implemented yet; falls back to native.
-            RuntimeBackend::Native | RuntimeBackend::Ssh => &self.native,
+            RuntimeBackend::Ssh => &self.ssh,
+            RuntimeBackend::Native => &self.native,
         }
     }
 
@@ -248,7 +253,59 @@ impl RuntimeAdapter for RuntimeManager {
     async fn cleanup(&self) -> Result<(), RuntimeError> {
         self.native.cleanup().await?;
         self.docker.cleanup().await?;
+        self.ssh.cleanup().await?;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CommandRunner — bridge for Tool layer injection
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl CommandRunner for RuntimeManager {
+    async fn run_command(
+        &self,
+        command: &str,
+        working_dir: Option<&str>,
+        timeout: Duration,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        use std::collections::HashMap;
+
+        // When the default backend is Docker, use the configured default image
+        // so that callers don't need to specify it per-request.
+        let image = if self.config.default_backend == RuntimeBackend::Docker {
+            self.config.docker.default_image.clone()
+        } else {
+            None
+        };
+
+        let request = ExecutionRequest {
+            command: "sh".into(),
+            args: vec!["-c".into(), command.into()],
+            working_dir: working_dir.map(String::from),
+            env: HashMap::new(),
+            stdin: None,
+            capabilities: RuntimeCapability {
+                process: ProcessCapability {
+                    shell: true,
+                    ..Default::default()
+                },
+                container: y_core::runtime::ContainerCapability {
+                    resources: y_core::runtime::ResourceLimits {
+                        timeout: Some(timeout),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            image,
+        };
+
+        // Delegate to RuntimeAdapter::execute which already handles
+        // capability checks, security policy, concurrency, and backend selection.
+        self.execute(request).await
     }
 }
 

@@ -37,9 +37,9 @@ AutoSkill 运行两条并行管线：
 
 ```yaml
 ---
-id: "release-safety-protocol"
-name: "Release Safety Protocol"
-description: "Standard pre-release safety checklist"
+id: "release-security-protocol"
+name: "Release Security Protocol"
+description: "Standard pre-release security checklist"
 version: "0.1.1"
 tags: ["devops", "release"]
 triggers: ["release", "deploy", "rollout"]
@@ -48,9 +48,9 @@ examples:
     output: "1. Run regression..."
 ---
 
-# Release Safety Protocol
+# Release Security Protocol
 
-Standard pre-release safety checklist
+Standard pre-release security checklist
 
 ## Prompt
 

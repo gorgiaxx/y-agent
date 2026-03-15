@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
+use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
 use y_context::{
     BuildSystemPromptProvider, ContextPipeline, InjectContextStatus, InjectTools,
     SystemPromptConfig,
@@ -19,7 +20,6 @@ use y_core::types::ToolName;
 use y_diagnostics::{DiagnosticsSubscriber, TraceStore};
 use y_guardrails::GuardrailManager;
 use y_hooks::HookSystem;
-use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
 use y_prompt::{builtin_section_store_with_overrides, default_template, PromptContext};
 use y_provider::providers::anthropic::AnthropicProvider;
 use y_provider::providers::azure::AzureOpenAiProvider;
@@ -30,11 +30,14 @@ use y_provider::ProviderPoolImpl;
 use y_provider::SingleTurnRunner;
 use y_runtime::RuntimeManager;
 use y_session::{ChatCheckpointManager, SessionManager};
-use y_storage::{SqliteChatCheckpointStore, SqliteChatMessageStore, SqliteSessionStore, SqliteWorkflowStore};
-use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 use y_skills::SkillRegistryImpl;
+use y_storage::{
+    SqliteChatCheckpointStore, SqliteChatMessageStore, SqliteSessionStore, SqliteWorkflowStore,
+};
+use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
 use crate::config::ServiceConfig;
+use crate::diagnostics::DiagnosticsAgentDelegator;
 use crate::skill_ingestion::SkillIngestionService;
 
 /// Embedded default taxonomy TOML (compiled into binary).
@@ -64,12 +67,12 @@ pub struct ServiceContainer {
     pub tool_registry: ToolRegistryImpl,
 
     /// Runtime manager for tool execution environments.
-    pub runtime_manager: RuntimeManager,
+    pub runtime_manager: Arc<RuntimeManager>,
 
     /// Context pipeline for prompt assembly.
     pub context_pipeline: ContextPipeline,
 
-    /// Guardrail manager for safety middleware.
+    /// Guardrail manager for security middleware.
     pub guardrail_manager: GuardrailManager,
 
     /// Agent registry for definition management.
@@ -134,18 +137,24 @@ impl ServiceContainer {
 
         // 3. Provider pool.
         let providers = build_providers_from_config(&config.providers);
-        let provider_pool =
-            Arc::new(ProviderPoolImpl::from_providers(providers, &config.providers));
+        let provider_pool = Arc::new(ProviderPoolImpl::from_providers(
+            providers,
+            &config.providers,
+        ));
 
-        // 4. Transcript store.
+        // 4. Transcript stores.
         let transcript_store: Arc<dyn y_core::session::TranscriptStore> = Arc::new(
             y_storage::JsonlTranscriptStore::new(&config.storage.transcript_dir),
+        );
+        let display_transcript_store: Arc<dyn y_core::session::DisplayTranscriptStore> = Arc::new(
+            y_storage::JsonlDisplayTranscriptStore::new(&config.storage.transcript_dir),
         );
 
         // 5. Session manager.
         let session_manager = SessionManager::new(
             Arc::clone(&session_store),
             Arc::clone(&transcript_store),
+            Arc::clone(&display_transcript_store),
             config.session.clone(),
         );
 
@@ -153,6 +162,7 @@ impl ServiceContainer {
         let chat_checkpoint_store = Arc::new(SqliteChatCheckpointStore::new(pool.clone()));
         let chat_checkpoint_manager = ChatCheckpointManager::new(
             Arc::clone(&transcript_store),
+            Arc::clone(&display_transcript_store),
             chat_checkpoint_store,
             Arc::clone(&session_store),
         );
@@ -168,9 +178,10 @@ impl ServiceContainer {
         #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
         {
             use y_core::provider::ProviderPool as _;
-            let llm_runner = Arc::new(y_provider::ProviderPoolHookLlmRunner::new(
-                Arc::new(provider_pool.clone()) as Arc<dyn y_core::provider::ProviderPool>,
-            ));
+            let llm_runner = Arc::new(y_provider::ProviderPoolHookLlmRunner::new(Arc::new(
+                provider_pool.clone(),
+            )
+                as Arc<dyn y_core::provider::ProviderPool>));
             hook_system.set_llm_runner(llm_runner);
             info!("Prompt hook LLM runner injected");
         }
@@ -184,20 +195,23 @@ impl ServiceContainer {
 
         // 8b. Tool taxonomy (loaded from embedded TOML).
         let tool_taxonomy = Arc::new(
-            ToolTaxonomy::from_toml(DEFAULT_TAXONOMY_TOML)
-                .unwrap_or_else(|e| {
-                    warn!(error = %e, "failed to load tool taxonomy; using empty");
-                    ToolTaxonomy::from_toml(r#"
+            ToolTaxonomy::from_toml(DEFAULT_TAXONOMY_TOML).unwrap_or_else(|e| {
+                warn!(error = %e, "failed to load tool taxonomy; using empty");
+                ToolTaxonomy::from_toml(
+                    r#"
 [categories.meta]
 label = "Meta"
 description = "Tool management"
 tools = ["tool_search"]
-"#).expect("fallback taxonomy")
-                }),
+"#,
+                )
+                .expect("fallback taxonomy")
+            }),
         );
 
         // 8c. Tool activation set.
-        let tool_activation_set = Arc::new(RwLock::new(ToolActivationSet::new(ACTIVATION_SET_CEILING)));
+        let tool_activation_set =
+            Arc::new(RwLock::new(ToolActivationSet::new(ACTIVATION_SET_CEILING)));
         // Pre-activate tool_search (always-active).
         {
             let tool_search_def = tool_registry
@@ -211,7 +225,7 @@ tools = ["tool_search"]
         }
 
         // 9. Runtime manager.
-        let runtime_manager = RuntimeManager::new(config.runtime.clone(), None);
+        let runtime_manager = Arc::new(RuntimeManager::new(config.runtime.clone(), None));
 
         // 10. Context pipeline.
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
@@ -225,8 +239,7 @@ tools = ["tool_search"]
         context_pipeline.register(Box::new(InjectContextStatus::new(4096)));
 
         // 10b. Register InjectTools (PromptBased mode) with taxonomy + dynamic schemas.
-        let dynamic_tool_schemas: Arc<RwLock<Vec<String>>> =
-            Arc::new(RwLock::new(Vec::new()));
+        let dynamic_tool_schemas: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(Vec::new()));
         context_pipeline.register(Box::new(InjectTools::with_taxonomy_and_dynamic_schemas(
             tool_taxonomy.root_summary(),
             Arc::clone(&dynamic_tool_schemas),
@@ -237,7 +250,7 @@ tools = ["tool_search"]
         let mut agent_pool = AgentPool::new(MultiAgentConfig::default());
 
         let runner = Arc::new(SingleTurnRunner::new(
-            Arc::clone(&provider_pool) as Arc<dyn y_core::provider::ProviderPool>,
+            Arc::clone(&provider_pool) as Arc<dyn y_core::provider::ProviderPool>
         ));
         agent_pool.set_runner(runner);
 
@@ -249,7 +262,7 @@ tools = ["tool_search"]
         // Create a second pool with the same config and runner for service-level use.
         let mut agent_pool_for_services = AgentPool::new(MultiAgentConfig::default());
         let runner2 = Arc::new(SingleTurnRunner::new(
-            Arc::clone(&provider_pool) as Arc<dyn y_core::provider::ProviderPool>,
+            Arc::clone(&provider_pool) as Arc<dyn y_core::provider::ProviderPool>
         ));
         agent_pool_for_services.set_runner(runner2);
         let agent_pool_for_services = Mutex::new(agent_pool_for_services);
@@ -262,6 +275,12 @@ tools = ["tool_search"]
         let sqlite_trace_store = y_diagnostics::SqliteTraceStore::new(pool.clone());
         let trace_store_dyn: Arc<dyn TraceStore> = Arc::new(sqlite_trace_store);
         let diagnostics = Arc::new(DiagnosticsSubscriber::new(trace_store_dyn));
+
+        // 13b. Wrap the agent delegator with diagnostics recording so subagent
+        // LLM calls (title-generator, skill-ingestion, etc.) appear in the
+        // DIAGNOSTICS panel.
+        let agent_delegator: Arc<dyn AgentDelegator> =
+            Arc::new(DiagnosticsAgentDelegator::new(agent_delegator, Arc::clone(&diagnostics)));
 
         Ok(Self {
             provider_pool: RwLock::new(provider_pool),
@@ -318,10 +337,7 @@ tools = ["tool_search"]
         &self,
         registry: Arc<RwLock<SkillRegistryImpl>>,
     ) -> SkillIngestionService {
-        SkillIngestionService::new(
-            Arc::clone(&self.agent_delegator),
-            registry,
-        )
+        SkillIngestionService::new(Arc::clone(&self.agent_delegator), registry)
     }
 }
 
@@ -336,7 +352,9 @@ pub fn build_providers_from_config(
     let mut providers: Vec<Arc<dyn LlmProvider>> = Vec::new();
 
     for config in &pool_config.providers {
-        let api_key = if let Some(key) = config.resolve_api_key() { key } else {
+        let api_key = if let Some(key) = config.resolve_api_key() {
+            key
+        } else {
             let env_var = config.api_key_env.as_deref().unwrap_or("(not configured)");
             warn!(
                 provider_id = %config.id,
@@ -355,42 +373,80 @@ pub fn build_providers_from_config(
                 // use the same OpenAiProvider implementation; the distinction
                 // is purely for user clarity in the configuration UI.
                 providers.push(Arc::new(OpenAiProvider::new(
-                    &config.id, &config.model, api_key, config.base_url.clone(),
-                    proxy_url, config.tags.clone(), config.max_concurrency, config.context_window,
+                    &config.id,
+                    &config.model,
+                    api_key,
+                    config.base_url.clone(),
+                    proxy_url,
+                    config.tags.clone(),
+                    config.max_concurrency,
+                    config.context_window,
                 )));
             }
             "anthropic" => {
                 providers.push(Arc::new(AnthropicProvider::new(
-                    &config.id, &config.model, api_key, config.base_url.clone(),
-                    proxy_url, config.tags.clone(), config.max_concurrency, config.context_window,
+                    &config.id,
+                    &config.model,
+                    api_key,
+                    config.base_url.clone(),
+                    proxy_url,
+                    config.tags.clone(),
+                    config.max_concurrency,
+                    config.context_window,
                 )));
             }
             "gemini" => {
                 providers.push(Arc::new(GeminiProvider::new(
-                    &config.id, &config.model, api_key, config.base_url.clone(),
-                    proxy_url, config.tags.clone(), config.max_concurrency, config.context_window,
+                    &config.id,
+                    &config.model,
+                    api_key,
+                    config.base_url.clone(),
+                    proxy_url,
+                    config.tags.clone(),
+                    config.max_concurrency,
+                    config.context_window,
                 )));
             }
             "ollama" => {
                 providers.push(Arc::new(OllamaProvider::new(
-                    &config.id, &config.model, api_key, config.base_url.clone(),
-                    proxy_url, config.tags.clone(), config.max_concurrency, config.context_window,
+                    &config.id,
+                    &config.model,
+                    api_key,
+                    config.base_url.clone(),
+                    proxy_url,
+                    config.tags.clone(),
+                    config.max_concurrency,
+                    config.context_window,
                 )));
             }
             "azure" => {
                 providers.push(Arc::new(AzureOpenAiProvider::new(
-                    &config.id, &config.model, api_key, config.base_url.clone(),
-                    proxy_url, config.tags.clone(), config.max_concurrency, config.context_window,
+                    &config.id,
+                    &config.model,
+                    api_key,
+                    config.base_url.clone(),
+                    proxy_url,
+                    config.tags.clone(),
+                    config.max_concurrency,
+                    config.context_window,
                 )));
             }
             "deepseek" => {
                 // DeepSeek uses an OpenAI-compatible REST API.  Default
                 // base URL points to the official DeepSeek endpoint.
-                let base_url = config.base_url.clone()
+                let base_url = config
+                    .base_url
+                    .clone()
                     .or_else(|| Some("https://api.deepseek.com/v1".to_string()));
                 providers.push(Arc::new(OpenAiProvider::new(
-                    &config.id, &config.model, api_key, base_url,
-                    proxy_url, config.tags.clone(), config.max_concurrency, config.context_window,
+                    &config.id,
+                    &config.model,
+                    api_key,
+                    base_url,
+                    proxy_url,
+                    config.tags.clone(),
+                    config.max_concurrency,
+                    config.context_window,
                 )));
             }
             other => {
@@ -405,8 +461,6 @@ pub fn build_providers_from_config(
 
     providers
 }
-
-
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -525,7 +579,11 @@ mod tests {
             ..Default::default()
         };
         let providers = build_providers_from_config(&pool_config);
-        assert_eq!(providers.len(), 1, "openai-compat should build exactly one provider");
+        assert_eq!(
+            providers.len(),
+            1,
+            "openai-compat should build exactly one provider"
+        );
 
         std::env::remove_var("Y_AGENT_TEST_COMPAT_KEY");
     }
@@ -554,7 +612,11 @@ mod tests {
             ..Default::default()
         };
         let providers = build_providers_from_config(&pool_config);
-        assert_eq!(providers.len(), 1, "deepseek should build exactly one provider");
+        assert_eq!(
+            providers.len(),
+            1,
+            "deepseek should build exactly one provider"
+        );
 
         std::env::remove_var("Y_AGENT_TEST_DEEPSEEK_KEY");
     }

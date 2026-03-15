@@ -282,6 +282,7 @@ impl LlmProvider for AnthropicProvider {
             id: anthropic_response.id,
             model: anthropic_response.model,
             content,
+            reasoning_content: None,
             tool_calls,
             usage: TokenUsage {
                 input_tokens: anthropic_response.usage.input_tokens,
@@ -361,6 +362,7 @@ impl LlmProvider for AnthropicProvider {
                                     return Some((
                                         Ok(ChatStreamChunk {
                                             delta_content: Some(text),
+                                            delta_reasoning_content: None,
                                             delta_tool_calls: vec![],
                                             usage: None,
                                             finish_reason: None,
@@ -394,6 +396,7 @@ impl LlmProvider for AnthropicProvider {
                                     return Some((
                                         Ok(ChatStreamChunk {
                                             delta_content: None,
+                                            delta_reasoning_content: None,
                                             delta_tool_calls: vec![ToolCallRequest {
                                                 id,
                                                 name,
@@ -424,6 +427,7 @@ impl LlmProvider for AnthropicProvider {
                                 return Some((
                                     Ok(ChatStreamChunk {
                                         delta_content: None,
+                                        delta_reasoning_content: None,
                                         delta_tool_calls: vec![],
                                         usage: usage_info,
                                         finish_reason,

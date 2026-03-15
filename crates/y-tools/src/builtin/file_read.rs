@@ -109,6 +109,7 @@ mod tests {
             name: ToolName::from_string("file_read"),
             arguments: args,
             session_id: SessionId::new(),
+            command_runner: None,
         }
     }
 

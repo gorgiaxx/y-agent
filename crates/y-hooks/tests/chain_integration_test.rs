@@ -6,9 +6,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use y_core::hook::{
-    ChainType, Middleware, MiddlewareContext, MiddlewareError, MiddlewareResult,
-};
+use y_core::hook::{ChainType, Middleware, MiddlewareContext, MiddlewareError, MiddlewareResult};
 use y_hooks::chain::MiddlewareChain;
 
 /// Middleware that appends its name to a JSON array in metadata.
@@ -29,9 +27,15 @@ impl Middleware for RecordingMiddleware {
         }
         Ok(MiddlewareResult::Continue)
     }
-    fn chain_type(&self) -> ChainType { self.chain }
-    fn priority(&self) -> u32 { self.priority }
-    fn name(&self) -> &str { &self.name }
+    fn chain_type(&self) -> ChainType {
+        self.chain
+    }
+    fn priority(&self) -> u32 {
+        self.priority
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 /// Middleware that short-circuits when a condition is met.
@@ -55,9 +59,15 @@ impl Middleware for GuardrailMiddleware {
         }
         Ok(MiddlewareResult::Continue)
     }
-    fn chain_type(&self) -> ChainType { self.chain }
-    fn priority(&self) -> u32 { self.priority }
-    fn name(&self) -> &str { &self.name }
+    fn chain_type(&self) -> ChainType {
+        self.chain
+    }
+    fn priority(&self) -> u32 {
+        self.priority
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 fn recording_mw(name: &str, priority: u32, chain: ChainType) -> Arc<dyn Middleware> {
@@ -72,10 +82,18 @@ fn recording_mw(name: &str, priority: u32, chain: ChainType) -> Arc<dyn Middlewa
 #[tokio::test]
 async fn test_context_chain_full_pipeline() {
     let mut chain = MiddlewareChain::new(ChainType::Context);
-    chain.register(recording_mw("BuildSystemPrompt", 100, ChainType::Context)).unwrap();
-    chain.register(recording_mw("InjectMemory", 300, ChainType::Context)).unwrap();
-    chain.register(recording_mw("InjectTools", 500, ChainType::Context)).unwrap();
-    chain.register(recording_mw("LoadHistory", 600, ChainType::Context)).unwrap();
+    chain
+        .register(recording_mw("BuildSystemPrompt", 100, ChainType::Context))
+        .unwrap();
+    chain
+        .register(recording_mw("InjectMemory", 300, ChainType::Context))
+        .unwrap();
+    chain
+        .register(recording_mw("InjectTools", 500, ChainType::Context))
+        .unwrap();
+    chain
+        .register(recording_mw("LoadHistory", 600, ChainType::Context))
+        .unwrap();
 
     let mut ctx = MiddlewareContext {
         chain_type: ChainType::Context,
@@ -87,7 +105,15 @@ async fn test_context_chain_full_pipeline() {
     chain.execute(&mut ctx).await.unwrap();
 
     let order: Vec<String> = serde_json::from_value(ctx.metadata).unwrap();
-    assert_eq!(order, vec!["BuildSystemPrompt", "InjectMemory", "InjectTools", "LoadHistory"]);
+    assert_eq!(
+        order,
+        vec![
+            "BuildSystemPrompt",
+            "InjectMemory",
+            "InjectTools",
+            "LoadHistory"
+        ]
+    );
     assert!(!ctx.aborted);
 }
 
@@ -95,7 +121,9 @@ async fn test_context_chain_full_pipeline() {
 #[tokio::test]
 async fn test_tool_chain_with_guardrail() {
     let mut chain = MiddlewareChain::new(ChainType::Tool);
-    chain.register(recording_mw("validation", 100, ChainType::Tool)).unwrap();
+    chain
+        .register(recording_mw("validation", 100, ChainType::Tool))
+        .unwrap();
 
     let guardrail: Arc<dyn Middleware> = Arc::new(GuardrailMiddleware {
         name: "dangerous-tool-guard".to_string(),
@@ -104,9 +132,11 @@ async fn test_tool_chain_with_guardrail() {
         block_tool: "rm_rf".to_string(),
     });
     chain.register(guardrail).unwrap();
-    chain.register(recording_mw("execution", 300, ChainType::Tool)).unwrap();
+    chain
+        .register(recording_mw("execution", 300, ChainType::Tool))
+        .unwrap();
 
-    // Safe tool — goes through.
+    // Secure tool — goes through.
     let mut ctx = MiddlewareContext {
         chain_type: ChainType::Tool,
         payload: serde_json::json!({"tool_name": "search"}),
@@ -130,27 +160,35 @@ async fn test_tool_chain_with_guardrail() {
     chain.execute(&mut ctx).await.unwrap();
     // Should be aborted, execution middleware skipped.
     assert!(ctx.aborted);
-    assert!(ctx.abort_reason.as_ref().unwrap().contains("dangerous-tool-guard"));
+    assert!(ctx
+        .abort_reason
+        .as_ref()
+        .unwrap()
+        .contains("dangerous-tool-guard"));
 }
 
 // T-HOOK-INT-03: Abort propagation.
 #[tokio::test]
 async fn test_chain_abort_propagation() {
     let mut chain = MiddlewareChain::new(ChainType::Tool);
-    chain.register(recording_mw("step-1", 100, ChainType::Tool)).unwrap();
+    chain
+        .register(recording_mw("step-1", 100, ChainType::Tool))
+        .unwrap();
 
     let guardrail: Arc<dyn Middleware> = Arc::new(GuardrailMiddleware {
-        name: "safety-check".to_string(),
+        name: "security-check".to_string(),
         priority: 200,
         chain: ChainType::Tool,
-        block_tool: "unsafe_op".to_string(),
+        block_tool: "insecure_op".to_string(),
     });
     chain.register(guardrail).unwrap();
-    chain.register(recording_mw("step-3", 300, ChainType::Tool)).unwrap();
+    chain
+        .register(recording_mw("step-3", 300, ChainType::Tool))
+        .unwrap();
 
     let mut ctx = MiddlewareContext {
         chain_type: ChainType::Tool,
-        payload: serde_json::json!({"tool_name": "unsafe_op"}),
+        payload: serde_json::json!({"tool_name": "insecure_op"}),
         metadata: serde_json::json!([]),
         aborted: false,
         abort_reason: None,
@@ -158,7 +196,10 @@ async fn test_chain_abort_propagation() {
     chain.execute(&mut ctx).await.unwrap();
 
     assert!(ctx.aborted);
-    assert_eq!(ctx.abort_reason.as_deref(), Some("blocked by guardrail: safety-check"));
+    assert_eq!(
+        ctx.abort_reason.as_deref(),
+        Some("blocked by guardrail: security-check")
+    );
     // step-1 executed (before guardrail), step-3 skipped (after guardrail).
     let order: Vec<String> = serde_json::from_value(ctx.metadata).unwrap();
     assert_eq!(order, vec!["step-1"]);

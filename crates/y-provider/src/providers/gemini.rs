@@ -277,6 +277,7 @@ impl GeminiProvider {
             id: String::new(), // Gemini doesn't return a response ID in the same way.
             model: self.metadata.model.clone(),
             content,
+            reasoning_content: None,
             tool_calls,
             usage,
             finish_reason,
@@ -563,6 +564,7 @@ fn map_gemini_stream_chunk(resp: &GeminiResponse, _model: &str) -> ChatStreamChu
 
     ChatStreamChunk {
         delta_content,
+        delta_reasoning_content: None,
         delta_tool_calls,
         usage,
         finish_reason,

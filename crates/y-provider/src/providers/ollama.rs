@@ -255,6 +255,7 @@ impl LlmProvider for OllamaProvider {
             id: String::new(),
             model: ollama_response.model,
             content,
+            reasoning_content: None,
             tool_calls,
             usage,
             finish_reason,
@@ -327,6 +328,7 @@ impl LlmProvider for OllamaProvider {
                                     return Some((
                                         Ok(ChatStreamChunk {
                                             delta_content: None,
+                                            delta_reasoning_content: None,
                                             delta_tool_calls: vec![],
                                             usage,
                                             finish_reason: Some(FinishReason::Stop),
@@ -344,6 +346,7 @@ impl LlmProvider for OllamaProvider {
                                 return Some((
                                     Ok(ChatStreamChunk {
                                         delta_content: content,
+                                        delta_reasoning_content: None,
                                         delta_tool_calls: vec![],
                                         usage: None,
                                         finish_reason: None,

@@ -312,3 +312,29 @@ pub trait RuntimeAdapter: Send + Sync {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// CommandRunner — bridge between Tool and Runtime layers
+// ---------------------------------------------------------------------------
+
+/// Minimal trait for executing shell commands.
+///
+/// This is the bridge between the Tool layer (`y-tools`) and the Runtime
+/// layer (`y-runtime`). Tools receive a `dyn CommandRunner`, removing their
+/// direct dependency on any specific runtime backend.
+///
+/// `RuntimeManager` implements this trait, routing commands through the
+/// configured backend (Native, Docker, or SSH) based on `RuntimeConfig`.
+#[async_trait]
+pub trait CommandRunner: Send + Sync {
+    /// Execute a shell command string and return the result.
+    ///
+    /// The implementation decides *where* the command runs (local, container,
+    /// remote host) based on the runtime configuration.
+    async fn run_command(
+        &self,
+        command: &str,
+        working_dir: Option<&str>,
+        timeout: Duration,
+    ) -> Result<ExecutionResult, RuntimeError>;
+}

@@ -129,6 +129,7 @@ mod tests {
             name: ToolName::from_string("tool_search"),
             arguments: args,
             session_id: SessionId::new(),
+            command_runner: None,
         }
     }
 

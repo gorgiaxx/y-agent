@@ -30,7 +30,7 @@ tools = []
 skills = []
 knowledge_bases = []
 
-[skill.safety]
+[skill.security]
 allows_external_calls = false
 allows_file_operations = false
 allows_code_execution = false

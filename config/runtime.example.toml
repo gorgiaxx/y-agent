@@ -41,3 +41,39 @@ allowed_domains = []
 
 # Whitelisted filesystem mount paths.
 allowed_mounts = []
+
+# --- SSH Configuration -------------------------------------------------------
+# Used when default_backend = "ssh".
+
+[ssh]
+host = "localhost"
+port = 22
+user = "root"
+auth_method = "public_key"        # "password" | "public_key"
+# password = ""                   # used when auth_method = "password"
+# private_key_path = "~/.ssh/id_rsa"
+# passphrase = ""                 # passphrase for encrypted private keys
+# known_hosts_path = "~/.ssh/known_hosts"
+
+# --- Docker Configuration ----------------------------------------------------
+# Docker-specific execution defaults.
+
+[docker]
+network_mode = "none"             # "none" | "bridge" | "host" | custom
+privileged = false
+readonly_rootfs = true
+# user = "1000:1000"              # container user
+cap_drop = ["ALL"]
+# cap_add = []                    # Linux capabilities to add
+# dns = []                        # custom DNS servers
+# extra_hosts = []                # extra /etc/hosts entries
+
+# Default environment variables injected into every container.
+# [docker.default_env]
+# RUST_LOG = "info"
+
+# Default volume mappings.
+# [[docker.default_volumes]]
+# host_path = "/data"
+# container_path = "/mnt/data"
+# mode = "ro"                     # "ro" | "rw"

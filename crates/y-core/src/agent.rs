@@ -45,6 +45,12 @@ pub struct DelegationOutput {
     pub text: String,
     /// Approximate tokens consumed during the delegation.
     pub tokens_used: u32,
+    /// Input tokens consumed (for diagnostics breakdown).
+    pub input_tokens: u64,
+    /// Output tokens generated (for diagnostics breakdown).
+    pub output_tokens: u64,
+    /// Model that was actually used.
+    pub model_used: String,
     /// Wall-clock duration of the delegation in milliseconds.
     pub duration_ms: u64,
 }
@@ -153,8 +159,12 @@ pub struct AgentRunConfig {
 pub struct AgentRunOutput {
     /// Text output produced by the agent.
     pub text: String,
-    /// Tokens consumed during execution.
+    /// Tokens consumed during execution (input + output combined).
     pub tokens_used: u32,
+    /// Input tokens consumed (for diagnostics breakdown).
+    pub input_tokens: u64,
+    /// Output tokens generated (for diagnostics breakdown).
+    pub output_tokens: u64,
     /// Model that was actually used.
     pub model_used: String,
     /// Wall-clock duration in milliseconds.
@@ -218,11 +228,17 @@ mod tests {
         let output = DelegationOutput {
             text: "summarized content".to_string(),
             tokens_used: 150,
+            input_tokens: 100,
+            output_tokens: 50,
+            model_used: "gpt-4o".to_string(),
             duration_ms: 1200,
         };
 
         assert_eq!(output.text, "summarized content");
         assert_eq!(output.tokens_used, 150);
+        assert_eq!(output.input_tokens, 100);
+        assert_eq!(output.output_tokens, 50);
+        assert_eq!(output.model_used, "gpt-4o");
         assert_eq!(output.duration_ms, 1200);
     }
 
@@ -263,12 +279,18 @@ mod tests {
         let output = DelegationOutput {
             text: "test output".to_string(),
             tokens_used: 42,
+            input_tokens: 30,
+            output_tokens: 12,
+            model_used: "gpt-4o".to_string(),
             duration_ms: 500,
         };
         let json = serde_json::to_string(&output).unwrap();
         let parsed: DelegationOutput = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.text, output.text);
         assert_eq!(parsed.tokens_used, output.tokens_used);
+        assert_eq!(parsed.input_tokens, output.input_tokens);
+        assert_eq!(parsed.output_tokens, output.output_tokens);
+        assert_eq!(parsed.model_used, output.model_used);
         assert_eq!(parsed.duration_ms, output.duration_ms);
     }
 
@@ -302,6 +324,8 @@ mod tests {
         let output = AgentRunOutput {
             text: "My Title".to_string(),
             tokens_used: 15,
+            input_tokens: 10,
+            output_tokens: 5,
             model_used: "gpt-4o-mini".to_string(),
             duration_ms: 200,
         };

@@ -1,7 +1,7 @@
 [skill]
 name = "code-review-rust"
 version = "1.0.0"
-description = "Review Rust code for correctness, safety, idiomatic patterns, and performance"
+description = "Review Rust code for correctness, security, idiomatic patterns, and performance"
 author = "y-agent-builtin"
 source_format = "markdown"
 created = "2026-03-13T12:00:00Z"
@@ -22,7 +22,7 @@ token_count = 900
 [skill.tree]
 sub_documents = [
     { path = "details/error-handling-patterns.md", title = "Rust error handling best practices", token_count = 800 },
-    { path = "details/unsafe-review-checklist.md", title = "Checklist for reviewing unsafe blocks", token_count = 500 },
+    { path = "details/insecure-review-checklist.md", title = "Checklist for reviewing insecure blocks", token_count = 500 },
 ]
 
 [skill.references]
@@ -30,7 +30,7 @@ tools = []
 skills = []
 knowledge_bases = []
 
-[skill.safety]
+[skill.security]
 allows_external_calls = false
 allows_file_operations = false
 allows_code_execution = false

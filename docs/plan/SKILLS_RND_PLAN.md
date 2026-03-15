@@ -44,7 +44,7 @@
 
 ### 2.1 Problem with Scattered LLM Calls
 
-The original approach was to add `LlmProvider` calls individually to `analyzer.rs`, `decomposer.rs`, `classifier.rs`, `safety.rs` — each module making its own independent LLM call. Problems:
+The original approach was to add `LlmProvider` calls individually to `analyzer.rs`, `decomposer.rs`, `classifier.rs`, `security.rs` — each module making its own independent LLM call. Problems:
 
 - 4+ independent LLM calls per ingestion, each needing its own prompt engineering
 - No shared context between analysis, classification, decomposition, and conversion
@@ -61,7 +61,7 @@ CLI: y skill import ./path/to/skill.md
         │
         └─► skill-ingestion agent (TOML-defined, with preset prompt + tools)
               ├── read_file(path)         → reads source content
-              ├── analyze_content()       → analyzes purpose, capabilities, safety
+              ├── analyze_content()       → analyzes purpose, capabilities, security
               ├── query_registry()        → checks for duplicates/overlaps
               ├── decompose_and_convert() → transforms to proprietary format
               └── register_skill()        → writes to SkillRegistry
@@ -71,7 +71,7 @@ CLI: y skill import ./path/to/skill.md
 - **Context coherent**: the agent reads the file once and does all analysis in one context window
 - **Uses existing infra**: `AgentDelegator` + `AgentPool` + `AgentRunner` — no new abstractions
 - **Configurable**: system prompt defines transformation rules, tools define what it can do
-- **Composable**: the agent can call other agents if needed (e.g., a safety-audit agent)
+- **Composable**: the agent can call other agents if needed (e.g., a security-audit agent)
 
 ### 2.3 Agent-to-Agent Delegation: Current Framework State
 
@@ -118,7 +118,7 @@ Agent TOML config with:
 - System prompt containing:
   - Proprietary format specification (root.md + sub-documents + skill.toml schema)
   - Transformation rules from `skills-knowledge-design.md` §Transformation Engine
-  - Safety screening rules (prompt injection, privilege escalation detection)
+  - Security screening rules (prompt injection, privilege escalation detection)
   - Token budget constraints (root < 2000 tokens)
   - Classification taxonomy (`llm_reasoning` / `api_call` / `tool_wrapper` / `agent_behavior` / `hybrid`)
   - Output schema (structured JSON for `SkillManifest` + decomposed documents)
@@ -146,14 +146,14 @@ Wire the agent delegation into a service layer that handles the full import work
 2. Run deterministic pre-checks (format detection, size limits)
 3. Delegate to `skill-ingestion` agent via `AgentDelegator`:
    - Input: `{ source_content, source_format, existing_skills: [...], existing_tools: [...] }`
-   - Output: structured JSON with `{ classification, safety_verdict, manifest, root_content, sub_documents[], extracted_tools[] }`
+   - Output: structured JSON with `{ classification, security_verdict, manifest, root_content, sub_documents[], extracted_tools[] }`
 4. Validate agent output (schema check, token budget check)
 5. Register in `SkillRegistry` via existing `register()` method
 6. Track lineage via existing `LineageRecord`
 
 The service uses the existing deterministic modules as **pre/post validators**:
 - `FormatDetector` — pre-check (deterministic)
-- `SafetyScreener` — post-check (defense in depth: agent does first pass, deterministic rules verify)
+- `SecurityScreener` — post-check (defense in depth: agent does first pass, deterministic rules verify)
 - `SkillValidator` — post-check (format/schema/token/uniqueness)
 
 ```rust
@@ -162,7 +162,7 @@ pub struct SkillIngestionService {
     registry: Arc<dyn SkillRegistry>,
     // Deterministic validators (existing code)
     format_detector: FormatDetector,
-    safety_screener: SafetyScreener,
+    security_screener: SecurityScreener,
     skill_validator: SkillValidator,
 }
 
@@ -171,7 +171,7 @@ impl SkillIngestionService {
         // 1. Read + format detect (deterministic)
         // 2. Delegate to skill-ingestion agent
         // 3. Parse structured output
-        // 4. Safety post-check (deterministic)
+        // 4. Security post-check (deterministic)
         // 5. Validate (deterministic)
         // 6. Register
     }
@@ -317,7 +317,7 @@ cargo build --workspace
 | A3 | `cargo run -p y-cli -- skill list` | CLI outputs table |
 | B1 | `cargo test -p y-skills -- usage_audit` | Audit hook tests pass |
 
-### Regression Safety
+### Regression Security
 
 - 117 existing tests must pass at every phase
 - No modification to existing public APIs
@@ -328,7 +328,7 @@ cargo build --workspace
 
 | Risk | Mitigation |
 |------|------------|
-| LLM structured output unreliable | Deterministic post-validators (safety, schema, token budget) catch bad output |
+| LLM structured output unreliable | Deterministic post-validators (security, schema, token budget) catch bad output |
 | Single-turn agent insufficient for complex skills | Upgrade to multi-turn runner later; single-turn handles 90% of cases |
 | Agent prompt too long for context | Modular prompt: base rules + format spec loaded from skill.toml template |
 

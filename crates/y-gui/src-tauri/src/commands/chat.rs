@@ -77,6 +77,13 @@ pub struct TitleUpdatedPayload {
     pub title: String,
 }
 
+/// Payload emitted on `diagnostics:subagent_completed` so the frontend
+/// can refresh subagent history in the Global diagnostics view.
+#[derive(Debug, Serialize, Clone)]
+pub struct SubagentCompletedPayload {
+    pub agent_name: String,
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -116,6 +123,21 @@ pub async fn chat_send(
     let sid = prepared.session_id.clone();
     let result_sid = sid.0.clone();
     let result_run_id = run_id.clone();
+
+    // Resolve workspace path for this session and update prompt context.
+    {
+        let workspace_path = super::workspace::resolve_workspace_path(
+            &state.config_dir,
+            &sid.0,
+        );
+        tracing::info!(
+            session_id = %sid.0,
+            workspace_path = ?workspace_path,
+            "chat_send: resolved workspace path for session"
+        );
+        let mut ctx = state.container.prompt_context.write().await;
+        ctx.working_directory = workspace_path;
+    }
 
     // Spawn async LLM turn -- results streamed via events.
     let container = state.container.clone();
@@ -242,6 +264,14 @@ pub async fn chat_send(
                                     tracing::warn!(error = %e, "title generation failed");
                                 }
                             }
+                            // Notify frontend that a subagent call finished so the
+                            // Global diagnostics view can refresh.
+                            let _ = app.emit(
+                                "diagnostics:subagent_completed",
+                                SubagentCompletedPayload {
+                                    agent_name: "title-generator".to_string(),
+                                },
+                            );
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -455,7 +485,15 @@ pub async fn chat_resend(
 
     // 2. Partial truncation: keep user message (message_count_before + 1),
     //    remove assistant reply and any tool messages after it.
+    //    Truncate both display and context stores.
     let keep_count = checkpoint.message_count_before as usize + 1;
+    state
+        .container
+        .session_manager
+        .display_transcript_store()
+        .truncate(&sid, keep_count)
+        .await
+        .map_err(|e| format!("{e}"))?;
     state
         .container
         .session_manager
@@ -473,11 +511,11 @@ pub async fn chat_resend(
         .await
         .map_err(|e| format!("{e}"))?;
 
-    // 4. Read transcript (now ends with the original user message).
+    // 4. Read display transcript (now ends with the original user message).
     let history = state
         .container
         .session_manager
-        .read_transcript(&sid)
+        .read_display_transcript(&sid)
         .await
         .map_err(|e| format!("{e}"))?;
 
@@ -663,11 +701,11 @@ pub async fn chat_find_checkpoint_for_resend(
 ) -> Result<Option<ChatCheckpointInfo>, String> {
     let sid = SessionId(session_id);
 
-    // 1. Read transcript to find the user message's index.
+    // 1. Read display transcript to find the user message's index.
     let messages = state
         .container
         .session_manager
-        .read_transcript(&sid)
+        .read_display_transcript(&sid)
         .await
         .map_err(|e| format!("{e}"))?;
 

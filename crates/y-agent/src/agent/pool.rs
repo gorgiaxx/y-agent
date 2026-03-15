@@ -463,6 +463,9 @@ impl AgentDelegator for AgentPool {
         Ok(DelegationOutput {
             text: output.text,
             tokens_used: output.tokens_used,
+            input_tokens: output.input_tokens,
+            output_tokens: output.output_tokens,
+            model_used: output.model_used,
             duration_ms: output.duration_ms,
         })
     }
@@ -637,6 +640,8 @@ mod tests {
                 Ok(AgentRunOutput {
                     text: format!("agent '{}' responded", config.agent_name),
                     tokens_used: 10,
+                    input_tokens: 8,
+                    output_tokens: 2,
                     model_used: "mock".to_string(),
                     duration_ms: 5,
                 })
@@ -696,6 +701,8 @@ mod tests {
                 Ok(AgentRunOutput {
                     text: format!("processed input: {}", config.input),
                     tokens_used: 15,
+                    input_tokens: 10,
+                    output_tokens: 5,
                     model_used: "mock".to_string(),
                     duration_ms: 10,
                 })

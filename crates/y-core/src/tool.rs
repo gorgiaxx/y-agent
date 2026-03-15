@@ -6,10 +6,12 @@
 //! Tools are lazily loaded via `ToolIndex` + `tool_search` to minimize
 //! context window consumption (60-90% token reduction).
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::RuntimeCapability;
+use crate::runtime::{CommandRunner, RuntimeCapability};
 use crate::types::{SessionId, ToolName};
 
 // ---------------------------------------------------------------------------
@@ -84,7 +86,7 @@ pub struct ToolIndexEntry {
 // ---------------------------------------------------------------------------
 
 /// Input to a tool execution.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ToolInput {
     /// Tool call ID (links back to LLM request).
     pub call_id: String,
@@ -94,6 +96,23 @@ pub struct ToolInput {
     pub arguments: serde_json::Value,
     /// Session context for the execution.
     pub session_id: SessionId,
+    /// Runtime command runner, injected by the executor.
+    /// `None` for tools that don't execute shell commands (file_read, etc.).
+    /// When `Some`, tools like `shell_exec` delegate execution through this
+    /// runner instead of spawning local processes directly.
+    pub command_runner: Option<Arc<dyn CommandRunner>>,
+}
+
+impl std::fmt::Debug for ToolInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolInput")
+            .field("call_id", &self.call_id)
+            .field("name", &self.name)
+            .field("arguments", &self.arguments)
+            .field("session_id", &self.session_id)
+            .field("command_runner", &self.command_runner.as_ref().map(|_| ".."))
+            .finish()
+    }
 }
 
 /// Output from a tool execution.

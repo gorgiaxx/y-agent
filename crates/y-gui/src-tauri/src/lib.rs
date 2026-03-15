@@ -131,6 +131,10 @@ pub fn run() {
             commands::skills::skill_uninstall,
             commands::skills::skill_set_enabled,
             commands::skills::skill_open_folder,
+            commands::skills::skill_import,
+            commands::skills::skill_get_files,
+            commands::skills::skill_read_file,
+            commands::skills::skill_save_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

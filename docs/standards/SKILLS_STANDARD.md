@@ -93,7 +93,7 @@ tools = []                                     # Optional, refs to Tool Registry
 skills = []                                    # Optional, refs to Skill Registry
 knowledge_bases = []                           # Optional, refs to Knowledge System
 
-[skill.safety]
+[skill.security]
 allows_external_calls = false                  # Required, default: false
 allows_file_operations = false                 # Required, default: false
 allows_code_execution = false                  # Required, default: false
@@ -158,7 +158,7 @@ Each stage is deterministic unless marked `(LLM)`:
 | Format Detection | `FormatDetector` | < 10ms | `skill_ingestion` |
 | Content Analysis | `ContentAnalyzer` (LLM) | < 10s | `skill_ingestion` |
 | Classification | `SkillClassifier` | < 50ms | `skill_ingestion` |
-| Safety Screening | `SafetyScreener` | < 50ms | `skill_safety_screening` |
+| Security Screening | `SecurityScreener` | < 50ms | `skill_security_screening` |
 | Filter Gate | `FilterGate` | < 1ms | `skill_ingestion` |
 | Decomposition | `DocumentDecomposer` (LLM) | < 15s | `skill_transformation` |
 | Tool Separation | `ToolSeparator` | < 100ms | `skill_transformation` |
@@ -167,19 +167,19 @@ Each stage is deterministic unless marked `(LLM)`:
 
 **Total pipeline target**: < 60 seconds per skill.
 
-### 4.3 Safety Screening Rules
+### 4.3 Security Screening Rules
 
-The safety screener blocks skills containing these patterns:
+The security screener blocks skills containing these patterns:
 
 | Pattern | Tag | Severity |
 |---------|-----|----------|
-| Prompt injection (override system prompts) | `safety:prompt_injection` | Critical |
-| Privilege escalation (unauthorized access) | `safety:privilege_escalation` | Critical |
-| Unconstrained delegation (arbitrary tasks) | `safety:unconstrained_delegation` | High |
-| Data exfiltration (send data to external endpoints) | `safety:data_exfiltration` | Critical |
-| Excessive freedom ("do anything the user asks") | `safety:unconstrained_scope` | Medium |
+| Prompt injection (override system prompts) | `security:prompt_injection` | Critical |
+| Privilege escalation (unauthorized access) | `security:privilege_escalation` | Critical |
+| Unconstrained delegation (arbitrary tasks) | `security:unconstrained_delegation` | High |
+| Data exfiltration (send data to external endpoints) | `security:data_exfiltration` | Critical |
+| Excessive freedom ("do anything the user asks") | `security:unconstrained_scope` | Medium |
 
-Safety screening uses both pattern matching and (when available) LLM-assisted analysis as defense-in-depth.
+Security screening uses both pattern matching and (when available) LLM-assisted analysis as defense-in-depth.
 
 ---
 
@@ -191,7 +191,7 @@ Safety screening uses both pattern matching and (when available) LLM-assisted an
 |------|------------|
 | Format-only | Only proprietary format (valid `skill.toml` + `root.md`) accepted |
 | Root token limit | `root.md` must not exceed `max_root_tokens` (default: 2,000) |
-| Safety constraints | Safety flags must be `false` unless explicitly user-approved |
+| Security constraints | Security flags must be `false` unless explicitly user-approved |
 | Unique name | Name must be unique within the registry |
 | Lineage required | `lineage.toml` must be present |
 | Reference resolution | All `[tool:X]`, `[skill:X]`, `[knowledge:X]` references must resolve |
@@ -331,7 +331,7 @@ No skill modification occurs without explicit approval in `supervised` mode.
 | `skill_core` | Core registry + version control | **on** |
 | `skill_ingestion` | LLM-assisted ingestion pipeline | off |
 | `skill_transformation` | Transformation engine (decomposer, validator, state) | off |
-| `skill_safety_screening` | Safety screener | off |
+| `skill_security_screening` | Security screener | off |
 | `skill_linkage` | Cross-resource linker | off |
 | `skill_lazy_loading` | Lazy sub-document loading | off |
 | `evolution_capture` | Experience capture | off |
@@ -367,7 +367,7 @@ Rules:
 |--------|---------|
 | Ingestion | `skills.ingestion.{submitted,accepted,rejected}`, `skills.ingestion.duration_ms` |
 | Classification | `skills.classification.type` (by type) |
-| Safety | `skills.safety.blocks` (by finding type) |
+| Security | `skills.security.blocks` (by finding type) |
 | Transformation | `skills.transform.duration_ms`, `sub_documents_created`, `tools_extracted`, `links_created` |
 | Registry | `skills.registry.{total,active,deprecated,broken_references}` |
 | Runtime | `skills.runtime.{selections,sub_document_loads,selection_latency_ms}` |

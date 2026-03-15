@@ -24,17 +24,17 @@ tempfile = "3"
 
 [features]
 default = ["skill_core"]
-skill_core = []             # Core registry + version control (always on)
-skill_ingestion = []        # LLM-assisted ingestion pipeline
-skill_transformation = []   # Transformation engine
-skill_safety_screening = [] # Safety screener
-skill_linkage = []          # Cross-resource linker
-skill_lazy_loading = []     # Lazy sub-document loading
-evolution_capture = []      # Experience capture
-evolution_extraction = []   # LLM-assisted pattern extraction
-evolution_refinement = []   # Proposal generation
-evolution_fast_path = []    # Real-time fast-path extraction
-skill_usage_audit = []      # Per-retrieval usage tracking
+skill_core = []               # Core registry + version control (always on)
+skill_ingestion = []          # LLM-assisted ingestion pipeline
+skill_transformation = []     # Transformation engine
+skill_security_screening = [] # Security screener
+skill_linkage = []            # Cross-resource linker
+skill_lazy_loading = []       # Lazy sub-document loading
+evolution_capture = []        # Experience capture
+evolution_extraction = []     # LLM-assisted pattern extraction
+evolution_refinement = []     # Proposal generation
+evolution_fast_path = []      # Real-time fast-path extraction
+skill_usage_audit = []        # Per-retrieval usage tracking
 
 [lints]
 workspace = true

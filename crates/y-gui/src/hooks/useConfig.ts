@@ -39,11 +39,11 @@ export function useConfig(): UseConfigReturn {
     load();
   }, []);
 
-  // Apply theme whenever config changes.
+  // Apply font size whenever config changes.
+  // (Theme application is handled by useTheme hook.)
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', config.theme);
     document.documentElement.style.fontSize = `${config.font_size}px`;
-  }, [config.theme, config.font_size]);
+  }, [config.font_size]);
 
   const updateConfig = useCallback(
     async (updates: Partial<GuiConfig>) => {

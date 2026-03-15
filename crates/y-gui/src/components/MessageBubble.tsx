@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
   Copy,
   Check,
@@ -16,8 +17,11 @@ import {
 import type { Message } from '../types';
 import type { ToolResultRecord } from '../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
+import { ThinkingBlock } from './ThinkingBlock';
 import { processStreamContent, type ContentSegment } from '../hooks/useStreamContent';
+import { useResolvedTheme } from '../hooks/useTheme';
 import './MessageBubble.css';
+
 
 interface MessageBubbleProps {
   message: Message;
@@ -38,35 +42,40 @@ function Avatar({ role }: { role: string }) {
   );
 }
 
-/** Shared markdown renderer config. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const markdownComponents: any = {
-  code({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: unknown }) {
-    const match = /language-(\w+)/.exec(className || '');
-    const codeText = String(children).replace(/\n$/, '');
+/** Shared markdown renderer config -- needs theme to pick syntax style. */
+function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSProperties>) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const components: any = {
+    code({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: unknown }) {
+      const match = /language-(\w+)/.exec(className || '');
+      const codeText = String(children).replace(/\n$/, '');
 
-    if (match) {
+      if (match) {
+        return (
+          <CodeBlock language={match[1]} themeStyle={codeThemeStyle}>{codeText}</CodeBlock>
+        );
+      }
+
+      // Inline code
       return (
-        <CodeBlock language={match[1]}>{codeText}</CodeBlock>
+        <code className="inline-code" {...props}>
+          {children}
+        </code>
       );
-    }
-
-    // Inline code
-    return (
-      <code className="inline-code" {...props}>
-        {children}
-      </code>
-    );
-  },
-};
+    },
+  };
+  return components;
+}
 
 /** Fenced code block with language label and copy button. */
 function CodeBlock({
   language,
   children,
+  themeStyle,
 }: {
   language: string;
   children: string;
+  themeStyle: Record<string, React.CSSProperties>;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -90,7 +99,7 @@ function CodeBlock({
         </button>
       </div>
       <SyntaxHighlighter
-        style={oneDark}
+        style={themeStyle}
         language={language || 'text'}
         PreTag="div"
         customStyle={{
@@ -232,10 +241,11 @@ function UserActionBar({
 }
 
 /** Render a markdown text segment. */
-function MarkdownSegment({ text }: { text: string }) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function MarkdownSegment({ text, components }: { text: string; components: any }) {
   if (!text.trim()) return null;
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
       {text}
     </ReactMarkdown>
   );
@@ -245,6 +255,11 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isStreamingMsg = message.id.startsWith('streaming-');
+
+  // Resolve theme for syntax highlighting.
+  const resolvedTheme = useResolvedTheme();
+  const codeThemeStyle = resolvedTheme === 'light' ? oneLight : oneDark;
+  const markdownComponents = useMemo(() => makeMarkdownComponents(codeThemeStyle), [codeThemeStyle]);
 
   // Process content to extract text segments and tool call blocks.
   // Applied to ALL assistant messages (streaming AND completed) so that
@@ -316,7 +331,7 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
     segments.forEach((seg, idx) => {
       if (seg.type === 'text') {
         elements.push(
-          <MarkdownSegment key={`text-${idx}`} text={seg.text} />
+          <MarkdownSegment key={`text-${idx}`} text={seg.text} components={markdownComponents} />
         );
       } else if (seg.type === 'tool_call') {
         const result = toolResultsMap.get(idx);
@@ -371,6 +386,15 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
             <span className="message-model">{message.model}</span>
           )}
         </div>
+
+        {/* Reasoning/thinking block at the top of assistant messages */}
+        {!isUser && typeof message.metadata?.reasoning_content === 'string' && (
+          <ThinkingBlock
+            content={message.metadata.reasoning_content}
+            isStreaming={isStreamingMsg && !message.metadata?._reasoningDoneTs}
+            durationMs={message.metadata?._reasoningDurationMs as number | undefined}
+          />
+        )}
 
         {/* User messages render as plain styled text */}
         {isUser ? (

@@ -54,7 +54,11 @@ pub enum SkillAction {
 }
 
 /// Run a skill subcommand.
-pub async fn run(action: &SkillAction, services: &ServiceContainer, mode: OutputMode) -> Result<()> {
+pub async fn run(
+    action: &SkillAction,
+    services: &ServiceContainer,
+    mode: OutputMode,
+) -> Result<()> {
     // Determine store path from config
     let config = SkillConfig::default();
     let store_path = &config.store_path;
@@ -130,11 +134,11 @@ pub async fn run(action: &SkillAction, services: &ServiceContainer, mode: Output
                     }
                 }
 
-                if let Some(ref safety) = manifest.safety {
-                    println!("\nSafety:");
+                if let Some(ref security) = manifest.security {
+                    println!("\nSecurity:");
                     println!(
                         "  External Calls: {}",
-                        if safety.allows_external_calls {
+                        if security.allows_external_calls {
                             "allowed"
                         } else {
                             "blocked"
@@ -142,7 +146,7 @@ pub async fn run(action: &SkillAction, services: &ServiceContainer, mode: Output
                     );
                     println!(
                         "  File Operations: {}",
-                        if safety.allows_file_operations {
+                        if security.allows_file_operations {
                             "allowed"
                         } else {
                             "blocked"
@@ -150,13 +154,13 @@ pub async fn run(action: &SkillAction, services: &ServiceContainer, mode: Output
                     );
                     println!(
                         "  Code Execution: {}",
-                        if safety.allows_code_execution {
+                        if security.allows_code_execution {
                             "allowed"
                         } else {
                             "blocked"
                         }
                     );
-                    println!("  Max Delegation Depth: {}", safety.max_delegation_depth);
+                    println!("  Max Delegation Depth: {}", security.max_delegation_depth);
                 }
 
                 if let Some(ref refs) = manifest.references {
@@ -225,12 +229,14 @@ pub async fn run(action: &SkillAction, services: &ServiceContainer, mode: Output
             } else {
                 // Agent-based ingestion via SkillIngestionService
                 let store = FilesystemSkillStore::new(store_path)?;
-                let registry = std::sync::Arc::new(
-                    tokio::sync::RwLock::new(SkillRegistryImpl::with_store(store).await?),
-                );
+                let registry = std::sync::Arc::new(tokio::sync::RwLock::new(
+                    SkillRegistryImpl::with_store(store).await?,
+                ));
                 let ingestion_service = services.skill_ingestion_service(registry);
 
-                output::print_info(&format!("Importing skill from '{path}' (agent-assisted)..."));
+                output::print_info(&format!(
+                    "Importing skill from '{path}' (agent-assisted)..."
+                ));
 
                 match ingestion_service.import(Path::new(path)).await {
                     Ok(result) => match result.decision {
@@ -243,10 +249,10 @@ pub async fn run(action: &SkillAction, services: &ServiceContainer, mode: Output
                         }
                         y_service::ImportDecision::PartialAccept => {
                             output::print_info(&format!(
-                                "Skill partially accepted\n  ID: {}\n  Classification: {}\n  Safety issues: {:?}",
+                                "Skill partially accepted\n  ID: {}\n  Classification: {}\n  Security issues: {:?}",
                                 result.skill_id.unwrap_or_default(),
                                 result.classification,
-                                result.safety_issues
+                                result.security_issues
                             ));
                         }
                         y_service::ImportDecision::Rejected => {
@@ -333,9 +339,7 @@ pub async fn run(action: &SkillAction, services: &ServiceContainer, mode: Output
             let target_version = y_core::skill::SkillVersion(version.clone());
 
             registry.rollback(&skill_id, &target_version).await?;
-            output::print_success(&format!(
-                "Rolled back skill '{name}' to version {version}"
-            ));
+            output::print_success(&format!("Rolled back skill '{name}' to version {version}"));
         }
     }
 

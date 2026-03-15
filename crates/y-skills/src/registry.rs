@@ -5,6 +5,7 @@
 //! via `tokio::sync::RwLock`.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -59,7 +60,7 @@ impl SkillRegistryImpl {
 
     /// Create a skill registry backed by a filesystem store.
     ///
-    /// Pre-loads all skills from the store on construction.
+    /// Pre-loads all skills (manifests + sub-document content) from the store.
     pub async fn with_store(store: FilesystemSkillStore) -> Result<Self, SkillModuleError> {
         let registry = Self {
             inner: RwLock::new(RegistryInner::default()),
@@ -72,13 +73,30 @@ impl SkillRegistryImpl {
             let mut inner = registry.inner.write().await;
             for manifest in manifests {
                 let skill_id = manifest.id.to_string();
+                let skill_name = manifest.name.clone();
                 let content = serde_json::to_vec(&manifest).unwrap_or_default();
                 let version = inner.version_store.register_version(&skill_id, &content);
 
                 let mut versioned = manifest;
                 versioned.version = version;
                 inner.search.index(versioned.clone());
-                inner.manifests.insert(skill_id, versioned);
+                inner.manifests.insert(skill_id.clone(), versioned);
+
+                // Load sub-document content from disk into the in-memory cache.
+                if let Ok(sub_docs) = store.load_sub_documents(&skill_name) {
+                    for (doc_path, doc_content) in sub_docs {
+                        let key = (skill_id.clone(), doc_path.clone());
+                        inner.sub_documents.insert(
+                            key,
+                            SubDocumentContent {
+                                id: doc_path.clone(),
+                                title: doc_path,
+                                content: doc_content,
+                                token_estimate: 0,
+                            },
+                        );
+                    }
+                }
             }
         }
 
@@ -92,6 +110,9 @@ impl SkillRegistryImpl {
     }
 
     /// Store sub-document content for a registered skill.
+    ///
+    /// Updates the in-memory cache and, if a filesystem store is configured,
+    /// also persists the content to `<skill-dir>/<doc_path>`.
     pub async fn store_sub_document(
         &self,
         skill_id: &str,
@@ -115,7 +136,25 @@ impl SkillRegistryImpl {
                 },
             );
         }
+
+        // Persist to filesystem if a store is configured.
+        if let Some(ref store) = self.store {
+            // Look up the skill name from the manifest (filesystem uses name as dir).
+            if let Some(manifest) = inner.manifests.get(skill_id) {
+                store
+                    .write_sub_document(&manifest.name, doc_id, content)
+                    .map_err(|e| SkillError::StorageError {
+                        message: format!("failed to persist sub-document: {e}"),
+                    })?;
+            }
+        }
+
         Ok(())
+    }
+
+    /// Returns the filesystem store's base path, if a store is configured.
+    pub fn store_base_path(&self) -> Option<&Path> {
+        self.store.as_ref().map(|s| s.base_path())
     }
 }
 
@@ -265,7 +304,7 @@ mod tests {
             updated_at: now,
             classification: None,
             constraints: None,
-            safety: None,
+            security: None,
             references: None,
             author: None,
             source_format: None,

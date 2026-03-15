@@ -438,3 +438,224 @@
 .btn-session-action:hover {
   color: var(--text-primary);
 }
+
+/* ---- Skill sidebar list ---- */
+.skill-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.skill-sidebar-item {
+  padding: 10px var(--space-sm);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
+}
+
+.skill-sidebar-item:hover {
+  background: var(--surface-hover);
+}
+
+.skill-sidebar-item.active {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.skill-sidebar-item--disabled {
+  opacity: 0.55;
+}
+
+.skill-sidebar-item-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.skill-sidebar-item-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.skill-sidebar-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.skill-sidebar-item-badge {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.skill-sidebar-item-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.skill-sidebar-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.skill-sidebar-item-tag {
+  font-size: 9px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  line-height: 16px;
+}
+
+/* ---- Skill import status bar ---- */
+.skill-import-status {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  flex-shrink: 0;
+  animation: skill-status-in 0.2s ease;
+}
+
+.skill-import-status--expanded {
+  max-height: 260px;
+}
+
+@keyframes skill-status-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.skill-import-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px var(--space-md);
+  min-height: 0;
+}
+
+.skill-import-status--importing {
+  color: var(--text-muted);
+}
+
+.skill-import-status--success {
+  color: #4ade80;
+}
+
+.skill-import-status--error {
+  color: var(--error, #f87171);
+}
+
+@keyframes skill-status-spin {
+  to { transform: rotate(360deg); }
+}
+
+.skill-import-status-spinner {
+  animation: skill-status-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.skill-import-status-msg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-import-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.skill-import-status-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
+}
+
+.skill-import-status-toggle:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.skill-import-status-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
+}
+
+.skill-import-status-dismiss:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+/* ---- Expanded detail area ---- */
+.skill-import-status-detail {
+  border-top: 1px solid var(--border);
+  padding: var(--space-sm) var(--space-md);
+  max-height: 200px;
+  overflow-y: auto;
+  animation: skill-detail-in 0.15s ease;
+}
+
+@keyframes skill-detail-in {
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: 200px; }
+}
+
+.skill-import-status-pre {
+  margin: 0;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.85;
+}

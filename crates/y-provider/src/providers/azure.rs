@@ -250,6 +250,7 @@ impl LlmProvider for AzureOpenAiProvider {
                 .model
                 .unwrap_or_else(|| self.metadata.model.clone()),
             content,
+            reasoning_content: None,
             tool_calls,
             usage: TokenUsage {
                 input_tokens: usage.prompt_tokens,
@@ -522,6 +523,7 @@ fn map_stream_chunk(
 
     ChatStreamChunk {
         delta_content,
+        delta_reasoning_content: None,
         delta_tool_calls,
         usage,
         finish_reason,

@@ -67,6 +67,9 @@ pub struct PromptContext {
     pub available_tools: Vec<String>,
     /// Configuration flags (key-value).
     pub config_flags: std::collections::HashMap<String, bool>,
+    /// Working directory override for the session.
+    /// When set, `generate_environment()` uses this instead of `std::env::current_dir()`.
+    pub working_directory: Option<String>,
 }
 
 impl SectionCondition {
@@ -117,6 +120,7 @@ mod tests {
                 m.insert("persona.enabled".into(), true);
                 m
             },
+            working_directory: None,
         }
     }
 

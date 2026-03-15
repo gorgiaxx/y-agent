@@ -186,6 +186,34 @@ pub trait TranscriptStore: Send + Sync {
     ) -> Result<usize, SessionError>;
 }
 
+/// Append-only transcript for GUI display.
+///
+/// This store mirrors the context transcript but is **never compacted**.
+/// The GUI reads exclusively from this store so users always see the
+/// full, uncompacted conversation history.  Only truncated during
+/// undo/rollback operations.
+///
+/// Design reference: `GUI_SESSION_SEPARATION_PLAN.md` §3.1
+#[async_trait]
+pub trait DisplayTranscriptStore: Send + Sync {
+    /// Append a message to the display transcript.
+    async fn append(&self, session_id: &SessionId, message: &Message) -> Result<(), SessionError>;
+
+    /// Read all messages from the display transcript.
+    async fn read_all(&self, session_id: &SessionId) -> Result<Vec<Message>, SessionError>;
+
+    /// Count messages in the display transcript.
+    async fn message_count(&self, session_id: &SessionId) -> Result<usize, SessionError>;
+
+    /// Truncate the display transcript, keeping only the first `keep_count` messages.
+    /// Returns the number of messages removed.
+    async fn truncate(
+        &self,
+        session_id: &SessionId,
+        keep_count: usize,
+    ) -> Result<usize, SessionError>;
+}
+
 // ---------------------------------------------------------------------------
 // Chat checkpoint types
 // ---------------------------------------------------------------------------

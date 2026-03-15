@@ -99,6 +99,7 @@ type ChatBusEvent =
   | { type: 'complete'; payload: ChatCompletePayload }
   | { type: 'error'; payload: ChatErrorPayload }
   | { type: 'stream_delta'; run_id: string; session_id: string; content: string }
+  | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string }
   | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; result_preview: string };
 
 let chatBusInitialised = false;
@@ -159,6 +160,16 @@ async function initialiseChatBus() {
       if (session_id) {
         notifyChatSubscribers({
           type: 'stream_delta',
+          run_id,
+          session_id,
+          content: event.content,
+        });
+      }
+    } else if (event.type === 'stream_reasoning_delta') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'stream_reasoning_delta',
           run_id,
           session_id,
           content: event.content,
@@ -377,9 +388,17 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           const lastIdx = prev.findIndex((m) => m.id === streamingId);
           if (lastIdx >= 0) {
             const updated = [...prev];
+            const existing = updated[lastIdx];
+            // When first content delta arrives, mark reasoning as done.
+            const meta = { ...(existing.metadata || {}) };
+            if (meta._reasoningStartTs && !meta._reasoningDoneTs) {
+              meta._reasoningDoneTs = Date.now();
+              meta._reasoningDurationMs = (meta._reasoningDoneTs as number) - (meta._reasoningStartTs as number);
+            }
             updated[lastIdx] = {
-              ...updated[lastIdx],
-              content: updated[lastIdx].content + event.content,
+              ...existing,
+              content: existing.content + event.content,
+              metadata: meta,
             };
             return updated;
           }
@@ -392,6 +411,42 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               timestamp: new Date().toISOString(),
               tool_calls: [],
               _streaming: true,
+            } as Message,
+          ];
+        });
+        syncVisible(sid);
+      } else if (event.type === 'stream_reasoning_delta') {
+        // Merge reasoning into the streaming message's metadata.
+        const sid = event.session_id;
+        console.log(`[chat] stream_reasoning_delta: session=${sid}, len=${event.content.length}, preview=${event.content.substring(0, 50)}`);
+        setCachedMessages(sessionMessagesRef.current, sid, (prev) => {
+          const streamingId = `streaming-${sid}`;
+          const lastIdx = prev.findIndex((m) => m.id === streamingId);
+          if (lastIdx >= 0) {
+            const updated = [...prev];
+            const existing = updated[lastIdx];
+            const meta = { ...(existing.metadata || {}) };
+            meta.reasoning_content = ((meta.reasoning_content as string) || '') + event.content;
+            if (!meta._reasoningStartTs) {
+              meta._reasoningStartTs = Date.now();
+            }
+            updated[lastIdx] = { ...existing, metadata: meta };
+            return updated;
+          }
+          // Streaming message doesn't exist yet — create it with reasoning.
+          return [
+            ...prev,
+            {
+              id: streamingId,
+              role: 'assistant' as const,
+              content: '',
+              timestamp: new Date().toISOString(),
+              tool_calls: [],
+              _streaming: true,
+              metadata: {
+                reasoning_content: event.content,
+                _reasoningStartTs: Date.now(),
+              },
             } as Message,
           ];
         });
@@ -415,6 +470,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
               // Grab the accumulated streaming content before overwriting.
               const streamingId = `streaming-${sessionId}`;
+
               const cachedMessages = getCachedMessages(sessionMessagesRef.current, sessionId);
               const streamingMsg = cachedMessages.find((m) => m.id === streamingId);
               const accumulatedContent = streamingMsg?.content ?? '';
@@ -518,6 +574,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             // partially-streamed text visible and treats the run as complete.
             setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
               const streamingId = `streaming-${sessionId}`;
+              // reasoning content is merged into the streaming message's metadata.
               return prev.map((m) => {
                 if (m.id === streamingId && m.content) {
                   return {
@@ -526,7 +583,6 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                     _streaming: undefined,
                   } as Message;
                 }
-                // If streaming message has no content, remove it.
                 if (m.id === streamingId) return null;
                 return m;
               }).filter(Boolean) as Message[];
@@ -769,8 +825,58 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         try {
           // 1. Find checkpoint for the edited message (backend query, not cache).
           const checkpoint = await findCheckpointForMessage(sessionId, edit.messageId, sessionMessagesRef.current);
+
           if (!checkpoint) {
-            console.warn('[chat] No checkpoint found for edit; aborting');
+            // No checkpoint: this happens after a cancelled run where the
+            // assistant message was never persisted and no checkpoint was
+            // created. The backend transcript ends with the user message.
+            // Truncate to remove the user message and re-send with new content.
+            console.warn('[chat] No checkpoint found for edit -- using truncate fallback');
+            const freshMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+            let userIdx = freshMsgs.findIndex((m) => m.id === edit.messageId);
+            if (userIdx < 0) {
+              // Optimistic IDs won't match backend UUIDs; match by content+role.
+              const cachedMsg = getCachedMessages(sessionMessagesRef.current, sessionId)
+                .find((m) => m.id === edit.messageId);
+              if (cachedMsg) {
+                userIdx = freshMsgs.findIndex(
+                  (m) => m.role === cachedMsg.role && m.content === cachedMsg.content,
+                );
+              }
+            }
+
+            if (userIdx >= 0) {
+              await invoke('session_truncate_messages', {
+                sessionId,
+                keepCount: userIdx,
+              });
+              const keptMsgs = freshMsgs.slice(0, userIdx);
+              setCachedMessages(sessionMessagesRef.current, sessionId, keptMsgs);
+              syncVisible(sessionId);
+              setPendingEdit(null);
+
+              // Add optimistic user message with new content.
+              const userMsg: Message = {
+                id: `user-${Date.now()}`,
+                role: 'user' as const,
+                content: newContent,
+                timestamp: new Date().toISOString(),
+                tool_calls: [],
+              };
+              setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => [...prev, userMsg]);
+              syncVisible(sessionId);
+
+              const result = await invoke<ChatStarted>('chat_send', {
+                message: newContent,
+                sessionId,
+                providerId: providerId ?? null,
+              });
+              return result;
+            }
+
+            // Could not find the user message at all -- abort gracefully.
+            console.warn('[chat] editAndResend: fallback failed, user message not found');
+            setPendingEdit(null);
             setOp('idle');
             return null;
           }

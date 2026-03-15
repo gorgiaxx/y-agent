@@ -34,7 +34,7 @@ pub use chat::{
 pub use config::ServiceConfig;
 pub use container::ServiceContainer;
 pub use cost::CostService;
-pub use diagnostics::{DiagnosticsService, HistoricalEntry};
+pub use diagnostics::{DiagnosticsAgentDelegator, DiagnosticsService, HistoricalEntry};
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,

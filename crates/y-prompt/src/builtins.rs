@@ -23,7 +23,7 @@ const PROMPT_IDENTITY: &str = include_str!("../../../config/prompts/core_identit
 const PROMPT_DATETIME: &str = include_str!("../../../config/prompts/core_datetime.txt");
 const PROMPT_ENVIRONMENT: &str = include_str!("../../../config/prompts/core_environment.txt");
 const PROMPT_GUIDELINES: &str = include_str!("../../../config/prompts/core_guidelines.txt");
-const PROMPT_SAFETY: &str = include_str!("../../../config/prompts/core_safety.txt");
+const PROMPT_SECURITY: &str = include_str!("../../../config/prompts/core_security.txt");
 const PROMPT_TOOL_PROTOCOL: &str = include_str!("../../../config/prompts/core_tool_protocol.txt");
 const PROMPT_TOOL_BEHAVIOR: &str = include_str!("../../../config/prompts/core_tool_behavior.txt");
 const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.txt");
@@ -32,45 +32,136 @@ const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_expl
 
 /// Mapping from section ID to (compiled default content, override filename, token_budget, priority, condition, category).
 const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, ConditionTag)] = &[
-    ("core.identity",      PROMPT_IDENTITY,      "core_identity.txt",      200, 100, SectionCategoryTag::Identity,   ConditionTag::Always),
-    ("core.datetime",      PROMPT_DATETIME,       "core_datetime.txt",      50,  150, SectionCategoryTag::Context,    ConditionTag::Always),
-    ("core.environment",   PROMPT_ENVIRONMENT,    "core_environment.txt",   300, 200, SectionCategoryTag::Context,    ConditionTag::Always),
-    ("core.guidelines",    PROMPT_GUIDELINES,     "core_guidelines.txt",    500, 300, SectionCategoryTag::Behavioral, ConditionTag::Always),
-    ("core.safety",        PROMPT_SAFETY,         "core_safety.txt",        300, 400, SectionCategoryTag::Behavioral, ConditionTag::Always),
-    ("core.tool_protocol", PROMPT_TOOL_PROTOCOL,  "core_tool_protocol.txt", 600, 450, SectionCategoryTag::Behavioral, ConditionTag::Always),
-    ("core.tool_behavior", PROMPT_TOOL_BEHAVIOR,  "core_tool_behavior.txt", 300, 500, SectionCategoryTag::Behavioral, ConditionTag::HasToolWildcard),
-    ("core.persona",       PROMPT_PERSONA,        "core_persona.txt",       500, 250, SectionCategoryTag::Domain,     ConditionTag::PersonaEnabled),
-    ("core.planning",      PROMPT_PLANNING,       "core_planning.txt",      300, 350, SectionCategoryTag::Behavioral, ConditionTag::ModePlan),
-    ("core.exploration",   PROMPT_EXPLORATION,    "core_exploration.txt",   200, 350, SectionCategoryTag::Behavioral, ConditionTag::ModeExplore),
+    (
+        "core.identity",
+        PROMPT_IDENTITY,
+        "core_identity.txt",
+        200,
+        100,
+        SectionCategoryTag::Identity,
+        ConditionTag::Always,
+    ),
+    (
+        "core.datetime",
+        PROMPT_DATETIME,
+        "core_datetime.txt",
+        50,
+        150,
+        SectionCategoryTag::Context,
+        ConditionTag::Always,
+    ),
+    (
+        "core.environment",
+        PROMPT_ENVIRONMENT,
+        "core_environment.txt",
+        300,
+        200,
+        SectionCategoryTag::Context,
+        ConditionTag::Always,
+    ),
+    (
+        "core.guidelines",
+        PROMPT_GUIDELINES,
+        "core_guidelines.txt",
+        500,
+        300,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::Always,
+    ),
+    (
+        "core.security",
+        PROMPT_SECURITY,
+        "core_security.txt",
+        300,
+        400,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::Always,
+    ),
+    (
+        "core.tool_protocol",
+        PROMPT_TOOL_PROTOCOL,
+        "core_tool_protocol.txt",
+        600,
+        450,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::Always,
+    ),
+    (
+        "core.tool_behavior",
+        PROMPT_TOOL_BEHAVIOR,
+        "core_tool_behavior.txt",
+        300,
+        500,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::HasToolWildcard,
+    ),
+    (
+        "core.persona",
+        PROMPT_PERSONA,
+        "core_persona.txt",
+        500,
+        250,
+        SectionCategoryTag::Domain,
+        ConditionTag::PersonaEnabled,
+    ),
+    (
+        "core.planning",
+        PROMPT_PLANNING,
+        "core_planning.txt",
+        300,
+        350,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::ModePlan,
+    ),
+    (
+        "core.exploration",
+        PROMPT_EXPLORATION,
+        "core_exploration.txt",
+        200,
+        350,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::ModeExplore,
+    ),
 ];
 
 /// Internal tag for compact table — maps to `SectionCategory`.
 #[derive(Clone, Copy)]
-enum SectionCategoryTag { Identity, Context, Behavioral, Domain }
+enum SectionCategoryTag {
+    Identity,
+    Context,
+    Behavioral,
+    Domain,
+}
 
 impl SectionCategoryTag {
     fn into_category(self) -> SectionCategory {
         match self {
-            Self::Identity   => SectionCategory::Identity,
-            Self::Context    => SectionCategory::Context,
+            Self::Identity => SectionCategory::Identity,
+            Self::Context => SectionCategory::Context,
             Self::Behavioral => SectionCategory::Behavioral,
-            Self::Domain     => SectionCategory::Domain,
+            Self::Domain => SectionCategory::Domain,
         }
     }
 }
 
 /// Internal tag for compact table — maps to `Option<SectionCondition>`.
 #[derive(Clone, Copy)]
-enum ConditionTag { Always, HasToolWildcard, PersonaEnabled, ModePlan, ModeExplore }
+enum ConditionTag {
+    Always,
+    HasToolWildcard,
+    PersonaEnabled,
+    ModePlan,
+    ModeExplore,
+}
 
 impl ConditionTag {
     fn into_condition(self) -> Option<SectionCondition> {
         match self {
-            Self::Always          => Some(SectionCondition::Always),
+            Self::Always => Some(SectionCondition::Always),
             Self::HasToolWildcard => Some(SectionCondition::HasTool("*".into())),
-            Self::PersonaEnabled  => Some(SectionCondition::ConfigFlag("persona.enabled".into())),
-            Self::ModePlan        => Some(SectionCondition::ModeIs("plan".into())),
-            Self::ModeExplore     => Some(SectionCondition::ModeIs("explore".into())),
+            Self::PersonaEnabled => Some(SectionCondition::ConfigFlag("persona.enabled".into())),
+            Self::ModePlan => Some(SectionCondition::ModeIs("plan".into())),
+            Self::ModeExplore => Some(SectionCondition::ModeIs("explore".into())),
         }
     }
 }
@@ -93,13 +184,13 @@ pub fn builtin_section_store() -> SectionStore {
 pub fn builtin_section_store_with_overrides(prompts_dir: Option<&Path>) -> SectionStore {
     let mut store = SectionStore::new();
 
-    for &(id, default_content, filename, token_budget, priority, cat_tag, cond_tag) in BUILTIN_SECTIONS {
+    for &(id, default_content, filename, token_budget, priority, cat_tag, cond_tag) in
+        BUILTIN_SECTIONS
+    {
         // Try to load override from user's prompts directory.
         let content = prompts_dir
             .map(|dir| dir.join(filename))
-            .and_then(|path| {
-                std::fs::read_to_string(&path).ok()
-            })
+            .and_then(|path| std::fs::read_to_string(&path).ok())
             .unwrap_or_else(|| default_content.to_string());
 
         store.register(PromptSection {
@@ -117,16 +208,16 @@ pub fn builtin_section_store_with_overrides(prompts_dir: Option<&Path>) -> Secti
 
 /// List of all built-in prompt file names (for seeding into the user config dir).
 pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
-    ("core_identity.txt",      PROMPT_IDENTITY),
-    ("core_datetime.txt",      PROMPT_DATETIME),
-    ("core_environment.txt",   PROMPT_ENVIRONMENT),
-    ("core_guidelines.txt",    PROMPT_GUIDELINES),
-    ("core_safety.txt",        PROMPT_SAFETY),
+    ("core_identity.txt", PROMPT_IDENTITY),
+    ("core_datetime.txt", PROMPT_DATETIME),
+    ("core_environment.txt", PROMPT_ENVIRONMENT),
+    ("core_guidelines.txt", PROMPT_GUIDELINES),
+    ("core_security.txt", PROMPT_SECURITY),
     ("core_tool_protocol.txt", PROMPT_TOOL_PROTOCOL),
     ("core_tool_behavior.txt", PROMPT_TOOL_BEHAVIOR),
-    ("core_persona.txt",       PROMPT_PERSONA),
-    ("core_planning.txt",      PROMPT_PLANNING),
-    ("core_exploration.txt",   PROMPT_EXPLORATION),
+    ("core_persona.txt", PROMPT_PERSONA),
+    ("core_planning.txt", PROMPT_PLANNING),
+    ("core_exploration.txt", PROMPT_EXPLORATION),
 ];
 
 /// Create the default `PromptTemplate` referencing the built-in sections.
@@ -140,7 +231,7 @@ pub fn default_template() -> PromptTemplate {
         section_ref("core.environment"),
         section_ref("core.persona"),
         section_ref("core.guidelines"),
-        section_ref("core.safety"),
+        section_ref("core.security"),
         section_ref("core.tool_protocol"),
         section_ref("core.tool_behavior"),
         section_ref("core.planning"),
@@ -161,7 +252,7 @@ pub fn default_template() -> PromptTemplate {
     mode_overlays.insert(
         "explore".into(),
         ModeOverlay {
-            exclude: vec!["core.safety".into()],
+            exclude: vec!["core.security".into()],
             include: vec!["core.exploration".into()],
             token_budget_override: Some(2000),
             ..Default::default()
@@ -204,7 +295,7 @@ mod tests {
             "core.datetime",
             "core.environment",
             "core.guidelines",
-            "core.safety",
+            "core.security",
             "core.tool_protocol",
             "core.tool_behavior",
             "core.persona",
@@ -269,7 +360,7 @@ mod tests {
         let template = default_template();
         let sections = template.effective_sections("explore");
         let ids: Vec<&str> = sections.iter().map(|s| s.section_id.as_str()).collect();
-        assert!(!ids.contains(&"core.safety"));
+        assert!(!ids.contains(&"core.security"));
         assert!(ids.contains(&"core.exploration"));
         assert_eq!(template.effective_budget("explore"), 2000);
     }

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, MessageSquare, Zap, Puzzle } from 'lucide-react';
-import type { SessionInfo, WorkspaceInfo } from '../types';
+import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import type { SessionInfo, WorkspaceInfo, SkillInfo } from '../types';
+import type { ImportStatus } from '../hooks/useSkills';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import './Sidebar.css';
 
@@ -13,9 +14,17 @@ interface SidebarProps {
   workspaces: WorkspaceInfo[];
   sessionWorkspaceMap: Record<string, string>;
   activeView: ViewType;
+  skills: SkillInfo[];
+  activeSkillName: string | null;
+  importStatus: ImportStatus;
+  importError: string | null;
   onSelectView: (view: ViewType) => void;
   onSelectSession: (id: string) => void;
+  onSelectSkill: (name: string) => void;
+  onImportClick: () => void;
+  onClearImportStatus: () => void;
   onNewChat: () => void;
+  onNewChatInWorkspace: (workspaceId: string) => void;
   onDeleteSession: (id: string) => void;
   onCreateWorkspace: (name: string, path: string) => void;
   onUpdateWorkspace: (id: string, name: string, path: string) => void;
@@ -44,9 +53,17 @@ export function Sidebar({
   workspaces,
   sessionWorkspaceMap,
   activeView,
+  skills,
+  activeSkillName,
+  importStatus,
+  importError,
   onSelectView,
   onSelectSession,
+  onSelectSkill,
+  onImportClick,
+  onClearImportStatus,
   onNewChat,
+  onNewChatInWorkspace,
   onDeleteSession,
   onCreateWorkspace,
   onUpdateWorkspace,
@@ -55,10 +72,12 @@ export function Sidebar({
   onUnassignSession,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [skillSearchQuery, setSkillSearchQuery] = useState('');
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<WorkspaceInfo | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
+  const [importStatusExpanded, setImportStatusExpanded] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Sorted workspaces by name (alphabetically).
@@ -302,6 +321,16 @@ export function Sidebar({
                       className="btn-workspace-menu"
                       onClick={(e) => {
                         e.stopPropagation();
+                        onNewChatInWorkspace(workspace.id);
+                      }}
+                      title="New session in this workspace"
+                    >
+                      <Plus size={12} />
+                    </button>
+                    <button
+                      className="btn-workspace-menu"
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setOpenMenuId(openMenuId === workspace.id ? null : workspace.id);
                       }}
                       title="Workspace options"
@@ -367,13 +396,118 @@ export function Sidebar({
         </div>
       )}
 
-      {/* Skills view — content is in the main panel */}
+      {/* Skills view — skill list */}
       {activeView === 'skills' && (
-        <div className="sidebar-placeholder">
-          <Puzzle size={32} className="sidebar-placeholder-icon" />
-          <p className="sidebar-placeholder-text">Skill management</p>
-          <p className="sidebar-placeholder-sub">View and manage installed skills in the main panel</p>
-        </div>
+        <>
+          <div className="sidebar-header">
+            <div className="sidebar-search">
+              <input
+                type="text"
+                placeholder="Search skills..."
+                value={skillSearchQuery}
+                onChange={(e) => setSkillSearchQuery(e.target.value)}
+                className="search-input"
+              />
+            </div>
+            <div className="sidebar-header-actions">
+              <button className="btn-new-chat" onClick={onImportClick} title="Import Skill">
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="skill-sidebar-list">
+            {(() => {
+              const q = skillSearchQuery.toLowerCase();
+              const filtered = q
+                ? skills.filter(
+                    (s) =>
+                      s.name.toLowerCase().includes(q) ||
+                      s.tags.some((t) => t.toLowerCase().includes(q)) ||
+                      s.description.toLowerCase().includes(q),
+                  )
+                : skills;
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="session-empty">
+                    {skillSearchQuery ? 'No matching skills' : 'No skills installed'}
+                  </div>
+                );
+              }
+
+              return filtered.map((skill) => (
+                <div
+                  key={skill.name}
+                  className={`skill-sidebar-item ${activeSkillName === skill.name ? 'active' : ''} ${!skill.enabled ? 'skill-sidebar-item--disabled' : ''}`}
+                  onClick={() => onSelectSkill(skill.name)}
+                >
+                  <div className="skill-sidebar-item-header">
+                    <Puzzle size={14} className="skill-sidebar-item-icon" />
+                    <span className="skill-sidebar-item-name">{skill.name}</span>
+                    {!skill.enabled && (
+                      <span className="skill-sidebar-item-badge">OFF</span>
+                    )}
+                  </div>
+                  <p className="skill-sidebar-item-desc">{skill.description}</p>
+                  {skill.tags.length > 0 && (
+                    <div className="skill-sidebar-item-tags">
+                      {skill.tags.slice(0, 3).map((tag) => (
+                        <span key={tag} className="skill-sidebar-item-tag">{tag}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ));
+            })()}
+          </div>
+
+          {/* Import status bar */}
+          {importStatus !== 'idle' && (
+            <div className={`skill-import-status skill-import-status--${importStatus} ${importStatusExpanded ? 'skill-import-status--expanded' : ''}`}>
+              <div className="skill-import-status-row">
+                {importStatus === 'importing' && (
+                  <>
+                    <Loader2 size={14} className="skill-import-status-spinner" />
+                    <span className="skill-import-status-msg">Importing skill…</span>
+                  </>
+                )}
+                {importStatus === 'success' && (
+                  <>
+                    <CheckCircle2 size={14} />
+                    <span className="skill-import-status-msg">Skill imported</span>
+                  </>
+                )}
+                {importStatus === 'error' && (
+                  <>
+                    <AlertCircle size={14} />
+                    <span className="skill-import-status-msg">{importError || 'Import failed'}</span>
+                  </>
+                )}
+                <div className="skill-import-status-actions">
+                  {(importError || importStatus === 'importing') && (
+                    <button
+                      className="skill-import-status-toggle"
+                      onClick={() => setImportStatusExpanded(!importStatusExpanded)}
+                      title={importStatusExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      {importStatusExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    </button>
+                  )}
+                  {importStatus === 'error' && (
+                    <button className="skill-import-status-dismiss" onClick={() => { onClearImportStatus(); setImportStatusExpanded(false); }} title="Dismiss">
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              {importStatusExpanded && (importError || importStatus === 'importing') && (
+                <div className="skill-import-status-detail">
+                  <pre className="skill-import-status-pre">{importError || 'Processing…'}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {/* Workspace creation dialog */}

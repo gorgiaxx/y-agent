@@ -9,10 +9,10 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
-  max-height: 320px;
-  overflow-y: auto;
+  height: 360px;
+  display: flex;
+  flex-direction: column;
   z-index: 50;
-  padding: var(--space-xs) 0;
   animation: commandMenuSlideUp 0.15s ease-out;
 }
 
@@ -27,10 +27,67 @@
   }
 }
 
-/* ---- Category header ---- */
+/* ---- Search input ---- */
+
+.command-menu-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.command-menu-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.command-menu-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 4px 0;
+}
+
+.command-menu-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ---- Scrollable list ---- */
+
+.command-menu-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-xs) 0;
+}
+
+/* ---- Section label (Commands / Skills) ---- */
+
+.command-menu-section + .command-menu-section {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-xs);
+  padding-top: var(--space-xs);
+}
+
+.command-menu-section-label {
+  padding: var(--space-xs) var(--space-md) 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  user-select: none;
+}
+
+/* ---- Category header (within Commands section) ---- */
 
 .command-menu-category {
-  padding: var(--space-xs) var(--space-md);
+  padding: 2px var(--space-md);
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -40,9 +97,7 @@
 }
 
 .command-menu-group + .command-menu-group .command-menu-category {
-  margin-top: var(--space-xs);
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-sm);
+  margin-top: 2px;
 }
 
 /* ---- Menu item ---- */
@@ -51,7 +106,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: 6px var(--space-md);
+  padding: 5px var(--space-md);
   cursor: pointer;
   transition: background 0.1s ease;
   border-left: 2px solid transparent;
@@ -87,6 +142,11 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.command-menu-skill-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 /* ---- Empty state ---- */

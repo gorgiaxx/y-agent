@@ -105,7 +105,7 @@ impl TaintTracker {
 
         if self.dangerous_sinks.contains(sink) {
             // Return the first taint tag as the blocking reason.
-            // Safety: `tags` is guaranteed non-empty by the match guard above.
+            // Security: `tags` is guaranteed non-empty by the match guard above.
             if let Some(tag) = tags.iter().next() {
                 TaintCheckResult::Blocked {
                     tag: tag.clone(),

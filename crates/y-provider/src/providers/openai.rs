@@ -81,6 +81,7 @@ impl OpenAiProvider {
                     y_core::types::Role::Tool => "tool".to_string(),
                 },
                 content: Some(m.content.clone()),
+                reasoning_content: None,
                 tool_call_id: m.tool_call_id.clone(),
                 tool_calls: None,
             })
@@ -224,6 +225,7 @@ impl LlmProvider for OpenAiProvider {
                 })?;
 
         let content = choice.message.content;
+        let reasoning_content = choice.message.reasoning_content;
         let tool_calls = choice
             .message
             .tool_calls
@@ -254,6 +256,7 @@ impl LlmProvider for OpenAiProvider {
             id: openai_response.id,
             model: openai_response.model,
             content,
+            reasoning_content,
             tool_calls,
             usage: TokenUsage {
                 input_tokens: usage.prompt_tokens,
@@ -494,6 +497,7 @@ fn map_stream_chunk(
     let choice = chunk.choices.first();
 
     let delta_content = choice.and_then(|c| c.delta.content.clone());
+    let delta_reasoning_content = choice.and_then(|c| c.delta.reasoning_content.clone());
 
     // Handle incremental tool calls.
     let mut delta_tool_calls = Vec::new();
@@ -563,6 +567,7 @@ fn map_stream_chunk(
 
     ChatStreamChunk {
         delta_content,
+        delta_reasoning_content,
         delta_tool_calls,
         usage,
         finish_reason,
@@ -602,6 +607,10 @@ struct OpenAiMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    /// Reasoning/thinking content from thinking-mode LLMs (e.g. DeepSeek-R1).
+    /// Some providers use `reasoning_content`, others use `reasoning` (vLLM).
+    #[serde(skip_serializing_if = "Option::is_none", default, alias = "reasoning")]
+    reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -681,6 +690,10 @@ struct OpenAiStreamChoice {
 struct OpenAiStreamDelta {
     #[serde(default)]
     content: Option<String>,
+    /// Reasoning/thinking content delta.
+    /// Some providers use `reasoning_content`, others use `reasoning` (vLLM).
+    #[serde(default, alias = "reasoning")]
+    reasoning_content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<OpenAiStreamToolCall>>,
 }
@@ -767,6 +780,7 @@ mod tests {
             messages: vec![OpenAiMessage {
                 role: "user".into(),
                 content: Some("Hello".into()),
+                reasoning_content: None,
                 tool_call_id: None,
                 tool_calls: None,
             }],
@@ -935,6 +949,7 @@ mod tests {
             choices: vec![OpenAiStreamChoice {
                 delta: OpenAiStreamDelta {
                     content: Some("Hello".into()),
+                    reasoning_content: None,
                     tool_calls: None,
                 },
                 finish_reason: None,
@@ -960,6 +975,7 @@ mod tests {
             choices: vec![OpenAiStreamChoice {
                 delta: OpenAiStreamDelta {
                     content: None,
+                    reasoning_content: None,
                     tool_calls: Some(vec![OpenAiStreamToolCall {
                         index: Some(0),
                         id: Some("call_abc".into()),
@@ -985,6 +1001,7 @@ mod tests {
             choices: vec![OpenAiStreamChoice {
                 delta: OpenAiStreamDelta {
                     content: None,
+                    reasoning_content: None,
                     tool_calls: Some(vec![OpenAiStreamToolCall {
                         index: Some(0),
                         id: None,
@@ -1009,6 +1026,7 @@ mod tests {
             choices: vec![OpenAiStreamChoice {
                 delta: OpenAiStreamDelta {
                     content: None,
+                    reasoning_content: None,
                     tool_calls: None,
                 },
                 finish_reason: Some("tool_calls".into()),

@@ -12,9 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use y_prompt::{
-    estimate_tokens, truncate_to_budget, PromptContext, PromptTemplate, SectionStore,
-};
+use y_prompt::{estimate_tokens, truncate_to_budget, PromptContext, PromptTemplate, SectionStore};
 
 use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
@@ -89,11 +87,22 @@ impl BuildSystemPromptProvider {
     }
 
     /// Generate dynamic content for `core.environment`.
-    fn generate_environment() -> String {
+    ///
+    /// `cwd` always reflects the process working directory.
+    /// When `workspace_path` is provided (e.g. from a workspace-bound
+    /// session), it is appended as an extra field.
+    fn generate_environment(workspace_path: Option<&str>) -> String {
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
-        let cwd = std::env::current_dir().map_or_else(|_| "(unknown)".into(), |p| p.display().to_string());
-        format!("Environment: OS={os}, arch={arch}, cwd={cwd}")
+        let cwd = std::env::current_dir()
+            .map_or_else(|_| "(unknown)".into(), |p| p.display().to_string());
+        tracing::debug!(workspace_path = ?workspace_path, cwd = %cwd, "generate_environment");
+        match workspace_path.filter(|s| !s.is_empty()) {
+            Some(ws) => {
+                format!("Environment: OS={os}, arch={arch}, workspace_path={ws}, shell_cwd(optional)={cwd}")
+            }
+            None => format!("Environment: OS={os}, arch={arch}, shell_cwd={cwd}"),
+        }
     }
 }
 
@@ -169,7 +178,9 @@ impl ContextProvider for BuildSystemPromptProvider {
             // Dynamic section replacement.
             let content = match eff.section_id.as_str() {
                 "core.datetime" => Self::generate_datetime(),
-                "core.environment" => Self::generate_environment(),
+                "core.environment" => {
+                    Self::generate_environment(prompt_ctx.working_directory.as_deref())
+                }
                 _ => content,
             };
 
@@ -226,10 +237,7 @@ mod tests {
     use super::*;
     use y_prompt::{builtin_section_store, default_template};
 
-    fn make_provider(
-        ctx: PromptContext,
-        config: SystemPromptConfig,
-    ) -> BuildSystemPromptProvider {
+    fn make_provider(ctx: PromptContext, config: SystemPromptConfig) -> BuildSystemPromptProvider {
         BuildSystemPromptProvider::new(
             default_template(),
             builtin_section_store(),
@@ -244,6 +252,7 @@ mod tests {
             active_skills: vec![],
             available_tools: vec!["file_read".into()],
             config_flags: std::collections::HashMap::new(),
+            working_directory: None,
         }
     }
 
@@ -267,8 +276,8 @@ mod tests {
         assert!(item.content.contains("y-agent"));
         // Should contain guidelines.
         assert!(item.content.contains("Guidelines"));
-        // Should contain safety.
-        assert!(item.content.contains("Safety rules"));
+        // Should contain security.
+        assert!(item.content.contains("Security rules"));
         // Should contain tool_behavior (since we have tools).
         assert!(item.content.contains("Tool usage"));
         // Token estimate should be reasonable.
@@ -283,6 +292,7 @@ mod tests {
             active_skills: vec![],
             available_tools: vec!["file_read".into()],
             config_flags: std::collections::HashMap::new(),
+            working_directory: None,
         };
         let provider = make_provider(plan_ctx, SystemPromptConfig::default());
         let mut ctx = AssembledContext::default();
@@ -398,6 +408,7 @@ mod tests {
             active_skills: vec![],
             available_tools: vec![],
             config_flags: std::collections::HashMap::new(),
+            working_directory: None,
         };
 
         // Template where every section has a condition that won't match.
@@ -459,19 +470,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_mode_overlay_applied() {
-        // Explore mode excludes safety, includes exploration.
+        // Explore mode excludes security, includes exploration.
         let explore_ctx = PromptContext {
             agent_mode: "explore".into(),
             active_skills: vec![],
             available_tools: vec!["file_read".into()],
             config_flags: std::collections::HashMap::new(),
+            working_directory: None,
         };
         let provider = make_provider(explore_ctx, SystemPromptConfig::default());
         let mut ctx = AssembledContext::default();
         provider.provide(&mut ctx).await.unwrap();
 
         let content = &ctx.items[0].content;
-        assert!(!content.contains("Safety rules"));
+        assert!(!content.contains("Security rules"));
         assert!(content.contains("exploration mode"));
     }
 

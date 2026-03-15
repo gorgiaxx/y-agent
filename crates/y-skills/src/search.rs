@@ -116,7 +116,7 @@ mod tests {
             updated_at: now,
             classification: None,
             constraints: None,
-            safety: None,
+            security: None,
             references: None,
             author: None,
             source_format: None,

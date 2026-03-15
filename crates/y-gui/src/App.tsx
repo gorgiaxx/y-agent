@@ -10,6 +10,7 @@ import { SettingsOverlay } from './components/SettingsOverlay';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { ObservabilityPanel } from './components/ObservabilityPanel';
 import { SkillsPanel } from './components/SkillsPanel';
+import { SkillImportDialog } from './components/SkillImportDialog';
 import { useChat } from './hooks/useChat';
 import { useSessions } from './hooks/useSessions';
 import { useConfig } from './hooks/useConfig';
@@ -17,6 +18,7 @@ import { useDiagnostics } from './hooks/useDiagnostics';
 import { useObservability } from './hooks/useObservability';
 import { useWorkspaces } from './hooks/useWorkspaces';
 import { useSkills } from './hooks/useSkills';
+import { useThemeProvider, ThemeContext } from './hooks/useTheme';
 import type { SystemStatus, ProviderInfo, TurnMeta } from './types';
 import './App.css';
 
@@ -51,8 +53,7 @@ function App() {
   } = useChat(activeSessionId);
 
   const { config, updateConfig, loadSection, saveSection, reloadConfig: rawReloadConfig } = useConfig();
-  const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
-    useDiagnostics(activeSessionId);
+  const themeCtx = useThemeProvider(config.theme);
   const {
     workspaces,
     sessionWorkspaceMap,
@@ -64,13 +65,40 @@ function App() {
   } = useWorkspaces();
 
   const [activeView, setActiveView] = useState<ViewType>('chat');
+  // When not in chat view, treat diagnostics as global (no active session).
+  const diagnosticSessionId = activeView === 'chat' ? activeSessionId : null;
+  const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
+    useDiagnostics(diagnosticSessionId);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
   const [obsOpen, setObsOpen] = useState(false);
   const [obsExpanded, setObsExpanded] = useState(false);
   const [diagExpanded, setDiagExpanded] = useState(false);
   const { snapshot: obsSnapshot, loading: obsLoading } = useObservability(obsOpen);
-  const { skills, loading: skillsLoading, getSkillDetail, uninstallSkill, setEnabled: setSkillEnabled, openFolder: openSkillFolder } = useSkills();
+  const {
+    skills,
+    getSkillDetail,
+    uninstallSkill,
+    setEnabled: setSkillEnabled,
+    openFolder: openSkillFolder,
+    importSkill,
+    importStatus,
+    importError,
+    clearImportStatus,
+    getSkillFiles,
+    readSkillFile,
+    saveSkillFile,
+  } = useSkills();
+
+  // Auto-clear success status after 2 seconds.
+  useEffect(() => {
+    if (importStatus === 'success') {
+      const timer = setTimeout(clearImportStatus, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [importStatus, clearImportStatus]);
+  const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState('auto');
@@ -162,7 +190,7 @@ function App() {
   // ------------------------------------------------------------------
 
   const handleSend = useCallback(
-    async (message: string) => {
+    async (message: string, skillNames?: string[]) => {
       let sid = activeSessionId;
       if (!sid) {
         const session = await createSession();
@@ -171,6 +199,11 @@ function App() {
       }
 
       const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
+
+      // TODO: pass skillNames to the backend when skill-aware chat is implemented.
+      if (skillNames && skillNames.length > 0) {
+        console.log('Skills attached to message:', skillNames);
+      }
 
       // If in edit mode, use the transactional editAndResend.
       if (pendingEdit) {
@@ -238,6 +271,18 @@ function App() {
       selectSession(session.id);
     }
   }, [createSession, selectSession, clearMessages]);
+
+  const handleNewChatInWorkspace = useCallback(
+    async (workspaceId: string) => {
+      clearMessages();
+      const session = await createSession();
+      if (session) {
+        await assignSession(workspaceId, session.id);
+        selectSession(session.id);
+      }
+    },
+    [createSession, selectSession, clearMessages, assignSession],
+  );
 
   const handleDeleteSession = useCallback(
     async (id: string) => {
@@ -311,6 +356,7 @@ function App() {
   const inputDisabled = isStreaming || (opStatus !== 'idle' && opStatus !== 'sending');
 
   return (
+    <ThemeContext.Provider value={themeCtx}>
     <div className="app">
       <Sidebar
         sessions={sessions}
@@ -319,9 +365,17 @@ function App() {
         workspaces={workspaces}
         sessionWorkspaceMap={sessionWorkspaceMap}
         activeView={activeView}
+        skills={skills}
+        activeSkillName={activeSkillName}
+        importStatus={importStatus}
+        importError={importError}
         onSelectView={setActiveView}
         onSelectSession={(id) => { setActiveView('chat'); selectSession(id); }}
+        onSelectSkill={(name) => { setActiveView('skills'); setActiveSkillName(name); }}
+        onImportClick={() => setImportDialogOpen(true)}
+        onClearImportStatus={clearImportStatus}
         onNewChat={() => { setActiveView('chat'); handleNewChat(); }}
+        onNewChatInWorkspace={(wsId) => { setActiveView('chat'); handleNewChatInWorkspace(wsId); }}
         onDeleteSession={handleDeleteSession}
         onCreateWorkspace={handleCreateWorkspace}
         onUpdateWorkspace={updateWorkspace}
@@ -332,28 +386,30 @@ function App() {
 
       <main className="main-panel">
         <header className="main-header">
-          <h1 className="app-title">{activeView === 'skills' ? 'Skills' : 'y-agent'}</h1>
+          <h1 className="app-title">
+            {activeView === 'skills'
+              ? 'Skills'
+              : activeSessionId
+                ? sessions.find((s) => s.id === activeSessionId)?.title || 'Untitled'
+                : 'y-agent'}
+          </h1>
           <div className="header-actions">
-            {activeView === 'chat' && (
-              <>
-                <button
-                  className={`btn-header ${diagOpen ? 'active' : ''} ${isActive ? 'has-activity' : ''}`}
-                  onClick={() => setDiagOpen(!diagOpen)}
-                  title="Diagnostics"
-                  id="btn-diagnostics"
-                >
-                  <Activity size={16} />
-                </button>
-                <button
-                  className={`btn-header ${obsOpen ? 'active' : ''}`}
-                  onClick={() => setObsOpen(!obsOpen)}
-                  title="Observability"
-                  id="btn-observability"
-                >
-                  <Eye size={16} />
-                </button>
-              </>
-            )}
+            <button
+              className={`btn-header ${diagOpen ? 'active' : ''}`}
+              onClick={() => setDiagOpen(!diagOpen)}
+              title="Diagnostics"
+              id="btn-diagnostics"
+            >
+              <Activity size={16} />
+            </button>
+            <button
+              className={`btn-header ${obsOpen ? 'active' : ''}`}
+              onClick={() => setObsOpen(!obsOpen)}
+              title="Observability"
+              id="btn-observability"
+            >
+              <Eye size={16} />
+            </button>
             <button
               className="btn-header"
               onClick={() => setSettingsOpen(true)}
@@ -379,6 +435,7 @@ function App() {
               onSelectProvider={setSelectedProviderId}
               pendingEdit={pendingEdit}
               onCancelEdit={handleCancelEdit}
+              skills={skills.filter((s) => s.enabled)}
             />
             <StatusBar
               providerCount={systemStatus?.provider_count ?? 0}
@@ -394,11 +451,18 @@ function App() {
 
         {activeView === 'skills' && (
           <SkillsPanel
-            skills={skills}
-            loading={skillsLoading}
+            skillName={activeSkillName}
             onGetDetail={getSkillDetail}
-            onUninstall={uninstallSkill}
-            onSetEnabled={setSkillEnabled}
+            onGetFiles={getSkillFiles}
+            onReadFile={readSkillFile}
+            onSaveFile={saveSkillFile}
+            onUninstall={async (name) => {
+              await uninstallSkill(name);
+              setActiveSkillName(null);
+            }}
+            onSetEnabled={async (name, enabled) => {
+              await setSkillEnabled(name, enabled);
+            }}
             onOpenFolder={openSkillFolder}
           />
         )}
@@ -409,6 +473,7 @@ function App() {
           entries={entries}
           summary={summary}
           isActive={isActive}
+          isGlobal={!diagnosticSessionId}
           expanded={diagExpanded}
           onToggleExpand={() => setDiagExpanded(!diagExpanded)}
           onClear={clearDiagnostics}
@@ -451,7 +516,17 @@ function App() {
           }}
         />
       )}
+
+      {importDialogOpen && (
+        <SkillImportDialog
+          onImport={(path, sanitize) => {
+            importSkill(path, sanitize);
+          }}
+          onClose={() => setImportDialogOpen(false)}
+        />
+      )}
     </div>
+    </ThemeContext.Provider>
   );
 }
 

@@ -60,7 +60,7 @@ pub enum SkillState {
     Analyzing,
     /// Classification complete, awaiting filter decision.
     Classified,
-    /// Rejected by filter gate or safety screener.
+    /// Rejected by filter gate or security screener.
     Rejected,
     /// Accepted, transformation in progress.
     Transforming,
@@ -113,9 +113,9 @@ pub struct SkillConstraints {
     pub requires_language: Option<String>,
 }
 
-/// Skill safety flags (maps to `[skill.safety]` in manifest).
+/// Skill security flags (maps to `[skill.security]` in manifest).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillSafetyConfig {
+pub struct SkillSecurityConfig {
     #[serde(default)]
     pub allows_external_calls: bool,
     #[serde(default)]
@@ -172,9 +172,9 @@ pub struct SkillManifest {
     /// Skill constraint metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub constraints: Option<SkillConstraints>,
-    /// Skill safety configuration.
+    /// Skill security configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub safety: Option<SkillSafetyConfig>,
+    pub security: Option<SkillSecurityConfig>,
     /// Cross-resource references.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub references: Option<SkillReferences>,

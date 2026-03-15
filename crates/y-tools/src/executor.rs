@@ -194,6 +194,7 @@ mod tests {
             name: ToolName::from_string("echo"),
             arguments: args,
             session_id: SessionId::new(),
+            command_runner: None,
         }
     }
 

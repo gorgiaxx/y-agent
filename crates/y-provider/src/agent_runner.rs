@@ -132,6 +132,8 @@ impl AgentRunner for SingleTurnRunner {
         Ok(AgentRunOutput {
             text,
             tokens_used,
+            input_tokens: u64::from(response.usage.input_tokens),
+            output_tokens: u64::from(response.usage.output_tokens),
             model_used: response.model,
             duration_ms: start.elapsed().as_millis() as u64,
         })

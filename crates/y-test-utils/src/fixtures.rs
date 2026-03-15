@@ -55,6 +55,7 @@ pub fn make_chat_response(content: &str) -> ChatResponse {
         id: uuid::Uuid::new_v4().to_string(),
         model: "test-model".into(),
         content: Some(content.into()),
+        reasoning_content: None,
         tool_calls: vec![],
         usage: TokenUsage {
             input_tokens: 10,

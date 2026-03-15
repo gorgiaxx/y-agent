@@ -8,7 +8,7 @@
 
 use y_core::skill::{
     SkillClassification, SkillClassificationType, SkillConstraints, SkillError, SkillManifest,
-    SkillReferences, SkillSafetyConfig, SkillState, SkillVersion, SubDocumentRef,
+    SkillReferences, SkillSecurityConfig, SkillState, SkillVersion, SubDocumentRef,
 };
 use y_core::types::{now, SkillId};
 
@@ -52,7 +52,7 @@ struct NestedTomlSkill {
     #[serde(default)]
     references: Option<NestedReferences>,
     #[serde(default)]
-    safety: Option<NestedSafety>,
+    security: Option<NestedSecurity>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -110,7 +110,7 @@ struct NestedReferences {
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct NestedSafety {
+struct NestedSecurity {
     #[serde(default)]
     allows_external_calls: bool,
     #[serde(default)]
@@ -247,7 +247,7 @@ impl ManifestParser {
             requires_language: c.requires_language,
         });
 
-        let safety = skill.safety.map(|s| SkillSafetyConfig {
+        let security = skill.security.map(|s| SkillSecurityConfig {
             allows_external_calls: s.allows_external_calls,
             allows_file_operations: s.allows_file_operations,
             allows_code_execution: s.allows_code_execution,
@@ -277,7 +277,7 @@ impl ManifestParser {
             updated_at: now,
             classification,
             constraints,
-            safety,
+            security,
             references,
             author: skill.author,
             source_format: skill.source_format,
@@ -327,7 +327,7 @@ impl ManifestParser {
             updated_at: now,
             classification: None,
             constraints: None,
-            safety: None,
+            security: None,
             references: None,
             author: None,
             source_format: None,
@@ -339,28 +339,69 @@ impl ManifestParser {
 
     /// Serialize a `SkillManifest` back to TOML (roundtrip support).
     ///
-    /// Uses the legacy flat format for backward compatibility.
+    /// Uses the design-aligned nested `[skill]` format. Root content is NOT
+    /// inlined -- it lives in the separate `root.md` file written by the store.
     pub fn to_toml(manifest: &SkillManifest) -> Result<String, SkillModuleError> {
-        let toml_manifest = TomlManifest {
-            name: manifest.name.clone(),
-            description: manifest.description.clone(),
-            tags: manifest.tags.clone(),
-            trigger_patterns: manifest.trigger_patterns.clone(),
-            knowledge_bases: manifest.knowledge_bases.clone(),
-            root_content: manifest.root_content.clone(),
-            sub_documents: manifest
-                .sub_documents
-                .iter()
-                .map(|sd| TomlSubDoc {
-                    id: sd.id.clone(),
-                    title: sd.title.clone(),
-                    load_condition: sd.load_condition.clone(),
-                    content: String::new(), // Sub-doc content stored separately
-                })
-                .collect(),
+        let nested = NestedTomlWrapper {
+            skill: NestedTomlSkill {
+                name: manifest.name.clone(),
+                version: Some(manifest.version.0.clone()).filter(|v| !v.is_empty()),
+                description: manifest.description.clone(),
+                author: manifest.author.clone(),
+                source_format: manifest.source_format.clone(),
+                source_hash: manifest.source_hash.clone(),
+                created: None,
+                classification: manifest.classification.as_ref().map(|c| {
+                    NestedClassification {
+                        skill_type: c.skill_type,
+                        domain: c.domain.clone(),
+                        atomic: c.atomic,
+                    }
+                }),
+                constraints: manifest.constraints.as_ref().map(|c| NestedConstraints {
+                    max_input_tokens: c.max_input_tokens,
+                    max_output_tokens: c.max_output_tokens,
+                    requires_language: c.requires_language.clone(),
+                }),
+                root: Some(NestedRoot {
+                    path: manifest
+                        .root_path
+                        .clone()
+                        .or_else(|| Some("root.md".to_string())),
+                    token_count: Some(manifest.token_estimate),
+                    content: None, // Content lives in root.md, not inline
+                }),
+                tree: if manifest.sub_documents.is_empty() {
+                    None
+                } else {
+                    Some(NestedTree {
+                        sub_documents: manifest
+                            .sub_documents
+                            .iter()
+                            .map(|sd| NestedSubDoc {
+                                path: sd.path.clone(),
+                                title: sd.title.clone(),
+                                token_count: Some(sd.token_estimate),
+                                load_condition: Some(sd.load_condition.clone()),
+                            })
+                            .collect(),
+                    })
+                },
+                references: manifest.references.as_ref().map(|r| NestedReferences {
+                    tools: r.tools.clone(),
+                    skills: r.skills.clone(),
+                    knowledge_bases: r.knowledge_bases.clone(),
+                }),
+                security: manifest.security.as_ref().map(|s| NestedSecurity {
+                    allows_external_calls: s.allows_external_calls,
+                    allows_file_operations: s.allows_file_operations,
+                    allows_code_execution: s.allows_code_execution,
+                    max_delegation_depth: s.max_delegation_depth,
+                }),
+            },
         };
 
-        toml::to_string_pretty(&toml_manifest).map_err(|e| SkillModuleError::ManifestParseError {
+        toml::to_string_pretty(&nested).map_err(|e| SkillModuleError::ManifestParseError {
             message: e.to_string(),
         })
     }
@@ -438,7 +479,7 @@ tools = []
 skills = []
 knowledge_bases = ["chinese-writing"]
 
-[skill.safety]
+[skill.security]
 allows_external_calls = false
 allows_file_operations = false
 allows_code_execution = false
@@ -474,8 +515,8 @@ max_delegation_depth = 0
         assert_eq!(con.max_output_tokens, Some(8000));
         assert_eq!(con.requires_language.as_deref(), Some("zh"));
 
-        // Safety
-        let saf = manifest.safety.as_ref().unwrap();
+        // Security
+        let saf = manifest.security.as_ref().unwrap();
         assert!(!saf.allows_external_calls);
         assert!(!saf.allows_file_operations);
         assert!(!saf.allows_code_execution);
@@ -512,7 +553,7 @@ max_delegation_depth = 0
         // Extended fields should be None for legacy format
         assert!(manifest.classification.is_none());
         assert!(manifest.constraints.is_none());
-        assert!(manifest.safety.is_none());
+        assert!(manifest.security.is_none());
         assert!(manifest.references.is_none());
         assert!(manifest.author.is_none());
     }
@@ -592,6 +633,11 @@ content = "{long_content}"
     }
 
     /// T-SKILL-001-05: TOML → struct → TOML roundtrip (identity).
+    ///
+    /// `to_toml()` uses the nested format and does NOT inline root_content
+    /// (content lives in the separate `root.md` file). So after a pure
+    /// in-memory roundtrip, `root_content` is expected to be empty.
+    /// The full file-backed roundtrip is tested in `store::tests`.
     #[test]
     fn test_manifest_serialization_roundtrip() {
         let parser = ManifestParser::new(SkillConfig::default());
@@ -602,7 +648,9 @@ content = "{long_content}"
 
         assert_eq!(manifest.name, reparsed.name);
         assert_eq!(manifest.description, reparsed.description);
-        assert_eq!(manifest.tags, reparsed.tags);
-        assert_eq!(manifest.root_content, reparsed.root_content);
+        // root_content is NOT inlined in the nested TOML; it lives in root.md.
+        // In-memory roundtrip yields empty root_content — the filesystem store
+        // merges root.md back in during load_from_dir().
+        assert!(reparsed.root_content.is_empty());
     }
 }

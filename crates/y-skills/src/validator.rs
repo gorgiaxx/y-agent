@@ -4,7 +4,7 @@
 //! 1. Format validation: `skill.toml` + `root.md` must exist
 //! 2. Schema validation: parse `skill.toml`, required fields present
 //! 3. Root token limit: `root.md` ≤ `max_root_tokens`
-//! 4. Safety constraints: all safety flags `false` unless approved
+//! 4. Security constraints: all security flags `false` unless approved
 //! 5. Unique name: no duplicate names in registry
 //! 6. Lineage required: `lineage.toml` must exist
 //! 7. Reference resolution: `[tool:X]`, `[skill:X]`, `[knowledge:X]` refs resolve
@@ -41,8 +41,8 @@ pub enum ValidationRule {
     SchemaValidation,
     /// `root.md` must not exceed token limit.
     RootTokenLimit,
-    /// Safety flags must all be `false` unless approved.
-    SafetyConstraints,
+    /// Security flags must all be `false` unless approved.
+    SecurityConstraints,
     /// Skill name must be unique in the registry.
     UniqueName,
     /// `lineage.toml` must exist.
@@ -57,7 +57,7 @@ impl std::fmt::Display for ValidationRule {
             Self::FormatValidation => "format",
             Self::SchemaValidation => "schema",
             Self::RootTokenLimit => "root_token_limit",
-            Self::SafetyConstraints => "safety",
+            Self::SecurityConstraints => "security",
             Self::UniqueName => "unique_name",
             Self::LineageRequired => "lineage_required",
             Self::ReferenceResolution => "reference",
@@ -127,7 +127,7 @@ impl SkillValidator {
         errors
     }
 
-    /// Validate a manifest in memory (checks schema, safety, references).
+    /// Validate a manifest in memory (checks schema, security, references).
     pub fn validate_manifest(
         &self,
         manifest: &SkillManifest,
@@ -164,25 +164,25 @@ impl SkillValidator {
             });
         }
 
-        // Rule 4: Safety constraints
-        if let Some(ref safety) = manifest.safety {
-            if safety.allows_external_calls {
+        // Rule 4: Security constraints
+        if let Some(ref security) = manifest.security {
+            if security.allows_external_calls {
                 errors.push(ValidationError {
-                    rule: ValidationRule::SafetyConstraints,
+                    rule: ValidationRule::SecurityConstraints,
                     message: "allows_external_calls is true (requires explicit approval)"
                         .to_string(),
                 });
             }
-            if safety.allows_file_operations {
+            if security.allows_file_operations {
                 errors.push(ValidationError {
-                    rule: ValidationRule::SafetyConstraints,
+                    rule: ValidationRule::SecurityConstraints,
                     message: "allows_file_operations is true (requires explicit approval)"
                         .to_string(),
                 });
             }
-            if safety.allows_code_execution {
+            if security.allows_code_execution {
                 errors.push(ValidationError {
-                    rule: ValidationRule::SafetyConstraints,
+                    rule: ValidationRule::SecurityConstraints,
                     message: "allows_code_execution is true (requires explicit approval)"
                         .to_string(),
                 });
@@ -232,7 +232,7 @@ impl SkillValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use y_core::skill::{SkillManifest, SkillReferences, SkillSafetyConfig, SkillVersion};
+    use y_core::skill::{SkillManifest, SkillReferences, SkillSecurityConfig, SkillVersion};
     use y_core::types::{now, SkillId};
 
     fn test_manifest(name: &str) -> SkillManifest {
@@ -252,7 +252,7 @@ mod tests {
             updated_at: now,
             classification: None,
             constraints: None,
-            safety: None,
+            security: None,
             references: None,
             author: None,
             source_format: None,
@@ -365,12 +365,12 @@ mod tests {
             .any(|e| e.message.contains("nonexistent-skill")));
     }
 
-    /// Safety constraints: `allows_external_calls` triggers error.
+    /// Security constraints: `allows_external_calls` triggers error.
     #[test]
-    fn test_validator_rejects_unsafe_flags() {
+    fn test_validator_rejects_insecure_flags() {
         let validator = SkillValidator::new(SkillConfig::default());
-        let mut manifest = test_manifest("unsafe-skill");
-        manifest.safety = Some(SkillSafetyConfig {
+        let mut manifest = test_manifest("insecure-skill");
+        manifest.security = Some(SkillSecurityConfig {
             allows_external_calls: true,
             allows_file_operations: false,
             allows_code_execution: true,
@@ -380,14 +380,14 @@ mod tests {
         let (names, tools, skills, kb) = empty_sets();
         let errors = validator.validate_manifest(&manifest, &names, &tools, &skills, &kb);
 
-        let safety_errors: Vec<_> = errors
+        let security_errors: Vec<_> = errors
             .iter()
-            .filter(|e| e.rule == ValidationRule::SafetyConstraints)
+            .filter(|e| e.rule == ValidationRule::SecurityConstraints)
             .collect();
         assert_eq!(
-            safety_errors.len(),
+            security_errors.len(),
             2,
-            "expected 2 safety errors, got: {safety_errors:?}"
+            "expected 2 security errors, got: {security_errors:?}"
         );
     }
 

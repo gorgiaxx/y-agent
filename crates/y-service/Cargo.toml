@@ -19,7 +19,10 @@ y-guardrails = { workspace = true }
 
 y-prompt = { workspace = true }
 y-diagnostics = { workspace = true }
-y-skills = { workspace = true, features = ["skill_ingestion", "skill_safety_screening"] }
+y-skills = { workspace = true, features = [
+    "skill_ingestion",
+    "skill_security_screening",
+] }
 
 anyhow = { workspace = true }
 tokio = { workspace = true }

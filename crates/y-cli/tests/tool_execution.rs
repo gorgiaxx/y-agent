@@ -70,6 +70,7 @@ async fn e2e_tool_register_and_execute() {
         name: ToolName::from_string("echo"),
         arguments: serde_json::json!({"text": "hello world"}),
         session_id: SessionId::new(),
+        command_runner: None,
     };
 
     let output = tool.execute(input).await.unwrap();
@@ -122,6 +123,7 @@ async fn e2e_tool_registry_simulation() {
         name: ToolName::from_string("echo"),
         arguments: serde_json::json!({"text": "from registry"}),
         session_id: SessionId::new(),
+        command_runner: None,
     };
     let output = tool.execute(input).await.unwrap();
     assert_eq!(output.content["echo"], "from registry");

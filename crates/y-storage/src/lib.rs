@@ -24,6 +24,7 @@ pub mod repository;
 pub mod schedule_store;
 pub mod session_store;
 pub mod transcript;
+pub mod transcript_display;
 pub mod workflow_store;
 
 // Re-export primary types for convenient access.
@@ -36,6 +37,7 @@ pub use pool::create_pool;
 pub use schedule_store::SqliteScheduleStore;
 pub use session_store::SqliteSessionStore;
 pub use transcript::JsonlTranscriptStore;
+pub use transcript_display::JsonlDisplayTranscriptStore;
 pub use workflow_store::SqliteWorkflowStore;
 
 #[cfg(feature = "diagnostics_pg")]

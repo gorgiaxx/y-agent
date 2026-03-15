@@ -101,11 +101,40 @@ impl Tool for ShellExecTool {
             .unwrap_or(DEFAULT_TIMEOUT_SECS);
 
         let timeout = Duration::from_secs(timeout_secs);
+        let working_dir = input.arguments["working_dir"].as_str();
 
+        // Prefer the injected CommandRunner (runtime-aware execution).
+        // Falls back to direct local execution when no runner is provided
+        // (backward compatibility for tests and standalone usage).
+        if let Some(ref runner) = input.command_runner {
+            let result = runner
+                .run_command(command, working_dir, timeout)
+                .await
+                .map_err(|e| ToolError::RuntimeError {
+                    name: "shell_exec".into(),
+                    message: format!("{e}"),
+                })?;
+
+            let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+
+            return Ok(ToolOutput {
+                success: result.exit_code == 0,
+                content: serde_json::json!({
+                    "exit_code": result.exit_code,
+                    "stdout": Self::truncate_output(&stdout),
+                    "stderr": Self::truncate_output(&stderr),
+                }),
+                warnings: vec![],
+                metadata: serde_json::json!({}),
+            });
+        }
+
+        // Fallback: direct local execution (no runtime manager).
         let mut cmd = tokio::process::Command::new("sh");
         cmd.arg("-c").arg(command);
 
-        if let Some(wd) = input.arguments["working_dir"].as_str() {
+        if let Some(wd) = working_dir {
             cmd.current_dir(wd);
         }
 
@@ -156,6 +185,7 @@ mod tests {
             name: ToolName::from_string("shell_exec"),
             arguments: args,
             session_id: SessionId::new(),
+            command_runner: None,
         }
     }
 

@@ -2,14 +2,13 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Square, X } from 'lucide-react';
 import { ProviderSelector } from './ProviderSelector';
 import { CommandMenu } from './CommandMenu';
-import { filterCommands } from '../commands';
 import type { GuiCommandDef } from '../commands';
-import type { ProviderInfo } from '../types';
+import type { ProviderInfo, SkillInfo } from '../types';
 import type { PendingEdit } from '../hooks/useChat';
 import './InputArea.css';
 
 interface InputAreaProps {
-  onSend: (message: string) => void;
+  onSend: (message: string, skills?: string[]) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -19,6 +18,7 @@ interface InputAreaProps {
   onSelectProvider: (id: string) => void;
   pendingEdit?: PendingEdit | null;
   onCancelEdit?: () => void;
+  skills?: SkillInfo[];
 }
 
 export function InputArea({
@@ -32,11 +32,11 @@ export function InputArea({
   onSelectProvider,
   pendingEdit,
   onCancelEdit,
+  skills = [],
 }: InputAreaProps) {
   const [value, setValue] = useState('');
   const [commandMode, setCommandMode] = useState(false);
-  const [commandQuery, setCommandQuery] = useState('');
-  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const resetInput = useCallback(() => {
@@ -48,8 +48,6 @@ export function InputArea({
 
   const exitCommandMode = useCallback(() => {
     setCommandMode(false);
-    setCommandQuery('');
-    setSelectedCommandIndex(0);
   }, []);
 
   const handleCommandSelect = useCallback(
@@ -61,10 +59,30 @@ export function InputArea({
       } else {
         // For non-immediate commands, insert the command text for further argument editing.
         setValue(`/${cmd.name} `);
+        textareaRef.current?.focus();
       }
     },
     [onCommand, resetInput, exitCommandMode],
   );
+
+  const handleSkillSelect = useCallback(
+    (skillName: string) => {
+      exitCommandMode();
+      resetInput();
+      setSelectedSkills((prev) => {
+        if (prev.includes(skillName)) return prev;
+        return [...prev, skillName];
+      });
+      // Re-focus the textarea after skill selection.
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    },
+    [exitCommandMode, resetInput],
+  );
+
+  const handleRemoveSkill = useCallback((skillName: string) => {
+    setSelectedSkills((prev) => prev.filter((s) => s !== skillName));
+    textareaRef.current?.focus();
+  }, []);
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
@@ -81,48 +99,24 @@ export function InputArea({
       }
     }
 
-    onSend(trimmed);
+    onSend(trimmed, selectedSkills.length > 0 ? selectedSkills : undefined);
     resetInput();
     exitCommandMode();
-  }, [value, disabled, onSend, onCommand, resetInput, exitCommandMode]);
+    setSelectedSkills([]);
+  }, [value, disabled, onSend, onCommand, resetInput, exitCommandMode, selectedSkills]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Command mode keyboard navigation.
+    // In command mode, let the CommandMenu handle all keyboard events.
     if (commandMode) {
-      const filtered = filterCommands(commandQuery);
-
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setSelectedCommandIndex((i) => Math.max(0, i - 1));
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setSelectedCommandIndex((i) => Math.min(filtered.length - 1, i + 1));
-        return;
-      }
+      // Only handle Escape here to also reset input.
       if (e.key === 'Escape') {
         e.preventDefault();
         exitCommandMode();
         resetInput();
         return;
       }
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        if (filtered.length > 0) {
-          const idx = Math.min(selectedCommandIndex, filtered.length - 1);
-          handleCommandSelect(filtered[idx]);
-        }
-        return;
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        if (filtered.length > 0) {
-          const idx = Math.min(selectedCommandIndex, filtered.length - 1);
-          handleCommandSelect(filtered[idx]);
-        }
-        return;
-      }
+      // Let other keys propagate to CommandMenu's own onKeyDown.
+      return;
     }
 
     // Normal mode: Enter to send.
@@ -144,8 +138,6 @@ export function InputArea({
     // Command mode detection: "/" at start, single-line only.
     if (val.startsWith('/') && !val.includes('\n')) {
       setCommandMode(true);
-      setCommandQuery(val.slice(1));
-      setSelectedCommandIndex(0);
     } else {
       if (commandMode) exitCommandMode();
     }
@@ -183,26 +175,47 @@ export function InputArea({
       <div className="input-container">
         {commandMode && (
           <CommandMenu
-            query={commandQuery}
-            selectedIndex={selectedCommandIndex}
+            skills={skills}
             onSelect={handleCommandSelect}
+            onSelectSkill={handleSkillSelect}
             onDismiss={() => {
               exitCommandMode();
               resetInput();
             }}
-            onHover={setSelectedCommandIndex}
           />
         )}
-        <textarea
-          ref={textareaRef}
-          className="input-textarea"
-          value={value}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder={disabled ? 'Waiting for response...' : 'Type a message... (/ for commands)'}
-          disabled={disabled}
-          rows={1}
-        />
+
+        {/* Skill tags + textarea wrapper */}
+        <div className="input-content">
+          {selectedSkills.length > 0 && (
+            <div className="skill-tags-row">
+              {selectedSkills.map((name) => (
+                <span key={name} className="skill-tag">
+                  <span className="skill-tag-name">{name}</span>
+                  <button
+                    className="skill-tag-remove"
+                    onClick={() => handleRemoveSkill(name)}
+                    title={`Remove ${name}`}
+                    aria-label={`Remove skill ${name}`}
+                  >
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
+            className="input-textarea"
+            value={value}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
+            placeholder={disabled ? 'Waiting for response...' : 'Type a message... (/ for commands)'}
+            disabled={disabled}
+            rows={1}
+          />
+        </div>
+
         {disabled && onStop && (
           <button
             className="btn-stop"

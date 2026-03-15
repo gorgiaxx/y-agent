@@ -1,8 +1,6 @@
 //! Skill ingestion service — delegates third-party skill transformation to the
 //! `skill-ingestion` agent and registers the result in the skill registry.
-//!
-//! Design reference: `skills-knowledge-design.md` §Skill Ingestion Flow,
-//! §Skill Transformation Flow
+//! Security screening is handled separately by the `skill-security-check` agent.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -16,7 +14,7 @@ use y_core::skill::{
     SkillState, SkillVersion, SubDocumentRef,
 };
 use y_core::types::SkillId;
-use y_skills::{FormatDetector, IngestionFormat, SafetyScreener, SkillRegistryImpl};
+use y_skills::{FilesystemSkillStore, FormatDetector, IngestionFormat, SkillRegistryImpl};
 
 // ---------------------------------------------------------------------------
 // Import result
@@ -35,8 +33,8 @@ pub struct ImportResult {
     pub rejection_reason: Option<String>,
     /// Redirect suggestion if rejected.
     pub redirect_suggestion: Option<String>,
-    /// Safety issues found.
-    pub safety_issues: Vec<String>,
+    /// Security issues found.
+    pub security_issues: Vec<String>,
 }
 
 /// Import decision outcome.
@@ -57,10 +55,6 @@ pub enum ImportDecision {
 struct AgentIngestionOutput {
     decision: String,
     classification: String,
-    #[allow(dead_code)]
-    safety_verdict: String,
-    #[serde(default)]
-    safety_issues: Vec<String>,
     #[serde(default)]
     rejection_reason: Option<String>,
     #[serde(default)]
@@ -153,9 +147,6 @@ pub enum ImportError {
     #[error("agent returned invalid JSON: {0}")]
     InvalidAgentOutput(String),
 
-    #[error("safety post-check failed: {issues:?}")]
-    SafetyPostCheckFailed { issues: Vec<String> },
-
     #[error("skill registration failed: {0}")]
     RegistrationFailed(String),
 }
@@ -172,12 +163,13 @@ pub enum ImportError {
 /// 2. Format detection (deterministic — `FormatDetector`)
 /// 3. Delegate to `skill-ingestion` agent (LLM-assisted)
 /// 4. Parse structured output
-/// 5. Safety post-check (deterministic — `SafetyScreener`, defense in depth)
-/// 6. Register in `SkillRegistry`
+/// 5. Register in `SkillRegistry`
+///
+/// Security screening is NOT performed here; it is the caller's
+/// responsibility to invoke the `skill-security-check` agent beforehand.
 pub struct SkillIngestionService {
     delegator: Arc<dyn AgentDelegator>,
     registry: Arc<tokio::sync::RwLock<SkillRegistryImpl>>,
-    safety_screener: SafetyScreener,
 }
 
 impl SkillIngestionService {
@@ -189,7 +181,6 @@ impl SkillIngestionService {
         Self {
             delegator,
             registry,
-            safety_screener: SafetyScreener::new(),
         }
     }
 
@@ -209,6 +200,15 @@ impl SkillIngestionService {
         let format = FormatDetector::from_path(path);
         let format_str = format_to_str(&format);
 
+        // 2b. Collect companion file listing from the source directory
+        let source_dir = path.parent();
+        let main_file_name = path.file_name().and_then(|n| n.to_str()).map(String::from);
+        let companion_files: Vec<String> = if let Some(dir) = source_dir {
+            collect_companion_listing(dir, dir, main_file_name.as_deref())
+        } else {
+            vec![]
+        };
+
         // 3. Gather existing skills for dedup context
         let existing_skills: Vec<String> = self.registry.read().await.list_names().await;
 
@@ -218,6 +218,7 @@ impl SkillIngestionService {
             "source_format": format_str,
             "existing_skills": existing_skills,
             "existing_tools": [],
+            "companion_files": companion_files,
         });
 
         info!(
@@ -233,8 +234,8 @@ impl SkillIngestionService {
             .map_err(|e| ImportError::DelegationFailed(e.to_string()))?;
 
         // 5. Parse agent output
-        let agent_output: AgentIngestionOutput =
-            serde_json::from_str(&delegation_output.text).map_err(|e| {
+        let agent_output: AgentIngestionOutput = serde_json::from_str(&delegation_output.text)
+            .map_err(|e| {
                 ImportError::InvalidAgentOutput(format!(
                     "failed to parse agent response: {e}\nraw: {}",
                     &delegation_output.text[..delegation_output.text.len().min(500)]
@@ -260,22 +261,11 @@ impl SkillIngestionService {
                 skill_id: None,
                 rejection_reason: agent_output.rejection_reason,
                 redirect_suggestion: agent_output.redirect_suggestion,
-                safety_issues: agent_output.safety_issues,
+                security_issues: vec![],
             });
         }
 
-        // 7. Safety post-check (defense in depth)
-        if let Some(ref root_content) = agent_output.root_content {
-            let verdict = self.safety_screener.screen(root_content);
-            if !verdict.is_pass() {
-                warn!("Safety post-check caught issues missed by agent");
-                return Err(ImportError::SafetyPostCheckFailed {
-                    issues: vec![format!("post-check verdict: {verdict:?}")],
-                });
-            }
-        }
-
-        // 8. Build SkillManifest from agent output
+        // 7. Build SkillManifest from agent output
         let manifest_data = agent_output.manifest.ok_or_else(|| {
             ImportError::InvalidAgentOutput("accepted skill missing manifest".to_string())
         })?;
@@ -339,7 +329,7 @@ impl SkillIngestionService {
                 max_output_tokens: c.max_output_tokens,
                 requires_language: c.requires_language,
             }),
-            safety: None,
+            security: None,
             references: None,
             author: Some("skill-ingestion-agent".to_string()),
             source_format: Some(format_str.to_string()),
@@ -387,13 +377,32 @@ impl SkillIngestionService {
             );
         }
 
+        // 12. Copy companion files from the source directory
+        if let Some(dir) = source_dir {
+            if let Some(store_base) = reg.store_base_path() {
+                let store = FilesystemSkillStore::new(store_base)
+                    .map_err(|e| ImportError::IoError(format!("failed to open store: {e}")))?;
+                if let Err(e) = store.copy_companion_files(
+                    &skill_name,
+                    dir,
+                    main_file_name.as_deref(),
+                ) {
+                    warn!(
+                        skill = %skill_name,
+                        error = %e,
+                        "Failed to copy companion files"
+                    );
+                }
+            }
+        }
+
         Ok(ImportResult {
             decision,
             classification: agent_output.classification,
             skill_id: Some(skill_id_str),
             rejection_reason: None,
             redirect_suggestion: None,
-            safety_issues: agent_output.safety_issues,
+            security_issues: vec![],
         })
     }
 
@@ -416,6 +425,41 @@ fn format_to_str(format: &IngestionFormat) -> &'static str {
         IngestionFormat::PlainText => "plaintext",
         IngestionFormat::Directory => "directory",
     }
+}
+
+/// Recursively collect relative paths of companion files in `current`,
+/// skipping the main file and hidden entries.
+fn collect_companion_listing(
+    root: &Path,
+    current: &Path,
+    main_file_name: Option<&str>,
+) -> Vec<String> {
+    let mut listing = Vec::new();
+    let entries = match std::fs::read_dir(current) {
+        Ok(e) => e,
+        Err(_) => return listing,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') {
+            continue;
+        }
+        if let Some(main) = main_file_name {
+            if name_str == main && current == root {
+                continue;
+            }
+        }
+        let abs = entry.path();
+        let rel = abs.strip_prefix(root).unwrap_or(&abs);
+        if abs.is_dir() {
+            listing.push(format!("{}/", rel.display()));
+            listing.extend(collect_companion_listing(root, &abs, main_file_name));
+        } else {
+            listing.push(rel.display().to_string());
+        }
+    }
+    listing
 }
 
 #[cfg(test)]
@@ -449,6 +493,9 @@ mod tests {
             Ok(DelegationOutput {
                 text: self.response.clone(),
                 tokens_used: 100,
+                input_tokens: 80,
+                output_tokens: 20,
+                model_used: "mock".to_string(),
                 duration_ms: 500,
             })
         }
@@ -462,8 +509,6 @@ mod tests {
         serde_json::json!({
             "decision": "accepted",
             "classification": "llm_reasoning",
-            "safety_verdict": "safe",
-            "safety_issues": [],
             "manifest": {
                 "name": "test-humanizer",
                 "version": "1.0.0",
@@ -490,8 +535,6 @@ mod tests {
         serde_json::json!({
             "decision": "rejected",
             "classification": "api_call",
-            "safety_verdict": "safe",
-            "safety_issues": [],
             "rejection_reason": "This skill describes API interactions",
             "redirect_suggestion": "Register as a Tool via y-agent tool register"
         })

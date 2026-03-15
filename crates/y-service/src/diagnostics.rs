@@ -227,3 +227,112 @@ impl DiagnosticsService {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// DiagnosticsAgentDelegator — decorator for tracing subagent LLM calls
+// ---------------------------------------------------------------------------
+
+/// A decorator around [`AgentDelegator`] that records diagnostics (trace +
+/// generation observation) for each delegation call.
+///
+/// Without this wrapper, subagent calls (title-generator, skill-ingestion,
+/// etc.) are invisible in the DIAGNOSTICS panel because `AgentPool::delegate()`
+/// calls `SingleTurnRunner::run()` which bypasses the diagnostics subscriber.
+///
+/// Uses `Uuid::nil()` as the session UUID since subagent calls are not
+/// associated with any specific user session. The frontend's Global view
+/// merges all sessions' entries, so these will appear there.
+pub struct DiagnosticsAgentDelegator {
+    inner: Arc<dyn y_core::agent::AgentDelegator>,
+    diagnostics: Arc<y_diagnostics::DiagnosticsSubscriber<dyn y_diagnostics::TraceStore>>,
+}
+
+impl DiagnosticsAgentDelegator {
+    /// Create a new diagnostics-aware delegator wrapping `inner`.
+    pub fn new(
+        inner: Arc<dyn y_core::agent::AgentDelegator>,
+        diagnostics: Arc<y_diagnostics::DiagnosticsSubscriber<dyn y_diagnostics::TraceStore>>,
+    ) -> Self {
+        Self { inner, diagnostics }
+    }
+}
+
+impl std::fmt::Debug for DiagnosticsAgentDelegator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiagnosticsAgentDelegator")
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+#[async_trait::async_trait]
+impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
+    async fn delegate(
+        &self,
+        agent_name: &str,
+        input: serde_json::Value,
+        context_strategy: y_core::agent::ContextStrategyHint,
+    ) -> Result<y_core::agent::DelegationOutput, y_core::agent::DelegationError> {
+        // Start a trace for this subagent execution.
+        let session_id = uuid::Uuid::nil();
+        let trace_name = format!("subagent:{agent_name}");
+        let input_preview = match &input {
+            serde_json::Value::String(s) => s.chars().take(200).collect::<String>(),
+            other => {
+                let s = other.to_string();
+                s.chars().take(200).collect::<String>()
+            }
+        };
+        let trace_id = self
+            .diagnostics
+            .on_trace_start(session_id, &trace_name, &input_preview)
+            .await
+            .ok();
+
+        // Delegate to the inner delegator.
+        let result = self.inner.delegate(agent_name, input, context_strategy).await;
+
+        match &result {
+            Ok(output) => {
+                // Record the generation observation.
+                if let Some(tid) = trace_id {
+                    let _ = self
+                        .diagnostics
+                        .on_generation(
+                            tid,
+                            None,
+                            None,
+                            &output.model_used,
+                            output.input_tokens,
+                            output.output_tokens,
+                            crate::cost::CostService::compute_cost(
+                                output.input_tokens,
+                                output.output_tokens,
+                            ),
+                            serde_json::json!({
+                                "agent": agent_name,
+                                "type": "subagent_delegation",
+                            }),
+                            serde_json::from_str::<serde_json::Value>(&output.text)
+                                .unwrap_or_else(|_| serde_json::Value::String(output.text.clone())),
+                            output.duration_ms,
+                        )
+                        .await;
+
+                    let _ = self
+                        .diagnostics
+                        .on_trace_end(tid, true, Some(&output.text))
+                        .await;
+                }
+            }
+            Err(_) => {
+                // Mark the trace as failed.
+                if let Some(tid) = trace_id {
+                    let _ = self.diagnostics.on_trace_end(tid, false, None).await;
+                }
+            }
+        }
+
+        result
+    }
+}

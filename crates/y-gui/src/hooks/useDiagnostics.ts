@@ -52,7 +52,7 @@ const emptySummary: DiagnosticsSummary = {
   toolFailCount: 0,
 };
 
-function computeSummary(entries: DiagnosticsEntry[]): DiagnosticsSummary {
+export function computeSummary(entries: DiagnosticsEntry[]): DiagnosticsSummary {
   const s = { ...emptySummary };
   for (const e of entries) {
     const ev = e.event;
@@ -109,6 +109,63 @@ function broadcastUpdate(updater: (prev: DiagnosticsState) => DiagnosticsState) 
 }
 
 let unlistenFns: UnlistenFn[] = [];
+
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/** Fetch subagent diagnostics (stored under nil UUID) from the database and
+ *  replace the nil-UUID entries in `sharedState`. Called on init and again
+ *  whenever a `diagnostics:subagent_completed` event arrives.              */
+async function loadSubagentHistory() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await invoke<any[]>('diagnostics_get_by_session', { sessionId: NIL_UUID, limit: 50 });
+    if (!raw || raw.length === 0) return;
+
+    const histEntries: DiagnosticsEntry[] = raw.map((item, idx) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let event: any;
+      const timestamp = item.timestamp as string;
+      switch (item.type) {
+        case 'llm_response':
+          event = {
+            type: 'llm_response' as const,
+            iteration: item.iteration as number,
+            model: item.model as string,
+            input_tokens: item.input_tokens as number,
+            output_tokens: item.output_tokens as number,
+            duration_ms: item.duration_ms as number,
+            cost_usd: item.cost_usd as number,
+            tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
+            prompt_preview: item.prompt_preview as string,
+            response_text: item.response_text as string,
+          };
+          break;
+        case 'tool_result':
+          event = {
+            type: 'tool_result' as const,
+            name: item.name as string,
+            success: item.success as boolean,
+            duration_ms: item.duration_ms as number,
+            result_preview: item.result_preview as string,
+          };
+          break;
+        default:
+          event = { type: 'user_message' as const, content: '' };
+      }
+      return { id: `subagent-${idx}`, timestamp, event };
+    });
+
+    broadcastUpdate((prev) => ({
+      ...prev,
+      sessionEntries: {
+        ...prev.sessionEntries,
+        [NIL_UUID]: histEntries,
+      },
+    }));
+  } catch {
+    // Ignore -- no subagent history available.
+  }
+}
 
 async function initialiseBus() {
   if (busInitialised) return;
@@ -169,6 +226,17 @@ async function initialiseBus() {
     });
   });
   unlistenFns.push(u3);
+
+  // When a subagent (title-generator, skill-ingestion, etc.) completes,
+  // the backend emits this event.  Re-fetch subagent history so the
+  // Global diagnostics view picks up the new entries.
+  const u4 = await listen('diagnostics:subagent_completed', () => {
+    loadSubagentHistory();
+  });
+  unlistenFns.push(u4);
+
+  // Seed subagent history on first load.
+  loadSubagentHistory();
 }
 
 // Kick off bus initialisation immediately (not inside any hook) so the first
@@ -269,13 +337,21 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
     })();
   }, [activeSessionId]);
 
+
   const clear = useCallback(() => {
-    if (!activeSessionId) return;
-    const sid = activeSessionId;
-    broadcastUpdate((prev) => ({
-      ...prev,
-      sessionEntries: { ...prev.sessionEntries, [sid]: [] },
-    }));
+    if (activeSessionId) {
+      const sid = activeSessionId;
+      broadcastUpdate((prev) => ({
+        ...prev,
+        sessionEntries: { ...prev.sessionEntries, [sid]: [] },
+      }));
+    } else {
+      // Global clear: wipe all session entries.
+      broadcastUpdate((prev) => ({
+        ...prev,
+        sessionEntries: {},
+      }));
+    }
   }, [activeSessionId]);
 
   const addUserMessage = useCallback((content: string, sessionId: string) => {
@@ -298,10 +374,17 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
     });
   }, []);
 
-  const entries = activeSessionId ? (localState.sessionEntries[activeSessionId] ?? []) : [];
+  const entries = useMemo(() => {
+    if (activeSessionId) {
+      return localState.sessionEntries[activeSessionId] ?? [];
+    }
+    // Global view: merge all sessions' entries sorted by timestamp.
+    const all = Object.values(localState.sessionEntries).flat();
+    return all.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  }, [activeSessionId, localState]);
   const isActive = activeSessionId
     ? [...localState.activeRuns].some((rid) => localState.runToSession[rid] === activeSessionId)
-    : false;
+    : localState.activeRuns.size > 0;
   const summary = useMemo(() => computeSummary(entries), [entries]);
 
   return { entries, summary, isActive, clear, addUserMessage };

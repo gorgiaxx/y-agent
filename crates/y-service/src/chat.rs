@@ -10,6 +10,7 @@
 //! 7. Checkpoint creation
 
 use std::fmt;
+use std::sync::Arc;
 
 use futures::StreamExt;
 use tokio::sync::mpsc;
@@ -22,6 +23,7 @@ use y_core::provider::{ChatRequest, ProviderPool, RouteRequest, ToolCallingMode}
 use y_core::tool::ToolInput;
 use y_core::types::{Message, ProviderId, Role, SessionId, ToolCallRequest, ToolName};
 use y_tools::{format_tool_result, parse_tool_calls, strip_tool_call_blocks};
+use y_core::runtime::CommandRunner;
 
 use crate::container::ServiceContainer;
 use crate::cost::CostService;
@@ -104,6 +106,15 @@ pub enum TurnEvent {
     /// channel is provided (i.e., `execute_turn_with_progress`).
     StreamDelta {
         /// Incremental text content from the LLM.
+        content: String,
+    },
+    /// Incremental reasoning/thinking delta from a thinking-mode LLM.
+    ///
+    /// Emitted during streaming for models that produce `reasoning_content`
+    /// (e.g. DeepSeek-R1, QwQ). Presentation layers show this in a collapsible
+    /// "Thinking..." section.
+    StreamReasoningDelta {
+        /// Incremental reasoning text from the LLM.
         content: String,
     },
 }
@@ -368,10 +379,12 @@ impl ChatService {
             .await
             .map_err(|e| PrepareTurnError::PersistFailed(e.to_string()))?;
 
-        // 3. Read full transcript (includes the just-appended user message).
+        // 3. Read full display transcript (includes the just-appended user message).
+        //    The display transcript is used for GUI-facing history; it is never
+        //    compacted, so users always see the complete conversation.
         let history = container
             .session_manager
-            .read_transcript(&session_id)
+            .read_display_transcript(&session_id)
             .await
             .map_err(|e| PrepareTurnError::TranscriptReadFailed(e.to_string()))?;
 
@@ -698,6 +711,10 @@ impl ChatService {
                             });
                         }
 
+                        let mut meta = serde_json::json!({ "model": response.model });
+                        if let Some(ref rc) = response.reasoning_content {
+                            meta["reasoning_content"] = serde_json::Value::String(rc.clone());
+                        }
                         let assistant_msg = Message {
                             message_id: y_core::types::generate_message_id(),
                             role: Role::Assistant,
@@ -705,7 +722,7 @@ impl ChatService {
                             tool_call_id: None,
                             tool_calls: response.tool_calls.clone(),
                             timestamp: y_core::types::now(),
-                            metadata: serde_json::json!({ "model": response.model }),
+                            metadata: meta,
                         };
                         // Accumulate intermediate assistant text for the final message.
                         accumulated_content.push_str(&assistant_msg.content);
@@ -811,6 +828,10 @@ impl ChatService {
                                         response_text: response_text_raw.clone(),
                                     });
                                 }
+                                let mut meta = serde_json::json!({ "model": response.model });
+                                if let Some(ref rc) = response.reasoning_content {
+                                    meta["reasoning_content"] = serde_json::Value::String(rc.clone());
+                                }
                                 // Record assistant message with original text.
                                 let assistant_msg = Message {
                                     message_id: y_core::types::generate_message_id(),
@@ -819,7 +840,7 @@ impl ChatService {
                                     tool_call_id: None,
                                     tool_calls: vec![],
                                     timestamp: y_core::types::now(),
-                                    metadata: serde_json::json!({ "model": response.model }),
+                                    metadata: meta,
                                 };
                                 // Accumulate intermediate assistant text (with tool_call XML)
                                 // for the final persisted message.
@@ -991,6 +1012,18 @@ impl ChatService {
                         })
                         .collect();
 
+                    let mut meta = serde_json::json!({
+                        "model": response.model,
+                        "usage": {
+                            "input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens,
+                        },
+                        "tool_results": tool_results_meta,
+                    });
+                    if let Some(ref rc) = response.reasoning_content {
+                        meta["reasoning_content"] = serde_json::Value::String(rc.clone());
+                    }
+
                     let assistant_msg = Message {
                         message_id: y_core::types::generate_message_id(),
                         role: Role::Assistant,
@@ -998,14 +1031,7 @@ impl ChatService {
                         tool_call_id: None,
                         tool_calls: vec![],
                         timestamp: y_core::types::now(),
-                        metadata: serde_json::json!({
-                            "model": response.model,
-                            "usage": {
-                                "input_tokens": response.usage.input_tokens,
-                                "output_tokens": response.usage.output_tokens,
-                            },
-                            "tool_results": tool_results_meta,
-                        }),
+                        metadata: meta,
                     };
 
                     let _ = container
@@ -1177,6 +1203,7 @@ impl ChatService {
             name: tool_name,
             arguments: tc.arguments.clone(),
             session_id: session_id.clone(),
+            command_runner: Some(Arc::clone(&container.runtime_manager) as Arc<dyn CommandRunner>),
         };
 
         // TODO(middleware): Route through ToolMiddleware chain instead of
@@ -1218,6 +1245,7 @@ impl ChatService {
         let mut stream = stream_response.stream;
 
         let mut content = String::new();
+        let mut reasoning_content = String::new();
         let mut tool_calls = Vec::new();
         let mut usage = TokenUsage {
             input_tokens: 0,
@@ -1255,6 +1283,19 @@ impl ChatService {
                             if let Some(tx) = progress {
                                 let _ = tx.send(TurnEvent::StreamDelta {
                                     content: delta.clone(),
+                                });
+                            }
+                        }
+                    }
+
+                    // Emit reasoning/thinking delta to presentation layers.
+                    if let Some(ref reasoning) = chunk.delta_reasoning_content {
+                        if !reasoning.is_empty() {
+                            tracing::debug!(len = reasoning.len(), "streaming reasoning delta");
+                            reasoning_content.push_str(reasoning);
+                            if let Some(tx) = progress {
+                                let _ = tx.send(TurnEvent::StreamReasoningDelta {
+                                    content: reasoning.clone(),
                                 });
                             }
                         }
@@ -1315,6 +1356,7 @@ impl ChatService {
             id: String::new(),
             model: model_name,
             content: if content.is_empty() { None } else { Some(content) },
+            reasoning_content: if reasoning_content.is_empty() { None } else { Some(reasoning_content) },
             tool_calls,
             usage,
             finish_reason,

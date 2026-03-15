@@ -12,7 +12,7 @@
 
 The `y-skills` crate currently implements approximately **20-25%** of the design scope, corresponding to the **Phase 1** foundation defined in both design documents. All 29 existing tests pass. Completed work includes: core traits, TOML manifest parsing with 2000-token budget enforcement, in-memory content-addressable version store (SHA-256) with reflog and rollback, tag/trigger-based skill search, experience capture with evidence provenance, evolution proposals, and approval gate (5 policies).
 
-Major gaps include: the entire LLM-assisted ingestion pipeline, transformation engine, persistent storage, safety screening, CLI maintenance commands, and advanced self-evolution features.
+Major gaps include: the entire LLM-assisted ingestion pipeline, transformation engine, persistent storage, security screening, CLI maintenance commands, and advanced self-evolution features.
 
 ---
 
@@ -46,7 +46,7 @@ gantt
     section S4 Ingestion Pipeline
     Format detector                    :s4_1, after s2_4, 2d
     Content analyzer (LLM)             :s4_2, after s4_1, 3d
-    Classifier + Safety screener       :s4_3, after s4_2, 2d
+    Classifier + Security screener       :s4_3, after s4_2, 2d
     Filter gate                        :s4_4, after s4_3, 1d
 
     section S5 Transformation Engine
@@ -79,7 +79,7 @@ gantt
 
 #### S1.1 Manifest Schema Alignment
 
-**Problem**: Current `TomlManifest` uses a flat TOML format (`name`, `description`, `root_content`, etc.), diverging significantly from the design's nested `skill.toml` structure (`[skill]`, `[skill.classification]`, `[skill.constraints]`, `[skill.safety]`, `[skill.references]`).
+**Problem**: Current `TomlManifest` uses a flat TOML format (`name`, `description`, `root_content`, etc.), diverging significantly from the design's nested `skill.toml` structure (`[skill]`, `[skill.classification]`, `[skill.constraints]`, `[skill.security]`, `[skill.references]`).
 
 **Changes**:
 
@@ -87,7 +87,7 @@ gantt
 
 - Add `SkillClassification` struct: `type` (llm_reasoning enum), `domain: Vec<String>`, `tags: Vec<String>`, `atomic: bool`
 - Add `SkillConstraints` struct: `max_input_tokens`, `max_output_tokens`, `requires_language: Option<String>`
-- Add `SkillSafetyConfig` struct: `allows_external_calls: bool`, `allows_file_operations: bool`, `allows_code_execution: bool`, `max_delegation_depth: u32`
+- Add `SkillSecurityConfig` struct: `allows_external_calls: bool`, `allows_file_operations: bool`, `allows_code_execution: bool`, `max_delegation_depth: u32`
 - Add `SkillReferences` struct: `tools: Vec<String>`, `skills: Vec<String>`, `knowledge_bases: Vec<String>`
 - Update `TomlManifest` to use nested `[skill]` table matching design's `skill.toml` schema
 - Maintain backward compatibility by supporting the current flat format as a legacy path (if flat-format `.toml` files exist)
@@ -97,7 +97,7 @@ gantt
 
 - Add `classification: Option<SkillClassification>` to `SkillManifest`
 - Add `constraints: Option<SkillConstraints>` to `SkillManifest`
-- Add `safety: Option<SkillSafetyConfig>` to `SkillManifest`
+- Add `security: Option<SkillSecurityConfig>` to `SkillManifest`
 - Add `references: Option<SkillReferences>` to `SkillManifest`
 
 #### S1.2 Fix SkillRegistry Trait Compliance
@@ -162,7 +162,7 @@ gantt
 
 #### S2.1 Registration Validation Rules
 
-**Problem**: Only token budget is validated. Design requires 6 rules: format-only, root token limit, safety constraints, unique name, lineage required, reference resolution.
+**Problem**: Only token budget is validated. Design requires 6 rules: format-only, root token limit, security constraints, unique name, lineage required, reference resolution.
 
 **Changes**:
 
@@ -172,7 +172,7 @@ gantt
   1. **Format validation**: `skill.toml` + `root.md` must exist
   2. **Schema validation**: parse `skill.toml`, required fields present
   3. **Root token limit**: `root.md` ≤ `max_root_tokens`
-  4. **Safety constraints**: all safety flags `false` unless explicitly approved
+  4. **Security constraints**: all security flags `false` unless explicitly approved
   5. **Unique name**: no duplicate names in registry
   6. **Lineage required**: `lineage.toml` must exist with valid content
   7. **Reference resolution**: `[tool:X]`, `[skill:X]`, `[knowledge:X]` refs all resolve
@@ -305,7 +305,7 @@ gantt
 
 ### Phase S4: Ingestion Pipeline (Est. 5-6 days)
 
-> **Goal**: Multi-format detection, LLM-assisted content analysis, classification, safety screening, filter gate. This is the core value proposition of the skills system.
+> **Goal**: Multi-format detection, LLM-assisted content analysis, classification, security screening, filter gate. This is the core value proposition of the skills system.
 >
 > **Depends on**: `y-provider` (LLM API access)
 
@@ -332,11 +332,11 @@ gantt
 ##### [NEW] [analyzer.rs](file:///Users/gorgias/Projects/y-agent/crates/y-skills/src/analyzer.rs)
 
 - `ContentAnalyzer` struct: single LLM call per skill with structured output (JSON schema)
-- `AnalysisReport` struct: `purpose`, `classification_hint`, `capabilities`, `embedded_tools`, `embedded_scripts`, `quality_issues`, `token_estimate`, `safety_flags`
+- `AnalysisReport` struct: `purpose`, `classification_hint`, `capabilities`, `embedded_tools`, `embedded_scripts`, `quality_issues`, `token_estimate`, `security_flags`
 - Uses `y-provider` for LLM calls (takes `LlmProvider` trait object)
 - Structured output prompt with JSON Schema response format
 
-#### S4.3 Classifier + Safety Screener
+#### S4.3 Classifier + Security Screener
 
 **Changes**:
 
@@ -346,15 +346,15 @@ gantt
 - `SkillClassifier`: determines type from `AnalysisReport`
 - Rule-based heuristics backed by LLM classification hint
 
-##### [NEW] [safety.rs](file:///Users/gorgias/Projects/y-agent/crates/y-skills/src/safety.rs)
+##### [NEW] [security.rs](file:///Users/gorgias/Projects/y-agent/crates/y-skills/src/security.rs)
 
-- `SafetyScreener` struct with 5 pattern checks:
+- `SecurityScreener` struct with 5 pattern checks:
   1. Prompt injection detection (pattern matching + LLM-assisted)
   2. Privilege escalation detection
   3. Unconstrained delegation detection
   4. Data exfiltration detection
   5. Excessive freedom detection
-- `SafetyVerdict` enum: `Pass`, `Blocked { reason: String, finding_type: SafetyFindingType }`
+- `SecurityVerdict` enum: `Pass`, `Blocked { reason: String, finding_type: SecurityFindingType }`
 - Dual-mode: pattern-matching (fast, deterministic) + optional LLM-assisted (configurable)
 
 #### S4.4 Filter Gate
@@ -363,7 +363,7 @@ gantt
 
 ##### [NEW] [filter.rs](file:///Users/gorgias/Projects/y-agent/crates/y-skills/src/filter.rs)
 
-- `FilterGate` struct: applies 7 filter rules from `AnalysisReport` + `SkillClassificationType` + `SafetyVerdict`
+- `FilterGate` struct: applies 7 filter rules from `AnalysisReport` + `SkillClassificationType` + `SecurityVerdict`
 - `FilterDecision` enum: `Accepted`, `Rejected { reason: String, redirect: Option<RedirectTarget> }`, `PartialAccept { llm_portion, redirect_for: Vec<RedirectTarget> }`
 - `RedirectTarget`: `ToolSystem`, `AgentFramework`
 
@@ -375,8 +375,8 @@ gantt
 | T-SK-S4-02 | Content analyzer produces structured `AnalysisReport` | `analyzer.rs` (mock LLM) |
 | T-SK-S4-03 | Classifier assigns `LlmReasoning` for reasoning-only skills | `classifier.rs` |
 | T-SK-S4-04 | Classifier assigns `ApiCall` for API-description skills | `classifier.rs` |
-| T-SK-S4-05 | Safety screener detects prompt injection patterns | `safety.rs` |
-| T-SK-S4-06 | Safety screener detects privilege escalation | `safety.rs` |
+| T-SK-S4-05 | Security screener detects prompt injection patterns | `security.rs` |
+| T-SK-S4-06 | Security screener detects privilege escalation | `security.rs` |
 | T-SK-S4-07 | Filter gate accepts `LlmReasoning` + safe skills | `filter.rs` |
 | T-SK-S4-08 | Filter gate rejects `ApiCall` with redirect message | `filter.rs` |
 | T-SK-S4-09 | Filter gate handles hybrid: partial accept + redirect | `filter.rs` |
@@ -591,7 +591,7 @@ gantt
 - Add feature flags:
   - `skill_ingestion` — enables LLM-assisted ingestion pipeline
   - `skill_transformation` — enables transformation engine
-  - `skill_safety_screening` — enables safety screener
+  - `skill_security_screening` — enables security screener
   - `skill_linkage` — enables cross-resource linker
   - `skill_lazy_loading` — enables lazy sub-document loading
   - `evolution_capture` — enables experience capture
@@ -705,7 +705,7 @@ After Phase S6 completion:
 
 ## 8. Acceptance Criteria
 
-- [ ] All existing 29 tests continue to pass (regression safety)
+- [ ] All existing 29 tests continue to pass (regression security)
 - [ ] All new tests per phase pass
 - [ ] `cargo clippy -p y-skills -- -D warnings` zero warnings
 - [ ] `SkillRegistry::register()` works as async trait method (no workaround)

@@ -44,7 +44,7 @@ pub struct ServiceConfig {
     /// Tool registry configuration.
     pub tools: ToolRegistryConfig,
 
-    /// Guardrail/safety configuration.
+    /// Guardrail/security configuration.
     pub guardrails: GuardrailConfig,
 
     /// Path to the user prompts override directory (`~/.config/y-agent/prompts/`).
@@ -269,4 +269,3 @@ api_key_env = "OPENAI_API_KEY"
         assert_eq!(config.storage.db_path, ":memory:");
     }
 }
-

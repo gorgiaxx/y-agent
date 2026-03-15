@@ -110,6 +110,7 @@ impl LlmProvider for MockProvider {
             id: uuid::Uuid::new_v4().to_string(),
             model: "mock-model".into(),
             content: Some(text),
+            reasoning_content: None,
             tool_calls: vec![],
             usage: TokenUsage {
                 input_tokens: request
@@ -136,6 +137,7 @@ impl LlmProvider for MockProvider {
         let text = self.next_response(request, count)?;
         let chunk = ChatStreamChunk {
             delta_content: Some(text),
+            delta_reasoning_content: None,
             delta_tool_calls: vec![],
             usage: None,
             finish_reason: Some(FinishReason::Stop),

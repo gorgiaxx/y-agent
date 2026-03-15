@@ -43,12 +43,39 @@ interface SessionFormData {
   auto_archive_merged: boolean;
 }
 
+interface VolumeMappingData {
+  host_path: string;
+  container_path: string;
+  mode: string;
+}
+
 interface RuntimeFormData {
   default_backend: string;
   allow_shell: boolean;
   allow_host_access: boolean;
   default_timeout: string;
   default_memory_bytes: number;
+  // SSH fields
+  ssh_host: string;
+  ssh_port: number;
+  ssh_user: string;
+  ssh_auth_method: string;
+  ssh_password: string;
+  ssh_private_key_path: string;
+  ssh_passphrase: string;
+  ssh_known_hosts_path: string;
+  // Docker fields
+  docker_default_image: string;
+  docker_network_mode: string;
+  docker_privileged: boolean;
+  docker_user: string;
+  docker_readonly_rootfs: boolean;
+  docker_default_env: Record<string, string>;
+  docker_default_volumes: VolumeMappingData[];
+  docker_extra_hosts: string[];
+  docker_dns: string[];
+  docker_cap_add: string[];
+  docker_cap_drop: string[];
 }
 
 function emptyProvider(): ProviderFormData {
@@ -437,13 +464,68 @@ function sessionToToml(s: SessionFormData): string {
 }
 
 function runtimeToToml(r: RuntimeFormData): string {
-  return [
+  const lines: string[] = [
     `default_backend = "${r.default_backend}"`,
     `allow_shell = ${r.allow_shell}`,
     `allow_host_access = ${r.allow_host_access}`,
     `default_timeout = "${r.default_timeout}"`,
     `default_memory_bytes = ${r.default_memory_bytes}`,
-  ].join('\n') + '\n';
+    '',
+    '[ssh]',
+    `host = "${r.ssh_host}"`,
+    `port = ${r.ssh_port}`,
+    `user = "${r.ssh_user}"`,
+    `auth_method = "${r.ssh_auth_method}"`,
+  ];
+  if (r.ssh_auth_method === 'password' && r.ssh_password) {
+    lines.push(`password = "${r.ssh_password}"`);
+  }
+  if (r.ssh_auth_method === 'public_key' && r.ssh_private_key_path) {
+    lines.push(`private_key_path = "${r.ssh_private_key_path}"`);
+  }
+  if (r.ssh_passphrase) lines.push(`passphrase = "${r.ssh_passphrase}"`);
+  if (r.ssh_known_hosts_path) lines.push(`known_hosts_path = "${r.ssh_known_hosts_path}"`);
+
+  lines.push('');
+  lines.push('[docker]');
+  if (r.docker_default_image) lines.push(`default_image = "${r.docker_default_image}"`);
+  lines.push(`network_mode = "${r.docker_network_mode}"`);
+  lines.push(`privileged = ${r.docker_privileged}`);
+  lines.push(`readonly_rootfs = ${r.docker_readonly_rootfs}`);
+  if (r.docker_user) lines.push(`user = "${r.docker_user}"`);  
+  if (r.docker_cap_drop.length > 0) {
+    lines.push(`cap_drop = [${r.docker_cap_drop.map(c => `"${c}"`).join(', ')}]`);
+  }
+  if (r.docker_cap_add.length > 0) {
+    lines.push(`cap_add = [${r.docker_cap_add.map(c => `"${c}"`).join(', ')}]`);
+  }
+  if (r.docker_dns.length > 0) {
+    lines.push(`dns = [${r.docker_dns.map(d => `"${d}"`).join(', ')}]`);
+  }
+  if (r.docker_extra_hosts.length > 0) {
+    lines.push(`extra_hosts = [${r.docker_extra_hosts.map(h => `"${h}"`).join(', ')}]`);
+  }
+
+  // Docker default_env as inline table section.
+  if (Object.keys(r.docker_default_env).length > 0) {
+    lines.push('');
+    lines.push('[docker.default_env]');
+    for (const [k, v] of Object.entries(r.docker_default_env)) {
+      lines.push(`${k} = "${v}"`);
+    }
+  }
+
+  // Docker default_volumes as array of tables.
+  for (const vol of r.docker_default_volumes) {
+    lines.push('');
+    lines.push('[[docker.default_volumes]]');
+    lines.push(`host_path = "${vol.host_path}"`);
+    lines.push(`container_path = "${vol.container_path}"`);
+    lines.push(`mode = "${vol.mode}"`);
+  }
+
+  lines.push('');
+  return lines.join('\n');
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -491,12 +573,39 @@ function jsonToSession(json: any): SessionFormData {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function jsonToRuntime(json: any): RuntimeFormData {
+  const ssh = json?.ssh ?? {};
+  const docker = json?.docker ?? {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const volumes: VolumeMappingData[] = (docker.default_volumes ?? []).map((v: any) => ({
+    host_path: v.host_path ?? '',
+    container_path: v.container_path ?? '',
+    mode: v.mode ?? 'ro',
+  }));
   return {
     default_backend: json?.default_backend ?? 'native',
     allow_shell: json?.allow_shell ?? false,
     allow_host_access: json?.allow_host_access ?? false,
     default_timeout: json?.default_timeout ?? '30s',
     default_memory_bytes: json?.default_memory_bytes ?? 536870912,
+    ssh_host: ssh.host ?? 'localhost',
+    ssh_port: ssh.port ?? 22,
+    ssh_user: ssh.user ?? 'root',
+    ssh_auth_method: ssh.auth_method ?? 'public_key',
+    ssh_password: ssh.password ?? '',
+    ssh_private_key_path: ssh.private_key_path ?? '',
+    ssh_passphrase: ssh.passphrase ?? '',
+    ssh_known_hosts_path: ssh.known_hosts_path ?? '',
+    docker_default_image: docker.default_image ?? '',
+    docker_network_mode: docker.network_mode ?? 'none',
+    docker_privileged: docker.privileged ?? false,
+    docker_user: docker.user ?? '',
+    docker_readonly_rootfs: docker.readonly_rootfs ?? true,
+    docker_default_env: docker.default_env ?? {},
+    docker_default_volumes: volumes,
+    docker_extra_hosts: docker.extra_hosts ?? [],
+    docker_dns: docker.dns ?? [],
+    docker_cap_add: docker.cap_add ?? [],
+    docker_cap_drop: docker.cap_drop ?? ['ALL'],
   };
 }
 
@@ -554,6 +663,25 @@ export function SettingsOverlay({
     allow_host_access: false,
     default_timeout: '30s',
     default_memory_bytes: 536870912,
+    ssh_host: 'localhost',
+    ssh_port: 22,
+    ssh_user: 'root',
+    ssh_auth_method: 'public_key',
+    ssh_password: '',
+    ssh_private_key_path: '',
+    ssh_passphrase: '',
+    ssh_known_hosts_path: '',
+    docker_default_image: '',
+    docker_network_mode: 'none',
+    docker_privileged: false,
+    docker_user: '',
+    docker_readonly_rootfs: true,
+    docker_default_env: {},
+    docker_default_volumes: [],
+    docker_extra_hosts: [],
+    docker_dns: [],
+    docker_cap_add: [],
+    docker_cap_drop: ['ALL'],
   });
   const [runtimeFormLoading, setRuntimeFormLoading] = useState(false);
 
@@ -707,31 +835,20 @@ export function SettingsOverlay({
     }
   }, [loadSection]);
 
-  // Load runtime config as structured JSON.
+  // Load runtime config as structured JSON via config_get.
   const loadRuntimeForm = useCallback(async () => {
     setRuntimeFormLoading(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const content = await loadSection('runtime');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const parsed: any = {};
-      for (const line of content.split('\n')) {
-        const m = line.match(/^\s*(\w+)\s*=\s*(.+)$/);
-        if (m) {
-          const val = m[2].trim();
-          if (val === 'true') parsed[m[1]] = true;
-          else if (val === 'false') parsed[m[1]] = false;
-          else if (/^\d+$/.test(val)) parsed[m[1]] = parseInt(val, 10);
-          else parsed[m[1]] = val.replace(/^"|"$/g, '');
-        }
-      }
-      setRuntimeForm(jsonToRuntime(parsed));
+      const allConfig = await invoke<any>('config_get');
+      const runtimeJson = allConfig?.runtime ?? {};
+      setRuntimeForm(jsonToRuntime(runtimeJson));
     } catch {
       // Use defaults if section not found.
     } finally {
       setRuntimeFormLoading(false);
     }
-  }, [loadSection]);
+  }, []);
 
   // Load prompt file list and first file content when switching to prompts tab.
   const loadPromptFile = useCallback(async (filename: string) => {
@@ -1183,6 +1300,335 @@ export function SettingsOverlay({
                             />
                             {' '}Allow host filesystem access
                           </label>
+                        </div>
+                      </div>
+
+                      {/* --- SSH section (shown for all backends since it's config, always saved) --- */}
+                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 'var(--space-sm)', paddingTop: 'var(--space-sm)' }}>
+                        <h4 style={{ margin: '0 0 var(--space-xs)', fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>SSH Configuration</h4>
+                        <div className="pf-row">
+                          <div className="pf-field">
+                            <label className="pf-label">Host</label>
+                            <input
+                              className="pf-input"
+                              value={runtimeForm.ssh_host}
+                              onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_host: e.target.value }); setDirtyRuntime(true); }}
+                              placeholder="localhost"
+                            />
+                          </div>
+                          <div className="pf-field" style={{ maxWidth: '120px' }}>
+                            <label className="pf-label">Port</label>
+                            <input
+                              className="pf-input pf-input-num"
+                              type="number"
+                              min={1}
+                              max={65535}
+                              value={runtimeForm.ssh_port}
+                              onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_port: Number(e.target.value) || 22 }); setDirtyRuntime(true); }}
+                            />
+                          </div>
+                          <div className="pf-field">
+                            <label className="pf-label">User</label>
+                            <input
+                              className="pf-input"
+                              value={runtimeForm.ssh_user}
+                              onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_user: e.target.value }); setDirtyRuntime(true); }}
+                              placeholder="root"
+                            />
+                          </div>
+                        </div>
+                        <div className="pf-row">
+                          <div className="pf-field">
+                            <label className="pf-label">Auth Method</label>
+                            <select
+                              className="form-select"
+                              style={{ maxWidth: 'none' }}
+                              value={runtimeForm.ssh_auth_method}
+                              onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_auth_method: e.target.value }); setDirtyRuntime(true); }}
+                            >
+                              <option value="public_key">Public Key</option>
+                              <option value="password">Password</option>
+                            </select>
+                          </div>
+                          {runtimeForm.ssh_auth_method === 'password' ? (
+                            <div className="pf-field">
+                              <label className="pf-label">Password</label>
+                              <input
+                                className="pf-input"
+                                type="password"
+                                value={runtimeForm.ssh_password}
+                                onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_password: e.target.value }); setDirtyRuntime(true); }}
+                                placeholder="SSH password"
+                              />
+                            </div>
+                          ) : (
+                            <div className="pf-field">
+                              <label className="pf-label">Private Key Path</label>
+                              <input
+                                className="pf-input"
+                                value={runtimeForm.ssh_private_key_path}
+                                onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_private_key_path: e.target.value }); setDirtyRuntime(true); }}
+                                placeholder="~/.ssh/id_rsa"
+                              />
+                            </div>
+                          )}
+                        </div>
+                        {runtimeForm.ssh_auth_method === 'public_key' && (
+                          <div className="pf-row">
+                            <div className="pf-field">
+                              <label className="pf-label">Passphrase</label>
+                              <input
+                                className="pf-input"
+                                type="password"
+                                value={runtimeForm.ssh_passphrase}
+                                onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_passphrase: e.target.value }); setDirtyRuntime(true); }}
+                                placeholder="(optional)"
+                              />
+                            </div>
+                            <div className="pf-field">
+                              <label className="pf-label">Known Hosts Path</label>
+                              <input
+                                className="pf-input"
+                                value={runtimeForm.ssh_known_hosts_path}
+                                onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_known_hosts_path: e.target.value }); setDirtyRuntime(true); }}
+                                placeholder="~/.ssh/known_hosts"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* --- Docker section --- */}
+                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 'var(--space-sm)', paddingTop: 'var(--space-sm)' }}>
+                        <h4 style={{ margin: '0 0 var(--space-xs)', fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Docker Configuration</h4>
+                        <div className="pf-row">
+                          <div className="pf-field pf-field-full">
+                            <label className="pf-label">Default Image</label>
+                            <input
+                              className="pf-input"
+                              value={runtimeForm.docker_default_image}
+                              onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_default_image: e.target.value }); setDirtyRuntime(true); }}
+                              placeholder="e.g. python:3.12-slim, ubuntu:24.04"
+                            />
+                            <span className="pf-hint">Container image used for Docker-backend executions when not specified per-request</span>
+                          </div>
+                        </div>
+                        <div className="pf-row">
+                          <div className="pf-field">
+                            <label className="pf-label">Network Mode</label>
+                            <select
+                              className="form-select"
+                              style={{ maxWidth: 'none' }}
+                              value={runtimeForm.docker_network_mode}
+                              onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_network_mode: e.target.value }); setDirtyRuntime(true); }}
+                            >
+                              <option value="none">none</option>
+                              <option value="bridge">bridge</option>
+                              <option value="host">host</option>
+                            </select>
+                          </div>
+                          <div className="pf-field">
+                            <label className="pf-label">Container User</label>
+                            <input
+                              className="pf-input"
+                              value={runtimeForm.docker_user}
+                              onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_user: e.target.value }); setDirtyRuntime(true); }}
+                              placeholder="e.g. 1000:1000"
+                            />
+                          </div>
+                        </div>
+                        <div className="pf-row">
+                          <div className="pf-field">
+                            <label className="pf-label">
+                              <input
+                                type="checkbox"
+                                className="form-checkbox"
+                                checked={runtimeForm.docker_privileged}
+                                onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_privileged: e.target.checked }); setDirtyRuntime(true); }}
+                              />
+                              {' '}Privileged mode
+                            </label>
+                          </div>
+                          <div className="pf-field">
+                            <label className="pf-label">
+                              <input
+                                type="checkbox"
+                                className="form-checkbox"
+                                checked={runtimeForm.docker_readonly_rootfs}
+                                onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_readonly_rootfs: e.target.checked }); setDirtyRuntime(true); }}
+                              />
+                              {' '}Read-only root filesystem
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Cap Drop / Cap Add */}
+                        <div className="pf-row">
+                          <div className="pf-field">
+                            <label className="pf-label">Cap Drop</label>
+                            <TagChipInput
+                              tags={runtimeForm.docker_cap_drop}
+                              onChange={(next) => { setRuntimeForm({ ...runtimeForm, docker_cap_drop: next }); setDirtyRuntime(true); }}
+                            />
+                          </div>
+                          <div className="pf-field">
+                            <label className="pf-label">Cap Add</label>
+                            <TagChipInput
+                              tags={runtimeForm.docker_cap_add}
+                              onChange={(next) => { setRuntimeForm({ ...runtimeForm, docker_cap_add: next }); setDirtyRuntime(true); }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* DNS / Extra Hosts */}
+                        <div className="pf-row">
+                          <div className="pf-field">
+                            <label className="pf-label">DNS Servers</label>
+                            <TagChipInput
+                              tags={runtimeForm.docker_dns}
+                              onChange={(next) => { setRuntimeForm({ ...runtimeForm, docker_dns: next }); setDirtyRuntime(true); }}
+                            />
+                          </div>
+                          <div className="pf-field">
+                            <label className="pf-label">Extra Hosts</label>
+                            <TagChipInput
+                              tags={runtimeForm.docker_extra_hosts}
+                              onChange={(next) => { setRuntimeForm({ ...runtimeForm, docker_extra_hosts: next }); setDirtyRuntime(true); }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Environment Variables */}
+                        <div className="pf-row">
+                          <div className="pf-field pf-field-full">
+                            <label className="pf-label">Environment Variables</label>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {Object.entries(runtimeForm.docker_default_env).map(([k, v], i) => (
+                                <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                  <input
+                                    className="pf-input"
+                                    style={{ flex: 1 }}
+                                    value={k}
+                                    onChange={(e) => {
+                                      const entries = Object.entries(runtimeForm.docker_default_env);
+                                      entries[i] = [e.target.value, v];
+                                      setRuntimeForm({ ...runtimeForm, docker_default_env: Object.fromEntries(entries) });
+                                      setDirtyRuntime(true);
+                                    }}
+                                    placeholder="KEY"
+                                  />
+                                  <span style={{ color: 'var(--text-secondary)' }}>=</span>
+                                  <input
+                                    className="pf-input"
+                                    style={{ flex: 2 }}
+                                    value={v}
+                                    onChange={(e) => {
+                                      const newEnv = { ...runtimeForm.docker_default_env };
+                                      newEnv[k] = e.target.value;
+                                      setRuntimeForm({ ...runtimeForm, docker_default_env: newEnv });
+                                      setDirtyRuntime(true);
+                                    }}
+                                    placeholder="value"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="pf-tag-chip-remove"
+                                    style={{ padding: '2px 6px', cursor: 'pointer' }}
+                                    title="Remove"
+                                    onClick={() => {
+                                      const newEnv = { ...runtimeForm.docker_default_env };
+                                      delete newEnv[k];
+                                      setRuntimeForm({ ...runtimeForm, docker_default_env: newEnv });
+                                      setDirtyRuntime(true);
+                                    }}
+                                  >×</button>
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                className="btn-test"
+                                style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '2px 8px' }}
+                                onClick={() => {
+                                  const newEnv = { ...runtimeForm.docker_default_env, '': '' };
+                                  setRuntimeForm({ ...runtimeForm, docker_default_env: newEnv });
+                                  setDirtyRuntime(true);
+                                }}
+                              >+ Add Variable</button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Volume Mappings */}
+                        <div className="pf-row">
+                          <div className="pf-field pf-field-full">
+                            <label className="pf-label">Volume Mappings</label>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {runtimeForm.docker_default_volumes.map((vol, i) => (
+                                <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                  <input
+                                    className="pf-input"
+                                    style={{ flex: 2 }}
+                                    value={vol.host_path}
+                                    onChange={(e) => {
+                                      const vols = [...runtimeForm.docker_default_volumes];
+                                      vols[i] = { ...vols[i], host_path: e.target.value };
+                                      setRuntimeForm({ ...runtimeForm, docker_default_volumes: vols });
+                                      setDirtyRuntime(true);
+                                    }}
+                                    placeholder="Host path"
+                                  />
+                                  <span style={{ color: 'var(--text-secondary)' }}>→</span>
+                                  <input
+                                    className="pf-input"
+                                    style={{ flex: 2 }}
+                                    value={vol.container_path}
+                                    onChange={(e) => {
+                                      const vols = [...runtimeForm.docker_default_volumes];
+                                      vols[i] = { ...vols[i], container_path: e.target.value };
+                                      setRuntimeForm({ ...runtimeForm, docker_default_volumes: vols });
+                                      setDirtyRuntime(true);
+                                    }}
+                                    placeholder="Container path"
+                                  />
+                                  <select
+                                    className="form-select"
+                                    style={{ width: '70px', minWidth: '70px' }}
+                                    value={vol.mode}
+                                    onChange={(e) => {
+                                      const vols = [...runtimeForm.docker_default_volumes];
+                                      vols[i] = { ...vols[i], mode: e.target.value };
+                                      setRuntimeForm({ ...runtimeForm, docker_default_volumes: vols });
+                                      setDirtyRuntime(true);
+                                    }}
+                                  >
+                                    <option value="ro">ro</option>
+                                    <option value="rw">rw</option>
+                                  </select>
+                                  <button
+                                    type="button"
+                                    className="pf-tag-chip-remove"
+                                    style={{ padding: '2px 6px', cursor: 'pointer' }}
+                                    title="Remove"
+                                    onClick={() => {
+                                      const vols = runtimeForm.docker_default_volumes.filter((_, j) => j !== i);
+                                      setRuntimeForm({ ...runtimeForm, docker_default_volumes: vols });
+                                      setDirtyRuntime(true);
+                                    }}
+                                  >×</button>
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                className="btn-test"
+                                style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '2px 8px' }}
+                                onClick={() => {
+                                  const vols = [...runtimeForm.docker_default_volumes, { host_path: '', container_path: '', mode: 'ro' }];
+                                  setRuntimeForm({ ...runtimeForm, docker_default_volumes: vols });
+                                  setDirtyRuntime(true);
+                                }}
+                              >+ Add Volume</button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>

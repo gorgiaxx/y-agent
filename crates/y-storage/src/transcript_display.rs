@@ -1,35 +1,46 @@
-//! JSONL-based `TranscriptStore` implementation.
+//! JSONL-based `DisplayTranscriptStore` implementation.
+//!
+//! Append-only transcript for GUI display. Uses `{session_id}.display.jsonl`
+//! file naming to coexist alongside the context transcript.
+//!
+//! Design reference: `GUI_SESSION_SEPARATION_PLAN.md` §3.1, Step 1.2.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tracing::instrument;
 
-use y_core::session::{SessionError, TranscriptStore};
+use y_core::session::{DisplayTranscriptStore, SessionError};
 use y_core::types::{Message, SessionId};
 
-/// JSONL file-based transcript store.
+use crate::transcript::read_messages_from_file;
+
+/// JSONL file-based display transcript store.
 ///
-/// Each session's messages are stored in a separate `.jsonl` file
-/// where each line is a JSON-serialized `Message`.
+/// Each session's display messages are stored in a separate `.display.jsonl`
+/// file where each line is a JSON-serialized `Message`.
+///
+/// This store is append-only (never compacted). Only truncated during
+/// undo/rollback operations.
 #[derive(Debug, Clone)]
-pub struct JsonlTranscriptStore {
+pub struct JsonlDisplayTranscriptStore {
     /// Base directory for transcript files.
     base_dir: PathBuf,
 }
 
-impl JsonlTranscriptStore {
-    /// Create a new transcript store with the given base directory.
+impl JsonlDisplayTranscriptStore {
+    /// Create a new display transcript store with the given base directory.
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
         }
     }
 
-    /// Get the file path for a session's transcript.
+    /// Get the file path for a session's display transcript.
     fn transcript_path(&self, session_id: &SessionId) -> PathBuf {
-        self.base_dir.join(format!("{}.jsonl", session_id.as_str()))
+        self.base_dir
+            .join(format!("{}.display.jsonl", session_id.as_str()))
     }
 
     /// Ensure the base directory exists.
@@ -37,13 +48,13 @@ impl JsonlTranscriptStore {
         tokio::fs::create_dir_all(&self.base_dir)
             .await
             .map_err(|e| SessionError::TranscriptError {
-                message: format!("create transcript dir: {e}"),
+                message: format!("create display transcript dir: {e}"),
             })
     }
 }
 
 #[async_trait]
-impl TranscriptStore for JsonlTranscriptStore {
+impl DisplayTranscriptStore for JsonlDisplayTranscriptStore {
     #[instrument(skip(self, message), fields(session_id = %session_id))]
     async fn append(&self, session_id: &SessionId, message: &Message) -> Result<(), SessionError> {
         self.ensure_dir().await?;
@@ -61,19 +72,19 @@ impl TranscriptStore for JsonlTranscriptStore {
             .open(&path)
             .await
             .map_err(|e| SessionError::TranscriptError {
-                message: format!("open transcript file {}: {e}", path.display()),
+                message: format!("open display transcript file {}: {e}", path.display()),
             })?;
 
         file.write_all(line.as_bytes())
             .await
             .map_err(|e| SessionError::TranscriptError {
-                message: format!("write to transcript: {e}"),
+                message: format!("write to display transcript: {e}"),
             })?;
 
         file.flush()
             .await
             .map_err(|e| SessionError::TranscriptError {
-                message: format!("flush transcript: {e}"),
+                message: format!("flush display transcript: {e}"),
             })?;
 
         Ok(())
@@ -90,17 +101,6 @@ impl TranscriptStore for JsonlTranscriptStore {
         read_messages_from_file(&path).await
     }
 
-    #[instrument(skip(self), fields(session_id = %session_id, count = count))]
-    async fn read_last(
-        &self,
-        session_id: &SessionId,
-        count: usize,
-    ) -> Result<Vec<Message>, SessionError> {
-        let all = self.read_all(session_id).await?;
-        let start = all.len().saturating_sub(count);
-        Ok(all[start..].to_vec())
-    }
-
     #[instrument(skip(self), fields(session_id = %session_id))]
     async fn message_count(&self, session_id: &SessionId) -> Result<usize, SessionError> {
         let path = self.transcript_path(session_id);
@@ -112,7 +112,7 @@ impl TranscriptStore for JsonlTranscriptStore {
         let file = tokio::fs::File::open(&path)
             .await
             .map_err(|e| SessionError::TranscriptError {
-                message: format!("open transcript: {e}"),
+                message: format!("open display transcript: {e}"),
             })?;
 
         let reader = tokio::io::BufReader::new(file);
@@ -148,7 +148,7 @@ impl TranscriptStore for JsonlTranscriptStore {
 
         // Atomic rewrite: write to temp file, then rename.
         let path = self.transcript_path(session_id);
-        let tmp_path = path.with_extension("jsonl.tmp");
+        let tmp_path = path.with_extension("display.jsonl.tmp");
 
         let mut content = String::new();
         for msg in kept {
@@ -163,48 +163,17 @@ impl TranscriptStore for JsonlTranscriptStore {
         tokio::fs::write(&tmp_path, content.as_bytes())
             .await
             .map_err(|e| SessionError::TranscriptError {
-                message: format!("write temp transcript: {e}"),
+                message: format!("write temp display transcript: {e}"),
             })?;
 
         tokio::fs::rename(&tmp_path, &path)
             .await
             .map_err(|e| SessionError::TranscriptError {
-                message: format!("rename temp transcript: {e}"),
+                message: format!("rename temp display transcript: {e}"),
             })?;
 
         Ok(removed)
     }
-}
-
-/// Read all messages from a JSONL file.
-pub(crate) async fn read_messages_from_file(path: &Path) -> Result<Vec<Message>, SessionError> {
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| SessionError::TranscriptError {
-            message: format!("open transcript {}: {e}", path.display()),
-        })?;
-
-    let reader = tokio::io::BufReader::new(file);
-    let mut lines = reader.lines();
-    let mut messages = Vec::new();
-
-    while let Some(line) = lines.next_line().await.map_err(|e| {
-        SessionError::TranscriptError {
-            message: format!("read line: {e}"),
-        }
-    })? {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let msg: Message =
-            serde_json::from_str(trimmed).map_err(|e| SessionError::TranscriptError {
-                message: format!("parse message: {e}"),
-            })?;
-        messages.push(msg);
-    }
-
-    Ok(messages)
 }
 
 #[cfg(test)]
@@ -224,20 +193,29 @@ mod tests {
         }
     }
 
-    fn temp_store() -> (tempfile::TempDir, JsonlTranscriptStore) {
+    fn temp_store() -> (tempfile::TempDir, JsonlDisplayTranscriptStore) {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let store = JsonlTranscriptStore::new(dir.path());
+        let store = JsonlDisplayTranscriptStore::new(dir.path());
         (dir, store)
     }
 
     #[tokio::test]
-    async fn test_transcript_append_and_read_all() {
+    async fn test_display_append_and_read_all() {
         let (_dir, store) = temp_store();
         let session_id = SessionId::new();
 
-        store.append(&session_id, &test_message("hello")).await.unwrap();
-        store.append(&session_id, &test_message("world")).await.unwrap();
-        store.append(&session_id, &test_message("!")).await.unwrap();
+        store
+            .append(&session_id, &test_message("hello"))
+            .await
+            .unwrap();
+        store
+            .append(&session_id, &test_message("world"))
+            .await
+            .unwrap();
+        store
+            .append(&session_id, &test_message("!"))
+            .await
+            .unwrap();
 
         let messages = store.read_all(&session_id).await.unwrap();
         assert_eq!(messages.len(), 3);
@@ -247,26 +225,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_transcript_read_last_n() {
-        let (_dir, store) = temp_store();
-        let session_id = SessionId::new();
-
-        for i in 0..10 {
-            store
-                .append(&session_id, &test_message(&format!("msg-{i}")))
-                .await
-                .unwrap();
-        }
-
-        let last_3 = store.read_last(&session_id, 3).await.unwrap();
-        assert_eq!(last_3.len(), 3);
-        assert_eq!(last_3[0].content, "msg-7");
-        assert_eq!(last_3[1].content, "msg-8");
-        assert_eq!(last_3[2].content, "msg-9");
-    }
-
-    #[tokio::test]
-    async fn test_transcript_message_count() {
+    async fn test_display_message_count() {
         let (_dir, store) = temp_store();
         let session_id = SessionId::new();
 
@@ -282,41 +241,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_transcript_empty_session() {
+    async fn test_display_empty_session() {
         let (_dir, store) = temp_store();
         let session_id = SessionId::new();
 
         let messages = store.read_all(&session_id).await.unwrap();
         assert!(messages.is_empty());
+
+        let count = store.message_count(&session_id).await.unwrap();
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]
-    async fn test_transcript_jsonl_format() {
-        let (dir, store) = temp_store();
-        let session_id = SessionId::new();
-
-        store.append(&session_id, &test_message("test")).await.unwrap();
-
-        // Read the raw file and verify each line is valid JSON.
-        let path = dir.path().join(format!("{}.jsonl", session_id.as_str()));
-        let content = tokio::fs::read_to_string(&path).await.unwrap();
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                assert!(
-                    serde_json::from_str::<serde_json::Value>(trimmed).is_ok(),
-                    "line should be valid JSON: {trimmed}"
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_transcript_concurrent_append() {
+    async fn test_display_truncate() {
         let (_dir, store) = temp_store();
         let session_id = SessionId::new();
 
-        // Write from multiple tasks concurrently.
+        for i in 0..5 {
+            store
+                .append(&session_id, &test_message(&format!("msg-{i}")))
+                .await
+                .unwrap();
+        }
+
+        let removed = store.truncate(&session_id, 3).await.unwrap();
+        assert_eq!(removed, 2);
+
+        let messages = store.read_all(&session_id).await.unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].content, "msg-0");
+        assert_eq!(messages[2].content, "msg-2");
+    }
+
+    #[tokio::test]
+    async fn test_display_truncate_noop() {
+        let (_dir, store) = temp_store();
+        let session_id = SessionId::new();
+
+        store
+            .append(&session_id, &test_message("solo"))
+            .await
+            .unwrap();
+
+        let removed = store.truncate(&session_id, 5).await.unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_display_uses_display_jsonl_extension() {
+        let (dir, store) = temp_store();
+        let session_id = SessionId::new();
+
+        store
+            .append(&session_id, &test_message("test"))
+            .await
+            .unwrap();
+
+        let path = dir
+            .path()
+            .join(format!("{}.display.jsonl", session_id.as_str()));
+        assert!(path.exists(), "display transcript should use .display.jsonl");
+    }
+
+    #[tokio::test]
+    async fn test_display_concurrent_append() {
+        let (_dir, store) = temp_store();
+        let session_id = SessionId::new();
+
         let mut handles = Vec::new();
         for i in 0..10 {
             let store = store.clone();
@@ -334,6 +325,10 @@ mod tests {
         }
 
         let messages = store.read_all(&session_id).await.unwrap();
-        assert_eq!(messages.len(), 10, "all concurrent messages should be present");
+        assert_eq!(
+            messages.len(),
+            10,
+            "all concurrent messages should be present"
+        );
     }
 }

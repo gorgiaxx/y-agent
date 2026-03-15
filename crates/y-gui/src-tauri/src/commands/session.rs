@@ -113,9 +113,9 @@ pub async fn session_get_messages(
     let messages = state
         .container
         .session_manager
-        .read_transcript(&sid)
+        .read_display_transcript(&sid)
         .await
-        .map_err(|e| format!("Failed to read transcript: {e}"))?;
+        .map_err(|e| format!("Failed to read display transcript: {e}"))?;
 
     Ok(messages
         .iter()
@@ -168,12 +168,20 @@ pub async fn session_truncate_messages(
     keep_count: usize,
 ) -> Result<(), String> {
     let sid = SessionId(session_id);
+    // Truncate both display and context transcript stores.
+    state
+        .container
+        .session_manager
+        .display_transcript_store()
+        .truncate(&sid, keep_count)
+        .await
+        .map_err(|e| format!("Failed to truncate display transcript: {e}"))?;
     state
         .container
         .session_manager
         .transcript_store()
         .truncate(&sid, keep_count)
         .await
-        .map_err(|e| format!("Failed to truncate transcript: {e}"))?;
+        .map_err(|e| format!("Failed to truncate context transcript: {e}"))?;
     Ok(())
 }

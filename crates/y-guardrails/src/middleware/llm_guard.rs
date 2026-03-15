@@ -1,12 +1,12 @@
-//! `LlmGuardMiddleware`: output safety validation.
+//! `LlmGuardMiddleware`: output security validation.
 //!
 //! This middleware sits in the LLM chain and validates LLM outputs
-//! for safety concerns (e.g., harmful content, injection attempts).
+//! for security concerns (e.g., harmful content, injection attempts).
 
 use async_trait::async_trait;
 use y_core::hook::{ChainType, Middleware, MiddlewareContext, MiddlewareError, MiddlewareResult};
 
-/// Middleware that validates LLM outputs for safety.
+/// Middleware that validates LLM outputs for security.
 ///
 /// Registered as an `LlmMiddleware` at priority 900 (runs late, after main LLM processing).
 #[derive(Debug)]

@@ -72,6 +72,9 @@ pub struct ChatResponse {
     pub model: String,
     /// Generated content (may be empty if tool calls are present).
     pub content: Option<String>,
+    /// Reasoning/thinking content from thinking-mode LLMs (e.g. DeepSeek-R1, QwQ).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     /// Tool calls requested by the model.
     #[serde(default)]
     pub tool_calls: Vec<crate::types::ToolCallRequest>,
@@ -95,6 +98,8 @@ pub struct ChatResponse {
 pub struct ChatStreamChunk {
     /// Incremental content delta.
     pub delta_content: Option<String>,
+    /// Incremental reasoning/thinking content delta.
+    pub delta_reasoning_content: Option<String>,
     /// Incremental tool call delta.
     pub delta_tool_calls: Vec<crate::types::ToolCallRequest>,
     /// Present only in the final chunk.

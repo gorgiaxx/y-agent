@@ -1,5 +1,5 @@
 # ==============================================================================
-# y-agent — Guardrails & Safety Configuration
+# y-agent — Guardrails & Security Configuration
 # ==============================================================================
 
 # Global default permission for tools: "allow" | "notify" | "ask" | "deny"

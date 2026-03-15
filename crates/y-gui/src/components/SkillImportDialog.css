@@ -1,0 +1,267 @@
+/* ---- Import Dialog Overlay ---- */
+.import-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: import-overlay-in 0.15s ease;
+}
+
+@keyframes import-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.import-dialog {
+  width: 480px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  animation: import-dialog-in 0.2s ease;
+}
+
+@keyframes import-dialog-in {
+  from { opacity: 0; transform: scale(0.97) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ---- Header ---- */
+.import-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+
+.import-dialog-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.import-dialog-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: color 0.12s, background 0.12s;
+}
+
+.import-dialog-close:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+/* ---- Fields ---- */
+.import-dialog-field {
+  padding: var(--space-md) var(--space-lg);
+}
+
+.import-dialog-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-sm);
+}
+
+.import-dialog-path-row {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.import-dialog-path-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  outline: none;
+}
+
+.import-dialog-browse {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.import-dialog-browse:hover {
+  background: var(--surface-hover);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ---- Toggle ---- */
+.import-dialog-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  margin: 0;
+}
+
+.import-dialog-toggle-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.import-dialog-toggle-icon {
+  color: var(--accent);
+}
+
+.import-dialog-toggle-label {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.import-dialog-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.2s;
+}
+
+.import-dialog-switch--on {
+  background: var(--accent, #3b82f6);
+}
+
+.import-dialog-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+}
+
+.import-dialog-switch--on .import-dialog-switch-thumb {
+  transform: translateX(16px);
+}
+
+.import-dialog-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: var(--space-xs) 0 0;
+  line-height: 1.5;
+}
+
+/* ---- Status ---- */
+.import-dialog-status {
+  padding: var(--space-sm) var(--space-lg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.import-dialog-status--accepted {
+  color: #4ade80;
+}
+
+.import-dialog-status--partial_accept {
+  color: #fbbf24;
+}
+
+.import-dialog-status--rejected {
+  color: var(--error, #f87171);
+}
+
+/* ---- Actions ---- */
+.import-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+
+.import-dialog-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+
+.import-dialog-btn--cancel {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.import-dialog-btn--cancel:hover {
+  background: var(--surface-hover);
+}
+
+.import-dialog-btn--import {
+  background: var(--accent, #3b82f6);
+  color: white;
+  border-color: var(--accent, #3b82f6);
+  font-weight: 500;
+}
+
+.import-dialog-btn--import:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.import-dialog-btn--import:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- Spinner ---- */
+@keyframes import-spin {
+  to { transform: rotate(360deg); }
+}
+
+.import-dialog-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: import-spin 0.6s linear infinite;
+}

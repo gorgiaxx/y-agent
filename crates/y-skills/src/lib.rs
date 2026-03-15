@@ -48,9 +48,9 @@ pub mod state;
 #[cfg(feature = "skill_transformation")]
 pub mod validator;
 
-// ----- Safety screening (feature: skill_safety_screening) -----
-#[cfg(feature = "skill_safety_screening")]
-pub mod safety;
+// ----- Security screening (feature: skill_security_screening) -----
+#[cfg(feature = "skill_security_screening")]
+pub mod security;
 
 // ----- Cross-resource linkage (feature: skill_linkage) -----
 #[cfg(feature = "skill_linkage")]
@@ -119,25 +119,25 @@ pub use state::{SkillState, SkillStateMachine};
 #[cfg(feature = "skill_transformation")]
 pub use validator::SkillValidator;
 
-// Safety
-#[cfg(feature = "skill_safety_screening")]
-pub use safety::{SafetyScreener, SafetyVerdict};
+// Security
+#[cfg(feature = "skill_security_screening")]
+pub use security::{SecurityScreener, SecurityVerdict};
 
 // Linkage
 #[cfg(feature = "skill_linkage")]
 pub use linker::ResourceLinker;
 
 // Evolution
+#[cfg(feature = "evolution_refinement")]
+pub use evolution::{ChangeType, SkillMetrics, SkillRefiner};
 #[cfg(feature = "evolution_capture")]
 pub use experience::{ExperienceRecord, ExperienceStore, TokenUsage, ToolCallRecord};
 #[cfg(feature = "evolution_extraction")]
 pub use extractor::{ExtractedPattern, PatternExtractor, PatternRegistry};
-#[cfg(feature = "evolution_refinement")]
-pub use evolution::{ChangeType, SkillMetrics, SkillRefiner};
-#[cfg(feature = "evolution_refinement")]
-pub use regression::RegressionDetector;
 #[cfg(feature = "evolution_fast_path")]
 pub use fast_path::FastPathExtractor;
+#[cfg(feature = "evolution_refinement")]
+pub use regression::RegressionDetector;
 
 // Usage audit
 #[cfg(feature = "skill_usage_audit")]

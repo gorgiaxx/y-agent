@@ -1,7 +1,7 @@
 //! Content analyzer: LLM-assisted skill content analysis.
 //!
 //! Uses a single LLM call per skill with structured JSON output
-//! to analyze purpose, capabilities, embedded tools, and safety flags.
+//! to analyze purpose, capabilities, embedded tools, and security flags.
 
 use serde::{Deserialize, Serialize};
 
@@ -22,8 +22,8 @@ pub struct AnalysisReport {
     pub quality_issues: Vec<String>,
     /// Estimated token count for the content.
     pub token_estimate: u32,
-    /// Safety flags detected during analysis.
-    pub safety_flags: SafetyFlags,
+    /// Security flags detected during analysis.
+    pub security_flags: SecurityFlags,
 }
 
 /// An embedded tool found in skill content.
@@ -48,10 +48,10 @@ pub struct EmbeddedScript {
     pub line_start: usize,
 }
 
-/// Safety flags detected during content analysis.
+/// Security flags detected during content analysis.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SafetyFlags {
+pub struct SecurityFlags {
     /// Content contains patterns suggesting external API calls.
     #[serde(default)]
     pub has_external_calls: bool,
@@ -87,7 +87,7 @@ impl ContentAnalyzer {
     pub fn analyze(&self, content: &str) -> AnalysisReport {
         let embedded_tools = self.detect_tools(content);
         let embedded_scripts = self.detect_scripts(content);
-        let safety_flags = self.detect_safety_flags(content);
+        let security_flags = self.detect_security_flags(content);
         let quality_issues = self.detect_quality_issues(content);
         let classification_hint = self.classify_hint(content, &embedded_tools, &embedded_scripts);
         let token_estimate = crate::manifest::estimate_tokens(content);
@@ -100,7 +100,7 @@ impl ContentAnalyzer {
             embedded_scripts,
             quality_issues,
             token_estimate,
-            safety_flags,
+            security_flags,
         }
     }
 
@@ -202,9 +202,9 @@ impl ContentAnalyzer {
         scripts
     }
 
-    fn detect_safety_flags(&self, content: &str) -> SafetyFlags {
+    fn detect_security_flags(&self, content: &str) -> SecurityFlags {
         let lower = content.to_lowercase();
-        SafetyFlags {
+        SecurityFlags {
             has_external_calls: lower.contains("http://")
                 || lower.contains("https://")
                 || lower.contains("curl ")
@@ -314,7 +314,7 @@ curl -X POST https://api.example.com/deploy
 
         assert!(!report.embedded_scripts.is_empty());
         assert_eq!(report.embedded_scripts[0].language, "bash");
-        assert!(report.safety_flags.has_external_calls);
+        assert!(report.security_flags.has_external_calls);
     }
 
     /// Analyzer detects API tools.

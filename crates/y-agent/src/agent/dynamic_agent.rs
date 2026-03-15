@@ -170,11 +170,11 @@ pub enum ValidationError {
     PermissionDenied { creator: String, tool: String },
     #[error("delegation depth is 0; agent cannot delegate further")]
     DelegationDepthExhausted,
-    #[error("safety violation: {reason}")]
-    SafetyViolation { reason: String },
+    #[error("security violation: {reason}")]
+    SecurityViolation { reason: String },
 }
 
-/// Dangerous tool combinations that trigger safety screening.
+/// Dangerous tool combinations that trigger security screening.
 const DANGEROUS_TOOLS: &[&str] = &["shell_exec", "file_write", "file_delete", "network_request"];
 
 /// Patterns in system prompts that indicate prompt injection attempts.
@@ -190,7 +190,7 @@ const INJECTION_PATTERNS: &[&str] = &[
 ///
 /// Stage 1: Schema validation (name, description).
 /// Stage 2: Permission validation (tools in effective permissions, delegation depth).
-/// Stage 3: Safety screening (dangerous tool combos, prompt injection).
+/// Stage 3: Security screening (dangerous tool combos, prompt injection).
 pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), ValidationError> {
     // Stage 1: Schema validation
     if def.definition.name.is_empty() {
@@ -233,7 +233,7 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
         }
     }
 
-    // Stage 3: Safety screening
+    // Stage 3: Security screening
     // Detect dangerous tool combinations: having dangerous tools with no denied_tools
     let has_dangerous = def
         .definition
@@ -243,7 +243,7 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
     let has_no_denied = def.effective_permissions.tools_denied.is_empty();
 
     if has_dangerous && has_no_denied {
-        return Err(ValidationError::SafetyViolation {
+        return Err(ValidationError::SecurityViolation {
             reason: "dangerous tools present with no denied tools configured".to_string(),
         });
     }
@@ -252,7 +252,7 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
     let prompt_lower = def.definition.system_prompt.to_lowercase();
     for pattern in INJECTION_PATTERNS {
         if prompt_lower.contains(pattern) {
-            return Err(ValidationError::SafetyViolation {
+            return Err(ValidationError::SecurityViolation {
                 reason: format!("potential prompt injection detected: '{pattern}'"),
             });
         }
@@ -605,9 +605,9 @@ mod tests {
         assert_eq!(agent.effective_permissions.delegation_depth, 0);
     }
 
-    /// T-MA-R1-04: Safety screening detects dangerous tool combinations.
+    /// T-MA-R1-04: Security screening detects dangerous tool combinations.
     #[test]
-    fn test_safety_screening_dangerous_tools() {
+    fn test_security_screening_dangerous_tools() {
         let creator = CreatorPermissionSnapshot {
             tools_allowed: vec!["shell_exec".to_string(), "file_read".to_string()],
             tools_denied: vec![], // No denied tools
@@ -628,16 +628,16 @@ mod tests {
         let result = validate_definition(&agent);
         assert!(result.is_err());
         match result.unwrap_err() {
-            ValidationError::SafetyViolation { reason } => {
+            ValidationError::SecurityViolation { reason } => {
                 assert!(reason.contains("dangerous tools"));
             }
-            other => panic!("expected SafetyViolation, got: {other}"),
+            other => panic!("expected SecurityViolation, got: {other}"),
         }
     }
 
-    /// Safety screening detects prompt injection patterns.
+    /// Security screening detects prompt injection patterns.
     #[test]
-    fn test_safety_screening_prompt_injection() {
+    fn test_security_screening_prompt_injection() {
         let creator = default_creator_snapshot();
         let mut agent = make_dynamic_agent(
             "injector",
@@ -651,10 +651,10 @@ mod tests {
         let result = validate_definition(&agent);
         assert!(result.is_err());
         match result.unwrap_err() {
-            ValidationError::SafetyViolation { reason } => {
+            ValidationError::SecurityViolation { reason } => {
                 assert!(reason.contains("prompt injection"));
             }
-            other => panic!("expected SafetyViolation, got: {other}"),
+            other => panic!("expected SecurityViolation, got: {other}"),
         }
     }
 
@@ -908,4 +908,3 @@ mod tests {
         assert_eq!(current.definition.description, "v3");
     }
 }
-

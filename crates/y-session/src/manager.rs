@@ -6,7 +6,8 @@ use tracing::instrument;
 
 use y_core::agent::{AgentDelegator, ContextStrategyHint};
 use y_core::session::{
-    CreateSessionOptions, SessionFilter, SessionNode, SessionState, SessionStore, TranscriptStore,
+    CreateSessionOptions, DisplayTranscriptStore, SessionFilter, SessionNode, SessionState,
+    SessionStore, TranscriptStore,
 };
 use y_core::types::{Message, SessionId};
 
@@ -22,6 +23,7 @@ use crate::state_machine::StateMachine;
 pub struct SessionManager {
     session_store: Arc<dyn SessionStore>,
     transcript_store: Arc<dyn TranscriptStore>,
+    display_transcript_store: Arc<dyn DisplayTranscriptStore>,
     config: SessionConfig,
 }
 
@@ -30,11 +32,13 @@ impl SessionManager {
     pub fn new(
         session_store: Arc<dyn SessionStore>,
         transcript_store: Arc<dyn TranscriptStore>,
+        display_transcript_store: Arc<dyn DisplayTranscriptStore>,
         config: SessionConfig,
     ) -> Self {
         Self {
             session_store,
             transcript_store,
+            display_transcript_store,
             config,
         }
     }
@@ -93,6 +97,9 @@ impl SessionManager {
     }
 
     /// Append a message to a session's transcript.
+    ///
+    /// Dual-writes to both the display transcript (GUI-facing) and the
+    /// context transcript (LLM-facing). Display store is written first.
     #[instrument(skip(self, message), fields(session_id = %session_id))]
     pub async fn append_message(
         &self,
@@ -108,6 +115,15 @@ impl SessionManager {
             });
         }
 
+        // Write to display transcript first (append-only, GUI source of truth).
+        self.display_transcript_store
+            .append(session_id, message)
+            .await
+            .map_err(|e| SessionManagerError::Transcript {
+                message: format!("display transcript: {e}"),
+            })?;
+
+        // Write to context transcript (LLM source of truth).
         self.transcript_store
             .append(session_id, message)
             .await
@@ -131,7 +147,7 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Read all messages from a session's transcript.
+    /// Read all messages from the context transcript (for LLM context assembly).
     pub async fn read_transcript(
         &self,
         session_id: &SessionId,
@@ -141,6 +157,22 @@ impl SessionManager {
             .await
             .map_err(|e| SessionManagerError::Transcript {
                 message: e.to_string(),
+            })
+    }
+
+    /// Read all messages from the display transcript (for GUI display).
+    ///
+    /// The display transcript is never compacted, so this always returns
+    /// the full conversation history as seen by the user.
+    pub async fn read_display_transcript(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<Message>, SessionManagerError> {
+        self.display_transcript_store
+            .read_all(session_id)
+            .await
+            .map_err(|e| SessionManagerError::Transcript {
+                message: format!("display transcript: {e}"),
             })
     }
 
@@ -217,13 +249,14 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Hard-delete a session: removes the metadata row, clears transcript.
+    /// Hard-delete a session: removes the metadata row, clears both transcripts.
     ///
     /// This is irreversible. Any in-progress runs for this session should have
     /// completed or been cancelled before calling this.
     #[instrument(skip(self), fields(session_id = %id))]
     pub async fn delete_session(&self, id: &SessionId) -> Result<(), SessionManagerError> {
-        // Remove message transcript first (best-effort; continue if it fails).
+        // Remove message transcripts first (best-effort; continue if they fail).
+        let _ = self.display_transcript_store.truncate(id, 0).await;
         let _ = self.transcript_store.truncate(id, 0).await;
         // Hard-delete the session metadata row.
         self.session_store.delete(id).await?;
@@ -284,9 +317,14 @@ impl SessionManager {
         session.token_count >= self.config.compaction_threshold
     }
 
-    /// Get a reference to the underlying transcript store.
+    /// Get a reference to the underlying context transcript store.
     pub fn transcript_store(&self) -> &dyn TranscriptStore {
         &*self.transcript_store
+    }
+
+    /// Get a reference to the underlying display transcript store.
+    pub fn display_transcript_store(&self) -> &dyn DisplayTranscriptStore {
+        &*self.display_transcript_store
     }
 
     /// Get the session configuration.
@@ -318,11 +356,20 @@ mod tests {
 
         let session_store = Arc::new(y_storage::SqliteSessionStore::new(pool));
         let transcript_dir = tempfile::tempdir().unwrap();
+        let transcript_path = transcript_dir.into_path();
         let transcript_store = Arc::new(y_storage::JsonlTranscriptStore::new(
-            transcript_dir.into_path(),
+            &transcript_path,
+        ));
+        let display_transcript_store = Arc::new(y_storage::JsonlDisplayTranscriptStore::new(
+            &transcript_path,
         ));
 
-        SessionManager::new(session_store, transcript_store, SessionConfig::default())
+        SessionManager::new(
+            session_store,
+            transcript_store,
+            display_transcript_store,
+            SessionConfig::default(),
+        )
     }
 
     fn test_msg(content: &str) -> Message {
@@ -470,6 +517,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_manager_max_depth_enforced() {
+        let td = tempfile::tempdir().unwrap();
+        let tp = td.into_path();
         let mgr = SessionManager::new(
             {
                 let config = y_storage::StorageConfig::in_memory();
@@ -479,10 +528,8 @@ mod tests {
                     .unwrap();
                 Arc::new(y_storage::SqliteSessionStore::new(pool))
             },
-            {
-                let td = tempfile::tempdir().unwrap();
-                Arc::new(y_storage::JsonlTranscriptStore::new(td.into_path()))
-            },
+            Arc::new(y_storage::JsonlTranscriptStore::new(&tp)),
+            Arc::new(y_storage::JsonlDisplayTranscriptStore::new(&tp)),
             SessionConfig {
                 max_depth: 2,
                 ..Default::default()

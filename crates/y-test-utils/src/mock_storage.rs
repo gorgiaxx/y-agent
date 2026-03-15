@@ -355,6 +355,64 @@ impl TranscriptStore for MockTranscriptStore {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MockDisplayTranscriptStore
+// ---------------------------------------------------------------------------
+
+/// In-memory display transcript store for tests.
+#[derive(Debug, Default)]
+pub struct MockDisplayTranscriptStore {
+    transcripts: RwLock<HashMap<String, Vec<Message>>>,
+}
+
+impl MockDisplayTranscriptStore {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl y_core::session::DisplayTranscriptStore for MockDisplayTranscriptStore {
+    async fn append(&self, session_id: &SessionId, message: &Message) -> Result<(), SessionError> {
+        let mut map = self.transcripts.write().unwrap();
+        map.entry(session_id.to_string())
+            .or_default()
+            .push(message.clone());
+        Ok(())
+    }
+
+    async fn read_all(&self, session_id: &SessionId) -> Result<Vec<Message>, SessionError> {
+        let map = self.transcripts.read().unwrap();
+        Ok(map
+            .get(&session_id.to_string())
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn message_count(&self, session_id: &SessionId) -> Result<usize, SessionError> {
+        let map = self.transcripts.read().unwrap();
+        Ok(map
+            .get(&session_id.to_string())
+            .map_or(0, std::vec::Vec::len))
+    }
+
+    async fn truncate(
+        &self,
+        session_id: &SessionId,
+        keep_count: usize,
+    ) -> Result<usize, SessionError> {
+        let mut map = self.transcripts.write().unwrap();
+        let msgs = map.entry(session_id.to_string()).or_default();
+        if keep_count >= msgs.len() {
+            return Ok(0);
+        }
+        let removed = msgs.len() - keep_count;
+        msgs.truncate(keep_count);
+        Ok(removed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

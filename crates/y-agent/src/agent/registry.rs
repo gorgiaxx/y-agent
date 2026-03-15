@@ -104,7 +104,10 @@ impl AgentRegistry {
     }
 
     /// Search definitions filtered by agent mode.
-    pub fn search_by_mode(&self, mode: crate::agent::definition::AgentMode) -> Vec<&AgentDefinition> {
+    pub fn search_by_mode(
+        &self,
+        mode: crate::agent::definition::AgentMode,
+    ) -> Vec<&AgentDefinition> {
         self.definitions
             .values()
             .filter(|def| def.mode == mode)
@@ -177,10 +180,7 @@ impl AgentRegistry {
     /// Register a built-in agent definition.
     ///
     /// Asserts the definition's `trust_tier` is `BuiltIn`.
-    pub fn register_builtin(
-        &mut self,
-        definition: AgentDefinition,
-    ) -> Result<(), MultiAgentError> {
+    pub fn register_builtin(&mut self, definition: AgentDefinition) -> Result<(), MultiAgentError> {
         if definition.trust_tier != TrustTier::BuiltIn {
             return Err(MultiAgentError::InvalidDefinition {
                 message: format!(
@@ -213,10 +213,7 @@ impl AgentRegistry {
     /// Register a dynamic agent definition.
     ///
     /// Asserts the definition's `trust_tier` is `Dynamic`.
-    pub fn register_dynamic(
-        &mut self,
-        definition: AgentDefinition,
-    ) -> Result<(), MultiAgentError> {
+    pub fn register_dynamic(&mut self, definition: AgentDefinition) -> Result<(), MultiAgentError> {
         if definition.trust_tier != TrustTier::Dynamic {
             return Err(MultiAgentError::InvalidDefinition {
                 message: format!(
@@ -313,6 +310,10 @@ impl AgentRegistry {
             (
                 "skill-ingestion",
                 include_str!("../../../../config/agents/skill-ingestion.toml"),
+            ),
+            (
+                "skill-security-check",
+                include_str!("../../../../config/agents/skill-security-check.toml"),
             ),
         ]
     }

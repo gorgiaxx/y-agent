@@ -1,13 +1,13 @@
 //! Filter gate: decides whether a skill should be accepted, rejected, or partially accepted.
 //!
-//! Combines analysis report, classification, and safety verdict to produce
+//! Combines analysis report, classification, and security verdict to produce
 //! a final decision with optional redirect suggestions.
 
 use serde::{Deserialize, Serialize};
 
 use crate::analyzer::AnalysisReport;
 use crate::classifier::SkillClassificationType;
-use crate::safety::SafetyVerdict;
+use crate::security::SecurityVerdict;
 
 /// Where to redirect non-skill content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,12 +103,12 @@ impl FilterGate {
         &self,
         report: &AnalysisReport,
         classification: SkillClassificationType,
-        safety: &SafetyVerdict,
+        security: &SecurityVerdict,
     ) -> FilterDecision {
-        // Rule 1: Safety blocks are absolute
-        if let SafetyVerdict::Blocked { reason, .. } = safety {
+        // Rule 1: Security blocks are absolute
+        if let SecurityVerdict::Blocked { reason, .. } = security {
             return FilterDecision::Rejected {
-                reason: format!("Safety blocked: {reason}"),
+                reason: format!("Security blocked: {reason}"),
                 redirect: None,
             };
         }
@@ -196,8 +196,8 @@ impl Default for FilterGate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer::{AnalysisReport, EmbeddedTool, SafetyFlags};
-    use crate::safety::{SafetyFinding, SafetyFindingType};
+    use crate::analyzer::{AnalysisReport, EmbeddedTool, SecurityFlags};
+    use crate::security::{SecurityFinding, SecurityFindingType};
 
     fn base_report() -> AnalysisReport {
         AnalysisReport {
@@ -208,20 +208,20 @@ mod tests {
             embedded_scripts: vec![],
             quality_issues: vec![],
             token_estimate: 500,
-            safety_flags: SafetyFlags::default(),
+            security_flags: SecurityFlags::default(),
         }
     }
 
-    /// T-SK-S4-07: Filter gate accepts `LlmReasoning` + safe skills.
+    /// T-SK-S4-07: Filter gate accepts `LlmReasoning` + secure skills.
     #[test]
-    fn test_filter_accepts_safe_llm_reasoning() {
+    fn test_filter_accepts_secure_llm_reasoning() {
         let gate = FilterGate::new();
         let report = base_report();
 
         let decision = gate.filter(
             &report,
             SkillClassificationType::LlmReasoning,
-            &SafetyVerdict::Pass,
+            &SecurityVerdict::Pass,
         );
         assert!(decision.is_accepted());
     }
@@ -240,7 +240,7 @@ mod tests {
         let decision = gate.filter(
             &report,
             SkillClassificationType::ApiCall,
-            &SafetyVerdict::Pass,
+            &SecurityVerdict::Pass,
         );
 
         assert!(decision.is_rejected());
@@ -263,7 +263,7 @@ mod tests {
         let decision = gate.filter(
             &report,
             SkillClassificationType::Hybrid,
-            &SafetyVerdict::Pass,
+            &SecurityVerdict::Pass,
         );
 
         if let FilterDecision::PartialAccept {
@@ -292,23 +292,23 @@ mod tests {
         let decision = gate.filter(
             &report,
             SkillClassificationType::LlmReasoning,
-            &SafetyVerdict::Pass,
+            &SecurityVerdict::Pass,
         );
 
         assert!(decision.is_rejected());
     }
 
-    /// Safety block overrides all other rules.
+    /// Security block overrides all other rules.
     #[test]
-    fn test_filter_safety_block_overrides() {
+    fn test_filter_security_block_overrides() {
         let gate = FilterGate::new();
         let report = base_report();
 
-        let blocked = SafetyVerdict::Blocked {
+        let blocked = SecurityVerdict::Blocked {
             reason: "prompt injection detected".to_string(),
-            finding_type: SafetyFindingType::PromptInjection,
-            findings: vec![SafetyFinding {
-                finding_type: SafetyFindingType::PromptInjection,
+            finding_type: SecurityFindingType::PromptInjection,
+            findings: vec![SecurityFinding {
+                finding_type: SecurityFindingType::PromptInjection,
                 description: "test".to_string(),
                 severity: 5,
                 line: Some(1),

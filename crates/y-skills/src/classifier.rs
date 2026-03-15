@@ -67,7 +67,7 @@ impl Default for SkillClassifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer::{AnalysisReport, SafetyFlags};
+    use crate::analyzer::{AnalysisReport, SecurityFlags};
 
     fn base_report() -> AnalysisReport {
         AnalysisReport {
@@ -78,7 +78,7 @@ mod tests {
             embedded_scripts: vec![],
             quality_issues: vec![],
             token_estimate: 100,
-            safety_flags: SafetyFlags::default(),
+            security_flags: SecurityFlags::default(),
         }
     }
 

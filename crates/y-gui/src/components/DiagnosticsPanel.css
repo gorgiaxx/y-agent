@@ -83,6 +83,12 @@
   text-transform: uppercase;
 }
 
+.diag-global-label {
+  color: var(--accent);
+  font-weight: 400;
+  opacity: 0.85;
+}
+
 .diag-live-dot {
   width: 6px;
   height: 6px;
@@ -119,6 +125,63 @@
   background: var(--surface-hover);
   border-color: var(--border);
   color: var(--text-primary);
+}
+
+.diag-btn.diag-btn-active {
+  color: var(--accent);
+}
+
+/* ---- Filter popover ---- */
+.diag-filter-wrapper {
+  position: relative;
+}
+
+.diag-filter-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-xs);
+  z-index: 120;
+  min-width: 140px;
+  animation: diag-detail-in 0.14s ease-out;
+}
+
+.diag-filter-title {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 8px 2px;
+}
+
+.diag-filter-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.diag-filter-option:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.diag-filter-option.active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 500;
 }
 
 /* ---- Summary bar ---- */

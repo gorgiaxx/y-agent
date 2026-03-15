@@ -87,6 +87,21 @@ fn write_session_workspaces(
     Ok(())
 }
 
+/// Resolve the workspace path for a given session.
+///
+/// Returns `Some(path)` if the session is assigned to a workspace,
+/// `None` otherwise.
+pub(crate) fn resolve_workspace_path(config_dir: &std::path::Path, session_id: &str) -> Option<String> {
+    let sw = read_session_workspaces(config_dir);
+    let ws_id = sw.assignments.get(session_id)?;
+    let ws_data = read_workspaces(config_dir);
+    ws_data
+        .workspaces
+        .iter()
+        .find(|w| w.id == *ws_id)
+        .map(|w| w.path.clone())
+}
+
 // ---------------------------------------------------------------------------
 // Workspace CRUD commands
 // ---------------------------------------------------------------------------

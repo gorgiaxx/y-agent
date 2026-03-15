@@ -8,7 +8,8 @@ use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
 use y_core::session::{
-    ChatCheckpoint, ChatCheckpointStore, SessionError, SessionStore, TranscriptStore,
+    ChatCheckpoint, ChatCheckpointStore, DisplayTranscriptStore, SessionError, SessionStore,
+    TranscriptStore,
 };
 use y_core::types::SessionId;
 
@@ -31,6 +32,7 @@ pub struct RollbackResult {
 /// (checkpoint records), and File Journal scopes (filesystem rollback).
 pub struct ChatCheckpointManager {
     transcript_store: Arc<dyn TranscriptStore>,
+    display_transcript_store: Arc<dyn DisplayTranscriptStore>,
     checkpoint_store: Arc<dyn ChatCheckpointStore>,
     session_store: Arc<dyn SessionStore>,
 }
@@ -39,11 +41,13 @@ impl ChatCheckpointManager {
     /// Create a new checkpoint manager.
     pub fn new(
         transcript_store: Arc<dyn TranscriptStore>,
+        display_transcript_store: Arc<dyn DisplayTranscriptStore>,
         checkpoint_store: Arc<dyn ChatCheckpointStore>,
         session_store: Arc<dyn SessionStore>,
     ) -> Self {
         Self {
             transcript_store,
+            display_transcript_store,
             checkpoint_store,
             session_store,
         }
@@ -141,7 +145,13 @@ impl ChatCheckpointManager {
             .map(|cp| cp.journal_scope_id.clone())
             .collect();
 
-        // Truncate transcript to the pre-turn state.
+        // Truncate display transcript to the pre-turn state.
+        let _ = self
+            .display_transcript_store
+            .truncate(session_id, target.message_count_before as usize)
+            .await;
+
+        // Truncate context transcript to the pre-turn state.
         let messages_removed = self
             .transcript_store
             .truncate(session_id, target.message_count_before as usize)
@@ -212,7 +222,7 @@ impl std::fmt::Debug for ChatCheckpointManager {
 mod tests {
     use super::*;
     use y_test_utils::fixtures::{make_user_message, make_assistant_message};
-    use y_test_utils::mock_storage::{MockSessionStore, MockTranscriptStore};
+    use y_test_utils::mock_storage::{MockDisplayTranscriptStore, MockSessionStore, MockTranscriptStore};
 
     /// In-memory `ChatCheckpointStore` for tests.
     #[derive(Debug, Default)]
@@ -290,6 +300,7 @@ mod tests {
     async fn setup() -> (ChatCheckpointManager, SessionId) {
         let session_store = Arc::new(MockSessionStore::new());
         let transcript_store = Arc::new(MockTranscriptStore::new());
+        let display_transcript_store = Arc::new(MockDisplayTranscriptStore::new());
         let checkpoint_store = Arc::new(MockChatCheckpointStore::default());
 
         // Create a session.
@@ -303,7 +314,12 @@ mod tests {
             .await
             .unwrap();
 
-        let mgr = ChatCheckpointManager::new(transcript_store, checkpoint_store, session_store);
+        let mgr = ChatCheckpointManager::new(
+            transcript_store,
+            display_transcript_store,
+            checkpoint_store,
+            session_store,
+        );
         (mgr, session.id)
     }
 

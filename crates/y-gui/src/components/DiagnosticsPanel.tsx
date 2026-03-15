@@ -1,12 +1,15 @@
 // Diagnostics panel -- real-time observability into LLM turn lifecycle.
 
-import { useRef, useEffect, useState } from 'react';
-import { Activity, X, Cpu, Wrench, AlertTriangle, ChevronDown, ChevronRight, Trash2, Maximize2, Minimize2, User, Copy, Check } from 'lucide-react';
+import { useRef, useEffect, useState, useMemo } from 'react';
+import { Activity, X, Cpu, Wrench, AlertTriangle, ChevronDown, ChevronRight, Trash2, Maximize2, Minimize2, User, Copy, Check, Filter } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import type { DiagnosticsEntry, LlmResponseEvent, ToolResultEvent, LoopLimitEvent, UserMessageEvent } from '../types';
+import { computeSummary } from '../hooks/useDiagnostics';
 import type { DiagnosticsSummary } from '../hooks/useDiagnostics';
+import { useResolvedTheme } from '../hooks/useTheme';
 import './DiagnosticsPanel.css';
 
 // Strip hardcoded background from every token rule so the highlighter
@@ -19,17 +22,59 @@ const oneDarkNoBackground = Object.fromEntries(
       ...(v as object),
       background: undefined,
       backgroundColor: undefined,
-      // Strip overflowX so the theme does not create its own nested scroll
-      // container on the <code> element -- we control scrolling via customStyle.
       overflowX: undefined,
     },
   ])
 ) as typeof oneDark;
 
+const oneLightNoBackground = Object.fromEntries(
+  Object.entries(oneLight).map(([k, v]) => [
+    k,
+    {
+      ...(v as object),
+      background: undefined,
+      backgroundColor: undefined,
+      overflowX: undefined,
+    },
+  ])
+) as typeof oneLight;
+
+// -- Time range filter --
+
+type TimeRange = '15m' | '30m' | '1h' | '6h' | '24h' | 'all';
+
+const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
+  { value: '15m', label: '15 min' },
+  { value: '30m', label: '30 min' },
+  { value: '1h', label: '1 hour' },
+  { value: '6h', label: '6 hours' },
+  { value: '24h', label: '24 hours' },
+  { value: 'all', label: 'All time' },
+];
+
+function getTimeRangeMs(range: TimeRange): number | null {
+  switch (range) {
+    case '15m': return 15 * 60 * 1000;
+    case '30m': return 30 * 60 * 1000;
+    case '1h': return 60 * 60 * 1000;
+    case '6h': return 6 * 60 * 60 * 1000;
+    case '24h': return 24 * 60 * 60 * 1000;
+    case 'all': return null;
+  }
+}
+
+function filterByTimeRange(entries: DiagnosticsEntry[], range: TimeRange): DiagnosticsEntry[] {
+  const ms = getTimeRangeMs(range);
+  if (ms === null) return entries;
+  const cutoff = Date.now() - ms;
+  return entries.filter(e => new Date(e.timestamp).getTime() >= cutoff);
+}
+
 interface DiagnosticsPanelProps {
   entries: DiagnosticsEntry[];
   summary: DiagnosticsSummary;
   isActive: boolean;
+  isGlobal: boolean;
   expanded: boolean;
   onToggleExpand: () => void;
   onClear: () => void;
@@ -103,6 +148,8 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
   const [responseWrapped, setResponseWrapped] = useState(true);
   const hasToolCalls = event.tool_calls_requested.length > 0;
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const resolvedTheme = useResolvedTheme();
+  const highlighterStyle = resolvedTheme === 'light' ? oneLightNoBackground : oneDarkNoBackground;
 
   const tryBeautify = (raw: string): string | null => {
     try {
@@ -208,7 +255,7 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
               {promptBeautified && promptJsonOk ? (
                 <div className="diag-highlighted-block">
                   <SyntaxHighlighter
-                    style={oneDarkNoBackground}
+                    style={highlighterStyle}
                     language="json"
                     PreTag="div"
                     wrapLongLines={promptWrapped}
@@ -250,7 +297,7 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
               {responseBeautified && responseJsonOk ? (
                 <div className="diag-highlighted-block">
                   <SyntaxHighlighter
-                    style={oneDarkNoBackground}
+                    style={highlighterStyle}
                     language="json"
                     PreTag="div"
                     wrapLongLines={responseWrapped}
@@ -283,6 +330,8 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
   const [beautified, setBeautified] = useState(true);
   const [resultWrapped, setResultWrapped] = useState(true);
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const resolvedTheme = useResolvedTheme();
+  const highlighterStyle = resolvedTheme === 'light' ? oneLightNoBackground : oneDarkNoBackground;
 
   // Attempt to format as pretty JSON; return null if not valid JSON.
   const tryBeautify = (raw: string): string | null => {
@@ -358,7 +407,7 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
               {isJsonBeautified ? (
                 <div className="diag-highlighted-block">
                   <SyntaxHighlighter
-                    style={oneDarkNoBackground}
+                    style={highlighterStyle}
                     language="json"
                     PreTag="div"
                     wrapLongLines={resultWrapped}
@@ -406,23 +455,67 @@ function LoopLimitEntry({ event }: { event: LoopLimitEvent }) {
   );
 }
 
-export function DiagnosticsPanel({ entries, summary, isActive, expanded, onToggleExpand, onClear, onClose }: DiagnosticsPanelProps) {
+export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGlobal, expanded, onToggleExpand, onClear, onClose }: DiagnosticsPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLDivElement>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [timeRange, setTimeRange] = useState<TimeRange>('1h');
+
+  const filteredEntries = useMemo(() => filterByTimeRange(entries, timeRange), [entries, timeRange]);
+  const summary = useMemo(() => computeSummary(filteredEntries), [filteredEntries]);
 
   // Auto-scroll to bottom.
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [entries]);
+  }, [filteredEntries]);
+
+  // Close filter popover on outside click.
+  useEffect(() => {
+    if (!filterOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setFilterOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [filterOpen]);
 
   const panelContent = (
     <div className={`diag-panel ${expanded ? 'diag-expanded' : ''}`}>
       <div className="diag-header">
         <div className="diag-header-left">
           <Activity size={16} className="diag-header-icon" />
-          <h3 className="diag-title">Diagnostics</h3>
+          <h3 className="diag-title">Diagnostics{isGlobal && <span className="diag-global-label"> (Global)</span>}</h3>
           {isActive && <span className="diag-live-dot" />}
         </div>
         <div className="diag-header-actions">
+          <div className="diag-filter-wrapper" ref={filterRef}>
+            <button
+              className={`diag-btn${timeRange !== 'all' ? ' diag-btn-active' : ''}`}
+              onClick={() => setFilterOpen(!filterOpen)}
+              title="Filter by time range"
+            >
+              <Filter size={14} />
+            </button>
+            {filterOpen && (
+              <div className="diag-filter-popover">
+                <div className="diag-filter-title">Time range</div>
+                {TIME_RANGE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    className={`diag-filter-option${timeRange === opt.value ? ' active' : ''}`}
+                    onClick={() => {
+                      setTimeRange(opt.value);
+                      setFilterOpen(false);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button className="diag-btn" onClick={onToggleExpand} title={expanded ? 'Collapse' : 'Expand'}>
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
@@ -436,7 +529,7 @@ export function DiagnosticsPanel({ entries, summary, isActive, expanded, onToggl
       </div>
 
       {/* Summary bar */}
-      {entries.length > 0 && (
+      {filteredEntries.length > 0 && (
         <div className="diag-summary">
           <div className="diag-summary-item">
             <span className="diag-summary-value">{summary.totalIterations}</span>
@@ -463,14 +556,21 @@ export function DiagnosticsPanel({ entries, summary, isActive, expanded, onToggl
 
       {/* Timeline */}
       <div className="diag-timeline">
-        {entries.length === 0 && (
+        {filteredEntries.length === 0 && entries.length === 0 && (
           <div className="diag-empty">
             <Activity size={24} className="diag-empty-icon" />
             <p className="diag-empty-text">No diagnostics data yet.</p>
             <p className="diag-empty-hint">Send a message to see real-time request details.</p>
           </div>
         )}
-        {entries.map((entry) => {
+        {filteredEntries.length === 0 && entries.length > 0 && (
+          <div className="diag-empty">
+            <Filter size={24} className="diag-empty-icon" />
+            <p className="diag-empty-text">No entries in selected time range.</p>
+            <p className="diag-empty-hint">Try expanding the time range filter.</p>
+          </div>
+        )}
+        {filteredEntries.map((entry) => {
           switch (entry.event.type) {
             case 'llm_response':
               return <LlmEntry key={entry.id} event={entry.event} timestamp={entry.timestamp} />;

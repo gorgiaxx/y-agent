@@ -512,6 +512,7 @@ mod tests {
                 id: "resp-1".into(),
                 model: self.meta.model.clone(),
                 content: Some("test response".into()),
+                reasoning_content: None,
                 tool_calls: vec![],
                 usage: TokenUsage {
                     input_tokens: 10,
