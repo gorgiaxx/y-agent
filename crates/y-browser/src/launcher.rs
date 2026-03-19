@@ -117,9 +117,9 @@ impl ChromeLauncher {
         loop {
             // Check that the child hasn't exited.
             if let Some(status) = self.child.try_wait().ok().flatten() {
-                return Err(LaunchError::SpawnFailed(std::io::Error::other(
-                    format!("Chrome exited early with status: {status}"),
-                )));
+                return Err(LaunchError::SpawnFailed(std::io::Error::other(format!(
+                    "Chrome exited early with status: {status}"
+                ))));
             }
 
             if let Ok(resp) = reqwest::get(&url).await {
