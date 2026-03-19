@@ -5,13 +5,6 @@ on:
     tags:
       - "v*"
 
-  # Allow manual trigger for testing
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Version tag (e.g. v0.1.0)"
-        required: false
-
 permissions:
   contents: write
   packages: write
@@ -29,7 +22,7 @@ jobs:
 
   # -- Build and publish Docker image ------------------------------------------
   docker:
-    name: Build & Push Docker Image
+    name: Docker Image
     runs-on: ubuntu-latest
     needs: ci-gate
     steps:
@@ -126,13 +119,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION="${{ inputs.tag || '0.0.0-dev' }}"
-            VERSION="${VERSION#v}"
-          fi
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       # -- CLI Binary ----------------------------------------------------------
@@ -155,8 +142,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ""
         run: npx @tauri-apps/cli build --ci --target ${{ matrix.target }}
 
-      # -- Package CLI zip (Unix) ------------------------------------------------
-      - name: Package CLI zip (Unix)
+      # -- Package CLI (Unix) --------------------------------------------------
+      - name: Package CLI (Unix)
         if: runner.os != 'Windows'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -168,9 +155,8 @@ jobs:
           cp -r data "dist/${CLI_ARCHIVE}/data" 2>/dev/null || true
           cp README.md "dist/${CLI_ARCHIVE}/"
           cd dist && tar czf "${CLI_ARCHIVE}.tar.gz" "${CLI_ARCHIVE}"
-          cd .. && cd dist && zip -r "${CLI_ARCHIVE}.zip" "${CLI_ARCHIVE}"
 
-      - name: Package CLI zip (Windows)
+      - name: Package CLI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -184,14 +170,11 @@ jobs:
           Copy-Item "README.md" "dist/${CLI_ARCHIVE}/"
           Compress-Archive -Path "dist/${CLI_ARCHIVE}" -DestinationPath "dist/${CLI_ARCHIVE}.zip"
 
-      # -- Package GUI installers (Unix) -----------------------------------------
-      - name: Package GUI installers (Unix)
+      # -- Collect GUI installers (Unix) ---------------------------------------
+      - name: Collect GUI installers (Unix)
         if: runner.os != 'Windows'
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
           BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
-
-          # Copy native installers directly to dist (no extra zip wrapping)
           mkdir -p dist
           if [ "${{ runner.os }}" = "macOS" ]; then
             cp "${BUNDLE_DIR}"/dmg/*.dmg dist/ 2>/dev/null || true
@@ -201,11 +184,10 @@ jobs:
             cp "${BUNDLE_DIR}"/rpm/*.rpm dist/ 2>/dev/null || true
           fi
 
-      - name: Package GUI installers (Windows)
+      - name: Collect GUI installers (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $VERSION = "${{ steps.version.outputs.version }}"
           $BUNDLE_DIR = "target/${{ matrix.target }}/release/bundle"
           New-Item -ItemType Directory -Force -Path "dist"
           Copy-Item "${BUNDLE_DIR}/msi/*.msi" "dist/" -ErrorAction SilentlyContinue
@@ -216,8 +198,8 @@ jobs:
         with:
           name: release-${{ matrix.platform }}
           path: |
-            dist/*.zip
             dist/*.tar.gz
+            dist/*.zip
             dist/*.dmg
             dist/*.deb
             dist/*.AppImage
@@ -241,14 +223,14 @@ jobs:
           path: dist/
           merge-multiple: true
 
-      - name: List release assets
+      - name: Generate checksums
+        working-directory: dist
         run: |
-          echo "=== Release assets ==="
-          find dist/ -type f | sort
-          echo "======================"
+          sha256sum * > SHA256SUMS.txt 2>/dev/null || true
+          echo "=== SHA256 checksums ==="
+          cat SHA256SUMS.txt
 
       - name: Generate changelog
-        id: changelog
         run: |
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
@@ -266,7 +248,7 @@ jobs:
           echo "### CLI (command-line)" >> CHANGELOG.md
           echo "| Platform | Archive |" >> CHANGELOG.md
           echo "|----------|---------|" >> CHANGELOG.md
-          for f in dist/y-agent-cli-*.zip dist/y-agent-cli-*.tar.gz; do
+          for f in dist/y-agent-cli-*.tar.gz dist/y-agent-cli-*.zip; do
             [ -f "$f" ] || continue
             fname=$(basename "$f")
             echo "| ${fname} | [Download](${fname}) |" >> CHANGELOG.md
@@ -282,19 +264,24 @@ jobs:
             echo "| ${fname} | [Download](${fname}) |" >> CHANGELOG.md
           done
 
+          echo "" >> CHANGELOG.md
+          echo "### Verification" >> CHANGELOG.md
+          echo "Verify downloads with \`sha256sum -c SHA256SUMS.txt\`" >> CHANGELOG.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body_path: CHANGELOG.md
           files: |
-            dist/*.zip
             dist/*.tar.gz
+            dist/*.zip
             dist/*.dmg
             dist/*.deb
             dist/*.AppImage
             dist/*.rpm
             dist/*.msi
             dist/*.exe
+            dist/SHA256SUMS.txt
           generate_release_notes: true
           fail_on_unmatched_files: false
         env:

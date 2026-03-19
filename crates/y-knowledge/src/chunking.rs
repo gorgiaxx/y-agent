@@ -54,21 +54,16 @@ pub struct ChunkMetadata {
 }
 
 /// Chunking algorithm type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ChunkerType {
     /// Simple newline-based splitting (legacy default).
+    #[default]
     TextSplit,
     /// Punctuation-aware sentence boundary splitting (MaxKB-inspired).
     SentenceBoundary,
     /// Markdown heading-based splitting.
     HeadingBased,
-}
-
-impl Default for ChunkerType {
-    fn default() -> Self {
-        Self::TextSplit
-    }
 }
 
 /// Chunks documents at multiple resolution levels.

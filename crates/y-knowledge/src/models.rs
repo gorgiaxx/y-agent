@@ -270,21 +270,16 @@ impl KnowledgeEntry {
 // ---------------------------------------------------------------------------
 
 /// Refresh policy for knowledge collections.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RefreshPolicy {
     /// Never automatically refresh.
+    #[default]
     Manual,
     /// Refresh on a fixed interval (seconds).
     Interval(u64),
     /// Refresh when source hash changes (on access).
     OnChange,
-}
-
-impl Default for RefreshPolicy {
-    fn default() -> Self {
-        Self::Manual
-    }
 }
 
 /// Configuration for a knowledge collection.

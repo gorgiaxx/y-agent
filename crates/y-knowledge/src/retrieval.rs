@@ -18,7 +18,7 @@ use std::collections::HashMap;
 // ---------------------------------------------------------------------------
 
 /// Search strategy for retrieval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchStrategy {
     /// Vector similarity search only.
@@ -26,13 +26,8 @@ pub enum SearchStrategy {
     /// BM25 keyword search only.
     KeywordSearch,
     /// Blend Search: additive fusion of vector + BM25. (`MaxKB`-inspired)
+    #[default]
     Hybrid,
-}
-
-impl Default for SearchStrategy {
-    fn default() -> Self {
-        Self::Hybrid
-    }
 }
 
 // ---------------------------------------------------------------------------

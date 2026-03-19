@@ -113,13 +113,12 @@ No task is complete until all three commands pass cleanly.
 
 ### 4.7 CI Pipeline
 
-The GitHub Actions CI (`.github/workflows/ci.yml`) enforces three jobs:
+The GitHub Actions CI (`.github/workflows/ci.yml`) enforces two jobs:
 
 | Job              | Steps                                                                        |
 | ---------------- | ---------------------------------------------------------------------------- |
 | Format           | `cargo fmt --check`                                                          |
 | Build & Test     | clippy, check, test, doc (single runner, shared deps and compilation cache)  |
-| Security Audit   | `rustsec/audit-check`                                                        |
 
 The **Build & Test** job runs clippy, check, test, and doc sequentially in one runner to avoid redundant system-dependency installs and to reuse compilation artifacts across steps.
 
