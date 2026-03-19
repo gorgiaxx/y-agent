@@ -57,20 +57,17 @@ pub struct DomSnapshotNode {
 }
 
 /// Snapshot format selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotFormat {
     /// Accessibility tree snapshot (ARIA roles + names).
+    #[default]
     Aria,
     /// DOM tree snapshot (HTML elements).
     Dom,
 }
 
-impl Default for SnapshotFormat {
-    fn default() -> Self {
-        Self::Aria
-    }
-}
+
 
 /// Raw AX node from CDP `Accessibility.getFullAXTree`.
 #[derive(Debug, Deserialize)]
