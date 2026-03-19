@@ -48,30 +48,51 @@ pub use structural::{
 pub use taint::{TaintCheckResult, TaintTag, TaintTracker};
 
 /// Convenience builder that creates all guardrail middleware from a single config.
-#[derive(Debug)]
+///
+/// The inner config is wrapped in `RwLock` so it can be hot-reloaded at
+/// runtime without restarting the application.
 pub struct GuardrailManager {
-    config: GuardrailConfig,
+    config: std::sync::RwLock<GuardrailConfig>,
+}
+
+impl std::fmt::Debug for GuardrailManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let cfg = self.config.read().unwrap();
+        f.debug_struct("GuardrailManager")
+            .field("config", &*cfg)
+            .finish()
+    }
 }
 
 impl GuardrailManager {
     /// Create a new guardrail manager.
     pub fn new(config: GuardrailConfig) -> Self {
-        Self { config }
+        Self { config: std::sync::RwLock::new(config) }
     }
 
-    /// Read-only access to the underlying guardrail configuration.
-    pub fn config(&self) -> &GuardrailConfig {
-        &self.config
+    /// Get a snapshot of the current guardrail configuration.
+    pub fn config(&self) -> GuardrailConfig {
+        self.config.read().unwrap().clone()
+    }
+
+    /// Hot-reload the guardrail configuration.
+    ///
+    /// Atomically replaces the current config. Subsequent calls to
+    /// `config()` and middleware constructors will use the new values.
+    pub fn reload_config(&self, new_config: GuardrailConfig) {
+        let mut guard = self.config.write().unwrap();
+        *guard = new_config;
+        tracing::info!("Guardrail config hot-reloaded");
     }
 
     /// Create the `ToolGuardMiddleware`.
     pub fn tool_guard(&self) -> ToolGuardMiddleware {
-        ToolGuardMiddleware::new(self.config.clone())
+        ToolGuardMiddleware::new(self.config())
     }
 
     /// Create the `LoopDetectorMiddleware`.
     pub fn loop_detector(&self) -> LoopDetectorMiddleware {
-        LoopDetectorMiddleware::new(self.config.loop_guard.clone())
+        LoopDetectorMiddleware::new(self.config().loop_guard.clone())
     }
 
     /// Create the `LlmGuardMiddleware`.
@@ -81,16 +102,16 @@ impl GuardrailManager {
 
     /// Create a new `PermissionModel` bound to this config.
     pub fn permission_model(&self) -> PermissionModel {
-        PermissionModel::new(self.config.clone())
+        PermissionModel::new(self.config())
     }
 
     /// Create a new `RiskScorer` bound to this config.
     pub fn risk_scorer(&self) -> RiskScorer {
-        RiskScorer::new(self.config.risk.clone())
+        RiskScorer::new(self.config().risk.clone())
     }
 
     /// Create a new HITL protocol pair.
     pub fn hitl_protocol(&self) -> (HitlProtocol, HitlHandler) {
-        HitlProtocol::new(self.config.hitl.clone())
+        HitlProtocol::new(self.config().hitl.clone())
     }
 }

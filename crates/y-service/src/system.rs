@@ -113,6 +113,64 @@ impl SystemService {
         Ok(count)
     }
 
+    /// Hot-reload the guardrail config from a TOML config string.
+    ///
+    /// Parses the TOML into `GuardrailConfig` and delegates to
+    /// `container.reload_guardrails()`.
+    pub fn reload_guardrails_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<(), String> {
+        let config: y_guardrails::GuardrailConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse guardrails config: {e}"))?;
+        container.reload_guardrails(config);
+        Ok(())
+    }
+
+    /// Hot-reload the session config from a TOML config string.
+    pub fn reload_session_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<(), String> {
+        let config: y_session::SessionConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse session config: {e}"))?;
+        container.reload_session(config);
+        Ok(())
+    }
+
+    /// Hot-reload the runtime config from a TOML config string.
+    pub fn reload_runtime_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<(), String> {
+        let config: y_runtime::RuntimeConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse runtime config: {e}"))?;
+        container.reload_runtime(config);
+        Ok(())
+    }
+
+    /// Hot-reload the browser config from a TOML config string.
+    pub async fn reload_browser_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<(), String> {
+        let config: y_browser::BrowserConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse browser config: {e}"))?;
+        container.reload_browser(config).await;
+        Ok(())
+    }
+
+    /// Hot-reload the tools config from a TOML config string.
+    pub fn reload_tools_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<(), String> {
+        let config: y_tools::ToolRegistryConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse tools config: {e}"))?;
+        container.reload_tools(config);
+        Ok(())
+    }
+
     /// Test an LLM provider by sending a minimal probe request.
     ///
     /// Providers using OpenAI-compatible REST are actively tested via a

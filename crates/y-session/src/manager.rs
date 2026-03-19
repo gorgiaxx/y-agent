@@ -1,6 +1,7 @@
 //! `SessionManager` — high-level facade for session lifecycle management.
 
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use tracing::instrument;
 
@@ -24,7 +25,7 @@ pub struct SessionManager {
     session_store: Arc<dyn SessionStore>,
     transcript_store: Arc<dyn TranscriptStore>,
     display_transcript_store: Arc<dyn DisplayTranscriptStore>,
-    config: SessionConfig,
+    config: RwLock<SessionConfig>,
 }
 
 impl SessionManager {
@@ -39,8 +40,15 @@ impl SessionManager {
             session_store,
             transcript_store,
             display_transcript_store,
-            config,
+            config: RwLock::new(config),
         }
+    }
+
+    /// Hot-reload the session configuration.
+    pub fn reload_config(&self, new_config: SessionConfig) {
+        let mut guard = self.config.write().unwrap();
+        *guard = new_config;
+        tracing::info!("Session config hot-reloaded");
     }
 
     /// Create a new root session.
@@ -52,11 +60,12 @@ impl SessionManager {
         // Validate depth if creating a child.
         if let Some(ref parent_id) = options.parent_id {
             let parent = self.session_store.get(parent_id).await?;
-            if parent.depth >= self.config.max_depth {
+            let max_depth = self.config.read().unwrap().max_depth;
+            if parent.depth >= max_depth {
                 return Err(SessionManagerError::Config {
                     message: format!(
                         "maximum tree depth {} exceeded",
-                        self.config.max_depth
+                        max_depth
                     ),
                 });
             }
@@ -200,11 +209,12 @@ impl SessionManager {
         title: Option<String>,
     ) -> Result<SessionNode, SessionManagerError> {
         let parent = self.session_store.get(parent_id).await?;
-        if parent.depth >= self.config.max_depth {
+        let max_depth = self.config.read().unwrap().max_depth;
+        if parent.depth >= max_depth {
             return Err(SessionManagerError::Config {
                 message: format!(
                     "maximum tree depth {} exceeded",
-                    self.config.max_depth
+                    max_depth
                 ),
             });
         }
@@ -314,7 +324,7 @@ impl SessionManager {
 
     /// Check if a session should trigger compaction.
     pub fn should_compact(&self, session: &SessionNode) -> bool {
-        session.token_count >= self.config.compaction_threshold
+        session.token_count >= self.config.read().unwrap().compaction_threshold
     }
 
     /// Get a reference to the underlying context transcript store.
@@ -327,16 +337,16 @@ impl SessionManager {
         &*self.display_transcript_store
     }
 
-    /// Get the session configuration.
-    pub fn config(&self) -> &SessionConfig {
-        &self.config
+    /// Get a snapshot of the session configuration.
+    pub fn config(&self) -> SessionConfig {
+        self.config.read().unwrap().clone()
     }
 }
 
 impl std::fmt::Debug for SessionManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionManager")
-            .field("config", &self.config)
+            .field("config", &*self.config.read().unwrap())
             .finish()
     }
 }

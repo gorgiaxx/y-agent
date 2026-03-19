@@ -4,6 +4,7 @@
 //! Key workflow: snapshot → get refs → click/type with refs.
 
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -107,10 +108,10 @@ impl BrowserAction {
 /// Browser tool for agent integration.
 pub struct BrowserTool {
     def: ToolDefinition,
-    config: BrowserConfig,
+    config: RwLock<BrowserConfig>,
     client: Arc<CdpClient>,
     actions: BrowserActions,
-    security: SecurityPolicy,
+    security: RwLock<SecurityPolicy>,
     /// Locally launched Chrome process (if `auto_launch` is enabled).
     launcher: Mutex<Option<ChromeLauncher>>,
     /// Whether console monitoring has been started.
@@ -140,13 +141,28 @@ impl BrowserTool {
 
         Self {
             def: Self::tool_definition(),
-            config,
+            config: RwLock::new(config),
             client,
             actions,
-            security,
+            security: RwLock::new(security),
             launcher: Mutex::new(None),
             console_started: Mutex::new(false),
         }
+    }
+
+    /// Hot-reload the browser configuration.
+    ///
+    /// Updates the stored config and rebuilds the security policy.
+    /// Does NOT affect an already-running Chrome session; changes
+    /// take effect on the next connection.
+    pub fn reload_config(&self, new_config: BrowserConfig) {
+        let new_security = SecurityPolicy::new(
+            new_config.allowed_domains.clone(),
+            new_config.block_private_networks,
+        );
+        *self.security.write().unwrap() = new_security;
+        *self.config.write().unwrap() = new_config;
+        tracing::info!("Browser config hot-reloaded");
     }
 
     /// Get the tool definition.
@@ -251,15 +267,17 @@ impl BrowserTool {
             return Ok(());
         }
 
+        let config = self.config.read().unwrap().clone();
+
         // Auto-launch Chrome if configured.
-        if self.config.auto_launch {
+        if config.auto_launch {
             let mut launcher_guard = self.launcher.lock().await;
             if launcher_guard.is_none() {
                 debug!("auto-launching Chrome");
                 let chrome = ChromeLauncher::launch(
-                    &self.config.chrome_path,
-                    self.config.local_cdp_port,
-                    self.config.headless,
+                    &config.chrome_path,
+                    config.local_cdp_port,
+                    config.headless,
                 ).await.map_err(|e| ToolError::ExternalServiceError {
                     name: "browser".into(),
                     message: format!("Failed to launch Chrome: {e}"),
@@ -284,7 +302,7 @@ impl BrowserTool {
                 }
             })?;
         } else {
-            let cdp_url = &self.config.cdp_url;
+            let cdp_url = &config.cdp_url;
             debug!(cdp_url = %cdp_url, "connecting to CDP");
             self.client.connect().await.map_err(|e| {
                 ToolError::ExternalServiceError {
@@ -327,7 +345,7 @@ impl Default for BrowserTool {
 #[async_trait]
 impl Tool for BrowserTool {
     async fn execute(&self, input: ToolInput) -> Result<ToolOutput, ToolError> {
-        if !self.config.enabled {
+        if !self.config.read().unwrap().enabled {
             return Err(ToolError::PermissionDenied {
                 name: "browser".into(),
                 reason: "browser tool is disabled in configuration".into(),
@@ -378,7 +396,7 @@ impl Tool for BrowserTool {
                     })?;
 
                 // Security check.
-                self.security.validate_url(url).map_err(|e| {
+                self.security.read().unwrap().validate_url(url).map_err(|e| {
                     ToolError::PermissionDenied {
                         name: "browser".into(),
                         reason: e.to_string(),
@@ -571,6 +589,10 @@ impl Tool for BrowserTool {
 
     fn definition(&self) -> &ToolDefinition {
         &self.def
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

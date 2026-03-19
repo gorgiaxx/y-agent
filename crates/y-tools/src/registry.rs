@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::RwLock as StdRwLock;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -21,7 +22,7 @@ use crate::index::ToolIndex;
 /// Uses interior mutability (`RwLock`) so the trait's `&self` methods work.
 pub struct ToolRegistryImpl {
     inner: RwLock<RegistryInner>,
-    config: ToolRegistryConfig,
+    config: StdRwLock<ToolRegistryConfig>,
 }
 
 struct RegistryInner {
@@ -42,8 +43,14 @@ impl ToolRegistryImpl {
                 definitions: HashMap::new(),
                 index: ToolIndex::new(),
             }),
-            config,
+            config: StdRwLock::new(config),
         }
+    }
+
+    /// Hot-reload the tool registry configuration.
+    pub fn reload_config(&self, new_config: ToolRegistryConfig) {
+        *self.config.write().unwrap() = new_config;
+        tracing::info!("Tool registry config hot-reloaded");
     }
 
     /// Register a tool with its definition (direct method, not trait).
@@ -87,7 +94,7 @@ impl ToolRegistryImpl {
     ) -> Vec<ToolDefinition> {
         let inner = self.inner.read().await;
         let query_lower = query.to_lowercase();
-        let limit = self.config.search_limit;
+        let limit = self.config.read().unwrap().search_limit;
 
         inner
             .index

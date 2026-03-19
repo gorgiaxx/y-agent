@@ -48,7 +48,7 @@ impl ToolSearchOrchestrator {
         if let Some(name) = tool_name {
             Self::handle_get_tool(name, registry, activation_set).await
         } else if let Some(cat) = category {
-            Self::handle_browse_category(cat, taxonomy).await
+            Self::handle_browse_category(cat, taxonomy, registry, activation_set).await
         } else if let Some(q) = query {
             Self::handle_search(q, registry, taxonomy, activation_set).await
         } else {
@@ -88,10 +88,13 @@ impl ToolSearchOrchestrator {
         })
     }
 
-    /// Browse a taxonomy category, returning subcategories and tool lists.
+    /// Browse a taxonomy category, returning subcategories, tool lists,
+    /// and full tool definitions (with auto-activation).
     async fn handle_browse_category(
         category: &str,
         taxonomy: &ToolTaxonomy,
+        registry: &ToolRegistryImpl,
+        activation_set: &Arc<RwLock<ToolActivationSet>>,
     ) -> Result<ToolOutput, y_core::tool::ToolError> {
         let detail = taxonomy
             .category_detail(category)
@@ -101,12 +104,29 @@ impl ToolSearchOrchestrator {
 
         let tools = taxonomy.tools_in_category(category);
 
+        // Look up full definitions for tools in the category and activate them.
+        let mut tool_defs = Vec::new();
+        let mut activated_names = Vec::new();
+        {
+            let mut set = activation_set.write().await;
+            for tool_name_str in &tools {
+                let tn = ToolName::from_string(tool_name_str);
+                if let Some(def) = registry.get_definition(&tn).await {
+                    set.activate(def.clone());
+                    activated_names.push(tool_name_str.clone());
+                    tool_defs.push(Self::definition_to_json(&def));
+                }
+            }
+        }
+
         Ok(ToolOutput {
             success: true,
             content: serde_json::json!({
                 "category": category,
                 "detail": detail,
                 "tools": tools,
+                "tool_definitions": tool_defs,
+                "activated": activated_names,
             }),
             warnings: vec![],
             metadata: serde_json::json!({"action": "browse_category"}),
@@ -293,6 +313,20 @@ tools = ["tool_search"]
         let tools = result.content["tools"].as_array().unwrap();
         assert!(tools.iter().any(|t| t == "file_read"));
         assert!(tools.iter().any(|t| t == "file_write"));
+
+        // Verify tool definitions are returned.
+        let defs = result.content["tool_definitions"].as_array().unwrap();
+        assert!(!defs.is_empty());
+        assert!(defs.iter().any(|d| d["name"] == "file_read"));
+
+        // Verify activated list is returned.
+        let activated = result.content["activated"].as_array().unwrap();
+        assert!(activated.iter().any(|a| a == "file_read"));
+
+        // Verify tools are activated in the activation set.
+        let set = activation_set.read().await;
+        assert!(set.contains(&ToolName::from_string("file_read")));
+        assert!(set.contains(&ToolName::from_string("file_write")));
     }
 
     #[tokio::test]

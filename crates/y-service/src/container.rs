@@ -446,6 +446,44 @@ tools = ["tool_search"]
         );
     }
 
+    /// Hot-reload the guardrail configuration.
+    ///
+    /// Atomically replaces the `GuardrailManager` config so that subsequent
+    /// turns use the new values (e.g. `max_tool_iterations`).
+    pub fn reload_guardrails(&self, new_config: y_guardrails::GuardrailConfig) {
+        self.guardrail_manager.reload_config(new_config);
+    }
+
+    /// Hot-reload the session configuration.
+    pub fn reload_session(&self, new_config: y_session::SessionConfig) {
+        self.session_manager.reload_config(new_config);
+    }
+
+    /// Hot-reload the runtime configuration.
+    pub fn reload_runtime(&self, new_config: y_runtime::RuntimeConfig) {
+        self.runtime_manager.reload_config(new_config);
+    }
+
+    /// Hot-reload the tool registry configuration.
+    pub fn reload_tools(&self, new_config: y_tools::ToolRegistryConfig) {
+        self.tool_registry.reload_config(new_config);
+    }
+
+    /// Hot-reload the browser tool configuration.
+    ///
+    /// Looks up the registered `browser` tool by name and calls its
+    /// `reload_config` method. No-op if the browser tool is not registered.
+    pub async fn reload_browser(&self, new_config: y_browser::BrowserConfig) {
+        if let Some(tool) = self.tool_registry.get_tool(&y_core::types::ToolName::from_string("browser")).await {
+            // Downcast the Arc<dyn Tool> to BrowserTool.
+            if let Some(bt) = tool.as_any().downcast_ref::<y_browser::BrowserTool>() {
+                bt.reload_config(new_config);
+            } else {
+                info!("browser tool found but downcast failed; skipping browser config reload");
+            }
+        }
+    }
+
     /// Construct a [`SkillIngestionService`] wired to this container's
     /// agent delegator.
     ///

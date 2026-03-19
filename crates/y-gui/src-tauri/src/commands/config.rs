@@ -146,23 +146,67 @@ pub async fn config_save_section(
     Ok(())
 }
 
-/// Hot-reload the provider pool from updated config files.
+/// Hot-reload configuration from updated config files.
 ///
-/// Re-reads `providers.toml` and rebuilds all LLM provider instances.
-/// In-flight requests using the old pool are unaffected.
+/// Re-reads all config TOML files and updates the corresponding runtime
+/// managers. In-flight requests using old values are unaffected.
 #[tauri::command]
 pub async fn config_reload(state: State<'_, AppState>) -> Result<String, String> {
-    let path = state.config_dir.join("providers.toml");
-    if !path.exists() {
-        return Err("providers.toml not found".into());
+    let mut results: Vec<String> = Vec::new();
+
+    // Helper: try to read a config file; returns None if file doesn't exist.
+    let read_toml = |name: &str| -> Result<Option<String>, String> {
+        let path = state.config_dir.join(format!("{name}.toml"));
+        if !path.exists() {
+            return Ok(None);
+        }
+        std::fs::read_to_string(&path)
+            .map(Some)
+            .map_err(|e| format!("Failed to read {name}.toml: {e}"))
+    };
+
+    // 1. Providers.
+    if let Some(content) = read_toml("providers")? {
+        let count =
+            y_service::SystemService::reload_providers_from_toml(&state.container, &content).await?;
+        results.push(format!("{count} provider(s)"));
     }
 
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read providers.toml: {e}"))?;
+    // 2. Guardrails.
+    if let Some(content) = read_toml("guardrails")? {
+        y_service::SystemService::reload_guardrails_from_toml(&state.container, &content)?;
+        results.push("guardrails".to_string());
+    }
 
-    let count =
-        y_service::SystemService::reload_providers_from_toml(&state.container, &content).await?;
-    Ok(format!("Provider pool reloaded: {count} provider(s) active"))
+    // 3. Session.
+    if let Some(content) = read_toml("session")? {
+        y_service::SystemService::reload_session_from_toml(&state.container, &content)?;
+        results.push("session".to_string());
+    }
+
+    // 4. Runtime.
+    if let Some(content) = read_toml("runtime")? {
+        y_service::SystemService::reload_runtime_from_toml(&state.container, &content)?;
+        results.push("runtime".to_string());
+    }
+
+    // 5. Browser.
+    if let Some(content) = read_toml("browser")? {
+        y_service::SystemService::reload_browser_from_toml(&state.container, &content).await?;
+        results.push("browser".to_string());
+    }
+
+    // 6. Tools.
+    if let Some(content) = read_toml("tools")? {
+        y_service::SystemService::reload_tools_from_toml(&state.container, &content)?;
+        results.push("tools".to_string());
+    }
+
+    if results.is_empty() {
+        return Ok("Config reloaded (no config files to update)".into());
+    }
+
+    Ok(format!("Config reloaded: {}", results.join(", ")))
 }
 
 /// Test an LLM provider configuration by sending a minimal probe request.

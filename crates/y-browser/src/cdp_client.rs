@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -105,8 +105,9 @@ type PendingMap = HashMap<u64, oneshot::Sender<Result<serde_json::Value, CdpErro
 /// Connects to Chrome via the DevTools Protocol WebSocket and sends
 /// JSON-RPC commands. Thread-safe and shareable via `Arc`.
 pub struct CdpClient {
-    /// The base CDP URL (http:// or ws://).
-    cdp_url: String,
+    /// The base CDP URL (http:// or ws://). Wrapped in RwLock to allow
+    /// updating after launcher picks a different port.
+    cdp_url: RwLock<String>,
     /// Default timeout for requests.
     default_timeout: Duration,
     /// Auto-incrementing message ID.
@@ -133,7 +134,7 @@ impl CdpClient {
     pub fn new(cdp_url: String, default_timeout: Duration) -> Self {
         let (event_tx, _) = broadcast::channel(256);
         Self {
-            cdp_url,
+            cdp_url: RwLock::new(cdp_url),
             default_timeout,
             next_id: AtomicU64::new(1),
             writer: Mutex::new(None),
@@ -141,6 +142,11 @@ impl CdpClient {
             reader_handle: Mutex::new(None),
             event_tx,
         }
+    }
+
+    /// Update the CDP URL (e.g. when the launcher picks a different port).
+    pub fn set_cdp_url(&self, url: String) {
+        *self.cdp_url.write().unwrap() = url;
     }
 
     /// Connect to the CDP endpoint.
@@ -279,7 +285,8 @@ impl CdpClient {
     /// launching to register its default tab), creating a new page target
     /// only as a last resort to avoid producing duplicate windows/tabs.
     async fn resolve_ws_url(&self) -> Result<String, CdpError> {
-        let url = self.cdp_url.trim();
+        let cdp_url_owned = self.cdp_url.read().unwrap().clone();
+        let url = cdp_url_owned.trim();
 
         // Direct WebSocket URL — use as-is.
         if url.starts_with("ws://") || url.starts_with("wss://") {
@@ -462,14 +469,16 @@ impl CdpClient {
             })?;
 
         let ws_url = target.ws_url.as_ref().unwrap();
-        let http_url = self.cdp_url.trim();
+        let cdp_url_owned2 = self.cdp_url.read().unwrap().clone();
+        let http_url = cdp_url_owned2.trim();
         debug!(ws_url, "using newly created page target");
         Ok(normalize_ws_url(ws_url, http_url))
     }
 
     /// Get HTTP base URL for /json/* endpoints.
     fn http_base_url(&self) -> String {
-        let url = self.cdp_url.trim().trim_end_matches('/');
+        let cdp_url_owned3 = self.cdp_url.read().unwrap().clone();
+        let url = cdp_url_owned3.trim().trim_end_matches('/');
         if url.starts_with("ws://") {
             url.replacen("ws://", "http://", 1)
         } else if url.starts_with("wss://") {

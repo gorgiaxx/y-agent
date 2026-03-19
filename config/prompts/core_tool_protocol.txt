@@ -28,7 +28,7 @@ You can call these tools directly without searching:
 | file_list | List directory contents | {"path": "<dirpath>"} |
 | file_search | Search for text pattern in files | {"pattern": "<text>", "path": "<dirpath>"} |
 | shell_exec | Execute a shell command | {"command": "<cmd>"} |
-| browser | Automate a web browser (navigate, click, type, screenshot) | {"action": "navigate", "url": "<url>"} |
+| browser | Automate a web browser. Actions: navigate, snapshot, click, type, screenshot, get_text, get_title, get_url, evaluate, wait, press_key, scroll, get_page_text, get_console_logs, close. Workflow: navigate → snapshot (returns @eN refs) → click/type with @eN refs. | {"action": "\<action\>", ...} Required: action. Key args: url (navigate), selector (click/type/get_text, use @eN from snapshot), text (type), expression (evaluate), key (press_key), direction/pixels (scroll) |
 
 IMPORTANT: Use ONLY these exact tool names. Do NOT invent tool names like 'ls', 'cat', 'grep', or 'mkdir'. For shell operations not covered above, use shell_exec.
 

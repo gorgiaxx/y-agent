@@ -55,13 +55,23 @@ pub fn run() {
             // Tauri's setup runs on the main thread without a Tokio runtime,
             // so we create a temporary one for async initialization.
             let config_path = config_dir();
+            let data_dir = state_dir();
             let rt = tokio::runtime::Runtime::new()
                 .expect("Failed to create Tokio runtime");
+
+            // First-run auto-init: seed configs, prompts, skills, agents
+            // if they don't already exist. This makes the GUI work
+            // out-of-the-box without requiring `y-agent init`.
+            if let Some(ref dd) = data_dir {
+                if let Err(e) = y_service::init::ensure_initialized(&config_path, dd) {
+                    tracing::warn!(error = %e, "Auto-init failed; continuing with defaults");
+                }
+            }
 
             let container = rt.block_on(async {
                 let config = ServiceConfig::load_from_directory(
                     &config_path,
-                    state_dir().as_deref(),
+                    data_dir.as_deref(),
                 );
                 let container = ServiceContainer::from_config(&config)
                     .await

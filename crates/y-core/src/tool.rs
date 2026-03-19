@@ -188,6 +188,13 @@ pub trait Tool: Send + Sync {
 
     /// Return the tool's definition (schema, capabilities, metadata).
     fn definition(&self) -> &ToolDefinition;
+
+    /// Downcast support for concrete type access (e.g. hot-reload).
+    fn as_any(&self) -> &dyn std::any::Any {
+        // Default returns a type that won't match anything useful.
+        // Concrete types should override this to return `self`.
+        &()
+    }
 }
 
 /// Registry managing all available tools with lazy loading support.

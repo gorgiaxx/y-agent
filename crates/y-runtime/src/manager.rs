@@ -4,7 +4,7 @@
 //! - **Concurrency limiter**: global Semaphore (default 10) prevents overloading.
 //! - **Resource quota**: `ResourceMonitor` checks block execution when thresholds exceeded.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -41,7 +41,7 @@ const DEFAULT_CONCURRENCY_TIMEOUT: Duration = Duration::from_secs(30);
 /// 5. Dispatches execution to the selected backend.
 /// 6. Falls back to alternative backends when the primary is unavailable.
 pub struct RuntimeManager {
-    config: RuntimeConfig,
+    config: RwLock<RuntimeConfig>,
     native: NativeRuntime,
     docker: DockerRuntime,
     ssh: SshRuntime,
@@ -52,7 +52,7 @@ pub struct RuntimeManager {
     /// Resource monitor for quota enforcement.
     resource_monitor: Arc<ResourceMonitor>,
     /// Security policy for enforcement.
-    security_policy: SecurityPolicy,
+    security_policy: RwLock<SecurityPolicy>,
 }
 
 impl RuntimeManager {
@@ -63,14 +63,14 @@ impl RuntimeManager {
         let ssh = SshRuntime::new(config.ssh.clone());
         let security_policy = SecurityPolicy::from_config(&config);
         Self {
-            config,
+            config: RwLock::new(config),
             native,
             docker,
             ssh,
             audit_trail,
             concurrency_semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
             resource_monitor: Arc::new(ResourceMonitor::with_defaults()),
-            security_policy,
+            security_policy: RwLock::new(security_policy),
         }
     }
 
@@ -106,6 +106,19 @@ impl RuntimeManager {
         self.concurrency_semaphore.available_permits()
     }
 
+    /// Hot-reload the runtime configuration.
+    ///
+    /// Rebuilds the `SecurityPolicy` from the new config. The sub-runtimes
+    /// (NativeRuntime, DockerRuntime, SshRuntime) are created at startup and
+    /// not rebuilt, but the security-relevant checks (`allow_shell`,
+    /// `default_backend`, etc.) all read from the shared `self.config`.
+    pub fn reload_config(&self, new_config: RuntimeConfig) {
+        let new_policy = SecurityPolicy::from_config(&new_config);
+        *self.security_policy.write().unwrap() = new_policy;
+        *self.config.write().unwrap() = new_config;
+        tracing::info!("Runtime config hot-reloaded");
+    }
+
     /// Select the appropriate backend for the given request.
     ///
     /// Decision logic:
@@ -124,7 +137,7 @@ impl RuntimeManager {
         }
 
         // Fall back to configured default.
-        self.config.default_backend.clone()
+        self.config.read().unwrap().default_backend.clone()
     }
 
     /// Get the backend adapter for the given backend type.
@@ -160,13 +173,14 @@ impl RuntimeAdapter for RuntimeManager {
     #[instrument(skip(self, request), fields(command = %request.command))]
     async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError> {
         // Step 1: Validate capabilities against policy.
-        let checker = CapabilityChecker::new(&self.config);
+        let config = self.config.read().unwrap().clone();
+        let checker = CapabilityChecker::new(&config);
         let _capped_caps = checker
             .validate(&request)
             .map_err(|e| -> RuntimeError { e.into() })?;
 
         // Step 2: Enforce security policy.
-        self.security_policy.enforce(&request)?;
+        self.security_policy.read().unwrap().enforce(&request)?;
 
         // Step 3: Check resource quota.
         self.check_resource_quota().await?;
@@ -240,14 +254,14 @@ impl RuntimeAdapter for RuntimeManager {
         }
 
         Ok(RuntimeHealth {
-            backend: self.config.default_backend.clone(),
+            backend: self.config.read().unwrap().default_backend.clone(),
             available: false,
             message: Some("No runtime backends available".into()),
         })
     }
 
     fn backend(&self) -> RuntimeBackend {
-        self.config.default_backend.clone()
+        self.config.read().unwrap().default_backend.clone()
     }
 
     async fn cleanup(&self) -> Result<(), RuntimeError> {
@@ -274,10 +288,13 @@ impl CommandRunner for RuntimeManager {
 
         // When the default backend is Docker, use the configured default image
         // so that callers don't need to specify it per-request.
-        let image = if self.config.default_backend == RuntimeBackend::Docker {
-            self.config.docker.default_image.clone()
-        } else {
-            None
+        let image = {
+            let cfg = self.config.read().unwrap();
+            if cfg.default_backend == RuntimeBackend::Docker {
+                cfg.docker.default_image.clone()
+            } else {
+                None
+            }
         };
 
         let request = ExecutionRequest {

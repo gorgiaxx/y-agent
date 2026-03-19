@@ -22,6 +22,7 @@ pub mod config;
 pub mod container;
 pub mod cost;
 pub mod diagnostics;
+pub mod init;
 pub mod knowledge_service;
 pub mod observability;
 pub mod skill_evolution;

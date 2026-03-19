@@ -873,13 +873,20 @@ export function SettingsOverlay({
       return;
     }
 
+    // Hot-reload backend config so saved changes take effect immediately.
+    try {
+      await reloadConfig();
+    } catch (e) {
+      console.warn('Config reload after save failed:', e);
+    }
+
     onSave(localConfig);
     onClose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser,
     providersList, providersMeta, sessionForm, runtimeForm, browserForm,
-    tomlDraftsBySection, dirtyPrompts, saveSection, localConfig, onSave, onClose,
+    tomlDraftsBySection, dirtyPrompts, saveSection, reloadConfig, localConfig, onSave, onClose,
   ]);
 
   // Derive the active config section key from the active tab.
