@@ -269,7 +269,7 @@ pub async fn kb_entry_list(
                 e.chunks.iter().map(|c| c.len() as u64).sum()
             },
             state: e.state.to_string(),
-            hit_count: e.hit_num as u64,
+            hit_count: u64::from(e.hit_num),
             updated_at: e.refreshed_at.to_rfc3339(),
         })
         .collect())
@@ -285,7 +285,7 @@ pub async fn kb_entry_detail(
     let service = kb.service.lock().await;
     let entry = service
         .get_entry(&entry_id)
-        .ok_or_else(|| format!("Entry '{}' not found", entry_id))?;
+        .ok_or_else(|| format!("Entry '{entry_id}' not found"))?;
 
     let l0_summary = entry.summary.clone().unwrap_or_default();
     let l1_sections: Vec<SectionInfo> = entry
@@ -321,7 +321,7 @@ pub async fn kb_entry_detail(
         domains: entry.domains.clone(),
         quality_score: entry.quality_score,
         state: entry.state.to_string(),
-        hit_count: entry.hit_num as u64,
+        hit_count: u64::from(entry.hit_num),
         total_chunk_count,
         l0_summary,
         l1_sections,

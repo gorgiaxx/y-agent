@@ -11,7 +11,7 @@ use encoding_rs::Encoding;
 ///
 /// If the file is already valid UTF-8, it is returned directly.
 /// Otherwise, the encoding is detected (supports Big5, GBK/GB18030,
-/// Shift_JIS, EUC-KR, ISO-8859-*, Windows-1252, and more) and the
+/// `Shift_JIS`, EUC-KR, ISO-8859-*, Windows-1252, and more) and the
 /// content is converted to UTF-8.
 ///
 /// Returns the UTF-8 content and the name of the detected encoding.

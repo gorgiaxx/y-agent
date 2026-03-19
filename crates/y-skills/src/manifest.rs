@@ -635,7 +635,7 @@ content = "{long_content}"
 
     /// T-SKILL-001-05: TOML → struct → TOML roundtrip (identity).
     ///
-    /// `to_toml()` uses the nested format and does NOT inline root_content
+    /// `to_toml()` uses the nested format and does NOT inline `root_content`
     /// (content lives in the separate `root.md` file). So after a pure
     /// in-memory roundtrip, `root_content` is expected to be empty.
     /// The full file-backed roundtrip is tested in `store::tests`.

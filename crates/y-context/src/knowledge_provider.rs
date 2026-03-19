@@ -78,7 +78,7 @@ impl KnowledgeContextProvider {
             }
             // Structured L0/L1 info (if available).
             if let Some(ref summary) = item.summary {
-                block.push_str(&format!("Summary: {}\n", summary));
+                block.push_str(&format!("Summary: {summary}\n"));
             }
             if !item.section_titles.is_empty() {
                 block.push_str("Sections:\n");
@@ -141,7 +141,7 @@ impl ContextProvider for KnowledgeContextProvider {
         };
 
         // Retrieve relevant knowledge, filtering by selected collections.
-        let knowledge = self.knowledge.lock().unwrap_or_else(|e| e.into_inner());
+        let knowledge = self.knowledge.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let items = knowledge.retrieve_for_context(&user_query, query_embedding.as_deref(), None);
 
         if items.is_empty() {

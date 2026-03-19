@@ -45,16 +45,16 @@ pub struct AgentExecutionConfig {
     pub system_prompt: String,
     /// Maximum LLM iterations (tool-call loop limit).
     pub max_iterations: usize,
-    /// Tool definitions in OpenAI function-calling JSON format.
+    /// Tool definitions in `OpenAI` function-calling JSON format.
     /// Empty = no tool calling.
     pub tool_definitions: Vec<serde_json::Value>,
-    /// Tool calling mode (Native or PromptBased).
+    /// Tool calling mode (Native or `PromptBased`).
     pub tool_calling_mode: ToolCallingMode,
     /// Conversation messages (system prompt prepended by caller if needed).
     pub messages: Vec<Message>,
     /// Provider routing preference.
     pub provider_id: Option<String>,
-    /// Preferred model identifiers (tried in order via RouteRequest).
+    /// Preferred model identifiers (tried in order via `RouteRequest`).
     pub preferred_models: Vec<String>,
     /// Provider routing tags.
     pub provider_tags: Vec<String>,
@@ -298,7 +298,7 @@ impl AgentService {
                     cumulative_output_tokens += resp_output_tokens;
                     cumulative_cost += cost;
                     final_model = response.model.clone();
-                    final_provider_id = response.provider_id.as_ref().map(|id| id.to_string());
+                    final_provider_id = response.provider_id.as_ref().map(std::string::ToString::to_string);
 
                     // Prompt preview.
                     let prompt_preview = response.raw_request.as_ref().map_or_else(
@@ -319,7 +319,7 @@ impl AgentService {
                             })
                             .to_string()
                         },
-                        |v| v.to_string(),
+                        std::string::ToString::to_string,
                     );
 
                     // Diagnostics: record generation observation.
@@ -683,7 +683,7 @@ impl AgentService {
                     let final_content = if accumulated_content.is_empty() {
                         content.clone()
                     } else {
-                        format!("{}{}", accumulated_content, content)
+                        format!("{accumulated_content}{content}")
                     };
 
                     // Compute context_window.

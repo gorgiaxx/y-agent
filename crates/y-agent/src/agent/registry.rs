@@ -365,7 +365,7 @@ impl AgentRegistry {
         self.builtin_originals
             .keys()
             .filter(|id| self.is_overridden(id))
-            .map(|id| id.as_str())
+            .map(std::string::String::as_str)
             .collect()
     }
 
@@ -841,7 +841,7 @@ mod tests {
         assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 11);
     }
 
-    /// Override a built-in agent with register_or_override.
+    /// Override a built-in agent with `register_or_override`.
     #[test]
     fn test_register_or_override_replaces_builtin() {
         let mut registry = AgentRegistry::new();
@@ -902,7 +902,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// is_overridden and list_overridden_ids track overrides correctly.
+    /// `is_overridden` and `list_overridden_ids` track overrides correctly.
     #[test]
     fn test_is_overridden_tracking() {
         let mut registry = AgentRegistry::new();

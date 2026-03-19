@@ -80,7 +80,7 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub fallback_models: Vec<String>,
     /// Provider routing tags (e.g. ["general"], ["title"]).
-    /// Used as `required_tags` in RouteRequest for provider selection.
+    /// Used as `required_tags` in `RouteRequest` for provider selection.
     #[serde(default)]
     pub provider_tags: Vec<String>,
     /// Temperature setting for LLM calls.

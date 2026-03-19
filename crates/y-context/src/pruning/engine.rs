@@ -1,4 +1,4 @@
-//! PruningEngine: coordinates strategy selection, threshold evaluation,
+//! `PruningEngine`: coordinates strategy selection, threshold evaluation,
 //! and pruning execution.
 //!
 //! Design reference: context-pruning-design.md, Component Overview

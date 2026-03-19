@@ -51,7 +51,7 @@ impl SshRuntime {
             cmd.arg("-o").arg("StrictHostKeyChecking=no");
             cmd.arg("-o").arg("UserKnownHostsFile=/dev/null");
         } else if let Some(ref kh) = self.config.known_hosts_path {
-            cmd.arg("-o").arg(format!("UserKnownHostsFile={}", kh));
+            cmd.arg("-o").arg(format!("UserKnownHostsFile={kh}"));
         }
 
         // Auth method.
@@ -132,7 +132,7 @@ impl RuntimeAdapter for SshRuntime {
                 .map(|(k, v)| format!("{}={}", k, shell_escape(v)))
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("{} {}", env_prefix, full_command)
+            format!("{env_prefix} {full_command}")
         };
 
         // Get timeout from capabilities or use default.

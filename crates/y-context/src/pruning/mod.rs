@@ -3,8 +3,8 @@
 //! Design reference: context-pruning-design.md
 //!
 //! Two built-in strategies:
-//! - **RetryPruning**: removes failed tool call branches (zero LLM cost)
-//! - **ProgressivePruning**: replaces completed multi-step sequences with
+//! - **`RetryPruning`**: removes failed tool call branches (zero LLM cost)
+//! - **`ProgressivePruning`**: replaces completed multi-step sequences with
 //!   LLM-generated rolling summaries
 
 pub mod config;

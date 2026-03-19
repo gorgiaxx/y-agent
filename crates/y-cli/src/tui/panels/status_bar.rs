@@ -123,7 +123,7 @@ fn format_token_count(count: u64) -> String {
         if m == m.floor() {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let val = m as u64;
-            format!("{}M", val)
+            format!("{val}M")
         } else {
             format!("{m:.1}M")
         }
@@ -132,7 +132,7 @@ fn format_token_count(count: u64) -> String {
         if k == k.floor() {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let val = k as u64;
-            format!("{}k", val)
+            format!("{val}k")
         } else {
             format!("{k:.1}k")
         }

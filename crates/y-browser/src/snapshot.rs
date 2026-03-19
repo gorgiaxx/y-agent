@@ -220,7 +220,7 @@ pub fn format_aria_snapshot(
             let Some(node_id) = node.node_id.as_deref() else {
                 continue;
             };
-            let role = node.role.as_ref().map_or_else(String::new, |v| v.as_str());
+            let role = node.role.as_ref().map_or_else(String::new, AxValue::as_str);
             if is_interactive_role(&role) {
                 // Mark this node and all ancestors
                 let mut current = Some(node_id);
@@ -248,8 +248,8 @@ pub fn format_aria_snapshot(
             continue;
         };
 
-        let role = node.role.as_ref().map_or_else(String::new, |v| v.as_str());
-        let name = node.name.as_ref().map_or_else(String::new, |v| v.as_str());
+        let role = node.role.as_ref().map_or_else(String::new, AxValue::as_str);
+        let name = node.name.as_ref().map_or_else(String::new, AxValue::as_str);
 
         // Apply interactive filter
         if let Some(ref keep) = keep_ids {
@@ -288,12 +288,12 @@ pub fn format_aria_snapshot(
         let value = node
             .value
             .as_ref()
-            .map(|v| v.as_str())
+            .map(AxValue::as_str)
             .filter(|s| !s.is_empty());
         let description = node
             .description
             .as_ref()
-            .map(|v| v.as_str())
+            .map(AxValue::as_str)
             .filter(|s| !s.is_empty());
 
         let ref_id = format!("e{}", out.len() + 1);

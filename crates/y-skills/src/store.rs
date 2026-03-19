@@ -229,7 +229,7 @@ impl FilesystemSkillStore {
         }
 
         std::fs::write(&file_path, content).map_err(|e| SkillModuleError::Other {
-            message: format!("failed to write sub-doc {}: {e}", doc_path),
+            message: format!("failed to write sub-doc {doc_path}: {e}"),
         })?;
 
         Ok(())
@@ -266,7 +266,7 @@ impl FilesystemSkillStore {
                 let doc_path = format!("details/{filename}");
                 let content =
                     std::fs::read_to_string(&path).map_err(|e| SkillModuleError::Other {
-                        message: format!("failed to read sub-doc {}: {e}", doc_path),
+                        message: format!("failed to read sub-doc {doc_path}: {e}"),
                     })?;
                 results.push((doc_path, content));
             }

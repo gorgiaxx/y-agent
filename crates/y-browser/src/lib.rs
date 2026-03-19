@@ -1,4 +1,4 @@
-//! y-browser: Browser automation via Chrome DevTools Protocol (CDP).
+//! y-browser: Browser automation via Chrome `DevTools` Protocol (CDP).
 //!
 //! This crate provides browser control for y-agent by connecting to
 //! Chrome/Chromium via CDP WebSocket. It can optionally manage Chrome's

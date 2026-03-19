@@ -135,7 +135,7 @@ pub struct AgentExtractedTool {
 pub struct CompanionDecision {
     /// Relative path within the skill directory.
     pub path: String,
-    /// Action: "keep" (copy as-is), "transform" (write transformed_content),
+    /// Action: "keep" (copy as-is), "transform" (write `transformed_content`),
     /// or "discard" (skip).
     pub action: String,
     /// Reason for the decision.

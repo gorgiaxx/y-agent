@@ -61,7 +61,7 @@ pub struct KnowledgeConfig {
     /// Maximum tokens per chunk that the embedding model can accept.
     /// When set (> 0), chunk sizes are capped to this value before embedding.
     /// Set this to your embedding model's context window (e.g. 512 for many
-    /// local GGUF models, 8192 for OpenAI text-embedding-3-small).
+    /// local GGUF models, 8192 for `OpenAI` text-embedding-3-small).
     /// Default: 0 (uses `l2_max_tokens` as the limit).
     #[serde(default)]
     pub embedding_max_tokens: u32,

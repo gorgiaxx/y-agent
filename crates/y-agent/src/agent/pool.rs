@@ -159,7 +159,7 @@ pub struct ActiveDelegation {
 
 /// Tracks active delegated agent executions.
 ///
-/// `AgentPool::delegate()` bypasses the pool's `instances` HashMap and
+/// `AgentPool::delegate()` bypasses the pool's `instances` `HashMap` and
 /// calls `AgentRunner::run()` directly. This tracker provides interior-
 /// mutable bookkeeping so that observability can see those executions.
 #[derive(Debug, Default)]

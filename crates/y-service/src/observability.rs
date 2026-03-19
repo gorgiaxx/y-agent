@@ -160,8 +160,8 @@ impl ObservabilityService {
                     total_errors: metrics.map_or(0, |m| m.total_errors),
                     total_input_tokens: metrics.map_or(0, |m| m.total_input_tokens),
                     total_output_tokens: metrics.map_or(0, |m| m.total_output_tokens),
-                    estimated_cost_usd: metrics.map_or(0.0, |m| m.estimated_cost_usd()),
-                    error_rate: metrics.map_or(0.0, |m| m.error_rate()),
+                    estimated_cost_usd: metrics.map_or(0.0, y_provider::MetricsSnapshot::estimated_cost_usd),
+                    error_rate: metrics.map_or(0.0, y_provider::MetricsSnapshot::error_rate),
                 }
             })
             .collect()

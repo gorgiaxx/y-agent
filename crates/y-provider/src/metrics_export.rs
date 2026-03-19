@@ -118,8 +118,7 @@ fn write_metric_value(buf: &mut String, name: &str, provider_id: &str, value: f6
         let int_value = value as i64;
         let _ = writeln!(
             buf,
-            "{METRIC_PREFIX}_{name}{{provider=\"{provider_id}\"}} {}",
-            int_value
+            "{METRIC_PREFIX}_{name}{{provider=\"{provider_id}\"}} {int_value}"
         );
     } else {
         let _ = writeln!(

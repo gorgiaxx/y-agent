@@ -298,8 +298,7 @@ impl BrowserTool {
                 ToolError::ExternalServiceError {
                     name: "browser".into(),
                     message: format!(
-                        "Failed to connect to Chrome CDP at '{}': {}. Chrome was auto-launched but CDP connection failed.",
-                        cdp_url, e,
+                        "Failed to connect to Chrome CDP at '{cdp_url}': {e}. Chrome was auto-launched but CDP connection failed.",
                     ),
                 }
             })?;
@@ -310,8 +309,7 @@ impl BrowserTool {
                 ToolError::ExternalServiceError {
                     name: "browser".into(),
                     message: format!(
-                        "Failed to connect to Chrome CDP at '{}': {}. Make sure Chrome is running with --remote-debugging-port=9222",
-                        cdp_url, e,
+                        "Failed to connect to Chrome CDP at '{cdp_url}': {e}. Make sure Chrome is running with --remote-debugging-port=9222",
                     ),
                 }
             })?;

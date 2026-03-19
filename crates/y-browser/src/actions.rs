@@ -205,8 +205,8 @@ impl BrowserActions {
                 .or_else(|| metrics.get("contentSize"));
 
             if let Some(size) = content_size {
-                let width = size.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let height = size.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let width = size.get("width").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+                let height = size.get("height").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
                 if width > 0.0 && height > 0.0 {
                     params["clip"] = serde_json::json!({
                         "x": 0,
@@ -308,10 +308,10 @@ impl BrowserActions {
             Ok(text.to_string())
         } else {
             let js = format!(
-                r#"(() => {{
+                r"(() => {{
                     const el = document.querySelector({});
                     return el ? (el.innerText || el.textContent || '').trim() : null;
-                }})()"#,
+                }})()",
                 serde_json::to_string(selector).unwrap_or_default()
             );
             let result = self.evaluate(&js).await?;
@@ -351,13 +351,13 @@ impl BrowserActions {
             Ok(())
         } else {
             let js = format!(
-                r#"(() => {{
+                r"(() => {{
                     const el = document.querySelector({});
                     if (!el) throw new Error('Element not found: ' + {});
                     el.scrollIntoView({{ block: 'center' }});
                     el.click();
                     return true;
-                }})()"#,
+                }})()",
                 serde_json::to_string(selector).unwrap_or_default(),
                 serde_json::to_string(selector).unwrap_or_default(),
             );
@@ -407,7 +407,7 @@ impl BrowserActions {
             Ok(())
         } else {
             let js = format!(
-                r#"(() => {{
+                r"(() => {{
                     const el = document.querySelector({});
                     if (!el) throw new Error('Element not found: ' + {});
                     el.scrollIntoView({{ block: 'center' }});
@@ -416,7 +416,7 @@ impl BrowserActions {
                     el.dispatchEvent(new Event('input', {{ bubbles: true }}));
                     el.dispatchEvent(new Event('change', {{ bubbles: true }}));
                     return true;
-                }})()"#,
+                }})()",
                 serde_json::to_string(selector).unwrap_or_default(),
                 serde_json::to_string(selector).unwrap_or_default(),
                 serde_json::to_string(text).unwrap_or_default(),
@@ -648,7 +648,7 @@ impl BrowserActions {
         Ok(result.value.as_str().unwrap_or_default().to_string())
     }
 
-    /// Helper: resolve a ref id (e.g. "e1") to a CDP RemoteObject objectId.
+    /// Helper: resolve a ref id (e.g. "e1") to a CDP `RemoteObject` objectId.
     async fn resolve_ref_to_object_id(&self, ref_id: &str) -> Result<String, CdpError> {
         let registry = self.ref_registry.lock().await;
         let backend_id = registry
@@ -687,8 +687,7 @@ impl BrowserActions {
             .ok_or_else(|| CdpError::ProtocolError {
                 code: -1,
                 message: format!(
-                    "Element @{} no longer exists in the DOM. The page may have changed — re-run snapshot.",
-                    ref_id
+                    "Element @{ref_id} no longer exists in the DOM. The page may have changed — re-run snapshot."
                 ),
             })
     }

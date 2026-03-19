@@ -1,4 +1,4 @@
-//! RetryPruning strategy: removes failed tool call branches.
+//! `RetryPruning` strategy: removes failed tool call branches.
 //!
 //! Design reference: context-pruning-design.md, Flow 1
 //!

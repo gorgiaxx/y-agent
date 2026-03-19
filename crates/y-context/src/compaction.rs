@@ -319,7 +319,7 @@ impl CompactionEngine {
                 if !result.is_empty() {
                     result.push_str("\n\n");
                 }
-                let _ = write!(result, "[Retained] {}", message);
+                let _ = write!(result, "[Retained] {message}");
             }
         }
 

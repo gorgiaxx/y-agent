@@ -238,7 +238,7 @@ impl SystemService {
                     .and_then(|v| {
                         v.pointer("/error/message")
                             .and_then(|m| m.as_str())
-                            .map(|s| s.to_owned())
+                            .map(std::borrow::ToOwned::to_owned)
                     })
                     .unwrap_or_else(|| body_text.chars().take(200).collect());
 

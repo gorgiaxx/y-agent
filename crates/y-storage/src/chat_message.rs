@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore, SessionError};
 use y_core::types::SessionId;
 
-/// SQLite implementation of [`ChatMessageStore`].
+/// `SQLite` implementation of [`ChatMessageStore`].
 pub struct SqliteChatMessageStore {
     pool: SqlitePool,
 }
@@ -374,7 +374,7 @@ mod tests {
             role: role.to_string(),
             content: content.to_string(),
             status: ChatMessageStatus::Active,
-            checkpoint_id: cp.map(|s| s.to_string()),
+            checkpoint_id: cp.map(std::string::ToString::to_string),
             model: None,
             input_tokens: None,
             output_tokens: None,

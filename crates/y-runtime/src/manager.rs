@@ -109,7 +109,7 @@ impl RuntimeManager {
     /// Hot-reload the runtime configuration.
     ///
     /// Rebuilds the `SecurityPolicy` from the new config. The sub-runtimes
-    /// (NativeRuntime, DockerRuntime, SshRuntime) are created at startup and
+    /// (`NativeRuntime`, `DockerRuntime`, `SshRuntime`) are created at startup and
     /// not rebuilt, but the security-relevant checks (`allow_shell`,
     /// `default_backend`, etc.) all read from the shared `self.config`.
     pub fn reload_config(&self, new_config: RuntimeConfig) {

@@ -6,7 +6,7 @@
 //! Features:
 //! - Domain keyword extraction from user messages
 //! - Token budget control (default 4000 tokens)
-//! - Progressive L0/L1/L2 injection inspired by OpenViking's context layers
+//! - Progressive L0/L1/L2 injection inspired by `OpenViking`'s context layers
 
 use std::collections::HashMap;
 
@@ -61,7 +61,7 @@ impl Default for InjectKnowledgeConfig {
 
 /// Lightweight metadata for progressive context injection.
 ///
-/// Stored per document_id to provide L0 summary and L1 section titles
+/// Stored per `document_id` to provide L0 summary and L1 section titles
 /// when formatting retrieval results for LLM context.
 #[derive(Debug, Clone)]
 pub struct EntryMetadata {
@@ -102,7 +102,7 @@ pub struct KnowledgeContextItem {
 /// `ContextProvider` trait (from `y-context`) is done via the bridge in
 /// `y-context` or at the service layer.
 ///
-/// Supports progressive context injection inspired by OpenViking:
+/// Supports progressive context injection inspired by `OpenViking`:
 /// - When L0/L1 metadata is registered, injects structured summaries
 ///   (saving tokens while preserving coverage).
 /// - When no metadata is available, falls back to raw L2 chunk injection.
@@ -294,7 +294,7 @@ impl<T: Tokenizer> InjectKnowledge<T> {
 
         // L0 summary
         if let Some(ref summary) = meta.summary {
-            out.push_str(&format!("\nSummary: {}", summary));
+            out.push_str(&format!("\nSummary: {summary}"));
         }
 
         // L1 section titles

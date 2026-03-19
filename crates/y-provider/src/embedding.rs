@@ -1,8 +1,8 @@
 //! OpenAI-compatible embedding provider.
 //!
-//! Implements the `EmbeddingProvider` trait from `y-core` using the OpenAI
+//! Implements the `EmbeddingProvider` trait from `y-core` using the `OpenAI`
 //! `/embeddings` API. Compatible with any OpenAI-API-compatible endpoint
-//! (OpenAI, Azure, Ollama, local servers).
+//! (`OpenAI`, Azure, Ollama, local servers).
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use y_core::embedding::{EmbeddingError, EmbeddingProvider, EmbeddingResult};
 // Configuration
 // ---------------------------------------------------------------------------
 
-/// Configuration for the OpenAI embedding provider.
+/// Configuration for the `OpenAI` embedding provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingConfig {
     /// Whether embedding is enabled.
@@ -123,8 +123,8 @@ struct EmbeddingApiError {
 
 /// OpenAI-compatible embedding provider.
 ///
-/// Works with any API that implements the OpenAI `/embeddings` endpoint,
-/// including Azure OpenAI, Ollama with OpenAI-compatible mode, and others.
+/// Works with any API that implements the `OpenAI` `/embeddings` endpoint,
+/// including Azure `OpenAI`, Ollama with OpenAI-compatible mode, and others.
 pub struct OpenAiEmbeddingProvider {
     client: reqwest::Client,
     api_key: String,

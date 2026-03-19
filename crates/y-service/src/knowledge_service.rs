@@ -403,7 +403,7 @@ impl KnowledgeService {
             let mut knowledge = self
                 .inject_knowledge
                 .lock()
-                .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             let domain = domains.first().cloned().unwrap_or_default();
             let chunks_for_index: Vec<Chunk> = entry
@@ -488,7 +488,7 @@ impl KnowledgeService {
         let knowledge = self
             .inject_knowledge
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let items = knowledge.retrieve_for_context(&params.query, None, domain);
 
         let results: Vec<SearchResultItem> = items
@@ -561,7 +561,7 @@ impl KnowledgeService {
                 let mut knowledge = self
                     .inject_knowledge
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let removed = knowledge.retriever_mut().remove_by_document(entry_id);
                 knowledge.remove_entry_metadata(entry_id);
                 tracing::debug!(entry_id, removed, "Removed chunks from retriever index");
@@ -590,7 +590,7 @@ impl KnowledgeService {
     ) -> Vec<KnowledgeContextItem> {
         self.inject_knowledge
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retrieve_for_context(user_query, None, domain_hint)
     }
 
@@ -603,7 +603,7 @@ impl KnowledgeService {
     ) -> Vec<KnowledgeContextItem> {
         self.inject_knowledge
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retrieve_for_context(user_query, query_embedding, domain_hint)
     }
 
@@ -611,7 +611,7 @@ impl KnowledgeService {
     // Re-indexing (rebuild in-memory index from persisted entries)
     // -------------------------------------------------------------------
 
-    /// Re-index all loaded entries into the HybridRetriever.
+    /// Re-index all loaded entries into the `HybridRetriever`.
     ///
     /// Called on startup after `load_entries()` to rebuild the in-memory
     /// BM25 index from persisted chunk data. Uses batch indexing for
@@ -654,7 +654,7 @@ impl KnowledgeService {
         let mut knowledge = self
             .inject_knowledge
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         for (entry_id, chunks, source_uri, title, quality_score, summary, section_titles) in
             &entries_data
@@ -850,7 +850,7 @@ impl KnowledgeService {
         let knowledge = self
             .inject_knowledge
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let embeddings = knowledge.retriever().embeddings();
         if embeddings.is_empty() {
             return;

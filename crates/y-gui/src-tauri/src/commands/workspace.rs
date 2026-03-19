@@ -32,8 +32,8 @@ struct WorkspacesFile {
     workspaces: Vec<WorkspaceRecord>,
 }
 
-/// The top-level TOML document for session_workspaces.toml.
-/// Maps session_id -> workspace_id.
+/// The top-level TOML document for `session_workspaces.toml`.
+/// Maps `session_id` -> `workspace_id`.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct SessionWorkspacesFile {
     #[serde(default)]

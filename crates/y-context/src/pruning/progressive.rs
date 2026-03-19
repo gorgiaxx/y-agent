@@ -1,4 +1,4 @@
-//! ProgressivePruning strategy: replaces completed multi-step sequences
+//! `ProgressivePruning` strategy: replaces completed multi-step sequences
 //! with LLM-generated rolling summaries via subagent delegation.
 //!
 //! Design reference: context-pruning-design.md, Flow 2
@@ -202,50 +202,47 @@ impl PruningStrategy for ProgressivePruning {
 
             let input = Self::build_delegation_input(&all_messages, candidate);
 
-            match self.call_with_retry(input).await {
-                Some(summary) => {
-                    let summary_tokens = estimate_tokens(&summary);
-                    total_tokens_after += summary_tokens;
+            if let Some(summary) = self.call_with_retry(input).await {
+                let summary_tokens = estimate_tokens(&summary);
+                total_tokens_after += summary_tokens;
 
-                    // Insert summary as a new active message.
-                    let summary_record = ChatMessageRecord {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        session_id: session_id.clone(),
-                        role: "assistant".to_string(),
-                        content: format!("[Pruning Summary] {summary}"),
-                        status: ChatMessageStatus::Active,
-                        checkpoint_id: None,
-                        model: None,
-                        input_tokens: None,
-                        output_tokens: None,
-                        cost_usd: None,
-                        context_window: None,
-                        parent_message_id: None,
-                        pruning_group_id: None,
-                        created_at: chrono::Utc::now(),
-                    };
-                    store.insert(&summary_record).await?;
+                // Insert summary as a new active message.
+                let summary_record = ChatMessageRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id: session_id.clone(),
+                    role: "assistant".to_string(),
+                    content: format!("[Pruning Summary] {summary}"),
+                    status: ChatMessageStatus::Active,
+                    checkpoint_id: None,
+                    model: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cost_usd: None,
+                    context_window: None,
+                    parent_message_id: None,
+                    pruning_group_id: None,
+                    created_at: chrono::Utc::now(),
+                };
+                store.insert(&summary_record).await?;
 
-                    // Mark original messages as pruned.
-                    let pruned = store
-                        .set_status_batch(
-                            session_id,
-                            &candidate.message_ids,
-                            ChatMessageStatus::Pruned,
-                        )
-                        .await?;
+                // Mark original messages as pruned.
+                let pruned = store
+                    .set_status_batch(
+                        session_id,
+                        &candidate.message_ids,
+                        ChatMessageStatus::Pruned,
+                    )
+                    .await?;
 
-                    total_pruned += pruned as usize;
-                    any_summary_inserted = true;
-                }
-                None => {
-                    // Subagent failed -- skip this candidate (safe default).
-                    total_tokens_after += candidate.estimated_tokens;
-                    tracing::warn!(
-                        candidate_messages = candidate.message_ids.len(),
-                        "progressive pruning skipped for candidate: delegator unavailable"
-                    );
-                }
+                total_pruned += pruned as usize;
+                any_summary_inserted = true;
+            } else {
+                // Subagent failed -- skip this candidate (safe default).
+                total_tokens_after += candidate.estimated_tokens;
+                tracing::warn!(
+                    candidate_messages = candidate.message_ids.len(),
+                    "progressive pruning skipped for candidate: delegator unavailable"
+                );
             }
         }
 

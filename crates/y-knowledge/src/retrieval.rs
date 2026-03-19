@@ -492,7 +492,7 @@ impl<T: Tokenizer> HybridRetriever<T> {
         fn fingerprint(text: &str) -> String {
             text.chars()
                 .filter(|c| !c.is_whitespace())
-                .flat_map(|c| c.to_lowercase())
+                .flat_map(char::to_lowercase)
                 .take(FINGERPRINT_LEN)
                 .collect()
         }

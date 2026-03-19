@@ -106,7 +106,7 @@ pub enum TurnEvent {
     /// Incremental reasoning/thinking delta from a thinking-mode LLM.
     ///
     /// Emitted during streaming for models that produce `reasoning_content`
-    /// (e.g. DeepSeek-R1, QwQ). Presentation layers show this in a collapsible
+    /// (e.g. DeepSeek-R1, `QwQ`). Presentation layers show this in a collapsible
     /// "Thinking..." section.
     StreamReasoningDelta {
         /// Incremental reasoning text from the LLM.
@@ -221,7 +221,7 @@ pub struct PrepareTurnRequest {
 /// `execute_turn_with_progress()`.
 ///
 /// Owns all data needed for turn execution so callers do not need to
-/// manage lifetimes of intermediate results (history, session_uuid, etc.).
+/// manage lifetimes of intermediate results (history, `session_uuid`, etc.).
 #[derive(Debug)]
 pub struct PreparedTurn {
     /// The resolved (or newly created) session ID.

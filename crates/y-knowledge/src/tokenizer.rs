@@ -189,7 +189,7 @@ mod tests {
         // Should not contain pure punctuation.
         for token in &tokens {
             assert!(
-                token.chars().any(|c| c.is_alphanumeric()),
+                token.chars().any(char::is_alphanumeric),
                 "token should not be pure punctuation: '{token}'"
             );
         }

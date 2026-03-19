@@ -24,7 +24,7 @@ pub struct ChatStarted {
     pub run_id: String,
 }
 
-/// Payload emitted on `chat:started` for run_id -> session_id mapping.
+/// Payload emitted on `chat:started` for `run_id` -> `session_id` mapping.
 #[derive(Debug, Serialize, Clone)]
 pub struct ChatStartedPayload {
     pub run_id: String,
@@ -199,7 +199,7 @@ pub async fn chat_send(
 /// Spawn the LLM worker task with progress forwarding and event emission.
 ///
 /// Shared by `chat_send` and `chat_resend` to avoid duplicating the ~50-line
-/// tokio::spawn block. Owns all data needed for the task.
+/// `tokio::spawn` block. Owns all data needed for the task.
 fn spawn_llm_worker(
     app: AppHandle,
     container: Arc<y_service::ServiceContainer>,

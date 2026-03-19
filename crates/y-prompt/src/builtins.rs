@@ -30,7 +30,7 @@ const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.
 const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_planning.txt");
 const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
 
-/// Mapping from section ID to (compiled default content, override filename, token_budget, priority, condition, category).
+/// Mapping from section ID to (compiled default content, override filename, `token_budget`, priority, condition, category).
 const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, ConditionTag)] = &[
     (
         "core.identity",

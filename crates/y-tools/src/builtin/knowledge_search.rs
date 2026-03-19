@@ -104,11 +104,11 @@ impl Tool for KnowledgeSearchTool {
         let _limit = input
             .arguments
             .get("limit")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(5)
             .min(20) as usize;
 
-        let knowledge = self.knowledge.lock().unwrap_or_else(|e| e.into_inner());
+        let knowledge = self.knowledge.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let items = knowledge.retrieve_for_context(query, None, domain);
 
         if items.is_empty() {

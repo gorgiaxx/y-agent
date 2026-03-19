@@ -1,4 +1,4 @@
-//! CDP (Chrome DevTools Protocol) WebSocket client.
+//! CDP (Chrome `DevTools` Protocol) WebSocket client.
 //!
 //! Provides low-level JSON-RPC communication with Chrome over WebSocket.
 //! Inspired by openclaw's direct CDP approach.
@@ -102,10 +102,10 @@ type PendingMap = HashMap<u64, oneshot::Sender<Result<serde_json::Value, CdpErro
 
 /// CDP WebSocket client.
 ///
-/// Connects to Chrome via the DevTools Protocol WebSocket and sends
+/// Connects to Chrome via the `DevTools` Protocol WebSocket and sends
 /// JSON-RPC commands. Thread-safe and shareable via `Arc`.
 pub struct CdpClient {
-    /// The base CDP URL (http:// or ws://). Wrapped in RwLock to allow
+    /// The base CDP URL (http:// or ws://). Wrapped in `RwLock` to allow
     /// updating after launcher picks a different port.
     cdp_url: RwLock<String>,
     /// Default timeout for requests.

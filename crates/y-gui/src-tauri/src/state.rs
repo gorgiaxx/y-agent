@@ -70,9 +70,9 @@ pub struct AppState {
     pub gui_config: RwLock<GuiConfig>,
     /// Path to the user config directory (`~/.config/y-agent/`).
     pub config_dir: PathBuf,
-    /// In-flight LLM cancellation tokens keyed by run_id.
+    /// In-flight LLM cancellation tokens keyed by `run_id`.
     pub pending_runs: Mutex<HashMap<String, CancellationToken>>,
-    /// Last completed turn metadata keyed by session_id string.
+    /// Last completed turn metadata keyed by `session_id` string.
     ///
     /// Arc-wrapped so the spawned chat task can clone it and write after a
     /// successful turn without holding a reference to `AppState`.

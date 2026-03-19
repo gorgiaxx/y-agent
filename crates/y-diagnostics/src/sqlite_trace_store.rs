@@ -476,9 +476,9 @@ impl TraceStore for SqliteTraceStore {
         let completed_at = obs.completed_at.map(|t| t.to_rfc3339());
         let input_toks = i64::try_from(obs.input_tokens).unwrap_or(i64::MAX);
         let output_toks = i64::try_from(obs.output_tokens).unwrap_or(i64::MAX);
-        let seq = obs.sequence as i64;
+        let seq = i64::from(obs.sequence);
 
-        let depth = obs.depth as i64;
+        let depth = i64::from(obs.depth);
         let path_json: String =
             serde_json::to_string(&obs.path.iter().map(Uuid::to_string).collect::<Vec<_>>())
                 .unwrap_or_else(|_| "[]".into());
