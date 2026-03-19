@@ -2,8 +2,8 @@
 
 > Yet Another Agent - A modular, observable, and recoverable AI Agent framework
 
-**Version**: v0.18
-**Last Updated**: 2026-03-09
+**Version**: v0.19
+**Last Updated**: 2026-03-19
 **Status**: Active Development
 
 ---
@@ -532,6 +532,7 @@ The following table documents key integration decisions that span multiple desig
 | **Prompt assembly ownership**                 | Prompt composition (sections, templates, lazy loading, mode overlays) is owned by prompt-design.md and executed inside the `BuildSystemPrompt` ContextMiddleware (priority 100). Other pipeline stages (InjectBootstrap, InjectSkills, InjectTools) remain independent -- they do not modify the system prompt, they add separate context items. AgentDefinition references a PromptTemplate; agent modes drive mode overlays. | [prompt-design.md](docs/design/prompt-design.md) + [context-session-design.md](docs/design/context-session-design.md) + [multi-agent-design.md](docs/design/multi-agent-design.md) | N/A (new) |
 | **User input enrichment**                     | EnrichInput ContextMiddleware (priority 50) runs before all other pipeline stages. TaskIntentAnalyzer sub-agent detects ambiguous/incomplete user input, triggers interactive clarification via Orchestrator interrupt/resume, and replaces original input with enriched version. Replacement (not augmentation) preserves context window tokens. Heuristic pre-filter avoids LLM calls for clear inputs. Four policy modes (always/auto/never/first_only) configurable per agent or session. | [input-enrichment-design.md](docs/design/input-enrichment-design.md) + [context-session-design.md](docs/design/context-session-design.md) + [orchestrator-design.md](docs/design/orchestrator-design.md) | N/A (new) |
 | **Agent autonomy**                            | All LLM reasoning operations (including internal: compaction, enrichment, title generation, gap assessment, pattern extraction) are agent delegations through `AgentPool`. No module may define ad-hoc LLM traits or hardcode prompts. Cross-module invocation via `AgentDelegator` trait in `y-core`. 8 built-in system agents defined in catalog. Three-tier trust hierarchy (built-in > user-defined > dynamic) with permission inheritance (snapshot model). | [multi-agent-design.md](docs/design/multi-agent-design.md) + [AGENT_AUTONOMY.md](docs/standards/AGENT_AUTONOMY.md) + [agent-autonomy-design.md](docs/design/agent-autonomy-design.md) | Ad-hoc LLM traits in individual modules (e.g., `CompactionLlm` in y-context, `generate_title` in y-session) |
+| **Context pruning**                           | PruningEngine in LoadHistory pipeline stage (priority 600) removes wasteful message branches from LLM context to reduce attention dilution. Two strategies: RetryPruning (hybrid detection via error status + heuristics, tombstones failed branches, zero LLM cost, < 5ms) and ProgressivePruning (LLM rolling summary of completed multi-step sequences, threshold-gated). Uses ChatMessageStore tombstone infrastructure with new `pruned` status. DisplayTranscriptStore never modified. Message tree via `parent_message_id` on ChatMessageRecord. Complementary to compaction: pruning = quality, compaction = capacity. | [context-pruning-design.md](docs/design/context-pruning-design.md) + [context-session-design.md](docs/design/context-session-design.md) + [chat-checkpoint-design.md](docs/design/chat-checkpoint-design.md) | N/A (new) |
 
 
 ---
@@ -576,6 +577,7 @@ y-agent/
 - [Orchestrator Design](docs/design/orchestrator-design.md) - Task scheduling and execution
 - [Scheduled Tasks Design](docs/design/scheduled-tasks-design.md) - Time-based and event-driven scheduling
 - [Context & Session Design](docs/design/context-session-design.md) - Session tree and context management
+- [Context Pruning Design](docs/design/context-pruning-design.md) - Message-level branch pruning for attention quality optimization
 - [User Input Enrichment Design](docs/design/input-enrichment-design.md) - Pre-loop input analysis, interactive clarification, and input replacement
 - [Prompt Design](docs/design/prompt-design.md) - Structured prompt assembly, lazy loading, mode overlays, token budgets
 
