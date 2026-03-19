@@ -850,7 +850,6 @@ fn build_init_storage_config(_config_base: &Path, data_dir: &Path) -> y_storage:
         wal_enabled: true,
         busy_timeout_ms: 5000,
         transcript_dir: data_dir.join("transcripts"),
-        migrations_dir: PathBuf::from("migrations/sqlite"),
     }
 }
 

@@ -19,5 +19,3 @@ busy_timeout_ms = 5000
 # Directory for JSONL session transcripts.
 transcript_dir = "data/transcripts"
 
-# Path to migrations directory.
-migrations_dir = "migrations"

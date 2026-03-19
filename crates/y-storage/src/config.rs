@@ -28,10 +28,6 @@ pub struct StorageConfig {
     /// Directory where JSONL transcript files are stored.
     #[serde(default = "default_transcript_dir")]
     pub transcript_dir: PathBuf,
-
-    /// Path to the migrations directory.
-    #[serde(default = "default_migrations_dir")]
-    pub migrations_dir: PathBuf,
 }
 
 fn default_db_path() -> String {
@@ -54,10 +50,6 @@ fn default_transcript_dir() -> PathBuf {
     PathBuf::from("data/transcripts")
 }
 
-fn default_migrations_dir() -> PathBuf {
-    PathBuf::from("migrations/sqlite")
-}
-
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
@@ -66,7 +58,6 @@ impl Default for StorageConfig {
             wal_enabled: default_wal_enabled(),
             busy_timeout_ms: default_busy_timeout_ms(),
             transcript_dir: default_transcript_dir(),
-            migrations_dir: default_migrations_dir(),
         }
     }
 }
@@ -159,7 +150,6 @@ mod tests {
             wal_enabled = true
             busy_timeout_ms = 3000
             transcript_dir = "/tmp/transcripts"
-            migrations_dir = "migrations/sqlite"
         "#;
         let config: StorageConfig = toml::from_str(toml_str).expect("should parse TOML");
         assert_eq!(config.db_path, "/tmp/test.db");

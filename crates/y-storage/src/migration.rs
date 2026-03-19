@@ -1,53 +1,31 @@
-//! `SQLite` migration runner using sqlx.
-
-use std::path::Path;
+//! `SQLite` schema initializer.
+//!
+//! Embeds the consolidated schema DDL at compile time via `include_str!` and
+//! executes it as raw SQL. All `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF
+//! NOT EXISTS` statements are naturally idempotent.
 
 use sqlx::SqlitePool;
 use tracing::info;
 
 use crate::error::StorageError;
 
-/// Run all pending `SQLite` migrations from the given directory.
+/// Full DDL for a fresh database, embedded at compile time.
+const SCHEMA_SQL: &str = include_str!("schema.sql");
+
+/// Initialize the `SQLite` database with the embedded schema.
 ///
-/// Uses sqlx's migration system with versioned `.up.sql` and `.down.sql` files.
-pub async fn run_migrations(pool: &SqlitePool, migrations_dir: &Path) -> Result<(), StorageError> {
-    let migrator = sqlx::migrate::Migrator::new(migrations_dir)
-        .await
-        .map_err(|e| StorageError::Migration {
-            message: format!(
-                "failed to load migrations from {}: {e}",
-                migrations_dir.display()
-            ),
-        })?;
-
-    migrator
-        .run(pool)
-        .await
-        .map_err(|e| StorageError::Migration {
-            message: format!("migration execution failed: {e}"),
-        })?;
-
-    info!(
-        migrations_dir = %migrations_dir.display(),
-        "SQLite migrations completed"
-    );
-
-    Ok(())
-}
-
-/// Run all pending `SQLite` migrations using embedded migrations.
-///
-/// This is the preferred method as it embeds migrations into the binary,
-/// removing the need for a migrations directory at runtime.
+/// This is the preferred (and only) method. The entire DDL is compiled into
+/// the binary so no external migration directory is needed at runtime. Every
+/// statement uses `IF NOT EXISTS`, making the call safe to repeat.
 pub async fn run_embedded_migrations(pool: &SqlitePool) -> Result<(), StorageError> {
-    sqlx::migrate!("../../migrations/sqlite")
-        .run(pool)
+    sqlx::raw_sql(SCHEMA_SQL)
+        .execute(pool)
         .await
         .map_err(|e| StorageError::Migration {
-            message: format!("embedded migration execution failed: {e}"),
+            message: format!("schema initialization failed: {e}"),
         })?;
 
-    info!("Embedded SQLite migrations completed");
+    info!("SQLite schema initialized");
 
     Ok(())
 }
@@ -69,9 +47,10 @@ mod tests {
     async fn test_migration_run_creates_tables() {
         let pool = setup_pool_with_migrations().await;
 
-        // Check that the session_metadata table exists.
         let tables: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_sqlx_%' ORDER BY name",
+            "SELECT name FROM sqlite_master \
+             WHERE type='table' AND name NOT LIKE 'sqlite_%' \
+             ORDER BY name",
         )
         .fetch_all(&pool)
         .await
@@ -93,7 +72,7 @@ mod tests {
         let config = StorageConfig::in_memory();
         let pool = create_pool(&config).await.expect("pool creation");
 
-        // Run migrations twice — second run should be a no-op.
+        // Run twice -- second run should be a no-op thanks to IF NOT EXISTS.
         run_embedded_migrations(&pool).await.expect("first run");
         run_embedded_migrations(&pool)
             .await
@@ -101,18 +80,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migration_version_tracking() {
+    async fn test_schema_creates_all_expected_tables() {
         let pool = setup_pool_with_migrations().await;
 
-        // sqlx stores migration metadata in _sqlx_migrations.
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(&pool)
-            .await
-            .expect("should query migration table");
-        assert!(
-            count.0 >= 6,
-            "should have at least 6 migrations recorded, got: {}",
-            count.0
-        );
+        let tables: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master \
+             WHERE type='table' AND name NOT LIKE 'sqlite_%' \
+             ORDER BY name",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("should list tables");
+
+        let names: Vec<&str> = tables.iter().map(|t| t.0.as_str()).collect();
+        let expected = [
+            "session_metadata",
+            "orchestrator_workflows",
+            "orchestrator_checkpoints",
+            "file_journal_entries",
+            "tool_dynamic_definitions",
+            "tool_activation_log",
+            "agent_definitions",
+            "schedule_definitions",
+            "schedule_executions",
+            "stm_experience_store",
+            "dynamic_agents",
+            "chat_checkpoints",
+            "chat_messages",
+            "diag_traces",
+            "diag_observations",
+            "diag_scores",
+        ];
+        for table in &expected {
+            assert!(
+                names.contains(table),
+                "expected table '{table}' missing, got: {names:?}"
+            );
+        }
     }
 }
