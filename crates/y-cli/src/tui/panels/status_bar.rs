@@ -87,6 +87,7 @@ fn build_context_spans(state: &AppState) -> Vec<Span<'static>> {
 
     let pct = state.context_usage_percent().min(100.0);
     let bar_width = 10usize;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let filled = ((pct / 100.0) * bar_width as f32).round() as usize;
     let empty = bar_width.saturating_sub(filled);
 
@@ -120,14 +121,18 @@ fn format_token_count(count: u64) -> String {
     if count >= 1_000_000 {
         let m = count as f64 / 1_000_000.0;
         if m == m.floor() {
-            format!("{}M", m as u64)
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let val = m as u64;
+            format!("{}M", val)
         } else {
             format!("{m:.1}M")
         }
     } else if count >= 1_000 {
         let k = count as f64 / 1_000.0;
         if k == k.floor() {
-            format!("{}k", k as u64)
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let val = k as u64;
+            format!("{}k", val)
         } else {
             format!("{k:.1}k")
         }

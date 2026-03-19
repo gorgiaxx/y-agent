@@ -69,7 +69,7 @@ impl EventBridge {
                 if *debounce_secs > 0 {
                     if let Some(last) = self.last_event.get(&schedule.id) {
                         let elapsed = (event.timestamp - *last).num_seconds();
-                        if elapsed < *debounce_secs as i64 {
+                        if elapsed < i64::try_from(*debounce_secs).unwrap_or(i64::MAX) {
                             debug!(
                                 schedule_id = %schedule.id,
                                 elapsed_secs = elapsed,

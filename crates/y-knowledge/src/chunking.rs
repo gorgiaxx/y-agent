@@ -328,7 +328,7 @@ fn estimate_tokens(text: &str) -> u32 {
         if is_cjk_char(ch) {
             cjk_chars += 1;
         } else {
-            other_bytes += ch.len_utf8() as u32;
+            other_bytes += u32::try_from(ch.len_utf8()).unwrap_or(0);
         }
     }
 
@@ -351,7 +351,9 @@ fn tokens_to_max_chars(max_tokens: u32, content: &str) -> usize {
 
     // Weighted chars-per-token: CJK ≈ 0.67 chars/token, Latin ≈ 4.0 chars/token.
     let chars_per_token = cjk_ratio * 0.67 + (1.0 - cjk_ratio) * 4.0;
-    (max_tokens as f64 * chars_per_token) as usize
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let max_chars = (max_tokens as f64 * chars_per_token) as usize;
+    max_chars
 }
 
 /// Check if a character is in the CJK Unified Ideographs range.

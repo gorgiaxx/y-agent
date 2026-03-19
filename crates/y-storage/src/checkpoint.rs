@@ -38,7 +38,7 @@ impl CheckpointStorage for SqliteCheckpointStorage {
     ) -> Result<(), CheckpointError> {
         let wf_id = workflow_id.as_str();
         let sess_id = session_id.as_str();
-        let step = step_number as i64;
+        let step = i64::try_from(step_number).unwrap_or(i64::MAX);
         let state_json = serde_json::to_string(state).map_err(|e| CheckpointError::Other {
             message: format!("serialize pending state: {e}"),
         })?;
@@ -98,7 +98,7 @@ impl CheckpointStorage for SqliteCheckpointStorage {
         step_number: u64,
     ) -> Result<(), CheckpointError> {
         let wf_id = workflow_id.as_str();
-        let step = step_number as i64;
+        let step = i64::try_from(step_number).unwrap_or(i64::MAX);
 
         // Move pending_state to committed_state and clear pending.
         let result = sqlx::query(
@@ -260,7 +260,7 @@ impl CheckpointStorage for SqliteCheckpointStorage {
         keep_after_step: u64,
     ) -> Result<u64, CheckpointError> {
         let wf_id = workflow_id.as_str();
-        let step = keep_after_step as i64;
+        let step = i64::try_from(keep_after_step).unwrap_or(i64::MAX);
 
         let result = sqlx::query(
             "DELETE FROM orchestrator_checkpoints WHERE workflow_id = ?1 AND step_number < ?2",
@@ -349,7 +349,7 @@ impl CheckpointRow {
         Ok(WorkflowCheckpoint {
             workflow_id: WorkflowId::from_string(self.workflow_id),
             session_id: SessionId::from_string(self.session_id),
-            step_number: self.step_number as u64,
+            step_number: u64::try_from(self.step_number).unwrap_or(0),
             status,
             committed_state,
             pending_state,

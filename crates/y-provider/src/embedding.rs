@@ -225,7 +225,7 @@ impl OpenAiEmbeddingProvider {
         let per_text_tokens = if texts.is_empty() {
             0
         } else {
-            response.usage.prompt_tokens / texts.len() as u32
+            response.usage.prompt_tokens / u32::try_from(texts.len()).unwrap_or(1)
         };
 
         let results = response

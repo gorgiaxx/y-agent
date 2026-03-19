@@ -169,7 +169,7 @@ impl RuntimeAdapter for SshRuntime {
 
         tracing::debug!(
             exit_code,
-            duration_ms = duration.as_millis() as u64,
+            duration_ms = u64::try_from(duration.as_millis()).unwrap_or(0),
             "SSH command completed"
         );
 

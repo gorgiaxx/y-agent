@@ -498,7 +498,7 @@ pub async fn chat_undo(
     Ok(UndoResult {
         messages_removed: result.messages_removed,
         restored_turn_number: result.rolled_back_to_turn,
-        files_restored: result.scopes_rolled_back.len() as u32,
+        files_restored: u32::try_from(result.scopes_rolled_back.len()).unwrap_or(0),
     })
 }
 

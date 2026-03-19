@@ -81,7 +81,7 @@ impl HookLlmRunner for ProviderPoolHookLlmRunner {
 
         debug!(
             model = model.unwrap_or("(default)"),
-            timeout_ms = timeout.as_millis() as u64,
+            timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
             "executing prompt hook LLM call"
         );
 

@@ -860,16 +860,16 @@ impl KnowledgeService {
             let mut file = fs::File::create(&path)?;
 
             // Entry count.
-            file.write_all(&(embeddings.len() as u32).to_le_bytes())?;
+            file.write_all(&u32::try_from(embeddings.len()).unwrap_or(0).to_le_bytes())?;
 
             for (key, vector) in embeddings {
                 // Key.
                 let key_bytes = key.as_bytes();
-                file.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
+                file.write_all(&u32::try_from(key_bytes.len()).unwrap_or(0).to_le_bytes())?;
                 file.write_all(key_bytes)?;
 
                 // Vector.
-                file.write_all(&(vector.len() as u32).to_le_bytes())?;
+                file.write_all(&u32::try_from(vector.len()).unwrap_or(0).to_le_bytes())?;
                 for &f in vector {
                     file.write_all(&f.to_le_bytes())?;
                 }

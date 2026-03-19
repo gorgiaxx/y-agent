@@ -57,6 +57,7 @@ impl ProviderMetrics {
         // Calculate cost in micro-dollars.
         let input_cost = f64::from(input_tokens) / 1000.0 * cost_per_1k_input;
         let output_cost = f64::from(output_tokens) / 1000.0 * cost_per_1k_output;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let total_micros = ((input_cost + output_cost) * 1_000_000.0) as u64;
 
         self.estimated_cost_micros

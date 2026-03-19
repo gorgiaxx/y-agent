@@ -98,7 +98,8 @@ impl Trace {
         let now = Utc::now();
         self.status = TraceStatus::Completed;
         self.completed_at = Some(now);
-        self.total_duration_ms = Some((now - self.started_at).num_milliseconds().max(0) as u64);
+        self.total_duration_ms =
+            Some(u64::try_from((now - self.started_at).num_milliseconds().max(0)).unwrap_or(0));
     }
 
     /// Mark as failed. Automatically computes `total_duration_ms`.
@@ -106,7 +107,8 @@ impl Trace {
         let now = Utc::now();
         self.status = TraceStatus::Failed;
         self.completed_at = Some(now);
-        self.total_duration_ms = Some((now - self.started_at).num_milliseconds().max(0) as u64);
+        self.total_duration_ms =
+            Some(u64::try_from((now - self.started_at).num_milliseconds().max(0)).unwrap_or(0));
     }
 
     /// Duration in milliseconds (if completed).

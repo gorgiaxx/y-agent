@@ -288,7 +288,8 @@ impl AgentService {
 
             match llm_result {
                 Ok(response) => {
-                    let llm_elapsed_ms = llm_start.elapsed().as_millis() as u64;
+                    let llm_elapsed_ms =
+                        u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(0);
                     let resp_input_tokens = u64::from(response.usage.input_tokens);
                     let resp_output_tokens = u64::from(response.usage.output_tokens);
                     let cost = CostService::compute_cost(resp_input_tokens, resp_output_tokens);
@@ -417,7 +418,8 @@ impl AgentService {
                                 session_id_ref.unwrap_or(&SessionId("agent".into())),
                             )
                             .await;
-                            let tool_elapsed_ms = tool_start.elapsed().as_millis() as u64;
+                            let tool_elapsed_ms =
+                                u64::try_from(tool_start.elapsed().as_millis()).unwrap_or(0);
 
                             let (tool_success, result_content) = match &tool_result {
                                 Ok(output) => {
@@ -547,7 +549,9 @@ impl AgentService {
                                         session_id_ref.unwrap_or(&SessionId("agent".into())),
                                     )
                                     .await;
-                                    let tool_elapsed_ms = tool_start.elapsed().as_millis() as u64;
+                                    let tool_elapsed_ms =
+                                        u64::try_from(tool_start.elapsed().as_millis())
+                                            .unwrap_or(0);
 
                                     let (tool_success, result_content) = match &tool_result {
                                         Ok(output) => {
@@ -1119,7 +1123,8 @@ impl AgentRunner for ServiceAgentRunner {
             });
         }
 
-        let tokens_used = result.input_tokens as u32 + result.output_tokens as u32;
+        let tokens_used = u32::try_from(result.input_tokens).unwrap_or(0)
+            + u32::try_from(result.output_tokens).unwrap_or(0);
 
         Ok(AgentRunOutput {
             text: result.content,
@@ -1127,7 +1132,7 @@ impl AgentRunner for ServiceAgentRunner {
             input_tokens: result.input_tokens,
             output_tokens: result.output_tokens,
             model_used: result.model,
-            duration_ms: start.elapsed().as_millis() as u64,
+            duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(0),
         })
     }
 }

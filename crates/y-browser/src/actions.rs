@@ -460,11 +460,11 @@ impl BrowserActions {
     pub async fn scroll(&self, direction: &str, pixels: u32) -> Result<(), CdpError> {
         debug!(direction, pixels, "browser scroll");
         let (dx, dy) = match direction {
-            "up" => (0, -(pixels as i32)),
-            "down" => (0, pixels as i32),
-            "left" => (-(pixels as i32), 0),
-            "right" => (pixels as i32, 0),
-            _ => (0, pixels as i32),
+            "up" => (0, -(i32::try_from(pixels).unwrap_or(i32::MAX))),
+            "down" => (0, i32::try_from(pixels).unwrap_or(i32::MAX)),
+            "left" => (-(i32::try_from(pixels).unwrap_or(i32::MAX)), 0),
+            "right" => (i32::try_from(pixels).unwrap_or(i32::MAX), 0),
+            _ => (0, i32::try_from(pixels).unwrap_or(i32::MAX)),
         };
 
         let js = format!("window.scrollBy({dx}, {dy})");

@@ -511,7 +511,7 @@ impl ChatService {
 
         // 5. Build PreparedTurn from the truncated transcript.
         let user_input = history.last().unwrap().content.clone();
-        let turn_number = history.len() as u32;
+        let turn_number = u32::try_from(history.len()).unwrap_or(0);
         let session_uuid =
             Uuid::parse_str(request.session_id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
 
@@ -690,7 +690,7 @@ impl ChatService {
         new_messages.push(assistant_msg);
 
         // Checkpoint.
-        let msg_count_before = input.history.len().saturating_sub(1) as u32;
+        let msg_count_before = u32::try_from(input.history.len().saturating_sub(1)).unwrap_or(0);
         let turn = input.turn_number + 1;
         let scope_id = format!("turn-{}-{}", input.session_id.0, turn);
         if let Err(e) = container

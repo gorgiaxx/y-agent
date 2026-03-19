@@ -114,7 +114,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
     // No `Wrap` — lines are already pre-wrapped to inner_width.
     let para = Paragraph::new(lines)
         .block(block)
-        .scroll((scroll_to as u16, 0));
+        .scroll((u16::try_from(scroll_to).unwrap_or(0), 0));
 
     frame.render_widget(para, area);
 

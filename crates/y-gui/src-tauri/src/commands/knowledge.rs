@@ -167,8 +167,8 @@ pub async fn kb_collection_list(
             id: c.id.to_string(),
             name: c.name.clone(),
             description: c.description.clone(),
-            entry_count: c.stats.entry_count as usize,
-            chunk_count: c.stats.chunk_count as usize,
+            entry_count: usize::try_from(c.stats.entry_count).unwrap_or(usize::MAX),
+            chunk_count: usize::try_from(c.stats.chunk_count).unwrap_or(usize::MAX),
             total_bytes: c.stats.total_bytes,
             created_at: c.created_at.to_rfc3339(),
         })
@@ -196,8 +196,8 @@ pub async fn kb_collection_create(
         id: c.id.to_string(),
         name: c.name.clone(),
         description: c.description.clone(),
-        entry_count: c.stats.entry_count as usize,
-        chunk_count: c.stats.chunk_count as usize,
+        entry_count: usize::try_from(c.stats.entry_count).unwrap_or(usize::MAX),
+        chunk_count: usize::try_from(c.stats.chunk_count).unwrap_or(usize::MAX),
         total_bytes: c.stats.total_bytes,
         created_at: c.created_at.to_rfc3339(),
     })
@@ -430,8 +430,8 @@ pub async fn kb_stats(kb: State<'_, KnowledgeState>) -> Result<KbStats, String> 
 
     Ok(KbStats {
         total_collections: collections.len(),
-        total_entries: total_entries as usize,
-        total_chunks: total_chunks as usize,
+        total_entries: usize::try_from(total_entries).unwrap_or(usize::MAX),
+        total_chunks: usize::try_from(total_chunks).unwrap_or(usize::MAX),
         total_hits: 0,
     })
 }

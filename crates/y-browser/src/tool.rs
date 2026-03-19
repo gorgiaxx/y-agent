@@ -415,7 +415,9 @@ impl Tool for BrowserTool {
             BrowserAction::Screenshot => {
                 let full_page = input.arguments["full_page"].as_bool().unwrap_or(false);
                 let format = input.arguments["format"].as_str().unwrap_or("png");
-                let quality = input.arguments["quality"].as_u64().map(|q| q as u32);
+                let quality = input.arguments["quality"]
+                    .as_u64()
+                    .map(|q| u32::try_from(q).unwrap_or(100));
 
                 let shot = self
                     .actions
@@ -430,7 +432,8 @@ impl Tool for BrowserTool {
                     Some("dom") => SnapshotFormat::Dom,
                     _ => SnapshotFormat::Aria,
                 };
-                let limit = input.arguments["limit"].as_u64().unwrap_or(500) as usize;
+                let limit = usize::try_from(input.arguments["limit"].as_u64().unwrap_or(500))
+                    .unwrap_or(usize::MAX);
                 let interactive_only = input.arguments["interactive_only"]
                     .as_bool()
                     .unwrap_or(true);
@@ -442,8 +445,10 @@ impl Tool for BrowserTool {
                         .await
                         .map_err(cdp_to_tool_error)?,
                     SnapshotFormat::Dom => {
-                        let max_text =
-                            input.arguments["max_text_chars"].as_u64().unwrap_or(220) as usize;
+                        let max_text = usize::try_from(
+                            input.arguments["max_text_chars"].as_u64().unwrap_or(220),
+                        )
+                        .unwrap_or(220);
                         self.actions
                             .snapshot_dom(limit, max_text)
                             .await
@@ -545,7 +550,8 @@ impl Tool for BrowserTool {
 
             BrowserAction::Scroll => {
                 let direction = input.arguments["direction"].as_str().unwrap_or("down");
-                let pixels = input.arguments["pixels"].as_u64().unwrap_or(300) as u32;
+                let pixels =
+                    u32::try_from(input.arguments["pixels"].as_u64().unwrap_or(300)).unwrap_or(300);
                 self.actions
                     .scroll(direction, pixels)
                     .await

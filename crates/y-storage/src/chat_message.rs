@@ -102,7 +102,7 @@ impl ChatMessageStore for SqliteChatMessageStore {
         .map_err(|e| SessionError::StorageError {
             message: format!("failed to tombstone messages: {e}"),
         })?;
-        Ok(result.len() as u32)
+        Ok(u32::try_from(result.len()).unwrap_or(0))
     }
 
     async fn restore_tombstoned(
@@ -122,7 +122,7 @@ impl ChatMessageStore for SqliteChatMessageStore {
         .map_err(|e| SessionError::StorageError {
             message: format!("failed to restore tombstoned messages: {e}"),
         })?;
-        Ok(result.len() as u32)
+        Ok(u32::try_from(result.len()).unwrap_or(0))
     }
 
     async fn swap_branches(
@@ -172,7 +172,10 @@ impl ChatMessageStore for SqliteChatMessageStore {
         })?;
 
         // active_count messages were tombstoned, tombstone_count messages were restored.
-        Ok((active_count as u32, tombstone_count as u32))
+        Ok((
+            u32::try_from(active_count).unwrap_or(0),
+            u32::try_from(tombstone_count).unwrap_or(0),
+        ))
     }
 }
 

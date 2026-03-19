@@ -101,7 +101,8 @@ impl CommandPaletteState {
 pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState) {
     // Calculate popup size: min 5 rows, up to half the screen.
     let max_height = (area.height / 2).max(5).min(15);
-    let popup_height = (palette.filtered_names.len() as u16 + 3).min(max_height);
+    let popup_height =
+        (u16::try_from(palette.filtered_names.len()).unwrap_or(0) + 3).min(max_height);
     let popup_width = area.width.min(50).max(30);
 
     // Position: centered horizontally, above the bottom quarter.

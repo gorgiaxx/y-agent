@@ -249,7 +249,7 @@ impl CdpClient {
         }
 
         // Wait for response with timeout.
-        let timeout_ms = request_timeout.as_millis() as u64;
+        let timeout_ms = u64::try_from(request_timeout.as_millis()).unwrap_or(u64::MAX);
         match timeout(request_timeout, rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(CdpError::NotConnected), // sender dropped
@@ -425,7 +425,11 @@ impl CdpClient {
         .await
         {
             Ok(result) => result?,
-            Err(_) => return Err(CdpError::Timeout(response_timeout.as_millis() as u64)),
+            Err(_) => {
+                return Err(CdpError::Timeout(
+                    u64::try_from(response_timeout.as_millis()).unwrap_or(u64::MAX),
+                ))
+            }
         };
 
         // Close the temporary connection.

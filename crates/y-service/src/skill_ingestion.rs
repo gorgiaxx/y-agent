@@ -290,7 +290,7 @@ impl SkillIngestionService {
             ImportError::InvalidAgentOutput("accepted skill missing root_content".to_string())
         })?;
 
-        let token_estimate = (root_content.len() / 4) as u32;
+        let token_estimate = u32::try_from(root_content.len() / 4).unwrap_or(0);
         let now = chrono::Utc::now();
         let skill_name = manifest_data.name.clone();
 

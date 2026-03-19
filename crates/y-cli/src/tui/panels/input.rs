@@ -66,7 +66,7 @@ pub fn render(frame: &mut Frame, area: Rect, focus: PanelFocus, textarea: &TextA
 /// is between 1 and 6 lines. The border accounts for `Borders::ALL`.
 pub fn input_height(textarea: &TextArea<'_>) -> u16 {
     let line_count = textarea.lines().len().max(1);
-    let content = (line_count as u16).clamp(1, 6);
+    let content = u16::try_from(line_count).unwrap_or(1).clamp(1, 6);
     content + 2 // +2 for top and bottom border
 }
 

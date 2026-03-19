@@ -158,7 +158,7 @@ impl ChatCheckpointStore for SqliteChatCheckpointStore {
             message: format!("invalidate chat checkpoints: {e}"),
         })?;
 
-        Ok(result.rows_affected() as u32)
+        Ok(u32::try_from(result.rows_affected()).unwrap_or(0))
     }
 }
 
@@ -185,8 +185,8 @@ impl ChatCheckpointRow {
         ChatCheckpoint {
             checkpoint_id: self.checkpoint_id,
             session_id: SessionId::from_string(self.session_id),
-            turn_number: self.turn_number as u32,
-            message_count_before: self.message_count_before as u32,
+            turn_number: u32::try_from(self.turn_number).unwrap_or(0),
+            message_count_before: u32::try_from(self.message_count_before).unwrap_or(0),
             journal_scope_id: self.journal_scope_id,
             invalidated: self.invalidated != 0,
             created_at,

@@ -50,7 +50,7 @@ pub async fn count_rows(
 
     let row: (i64,) = sqlx::query_as(&sql).fetch_one(pool).await?;
 
-    Ok(row.0 as u64)
+    Ok(u64::try_from(row.0).unwrap_or(0))
 }
 
 #[cfg(test)]

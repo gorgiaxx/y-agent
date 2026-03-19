@@ -204,7 +204,7 @@ impl SkillRegistryImpl {
                     id: doc_id.to_string(),
                     title: doc_id.to_string(),
                     content: content.to_string(),
-                    token_estimate: (content.len() / 4) as u32,
+                    token_estimate: u32::try_from(content.len() / 4).unwrap_or(0),
                 },
             );
         }

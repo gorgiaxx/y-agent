@@ -70,7 +70,7 @@ impl HealthChecker {
             Err(_) => {
                 tracing::warn!(
                     provider_id = %provider.metadata().id,
-                    timeout_ms = self.timeout.as_millis() as u64,
+                    timeout_ms = u64::try_from(self.timeout.as_millis()).unwrap_or(u64::MAX),
                     "health check timed out"
                 );
                 Err(ProviderError::NetworkError {

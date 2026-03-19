@@ -114,10 +114,12 @@ fn write_metric_header(buf: &mut String, name: &str, metric_type: &str, help: &s
 fn write_metric_value(buf: &mut String, name: &str, provider_id: &str, value: f64) {
     // Prometheus recommends integer representation for counters when possible.
     if value == value.floor() && value.abs() < 1e15 {
+        #[allow(clippy::cast_possible_truncation)]
+        let int_value = value as i64;
         let _ = writeln!(
             buf,
             "{METRIC_PREFIX}_{name}{{provider=\"{provider_id}\"}} {}",
-            value as i64
+            int_value
         );
     } else {
         let _ = writeln!(

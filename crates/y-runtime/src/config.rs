@@ -449,7 +449,7 @@ mod humantime_serde_compat {
                 if v < 0 {
                     return Err(E::custom("duration cannot be negative"));
                 }
-                Ok(Duration::from_secs(v as u64))
+                Ok(Duration::from_secs(u64::try_from(v).unwrap_or(0)))
             }
 
             fn visit_str<E: de::Error>(self, v: &str) -> Result<Duration, E> {

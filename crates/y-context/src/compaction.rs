@@ -276,6 +276,7 @@ impl CompactionEngine {
             .collect();
 
         // Keep top 30% verbatim, summarize the rest.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let threshold_index = (scored.len() as f64 * 0.3).ceil() as usize;
         let mut sorted = scored.clone();
         sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

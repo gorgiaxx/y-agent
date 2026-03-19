@@ -65,7 +65,7 @@ pub fn render(frame: &mut Frame, area: Rect, toasts: &VecDeque<Toast>) {
 
     // Render from bottom upward. Iterate in reverse so newest (back) is at bottom.
     for (i, toast) in toasts.iter().rev().enumerate() {
-        let slot = i as u16;
+        let slot = u16::try_from(i).unwrap_or(0);
         let y_offset = MARGIN_BOTTOM + slot * TOAST_HEIGHT;
 
         if y_offset + TOAST_HEIGHT > area.height {

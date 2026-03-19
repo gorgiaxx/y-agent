@@ -66,7 +66,9 @@ pub fn recover_missed(
                 result.caught_up.push(schedule.id.clone());
             }
             MissedPolicy::Backfill => {
-                let missed_count = (elapsed.num_seconds() / interval.num_seconds()).max(1) as usize;
+                let missed_count =
+                    usize::try_from((elapsed.num_seconds() / interval.num_seconds()).max(1))
+                        .unwrap_or(1);
                 // Cap backfill to a reasonable limit.
                 let capped = missed_count.min(100);
                 info!(
@@ -75,7 +77,7 @@ pub fn recover_missed(
                     "Missed schedule, backfilling (policy=backfill)"
                 );
                 for i in 0..capped {
-                    let fire_time = last_fire + interval * (i as i32 + 1);
+                    let fire_time = last_fire + interval * (i32::try_from(i).unwrap_or(0) + 1);
                     triggers.push(make_trigger(schedule, fire_time));
                 }
                 result.backfilled.push((schedule.id.clone(), capped));
@@ -89,7 +91,9 @@ pub fn recover_missed(
 /// Compute the effective interval for a schedule (for recovery purposes).
 fn compute_interval(schedule: &Schedule) -> Option<Duration> {
     match &schedule.trigger {
-        TriggerConfig::Interval { interval_secs } => Some(Duration::seconds(*interval_secs as i64)),
+        TriggerConfig::Interval { interval_secs } => Some(Duration::seconds(
+            i64::try_from(*interval_secs).unwrap_or(i64::MAX),
+        )),
         TriggerConfig::Cron { expression, .. } => {
             // Approximate interval by computing two consecutive next-fires.
             use crate::cron::CronSchedule;

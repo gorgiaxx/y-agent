@@ -253,10 +253,13 @@ impl EventSubscriber for ExperienceCaptureSubscriber {
                     .get("duration_ms")
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0);
-                let tokens_used = payload
-                    .get("tokens_used")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0) as u32;
+                let tokens_used = u32::try_from(
+                    payload
+                        .get("tokens_used")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                )
+                .unwrap_or(0);
 
                 let experience = CapturedExperience {
                     skill_id: skill_id.clone(),

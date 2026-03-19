@@ -482,9 +482,10 @@ impl HookHandlerExecutor {
         }
 
         let elapsed = start.elapsed();
-        self.metrics
-            .duration_us
-            .fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+        self.metrics.duration_us.fetch_add(
+            u64::try_from(elapsed.as_micros()).unwrap_or(0),
+            Ordering::Relaxed,
+        );
 
         let result = aggregate_decisions(&cmd_http_decisions, &prompt_agent_decisions);
 
@@ -499,7 +500,7 @@ impl HookHandlerExecutor {
             handler_count,
             decision = ?result.decision,
             block_count = result.block_count,
-            elapsed_us = elapsed.as_micros() as u64,
+            elapsed_us = u64::try_from(elapsed.as_micros()).unwrap_or(0),
             "hook handlers executed"
         );
 
@@ -715,7 +716,7 @@ impl CommandExecutor {
                 child.kill().await.ok();
                 return Err(HookError::HookHandlerTimeout {
                     handler_type: "command".into(),
-                    timeout_ms: timeout.as_millis() as u64,
+                    timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(0),
                 });
             }
         };
@@ -837,7 +838,7 @@ async fn execute_http(
             if e.is_timeout() {
                 return Err(HookError::HookHandlerTimeout {
                     handler_type: "http".into(),
-                    timeout_ms: timeout.as_millis() as u64,
+                    timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(0),
                 });
             }
             return Err(HookError::HookHandlerError {

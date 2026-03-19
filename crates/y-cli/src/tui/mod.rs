@@ -640,12 +640,14 @@ impl TuiApp {
                 self.state.scroll_offset = 0;
 
                 // Reset user message counter from transcript.
-                self.state.user_message_count = self
-                    .state
-                    .messages
-                    .iter()
-                    .filter(|m| matches!(m.role, state::MessageRole::User))
-                    .count() as u32;
+                self.state.user_message_count = u32::try_from(
+                    self.state
+                        .messages
+                        .iter()
+                        .filter(|m| matches!(m.role, state::MessageRole::User))
+                        .count(),
+                )
+                .unwrap_or(0);
             }
             Err(e) => {
                 warn!(error = %e, "failed to load transcript");

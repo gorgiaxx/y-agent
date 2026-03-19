@@ -158,14 +158,15 @@ impl TraceRow {
             status,
             started_at,
             completed_at,
-            total_input_tokens: self.total_input_tokens.unwrap_or(0) as u64,
-            total_output_tokens: self.total_output_tokens.unwrap_or(0) as u64,
+            total_input_tokens: u64::try_from(self.total_input_tokens.unwrap_or(0)).unwrap_or(0),
+            total_output_tokens: u64::try_from(self.total_output_tokens.unwrap_or(0)).unwrap_or(0),
             total_cost_usd: self.total_cost_usd.unwrap_or(0.0),
             user_input: self.user_input,
-            total_duration_ms: completed_at
-                .map(|end| (end - started_at).num_milliseconds().max(0) as u64),
-            llm_duration_ms: self.llm_duration_ms.unwrap_or(0) as u64,
-            tool_duration_ms: self.tool_duration_ms.unwrap_or(0) as u64,
+            total_duration_ms: completed_at.map(|end| {
+                u64::try_from((end - started_at).num_milliseconds().max(0)).unwrap_or(0)
+            }),
+            llm_duration_ms: u64::try_from(self.llm_duration_ms.unwrap_or(0)).unwrap_or(0),
+            tool_duration_ms: u64::try_from(self.tool_duration_ms.unwrap_or(0)).unwrap_or(0),
             replay_context,
         })
     }
@@ -239,15 +240,15 @@ impl ObsRow {
             input,
             output,
             model: self.model,
-            input_tokens: self.input_tokens.unwrap_or(0) as u64,
-            output_tokens: self.output_tokens.unwrap_or(0) as u64,
+            input_tokens: u64::try_from(self.input_tokens.unwrap_or(0)).unwrap_or(0),
+            output_tokens: u64::try_from(self.output_tokens.unwrap_or(0)).unwrap_or(0),
             cost_usd: self.cost_usd.unwrap_or(0.0),
             status: str_to_obs_status(self.status.as_deref().unwrap_or("running")),
             started_at,
             completed_at,
             metadata,
-            sequence: self.sequence.unwrap_or(0) as u32,
-            depth: self.depth.unwrap_or(0) as u32,
+            sequence: u32::try_from(self.sequence.unwrap_or(0)).unwrap_or(0),
+            depth: u32::try_from(self.depth.unwrap_or(0)).unwrap_or(0),
             path,
             error_message: self.error_message,
         })
@@ -330,10 +331,10 @@ impl TraceStore for SqliteTraceStore {
         let metadata = serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into());
         let started_at = trace.started_at.to_rfc3339();
         let completed_at = trace.completed_at.map(|t| t.to_rfc3339());
-        let input_toks = trace.total_input_tokens as i64;
-        let output_toks = trace.total_output_tokens as i64;
-        let llm_ms = trace.llm_duration_ms as i64;
-        let tool_ms = trace.tool_duration_ms as i64;
+        let input_toks = i64::try_from(trace.total_input_tokens).unwrap_or(i64::MAX);
+        let output_toks = i64::try_from(trace.total_output_tokens).unwrap_or(i64::MAX);
+        let llm_ms = i64::try_from(trace.llm_duration_ms).unwrap_or(i64::MAX);
+        let tool_ms = i64::try_from(trace.tool_duration_ms).unwrap_or(i64::MAX);
 
         let tags = serde_json::to_string(&trace.tags).unwrap_or_else(|_| "[]".into());
         let replay_context = trace
@@ -392,10 +393,10 @@ impl TraceStore for SqliteTraceStore {
         let status = trace_status_to_str(trace.status);
         let metadata = serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into());
         let completed_at = trace.completed_at.map(|t| t.to_rfc3339());
-        let input_toks = trace.total_input_tokens as i64;
-        let output_toks = trace.total_output_tokens as i64;
-        let llm_ms = trace.llm_duration_ms as i64;
-        let tool_ms = trace.tool_duration_ms as i64;
+        let input_toks = i64::try_from(trace.total_input_tokens).unwrap_or(i64::MAX);
+        let output_toks = i64::try_from(trace.total_output_tokens).unwrap_or(i64::MAX);
+        let llm_ms = i64::try_from(trace.llm_duration_ms).unwrap_or(i64::MAX);
+        let tool_ms = i64::try_from(trace.tool_duration_ms).unwrap_or(i64::MAX);
 
         let tags = serde_json::to_string(&trace.tags).unwrap_or_else(|_| "[]".into());
         let replay_context = trace
@@ -438,7 +439,7 @@ impl TraceStore for SqliteTraceStore {
         since: Option<DateTime<Utc>>,
         limit: usize,
     ) -> Result<Vec<Trace>, TraceStoreError> {
-        let limit_i64 = limit as i64;
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let status_str = status.map(trace_status_to_str);
         let since_str = since.map(|s| s.to_rfc3339());
 
@@ -473,8 +474,8 @@ impl TraceStore for SqliteTraceStore {
         let metadata = serde_json::to_string(&obs.metadata).unwrap_or_else(|_| "null".into());
         let started_at = obs.started_at.to_rfc3339();
         let completed_at = obs.completed_at.map(|t| t.to_rfc3339());
-        let input_toks = obs.input_tokens as i64;
-        let output_toks = obs.output_tokens as i64;
+        let input_toks = i64::try_from(obs.input_tokens).unwrap_or(i64::MAX);
+        let output_toks = i64::try_from(obs.output_tokens).unwrap_or(i64::MAX);
         let seq = obs.sequence as i64;
 
         let depth = obs.depth as i64;
@@ -609,7 +610,7 @@ impl TraceStore for SqliteTraceStore {
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<Trace>, TraceStoreError> {
-        let limit_i64 = limit as i64;
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let rows: Vec<TraceRow> = sqlx::query_as(
             "SELECT id, session_id, name, status, user_input, metadata, started_at, completed_at, \
              total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms, \

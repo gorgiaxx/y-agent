@@ -162,7 +162,10 @@ impl ChromeLauncher {
             use nix::unistd::Pid;
 
             if let Some(pid) = self.child.id() {
-                let _ = signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
+                let _ = signal::kill(
+                    Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX)),
+                    Signal::SIGTERM,
+                );
                 // Give Chrome a moment to shut down gracefully.
                 tokio::select! {
                     _ = self.child.wait() => {},
@@ -192,7 +195,10 @@ impl Drop for ChromeLauncher {
             {
                 use nix::sys::signal::{self, Signal};
                 use nix::unistd::Pid;
-                let _ = signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
+                let _ = signal::kill(
+                    Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX)),
+                    Signal::SIGTERM,
+                );
             }
             #[cfg(not(unix))]
             {
