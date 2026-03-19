@@ -26,7 +26,7 @@ You can call these tools directly without searching:
 | file_read | Read file contents | {"path": "<filepath>"} |
 | file_write | Write content to a file (creates dirs) | {"path": "<filepath>", "content": "<text>"} |
 | file_list | List directory contents | {"path": "<dirpath>"} |
-| file_search | Search for text pattern in files | {"pattern": "<text>", "path": "<dirpath>"} |
+| file_search | Search for text pattern in files. Case-sensitive substring match, recursive, skips hidden/binary files, max 50 results. | {"pattern": "<text>", "path": "<dir_or_file>"} Optional: {"include_ext": "<ext>"} (e.g. "rs", "py") |
 | shell_exec | Execute a shell command | {"command": "<cmd>"} |
 | browser | Automate a web browser. Actions: navigate, snapshot, click, type, screenshot, get_text, get_title, get_url, evaluate, wait, press_key, scroll, get_page_text, get_console_logs, close. Workflow: navigate → snapshot (returns @eN refs) → click/type with @eN refs. | {"action": "\<action\>", ...} Required: action. Key args: url (navigate), selector (click/type/get_text, use @eN from snapshot), text (type), expression (evaluate), key (press_key), direction/pixels (scroll) |
 

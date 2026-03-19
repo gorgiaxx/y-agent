@@ -177,7 +177,7 @@ mod tests {
     use super::*;
 
     fn policy(domains: &[&str]) -> SecurityPolicy {
-        SecurityPolicy::new(domains.iter().map(|s| s.to_string()).collect(), true)
+        SecurityPolicy::new(domains.iter().map(|s| (*s).to_string()).collect(), true)
     }
 
     #[test]

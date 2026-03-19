@@ -144,7 +144,12 @@ impl SessionManager {
             })?;
 
         self.session_store
-            .update_metadata(session_id, None, session.token_count, count as u32)
+            .update_metadata(
+                session_id,
+                None,
+                session.token_count,
+                u32::try_from(count).unwrap_or(u32::MAX),
+            )
             .await?;
 
         Ok(())
