@@ -19,14 +19,12 @@ impl SqliteChatMessageStore {
 #[async_trait::async_trait]
 impl ChatMessageStore for SqliteChatMessageStore {
     async fn insert(&self, record: &ChatMessageRecord) -> Result<(), SessionError> {
-        let status_str = match record.status {
-            ChatMessageStatus::Active => "active",
-            ChatMessageStatus::Tombstone => "tombstone",
-        };
+        let status_str = status_to_str(&record.status);
         sqlx::query(
             "INSERT INTO chat_messages (id, session_id, role, content, status, checkpoint_id, \
-             model, input_tokens, output_tokens, cost_usd, context_window, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             model, input_tokens, output_tokens, cost_usd, context_window, \
+             parent_message_id, pruning_group_id, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(record.session_id.as_str())
@@ -39,6 +37,8 @@ impl ChatMessageStore for SqliteChatMessageStore {
         .bind(record.output_tokens)
         .bind(record.cost_usd)
         .bind(record.context_window)
+        .bind(&record.parent_message_id)
+        .bind(&record.pruning_group_id)
         .bind(record.created_at.to_rfc3339())
         .execute(&self.pool)
         .await
@@ -54,7 +54,8 @@ impl ChatMessageStore for SqliteChatMessageStore {
     ) -> Result<Vec<ChatMessageRecord>, SessionError> {
         let rows: Vec<ChatMessageRow> = sqlx::query_as(
             "SELECT id, session_id, role, content, status, checkpoint_id, \
-             model, input_tokens, output_tokens, cost_usd, context_window, created_at \
+             model, input_tokens, output_tokens, cost_usd, context_window, \
+             parent_message_id, pruning_group_id, created_at \
              FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC",
         )
         .bind(session_id.as_str())
@@ -72,8 +73,10 @@ impl ChatMessageStore for SqliteChatMessageStore {
     ) -> Result<Vec<ChatMessageRecord>, SessionError> {
         let rows: Vec<ChatMessageRow> = sqlx::query_as(
             "SELECT id, session_id, role, content, status, checkpoint_id, \
-             model, input_tokens, output_tokens, cost_usd, context_window, created_at \
-             FROM chat_messages WHERE session_id = ? AND status = 'active' ORDER BY created_at ASC",
+             model, input_tokens, output_tokens, cost_usd, context_window, \
+             parent_message_id, pruning_group_id, created_at \
+             FROM chat_messages WHERE session_id = ? AND status = 'active' \
+             ORDER BY created_at ASC",
         )
         .bind(session_id.as_str())
         .fetch_all(&self.pool)
@@ -131,6 +134,7 @@ impl ChatMessageStore for SqliteChatMessageStore {
         checkpoint_id: &str,
     ) -> Result<(u32, u32), SessionError> {
         // Count active and tombstoned messages for this checkpoint before swapping.
+        // Pruned messages are excluded from swap.
         let active_count: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM chat_messages \
              WHERE session_id = ? AND checkpoint_id = ? AND status = 'active'",
@@ -156,12 +160,14 @@ impl ChatMessageStore for SqliteChatMessageStore {
         })?;
 
         // Atomic swap: flip active <-> tombstone in a single UPDATE.
+        // Pruned messages are NOT affected by branch swap.
         sqlx::query(
             "UPDATE chat_messages SET status = CASE \
                  WHEN status = 'active' THEN 'tombstone' \
                  WHEN status = 'tombstone' THEN 'active' \
              END \
-             WHERE session_id = ? AND checkpoint_id = ?",
+             WHERE session_id = ? AND checkpoint_id = ? \
+             AND status IN ('active', 'tombstone')",
         )
         .bind(session_id.as_str())
         .bind(checkpoint_id)
@@ -176,6 +182,75 @@ impl ChatMessageStore for SqliteChatMessageStore {
             u32::try_from(active_count).unwrap_or(0),
             u32::try_from(tombstone_count).unwrap_or(0),
         ))
+    }
+
+    async fn set_status(
+        &self,
+        session_id: &SessionId,
+        message_id: &str,
+        status: ChatMessageStatus,
+    ) -> Result<(), SessionError> {
+        let status_str = status_to_str(&status);
+        sqlx::query(
+            "UPDATE chat_messages SET status = ? \
+             WHERE session_id = ? AND id = ?",
+        )
+        .bind(status_str)
+        .bind(session_id.as_str())
+        .bind(message_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionError::StorageError {
+            message: format!("failed to set message status: {e}"),
+        })?;
+        Ok(())
+    }
+
+    async fn set_status_batch(
+        &self,
+        session_id: &SessionId,
+        message_ids: &[String],
+        status: ChatMessageStatus,
+    ) -> Result<u32, SessionError> {
+        if message_ids.is_empty() {
+            return Ok(0);
+        }
+        let status_str = status_to_str(&status);
+        // Build placeholder list for IN clause.
+        let placeholders: Vec<&str> = message_ids.iter().map(|_| "?").collect();
+        let sql = format!(
+            "UPDATE chat_messages SET status = ? \
+             WHERE session_id = ? AND id IN ({}) RETURNING 1",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query_scalar::<_, i32>(&sql)
+            .bind(status_str)
+            .bind(session_id.as_str());
+        for id in message_ids {
+            query = query.bind(id);
+        }
+        let result = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| SessionError::StorageError {
+                message: format!("failed to batch set message status: {e}"),
+            })?;
+        Ok(u32::try_from(result.len()).unwrap_or(0))
+    }
+
+    async fn restore_pruned(&self, session_id: &SessionId) -> Result<u32, SessionError> {
+        let result = sqlx::query_scalar::<_, i32>(
+            "UPDATE chat_messages SET status = 'active' \
+             WHERE session_id = ? AND status = 'pruned' \
+             RETURNING 1",
+        )
+        .bind(session_id.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SessionError::StorageError {
+            message: format!("failed to restore pruned messages: {e}"),
+        })?;
+        Ok(u32::try_from(result.len()).unwrap_or(0))
     }
 }
 
@@ -196,13 +271,25 @@ struct ChatMessageRow {
     output_tokens: Option<i64>,
     cost_usd: Option<f64>,
     context_window: Option<i64>,
+    parent_message_id: Option<String>,
+    pruning_group_id: Option<String>,
     created_at: String,
+}
+
+/// Convert a `ChatMessageStatus` to its SQL string representation.
+fn status_to_str(status: &ChatMessageStatus) -> &'static str {
+    match status {
+        ChatMessageStatus::Active => "active",
+        ChatMessageStatus::Tombstone => "tombstone",
+        ChatMessageStatus::Pruned => "pruned",
+    }
 }
 
 impl ChatMessageRow {
     fn into_record(self) -> ChatMessageRecord {
         let status = match self.status.as_str() {
             "tombstone" => ChatMessageStatus::Tombstone,
+            "pruned" => ChatMessageStatus::Pruned,
             _ => ChatMessageStatus::Active,
         };
         let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at)
@@ -219,6 +306,8 @@ impl ChatMessageRow {
             output_tokens: self.output_tokens,
             cost_usd: self.cost_usd,
             context_window: self.context_window,
+            parent_message_id: self.parent_message_id,
+            pruning_group_id: self.pruning_group_id,
             created_at,
         }
     }
@@ -261,6 +350,8 @@ mod tests {
                 output_tokens INTEGER,
                 cost_usd REAL,
                 context_window INTEGER,
+                parent_message_id TEXT,
+                pruning_group_id TEXT,
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             )",
         )
@@ -289,6 +380,8 @@ mod tests {
             output_tokens: None,
             cost_usd: None,
             context_window: None,
+            parent_message_id: None,
+            pruning_group_id: None,
             created_at: chrono::Utc::now(),
         }
     }

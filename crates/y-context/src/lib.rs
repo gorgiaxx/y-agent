@@ -28,6 +28,7 @@ pub mod load_history;
 pub mod memory;
 pub mod middleware_adapter;
 pub mod pipeline;
+pub mod pruning;
 pub mod recall;
 pub mod repair;
 pub mod system_prompt;
@@ -51,6 +52,10 @@ pub use middleware_adapter::{stage_priorities, ContextMiddlewareAdapter};
 pub use pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipeline, ContextPipelineError,
     ContextProvider, ContextRequest,
+};
+pub use pruning::{
+    PruningCandidate, PruningConfig, PruningEngine, PruningReport, PruningStrategy,
+    PruningStrategyMode,
 };
 pub use recall::{RecallConfig, RecallMethod, RecallStore, RecalledMemory};
 pub use repair::{repair_history, HistoryMessage, RepairReport};

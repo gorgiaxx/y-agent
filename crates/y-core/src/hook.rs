@@ -309,6 +309,24 @@ pub enum Event {
         fixes: serde_json::Value,
     },
 
+    // --- Pruning events ---
+    PruningApplied {
+        session_id: String,
+        strategy: String,
+        messages_pruned: u32,
+        tokens_before: u32,
+        tokens_after: u32,
+    },
+    PruningSkipped {
+        session_id: String,
+        reason: String,
+    },
+    PruningFailed {
+        session_id: String,
+        strategy: String,
+        error: String,
+    },
+
     // --- Orchestration events ---
     WorkflowEvent {
         workflow_id: String,
@@ -434,7 +452,10 @@ impl Event {
 
             Self::ContextOverflow { .. }
             | Self::CanonicalSynced { .. }
-            | Self::SessionRepaired { .. } => EventCategory::Context,
+            | Self::SessionRepaired { .. }
+            | Self::PruningApplied { .. }
+            | Self::PruningSkipped { .. }
+            | Self::PruningFailed { .. } => EventCategory::Context,
 
             Self::WorkflowEvent { .. } => EventCategory::Orchestration,
 

@@ -744,6 +744,7 @@ pub async fn chat_get_messages_with_status(
             let status = match r.status {
                 y_core::session::ChatMessageStatus::Active => "active".to_string(),
                 y_core::session::ChatMessageStatus::Tombstone => "tombstone".to_string(),
+                y_core::session::ChatMessageStatus::Pruned => "pruned".to_string(),
             };
             MessageWithStatus {
                 id: r.id,

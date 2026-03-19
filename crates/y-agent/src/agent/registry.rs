@@ -454,6 +454,10 @@ impl AgentRegistry {
                 "skill-security-check",
                 include_str!("../../../../config/agents/skill-security-check.toml"),
             ),
+            (
+                "pruning-summarizer",
+                include_str!("../../../../config/agents/pruning-summarizer.toml"),
+            ),
         ]
     }
 }
@@ -534,7 +538,7 @@ mod tests {
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 12); // 10 built-in + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 13); // 11 built-in + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -624,7 +628,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 10);
+        assert_eq!(builtins.len(), 11);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
         assert_eq!(user_defs.len(), 1);
@@ -706,7 +710,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 10);
+        assert_eq!(builtins.len(), 11);
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
@@ -822,6 +826,7 @@ mod tests {
             "agent-architect",
             "skill-ingestion",
             "skill-security-check",
+            "pruning-summarizer",
         ];
 
         for id in expected_ids {
@@ -833,7 +838,7 @@ mod tests {
             assert!(!def.system_prompt.is_empty());
         }
 
-        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 10);
+        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 11);
     }
 
     /// Override a built-in agent with register_or_override.

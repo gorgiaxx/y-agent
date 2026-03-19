@@ -274,6 +274,9 @@ pub trait ChatCheckpointStore: Send + Sync {
 pub enum ChatMessageStatus {
     Active,
     Tombstone,
+    /// Removed by pruning engine for attention quality optimization.
+    /// Recoverable via `restore_pruned()`.
+    Pruned,
 }
 
 /// A persisted chat message record stored in `SQLite` (Phase 2).
@@ -290,6 +293,11 @@ pub struct ChatMessageRecord {
     pub output_tokens: Option<i64>,
     pub cost_usd: Option<f64>,
     pub context_window: Option<i64>,
+    /// Parent message in the session message tree. NULL for root-level
+    /// and pre-migration messages.
+    pub parent_message_id: Option<String>,
+    /// Logical grouping identifier for batch pruning operations.
+    pub pruning_group_id: Option<String>,
     pub created_at: Timestamp,
 }
 
@@ -334,4 +342,23 @@ pub trait ChatMessageStore: Send + Sync {
         session_id: &SessionId,
         checkpoint_id: &str,
     ) -> Result<(u32, u32), SessionError>;
+
+    /// Update the status of a single message (used by pruning engine).
+    async fn set_status(
+        &self,
+        session_id: &SessionId,
+        message_id: &str,
+        status: ChatMessageStatus,
+    ) -> Result<(), SessionError>;
+
+    /// Batch-update status for multiple messages (used by pruning engine).
+    async fn set_status_batch(
+        &self,
+        session_id: &SessionId,
+        message_ids: &[String],
+        status: ChatMessageStatus,
+    ) -> Result<u32, SessionError>;
+
+    /// Restore all pruned messages in a session back to active.
+    async fn restore_pruned(&self, session_id: &SessionId) -> Result<u32, SessionError>;
 }

@@ -278,18 +278,22 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role            TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool')),
     content         TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'active'
-                        CHECK (status IN ('active', 'tombstone')),
+                        CHECK (status IN ('active', 'tombstone', 'pruned')),
     checkpoint_id   TEXT REFERENCES chat_checkpoints(checkpoint_id),
     model           TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
     cost_usd        REAL,
     context_window  INTEGER,
+    parent_message_id TEXT,
+    pruning_group_id TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_cm_session_status  ON chat_messages(session_id, status);
 CREATE INDEX IF NOT EXISTS idx_cm_session_created ON chat_messages(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_cm_parent          ON chat_messages(parent_message_id);
+CREATE INDEX IF NOT EXISTS idx_cm_pruning_group   ON chat_messages(session_id, pruning_group_id);
 
 ------------------------------------------------------------------------
 -- 10. Diagnostics (traces, observations, scores -- v2 columns baked in)
