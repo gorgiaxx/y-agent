@@ -67,8 +67,6 @@ pub enum SnapshotFormat {
     Dom,
 }
 
-
-
 /// Raw AX node from CDP `Accessibility.getFullAXTree`.
 #[derive(Debug, Deserialize)]
 pub struct RawAxNode {
