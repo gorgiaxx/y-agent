@@ -10,10 +10,10 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 /// Error type for CDP operations.
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +40,15 @@ pub enum CdpError {
     DiscoveryFailed(String),
 }
 
+/// A CDP event received from the browser.
+#[derive(Debug, Clone)]
+pub struct CdpEvent {
+    /// The event method name (e.g. "Runtime.consoleAPICalled").
+    pub method: String,
+    /// Event parameters.
+    pub params: serde_json::Value,
+}
+
 /// CDP JSON-RPC request.
 #[derive(Debug, Serialize)]
 struct CdpRequest {
@@ -55,9 +64,10 @@ struct CdpResponse {
     id: Option<u64>,
     result: Option<serde_json::Value>,
     error: Option<CdpProtocolError>,
-    // Events have `method` + `params` but no `id`.
-    #[allow(dead_code)]
+    /// Events have `method` + `params` but no `id`.
     method: Option<String>,
+    /// Event params (present when method is set).
+    params: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,6 +117,8 @@ pub struct CdpClient {
     pending: Arc<Mutex<PendingMap>>,
     /// Handle to the reader task.
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Broadcast sender for CDP events.
+    event_tx: broadcast::Sender<CdpEvent>,
 }
 
 type WriterHalf = futures_util::stream::SplitSink<
@@ -119,6 +131,7 @@ type WriterHalf = futures_util::stream::SplitSink<
 impl CdpClient {
     /// Create a new CDP client (not yet connected).
     pub fn new(cdp_url: String, default_timeout: Duration) -> Self {
+        let (event_tx, _) = broadcast::channel(256);
         Self {
             cdp_url,
             default_timeout,
@@ -126,6 +139,7 @@ impl CdpClient {
             writer: Mutex::new(None),
             pending: Arc::new(Mutex::new(HashMap::new())),
             reader_handle: Mutex::new(None),
+            event_tx,
         }
     }
 
@@ -148,8 +162,9 @@ impl CdpClient {
 
         // Spawn reader task to dispatch responses to pending senders.
         let pending = Arc::clone(&self.pending);
+        let event_tx = self.event_tx.clone();
         let handle = tokio::spawn(async move {
-            Self::reader_loop(reader, pending).await;
+            Self::reader_loop(reader, pending, event_tx).await;
         });
 
         *self.reader_handle.lock().await = Some(handle);
@@ -178,6 +193,14 @@ impl CdpClient {
     /// Check if the client is connected.
     pub async fn is_connected(&self) -> bool {
         self.writer.lock().await.is_some()
+    }
+
+    /// Subscribe to CDP events.
+    ///
+    /// Returns a receiver that will receive all CDP events dispatched by
+    /// the reader loop. The caller should spawn a task to drain the receiver.
+    pub fn subscribe_events(&self) -> broadcast::Receiver<CdpEvent> {
+        self.event_tx.subscribe()
     }
 
     /// Send a CDP command and wait for the response.
@@ -248,16 +271,59 @@ impl CdpClient {
     }
 
     /// Resolve the WebSocket URL from the configured CDP URL.
+    ///
+    /// Prefers connecting to a **page-level** target (which supports `Page.*`,
+    /// `Runtime.*`, etc.) rather than the browser-level endpoint.
+    ///
+    /// Retries `/json/list` multiple times (Chrome may need a moment after
+    /// launching to register its default tab), creating a new page target
+    /// only as a last resort to avoid producing duplicate windows/tabs.
     async fn resolve_ws_url(&self) -> Result<String, CdpError> {
         let url = self.cdp_url.trim();
 
-        // Direct WebSocket URL.
+        // Direct WebSocket URL — use as-is.
         if url.starts_with("ws://") || url.starts_with("wss://") {
             return Ok(url.to_string());
         }
 
-        // HTTP(S) — discover via /json/version.
-        let version_url = format!("{}/json/version", url.trim_end_matches('/'));
+        // HTTP(S) — try to find an existing page target via /json/list.
+        // Page targets support the full CDP domain set (Page, Runtime, DOM, etc.)
+        // while the browser endpoint from /json/version only supports
+        // Target.* and Browser.* commands.
+        //
+        // Retry several times because Chrome may not have registered its
+        // default tab yet right after launching.
+        let base = url.trim_end_matches('/');
+        let list_url = format!("{base}/json/list");
+
+        let max_retries = 10;
+        let retry_delay = Duration::from_millis(200);
+
+        for attempt in 0..max_retries {
+            if let Ok(resp) = reqwest::get(&list_url).await {
+                if let Ok(targets) = resp.json::<Vec<CdpTarget>>().await {
+                    // Pick the first "page" target that has a WebSocket URL.
+                    if let Some(target) = targets
+                        .iter()
+                        .find(|t| t.target_type == "page" && t.ws_url.is_some())
+                    {
+                        let ws_url = target.ws_url.as_ref().unwrap();
+                        debug!(ws_url, target_url = %target.url, attempt, "using existing page target");
+                        return Ok(normalize_ws_url(ws_url, url));
+                    }
+                }
+            }
+
+            if attempt < max_retries - 1 {
+                debug!(attempt, "no page target yet, retrying...");
+                tokio::time::sleep(retry_delay).await;
+            }
+        }
+
+        // No page target found after retries — get the browser endpoint from
+        // /json/version and create a new page target via Target.createTarget.
+        debug!("no page target found after {max_retries} retries, creating one via Target.createTarget");
+        let version_url = format!("{base}/json/version");
         let resp = reqwest::get(&version_url)
             .await
             .map_err(|e| CdpError::DiscoveryFailed(format!("GET {version_url}: {e}")))?;
@@ -267,7 +333,7 @@ impl CdpClient {
             .await
             .map_err(|e| CdpError::DiscoveryFailed(format!("parse /json/version: {e}")))?;
 
-        let ws_url = info
+        let browser_ws_url = info
             .web_socket_debugger_url
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
@@ -276,8 +342,129 @@ impl CdpClient {
                 )
             })?;
 
-        // Normalize: rewrite loopback if CDP URL host differs.
-        Ok(normalize_ws_url(&ws_url, url))
+        let browser_ws = normalize_ws_url(&browser_ws_url, url);
+
+        // Try to create a new page target via the browser-level endpoint.
+        // This gives us a page-level WebSocket that supports Page.*, Runtime.*, etc.
+        match self.create_page_target(&browser_ws, base).await {
+            Ok(page_ws_url) => Ok(page_ws_url),
+            Err(e) => {
+                // If creation fails for any reason, fall back to browser endpoint.
+                // This is a degraded mode — Page.* commands will fail.
+                warn!(error = %e, "failed to create page target, falling back to browser endpoint");
+                Ok(browser_ws)
+            }
+        }
+    }
+
+    /// Create a new page target using `Target.createTarget` over a temporary
+    /// browser-level WebSocket connection, then return the page-level WS URL.
+    async fn create_page_target(
+        &self,
+        browser_ws_url: &str,
+        http_base: &str,
+    ) -> Result<String, CdpError> {
+        // Open a temporary WebSocket to the browser endpoint.
+        let (ws_stream, _) = tokio_tungstenite::connect_async(browser_ws_url)
+            .await
+            .map_err(|e| CdpError::ConnectionFailed(e.to_string()))?;
+
+        let (mut writer, mut reader) = ws_stream.split();
+
+        // Send Target.createTarget to create a blank page.
+        let request = CdpRequest {
+            id: 1,
+            method: "Target.createTarget".into(),
+            params: Some(serde_json::json!({ "url": "about:blank" })),
+        };
+        let json = serde_json::to_string(&request)?;
+        writer
+            .send(Message::Text(json.into()))
+            .await
+            .map_err(|e| CdpError::WebSocket(e.to_string()))?;
+
+        // Wait for the response with the new target ID.
+        let response_timeout = Duration::from_secs(10);
+        let target_id = match timeout(response_timeout, async {
+            while let Some(msg) = reader.next().await {
+                let text = match msg {
+                    Ok(Message::Text(t)) => t.to_string(),
+                    Ok(Message::Close(_)) => break,
+                    Ok(_) => continue,
+                    Err(e) => return Err(CdpError::WebSocket(e.to_string())),
+                };
+                let resp: CdpResponse = serde_json::from_str(&text)?;
+                if resp.id == Some(1) {
+                    if let Some(err) = resp.error {
+                        return Err(CdpError::ProtocolError {
+                            code: err.code,
+                            message: err.message,
+                        });
+                    }
+                    let target_id = resp
+                        .result
+                        .as_ref()
+                        .and_then(|r| r.get("targetId"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .ok_or_else(|| {
+                            CdpError::DiscoveryFailed(
+                                "Target.createTarget returned no targetId".into(),
+                            )
+                        })?;
+                    return Ok(target_id);
+                }
+            }
+            Err(CdpError::DiscoveryFailed(
+                "WebSocket closed before receiving Target.createTarget response".into(),
+            ))
+        })
+        .await
+        {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(CdpError::Timeout(response_timeout.as_millis() as u64))
+            }
+        };
+
+        // Close the temporary connection.
+        let _ = writer.close().await;
+
+        debug!(target_id = %target_id, "created new page target");
+
+        // Now look up the new page target's WS URL from /json/list.
+        let list_url = format!("{http_base}/json/list");
+        // Small delay to let Chrome register the new target.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let resp = reqwest::get(&list_url)
+            .await
+            .map_err(|e| CdpError::DiscoveryFailed(format!("GET {list_url}: {e}")))?;
+        let targets: Vec<CdpTarget> = resp
+            .json()
+            .await
+            .map_err(|e| CdpError::DiscoveryFailed(format!("parse /json/list: {e}")))?;
+
+        // Find our newly created target.
+        let target = targets
+            .iter()
+            .find(|t| t.id == target_id && t.ws_url.is_some())
+            .or_else(|| {
+                // Fallback: any page target with a WS URL.
+                targets
+                    .iter()
+                    .find(|t| t.target_type == "page" && t.ws_url.is_some())
+            })
+            .ok_or_else(|| {
+                CdpError::DiscoveryFailed(format!(
+                    "created target {target_id} but not found in /json/list"
+                ))
+            })?;
+
+        let ws_url = target.ws_url.as_ref().unwrap();
+        let http_url = self.cdp_url.trim();
+        debug!(ws_url, "using newly created page target");
+        Ok(normalize_ws_url(ws_url, http_url))
     }
 
     /// Get HTTP base URL for /json/* endpoints.
@@ -300,6 +487,7 @@ impl CdpClient {
             >,
         >,
         pending: Arc<Mutex<PendingMap>>,
+        event_tx: broadcast::Sender<CdpEvent>,
     ) {
         while let Some(msg) = reader.next().await {
             let text = match msg {
@@ -320,11 +508,17 @@ impl CdpClient {
                 }
             };
 
-            // Events (no id) are ignored for now.
-            let Some(id) = resp.id else {
+            // Events (no id) — dispatch to subscribers.
+            if resp.id.is_none() {
+                if let Some(method) = resp.method {
+                    let params = resp.params.unwrap_or(serde_json::Value::Null);
+                    trace!(method = %method, "CDP event received");
+                    let _ = event_tx.send(CdpEvent { method, params });
+                }
                 continue;
-            };
+            }
 
+            let id = resp.id.unwrap();
             let result = if let Some(err) = resp.error {
                 Err(CdpError::ProtocolError {
                     code: err.code,

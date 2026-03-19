@@ -476,6 +476,7 @@ const EXAMPLE_RUNTIME: &str = include_str!("../../../../config/runtime.example.t
 const EXAMPLE_KNOWLEDGE: &str = include_str!("../../../../config/knowledge.example.toml");
 const EXAMPLE_HOOKS: &str = include_str!("../../../../config/hooks.example.toml");
 const EXAMPLE_TOOLS: &str = include_str!("../../../../config/tools.example.toml");
+const EXAMPLE_BROWSER: &str = include_str!("../../../../config/browser.example.toml");
 const EXAMPLE_GUARDRAILS: &str = include_str!("../../../../config/guardrails.example.toml");
 
 /// Mapping of config file names to their embedded content.
@@ -488,6 +489,7 @@ const CONFIG_TEMPLATES: &[(&str, &str)] = &[
     ("knowledge.toml", EXAMPLE_KNOWLEDGE),
     ("hooks.toml", EXAMPLE_HOOKS),
     ("tools.toml", EXAMPLE_TOOLS),
+    ("browser.toml", EXAMPLE_BROWSER),
     ("guardrails.toml", EXAMPLE_GUARDRAILS),
 ];
 
@@ -618,8 +620,7 @@ pub fn seed_builtin_prompts(config_dir: &Path) -> Result<Vec<String>> {
             continue;
         }
 
-        std::fs::write(&dest, content)
-            .with_context(|| format!("writing {}", dest.display()))?;
+        std::fs::write(&dest, content).with_context(|| format!("writing {}", dest.display()))?;
 
         seeded.push(filename.to_string());
     }
@@ -649,8 +650,7 @@ pub fn seed_builtin_agents(config_dir: &Path) -> Result<Vec<String>> {
             continue;
         }
 
-        std::fs::write(&dest, content)
-            .with_context(|| format!("writing {}", dest.display()))?;
+        std::fs::write(&dest, content).with_context(|| format!("writing {}", dest.display()))?;
 
         seeded.push(name.to_string());
     }
@@ -845,10 +845,7 @@ pub fn select_providers(args: &InitArgs, prompter: &dyn Prompter) -> Result<Prov
 /// Only one connection is needed since init just runs migrations.
 fn build_init_storage_config(_config_base: &Path, data_dir: &Path) -> y_storage::StorageConfig {
     y_storage::StorageConfig {
-        db_path: data_dir
-            .join("y-agent.db")
-            .to_string_lossy()
-            .to_string(),
+        db_path: data_dir.join("y-agent.db").to_string_lossy().to_string(),
         pool_size: 1,
         wal_enabled: true,
         busy_timeout_ms: 5000,
@@ -856,8 +853,6 @@ fn build_init_storage_config(_config_base: &Path, data_dir: &Path) -> y_storage:
         migrations_dir: PathBuf::from("migrations/sqlite"),
     }
 }
-
-
 
 /// Create the `SQLite` database and run all embedded migrations.
 ///
@@ -903,7 +898,11 @@ pub fn should_initialize_db(db_path: &Path, force: bool, prompter: &dyn Prompter
 /// convention used by `ConfigLoader::dirs_user_config()`.
 fn default_config_dir() -> PathBuf {
     std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE")).map_or_else(|| PathBuf::from("."), |h| PathBuf::from(h).join(".config").join("y-agent"))
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map_or_else(
+            || PathBuf::from("."),
+            |h| PathBuf::from(h).join(".config").join("y-agent"),
+        )
 }
 
 /// Get the default state data directory.
@@ -1027,8 +1026,6 @@ pub async fn run(args: &InitArgs) -> Result<()> {
     } else {
         output::print_info("Skipped database initialization (existing database preserved)");
     }
-
-
 
     // --- Step 6c: Seed built-in skills ---
     match seed_builtin_skills(&base) {

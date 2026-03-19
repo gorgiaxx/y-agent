@@ -39,6 +39,7 @@ pub mod observability;
 pub mod progressive;
 pub mod quality;
 pub mod retrieval;
+pub mod supported_formats;
 pub mod tokenizer;
 pub mod tools;
 

@@ -32,7 +32,8 @@ tools = ["shell_exec"]
 
 [categories.network]
 label = "Network"
-description = "HTTP requests, DNS, connectivity"
+description = "HTTP requests, DNS, connectivity, browser automation, web browsing, internet access, fetch web pages, online search, weather, news"
+tools = ["browser"]
 
 [categories.memory]
 label = "Memory & Knowledge"
@@ -40,7 +41,7 @@ description = "Store, recall, and search knowledge"
 
 [categories.search]
 label = "Search & Retrieval"
-description = "Search and retrieve information"
+description = "Search and retrieve information from knowledge base and documents"
 
 [categories.agent]
 label = "Agent & Workflow"

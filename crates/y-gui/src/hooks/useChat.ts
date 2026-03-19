@@ -280,72 +280,34 @@ async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Prom
 // Checkpoint resolution helpers
 // ---------------------------------------------------------------------------
 
-/** Find the checkpoint for a specific user message by its ID.
- *  We list all checkpoints and find the one whose message_count_before
- *  matches the message's position in the backend-persisted messages.
- *
- *  Uses content+role matching as the primary strategy (robust against
- *  ID drift between optimistic/streaming IDs and backend UUIDs), with
- *  exact ID match as a fast path.
- *
- *  Falls back to the most recent checkpoint if no match is found. */
+/** Find the checkpoint for a specific user message using the atomic backend
+ *  command. Falls back to null if the message is not found or no checkpoint
+ *  matches.
+ */
 async function findCheckpointForMessage(
   sessionId: string,
   messageId: string,
   cache?: Map<string, Message[]>,
 ): Promise<ChatCheckpointInfo | null> {
-  // Load messages from backend to get the canonical order.
-  const backendMessages = await invoke<Message[]>('session_get_messages', { sessionId });
-  console.log(`[chat] findCheckpointForMessage: backend has ${backendMessages.length} messages, looking for id=${messageId}`);
-
-  // Fast path: exact ID match.
-  let messageIndex = backendMessages.findIndex((m) => m.id === messageId);
-
-  // Primary strategy: content+role match (robust against ID drift).
-  // This covers optimistic IDs (`user-{timestamp}`), streaming IDs, and
-  // stale IDs from a previous render cycle.
-  if (messageIndex < 0) {
-    // Try to find the message content either from cache or from backendMessages.
-    let targetContent: string | null = null;
-    let targetRole: string | null = null;
-
-    if (cache) {
-      const cachedMessages = cache.get(sessionId) ?? [];
-      const cachedMsg = cachedMessages.find((m) => m.id === messageId);
-      if (cachedMsg) {
-        targetContent = cachedMsg.content;
-        targetRole = cachedMsg.role;
-      }
-    }
-
-    if (targetContent !== null && targetRole !== null) {
-      messageIndex = backendMessages.findIndex(
-        (m) => m.role === targetRole && m.content === targetContent,
-      );
-      console.log(`[chat] findCheckpointForMessage: content match found at index=${messageIndex}`);
+  // Resolve content from cache so the backend can do content-based fallback.
+  let content = '';
+  if (cache) {
+    const cachedMessages = cache.get(sessionId) ?? [];
+    const cachedMsg = cachedMessages.find((m) => m.id === messageId);
+    if (cachedMsg) {
+      content = cachedMsg.content;
     }
   }
 
-  const checkpoints = await invoke<ChatCheckpointInfo[]>('chat_checkpoint_list', {
-    sessionId,
-  });
-
-  console.log(`[chat] findCheckpointForMessage: ${checkpoints.length} checkpoints, messageIndex=${messageIndex}`);
-
-  if (checkpoints.length === 0) return null;
-
-  // Find checkpoint whose message_count_before matches this message's index.
-  if (messageIndex >= 0) {
-    const exactMatch = checkpoints.find(
-      (cp) => cp.message_count_before === messageIndex,
+  try {
+    return await invoke<ChatCheckpointInfo | null>(
+      'chat_find_checkpoint_for_resend',
+      { sessionId, userMessageContent: content, messageId },
     );
-    if (exactMatch) return exactMatch;
+  } catch (e) {
+    console.warn('[chat] findCheckpointForMessage: backend lookup failed:', e);
+    return null;
   }
-
-  // No match found -- do NOT fallback to an arbitrary checkpoint, as that
-  // would truncate to the wrong point and delete the user's messages.
-  console.warn(`[chat] findCheckpointForMessage: no checkpoint matched messageIndex=${messageIndex}, available:`, checkpoints.map(cp => `turn=${cp.turn_number} msg_before=${cp.message_count_before}`));
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1029,7 +991,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               await invoke('session_truncate_messages', { sessionId, keepCount: targetIdx });
               await loadMessages(sessionId);
               setOp('idle');
-              return { remaining_message_count: targetIdx, restored_turn_number: 0, files_restored: 0 } as UndoResult;
+              return { messages_removed: targetIdx, restored_turn_number: 0, files_restored: 0 } as UndoResult;
             }
             console.warn('[chat] undoToMessage: fallback truncation also failed');
             setOp('idle');
@@ -1083,30 +1045,11 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           const freshMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
           setCachedMessages(sessionMessagesRef.current, sessionId, freshMsgs);
 
-          // 1. Find checkpoint: use backend atomic command (primary),
-          //    fall back to frontend multi-step lookup if the backend command fails.
-          //    Resolve the messageId against freshMsgs to get a real backend UUID.
-          let resolvedId = messageId;
-          if (!freshMsgs.some((m) => m.id === messageId)) {
-            const match = freshMsgs.find((m) => m.role === 'user' && m.content === content);
-            if (match) {
-              console.log(`[chat] resendLastTurn: resolved stale id=${messageId} -> ${match.id}`);
-              resolvedId = match.id;
-            }
-          }
-
-          let checkpoint: ChatCheckpointInfo | null = null;
-          try {
-            checkpoint = await invoke<ChatCheckpointInfo | null>(
-              'chat_find_checkpoint_for_resend',
-              { sessionId, userMessageContent: content, messageId: resolvedId },
-            );
-            console.log('[chat] resendLastTurn: backend checkpoint result', checkpoint);
-          } catch (backendErr) {
-            console.warn('[chat] resendLastTurn: backend checkpoint lookup failed, using frontend fallback:', backendErr);
-            checkpoint = await findCheckpointForMessage(sessionId, resolvedId, sessionMessagesRef.current);
-            console.log('[chat] resendLastTurn: frontend fallback checkpoint result', checkpoint);
-          }
+          // 1. Find checkpoint via the atomic backend command.
+          //    findCheckpointForMessage now delegates to chat_find_checkpoint_for_resend
+          //    which handles ID resolution and content-based fallback internally.
+          const checkpoint = await findCheckpointForMessage(sessionId, messageId, sessionMessagesRef.current);
+          console.log('[chat] resendLastTurn: checkpoint result', checkpoint);
 
           if (!checkpoint) {
             // No checkpoint: this happens after a cancelled run where the
@@ -1115,7 +1058,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             // We can simply truncate to remove that user message and
             // re-send via chat_send.
             console.warn('[chat] No checkpoint found for resend -- using direct re-send fallback');
-            let userIdx = freshMsgs.findIndex((m) => m.id === resolvedId);
+            let userIdx = freshMsgs.findIndex((m) => m.id === messageId);
             if (userIdx < 0) {
               userIdx = freshMsgs.findIndex((m) => m.role === 'user' && m.content === content);
             }

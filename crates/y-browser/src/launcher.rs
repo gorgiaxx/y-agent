@@ -30,29 +30,54 @@ pub struct ChromeLauncher {
 }
 
 impl ChromeLauncher {
-    /// Launch a headless Chrome instance.
+    /// Launch a Chrome instance.
     ///
     /// - `chrome_path`: explicit path, or empty to auto-detect.
-    /// - `port`: remote debugging port.
+    /// - `port`: preferred remote debugging port (if in use, a free port is chosen).
+    /// - `headless`: when true, launches in headless mode (no visible window).
     ///
     /// Blocks until CDP is ready (polls `/json/version`).
-    pub async fn launch(chrome_path: &str, port: u16) -> Result<Self, LaunchError> {
+    pub async fn launch(chrome_path: &str, port: u16, headless: bool) -> Result<Self, LaunchError> {
         let exe = if chrome_path.is_empty() {
             detect_chrome().ok_or(LaunchError::ChromeNotFound)?
         } else {
             PathBuf::from(chrome_path)
         };
 
-        info!(path = %exe.display(), port, "launching Chrome");
+        // Check if the preferred port is already in use.
+        // If so, find a free port to avoid connecting to the wrong browser.
+        let actual_port = if is_port_in_use(port) {
+            let free = find_free_port().ok_or_else(|| {
+                LaunchError::SpawnFailed(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    format!("CDP port {port} is already in use and no free port could be found"),
+                ))
+            })?;
+            warn!(
+                preferred_port = port,
+                actual_port = free,
+                "CDP port {} already in use, using port {} instead",
+                port,
+                free
+            );
+            free
+        } else {
+            port
+        };
+
+        info!(path = %exe.display(), port = actual_port, "launching Chrome");
 
         // Create a temporary user-data-dir so multiple instances don't clash.
         let user_data_dir = std::env::temp_dir()
-            .join(format!("y-agent-chrome-{port}"));
+            .join(format!("y-agent-chrome-{actual_port}"));
         std::fs::create_dir_all(&user_data_dir).ok();
 
-        let child = Command::new(&exe)
-            .arg("--headless=new")
-            .arg(format!("--remote-debugging-port={port}"))
+        let mut cmd = Command::new(&exe);
+        if headless {
+            cmd.arg("--headless=new");
+        }
+        let child = cmd
+            .arg(format!("--remote-debugging-port={actual_port}"))
             .arg(format!("--user-data-dir={}", user_data_dir.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
@@ -61,14 +86,19 @@ impl ChromeLauncher {
             .arg("--disable-background-networking")
             .arg("--disable-sync")
             .arg("--disable-translate")
+            .arg("--disable-session-crashed-bubble")
+            .arg("--hide-crash-restore-bubble")
             .arg("--mute-audio")
+            // Open a single about:blank tab — ensures exactly one page target
+            // exists for resolve_ws_url to find, preventing duplicate windows.
+            .arg("about:blank")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()?;
 
-        let mut launcher = Self { child, port };
+        let mut launcher = Self { child, port: actual_port };
 
         // Wait for CDP to become ready.
         launcher.wait_ready(Duration::from_secs(15)).await?;
@@ -109,6 +139,13 @@ impl ChromeLauncher {
     /// The CDP URL for this launched Chrome instance.
     pub fn cdp_url(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// The actual CDP port this Chrome instance is using.
+    ///
+    /// May differ from the requested port if it was already in use.
+    pub fn cdp_port(&self) -> u16 {
+        self.port
     }
 
     /// Gracefully shutdown the Chrome process.
@@ -164,14 +201,20 @@ impl Drop for ChromeLauncher {
 }
 
 /// Auto-detect Chrome/Chromium executable from well-known locations.
+///
+/// Order matters: prefer Google Chrome over Chromium over other Chromium-based
+/// browsers. Brave is listed last because launching Brave with a custom
+/// `--user-data-dir` while Brave is already open can cause the new instance
+/// to merge into the existing one, leading to unexpected behavior.
 fn detect_chrome() -> Option<PathBuf> {
     let candidates: &[&str] = if cfg!(target_os = "macos") {
         &[
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
             "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
             "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            // Brave last — launching while already open can cause tab-in-existing-window issues
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
         ]
     } else if cfg!(target_os = "windows") {
         &[
@@ -214,3 +257,17 @@ fn detect_chrome() -> Option<PathBuf> {
 
     None
 }
+
+/// Check if a TCP port is currently in use on 127.0.0.1.
+fn is_port_in_use(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
+}
+
+/// Find a free TCP port by binding to port 0.
+fn find_free_port() -> Option<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+    let port = listener.local_addr().ok()?.port();
+    drop(listener);
+    Some(port)
+}
+

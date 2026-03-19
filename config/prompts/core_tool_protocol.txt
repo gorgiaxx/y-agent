@@ -28,11 +28,16 @@ You can call these tools directly without searching:
 | file_list | List directory contents | {"path": "<dirpath>"} |
 | file_search | Search for text pattern in files | {"pattern": "<text>", "path": "<dirpath>"} |
 | shell_exec | Execute a shell command | {"command": "<cmd>"} |
+| browser | Automate a web browser (navigate, click, type, screenshot) | {"action": "navigate", "url": "<url>"} |
 
 IMPORTANT: Use ONLY these exact tool names. Do NOT invent tool names like 'ls', 'cat', 'grep', or 'mkdir'. For shell operations not covered above, use shell_exec.
 
 ## Extended Tools
 
-For capabilities beyond the core tools, use tool_search to discover additional tools:
-- Do not guess tool names for extended tools -- search first, then call.
-- You may include regular text before and after tool calls.
+For capabilities beyond the core tools, use tool_search to discover additional tools.
+
+### Search Strategy
+1. **Prefer category browsing first**: Check the Tool Categories table above and use `tool_search({"category": "<key>"})` to browse the most relevant category.
+2. **Use broad, diverse keywords**: If you use keyword search, provide multiple semantically different keywords in a single query, e.g. `tool_search({"query": "weather web browse internet"})` instead of a single narrow word.
+3. **Do not guess tool names** — always search first, then call.
+4. You may include regular text before and after tool calls.

@@ -50,6 +50,11 @@ pub struct BrowserConfig {
     /// Maximum screenshot dimension (width or height) in pixels.
     #[serde(default = "default_max_screenshot_dim")]
     pub max_screenshot_dim: u32,
+
+    /// Run Chrome in headless mode (no visible window).
+    /// Default: true. Set to false for debugging or visual verification.
+    #[serde(default = "default_true")]
+    pub headless: bool,
 }
 
 impl Default for BrowserConfig {
@@ -64,6 +69,7 @@ impl Default for BrowserConfig {
             allowed_domains: vec!["*".into()],
             block_private_networks: true,
             max_screenshot_dim: default_max_screenshot_dim(),
+            headless: true,
         }
     }
 }

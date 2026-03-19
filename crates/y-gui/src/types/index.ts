@@ -181,7 +181,7 @@ export interface TurnMeta {
 
 /** Result of a chat undo operation (from `chat_undo`). */
 export interface UndoResult {
-  remaining_message_count: number;
+  messages_removed: number;
   restored_turn_number: number;
   files_restored: number;
 }

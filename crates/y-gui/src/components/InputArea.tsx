@@ -28,8 +28,7 @@ interface InputAreaProps {
 
 /** Data attribute used to identify skill mention tokens in the contenteditable. */
 const SKILL_ATTR = 'data-skill-name';
-/** Data attribute used to identify knowledge collection mention tokens. */
-const KB_ATTR = 'data-kb-collection';
+
 
 /**
  * Extract plain text and skill names from the contenteditable div.
@@ -37,9 +36,8 @@ const KB_ATTR = 'data-kb-collection';
  * Recursively traverses all child nodes since browsers may wrap content
  * in <div> elements.
  */
-function extractContent(el: HTMLDivElement): { text: string; skills: string[]; collections: string[] } {
+function extractContent(el: HTMLDivElement): { text: string; skills: string[] } {
   const skills: string[] = [];
-  const collections: string[] = [];
   let text = '';
 
   function walk(node: Node) {
@@ -48,17 +46,11 @@ function extractContent(el: HTMLDivElement): { text: string; skills: string[]; c
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const element = node as HTMLElement;
       const skillName = element.getAttribute(SKILL_ATTR);
-      const kbName = element.getAttribute(KB_ATTR);
       if (skillName) {
         if (!skills.includes(skillName)) {
           skills.push(skillName);
         }
         return; // Don't descend into skill mention spans.
-      } else if (kbName) {
-        if (!collections.includes(kbName)) {
-          collections.push(kbName);
-        }
-        return; // Don't descend into collection mention spans.
       } else if (element.tagName === 'BR') {
         text += '\n';
       } else {
@@ -80,8 +72,8 @@ function extractContent(el: HTMLDivElement): { text: string; skills: string[]; c
     walk(child);
   }
 
-  console.debug('[InputArea] extractContent:', { text: text.trim(), skills, collections });
-  return { text, skills, collections };
+  console.debug('[InputArea] extractContent:', { text: text.trim(), skills });
+  return { text, skills };
 }
 
 /** Get the plain text content (without skill tags) for command detection. */
@@ -93,7 +85,7 @@ function getPlainText(el: HTMLDivElement): string {
       text += node.textContent || '';
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const element = node as HTMLElement;
-      if (element.getAttribute(SKILL_ATTR) || element.getAttribute(KB_ATTR)) {
+      if (element.getAttribute(SKILL_ATTR)) {
         // Skip mention tokens — they're not part of the text.
       } else if (element.tagName === 'BR') {
         text += '\n';
@@ -126,15 +118,7 @@ function createSkillMention(skillName: string): HTMLSpanElement {
   return span;
 }
 
-/** Create a knowledge collection mention DOM element. */
-function createKbMention(collectionName: string): HTMLSpanElement {
-  const span = document.createElement('span');
-  span.setAttribute(KB_ATTR, collectionName);
-  span.setAttribute('contenteditable', 'false');
-  span.className = 'kb-mention';
-  span.textContent = `#${collectionName}`;
-  return span;
-}
+
 
 /** Place the cursor at the end of a contenteditable element. */
 function placeCursorAtEnd(el: HTMLElement) {
@@ -285,28 +269,16 @@ export function InputArea({
     [exitCommandMode, updateHasContent],
   );
 
+  const toggleKbCollection = useCallback((name: string) => {
+    setSelectedKbCollections(prev =>
+      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
+    );
+  }, []);
+
   const handleKbCollectionSelect = useCallback(
     (collectionName: string) => {
       exitCommandMode();
       if (!editableRef.current) return;
-
-      // Check if collection is already mentioned.
-      const existing = editableRef.current.querySelector(`[${KB_ATTR}="${collectionName}"]`);
-      if (existing) {
-        // Already present — just clear the slash text and refocus.
-        const textNodes = Array.from(editableRef.current.childNodes).filter(
-          (n) => n.nodeType === Node.TEXT_NODE,
-        );
-        for (const tn of textNodes) {
-          const t = tn.textContent || '';
-          if (t.startsWith('/')) {
-            tn.textContent = t.replace(/^\/\S*\s?/, '');
-          }
-        }
-        placeCursorAtEnd(editableRef.current);
-        updateHasContent();
-        return;
-      }
 
       // Remove the slash command text that triggered command mode.
       const textNodes = Array.from(editableRef.current.childNodes).filter(
@@ -319,26 +291,14 @@ export function InputArea({
         }
       }
 
-      // Insert the collection mention token.
-      const mention = createKbMention(collectionName);
-      editableRef.current.appendChild(mention);
-
-      // Add a trailing space so the cursor has somewhere to go.
-      const space = document.createTextNode('\u00A0');
-      editableRef.current.appendChild(space);
+      // Use the same toggle logic as the toolbar KB button.
+      toggleKbCollection(collectionName);
 
       placeCursorAtEnd(editableRef.current);
       editableRef.current.focus();
-      updateHasContent();
     },
-    [exitCommandMode, updateHasContent],
+    [exitCommandMode, toggleKbCollection],
   );
-
-  const toggleKbCollection = useCallback((name: string) => {
-    setSelectedKbCollections(prev =>
-      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
-    );
-  }, []);
 
   const clearKbSelections = useCallback(() => {
     setSelectedKbCollections([]);
@@ -347,18 +307,10 @@ export function InputArea({
   const handleSend = useCallback(() => {
     if (!editableRef.current || disabled) return;
 
-    const { text, skills: extractedSkills, collections: extractedCollections } = extractContent(editableRef.current);
+    const { text, skills: extractedSkills } = extractContent(editableRef.current);
     const trimmed = text.trim();
 
-    // Merge inline kb mentions with picker selections.
-    const allCollections = [...extractedCollections];
-    for (const name of selectedKbCollections) {
-      if (!allCollections.includes(name)) {
-        allCollections.push(name);
-      }
-    }
-
-    if (!trimmed && extractedSkills.length === 0 && allCollections.length === 0) return;
+    if (!trimmed && extractedSkills.length === 0 && selectedKbCollections.length === 0) return;
 
     // Intercept slash commands.
     if (trimmed.startsWith('/')) {
@@ -371,11 +323,11 @@ export function InputArea({
       }
     }
 
-    console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, allCollections });
+    console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, selectedKbCollections });
     onSend(
       trimmed,
       extractedSkills.length > 0 ? extractedSkills : undefined,
-      allCollections.length > 0 ? allCollections : undefined,
+      selectedKbCollections.length > 0 ? selectedKbCollections : undefined,
     );
     resetInput();
     exitCommandMode();

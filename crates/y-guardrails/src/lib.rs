@@ -59,6 +59,11 @@ impl GuardrailManager {
         Self { config }
     }
 
+    /// Read-only access to the underlying guardrail configuration.
+    pub fn config(&self) -> &GuardrailConfig {
+        &self.config
+    }
+
     /// Create the `ToolGuardMiddleware`.
     pub fn tool_guard(&self) -> ToolGuardMiddleware {
         ToolGuardMiddleware::new(self.config.clone())

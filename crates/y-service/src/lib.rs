@@ -35,8 +35,9 @@ pub use agent_service::{
     ServiceAgentRunner,
 };
 pub use chat::{
-    ChatService, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ToolCallRecord, TurnError,
-    TurnEvent, TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
+    ChatService, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError,
+    ResendTurnRequest, ToolCallRecord, TurnError, TurnEvent, TurnEventSender, TurnInput,
+    TurnMetaSummary, TurnResult,
 };
 pub use config::ServiceConfig;
 pub use container::ServiceContainer;

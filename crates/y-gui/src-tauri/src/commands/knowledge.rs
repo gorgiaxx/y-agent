@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use y_knowledge::config::KnowledgeConfig;
 use y_service::knowledge_service::KnowledgeService;
@@ -430,34 +430,10 @@ pub async fn kb_stats(
     })
 }
 
-/// Supported file extensions for knowledge ingestion.
-const SUPPORTED_EXTENSIONS: &[&str] = &[
-    // Markdown
-    "md", "markdown", "mdx",
-    // Plain text & docs
-    "txt", "text", "rst", "adoc", "org", "rtf",
-    // Data / config
-    "json", "jsonl", "yaml", "yml", "toml", "csv", "tsv",
-    "xml", "html", "htm", "svg",
-    "ini", "cfg", "conf", "env", "properties",
-    // Source code
-    "rs", "py", "js", "ts", "jsx", "tsx", "go", "java",
-    "c", "h", "cpp", "hpp", "cc", "cs", "rb", "php",
-    "swift", "kt", "kts", "scala", "lua", "r", "pl",
-    "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
-    "sql", "graphql", "gql",
-    // Misc text
-    "log", "diff", "patch", "tex", "bib",
-    "css", "scss", "less", "sass",
-    "vue", "svelte", "astro",
-    "dockerfile", "makefile", "cmake",
-];
-
 /// Expand a folder path into a list of supported files (recursively).
 ///
-/// If the given path is a file, returns it as-is (if its extension is supported).
-/// If it is a directory, recursively walks it and collects all files with
-/// supported extensions.
+/// Delegates to `y_knowledge::supported_formats` for extension checks and
+/// recursive directory walking.
 #[tauri::command]
 pub async fn kb_expand_folder(path: String) -> Result<Vec<String>, String> {
     let root = PathBuf::from(&path);
@@ -465,65 +441,91 @@ pub async fn kb_expand_folder(path: String) -> Result<Vec<String>, String> {
         return Err(format!("Path does not exist: {path}"));
     }
 
-    // If it's a single file, just check its extension.
+    // Single file: check extension via the knowledge crate.
     if root.is_file() {
-        if is_supported_extension(&root) {
+        if y_knowledge::supported_formats::is_supported(&root) {
             return Ok(vec![path]);
         } else {
-            return Ok(vec![]); // unsupported file
+            return Ok(vec![]);
         }
     }
 
-    // Recursively walk the directory.
-    let mut files = Vec::new();
-    collect_supported_files(&root, &mut files).map_err(|e| format!("Failed to scan folder: {e}"))?;
+    // Directory: recursively collect supported files.
+    let files = y_knowledge::supported_formats::expand_directory(&root)
+        .map_err(|e| format!("Failed to scan folder: {e}"))?;
 
-    // Sort for deterministic ordering.
-    files.sort();
-
-    Ok(files)
+    Ok(files
+        .into_iter()
+        .filter_map(|p| p.to_str().map(String::from))
+        .collect())
 }
 
-/// Check if a path has a supported extension for knowledge ingestion.
-fn is_supported_extension(path: &std::path::Path) -> bool {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    // Also support extensionless files named like "Dockerfile", "Makefile", etc.
-    if ext.is_empty() {
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            let lower = name.to_lowercase();
-            return matches!(lower.as_str(), "dockerfile" | "makefile" | "cmakelists.txt" | "readme" | "license" | "changelog");
-        }
-        return false;
-    }
-
-    SUPPORTED_EXTENSIONS.contains(&ext.as_str())
+/// Progress event payload emitted during batch ingestion.
+#[derive(Debug, Serialize, Clone)]
+pub struct BatchProgressPayload {
+    pub current: usize,
+    pub total: usize,
+    pub source: String,
 }
 
-/// Recursively collect files with supported extensions from a directory.
-fn collect_supported_files(dir: &std::path::Path, out: &mut Vec<String>) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
+/// Result summary for a batch ingestion operation.
+#[derive(Debug, Serialize, Clone)]
+pub struct BatchIngestResult {
+    pub succeeded: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
 
-        // Skip hidden files/directories (starting with '.')
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') {
-                continue;
+/// Ingest multiple files in a single backend call.
+///
+/// Emits `kb:batch_progress` events between files so the frontend can
+/// update the progress bar without additional IPC round-trips.
+#[tauri::command]
+pub async fn kb_ingest_batch(
+    app: tauri::AppHandle,
+    kb: State<'_, KnowledgeState>,
+    sources: Vec<String>,
+    domain: Option<String>,
+    collection: String,
+) -> Result<BatchIngestResult, String> {
+    let total = sources.len();
+    let mut succeeded = 0usize;
+    let mut errors = Vec::<String>::new();
+
+    for (i, source) in sources.iter().enumerate() {
+        // Emit progress before each file.
+        let _ = app.emit(
+            "kb:batch_progress",
+            BatchProgressPayload {
+                current: i + 1,
+                total,
+                source: source.clone(),
+            },
+        );
+
+        let params = y_knowledge::tools::KnowledgeIngestParams {
+            source: source.clone(),
+            domain: domain.clone(),
+            collection: collection.clone(),
+        };
+
+        let mut service = kb.service.lock().await;
+        match service.ingest(&params, "default").await {
+            Ok(r) if r.success => {
+                succeeded += 1;
             }
-        }
-
-        if path.is_dir() {
-            collect_supported_files(&path, out)?;
-        } else if path.is_file() && is_supported_extension(&path) {
-            if let Some(s) = path.to_str() {
-                out.push(s.to_string());
+            Ok(r) => {
+                errors.push(format!("{source}: {}", r.message));
+            }
+            Err(e) => {
+                errors.push(format!("{source}: {e}"));
             }
         }
     }
-    Ok(())
+
+    Ok(BatchIngestResult {
+        succeeded,
+        failed: errors.len(),
+        errors,
+    })
 }

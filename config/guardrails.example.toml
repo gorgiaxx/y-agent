@@ -8,6 +8,11 @@ default_permission = "notify"
 # Whether tools marked as dangerous auto-escalate to "ask".
 dangerous_auto_ask = true
 
+# Maximum consecutive LLM calls within a single chat turn (tool-call loop).
+# When the LLM responds with tool calls, each round-trip counts as one
+# iteration. If this limit is reached, the turn is terminated.
+# max_tool_iterations = 10
+
 # --- Per-tool Permission Overrides -------------------------------------------
 # Uncomment and customize as needed.
 

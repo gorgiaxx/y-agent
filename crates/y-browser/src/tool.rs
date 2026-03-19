@@ -1,6 +1,7 @@
 //! Browser tool implementing `y-core::tool::Tool`.
 //!
 //! Exposes browser automation as a single unified tool for the agent.
+//! Key workflow: snapshot → get refs → click/type with refs.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +22,10 @@ use crate::cdp_client::CdpClient;
 use crate::config::BrowserConfig;
 use crate::launcher::ChromeLauncher;
 use crate::security::SecurityPolicy;
-use crate::snapshot::SnapshotFormat;
+use crate::snapshot::{SnapshotFormat, truncate_output};
+
+/// Maximum output characters before truncation.
+const MAX_OUTPUT_CHARS: usize = 50_000;
 
 /// Supported browser actions (parsed from tool input).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,28 +44,63 @@ pub enum BrowserAction {
     PressKey,
     Scroll,
     GetPageText,
+    GetConsoleLogs,
     Close,
 }
 
 impl BrowserAction {
     fn from_str(s: &str) -> Option<Self> {
         match s {
-            "navigate" | "open" => Some(Self::Navigate),
-            "screenshot" => Some(Self::Screenshot),
-            "snapshot" => Some(Self::Snapshot),
-            "click" => Some(Self::Click),
-            "type" | "type_text" => Some(Self::Type),
-            "get_text" => Some(Self::GetText),
-            "get_title" => Some(Self::GetTitle),
-            "get_url" => Some(Self::GetUrl),
-            "evaluate" => Some(Self::Evaluate),
-            "wait" => Some(Self::Wait),
-            "press_key" | "press" => Some(Self::PressKey),
-            "scroll" => Some(Self::Scroll),
-            "get_page_text" => Some(Self::GetPageText),
-            "close" => Some(Self::Close),
+            // Navigation
+            "navigate" | "open" | "goto" | "go" | "load" | "visit" | "open_url" | "go_to" => {
+                Some(Self::Navigate)
+            }
+            // Screenshot
+            "screenshot" | "capture" | "screen" | "take_screenshot" | "capture_screenshot" => {
+                Some(Self::Screenshot)
+            }
+            // Snapshot (accessibility tree)
+            "snapshot" | "inspect" | "get_elements" | "list_elements" | "dom" | "get_dom"
+            | "accessibility" | "a11y" => Some(Self::Snapshot),
+            // Click
+            "click" | "tap" | "press_button" | "click_element" => Some(Self::Click),
+            // Type / fill text
+            "type" | "type_text" | "fill" | "input" | "enter_text" | "set_value" | "fill_text"
+            | "input_text" | "write" => Some(Self::Type),
+            // Get element text
+            "get_text" | "read_text" | "text" | "element_text" | "get_element_text"
+            | "extract_text" => Some(Self::GetText),
+            // Get title
+            "get_title" | "title" | "page_title" => Some(Self::GetTitle),
+            // Get URL
+            "get_url" | "url" | "current_url" | "page_url" => Some(Self::GetUrl),
+            // Evaluate JS
+            "evaluate" | "eval" | "execute" | "exec" | "run_js" | "javascript" | "js"
+            | "execute_script" | "run_script" | "eval_js" => Some(Self::Evaluate),
+            // Wait
+            "wait" | "sleep" | "delay" | "wait_for" | "pause" => Some(Self::Wait),
+            // Press key
+            "press_key" | "press" | "key" | "keypress" | "send_key" | "keyboard" => {
+                Some(Self::PressKey)
+            }
+            // Scroll
+            "scroll" | "scroll_page" | "scroll_down" | "scroll_up" => Some(Self::Scroll),
+            // Get full page text
+            "get_page_text" | "page_text" | "get_content" | "get_page_content" | "read_page"
+            | "page_content" | "body_text" | "get_body" | "read" | "read_content"
+            | "extract" | "scrape" => Some(Self::GetPageText),
+            // Console logs
+            "get_console_logs" | "console" | "console_logs" | "logs" | "get_logs"
+            | "get_errors" | "errors" => Some(Self::GetConsoleLogs),
+            // Close
+            "close" | "quit" | "exit" | "disconnect" | "stop" => Some(Self::Close),
             _ => None,
         }
+    }
+
+    /// All valid action names, for error messages.
+    fn all_names() -> &'static str {
+        "navigate, screenshot, snapshot, click, type, get_text, get_title, get_url, evaluate, wait, press_key, scroll, get_page_text, get_console_logs, close"
     }
 }
 
@@ -74,6 +113,8 @@ pub struct BrowserTool {
     security: SecurityPolicy,
     /// Locally launched Chrome process (if `auto_launch` is enabled).
     launcher: Mutex<Option<ChromeLauncher>>,
+    /// Whether console monitoring has been started.
+    console_started: Mutex<bool>,
 }
 
 impl BrowserTool {
@@ -104,6 +145,7 @@ impl BrowserTool {
             actions,
             security,
             launcher: Mutex::new(None),
+            console_started: Mutex::new(false),
         }
     }
 
@@ -112,13 +154,25 @@ impl BrowserTool {
         ToolDefinition {
             name: ToolName::from_string("browser"),
             description: concat!(
-                "Control a browser via Chrome DevTools Protocol. ",
-                "Actions: navigate (open URL), screenshot (capture page), ",
-                "snapshot (accessibility tree with refs like @e1), ",
-                "click (CSS selector), type (fill input), get_text, get_title, get_url, ",
-                "evaluate (run JS), wait (selector or ms), press_key, scroll, get_page_text, close. ",
-                "Use 'snapshot' first to get element refs, then 'click'/'type' with those refs. ",
-                "Requires Chrome running with --remote-debugging-port or auto_launch enabled."
+                "Control a web browser. ",
+                "WORKFLOW: (1) navigate to URL, (2) snapshot to get @refs, (3) click/type using @refs.\n\n",
+                "Actions:\n",
+                "- navigate: Open a URL. Args: url (required)\n",
+                "- snapshot: Get page elements with @eN refs. Use these refs for click/type. Args: format ('aria'|'dom'), interactive_only (bool, default true)\n",
+                "- click: Click an element. Args: selector ('@e1' ref from snapshot, or CSS selector)\n",
+                "- type: Type text into an input. Args: selector ('@e1' ref or CSS), text (required)\n",
+                "- screenshot: Capture page image. Args: full_page (bool)\n",
+                "- get_text: Get element text. Args: selector ('@e1' ref or CSS)\n",
+                "- get_title: Get page title\n",
+                "- get_url: Get current URL\n",
+                "- evaluate: Run JavaScript. Args: expression (required)\n",
+                "- wait: Wait for condition. Args: selector (CSS to wait for) or ms (milliseconds)\n",
+                "- press_key: Press keyboard key. Args: key ('Enter', 'Tab', 'Escape', etc.)\n",
+                "- scroll: Scroll page. Args: direction ('up'|'down'|'left'|'right'), pixels (default 300)\n",
+                "- get_page_text: Get all visible page text\n",
+                "- get_console_logs: Get browser console output (errors, warnings, logs)\n",
+                "- close: Close browser\n\n",
+                "IMPORTANT: After 'snapshot', use the @eN refs (e.g. @e3) for click/type — do NOT guess CSS selectors.",
             ).into(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -129,7 +183,7 @@ impl BrowserTool {
                             "navigate", "screenshot", "snapshot",
                             "click", "type", "get_text", "get_title", "get_url",
                             "evaluate", "wait", "press_key", "scroll",
-                            "get_page_text", "close"
+                            "get_page_text", "get_console_logs", "close"
                         ],
                         "description": "Browser action to perform"
                     },
@@ -139,7 +193,7 @@ impl BrowserTool {
                     },
                     "selector": {
                         "type": "string",
-                        "description": "CSS selector for click/type/get_text"
+                        "description": "Element ref from snapshot (e.g. '@e1') or CSS selector (for click/type/get_text)"
                     },
                     "text": {
                         "type": "string",
@@ -156,7 +210,11 @@ impl BrowserTool {
                     "format": {
                         "type": "string",
                         "enum": ["aria", "dom"],
-                        "description": "Snapshot format: 'aria' (accessibility) or 'dom' (HTML tree)"
+                        "description": "Snapshot format: 'aria' (accessibility, default) or 'dom' (HTML tree)"
+                    },
+                    "interactive_only": {
+                        "type": "boolean",
+                        "description": "Snapshot only interactive elements like buttons, links, inputs (default: true, much fewer tokens)"
                     },
                     "key": {
                         "type": "string",
@@ -201,35 +259,52 @@ impl BrowserTool {
                 let chrome = ChromeLauncher::launch(
                     &self.config.chrome_path,
                     self.config.local_cdp_port,
+                    self.config.headless,
                 ).await.map_err(|e| ToolError::ExternalServiceError {
                     name: "browser".into(),
                     message: format!("Failed to launch Chrome: {e}"),
                 })?;
                 *launcher_guard = Some(chrome);
             }
+
+            // Use the launcher's actual port (may differ from config if
+            // the configured port was already in use).
+            let actual_port = launcher_guard.as_ref().unwrap().cdp_port();
+            let cdp_url = format!("http://127.0.0.1:{actual_port}");
+
+            debug!(cdp_url = %cdp_url, "connecting to CDP (auto-launched)");
+            self.client.set_cdp_url(cdp_url.clone());
+            self.client.connect().await.map_err(|e| {
+                ToolError::ExternalServiceError {
+                    name: "browser".into(),
+                    message: format!(
+                        "Failed to connect to Chrome CDP at '{}': {}. Chrome was auto-launched but CDP connection failed.",
+                        cdp_url, e,
+                    ),
+                }
+            })?;
+        } else {
+            let cdp_url = &self.config.cdp_url;
+            debug!(cdp_url = %cdp_url, "connecting to CDP");
+            self.client.connect().await.map_err(|e| {
+                ToolError::ExternalServiceError {
+                    name: "browser".into(),
+                    message: format!(
+                        "Failed to connect to Chrome CDP at '{}': {}. Make sure Chrome is running with --remote-debugging-port=9222",
+                        cdp_url, e,
+                    ),
+                }
+            })?;
         }
 
-        let cdp_url = if self.config.auto_launch {
-            format!("http://127.0.0.1:{}", self.config.local_cdp_port)
-        } else {
-            self.config.cdp_url.clone()
-        };
+        // Start console monitoring on first connection.
+        let mut started = self.console_started.lock().await;
+        if !*started {
+            self.actions.enable_console_monitoring().await;
+            *started = true;
+        }
 
-        debug!(cdp_url = %cdp_url, "connecting to CDP");
-        self.client.connect().await.map_err(|e| {
-            ToolError::ExternalServiceError {
-                name: "browser".into(),
-                message: format!(
-                    "Failed to connect to Chrome CDP at '{}': {}. {}",
-                    cdp_url, e,
-                    if self.config.auto_launch {
-                        "Chrome was auto-launched but CDP connection failed."
-                    } else {
-                        "Make sure Chrome is running with --remote-debugging-port=9222"
-                    }
-                ),
-            }
-        })
+        Ok(())
     }
 
     /// Shutdown the launcher and disconnect.
@@ -239,6 +314,7 @@ impl BrowserTool {
         if let Some(mut chrome) = launcher_guard.take() {
             chrome.shutdown().await;
         }
+        *self.console_started.lock().await = false;
     }
 }
 
@@ -261,12 +337,19 @@ impl Tool for BrowserTool {
         let action_str = input.arguments["action"]
             .as_str()
             .ok_or_else(|| ToolError::ValidationError {
-                message: "missing 'action' parameter".into(),
+                message: format!(
+                    "Missing 'action' parameter. Valid actions: {}",
+                    BrowserAction::all_names()
+                ),
             })?;
 
         let action = BrowserAction::from_str(action_str).ok_or_else(|| {
             ToolError::ValidationError {
-                message: format!("unknown browser action: '{action_str}'"),
+                message: format!(
+                    "Unknown browser action: '{}'. Valid actions: {}",
+                    action_str,
+                    BrowserAction::all_names()
+                ),
             }
         })?;
 
@@ -283,12 +366,15 @@ impl Tool for BrowserTool {
 
         self.ensure_connected().await?;
 
+        // Collect console warnings to attach to the response.
+        let console_warnings: Vec<String>;
+
         let result = match action {
             BrowserAction::Navigate => {
                 let url = input.arguments["url"]
                     .as_str()
                     .ok_or_else(|| ToolError::ValidationError {
-                        message: "missing 'url' parameter for navigate".into(),
+                        message: "Missing 'url' parameter for navigate. Example: {\"action\": \"navigate\", \"url\": \"https://example.com\"}".into(),
                     })?;
 
                 // Security check.
@@ -328,10 +414,13 @@ impl Tool for BrowserTool {
                 let limit = input.arguments["limit"]
                     .as_u64()
                     .unwrap_or(500) as usize;
+                let interactive_only = input.arguments["interactive_only"]
+                    .as_bool()
+                    .unwrap_or(true);
 
-                let snap = match format {
+                let mut snap = match format {
                     SnapshotFormat::Aria => {
-                        self.actions.snapshot_aria(limit).await.map_err(cdp_to_tool_error)?
+                        self.actions.snapshot_aria(limit, interactive_only).await.map_err(cdp_to_tool_error)?
                     }
                     SnapshotFormat::Dom => {
                         let max_text = input.arguments["max_text_chars"]
@@ -343,18 +432,30 @@ impl Tool for BrowserTool {
                             .map_err(cdp_to_tool_error)?
                     }
                 };
+
+                // Truncate large snapshot text.
+                snap.text = truncate_output(&snap.text, MAX_OUTPUT_CHARS);
                 serde_json::to_value(snap).unwrap_or_default()
             }
 
             BrowserAction::Click => {
-                let selector = require_str(&input.arguments, "selector")?;
+                let selector = require_str(&input.arguments, "selector")
+                    .map_err(|_| ToolError::ValidationError {
+                        message: "Missing 'selector' for click. Use an @ref from snapshot (e.g. '@e1') or a CSS selector (e.g. '#submit-btn').".into(),
+                    })?;
                 self.actions.click(selector).await.map_err(cdp_to_tool_error)?;
                 serde_json::json!({"action": "click", "selector": selector, "ok": true})
             }
 
             BrowserAction::Type => {
-                let selector = require_str(&input.arguments, "selector")?;
-                let text = require_str(&input.arguments, "text")?;
+                let selector = require_str(&input.arguments, "selector")
+                    .map_err(|_| ToolError::ValidationError {
+                        message: "Missing 'selector' for type. Use an @ref from snapshot (e.g. '@e3') or a CSS selector.".into(),
+                    })?;
+                let text = require_str(&input.arguments, "text")
+                    .map_err(|_| ToolError::ValidationError {
+                        message: "Missing 'text' for type. Example: {\"action\": \"type\", \"selector\": \"@e3\", \"text\": \"hello\"}".into(),
+                    })?;
                 self.actions
                     .type_text(selector, text)
                     .await
@@ -363,8 +464,12 @@ impl Tool for BrowserTool {
             }
 
             BrowserAction::GetText => {
-                let selector = require_str(&input.arguments, "selector")?;
+                let selector = require_str(&input.arguments, "selector")
+                    .map_err(|_| ToolError::ValidationError {
+                        message: "Missing 'selector' for get_text. Use an @ref (e.g. '@e5') or CSS selector.".into(),
+                    })?;
                 let text = self.actions.get_text(selector).await.map_err(cdp_to_tool_error)?;
+                let text = truncate_output(&text, MAX_OUTPUT_CHARS);
                 serde_json::json!({"text": text, "selector": selector})
             }
 
@@ -379,7 +484,10 @@ impl Tool for BrowserTool {
             }
 
             BrowserAction::Evaluate => {
-                let expression = require_str(&input.arguments, "expression")?;
+                let expression = require_str(&input.arguments, "expression")
+                    .map_err(|_| ToolError::ValidationError {
+                        message: "Missing 'expression' for evaluate. Example: {\"action\": \"evaluate\", \"expression\": \"document.title\"}".into(),
+                    })?;
                 let eval = self
                     .actions
                     .evaluate(expression)
@@ -399,7 +507,10 @@ impl Tool for BrowserTool {
             }
 
             BrowserAction::PressKey => {
-                let key = require_str(&input.arguments, "key")?;
+                let key = require_str(&input.arguments, "key")
+                    .map_err(|_| ToolError::ValidationError {
+                        message: "Missing 'key' for press_key. Example: {\"action\": \"press_key\", \"key\": \"Enter\"}".into(),
+                    })?;
                 self.actions.press_key(key).await.map_err(cdp_to_tool_error)?;
                 serde_json::json!({"action": "press_key", "key": key, "ok": true})
             }
@@ -424,16 +535,36 @@ impl Tool for BrowserTool {
                     .get_page_text()
                     .await
                     .map_err(cdp_to_tool_error)?;
+                let text = truncate_output(&text, MAX_OUTPUT_CHARS);
                 serde_json::json!({"text": text})
+            }
+
+            BrowserAction::GetConsoleLogs => {
+                let logs = self.actions.take_console_logs().await;
+                serde_json::json!({
+                    "logs": logs,
+                    "count": logs.len(),
+                })
             }
 
             BrowserAction::Close => unreachable!(), // handled above
         };
 
+        // Attach any console errors/warnings that occurred during the action.
+        console_warnings = self
+            .actions
+            .peek_console_logs()
+            .await
+            .iter()
+            .filter(|l| l.level == "error" || l.level == "warning")
+            .take(5) // limit to avoid flooding
+            .map(|l| format!("[console.{}] {}", l.level, l.text))
+            .collect();
+
         Ok(ToolOutput {
             success: true,
             content: result,
-            warnings: vec![],
+            warnings: console_warnings,
             metadata: serde_json::json!({}),
         })
     }
@@ -456,7 +587,7 @@ fn cdp_to_tool_error(e: crate::cdp_client::CdpError) -> ToolError {
     match e {
         CdpError::NotConnected => ToolError::ExternalServiceError {
             name: "browser".into(),
-            message: "CDP connection lost".into(),
+            message: "CDP connection lost. Try the action again.".into(),
         },
         CdpError::Timeout(ms) => ToolError::Timeout {
             timeout_secs: ms / 1000,

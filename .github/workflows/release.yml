@@ -5,6 +5,13 @@ on:
     tags:
       - "v*"
 
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag (e.g. v0.1.0)"
+        required: false
+
 permissions:
   contents: write
   packages: write
@@ -12,6 +19,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  CARGO_TERM_COLOR: always
 
 jobs:
   # ── Gate: ensure CI passes before releasing ──────────────────────────
@@ -62,9 +70,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Build release binaries ──────────────────────────────────────────
-  binaries:
-    name: Build Binary (${{ matrix.target }})
+  # ── Build CLI release binaries ──────────────────────────────────────
+  cli-binaries:
+    name: CLI (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     needs: ci-gate
     strategy:
@@ -73,16 +81,19 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: y-agent-linux-amd64
+            platform: linux-amd64
+
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: y-agent-linux-arm64
+            platform: linux-arm64
+
           - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: y-agent-darwin-amd64
+            os: macos-13
+            platform: darwin-amd64
+
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: y-agent-darwin-arm64
+            platform: darwin-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -93,9 +104,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.target }}
+          key: release-cli-${{ matrix.target }}
 
-      - name: Install cross-compilation tools
+      - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
@@ -114,23 +125,164 @@ jobs:
             strip target/${{ matrix.target }}/release/y-agent
           fi
 
-      - name: Package binary
+      - name: Strip binary (macOS)
+        if: contains(matrix.target, 'apple')
+        run: strip target/${{ matrix.target }}/release/y-agent
+
+      - name: Determine version
+        id: version
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/y-agent dist/${{ matrix.artifact }}
-          tar -czf dist/${{ matrix.artifact }}.tar.gz -C dist ${{ matrix.artifact }}
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${{ inputs.tag || '0.0.0-dev' }}"
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Package CLI zip
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE_NAME="y-agent-cli-${VERSION}-${{ matrix.platform }}"
+          mkdir -p "dist/${ARCHIVE_NAME}"
+          cp "target/${{ matrix.target }}/release/y-agent" "dist/${ARCHIVE_NAME}/"
+          cp -r config "dist/${ARCHIVE_NAME}/config"
+          cp -r builtin-skills "dist/${ARCHIVE_NAME}/builtin-skills"
+          cp README.md "dist/${ARCHIVE_NAME}/"
+          cd dist
+          zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}.tar.gz
+          name: cli-${{ matrix.platform }}
+          path: dist/*.zip
+
+  # ── Build GUI (Tauri) app ───────────────────────────────────────────
+  gui-app:
+    name: GUI (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    needs: ci-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-amd64
+            target: x86_64-unknown-linux-gnu
+
+          - os: macos-13
+            platform: darwin-amd64
+            target: x86_64-apple-darwin
+
+          - os: macos-latest
+            platform: darwin-arm64
+            target: aarch64-apple-darwin
+
+          - os: windows-latest
+            platform: windows-amd64
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-gui-${{ matrix.target }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libsqlite3-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        working-directory: crates/y-gui
+        run: npm install
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${{ inputs.tag || '0.0.0-dev' }}"
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build Tauri app
+        working-directory: crates/y-gui
+        run: npx @tauri-apps/cli build --target ${{ matrix.target }}
+
+      - name: Package GUI zip (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE_NAME="y-agent-gui-${VERSION}-${{ matrix.platform }}"
+          BUNDLE_DIR="crates/y-gui/src-tauri/target/${{ matrix.target }}/release/bundle"
+          mkdir -p "dist/${ARCHIVE_NAME}"
+          # Copy .dmg if available
+          cp "${BUNDLE_DIR}"/dmg/*.dmg "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+          # Copy .app bundle
+          cp -r "${BUNDLE_DIR}"/macos/*.app "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp README.md "dist/${ARCHIVE_NAME}/"
+          cd dist && zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
+
+      - name: Package GUI zip (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE_NAME="y-agent-gui-${VERSION}-${{ matrix.platform }}"
+          BUNDLE_DIR="crates/y-gui/src-tauri/target/${{ matrix.target }}/release/bundle"
+          mkdir -p "dist/${ARCHIVE_NAME}"
+          cp "${BUNDLE_DIR}"/deb/*.deb "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp "${BUNDLE_DIR}"/appimage/*.AppImage "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp "${BUNDLE_DIR}"/rpm/*.rpm "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp README.md "dist/${ARCHIVE_NAME}/"
+          cd dist && zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
+
+      - name: Package GUI zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $VERSION = "${{ steps.version.outputs.version }}"
+          $ARCHIVE_NAME = "y-agent-gui-${VERSION}-${{ matrix.platform }}"
+          $BUNDLE_DIR = "crates/y-gui/src-tauri/target/${{ matrix.target }}/release/bundle"
+          New-Item -ItemType Directory -Force -Path "dist/${ARCHIVE_NAME}"
+          Copy-Item "${BUNDLE_DIR}/msi/*.msi" "dist/${ARCHIVE_NAME}/" -ErrorAction SilentlyContinue
+          Copy-Item "${BUNDLE_DIR}/nsis/*.exe" "dist/${ARCHIVE_NAME}/" -ErrorAction SilentlyContinue
+          Copy-Item "README.md" "dist/${ARCHIVE_NAME}/"
+          Compress-Archive -Path "dist/${ARCHIVE_NAME}" -DestinationPath "dist/${ARCHIVE_NAME}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-${{ matrix.platform }}
+          path: dist/*.zip
 
   # ── Create GitHub Release ───────────────────────────────────────────
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [docker, binaries]
+    needs: [docker, cli-binaries, gui-app]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -141,6 +293,11 @@ jobs:
         with:
           path: dist/
           merge-multiple: true
+
+      - name: List release assets
+        run: |
+          echo "📦 Release assets:"
+          ls -lah dist/
 
       - name: Generate changelog
         id: changelog
@@ -155,11 +312,34 @@ jobs:
             echo "## Initial Release" > CHANGELOG.md
           fi
 
+          # Add download section
+          echo "" >> CHANGELOG.md
+          echo "---" >> CHANGELOG.md
+          echo "## Downloads" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "### CLI (Command Line)" >> CHANGELOG.md
+          echo "| Platform | File |" >> CHANGELOG.md
+          echo "|----------|------|" >> CHANGELOG.md
+          for f in dist/y-agent-cli-*.zip; do
+            [ -f "$f" ] || continue
+            fname=$(basename "$f")
+            echo "| ${fname} | [Download](${fname}) |" >> CHANGELOG.md
+          done
+          echo "" >> CHANGELOG.md
+          echo "### GUI (Desktop App)" >> CHANGELOG.md
+          echo "| Platform | File |" >> CHANGELOG.md
+          echo "|----------|------|" >> CHANGELOG.md
+          for f in dist/y-agent-gui-*.zip; do
+            [ -f "$f" ] || continue
+            fname=$(basename "$f")
+            echo "| ${fname} | [Download](${fname}) |" >> CHANGELOG.md
+          done
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body_path: CHANGELOG.md
-          files: dist/*.tar.gz
+          files: dist/*.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -11,6 +11,10 @@
 # When true, y-agent spawns Chrome and manages its lifecycle.
 # auto_launch = false
 
+# Run Chrome in headless mode (no visible window).
+# Set to false for debugging or visual verification.
+# headless = true
+
 # Path to Chrome/Chromium executable.
 # Leave empty for auto-detection (tries Google Chrome, Chromium, etc.)
 # chrome_path = ""

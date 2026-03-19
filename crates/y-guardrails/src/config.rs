@@ -21,6 +21,14 @@ pub struct GuardrailConfig {
     #[serde(default = "default_true")]
     pub dangerous_auto_ask: bool,
 
+    /// Maximum consecutive LLM calls within a single chat turn (tool-call loop).
+    ///
+    /// When the LLM responds with tool calls, each round-trip counts as one
+    /// iteration. If this limit is reached, the turn is terminated with a
+    /// `ToolLoopLimitExceeded` error.
+    #[serde(default = "default_max_tool_iterations")]
+    pub max_tool_iterations: usize,
+
     /// Loop detection configuration.
     #[serde(default)]
     pub loop_guard: LoopGuardConfig,
@@ -40,6 +48,7 @@ impl Default for GuardrailConfig {
             default_permission: PermissionAction::Allow,
             tool_permissions: HashMap::new(),
             dangerous_auto_ask: true,
+            max_tool_iterations: default_max_tool_iterations(),
             loop_guard: LoopGuardConfig::default(),
             risk: RiskConfig::default(),
             hitl: HitlConfig::default(),
@@ -120,6 +129,10 @@ fn default_global_permission() -> PermissionAction {
 
 const fn default_true() -> bool {
     true
+}
+
+const fn default_max_tool_iterations() -> usize {
+    10
 }
 
 const fn default_repetition_threshold() -> usize {

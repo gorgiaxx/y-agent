@@ -780,6 +780,7 @@ impl AgentService {
                     ContextCategory::SystemPrompt
                         | ContextCategory::Skills
                         | ContextCategory::Knowledge
+                        | ContextCategory::Tools
                 )
             })
             .map(|item| item.content.as_str())

@@ -2,14 +2,20 @@
 //!
 //! Each action maps to one or more CDP commands and returns
 //! structured results.
+//!
+//! Key concept: **element refs** (`@e1`, `@e2`, ...) assigned during
+//! `snapshot_aria` are backed by CDP `backendDOMNodeId` values. Actions
+//! like `click` and `type_text` accept both CSS selectors and `@eN` refs.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
+use tokio::sync::Mutex;
 use tracing::debug;
 
-use crate::cdp_client::{CdpClient, CdpError};
+use crate::cdp_client::{CdpClient, CdpError, CdpEvent};
 use crate::snapshot::{
     format_aria_snapshot, AriaSnapshotNode, DomSnapshotNode, RawAxNode, SnapshotFormat,
 };
@@ -50,19 +56,105 @@ pub struct SnapshotResult {
     pub text: String,
 }
 
+/// A console log entry captured from the browser.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConsoleEntry {
+    pub level: String,
+    pub text: String,
+}
+
 /// High-level browser actions.
 pub struct BrowserActions {
     client: Arc<CdpClient>,
+    /// Ref registry: maps ref IDs (e.g. "e1") to CDP `backendDOMNodeId`.
+    /// Updated on each snapshot. Old refs are invalidated.
+    ref_registry: Arc<Mutex<HashMap<String, i64>>>,
+    /// Console log buffer, populated by the event listener.
+    console_logs: Arc<Mutex<Vec<ConsoleEntry>>>,
+    /// Handle to the console listener task.
+    console_listener: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl BrowserActions {
     pub fn new(client: Arc<CdpClient>) -> Self {
-        Self { client }
+        Self {
+            client,
+            ref_registry: Arc::new(Mutex::new(HashMap::new())),
+            console_logs: Arc::new(Mutex::new(Vec::new())),
+            console_listener: Mutex::new(None),
+        }
+    }
+
+    /// Start listening for console-related CDP events.
+    /// Call this after connecting to CDP.
+    pub async fn enable_console_monitoring(&self) {
+        // Enable the Runtime domain to receive console events.
+        let _ = self.client.send("Runtime.enable", None).await;
+
+        let mut rx = self.client.subscribe_events();
+        let logs = Arc::clone(&self.console_logs);
+
+        let handle = tokio::spawn(async move {
+            while let Ok(event) = rx.recv().await {
+                match event.method.as_str() {
+                    "Runtime.consoleAPICalled" => {
+                        let level = event
+                            .params
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("log")
+                            .to_string();
+                        let text = extract_console_text(&event);
+                        let mut buf = logs.lock().await;
+                        // Cap buffer at 100 entries to avoid memory issues
+                        if buf.len() >= 100 {
+                            buf.remove(0);
+                        }
+                        buf.push(ConsoleEntry { level, text });
+                    }
+                    "Runtime.exceptionThrown" => {
+                        let text = event
+                            .params
+                            .get("exceptionDetails")
+                            .and_then(|d| d.get("text"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown exception")
+                            .to_string();
+                        let mut buf = logs.lock().await;
+                        if buf.len() >= 100 {
+                            buf.remove(0);
+                        }
+                        buf.push(ConsoleEntry {
+                            level: "error".into(),
+                            text,
+                        });
+                    }
+                    _ => {} // Ignore other events
+                }
+            }
+        });
+
+        *self.console_listener.lock().await = Some(handle);
+    }
+
+    /// Get and drain captured console logs.
+    pub async fn take_console_logs(&self) -> Vec<ConsoleEntry> {
+        let mut logs = self.console_logs.lock().await;
+        std::mem::take(&mut *logs)
+    }
+
+    /// Get captured console logs without draining.
+    pub async fn peek_console_logs(&self) -> Vec<ConsoleEntry> {
+        self.console_logs.lock().await.clone()
     }
 
     /// Navigate to a URL.
     pub async fn navigate(&self, url: &str) -> Result<NavigateResult, CdpError> {
         debug!(url, "browser navigate");
+
+        // Ensure the Page domain is enabled.
+        let _ = self.client.send("Page.enable", None).await;
+
         let result = self
             .client
             .send(
@@ -70,6 +162,9 @@ impl BrowserActions {
                 Some(serde_json::json!({ "url": url })),
             )
             .await?;
+
+        // Invalidate refs after navigation.
+        self.ref_registry.lock().await.clear();
 
         Ok(NavigateResult {
             url: url.to_string(),
@@ -195,69 +290,151 @@ impl BrowserActions {
         Ok(result.value.as_str().unwrap_or_default().to_string())
     }
 
-    /// Get text content of an element by CSS selector.
+    /// Get text content of an element by CSS selector or `@eN` ref.
     pub async fn get_text(&self, selector: &str) -> Result<String, CdpError> {
-        let js = format!(
-            r#"(() => {{
-                const el = document.querySelector({});
-                return el ? (el.innerText || el.textContent || '').trim() : null;
-            }})()"#,
-            serde_json::to_string(selector).unwrap_or_default()
-        );
-        let result = self.evaluate(&js).await?;
-        Ok(result.value.as_str().unwrap_or_default().to_string())
+        if let Some(ref_id) = selector.strip_prefix('@') {
+            let object_id = self.resolve_ref_to_object_id(ref_id).await?;
+            let result = self
+                .client
+                .send(
+                    "Runtime.callFunctionOn",
+                    Some(serde_json::json!({
+                        "objectId": object_id,
+                        "functionDeclaration": "function() { return (this.innerText || this.textContent || '').trim(); }",
+                        "returnByValue": true,
+                    })),
+                )
+                .await?;
+            let text = result
+                .get("result")
+                .and_then(|r| r.get("value"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            Ok(text.to_string())
+        } else {
+            let js = format!(
+                r#"(() => {{
+                    const el = document.querySelector({});
+                    return el ? (el.innerText || el.textContent || '').trim() : null;
+                }})()"#,
+                serde_json::to_string(selector).unwrap_or_default()
+            );
+            let result = self.evaluate(&js).await?;
+            Ok(result.value.as_str().unwrap_or_default().to_string())
+        }
     }
 
-    /// Click an element by CSS selector.
+    /// Click an element by CSS selector or `@eN` ref.
     pub async fn click(&self, selector: &str) -> Result<(), CdpError> {
         debug!(selector, "browser click");
-        let js = format!(
-            r#"(() => {{
-                const el = document.querySelector({});
-                if (!el) throw new Error('Element not found: ' + {});
-                el.scrollIntoView({{ block: 'center' }});
-                el.click();
-                return true;
-            }})()"#,
-            serde_json::to_string(selector).unwrap_or_default(),
-            serde_json::to_string(selector).unwrap_or_default(),
-        );
-        let result = self.evaluate(&js).await?;
-        if let Some(err) = result.exception {
-            return Err(CdpError::ProtocolError {
-                code: -1,
-                message: err,
-            });
+
+        if let Some(ref_id) = selector.strip_prefix('@') {
+            let object_id = self.resolve_ref_to_object_id(ref_id).await?;
+            // scrollIntoView + click via callFunctionOn
+            let result = self
+                .client
+                .send(
+                    "Runtime.callFunctionOn",
+                    Some(serde_json::json!({
+                        "objectId": object_id,
+                        "functionDeclaration": "function() { this.scrollIntoView({block:'center'}); this.click(); return true; }",
+                        "returnByValue": true,
+                        "userGesture": true,
+                    })),
+                )
+                .await?;
+            if let Some(err) = result.get("exceptionDetails") {
+                let msg = err
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("click failed");
+                return Err(CdpError::ProtocolError {
+                    code: -1,
+                    message: msg.to_string(),
+                });
+            }
+            Ok(())
+        } else {
+            let js = format!(
+                r#"(() => {{
+                    const el = document.querySelector({});
+                    if (!el) throw new Error('Element not found: ' + {});
+                    el.scrollIntoView({{ block: 'center' }});
+                    el.click();
+                    return true;
+                }})()"#,
+                serde_json::to_string(selector).unwrap_or_default(),
+                serde_json::to_string(selector).unwrap_or_default(),
+            );
+            let result = self.evaluate(&js).await?;
+            if let Some(err) = result.exception {
+                return Err(CdpError::ProtocolError {
+                    code: -1,
+                    message: err,
+                });
+            }
+            Ok(())
         }
-        Ok(())
     }
 
-    /// Type text into an element by CSS selector.
+    /// Type text into an element by CSS selector or `@eN` ref.
     pub async fn type_text(&self, selector: &str, text: &str) -> Result<(), CdpError> {
         debug!(selector, text_len = text.len(), "browser type");
-        let js = format!(
-            r#"(() => {{
-                const el = document.querySelector({});
-                if (!el) throw new Error('Element not found: ' + {});
-                el.scrollIntoView({{ block: 'center' }});
-                el.focus();
-                el.value = {};
-                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                return true;
-            }})()"#,
-            serde_json::to_string(selector).unwrap_or_default(),
-            serde_json::to_string(selector).unwrap_or_default(),
-            serde_json::to_string(text).unwrap_or_default(),
-        );
-        let result = self.evaluate(&js).await?;
-        if let Some(err) = result.exception {
-            return Err(CdpError::ProtocolError {
-                code: -1,
-                message: err,
-            });
+
+        if let Some(ref_id) = selector.strip_prefix('@') {
+            let object_id = self.resolve_ref_to_object_id(ref_id).await?;
+            let text_json = serde_json::to_string(text).unwrap_or_default();
+            let fn_decl = format!(
+                "function() {{ this.scrollIntoView({{block:'center'}}); this.focus(); this.value = {text_json}; this.dispatchEvent(new Event('input', {{bubbles:true}})); this.dispatchEvent(new Event('change', {{bubbles:true}})); return true; }}"
+            );
+            let result = self
+                .client
+                .send(
+                    "Runtime.callFunctionOn",
+                    Some(serde_json::json!({
+                        "objectId": object_id,
+                        "functionDeclaration": fn_decl,
+                        "returnByValue": true,
+                        "userGesture": true,
+                    })),
+                )
+                .await?;
+            if let Some(err) = result.get("exceptionDetails") {
+                let msg = err
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("type failed");
+                return Err(CdpError::ProtocolError {
+                    code: -1,
+                    message: msg.to_string(),
+                });
+            }
+            Ok(())
+        } else {
+            let js = format!(
+                r#"(() => {{
+                    const el = document.querySelector({});
+                    if (!el) throw new Error('Element not found: ' + {});
+                    el.scrollIntoView({{ block: 'center' }});
+                    el.focus();
+                    el.value = {};
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    return true;
+                }})()"#,
+                serde_json::to_string(selector).unwrap_or_default(),
+                serde_json::to_string(selector).unwrap_or_default(),
+                serde_json::to_string(text).unwrap_or_default(),
+            );
+            let result = self.evaluate(&js).await?;
+            if let Some(err) = result.exception {
+                return Err(CdpError::ProtocolError {
+                    code: -1,
+                    message: err,
+                });
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// Press a keyboard key via CDP Input domain.
@@ -340,9 +517,18 @@ impl BrowserActions {
     }
 
     /// Take an accessibility snapshot.
-    pub async fn snapshot_aria(&self, limit: usize) -> Result<SnapshotResult, CdpError> {
-        debug!(limit, "browser snapshot (aria)");
+    ///
+    /// When `interactive_only` is true, only interactive elements and their
+    /// structural ancestors are included (dramatically fewer tokens).
+    pub async fn snapshot_aria(
+        &self,
+        limit: usize,
+        interactive_only: bool,
+    ) -> Result<SnapshotResult, CdpError> {
+        debug!(limit, interactive_only, "browser snapshot (aria)");
 
+        // Enable DOM domain (needed for resolving refs later).
+        let _ = self.client.send("DOM.enable", None).await;
         let _ = self.client.send("Accessibility.enable", None).await;
 
         let result = self
@@ -355,7 +541,20 @@ impl BrowserActions {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let aria_nodes = format_aria_snapshot(&raw_nodes, limit);
+        let aria_nodes = format_aria_snapshot(&raw_nodes, limit, interactive_only);
+
+        // Update ref registry with new refs.
+        {
+            let mut registry = self.ref_registry.lock().await;
+            registry.clear();
+            for node in &aria_nodes {
+                if let Some(backend_id) = node.backend_dom_node_id {
+                    registry.insert(node.ref_id.clone(), backend_id);
+                }
+            }
+            debug!(ref_count = registry.len(), "ref registry updated");
+        }
+
         let text = crate::snapshot::aria_snapshot_to_text(&aria_nodes);
 
         Ok(SnapshotResult {
@@ -457,4 +656,73 @@ impl BrowserActions {
             .await?;
         Ok(result.value.as_str().unwrap_or_default().to_string())
     }
+
+    /// Helper: resolve a ref id (e.g. "e1") to a CDP RemoteObject objectId.
+    async fn resolve_ref_to_object_id(&self, ref_id: &str) -> Result<String, CdpError> {
+        let registry = self.ref_registry.lock().await;
+        let backend_id = registry.get(ref_id).ok_or_else(|| CdpError::ProtocolError {
+            code: -1,
+            message: format!(
+                "Ref '@{}' not found. {}Run 'snapshot' to get fresh refs.",
+                ref_id,
+                if registry.is_empty() {
+                    "No refs available. "
+                } else {
+                    ""
+                }
+            ),
+        })?;
+        let backend_id = *backend_id;
+        drop(registry);
+
+        // Enable DOM domain if not yet enabled.
+        let _ = self.client.send("DOM.enable", None).await;
+
+        let resolve_result = self
+            .client
+            .send(
+                "DOM.resolveNode",
+                Some(serde_json::json!({ "backendNodeId": backend_id })),
+            )
+            .await?;
+
+        resolve_result
+            .get("object")
+            .and_then(|o| o.get("objectId"))
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| CdpError::ProtocolError {
+                code: -1,
+                message: format!(
+                    "Element @{} no longer exists in the DOM. The page may have changed — re-run snapshot.",
+                    ref_id
+                ),
+            })
+    }
+}
+
+/// Extract human-readable text from a `Runtime.consoleAPICalled` event.
+fn extract_console_text(event: &CdpEvent) -> String {
+    event
+        .params
+        .get("args")
+        .and_then(|args| args.as_array())
+        .map(|args| {
+            args.iter()
+                .filter_map(|arg| {
+                    arg.get("value")
+                        .and_then(|v| match v {
+                            serde_json::Value::String(s) => Some(s.clone()),
+                            other => Some(other.to_string()),
+                        })
+                        .or_else(|| {
+                            arg.get("description")
+                                .and_then(|v| v.as_str())
+                                .map(String::from)
+                        })
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
 }

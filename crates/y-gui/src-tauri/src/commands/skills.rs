@@ -79,41 +79,6 @@ pub struct SkillFileEntry {
     pub children: Option<Vec<SkillFileEntry>>,
 }
 
-// ---------------------------------------------------------------------------
-// Disabled-skills persistence
-// ---------------------------------------------------------------------------
-
-/// Path to the disabled-skills JSON file.
-fn disabled_skills_path(config_dir: &Path) -> PathBuf {
-    config_dir.join("disabled_skills.json")
-}
-
-/// Read the set of disabled skill names from disk.
-fn read_disabled_skills(config_dir: &Path) -> std::collections::HashSet<String> {
-    let path = disabled_skills_path(config_dir);
-    if path.exists() {
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
-        serde_json::from_str::<Vec<String>>(&content)
-            .unwrap_or_default()
-            .into_iter()
-            .collect()
-    } else {
-        std::collections::HashSet::new()
-    }
-}
-
-/// Write the set of disabled skill names to disk.
-fn write_disabled_skills(
-    config_dir: &Path,
-    disabled: &std::collections::HashSet<String>,
-) -> Result<(), String> {
-    let path = disabled_skills_path(config_dir);
-    let list: Vec<&String> = disabled.iter().collect();
-    let content =
-        serde_json::to_string_pretty(&list).map_err(|e| format!("Failed to serialize: {e}"))?;
-    std::fs::write(path, content).map_err(|e| format!("Failed to write disabled_skills.json: {e}"))
-}
-
 /// Resolve the base path of the skill store.
 fn skills_store_path(config_dir: &Path) -> PathBuf {
     config_dir.join("skills")
@@ -188,11 +153,18 @@ pub async fn skill_list(state: State<'_, AppState>) -> Result<Vec<SkillInfo>, St
     let store = FilesystemSkillStore::new(&store_path)
         .map_err(|e| format!("Failed to open skill store: {e}"))?;
 
-    let manifests = store
+    let registry = SkillRegistryImpl::with_store(store)
+        .await
+        .map_err(|e| format!("Failed to create registry: {e}"))?;
+
+    let disabled = registry.read_disabled_set().await;
+
+    // Read manifests via the store (registry already loaded them).
+    let store2 = FilesystemSkillStore::new(&store_path)
+        .map_err(|e| format!("Failed to open skill store: {e}"))?;
+    let manifests = store2
         .load_all()
         .map_err(|e| format!("Failed to load skills: {e}"))?;
-
-    let disabled = read_disabled_skills(&state.config_dir);
 
     let mut infos: Vec<SkillInfo> = manifests
         .into_iter()
@@ -220,8 +192,14 @@ pub async fn skill_get(state: State<'_, AppState>, name: String) -> Result<Skill
         .load_skill(&name)
         .map_err(|e| format!("Skill not found: {e}"))?;
 
-    let disabled = read_disabled_skills(&state.config_dir);
+    let registry = SkillRegistryImpl::with_store(
+        FilesystemSkillStore::new(&store_path)
+            .map_err(|e| format!("Failed to open skill store: {e}"))?,
+    )
+    .await
+    .map_err(|e| format!("Failed to create registry: {e}"))?;
 
+    let enabled = registry.is_enabled(&name).await;
     let classification_type = manifest
         .classification
         .as_ref()
@@ -232,7 +210,7 @@ pub async fn skill_get(state: State<'_, AppState>, name: String) -> Result<Skill
         description: manifest.description.clone(),
         version: manifest.version.0.clone(),
         tags: manifest.tags.clone(),
-        enabled: !disabled.contains(&manifest.name),
+        enabled,
         root_content: manifest.root_content.clone(),
         author: manifest.author.clone(),
         classification_type,
@@ -255,10 +233,13 @@ pub async fn skill_uninstall(state: State<'_, AppState>, name: String) -> Result
         .map_err(|e| format!("Failed to uninstall skill: {e}"))?;
 
     // Also remove from disabled list if present.
-    let mut disabled = read_disabled_skills(&state.config_dir);
-    if disabled.remove(&name) {
-        let _ = write_disabled_skills(&state.config_dir, &disabled);
-    }
+    let registry = SkillRegistryImpl::with_store(
+        FilesystemSkillStore::new(&store_path)
+            .map_err(|e| format!("Failed to open skill store: {e}"))?,
+    )
+    .await
+    .map_err(|e| format!("Failed to create registry: {e}"))?;
+    let _ = registry.set_enabled(&name, true).await; // remove from disabled set
 
     Ok(())
 }
@@ -270,13 +251,18 @@ pub async fn skill_set_enabled(
     name: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut disabled = read_disabled_skills(&state.config_dir);
-    if enabled {
-        disabled.remove(&name);
-    } else {
-        disabled.insert(name);
-    }
-    write_disabled_skills(&state.config_dir, &disabled)
+    let store_path = skills_store_path(&state.config_dir);
+    let store = FilesystemSkillStore::new(&store_path)
+        .map_err(|e| format!("Failed to open skill store: {e}"))?;
+
+    let registry = SkillRegistryImpl::with_store(store)
+        .await
+        .map_err(|e| format!("Failed to create registry: {e}"))?;
+
+    registry
+        .set_enabled(&name, enabled)
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 /// Open a skill's directory in the system file manager.

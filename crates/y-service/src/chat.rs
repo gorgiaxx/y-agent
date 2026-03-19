@@ -5,7 +5,7 @@
 //! 2. Build `ChatRequest` with tool definitions
 //! 3. LLM call via `ProviderPool`
 //! 4. Diagnostics recording (trace, generation, tool observations)
-//! 5. Tool execution loop (up to `MAX_TOOL_ITERATIONS`)
+//! 5. Tool execution loop (up to `guardrails.max_tool_iterations`)
 //! 6. Session message persistence
 //! 7. Checkpoint creation
 //!
@@ -27,9 +27,6 @@ use crate::container::ServiceContainer;
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-/// Maximum consecutive LLM calls within a single turn (tool-call loop).
-const MAX_TOOL_ITERATIONS: usize = 10;
 
 /// Record of a tool call executed during a turn.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -153,7 +150,10 @@ pub enum TurnError {
     /// Context assembly failed.
     ContextError(String),
     /// Tool-call iteration limit exceeded.
-    ToolLoopLimitExceeded,
+    ToolLoopLimitExceeded {
+        /// Maximum allowed iterations.
+        max_iterations: usize,
+    },
     /// The turn was explicitly cancelled by the caller.
     Cancelled,
 }
@@ -163,8 +163,8 @@ impl fmt::Display for TurnError {
         match self {
             TurnError::LlmError(msg) => write!(f, "LLM error: {msg}"),
             TurnError::ContextError(msg) => write!(f, "Context error: {msg}"),
-            TurnError::ToolLoopLimitExceeded => {
-                write!(f, "Tool call loop limit ({MAX_TOOL_ITERATIONS}) exceeded")
+            TurnError::ToolLoopLimitExceeded { max_iterations } => {
+                write!(f, "Tool call loop limit ({max_iterations}) exceeded")
             }
             TurnError::Cancelled => write!(f, "Cancelled"),
         }
@@ -269,6 +269,41 @@ pub enum PrepareTurnError {
     /// Failed to persist the user message to the session transcript.
     #[error("failed to persist user message: {0}")]
     PersistFailed(String),
+    /// Failed to read the session transcript.
+    #[error("failed to read transcript: {0}")]
+    TranscriptReadFailed(String),
+}
+
+// ---------------------------------------------------------------------------
+// Resend-turn preparation
+// ---------------------------------------------------------------------------
+
+/// Request to prepare a resend (keep user message, remove assistant reply,
+/// rebuild turn context).
+#[derive(Debug)]
+pub struct ResendTurnRequest {
+    /// Session to resend in.
+    pub session_id: SessionId,
+    /// Checkpoint ID marking the turn boundary to resend from.
+    pub checkpoint_id: String,
+    /// User-selected provider ID (None = default routing).
+    pub provider_id: Option<String>,
+    /// Knowledge collection names selected by the user.
+    pub knowledge_collections: Option<Vec<String>>,
+}
+
+/// Errors that can occur during resend-turn preparation.
+#[derive(Debug, thiserror::Error)]
+pub enum ResendTurnError {
+    /// The requested checkpoint was not found.
+    #[error("checkpoint not found: {0}")]
+    CheckpointNotFound(String),
+    /// Transcript truncation failed.
+    #[error("truncation failed: {0}")]
+    TruncateFailed(String),
+    /// Transcript is empty after truncation — nothing to resend.
+    #[error("transcript empty after truncation")]
+    TranscriptEmpty,
     /// Failed to read the session transcript.
     #[error("failed to read transcript: {0}")]
     TranscriptReadFailed(String),
@@ -422,6 +457,80 @@ impl ChatService {
         })
     }
 
+    /// Prepare a resend turn: keep the original user message, truncate the
+    /// assistant reply + tool messages, invalidate newer checkpoints, and
+    /// return a [`PreparedTurn`] ready for execution.
+    ///
+    /// This mirrors [`prepare_turn`] but for the resend case where no new
+    /// user message is appended — the existing one is reused.
+    pub async fn prepare_resend_turn(
+        container: &ServiceContainer,
+        request: ResendTurnRequest,
+    ) -> Result<PreparedTurn, ResendTurnError> {
+        // 1. Load the checkpoint to find message_count_before.
+        let checkpoint = container
+            .chat_checkpoint_manager
+            .checkpoint_store()
+            .load(&request.checkpoint_id)
+            .await
+            .map_err(|e| ResendTurnError::CheckpointNotFound(e.to_string()))?;
+
+        // 2. Partial truncation: keep user message (message_count_before + 1),
+        //    remove assistant reply and any tool messages after it.
+        let keep_count = checkpoint.message_count_before as usize + 1;
+        container
+            .session_manager
+            .display_transcript_store()
+            .truncate(&request.session_id, keep_count)
+            .await
+            .map_err(|e| ResendTurnError::TruncateFailed(e.to_string()))?;
+        container
+            .session_manager
+            .transcript_store()
+            .truncate(&request.session_id, keep_count)
+            .await
+            .map_err(|e| ResendTurnError::TruncateFailed(e.to_string()))?;
+
+        // 3. Invalidate this checkpoint and all newer ones.
+        container
+            .chat_checkpoint_manager
+            .checkpoint_store()
+            .invalidate_after(
+                &request.session_id,
+                checkpoint.turn_number.saturating_sub(1),
+            )
+            .await
+            .map_err(|e| ResendTurnError::TruncateFailed(e.to_string()))?;
+
+        // 4. Read display transcript (now ends with the original user message).
+        let history = container
+            .session_manager
+            .read_display_transcript(&request.session_id)
+            .await
+            .map_err(|e| ResendTurnError::TranscriptReadFailed(e.to_string()))?;
+
+        if history.is_empty() {
+            return Err(ResendTurnError::TranscriptEmpty);
+        }
+
+        // 5. Build PreparedTurn from the truncated transcript.
+        let user_input = history.last().unwrap().content.clone();
+        let turn_number = history.len() as u32;
+        let session_uuid = Uuid::parse_str(request.session_id.as_str())
+            .unwrap_or_else(|_| Uuid::new_v4());
+
+        Ok(PreparedTurn {
+            session_id: request.session_id,
+            session_uuid,
+            history,
+            turn_number,
+            user_input,
+            provider_id: request.provider_id,
+            session_created: false,
+            knowledge_collections: request.knowledge_collections.unwrap_or_default(),
+        })
+    }
+
     /// Look up metadata for the last completed LLM turn in a session.
     ///
     /// Queries the diagnostics store for the most recent trace belonging to
@@ -497,10 +606,11 @@ impl ChatService {
         };
 
         // 2. Construct execution config for the root agent.
+        let max_tool_iterations = container.guardrail_manager.config().max_tool_iterations;
         let exec_config = AgentExecutionConfig {
             agent_name: "chat-turn".to_string(),
             system_prompt: String::new(), // Uses context pipeline instead
-            max_iterations: MAX_TOOL_ITERATIONS,
+            max_iterations: max_tool_iterations,
             tool_definitions: tool_defs,
             tool_calling_mode,
             messages: input.history.to_vec(),
@@ -522,8 +632,8 @@ impl ChatService {
             .map_err(|e| match e {
                 AgentExecutionError::LlmError(msg) => TurnError::LlmError(msg),
                 AgentExecutionError::ContextError(msg) => TurnError::ContextError(msg),
-                AgentExecutionError::ToolLoopLimitExceeded { .. } => {
-                    TurnError::ToolLoopLimitExceeded
+                AgentExecutionError::ToolLoopLimitExceeded { max_iterations } => {
+                    TurnError::ToolLoopLimitExceeded { max_iterations }
                 }
                 AgentExecutionError::Cancelled => TurnError::Cancelled,
             })?;
@@ -782,7 +892,7 @@ mod tests {
         assert!(TurnError::LlmError("timeout".into())
             .to_string()
             .contains("timeout"));
-        assert!(TurnError::ToolLoopLimitExceeded
+        assert!(TurnError::ToolLoopLimitExceeded { max_iterations: 10 }
             .to_string()
             .contains("10"));
     }

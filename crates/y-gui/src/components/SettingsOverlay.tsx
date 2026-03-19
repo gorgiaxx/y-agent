@@ -92,6 +92,7 @@ interface RuntimeFormData {
 interface BrowserFormData {
   enabled: boolean;
   auto_launch: boolean;
+  headless: boolean;
   chrome_path: string;
   local_cdp_port: number;
   cdp_url: string;
@@ -665,6 +666,7 @@ function browserToToml(b: BrowserFormData): string {
   const lines: string[] = [
     `enabled = ${b.enabled}`,
     `auto_launch = ${b.auto_launch}`,
+    `headless = ${b.headless}`,
   ];
   if (b.chrome_path) lines.push(`chrome_path = "${b.chrome_path}"`);
   lines.push(`local_cdp_port = ${b.local_cdp_port}`);
@@ -681,6 +683,7 @@ function jsonToBrowser(json: any): BrowserFormData {
   return {
     enabled: json?.enabled ?? true,
     auto_launch: json?.auto_launch ?? false,
+    headless: json?.headless ?? true,
     chrome_path: json?.chrome_path ?? '',
     local_cdp_port: json?.local_cdp_port ?? 9222,
     cdp_url: json?.cdp_url ?? 'http://127.0.0.1:9222',
@@ -781,6 +784,7 @@ export function SettingsOverlay({
   const [browserForm, setBrowserForm] = useState<BrowserFormData>({
     enabled: true,
     auto_launch: false,
+    headless: true,
     chrome_path: '',
     local_cdp_port: 9222,
     cdp_url: 'http://127.0.0.1:9222',
@@ -1918,6 +1922,23 @@ export function SettingsOverlay({
                         </div>
                       </div>
 
+                      {browserForm.auto_launch && (
+                        <div className="pf-row">
+                          <div className="pf-field pf-field-full">
+                            <label className="pf-label">
+                              <input
+                                type="checkbox"
+                                className="form-checkbox"
+                                checked={browserForm.headless}
+                                onChange={(e) => { setBrowserForm({ ...browserForm, headless: e.target.checked }); setDirtyBrowser(true); }}
+                              />
+                              {' '}Headless mode
+                            </label>
+                            <span className="pf-hint">Run Chrome without a visible window. Disable for debugging or visual verification.</span>
+                          </div>
+                        </div>
+                      )}
+
                       {browserForm.auto_launch ? (
                         /* Local Chrome mode */
                         <div className="pf-row">
@@ -2107,6 +2128,10 @@ export function SettingsOverlay({
               <div className="settings-section">
                 <h3 className="section-title">y-agent Desktop</h3>
                 <div className="about-info">
+                  <div className="about-row">
+                    <span className="about-label">Author</span>
+                    <span className="about-value"><a href="https://gorgias.me">Gorgias</a></span>
+                  </div>
                   <div className="about-row">
                     <span className="about-label">Version</span>
                     <span className="about-value">0.1.0</span>

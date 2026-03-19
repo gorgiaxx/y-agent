@@ -199,42 +199,37 @@ export function useKnowledge() {
     setBatchProgress({ current: 0, total: sources.length });
     ingestCancelledRef.current = false;
 
-    let hasError = false;
-    const errors: string[] = [];
+    // Listen for progress events from the backend.
+    const { listen } = await import('@tauri-apps/api/event');
+    const unlisten = await listen<{ current: number; total: number; source: string }>(
+      'kb:batch_progress',
+      (event) => {
+        setBatchProgress({ current: event.payload.current, total: event.payload.total });
+      },
+    );
 
-    for (let i = 0; i < sources.length; i++) {
-      // Check cancellation before starting each file.
+    try {
+      const result = await invoke<{ succeeded: number; failed: number; errors: string[] }>(
+        'kb_ingest_batch',
+        { sources, domain: domain || null, collection },
+      );
+
       if (ingestCancelledRef.current) {
-        errors.push(`Cancelled after ${i} of ${sources.length} files`);
-        hasError = true;
-        break;
+        setIngestStatus('idle');
+        setBatchProgress(null);
+      } else if (result.failed > 0) {
+        setIngestStatus('error');
+        setIngestError(result.errors.join('\n'));
+      } else {
+        setIngestStatus('success');
       }
-
-      setBatchProgress({ current: i + 1, total: sources.length });
-      try {
-        const result = await invoke<KnowledgeIngestResult>('kb_ingest', {
-          source: sources[i],
-          domain: domain || null,
-          collection,
-        });
-        if (!result.success) {
-          hasError = true;
-          errors.push(`${sources[i]}: ${result.message}`);
-        }
-      } catch (err) {
-        hasError = true;
-        errors.push(`${sources[i]}: ${String(err)}`);
+    } catch (err) {
+      if (!ingestCancelledRef.current) {
+        setIngestStatus('error');
+        setIngestError(String(err));
       }
-    }
-
-    if (ingestCancelledRef.current) {
-      setIngestStatus('idle');
-      setBatchProgress(null);
-    } else if (hasError) {
-      setIngestStatus('error');
-      setIngestError(errors.join('\n'));
-    } else {
-      setIngestStatus('success');
+    } finally {
+      unlisten();
     }
 
     await refreshCollections();

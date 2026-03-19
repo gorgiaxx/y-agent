@@ -179,6 +179,7 @@ pub fn run() {
             commands::knowledge::kb_entry_delete,
             commands::knowledge::kb_stats,
             commands::knowledge::kb_expand_folder,
+            commands::knowledge::kb_ingest_batch,
             // Agents
             commands::agents::agent_list,
             commands::agents::agent_get,

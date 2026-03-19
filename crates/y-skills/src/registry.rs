@@ -30,6 +30,8 @@ struct RegistryInner {
     version_store: VersionStore,
     /// Search index.
     search: SkillSearch,
+    /// Set of disabled skill names.
+    disabled: std::collections::HashSet<String>,
 }
 
 /// Full implementation of the `SkillRegistry` trait.
@@ -71,6 +73,10 @@ impl SkillRegistryImpl {
         if let Some(ref store) = registry.store {
             let manifests = store.load_all()?;
             let mut inner = registry.inner.write().await;
+
+            // Load disabled-skills state from the store directory.
+            inner.disabled = Self::load_disabled_from_path(store.base_path());
+
             for manifest in manifests {
                 let skill_id = manifest.id.to_string();
                 let skill_name = manifest.name.clone();
@@ -107,6 +113,71 @@ impl SkillRegistryImpl {
     pub async fn list_names(&self) -> Vec<String> {
         let inner = self.inner.read().await;
         inner.manifests.values().map(|m| m.name.clone()).collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // Enabled / disabled state
+    // -----------------------------------------------------------------------
+
+    /// Check whether a skill is enabled (i.e. not in the disabled set).
+    pub async fn is_enabled(&self, name: &str) -> bool {
+        let inner = self.inner.read().await;
+        !inner.disabled.contains(name)
+    }
+
+    /// Return a snapshot of all disabled skill names.
+    pub async fn read_disabled_set(&self) -> std::collections::HashSet<String> {
+        let inner = self.inner.read().await;
+        inner.disabled.clone()
+    }
+
+    /// Enable or disable a skill by name.
+    ///
+    /// Persists the change to `disabled_skills.json` if a filesystem store
+    /// is configured.
+    pub async fn set_enabled(&self, name: &str, enabled: bool) -> Result<(), SkillError> {
+        let mut inner = self.inner.write().await;
+        if enabled {
+            inner.disabled.remove(name);
+        } else {
+            inner.disabled.insert(name.to_string());
+        }
+
+        // Persist to filesystem.
+        if let Some(ref store) = self.store {
+            Self::save_disabled_to_path(store.base_path(), &inner.disabled)
+                .map_err(|e| SkillError::StorageError {
+                    message: format!("failed to persist disabled state: {e}"),
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Load the disabled set from a `disabled_skills.json` file next to the store.
+    fn load_disabled_from_path(base_path: &Path) -> std::collections::HashSet<String> {
+        let path = base_path.join("disabled_skills.json");
+        if path.exists() {
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            serde_json::from_str::<Vec<String>>(&content)
+                .unwrap_or_default()
+                .into_iter()
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        }
+    }
+
+    /// Persist the disabled set to `disabled_skills.json`.
+    fn save_disabled_to_path(
+        base_path: &Path,
+        disabled: &std::collections::HashSet<String>,
+    ) -> Result<(), String> {
+        let path = base_path.join("disabled_skills.json");
+        let list: Vec<&String> = disabled.iter().collect();
+        let content = serde_json::to_string_pretty(&list)
+            .map_err(|e| format!("Failed to serialize: {e}"))?;
+        std::fs::write(path, content)
+            .map_err(|e| format!("Failed to write disabled_skills.json: {e}"))
     }
 
     /// Store sub-document content for a registered skill.

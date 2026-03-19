@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use y_core::types::SessionId;
-use y_service::{ChatService, PrepareTurnRequest, TurnEvent};
+use y_service::{ChatService, PrepareTurnRequest, PreparedTurn, ResendTurnRequest, TurnEvent};
 
 use crate::state::{AppState, TurnMeta};
 
@@ -162,14 +162,6 @@ pub async fn chat_send(
         }
     }
 
-    // Spawn async LLM turn -- results streamed via events.
-    let container = state.container.clone();
-    let sid_clone = sid.clone();
-    let run_id_clone = run_id.clone();
-    // Clone the Arc to the turn-meta cache so the spawned task can write to it
-    // after a successful turn without holding a reference to `AppState`.
-    let turn_meta_cache = Arc::clone(&state.turn_meta_cache);
-
     // Emit chat:started so the frontend can map run_id -> session_id
     // before any chat:progress events arrive.
     let _ = app.emit("chat:started", ChatStartedPayload {
@@ -180,26 +172,64 @@ pub async fn chat_send(
     // Create a cancellation token for this run and register it so chat_cancel
     // can trigger it for immediate mid-LLM-call termination.
     let cancel_token = CancellationToken::new();
-    let run_id_key = run_id_clone.clone();
     if let Ok(mut runs) = state.pending_runs.lock() {
-        runs.insert(run_id_key, cancel_token.clone());
+        runs.insert(run_id.clone(), cancel_token.clone());
     }
 
-    // Spawn the LLM worker task.
-    let cancel_clone = cancel_token.clone();
+    spawn_llm_worker(
+        app,
+        state.container.clone(),
+        prepared,
+        run_id.clone(),
+        Arc::clone(&state.turn_meta_cache),
+        cancel_token,
+        true, // may generate title
+    );
+
+    Ok(ChatStarted {
+        session_id: result_sid,
+        run_id: result_run_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Shared LLM spawn helper
+// ---------------------------------------------------------------------------
+
+/// Spawn the LLM worker task with progress forwarding and event emission.
+///
+/// Shared by `chat_send` and `chat_resend` to avoid duplicating the ~50-line
+/// tokio::spawn block. Owns all data needed for the task.
+fn spawn_llm_worker(
+    app: AppHandle,
+    container: Arc<y_service::ServiceContainer>,
+    prepared: PreparedTurn,
+    run_id: String,
+    turn_meta_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, TurnMeta>>>,
+    cancel_token: CancellationToken,
+    should_generate_title: bool,
+) {
+    let sid_clone = prepared.session_id.clone();
+    let run_id_clone = run_id;
+    let cancel_clone = cancel_token;
+
     tokio::spawn(async move {
         let input = prepared.as_turn_input();
 
-        // Determine whether to generate a title after this turn.
-        let title_interval = container.session_manager.config().title_summarize_interval;
-        let user_msg_count = prepared
-            .history
-            .iter()
-            .filter(|m| m.role == y_core::types::Role::User)
-            .count();
-        let should_generate_title = title_interval > 0
-            && user_msg_count > 0
-            && (user_msg_count == 1 || user_msg_count % title_interval as usize == 0);
+        // Check whether title generation should actually fire for this turn.
+        let do_title = if should_generate_title {
+            let title_interval = container.session_manager.config().title_summarize_interval;
+            let user_msg_count = prepared
+                .history
+                .iter()
+                .filter(|m| m.role == y_core::types::Role::User)
+                .count();
+            title_interval > 0
+                && user_msg_count > 0
+                && (user_msg_count == 1 || user_msg_count % title_interval as usize == 0)
+        } else {
+            false
+        };
 
         // Set up progress channel -- forward TurnEvents as Tauri events.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -263,7 +293,7 @@ pub async fn chat_send(
                 );
 
                 // Trigger title generation if the interval is reached.
-                if should_generate_title {
+                if do_title {
                     match container.session_manager.read_transcript(&sid_clone).await {
                         Ok(transcript) => {
                             match container
@@ -288,8 +318,6 @@ pub async fn chat_send(
                                     tracing::warn!(error = %e, "title generation failed");
                                 }
                             }
-                            // Notify frontend that a subagent call finished so the
-                            // Global diagnostics view can refresh.
                             let _ = app.emit(
                                 "diagnostics:subagent_completed",
                                 SubagentCompletedPayload {
@@ -321,11 +349,6 @@ pub async fn chat_send(
         // Ensure all progress events are forwarded before returning.
         let _ = progress_task.await;
     });
-
-    Ok(ChatStarted {
-        session_id: result_sid,
-        run_id: result_run_id,
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -443,8 +466,8 @@ pub async fn session_last_turn_meta(
 /// Result of an undo (rollback) operation.
 #[derive(Debug, Serialize, Clone)]
 pub struct UndoResult {
-    /// Messages remaining in the transcript after truncation.
-    pub remaining_message_count: usize,
+    /// Number of messages removed from the transcript.
+    pub messages_removed: usize,
     /// Turn number the session was rolled back to.
     pub restored_turn_number: u32,
     /// Number of file journal scopes that need rollback (for info).
@@ -475,7 +498,7 @@ pub async fn chat_undo(
     }
 
     Ok(UndoResult {
-        remaining_message_count: result.messages_removed, // messages_removed is what was cut
+        messages_removed: result.messages_removed,
         restored_turn_number: result.rolled_back_to_turn,
         files_restored: result.scopes_rolled_back.len() as u32,
     })
@@ -488,11 +511,8 @@ pub async fn chat_undo(
 /// Resend a user message by keeping it in the transcript and only removing
 /// the assistant reply + subsequent tool messages. Then re-run the LLM.
 ///
-/// Unlike undo + send, this preserves the original user message (same ID,
-/// same timestamp) so the conversation history remains consistent.
-///
-/// Events emitted: same as `chat_send` (`chat:started`, `chat:progress`,
-/// `chat:complete`, `chat:error`).
+/// Delegates domain logic to `ChatService::prepare_resend_turn()` and
+/// spawns the LLM worker using the shared `spawn_llm_worker` helper.
 #[tauri::command]
 pub async fn chat_resend(
     app: AppHandle,
@@ -500,64 +520,21 @@ pub async fn chat_resend(
     session_id: String,
     checkpoint_id: String,
     provider_id: Option<String>,
+    knowledge_collections: Option<Vec<String>>,
 ) -> Result<ChatStarted, String> {
-    let sid = SessionId(session_id.clone());
+    // Delegate domain logic to the service layer.
+    let prepared = ChatService::prepare_resend_turn(
+        &state.container,
+        ResendTurnRequest {
+            session_id: SessionId(session_id.clone()),
+            checkpoint_id,
+            provider_id,
+            knowledge_collections,
+        },
+    )
+    .await
+    .map_err(|e| format!("{e}"))?;
 
-    // 1. Load the checkpoint to find message_count_before.
-    let checkpoint = state
-        .container
-        .chat_checkpoint_manager
-        .checkpoint_store()
-        .load(&checkpoint_id)
-        .await
-        .map_err(|e| format!("{e}"))?;
-
-    // 2. Partial truncation: keep user message (message_count_before + 1),
-    //    remove assistant reply and any tool messages after it.
-    //    Truncate both display and context stores.
-    let keep_count = checkpoint.message_count_before as usize + 1;
-    state
-        .container
-        .session_manager
-        .display_transcript_store()
-        .truncate(&sid, keep_count)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    state
-        .container
-        .session_manager
-        .transcript_store()
-        .truncate(&sid, keep_count)
-        .await
-        .map_err(|e| format!("{e}"))?;
-
-    // 3. Invalidate this checkpoint and all newer ones.
-    state
-        .container
-        .chat_checkpoint_manager
-        .checkpoint_store()
-        .invalidate_after(&sid, checkpoint.turn_number.saturating_sub(1))
-        .await
-        .map_err(|e| format!("{e}"))?;
-
-    // 4. Read display transcript (now ends with the original user message).
-    let history = state
-        .container
-        .session_manager
-        .read_display_transcript(&sid)
-        .await
-        .map_err(|e| format!("{e}"))?;
-
-    if history.is_empty() {
-        return Err("transcript is empty after truncation".into());
-    }
-
-    let user_input = history.last().unwrap().content.clone();
-    let turn_number = history.len() as u32;
-    let session_uuid = uuid::Uuid::parse_str(&session_id)
-        .unwrap_or_else(|_| uuid::Uuid::new_v4());
-
-    // 5. Build run_id and emit chat:started.
     let run_id = uuid::Uuid::new_v4().to_string();
     let result_sid = session_id.clone();
     let result_run_id = run_id.clone();
@@ -578,96 +555,15 @@ pub async fn chat_resend(
         cache.remove(&session_id);
     }
 
-    // 6. Spawn LLM worker (same pattern as chat_send).
-    let container = state.container.clone();
-    let sid_clone = sid.clone();
-    let run_id_clone = run_id.clone();
-    let turn_meta_cache = Arc::clone(&state.turn_meta_cache);
-    let cancel_clone = cancel_token.clone();
-
-    tokio::spawn(async move {
-        let input = y_service::TurnInput {
-            user_input: &user_input,
-            session_id: sid_clone.clone(),
-            session_uuid,
-            history: &history,
-            turn_number,
-            provider_id: provider_id.clone(),
-            knowledge_collections: vec![],
-        };
-
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let app_progress = app.clone();
-        let run_id_progress = run_id_clone.clone();
-        let progress_task = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let _ = app_progress.emit("chat:progress", ProgressPayload {
-                    run_id: run_id_progress.clone(),
-                    event,
-                });
-            }
-        });
-
-        match ChatService::execute_turn_with_progress(
-            &container,
-            &input,
-            tx,
-            Some(cancel_clone),
-        )
-        .await
-        {
-            Ok(result) => {
-                let meta = TurnMeta {
-                    provider_id: result.provider_id.clone(),
-                    model: result.model.clone(),
-                    input_tokens: result.input_tokens,
-                    output_tokens: result.output_tokens,
-                    cost_usd: result.cost_usd,
-                    context_window: result.context_window,
-                };
-                if let Ok(mut cache) = turn_meta_cache.lock() {
-                    cache.insert(sid_clone.0.clone(), meta);
-                }
-
-                let _ = app.emit(
-                    "chat:complete",
-                    ChatCompletePayload {
-                        run_id: run_id_clone,
-                        session_id: sid_clone.0.clone(),
-                        content: result.content,
-                        model: result.model,
-                        provider_id: result.provider_id,
-                        input_tokens: result.input_tokens,
-                        output_tokens: result.output_tokens,
-                        cost_usd: result.cost_usd,
-                        tool_calls: result
-                            .tool_calls_executed
-                            .iter()
-                            .map(|tc| ToolCallInfo {
-                                name: tc.name.clone(),
-                                success: tc.success,
-                                duration_ms: tc.duration_ms,
-                            })
-                            .collect(),
-                        iterations: result.iterations,
-                        context_window: result.context_window,
-                    },
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "chat:error",
-                    ChatErrorPayload {
-                        run_id: run_id_clone,
-                        session_id: sid_clone.0.clone(),
-                        error: e.to_string(),
-                    },
-                );
-            }
-        }
-
-        let _ = progress_task.await;
-    });
+    spawn_llm_worker(
+        app,
+        state.container.clone(),
+        prepared,
+        run_id.clone(),
+        Arc::clone(&state.turn_meta_cache),
+        cancel_token,
+        false, // resend — no title generation
+    );
 
     Ok(ChatStarted {
         session_id: result_sid,
