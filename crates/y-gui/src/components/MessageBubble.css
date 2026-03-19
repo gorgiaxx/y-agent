@@ -443,3 +443,31 @@
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* ---- Skill tags on user messages ---- */
+
+.message-skill-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.message-skill-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  background: rgba(200, 181, 96, 0.12);
+  border: 1px solid rgba(200, 181, 96, 0.22);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+
+.message-skill-tag-icon {
+  opacity: 0.7;
+  flex-shrink: 0;
+}

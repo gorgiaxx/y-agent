@@ -4,11 +4,9 @@
 //! All storage is abstracted behind the [`TraceStore`] trait.  An in-memory
 //! implementation is provided for testing; a SQLite-backed implementation
 //! (`SqliteTraceStore`) is available via the `y-storage` crate for production
-//! use; a `PostgreSQL` backend is available behind the `diagnostics_pg`
-//! feature flag via [`PgTraceStore`].
+//! use.
 
 pub mod cost;
-pub mod pg_trace_store;
 pub mod replay;
 pub mod search;
 pub mod sqlite_trace_store;
@@ -24,6 +22,3 @@ pub use sqlite_trace_store::SqliteTraceStore;
 pub use subscriber::DiagnosticsSubscriber;
 pub use trace_store::{InMemoryTraceStore, TraceStore, TraceStoreError};
 pub use types::*;
-
-#[cfg(feature = "diagnostics_pg")]
-pub use pg_trace_store::PgTraceStore;

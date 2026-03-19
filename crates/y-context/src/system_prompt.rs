@@ -19,6 +19,39 @@ use crate::pipeline::{
 };
 
 // ---------------------------------------------------------------------------
+// Virtual environment prompt info
+// ---------------------------------------------------------------------------
+
+/// Lightweight snapshot of virtual environment paths for prompt injection.
+///
+/// Constructed from `y_runtime::PythonVenvConfig` / `y_runtime::BunVenvConfig`
+/// at service startup and threaded into the system prompt provider.
+#[derive(Debug, Clone, Default)]
+pub struct VenvPromptInfo {
+    /// Python (uv) environment info.
+    pub python: Option<PythonVenvPromptInfo>,
+    /// JavaScript (bun) environment info.
+    pub bun: Option<BunVenvPromptInfo>,
+}
+
+/// Python virtual environment info for prompt injection.
+#[derive(Debug, Clone)]
+pub struct PythonVenvPromptInfo {
+    pub uv_path: String,
+    pub python_version: String,
+    pub venv_dir: String,
+    pub working_dir: String,
+}
+
+/// Bun virtual environment info for prompt injection.
+#[derive(Debug, Clone)]
+pub struct BunVenvPromptInfo {
+    pub bun_path: String,
+    pub bun_version: String,
+    pub working_dir: String,
+}
+
+// ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
@@ -59,6 +92,8 @@ pub struct BuildSystemPromptProvider {
     store: SectionStore,
     prompt_context: Arc<RwLock<PromptContext>>,
     config: SystemPromptConfig,
+    /// Virtual environment info for prompt injection (optional).
+    venv_info: VenvPromptInfo,
 }
 
 impl BuildSystemPromptProvider {
@@ -74,6 +109,24 @@ impl BuildSystemPromptProvider {
             store,
             prompt_context,
             config,
+            venv_info: VenvPromptInfo::default(),
+        }
+    }
+
+    /// Create a new system prompt provider with virtual environment info.
+    pub fn with_venv_info(
+        template: PromptTemplate,
+        store: SectionStore,
+        prompt_context: Arc<RwLock<PromptContext>>,
+        config: SystemPromptConfig,
+        venv_info: VenvPromptInfo,
+    ) -> Self {
+        Self {
+            template,
+            store,
+            prompt_context,
+            config,
+            venv_info,
         }
     }
 
@@ -91,18 +144,37 @@ impl BuildSystemPromptProvider {
     /// `cwd` always reflects the process working directory.
     /// When `workspace_path` is provided (e.g. from a workspace-bound
     /// session), it is appended as an extra field.
-    fn generate_environment(workspace_path: Option<&str>) -> String {
+    fn generate_environment(workspace_path: Option<&str>, venv_info: &VenvPromptInfo) -> String {
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
         let cwd = std::env::current_dir()
             .map_or_else(|_| "(unknown)".into(), |p| p.display().to_string());
         tracing::debug!(workspace_path = ?workspace_path, cwd = %cwd, "generate_environment");
-        match workspace_path.filter(|s| !s.is_empty()) {
+
+        let mut env_str = match workspace_path.filter(|s| !s.is_empty()) {
             Some(ws) => {
                 format!("Environment: OS={os}, arch={arch}, workspace_path={ws}, shell_cwd(optional)={cwd}")
             }
             None => format!("Environment: OS={os}, arch={arch}, shell_cwd={cwd}"),
+        };
+
+        // Append Python (uv) venv info.
+        if let Some(ref py) = venv_info.python {
+            env_str.push_str(
+                &format!(", python_env=uv(version={}, venv={}, uv_path={}, working_dir={})",
+                    py.python_version, py.venv_dir, py.uv_path, py.working_dir),
+            );
         }
+
+        // Append JavaScript (bun) venv info.
+        if let Some(ref bun) = venv_info.bun {
+            env_str.push_str(
+                &format!(", js_env=bun(version={}, bun_path={}, working_dir={})",
+                    bun.bun_version, bun.bun_path, bun.working_dir),
+            );
+        }
+
+        env_str
     }
 }
 
@@ -179,7 +251,7 @@ impl ContextProvider for BuildSystemPromptProvider {
             let content = match eff.section_id.as_str() {
                 "core.datetime" => Self::generate_datetime(),
                 "core.environment" => {
-                    Self::generate_environment(prompt_ctx.working_directory.as_deref())
+                    Self::generate_environment(prompt_ctx.working_directory.as_deref(), &self.venv_info)
                 }
                 _ => content,
             };

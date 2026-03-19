@@ -18,6 +18,7 @@
 
 pub mod agent_runner;
 pub mod config;
+pub mod embedding;
 pub mod error;
 pub mod error_classifier;
 pub mod freeze;
@@ -50,3 +51,4 @@ pub use providers::openai::OpenAiProvider;
 pub use router::{SelectionStrategy, TagBasedRouter};
 pub use scheduler::{PriorityScheduler, SchedulerSnapshot};
 pub use agent_runner::SingleTurnRunner;
+pub use embedding::{EmbeddingConfig, OpenAiEmbeddingProvider};

@@ -22,8 +22,6 @@ pub struct HealthCheckResult {
     pub active_providers: usize,
     /// Frozen providers.
     pub frozen_providers: usize,
-    /// Whether the PG feature is compiled in.
-    pub pg_feature_enabled: bool,
 }
 
 /// A single historical diagnostic entry.
@@ -51,6 +49,7 @@ pub enum HistoricalEntry {
         name: String,
         success: bool,
         duration_ms: u64,
+        input_preview: String,
         result_preview: String,
         timestamp: String,
     },
@@ -177,6 +176,11 @@ impl DiagnosticsService {
                     y_diagnostics::ObservationType::ToolCall => {
                         let success = obs.status != y_diagnostics::ObservationStatus::Failed;
                         let result_preview = obs.output.to_string();
+                        let input_preview = if obs.input.is_null() {
+                            String::new()
+                        } else {
+                            obs.input.to_string()
+                        };
 
                         entries.push((
                             ts,
@@ -184,6 +188,7 @@ impl DiagnosticsService {
                                 name: obs.name.clone(),
                                 success,
                                 duration_ms,
+                                input_preview,
                                 result_preview,
                                 timestamp: ts.to_rfc3339(),
                             },
@@ -223,7 +228,6 @@ impl DiagnosticsService {
             recent_trace_count,
             active_providers: active,
             frozen_providers: statuses.len() - active,
-            pg_feature_enabled: cfg!(feature = "diagnostics_pg"),
         }
     }
 }

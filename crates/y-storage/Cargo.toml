@@ -3,11 +3,10 @@ name = "y-storage"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Persistence layer: SQLite + optional PostgreSQL backends, JSONL writers"
+description = "Persistence layer: SQLite backends, JSONL writers"
 
 [features]
-default = ["diagnostics_pg"]
-diagnostics_pg = ["sqlx/postgres"]
+default = []
 
 [dependencies]
 y-core = { workspace = true }

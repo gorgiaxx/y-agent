@@ -1,0 +1,46 @@
+[package]
+name = "y-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Browser automation via CDP for y-agent"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+
+# WebSocket for CDP
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# URL parsing
+url = "2"
+
+# Base64 for screenshot data
+base64 = "0.22"
+
+# Internal
+y-core = { workspace = true }
+
+# HTTP client for CDP discovery (/json/version, /json/list)
+reqwest = { workspace = true }
+
+# Unix process signals (SIGTERM for graceful Chrome shutdown)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

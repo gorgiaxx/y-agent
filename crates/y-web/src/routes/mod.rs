@@ -1,6 +1,7 @@
 //! Route modules and router construction.
 
 pub mod agents;
+pub mod bots;
 pub mod chat;
 pub mod diagnostics;
 pub mod health;
@@ -22,6 +23,7 @@ pub fn create_router(state: AppState) -> Router {
         .merge(agents::router())
         .merge(tools::router())
         .merge(diagnostics::router())
+        .merge(bots::router())
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)

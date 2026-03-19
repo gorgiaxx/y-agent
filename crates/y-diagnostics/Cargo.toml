@@ -3,11 +3,10 @@ name = "y-diagnostics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Diagnostics: trace store, cost intelligence, trace replay (PostgreSQL-backed)"
+description = "Diagnostics: trace store, cost intelligence, trace replay (SQLite-backed)"
 
 [features]
-default = ["diagnostics_pg"]
-diagnostics_pg = ["y-storage/diagnostics_pg"]
+default = []
 
 [dependencies]
 y-core = { workspace = true }

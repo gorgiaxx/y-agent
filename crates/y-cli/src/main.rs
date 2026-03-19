@@ -183,6 +183,9 @@ async fn main() -> Result<()> {
             let services = wire::wire(&config).await?;
             commands::skills::run(action, &services, mode).await?;
         }
+        Some(Commands::Kb { ref action }) => {
+            commands::kb::run(action, mode).await?;
+        }
         #[cfg(feature = "tui")]
         Some(Commands::Tui) => {
             let services = wire::wire(&config).await?;

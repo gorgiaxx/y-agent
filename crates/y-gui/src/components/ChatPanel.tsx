@@ -1,9 +1,10 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import { Sparkles, AlertTriangle } from 'lucide-react';
 import type { Message } from '../types';
 import type { ToolResultRecord } from '../hooks/useChat';
 import { MessageBubble } from './MessageBubble';
 import { RestoreDivider } from './RestoreDivider';
+import { ContextResetDivider } from './ContextResetDivider';
 import './ChatPanel.css';
 
 /** A tombstoned segment for rendering restore dividers. */
@@ -25,15 +26,40 @@ interface ChatPanelProps {
   tombstonedSegments?: TombstonedSegment[];
   onRestoreBranch?: (checkpointId: string) => void;
   toolResults?: ToolResultRecord[];
+  contextResetPoints?: number[];
 }
 
-export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessage, onUndoMessage, onResendMessage, tombstonedSegments, onRestoreBranch, toolResults }: ChatPanelProps) {
-  const endRef = useRef<HTMLDivElement>(null);
+/** Threshold in pixels from the bottom to consider the user "at bottom". */
+const AUTO_SCROLL_THRESHOLD = 150;
 
-  // Auto-scroll to bottom on new messages.
+export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessage, onUndoMessage, onResendMessage, tombstonedSegments, onRestoreBranch, toolResults, contextResetPoints }: ChatPanelProps) {
+  const endRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  /** Whether the user is near the bottom of the scroll area. */
+  const isNearBottomRef = useRef(true);
+  /** Track previous message count to detect new messages (vs. streaming updates). */
+  const prevMessageCountRef = useRef(0);
+
+  // Track scroll position to determine if user is near the bottom.
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD;
+  }, []);
+
+  // Smart auto-scroll: only scroll to bottom if the user is already near the bottom.
+  // Always scroll when a new message is added (message count changes),
+  // but during streaming updates (content growing), only scroll if near bottom.
+  // Also scroll when contextResetPoints changes (divider appears/disappears).
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isStreaming]);
+    const messageCountChanged = messages.length !== prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+
+    if (messageCountChanged || isNearBottomRef.current) {
+      endRef.current?.scrollIntoView({ behavior: messageCountChanged ? 'smooth' : 'auto' });
+    }
+  }, [messages, isStreaming, contextResetPoints]);
 
   if (isLoading) {
     return (
@@ -65,7 +91,7 @@ export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessa
 
   return (
     <div className="chat-panel">
-      <div className="chat-messages">
+      <div className="chat-messages" ref={scrollContainerRef} onScroll={handleScroll}>
           {(() => {
             // Build a display list interleaving messages and restore dividers.
             const elements: React.ReactNode[] = [];
@@ -86,6 +112,14 @@ export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessa
                     onRestore={onRestoreBranch}
                   />
                 );
+              }
+              // Insert context reset divider(s) between the last pre-reset message and the first post-reset message.
+              if (contextResetPoints && contextResetPoints.length > 0) {
+                for (let pi = 0; pi < contextResetPoints.length; pi++) {
+                  if (contextResetPoints[pi] === idx) {
+                    elements.push(<ContextResetDivider key={`context-reset-divider-${pi}`} />);
+                  }
+                }
               }
               elements.push(
                 <MessageBubble
@@ -109,6 +143,14 @@ export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessa
                   onRestore={onRestoreBranch}
                 />
               );
+            }
+            // Context reset divider(s) at the end (when reset point equals message count).
+            if (contextResetPoints && contextResetPoints.length > 0) {
+              for (let pi = 0; pi < contextResetPoints.length; pi++) {
+                if (contextResetPoints[pi] >= messages.length) {
+                  elements.push(<ContextResetDivider key={`context-reset-divider-${pi}`} />);
+                }
+              }
             }
             return elements;
           })()}

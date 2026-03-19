@@ -1,26 +1,31 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, Puzzle } from 'lucide-react';
+import { Search, Puzzle, BookOpen } from 'lucide-react';
 import { filterCommands, CATEGORY_ORDER } from '../commands';
 import type { GuiCommandDef, CommandCategory } from '../commands';
-import type { SkillInfo } from '../types';
+import type { SkillInfo, KnowledgeCollectionInfo } from '../types';
 import './CommandMenu.css';
 
 /** Union item type for the flat navigation list. */
 type MenuItem =
   | { kind: 'command'; command: GuiCommandDef }
-  | { kind: 'skill'; skill: SkillInfo };
+  | { kind: 'skill'; skill: SkillInfo }
+  | { kind: 'collection'; collection: KnowledgeCollectionInfo };
 
 interface CommandMenuProps {
   skills: SkillInfo[];
+  knowledgeCollections?: KnowledgeCollectionInfo[];
   onSelect: (command: GuiCommandDef) => void;
   onSelectSkill: (skillName: string) => void;
+  onSelectKbCollection?: (collectionName: string) => void;
   onDismiss: () => void;
 }
 
 export function CommandMenu({
   skills,
+  knowledgeCollections = [],
   onSelect,
   onSelectSkill,
+  onSelectKbCollection,
   onDismiss,
 }: CommandMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -33,7 +38,7 @@ export function CommandMenu({
     searchRef.current?.focus();
   }, []);
 
-  // Filter commands and skills by search query.
+  // Filter commands, skills, and knowledge collections by search query.
   const filteredCommands = useMemo(() => filterCommands(search), [search]);
   const filteredSkills = useMemo(() => {
     if (!search) return skills;
@@ -45,6 +50,15 @@ export function CommandMenu({
         s.tags.some((t) => t.toLowerCase().includes(q)),
     );
   }, [search, skills]);
+  const filteredCollections = useMemo(() => {
+    if (!search) return knowledgeCollections;
+    const q = search.toLowerCase();
+    return knowledgeCollections.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.description.toLowerCase().includes(q),
+    );
+  }, [search, knowledgeCollections]);
 
   // Build a flat item list for keyboard navigation.
   const flatItems = useMemo<MenuItem[]>(() => {
@@ -61,8 +75,12 @@ export function CommandMenu({
     for (const skill of filteredSkills) {
       items.push({ kind: 'skill', skill });
     }
+    // Knowledge collections follow after skills.
+    for (const collection of filteredCollections) {
+      items.push({ kind: 'collection', collection });
+    }
     return items;
-  }, [filteredCommands, filteredSkills]);
+  }, [filteredCommands, filteredSkills, filteredCollections]);
 
   // Clamp selection.
   const clampedIndex = Math.max(0, Math.min(selectedIndex, flatItems.length - 1));
@@ -97,8 +115,10 @@ export function CommandMenu({
   const selectItem = (item: MenuItem) => {
     if (item.kind === 'command') {
       onSelect(item.command);
-    } else {
+    } else if (item.kind === 'skill') {
       onSelectSkill(item.skill.name);
+    } else {
+      onSelectKbCollection?.(item.collection.name);
     }
   };
 
@@ -145,6 +165,8 @@ export function CommandMenu({
 
   // Skills flat index starts after commands.
   const skillsStartIndex = flatIndex;
+  // Collections flat index starts after skills.
+  const collectionsStartIndex = skillsStartIndex + filteredSkills.length;
 
   return (
     <div className="command-menu" ref={menuRef} onKeyDown={handleKeyDown}>
@@ -155,7 +177,7 @@ export function CommandMenu({
           ref={searchRef}
           type="text"
           className="command-menu-search-input"
-          placeholder="Search commands and skills..."
+          placeholder="Search commands, skills, and collections..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -213,6 +235,33 @@ export function CommandMenu({
                       <Puzzle size={13} className="command-menu-skill-icon" />
                       <span className="command-menu-name">{skill.name}</span>
                       <span className="command-menu-desc">{skill.description}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Knowledge Collections section */}
+            {filteredCollections.length > 0 && (
+              <div className="command-menu-section">
+                <div className="command-menu-section-label">Knowledge</div>
+                {filteredCollections.map((collection, i) => {
+                  const idx = collectionsStartIndex + i;
+                  return (
+                    <div
+                      key={collection.id}
+                      className={`command-menu-item ${idx === clampedIndex ? 'selected' : ''}`}
+                      onMouseEnter={() => setSelectedIndex(idx)}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        onSelectKbCollection?.(collection.name);
+                      }}
+                    >
+                      <BookOpen size={13} className="command-menu-skill-icon" />
+                      <span className="command-menu-name">#{collection.name}</span>
+                      <span className="command-menu-desc">
+                        {collection.entry_count} entries · {collection.description || 'Knowledge collection'}
+                      </span>
                     </div>
                   );
                 })}

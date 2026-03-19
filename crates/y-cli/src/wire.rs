@@ -22,6 +22,9 @@ pub async fn wire(config: &YAgentConfig) -> Result<AppServices> {
         .map(|d| d.join("prompts"))
         .filter(|d| d.is_dir());
 
+    // Derive skills store directory from the user config directory.
+    let skills_dir = crate::config::dirs_user_config().map(|d| d.join("skills"));
+
     let service_config = y_service::ServiceConfig {
         providers: config.providers.clone(),
         storage: config.storage.clone(),
@@ -30,7 +33,10 @@ pub async fn wire(config: &YAgentConfig) -> Result<AppServices> {
         hooks: config.hooks.clone(),
         tools: config.tools.clone(),
         guardrails: config.guardrails.clone(),
+        browser: config.browser.clone(),
+        knowledge: config.knowledge.clone(),
         prompts_dir,
+        skills_dir,
     };
 
     AppServices::from_config(&service_config).await
@@ -138,6 +144,6 @@ mod tests {
         config.storage.db_path = ":memory:".to_string();
 
         let services = wire(&config).await.unwrap();
-        assert_eq!(services.context_pipeline.provider_count(), 3);
+        assert_eq!(services.context_pipeline.provider_count(), 5);
     }
 }

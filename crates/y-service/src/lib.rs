@@ -15,11 +15,14 @@
 //! - [`DiagnosticsService`] — Trace queries and health checks
 //! - [`SystemService`] — System status reporting
 
+pub mod agent_service;
+pub mod bot;
 pub mod chat;
 pub mod config;
 pub mod container;
 pub mod cost;
 pub mod diagnostics;
+pub mod knowledge_service;
 pub mod observability;
 pub mod skill_evolution;
 pub mod skill_ingestion;
@@ -27,6 +30,10 @@ pub mod system;
 pub mod tool_search_orchestrator;
 
 // Re-export primary types for convenience.
+pub use agent_service::{
+    AgentExecutionConfig, AgentExecutionError, AgentExecutionResult, AgentService,
+    ServiceAgentRunner,
+};
 pub use chat::{
     ChatService, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ToolCallRecord, TurnError,
     TurnEvent, TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
@@ -35,6 +42,7 @@ pub use config::ServiceConfig;
 pub use container::ServiceContainer;
 pub use cost::CostService;
 pub use diagnostics::{DiagnosticsAgentDelegator, DiagnosticsService, HistoricalEntry};
+pub use bot::{BotService, BotServiceError};
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,

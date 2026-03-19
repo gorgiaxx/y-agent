@@ -1,14 +1,14 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X } from 'lucide-react';
-import { ProviderSelector } from './ProviderSelector';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen } from 'lucide-react';
+import { ConfirmDialog } from './ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
 import type { GuiCommandDef } from '../commands';
-import type { ProviderInfo, SkillInfo } from '../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo } from '../types';
 import type { PendingEdit } from '../hooks/useChat';
 import './InputArea.css';
 
 interface InputAreaProps {
-  onSend: (message: string, skills?: string[]) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[]) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -19,6 +19,131 @@ interface InputAreaProps {
   pendingEdit?: PendingEdit | null;
   onCancelEdit?: () => void;
   skills?: SkillInfo[];
+  knowledgeCollections?: KnowledgeCollectionInfo[];
+  expanded?: boolean;
+  onExpandChange?: (expanded: boolean) => void;
+  onClearSession?: () => void;
+  onAddContextReset?: () => void;
+}
+
+/** Data attribute used to identify skill mention tokens in the contenteditable. */
+const SKILL_ATTR = 'data-skill-name';
+/** Data attribute used to identify knowledge collection mention tokens. */
+const KB_ATTR = 'data-kb-collection';
+
+/**
+ * Extract plain text and skill names from the contenteditable div.
+ * Skill mentions are embedded as <span data-skill-name="..."> elements.
+ * Recursively traverses all child nodes since browsers may wrap content
+ * in <div> elements.
+ */
+function extractContent(el: HTMLDivElement): { text: string; skills: string[]; collections: string[] } {
+  const skills: string[] = [];
+  const collections: string[] = [];
+  let text = '';
+
+  function walk(node: Node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent || '';
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const element = node as HTMLElement;
+      const skillName = element.getAttribute(SKILL_ATTR);
+      const kbName = element.getAttribute(KB_ATTR);
+      if (skillName) {
+        if (!skills.includes(skillName)) {
+          skills.push(skillName);
+        }
+        return; // Don't descend into skill mention spans.
+      } else if (kbName) {
+        if (!collections.includes(kbName)) {
+          collections.push(kbName);
+        }
+        return; // Don't descend into collection mention spans.
+      } else if (element.tagName === 'BR') {
+        text += '\n';
+      } else {
+        // Recurse into child elements (e.g. browser-inserted <div> wrappers).
+        if (element.tagName === 'DIV' && element !== el) {
+          // Browser wraps new lines in <div> — treat as newline.
+          if (text.length > 0 && !text.endsWith('\n')) {
+            text += '\n';
+          }
+        }
+        for (const child of Array.from(element.childNodes)) {
+          walk(child);
+        }
+      }
+    }
+  }
+
+  for (const child of Array.from(el.childNodes)) {
+    walk(child);
+  }
+
+  console.debug('[InputArea] extractContent:', { text: text.trim(), skills, collections });
+  return { text, skills, collections };
+}
+
+/** Get the plain text content (without skill tags) for command detection. */
+function getPlainText(el: HTMLDivElement): string {
+  let text = '';
+
+  function walk(node: Node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent || '';
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const element = node as HTMLElement;
+      if (element.getAttribute(SKILL_ATTR) || element.getAttribute(KB_ATTR)) {
+        // Skip mention tokens — they're not part of the text.
+      } else if (element.tagName === 'BR') {
+        text += '\n';
+      } else {
+        if (element.tagName === 'DIV' && element !== el) {
+          if (text.length > 0 && !text.endsWith('\n')) {
+            text += '\n';
+          }
+        }
+        for (const child of Array.from(element.childNodes)) {
+          walk(child);
+        }
+      }
+    }
+  }
+
+  for (const child of Array.from(el.childNodes)) {
+    walk(child);
+  }
+  return text;
+}
+
+/** Create a skill mention DOM element. */
+function createSkillMention(skillName: string): HTMLSpanElement {
+  const span = document.createElement('span');
+  span.setAttribute(SKILL_ATTR, skillName);
+  span.setAttribute('contenteditable', 'false');
+  span.className = 'skill-mention';
+  span.textContent = `@${skillName}`;
+  return span;
+}
+
+/** Create a knowledge collection mention DOM element. */
+function createKbMention(collectionName: string): HTMLSpanElement {
+  const span = document.createElement('span');
+  span.setAttribute(KB_ATTR, collectionName);
+  span.setAttribute('contenteditable', 'false');
+  span.className = 'kb-mention';
+  span.textContent = `#${collectionName}`;
+  return span;
+}
+
+/** Place the cursor at the end of a contenteditable element. */
+function placeCursorAtEnd(el: HTMLElement) {
+  const range = document.createRange();
+  const sel = window.getSelection();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  sel?.removeAllRanges();
+  sel?.addRange(range);
 }
 
 export function InputArea({
@@ -33,16 +158,58 @@ export function InputArea({
   pendingEdit,
   onCancelEdit,
   skills = [],
+  knowledgeCollections = [],
+  expanded = false,
+  onExpandChange,
+  onClearSession,
+  onAddContextReset,
 }: InputAreaProps) {
-  const [value, setValue] = useState('');
   const [commandMode, setCommandMode] = useState(false);
-  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
+  const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const editableRef = useRef<HTMLDivElement>(null);
+  const providerDropdownRef = useRef<HTMLDivElement>(null);
+  const kbPickerRef = useRef<HTMLDivElement>(null);
+
+  // Close provider dropdown on outside click.
+  useEffect(() => {
+    if (!providerDropdownOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (providerDropdownRef.current && !providerDropdownRef.current.contains(e.target as Node)) {
+        setProviderDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [providerDropdownOpen]);
+
+  // Close knowledge picker on outside click.
+  useEffect(() => {
+    if (!kbPickerOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (kbPickerRef.current && !kbPickerRef.current.contains(e.target as Node)) {
+        setKbPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [kbPickerOpen]);
+
+  // Derive display label for selected provider.
+  const selectedProviderLabel = selectedProviderId === 'auto'
+    ? 'Auto'
+    : providers.find((p) => p.id === selectedProviderId)?.model || selectedProviderId;
+
+  const updateHasContent = useCallback(() => {
+    if (!editableRef.current) return;
+    // no-op currently — reserved for future use (e.g. enabling/disabling send button).
+  }, []);
 
   const resetInput = useCallback(() => {
-    setValue('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+    if (editableRef.current) {
+      editableRef.current.innerHTML = '';
     }
   }, []);
 
@@ -57,36 +224,141 @@ export function InputArea({
         resetInput();
         onCommand?.(cmd.name);
       } else {
-        // For non-immediate commands, insert the command text for further argument editing.
-        setValue(`/${cmd.name} `);
-        textareaRef.current?.focus();
+        // For non-immediate commands, insert the command text.
+        if (editableRef.current) {
+          editableRef.current.textContent = `/${cmd.name} `;
+          placeCursorAtEnd(editableRef.current);
+          updateHasContent();
+        }
       }
     },
-    [onCommand, resetInput, exitCommandMode],
+    [onCommand, resetInput, exitCommandMode, updateHasContent],
   );
 
   const handleSkillSelect = useCallback(
     (skillName: string) => {
       exitCommandMode();
-      resetInput();
-      setSelectedSkills((prev) => {
-        if (prev.includes(skillName)) return prev;
-        return [...prev, skillName];
-      });
-      // Re-focus the textarea after skill selection.
-      setTimeout(() => textareaRef.current?.focus(), 0);
+      if (!editableRef.current) return;
+
+      // Check if skill is already mentioned.
+      const existing = editableRef.current.querySelector(`[${SKILL_ATTR}="${skillName}"]`);
+      if (existing) {
+        // Already present — just clear the slash text and refocus.
+        // Remove any "/" text that was typed for command mode.
+        const textNodes = Array.from(editableRef.current.childNodes).filter(
+          (n) => n.nodeType === Node.TEXT_NODE,
+        );
+        for (const tn of textNodes) {
+          const t = tn.textContent || '';
+          if (t.startsWith('/')) {
+            tn.textContent = t.replace(/^\/\S*\s?/, '');
+          }
+        }
+        placeCursorAtEnd(editableRef.current);
+        updateHasContent();
+        return;
+      }
+
+      // Remove the slash command text that triggered command mode.
+      const textNodes = Array.from(editableRef.current.childNodes).filter(
+        (n) => n.nodeType === Node.TEXT_NODE,
+      );
+      for (const tn of textNodes) {
+        const t = tn.textContent || '';
+        if (t.startsWith('/')) {
+          tn.textContent = t.replace(/^\/\S*\s?/, '');
+        }
+      }
+
+      // Insert the skill mention token.
+      const mention = createSkillMention(skillName);
+      editableRef.current.appendChild(mention);
+
+      // Add a trailing space so the cursor has somewhere to go.
+      const space = document.createTextNode('\u00A0');
+      editableRef.current.appendChild(space);
+
+      placeCursorAtEnd(editableRef.current);
+      editableRef.current.focus();
+      updateHasContent();
     },
-    [exitCommandMode, resetInput],
+    [exitCommandMode, updateHasContent],
   );
 
-  const handleRemoveSkill = useCallback((skillName: string) => {
-    setSelectedSkills((prev) => prev.filter((s) => s !== skillName));
-    textareaRef.current?.focus();
+  const handleKbCollectionSelect = useCallback(
+    (collectionName: string) => {
+      exitCommandMode();
+      if (!editableRef.current) return;
+
+      // Check if collection is already mentioned.
+      const existing = editableRef.current.querySelector(`[${KB_ATTR}="${collectionName}"]`);
+      if (existing) {
+        // Already present — just clear the slash text and refocus.
+        const textNodes = Array.from(editableRef.current.childNodes).filter(
+          (n) => n.nodeType === Node.TEXT_NODE,
+        );
+        for (const tn of textNodes) {
+          const t = tn.textContent || '';
+          if (t.startsWith('/')) {
+            tn.textContent = t.replace(/^\/\S*\s?/, '');
+          }
+        }
+        placeCursorAtEnd(editableRef.current);
+        updateHasContent();
+        return;
+      }
+
+      // Remove the slash command text that triggered command mode.
+      const textNodes = Array.from(editableRef.current.childNodes).filter(
+        (n) => n.nodeType === Node.TEXT_NODE,
+      );
+      for (const tn of textNodes) {
+        const t = tn.textContent || '';
+        if (t.startsWith('/')) {
+          tn.textContent = t.replace(/^\/\S*\s?/, '');
+        }
+      }
+
+      // Insert the collection mention token.
+      const mention = createKbMention(collectionName);
+      editableRef.current.appendChild(mention);
+
+      // Add a trailing space so the cursor has somewhere to go.
+      const space = document.createTextNode('\u00A0');
+      editableRef.current.appendChild(space);
+
+      placeCursorAtEnd(editableRef.current);
+      editableRef.current.focus();
+      updateHasContent();
+    },
+    [exitCommandMode, updateHasContent],
+  );
+
+  const toggleKbCollection = useCallback((name: string) => {
+    setSelectedKbCollections(prev =>
+      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
+    );
+  }, []);
+
+  const clearKbSelections = useCallback(() => {
+    setSelectedKbCollections([]);
   }, []);
 
   const handleSend = useCallback(() => {
-    const trimmed = value.trim();
-    if (!trimmed || disabled) return;
+    if (!editableRef.current || disabled) return;
+
+    const { text, skills: extractedSkills, collections: extractedCollections } = extractContent(editableRef.current);
+    const trimmed = text.trim();
+
+    // Merge inline kb mentions with picker selections.
+    const allCollections = [...extractedCollections];
+    for (const name of selectedKbCollections) {
+      if (!allCollections.includes(name)) {
+        allCollections.push(name);
+      }
+    }
+
+    if (!trimmed && extractedSkills.length === 0 && allCollections.length === 0) return;
 
     // Intercept slash commands.
     if (trimmed.startsWith('/')) {
@@ -99,23 +371,25 @@ export function InputArea({
       }
     }
 
-    onSend(trimmed, selectedSkills.length > 0 ? selectedSkills : undefined);
+    console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, allCollections });
+    onSend(
+      trimmed,
+      extractedSkills.length > 0 ? extractedSkills : undefined,
+      allCollections.length > 0 ? allCollections : undefined,
+    );
     resetInput();
     exitCommandMode();
-    setSelectedSkills([]);
-  }, [value, disabled, onSend, onCommand, resetInput, exitCommandMode, selectedSkills]);
+  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // In command mode, let the CommandMenu handle all keyboard events.
+    // In command mode, let the CommandMenu handle most keyboard events.
     if (commandMode) {
-      // Only handle Escape here to also reset input.
       if (e.key === 'Escape') {
         e.preventDefault();
         exitCommandMode();
         resetInput();
         return;
       }
-      // Let other keys propagate to CommandMenu's own onKeyDown.
       return;
     }
 
@@ -126,39 +400,33 @@ export function InputArea({
     }
   };
 
-  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value;
-    setValue(val);
+  const handleInput = () => {
+    if (!editableRef.current) return;
 
-    // Auto-resize textarea.
-    const el = e.target;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    const plainText = getPlainText(editableRef.current);
+    updateHasContent();
 
     // Command mode detection: "/" at start, single-line only.
-    if (val.startsWith('/') && !val.includes('\n')) {
+    if (plainText.startsWith('/') && !plainText.includes('\n')) {
       setCommandMode(true);
     } else {
       if (commandMode) exitCommandMode();
     }
   };
 
-  // When entering edit mode, populate the textarea with the message content.
+  // When entering edit mode, populate with the message content.
   useEffect(() => {
-    if (pendingEdit) {
-      setValue(pendingEdit.content);
+    if (pendingEdit && editableRef.current) {
+      editableRef.current.textContent = pendingEdit.content;
       exitCommandMode();
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-        // Auto-resize for the new content.
-        textareaRef.current.style.height = 'auto';
-        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
-      }
+      editableRef.current.focus();
+      placeCursorAtEnd(editableRef.current);
+      updateHasContent();
     }
-  }, [pendingEdit, exitCommandMode]);
+  }, [pendingEdit, exitCommandMode, updateHasContent]);
 
   return (
-    <div className="input-area">
+    <div className={`input-area ${expanded ? 'input-area--expanded' : ''}`}>
       {pendingEdit && (
         <div className="edit-banner">
           <span className="edit-banner-text">Editing message -- sending will undo context to this point</span>
@@ -176,8 +444,10 @@ export function InputArea({
         {commandMode && (
           <CommandMenu
             skills={skills}
+            knowledgeCollections={knowledgeCollections}
             onSelect={handleCommandSelect}
             onSelectSkill={handleSkillSelect}
+            onSelectKbCollection={handleKbCollectionSelect}
             onDismiss={() => {
               exitCommandMode();
               resetInput();
@@ -185,34 +455,18 @@ export function InputArea({
           />
         )}
 
-        {/* Skill tags + textarea wrapper */}
+        {/* Editable div with inline skill mentions */}
         <div className="input-content">
-          {selectedSkills.length > 0 && (
-            <div className="skill-tags-row">
-              {selectedSkills.map((name) => (
-                <span key={name} className="skill-tag">
-                  <span className="skill-tag-name">{name}</span>
-                  <button
-                    className="skill-tag-remove"
-                    onClick={() => handleRemoveSkill(name)}
-                    title={`Remove ${name}`}
-                    aria-label={`Remove skill ${name}`}
-                  >
-                    <X size={10} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <textarea
-            ref={textareaRef}
-            className="input-textarea"
-            value={value}
-            onChange={handleInput}
+          <div
+            ref={editableRef}
+            className="input-editable"
+            contentEditable={!disabled}
+            onInput={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder={disabled ? 'Waiting for response...' : 'Type a message... (/ for commands)'}
-            disabled={disabled}
-            rows={1}
+            data-placeholder={disabled ? 'Waiting for response...' : 'Type a message... (/ for commands), Enter to send, Shift+Enter for newline)'}
+            role="textbox"
+            aria-multiline="true"
+            suppressContentEditableWarning
           />
         </div>
 
@@ -226,14 +480,117 @@ export function InputArea({
             <Square size={14} />
           </button>
         )}
+
+        {/* Toolbar row with action buttons — inside the input border */}
+        <div className="input-toolbar">
+          {/* (a) Model / provider selection */}
+          <div className="toolbar-btn-group" ref={providerDropdownRef}>
+            <button
+              className="toolbar-btn has-tooltip"
+              onClick={() => setProviderDropdownOpen(!providerDropdownOpen)}
+              data-tooltip="Select model"
+              disabled={disabled}
+            >
+              <AtSign size={14} />
+              <span className="toolbar-btn-label">{selectedProviderLabel}</span>
+            </button>
+            {providerDropdownOpen && (
+              <div className="toolbar-provider-dropdown">
+                <button
+                  className={`toolbar-provider-item ${selectedProviderId === 'auto' ? 'selected' : ''}`}
+                  onClick={() => { onSelectProvider('auto'); setProviderDropdownOpen(false); }}
+                >
+                  Auto
+                </button>
+                {providers.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`toolbar-provider-item ${selectedProviderId === p.id ? 'selected' : ''}`}
+                    onClick={() => { onSelectProvider(p.id); setProviderDropdownOpen(false); }}
+                  >
+                    {p.id} ({p.model})
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* (b) Expand / collapse input */}
+          <button
+            className="toolbar-btn has-tooltip"
+            onClick={() => onExpandChange?.(!expanded)}
+            data-tooltip={expanded ? 'Collapse input' : 'Expand input'}
+          >
+            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+
+          {/* (c) Clear all messages */}
+          <button
+            className="toolbar-btn toolbar-btn--danger has-tooltip"
+            onClick={() => setClearConfirmOpen(true)}
+            data-tooltip="Clear chat"
+            disabled={disabled}
+          >
+            <Paintbrush size={14} />
+          </button>
+
+          {/* (d) Add context reset */}
+          <button
+            className="toolbar-btn has-tooltip"
+            onClick={onAddContextReset}
+            data-tooltip="Reset context"
+            disabled={disabled}
+          >
+            <Eraser size={14} />
+          </button>
+
+          {/* (e) Knowledge base picker */}
+          {knowledgeCollections.length > 0 && (
+            <div className="toolbar-btn-group" ref={kbPickerRef}>
+              <button
+                className={`toolbar-btn has-tooltip ${selectedKbCollections.length > 0 ? 'toolbar-btn--active' : ''}`}
+                onClick={() => setKbPickerOpen(!kbPickerOpen)}
+                data-tooltip="Knowledge bases"
+                disabled={disabled}
+              >
+                <BookOpen size={14} />
+                {selectedKbCollections.length > 0 && (
+                  <span className="toolbar-btn-label">{selectedKbCollections.length} selected</span>
+                )}
+              </button>
+              {kbPickerOpen && (
+                <div className="toolbar-kb-dropdown">
+                  <div className="toolbar-kb-header">
+                    <span className="toolbar-kb-title">Knowledge Bases</span>
+                    {selectedKbCollections.length > 0 && (
+                      <button
+                        className="toolbar-kb-clear"
+                        onClick={clearKbSelections}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  {knowledgeCollections.map((col) => (
+                    <div
+                      key={col.id}
+                      className={`toolbar-kb-item ${selectedKbCollections.includes(col.name) ? 'selected' : ''}`}
+                      onClick={() => toggleKbCollection(col.name)}
+                    >
+                      <span className="toolbar-kb-item-name">{col.name}</span>
+                      <span className="toolbar-kb-item-count">{col.entry_count} entries</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-      <div className="input-footer">
-        <ProviderSelector
-          providers={providers}
-          selectedProviderId={selectedProviderId}
-          onSelect={onSelectProvider}
-          disabled={disabled}
-        />
+
+
+
+      {/* <div className="input-footer">
         <div className="input-hint">
           {commandMode
             ? 'Up/Down to navigate, Enter to select, Esc to dismiss'
@@ -241,7 +598,20 @@ export function InputArea({
               ? 'Enter to send, Shift+Enter for newline'
               : 'Shift+Enter to send'}
         </div>
-      </div>
+      </div> */}
+
+      <ConfirmDialog
+        open={clearConfirmOpen}
+        title="Clear all messages"
+        message="This will permanently delete the current conversation. This cannot be undone."
+        confirmLabel="Clear"
+        variant="danger"
+        onConfirm={() => {
+          setClearConfirmOpen(false);
+          onClearSession?.();
+        }}
+        onCancel={() => setClearConfirmOpen(false)}
+      />
     </div>
   );
 }

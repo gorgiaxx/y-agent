@@ -1,0 +1,42 @@
+# Browser tool (Chrome DevTools Protocol) configuration.
+# Place this file at ~/.config/y-agent/browser.toml or config/browser.toml
+
+# Enable/disable the browser tool entirely.
+# enabled = true
+
+# ---------- Chrome Mode ----------
+# Choose one: auto-launch a local Chrome, or connect to a remote CDP endpoint.
+
+# Launch a local headless Chrome automatically.
+# When true, y-agent spawns Chrome and manages its lifecycle.
+# auto_launch = false
+
+# Path to Chrome/Chromium executable.
+# Leave empty for auto-detection (tries Google Chrome, Chromium, etc.)
+# chrome_path = ""
+
+# Remote debugging port for the auto-launched Chrome.
+# local_cdp_port = 9222
+
+# ---------- Remote CDP Mode ----------
+# Used when auto_launch = false.
+
+# CDP endpoint URL.
+# Supports http://, https://, ws://, wss://
+# cdp_url = "http://127.0.0.1:9222"
+
+# ---------- Shared Settings ----------
+
+# Default timeout for CDP operations (milliseconds).
+# timeout_ms = 30000
+
+# Allowed domains for navigation. Use ["*"] to allow all public domains.
+# Empty list = block all navigation.
+# allowed_domains = ["*"]
+
+# Block navigation to private/local network addresses (10.x, 192.168.x, etc.)
+# Recommended to stay enabled for security (SSRF protection).
+# block_private_networks = true
+
+# Maximum screenshot width/height in pixels.
+# max_screenshot_dim = 4096

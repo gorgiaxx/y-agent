@@ -62,7 +62,7 @@ interface UseChatReturn {
   pendingEdit: PendingEdit | null;
   /** Tool results from the current streaming run (for inline cards). */
   toolResults: ToolResultRecord[];
-  sendMessage: (message: string, sessionId: string, providerId?: string) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[]) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
@@ -80,6 +80,10 @@ interface UseChatReturn {
   resendLastTurn: (sessionId: string, messageId: string, content: string, providerId?: string) => Promise<ChatStarted | null>;
   /** Restore a tombstoned branch. */
   restoreBranch: (sessionId: string, checkpointId: string) => Promise<RestoreResult | null>;
+  /** All context reset points for the active session (empty = no resets). */
+  contextResetPoints: number[];
+  /** Add a new context reset point at the current message position. */
+  addContextReset: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +141,8 @@ async function initialiseChatBus() {
 
   const u1 = await listen<ChatCompletePayload>('chat:complete', (e) => {
     const { run_id } = e.payload;
-    const session_id = chatBusState.runToSession[run_id];
+    // Prefer session_id from payload (always available), then fallback to mapping.
+    const session_id = e.payload.session_id || chatBusState.runToSession[run_id];
     chatBusState.pendingRuns.delete(run_id);
     if (session_id) chatBusState.streamingSessions.delete(session_id);
     notifyChatSubscribers({ type: 'complete', payload: e.payload });
@@ -146,7 +151,8 @@ async function initialiseChatBus() {
 
   const u2 = await listen<ChatErrorPayload>('chat:error', (e) => {
     const { run_id } = e.payload;
-    const session_id = chatBusState.runToSession[run_id];
+    // Prefer session_id from payload (may be empty for cancels), then fallback to mapping.
+    const session_id = e.payload.session_id || chatBusState.runToSession[run_id];
     chatBusState.pendingRuns.delete(run_id);
     if (session_id) chatBusState.streamingSessions.delete(session_id);
     notifyChatSubscribers({ type: 'error', payload: e.payload });
@@ -215,6 +221,37 @@ function setCachedMessages(
   const next = typeof updater === 'function' ? updater(prev) : updater;
   cache.set(sessionId, next);
   return next;
+}
+
+/**
+ * Merge skill tag metadata from cached (optimistic) user messages into
+ * backend-loaded messages. The backend doesn't persist `skills`, so we
+ * transfer them from the cache by matching on role + content.
+ */
+function mergeSkillsFromCache(
+  backendMsgs: Message[],
+  cache: Map<string, Message[]>,
+  sessionId: string,
+): Message[] {
+  const cached = cache.get(sessionId);
+  if (!cached || cached.length === 0) return backendMsgs;
+
+  // Build a lookup: content → skills (only for user messages with skills).
+  const skillsByContent = new Map<string, string[]>();
+  for (const m of cached) {
+    if (m.role === 'user' && m.skills && m.skills.length > 0) {
+      skillsByContent.set(m.content, m.skills);
+    }
+  }
+  if (skillsByContent.size === 0) return backendMsgs;
+
+  return backendMsgs.map((m) => {
+    if (m.role === 'user' && !m.skills) {
+      const skills = skillsByContent.get(m.content);
+      if (skills) return { ...m, skills };
+    }
+    return m;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +382,10 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const toolResultsRef = useRef(new Map<string, ToolResultRecord[]>());
   const [visibleToolResults, setVisibleToolResults] = useState<ToolResultRecord[]>([]);
 
+  // Per-session context reset points (list of message indices where context was reset).
+  const contextResetMapRef = useRef(new Map<string, number[]>());
+  const [contextResetPoints, setContextResetPoints] = useState<number[]>([]);
+
   // Keep a ref in sync with activeSessionId.
   const activeSessionIdRef = useRef<string | null>(activeSessionId);
   useEffect(() => {
@@ -354,6 +395,10 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       setPendingEdit(null);
       setOp('idle');
     }
+    // Restore context reset points for the new session.
+    setContextResetPoints(
+      activeSessionId ? contextResetMapRef.current.get(activeSessionId) ?? [] : [],
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId]);
 
@@ -453,7 +498,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         syncVisible(sid);
       } else if (event.type === 'complete') {
         const payload = event.payload;
-        const sessionId = chatBusState.runToSession[payload.run_id];
+        // Resolve session: prefer payload (always available from backend),
+        // fall back to bus mapping for older event formats.
+        const sessionId = payload.session_id || chatBusState.runToSession[payload.run_id] || undefined;
         console.log(`[chat] complete: run_id=${payload.run_id}, session=${sessionId}, opStatus=${opStatusRef.current}`);
 
         if (sessionId) {
@@ -468,9 +515,11 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             try {
               const msgs = await invoke<Message[]>('session_get_messages', { sessionId });
 
+              // Preserve skill tags from optimistic user messages.
+              const mergedMsgs = mergeSkillsFromCache(msgs, sessionMessagesRef.current, sessionId);
+
               // Grab the accumulated streaming content before overwriting.
               const streamingId = `streaming-${sessionId}`;
-
               const cachedMessages = getCachedMessages(sessionMessagesRef.current, sessionId);
               const streamingMsg = cachedMessages.find((m) => m.id === streamingId);
               const accumulatedContent = streamingMsg?.content ?? '';
@@ -478,23 +527,23 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               // If there was accumulated streaming content and the backend
               // has a final assistant message, check if the streaming content
               // carries extra text from prior tool-call iterations.
-              if (accumulatedContent && msgs.length > 0) {
-                const lastMsg = msgs[msgs.length - 1];
+              if (accumulatedContent && mergedMsgs.length > 0) {
+                const lastMsg = mergedMsgs[mergedMsgs.length - 1];
                 if (lastMsg.role === 'assistant' && accumulatedContent.length > lastMsg.content.length) {
                   // The streaming content has more text (from earlier
                   // iterations). Use it as the display content but keep
                   // the backend message's metadata.
-                  msgs[msgs.length - 1] = {
+                  mergedMsgs[mergedMsgs.length - 1] = {
                     ...lastMsg,
                     content: accumulatedContent,
                   };
                 }
               }
 
-              setCachedMessages(sessionMessagesRef.current, sessionId, msgs);
+              setCachedMessages(sessionMessagesRef.current, sessionId, mergedMsgs);
               if (activeSessionIdRef.current === sessionId) {
                 startTransition(() => {
-                  setVisibleMessages(msgs);
+                  setVisibleMessages(mergedMsgs);
                 });
               }
             } catch (e) {
@@ -546,7 +595,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         setError(null);
       } else if (event.type === 'error') {
         const payload = event.payload;
-        const sessionId = chatBusState.runToSession[payload.run_id];
+        // Resolve session: prefer payload, fall back to bus mapping.
+        // For cancels the backend sends empty string, so the fallback is needed.
+        const sessionId = payload.session_id || chatBusState.runToSession[payload.run_id] || undefined;
         const isCancelled = payload.error === 'Cancelled';
 
         // Deduplicate cancel events: `chat_cancel` emits one immediately,
@@ -670,7 +721,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
     try {
       const msgs = await invoke<Message[]>('session_get_messages', { sessionId });
-      console.log(`[chat] loadMessages: got ${msgs.length} messages for session=${sessionId}, active=${activeSessionIdRef.current}`);
+      // Preserve skill tags from cached messages.
+      const mergedMsgs = mergeSkillsFromCache(msgs, sessionMessagesRef.current, sessionId);
+      console.log(`[chat] loadMessages: got ${mergedMsgs.length} messages for session=${sessionId}, active=${activeSessionIdRef.current}`);
       if (activeSessionIdRef.current === sessionId) {
         const streamingId = `streaming-${sessionId}`;
         const existingStreaming = getCachedMessages(
@@ -678,14 +731,14 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           sessionId,
         ).find((m) => m.id === streamingId);
 
-        const merged = existingStreaming ? [...msgs, existingStreaming] : msgs;
+        const merged = existingStreaming ? [...mergedMsgs, existingStreaming] : mergedMsgs;
         setCachedMessages(sessionMessagesRef.current, sessionId, merged);
         startTransition(() => {
           setVisibleMessages(merged);
         });
       } else {
         console.log(`[chat] loadMessages: session mismatch, skipping visible update (active=${activeSessionIdRef.current}, requested=${sessionId})`);
-        setCachedMessages(sessionMessagesRef.current, sessionId, msgs);
+        setCachedMessages(sessionMessagesRef.current, sessionId, mergedMsgs);
       }
     } catch (e) {
       console.error('[chat] loadMessages failed:', e);
@@ -739,7 +792,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   // ------------------------------------------------------------------
 
   const sendMessage = useCallback(
-    async (message: string, sessionId: string, providerId?: string): Promise<ChatStarted | null> => {
+    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[]): Promise<ChatStarted | null> => {
       // Guard: block if a compound operation is in progress.
       if (opStatusRef.current !== 'idle' && opStatusRef.current !== 'sending') {
         console.warn(`[chat] sendMessage blocked: opStatus=${opStatusRef.current}`);
@@ -757,15 +810,23 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         content: message,
         timestamp: new Date().toISOString(),
         tool_calls: [],
+        skills: skills && skills.length > 0 ? skills : undefined,
       };
       setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => [...prev, userMsg]);
       syncVisible(sessionId);
 
       try {
+        // Pass context reset index so the backend trims history for fresh context.
+        // Use the latest (most recent) reset point.
+        const resetPoints = contextResetMapRef.current.get(sessionId) ?? [];
+        const resetIdx = resetPoints.length > 0 ? resetPoints[resetPoints.length - 1] : null;
         const result = await invoke<ChatStarted>('chat_send', {
           message,
           sessionId,
           providerId: providerId ?? null,
+          skills: skills && skills.length > 0 ? skills : null,
+          knowledgeCollections: knowledgeCollections && knowledgeCollections.length > 0 ? knowledgeCollections : null,
+          contextStartIndex: resetIdx,
         });
         return result;
       } catch (e) {
@@ -1149,6 +1210,25 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     [loadMessages, setOp],
   );
 
+  // ------------------------------------------------------------------
+  // addContextReset -- add a new context reset point
+  // ------------------------------------------------------------------
+
+  const addContextReset = useCallback(() => {
+    const sid = activeSessionIdRef.current;
+    if (!sid) return;
+
+    // Set: add a new reset point at the current message count.
+    const msgs = getCachedMessages(sessionMessagesRef.current, sid);
+    const idx = msgs.length;
+    const existing = contextResetMapRef.current.get(sid) ?? [];
+    // Avoid adding duplicate if the last point is already at this index.
+    if (existing.length > 0 && existing[existing.length - 1] === idx) return;
+    const updated = [...existing, idx];
+    contextResetMapRef.current.set(sid, updated);
+    setContextResetPoints(updated);
+  }, []);
+
   return {
     messages: visibleMessages,
     isStreaming,
@@ -1169,5 +1249,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     undoToMessage,
     resendLastTurn,
     restoreBranch,
+    contextResetPoints,
+    addContextReset,
   };
 }

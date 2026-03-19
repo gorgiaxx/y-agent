@@ -1,0 +1,15 @@
+# Bot platform configuration
+# Uncomment and fill in credentials to enable bot integrations.
+
+# --- Feishu (飞书 / Lark) ---
+# [feishu]
+# app_id = ""
+# app_secret = ""
+# encrypt_key = ""           # Optional: for webhook signature verification
+# verification_token = ""    # Optional: for event subscription verification
+# domain = "feishu"          # "feishu" (default), "lark" (international), or custom URL
+
+# --- Telegram ---
+# [telegram]
+# token = ""                 # Bot API token from @BotFather
+# webhook_secret = ""        # Optional: for webhook request verification

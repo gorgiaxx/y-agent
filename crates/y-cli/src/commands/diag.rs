@@ -358,16 +358,6 @@ async fn run_self_check(services: &AppServices, _mode: OutputMode) -> Result<()>
     let frozen = statuses.len() - active;
     println!("  Providers:         {active} active, {frozen} frozen");
 
-    // 3. PG configuration.
-    println!(
-        "  PG feature:        {}",
-        if cfg!(feature = "diagnostics_pg") {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
-
     println!();
     Ok(())
 }

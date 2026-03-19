@@ -35,6 +35,7 @@ pub struct ChatStartedPayload {
 #[derive(Debug, Serialize, Clone)]
 pub struct ChatCompletePayload {
     pub run_id: String,
+    pub session_id: String,
     pub content: String,
     pub model: String,
     pub provider_id: Option<String>,
@@ -59,6 +60,7 @@ pub struct ToolCallInfo {
 #[derive(Debug, Serialize, Clone)]
 pub struct ChatErrorPayload {
     pub run_id: String,
+    pub session_id: String,
     pub error: String,
 }
 
@@ -101,6 +103,9 @@ pub async fn chat_send(
     message: String,
     session_id: Option<String>,
     provider_id: Option<String>,
+    skills: Option<Vec<String>>,
+    knowledge_collections: Option<Vec<String>>,
+    context_start_index: Option<usize>,
 ) -> Result<ChatStarted, String> {
     if message.trim().is_empty() {
         return Err("Message must not be empty".into());
@@ -109,22 +114,33 @@ pub async fn chat_send(
     let run_id = uuid::Uuid::new_v4().to_string();
 
     // Prepare turn: resolve/create session, persist user message, read transcript.
-    let prepared = ChatService::prepare_turn(
+    let mut prepared = ChatService::prepare_turn(
         &state.container,
         PrepareTurnRequest {
             session_id: session_id.map(|s| SessionId(s)),
             user_input: message.clone(),
             provider_id: provider_id.clone(),
+            skills: skills.clone(),
+            knowledge_collections: knowledge_collections.clone(),
         },
     )
     .await
     .map_err(|e| format!("{e}"))?;
+
+    // If context reset is active, trim history so only messages after the
+    // reset point are sent to the LLM (fresh context).
+    if let Some(start_idx) = context_start_index {
+        if start_idx < prepared.history.len() {
+            prepared.history.drain(..start_idx);
+        }
+    }
 
     let sid = prepared.session_id.clone();
     let result_sid = sid.0.clone();
     let result_run_id = run_id.clone();
 
     // Resolve workspace path for this session and update prompt context.
+    // Also set active_skills if the user attached skills to this message.
     {
         let workspace_path = super::workspace::resolve_workspace_path(
             &state.config_dir,
@@ -133,10 +149,17 @@ pub async fn chat_send(
         tracing::info!(
             session_id = %sid.0,
             workspace_path = ?workspace_path,
+            skills = ?skills,
+            knowledge_collections = ?knowledge_collections,
             "chat_send: resolved workspace path for session"
         );
         let mut ctx = state.container.prompt_context.write().await;
         ctx.working_directory = workspace_path;
+        if let Some(ref skill_names) = skills {
+            ctx.active_skills = skill_names.clone();
+        } else {
+            ctx.active_skills.clear();
+        }
     }
 
     // Spawn async LLM turn -- results streamed via events.
@@ -218,6 +241,7 @@ pub async fn chat_send(
                     "chat:complete",
                     ChatCompletePayload {
                         run_id: run_id_clone,
+                        session_id: sid_clone.0.clone(),
                         content: result.content,
                         model: result.model,
                         provider_id: result.provider_id,
@@ -287,6 +311,7 @@ pub async fn chat_send(
                     "chat:error",
                     ChatErrorPayload {
                         run_id: run_id_clone,
+                        session_id: sid_clone.0.clone(),
                         error: e.to_string(),
                     },
                 );
@@ -342,10 +367,14 @@ pub async fn chat_cancel(
     }
     // Notify frontend regardless of whether a token was found so the UI
     // streaming state is always cleared.
+    // For cancel, the session_id is not easily recoverable from the backend
+    // side (the run_id→session mapping lives in the frontend's ChatBus).
+    // We send an empty string; the frontend falls back to its own mapping.
     let _ = app.emit(
         "chat:error",
         ChatErrorPayload {
             run_id,
+            session_id: String::new(),
             error: "Cancelled".to_string(),
         },
     );
@@ -564,6 +593,7 @@ pub async fn chat_resend(
             history: &history,
             turn_number,
             provider_id: provider_id.clone(),
+            knowledge_collections: vec![],
         };
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -603,6 +633,7 @@ pub async fn chat_resend(
                     "chat:complete",
                     ChatCompletePayload {
                         run_id: run_id_clone,
+                        session_id: sid_clone.0.clone(),
                         content: result.content,
                         model: result.model,
                         provider_id: result.provider_id,
@@ -628,6 +659,7 @@ pub async fn chat_resend(
                     "chat:error",
                     ChatErrorPayload {
                         run_id: run_id_clone,
+                        session_id: sid_clone.0.clone(),
                         error: e.to_string(),
                     },
                 );

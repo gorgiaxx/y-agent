@@ -192,6 +192,102 @@ impl Default for DockerConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Virtual environment configuration
+// ---------------------------------------------------------------------------
+
+/// Python virtual environment configuration (uv-based).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PythonVenvConfig {
+    /// Whether the Python venv is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Path to the `uv` binary.
+    #[serde(default = "default_uv_path")]
+    pub uv_path: String,
+
+    /// Python version to use.
+    #[serde(default = "default_python_version")]
+    pub python_version: String,
+
+    /// Directory name for the virtual environment.
+    #[serde(default = "default_venv_dir")]
+    pub venv_dir: String,
+
+    /// Working directory for `uv` commands.
+    #[serde(default = "default_venv_working_dir")]
+    pub working_dir: String,
+}
+
+fn default_uv_path() -> String {
+    "uv".into()
+}
+
+fn default_python_version() -> String {
+    "3.12".into()
+}
+
+fn default_venv_dir() -> String {
+    ".venv".into()
+}
+
+fn default_venv_working_dir() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    format!("{home}/.local/state/y-agent")
+}
+
+impl Default for PythonVenvConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            uv_path: default_uv_path(),
+            python_version: default_python_version(),
+            venv_dir: default_venv_dir(),
+            working_dir: default_venv_working_dir(),
+        }
+    }
+}
+
+/// JavaScript environment configuration (bun-based).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BunVenvConfig {
+    /// Whether the Bun environment is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Path to the `bun` binary.
+    #[serde(default = "default_bun_path")]
+    pub bun_path: String,
+
+    /// Bun version to use.
+    #[serde(default = "default_bun_version")]
+    pub bun_version: String,
+
+    /// Working directory for `bun` commands.
+    #[serde(default = "default_venv_working_dir")]
+    pub working_dir: String,
+}
+
+fn default_bun_path() -> String {
+    "bun".into()
+}
+
+fn default_bun_version() -> String {
+    "latest".into()
+}
+
+impl Default for BunVenvConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bun_path: default_bun_path(),
+            bun_version: default_bun_version(),
+            working_dir: default_venv_working_dir(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Top-level runtime configuration
 // ---------------------------------------------------------------------------
 
@@ -253,6 +349,14 @@ pub struct RuntimeConfig {
     /// Docker backend configuration.
     #[serde(default)]
     pub docker: DockerConfig,
+
+    /// Python virtual environment configuration (uv-based).
+    #[serde(default)]
+    pub python_venv: PythonVenvConfig,
+
+    /// JavaScript environment configuration (bun-based).
+    #[serde(default)]
+    pub bun_venv: BunVenvConfig,
 }
 
 fn default_backend() -> RuntimeBackend {
@@ -292,6 +396,8 @@ impl Default for RuntimeConfig {
             allowed_paths: vec![],
             ssh: SshConfig::default(),
             docker: DockerConfig::default(),
+            python_venv: PythonVenvConfig::default(),
+            bun_venv: BunVenvConfig::default(),
         }
     }
 }

@@ -447,6 +447,9 @@ impl AgentDelegator for AgentPool {
             #[allow(clippy::cast_possible_truncation)]
             max_tokens: Some(definition.max_context_tokens as u32),
             timeout_secs: definition.timeout_secs,
+            allowed_tools: definition.allowed_tools.clone(),
+            denied_tools: definition.denied_tools.clone(),
+            max_iterations: definition.max_iterations,
         };
 
         // Register for observability before execution.

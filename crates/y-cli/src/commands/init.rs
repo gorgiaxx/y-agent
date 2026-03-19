@@ -473,6 +473,7 @@ const EXAMPLE_PROVIDERS: &str = include_str!("../../../../config/providers.examp
 const EXAMPLE_STORAGE: &str = include_str!("../../../../config/storage.example.toml");
 const EXAMPLE_SESSION: &str = include_str!("../../../../config/session.example.toml");
 const EXAMPLE_RUNTIME: &str = include_str!("../../../../config/runtime.example.toml");
+const EXAMPLE_KNOWLEDGE: &str = include_str!("../../../../config/knowledge.example.toml");
 const EXAMPLE_HOOKS: &str = include_str!("../../../../config/hooks.example.toml");
 const EXAMPLE_TOOLS: &str = include_str!("../../../../config/tools.example.toml");
 const EXAMPLE_GUARDRAILS: &str = include_str!("../../../../config/guardrails.example.toml");
@@ -484,6 +485,7 @@ const CONFIG_TEMPLATES: &[(&str, &str)] = &[
     ("storage.toml", EXAMPLE_STORAGE),
     ("session.toml", EXAMPLE_SESSION),
     ("runtime.toml", EXAMPLE_RUNTIME),
+    ("knowledge.toml", EXAMPLE_KNOWLEDGE),
     ("hooks.toml", EXAMPLE_HOOKS),
     ("tools.toml", EXAMPLE_TOOLS),
     ("guardrails.toml", EXAMPLE_GUARDRAILS),
@@ -620,6 +622,37 @@ pub fn seed_builtin_prompts(config_dir: &Path) -> Result<Vec<String>> {
             .with_context(|| format!("writing {}", dest.display()))?;
 
         seeded.push(filename.to_string());
+    }
+
+    Ok(seeded)
+}
+
+/// Seed built-in agent definitions into the user's config directory.
+///
+/// Creates `<config_dir>/agents/` and writes each agent TOML file only if it
+/// does not already exist (preserving user modifications).
+/// Returns the list of agent IDs that were seeded.
+pub fn seed_builtin_agents(config_dir: &Path) -> Result<Vec<String>> {
+    use y_agent::agent::registry::AgentRegistry;
+
+    let agents_dir = config_dir.join("agents");
+    std::fs::create_dir_all(&agents_dir)
+        .with_context(|| format!("creating agents directory: {}", agents_dir.display()))?;
+
+    let mut seeded = Vec::new();
+
+    for (name, content) in AgentRegistry::builtin_toml_sources() {
+        let dest = agents_dir.join(format!("{name}.toml"));
+
+        // Skip if already exists (don't overwrite user modifications).
+        if dest.exists() {
+            continue;
+        }
+
+        std::fs::write(&dest, content)
+            .with_context(|| format!("writing {}", dest.display()))?;
+
+        seeded.push(name.to_string());
     }
 
     Ok(seeded)
@@ -810,19 +843,7 @@ pub fn select_providers(args: &InitArgs, prompter: &dyn Prompter) -> Result<Prov
 /// - `data_dir` is `~/.local/state/y-agent/data/` where the database lives.
 ///
 /// Only one connection is needed since init just runs migrations.
-fn build_init_storage_config(config_base: &Path, data_dir: &Path) -> y_storage::StorageConfig {
-    // Try to read postgres_url from the generated storage.toml.
-    let pg_url = config_base
-        .join("storage.toml")
-        .to_str()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|content| {
-            content
-                .parse::<toml::Table>()
-                .ok()
-                .and_then(|t| t.get("postgres_url")?.as_str().map(String::from))
-        });
-
+fn build_init_storage_config(_config_base: &Path, data_dir: &Path) -> y_storage::StorageConfig {
     y_storage::StorageConfig {
         db_path: data_dir
             .join("y-agent.db")
@@ -833,39 +854,10 @@ fn build_init_storage_config(config_base: &Path, data_dir: &Path) -> y_storage::
         busy_timeout_ms: 5000,
         transcript_dir: data_dir.join("transcripts"),
         migrations_dir: PathBuf::from("migrations/sqlite"),
-        postgres_url: pg_url,
-        pg_pool_size: 5,
     }
 }
 
-/// Initialize `PostgreSQL` diagnostics schema if PG is configured.
-///
-/// Creates a connection pool and runs the observability migrations.
-/// This is non-fatal — failures are reported but do not block init.
-#[cfg(feature = "diagnostics_pg")]
-async fn initialize_pg_diagnostics(
-    config: &y_storage::StorageConfig,
-) -> Result<()> {
-    let pg_pool = y_storage::create_pg_pool(config)
-        .await
-        .context("failed to connect to PostgreSQL")?;
 
-    let store = y_diagnostics::PgTraceStore::new(pg_pool);
-    store
-        .run_migrations()
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .context("failed to run diagnostics migrations")?;
-
-    Ok(())
-}
-
-#[cfg(not(feature = "diagnostics_pg"))]
-async fn initialize_pg_diagnostics(
-    _config: &y_storage::StorageConfig,
-) -> Result<()> {
-    anyhow::bail!("diagnostics_pg feature not enabled")
-}
 
 /// Create the `SQLite` database and run all embedded migrations.
 ///
@@ -1036,19 +1028,7 @@ pub async fn run(args: &InitArgs) -> Result<()> {
         output::print_info("Skipped database initialization (existing database preserved)");
     }
 
-    // --- Step 6b: Initialize PostgreSQL diagnostics (optional) ---
-    let storage_config = build_init_storage_config(&base, &data_dir);
-    if storage_config.postgres_url.is_some() {
-        match initialize_pg_diagnostics(&storage_config).await {
-            Ok(()) => {
-                output::print_success("PostgreSQL diagnostics schema initialized");
-            }
-            Err(e) => {
-                output::print_warning(&format!("PostgreSQL diagnostics init skipped: {e}"));
-                output::print_info("Diagnostics will use in-memory storage until PG is available");
-            }
-        }
-    }
+
 
     // --- Step 6c: Seed built-in skills ---
     match seed_builtin_skills(&base) {
@@ -1085,6 +1065,25 @@ pub async fn run(args: &InitArgs) -> Result<()> {
         Err(e) => {
             output::print_warning(&format!("Built-in prompts seeding failed: {e}"));
             output::print_info("You can manually copy prompt files later");
+        }
+    }
+
+    // --- Step 6e: Seed built-in agent definitions ---
+    match seed_builtin_agents(&base) {
+        Ok(seeded) => {
+            if seeded.is_empty() {
+                output::print_info("Built-in agent definitions already installed");
+            } else {
+                output::print_success(&format!(
+                    "Seeded {} built-in agent(s) to {}/agents/",
+                    seeded.len(),
+                    base.display()
+                ));
+            }
+        }
+        Err(e) => {
+            output::print_warning(&format!("Built-in agent seeding failed: {e}"));
+            output::print_info("You can manually copy agent files later");
         }
     }
 

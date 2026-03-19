@@ -13,6 +13,7 @@ import {
   Pencil,
   Undo2,
   RefreshCw,
+  Puzzle,
 } from 'lucide-react';
 import type { Message } from '../types';
 import type { ToolResultRecord } from '../hooks/useChat';
@@ -251,6 +252,57 @@ function MarkdownSegment({ text, components }: { text: string; components: any }
   );
 }
 
+/**
+ * Extract `<think>...</think>` tags from message content.
+ *
+ * Some models (e.g. DeepSeek, QwQ) embed chain-of-thought inside `<think>` tags
+ * in the main content rather than sending a separate `reasoning` field.
+ *
+ * Returns the extracted thinking text and the remaining content with tags stripped.
+ * If the closing `</think>` tag is missing, the content after `<think>` is treated
+ * as still-streaming thinking content.
+ */
+function extractThinkTags(content: string): {
+  thinkContent: string | null;
+  strippedContent: string;
+  isThinkingIncomplete: boolean;
+} {
+  const openTag = '<think>';
+  const closeTag = '</think>';
+
+  const openIdx = content.indexOf(openTag);
+  if (openIdx < 0) {
+    return { thinkContent: null, strippedContent: content, isThinkingIncomplete: false };
+  }
+
+  const afterOpen = openIdx + openTag.length;
+  const closeIdx = content.indexOf(closeTag, afterOpen);
+
+  if (closeIdx < 0) {
+    // The <think> tag is not closed — still streaming thinking content.
+    const thinkContent = content.slice(afterOpen).trim();
+    const strippedContent = content.slice(0, openIdx).trim();
+    return {
+      thinkContent: thinkContent || null,
+      strippedContent,
+      isThinkingIncomplete: true,
+    };
+  }
+
+  // Complete <think>...</think> block found.
+  const thinkContent = content.slice(afterOpen, closeIdx).trim();
+  // Strip the entire <think>...</think> block from the content.
+  const strippedContent = (
+    content.slice(0, openIdx) + content.slice(closeIdx + closeTag.length)
+  ).trim();
+
+  return {
+    thinkContent: thinkContent || null,
+    strippedContent,
+    isThinkingIncomplete: false,
+  };
+}
+
 export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -261,17 +313,30 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
   const codeThemeStyle = resolvedTheme === 'light' ? oneLight : oneDark;
   const markdownComponents = useMemo(() => makeMarkdownComponents(codeThemeStyle), [codeThemeStyle]);
 
+  // Extract <think> tags from content for models that inline reasoning.
+  // Priority: metadata.reasoning_content (from stream_reasoning_delta) takes
+  // precedence over <think> tag extraction.
+  const thinkTagResult = useMemo(() => {
+    if (isUser) return null;
+    // Skip if metadata already has reasoning_content from the backend.
+    if (typeof message.metadata?.reasoning_content === 'string') return null;
+    return extractThinkTags(message.content);
+  }, [isUser, message.content, message.metadata?.reasoning_content]);
+
+  // The effective content to render (with <think> tags stripped if present).
+  const effectiveContent = thinkTagResult?.strippedContent ?? message.content;
+
   // Process content to extract text segments and tool call blocks.
   // Applied to ALL assistant messages (streaming AND completed) so that
   // accumulated multi-iteration content with tool_call XML renders properly.
   const streamResult = useMemo(() => {
     if (isUser) return null;
     // Only process if content might contain tool_call XML.
-    if (!message.content.includes('<tool_call') && !message.content.includes('<tool_cal')) {
+    if (!effectiveContent.includes('<tool_call') && !effectiveContent.includes('<tool_cal')) {
       return null;
     }
-    return processStreamContent(message.content);
-  }, [isUser, message.content]);
+    return processStreamContent(effectiveContent);
+  }, [isUser, effectiveContent]);
 
   // Build the tool results lookup by matching order.
   // Sources: (1) live progress events via toolResults prop, (2) metadata from backend.
@@ -388,6 +453,7 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
         </div>
 
         {/* Reasoning/thinking block at the top of assistant messages */}
+        {/* Source 1: metadata.reasoning_content (from stream_reasoning_delta events) */}
         {!isUser && typeof message.metadata?.reasoning_content === 'string' && (
           <ThinkingBlock
             content={message.metadata.reasoning_content}
@@ -395,10 +461,27 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
             durationMs={message.metadata?._reasoningDurationMs as number | undefined}
           />
         )}
+        {/* Source 2: <think> tags embedded in message content */}
+        {!isUser && thinkTagResult?.thinkContent && (
+          <ThinkingBlock
+            content={thinkTagResult.thinkContent}
+            isStreaming={isStreamingMsg && thinkTagResult.isThinkingIncomplete}
+          />
+        )}
 
         {/* User messages render as plain styled text */}
         {isUser ? (
           <div className="message-content user-plain">
+            {message.skills && message.skills.length > 0 && (
+              <div className="message-skill-tags">
+                {message.skills.map((s) => (
+                  <span key={s} className="message-skill-tag">
+                    <Puzzle size={11} className="message-skill-tag-icon" />
+                    {s}
+                  </span>
+                ))}
+              </div>
+            )}
             {message.content}
           </div>
         ) : streamResult ? (
@@ -413,7 +496,7 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
               remarkPlugins={[remarkGfm]}
               components={markdownComponents}
             >
-              {message.content}
+              {effectiveContent}
             </ReactMarkdown>
           </div>
         )}

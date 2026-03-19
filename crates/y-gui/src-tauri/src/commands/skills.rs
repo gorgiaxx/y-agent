@@ -44,6 +44,19 @@ pub struct SkillDetail {
     pub dir_path: String,
 }
 
+/// Permissions the skill needs according to the security screening agent.
+#[derive(Debug, Serialize, serde::Deserialize, Clone, Default)]
+pub struct PermissionsNeeded {
+    #[serde(default)]
+    pub files_read: Vec<String>,
+    #[serde(default)]
+    pub files_write: Vec<String>,
+    #[serde(default)]
+    pub network: Vec<String>,
+    #[serde(default)]
+    pub commands: Vec<String>,
+}
+
 /// Result of a skill import operation.
 #[derive(Debug, Serialize, Clone)]
 pub struct SkillImportResult {
@@ -52,6 +65,7 @@ pub struct SkillImportResult {
     pub skill_id: Option<String>,
     pub error: Option<String>,
     pub security_issues: Vec<String>,
+    pub permissions_needed: Option<PermissionsNeeded>,
 }
 
 /// A file/directory entry within a skill directory.
@@ -352,6 +366,7 @@ pub async fn skill_import(
             skill_id: Some(skill_name),
             error: None,
             security_issues: vec![],
+            permissions_needed: None,
         });
     }
 
@@ -401,23 +416,40 @@ pub async fn skill_import(
                     risk_level: String,
                     #[serde(default)]
                     summary: String,
+                    #[serde(default)]
+                    permissions_needed: Option<PermissionsNeeded>,
                 }
 
                 if let Ok(security) = serde_json::from_str::<SecurityOutput>(&output.text) {
-                    if security.verdict == "unsecure" {
-                        return Ok(SkillImportResult {
-                            decision: "rejected".to_string(),
-                            classification: String::new(),
-                            skill_id: None,
-                            error: Some(format!(
-                                "Security check failed ({}): {}",
-                                security.risk_level, security.summary
-                            )),
-                            security_issues: security.issues,
-                        });
+                    match security.verdict.as_str() {
+                        "insecure" => {
+                            return Ok(SkillImportResult {
+                                decision: "rejected".to_string(),
+                                classification: String::new(),
+                                skill_id: None,
+                                error: Some(format!(
+                                    "Security check failed ({}): {}",
+                                    security.risk_level, security.summary
+                                )),
+                                security_issues: security.issues,
+                                permissions_needed: security.permissions_needed,
+                            });
+                        }
+                        "caution" => {
+                            tracing::warn!(
+                                risk_level = %security.risk_level,
+                                summary = %security.summary,
+                                issues = ?security.issues,
+                                "Security check returned caution — proceeding with ingestion"
+                            );
+                            // Fall through to ingestion, but issues are logged.
+                        }
+                        _ => {
+                            // "secure" or any other value — proceed normally.
+                        }
                     }
                 }
-                // If secure or unparseable, fall through to ingestion.
+                // If secure, caution, or unparseable, fall through to ingestion.
             }
             Err(e) => {
                 tracing::warn!(error = %e, "Security check agent failed — proceeding with ingestion");
@@ -447,7 +479,7 @@ pub async fn skill_import(
 
     let ingestion_service = state.container.skill_ingestion_service(registry);
 
-    match ingestion_service.import(source_path).await {
+    let import_result = match ingestion_service.import(source_path).await {
         Ok(result) => {
             let decision = match result.decision {
                 y_service::ImportDecision::Accepted => "accepted",
@@ -460,6 +492,7 @@ pub async fn skill_import(
                 skill_id: result.skill_id,
                 error: result.rejection_reason,
                 security_issues: result.security_issues,
+                permissions_needed: None,
             })
         }
         Err(e) => Ok(SkillImportResult {
@@ -468,8 +501,20 @@ pub async fn skill_import(
             skill_id: None,
             error: Some(e.to_string()),
             security_issues: vec![],
+            permissions_needed: None,
         }),
-    }
+    };
+
+    // Notify frontend that the ingestion subagent finished so the
+    // Global diagnostics view picks up the new trace entries.
+    let _ = app.emit(
+        "diagnostics:subagent_completed",
+        super::chat::SubagentCompletedPayload {
+            agent_name: "skill-ingestion".to_string(),
+        },
+    );
+
+    import_result
 }
 
 /// Get the file tree of a skill directory.

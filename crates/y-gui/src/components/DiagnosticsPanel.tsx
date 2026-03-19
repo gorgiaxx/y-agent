@@ -327,7 +327,9 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
 
 function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: string }) {
   const [expanded, setExpanded] = useState(false);
-  const [beautified, setBeautified] = useState(true);
+  const [inputBeautified, setInputBeautified] = useState(true);
+  const [resultBeautified, setResultBeautified] = useState(true);
+  const [inputWrapped, setInputWrapped] = useState(true);
   const [resultWrapped, setResultWrapped] = useState(true);
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const resolvedTheme = useResolvedTheme();
@@ -342,14 +344,20 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
     }
   };
 
-  const displayResult = (() => {
-    if (!event.result_preview) return null;
-    if (!beautified) return event.result_preview;
-    return tryBeautify(event.result_preview) ?? event.result_preview;
+  const inputJsonOk = event.input_preview ? tryBeautify(event.input_preview) !== null : false;
+  const resultJsonOk = event.result_preview ? tryBeautify(event.result_preview) !== null : false;
+
+  const displayInput = (() => {
+    if (!event.input_preview) return null;
+    if (inputBeautified && inputJsonOk) return tryBeautify(event.input_preview);
+    return event.input_preview;
   })();
 
-  const canBeautify = event.result_preview ? tryBeautify(event.result_preview) !== null : false;
-  const isJsonBeautified = beautified && canBeautify;
+  const displayResult = (() => {
+    if (!event.result_preview) return null;
+    if (resultBeautified && resultJsonOk) return tryBeautify(event.result_preview);
+    return event.result_preview;
+  })();
 
   return (
     <div className={`diag-entry diag-tool ${event.success ? 'diag-tool-ok' : 'diag-tool-fail'}`}>
@@ -387,24 +395,66 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
               <span className="diag-detail-value">{time}</span>
             </div>
           </div>
-          {event.result_preview && (
+          {displayInput !== null && (
+            <div className="diag-result-preview">
+              <div className="diag-result-header">
+                <span className="diag-detail-label">Input (arguments)</span>
+                <CopyButton getText={() => displayInput ?? ''} />
+                {inputBeautified && inputJsonOk && (
+                  <WrapToggle wrapped={inputWrapped} onToggle={() => setInputWrapped((v) => !v)} />
+                )}
+                <button
+                  className={`diag-beautify-btn ${!inputJsonOk ? 'disabled' : ''}`}
+                  onClick={() => setInputBeautified(!inputBeautified)}
+                  disabled={!inputJsonOk}
+                  title={inputJsonOk ? (inputBeautified ? 'Show raw' : 'Beautify JSON') : 'Not valid JSON'}
+                >
+                  {inputBeautified ? 'Raw' : 'Beautify'}
+                </button>
+              </div>
+              {inputBeautified && inputJsonOk ? (
+                <div className="diag-highlighted-block">
+                  <SyntaxHighlighter
+                    style={highlighterStyle}
+                    language="json"
+                    PreTag="div"
+                    wrapLongLines={inputWrapped}
+                    codeTagProps={{ style: { whiteSpace: inputWrapped ? 'pre-wrap' : 'pre' } }}
+                    customStyle={{
+                      margin: 0,
+                      padding: '8px',
+                      fontSize: '11px',
+                      lineHeight: '1.5',
+                      overflow: 'auto',
+                      maxHeight: '320px',
+                    }}
+                  >
+                    {displayInput ?? ''}
+                  </SyntaxHighlighter>
+                </div>
+              ) : (
+                <pre className="diag-result-code">{displayInput}</pre>
+              )}
+            </div>
+          )}
+          {displayResult !== null && (
             <div className="diag-result-preview">
               <div className="diag-result-header">
                 <span className="diag-detail-label">Result</span>
                 <CopyButton getText={() => displayResult ?? ''} />
-                {isJsonBeautified && (
+                {resultBeautified && resultJsonOk && (
                   <WrapToggle wrapped={resultWrapped} onToggle={() => setResultWrapped((v) => !v)} />
                 )}
                 <button
-                  className={`diag-beautify-btn ${!canBeautify ? 'disabled' : ''}`}
-                  onClick={() => setBeautified(!beautified)}
-                  disabled={!canBeautify}
-                  title={canBeautify ? (beautified ? 'Show raw' : 'Beautify JSON') : 'Not valid JSON'}
+                  className={`diag-beautify-btn ${!resultJsonOk ? 'disabled' : ''}`}
+                  onClick={() => setResultBeautified(!resultBeautified)}
+                  disabled={!resultJsonOk}
+                  title={resultJsonOk ? (resultBeautified ? 'Show raw' : 'Beautify JSON') : 'Not valid JSON'}
                 >
-                  {beautified ? 'Raw' : 'Beautify'}
+                  {resultBeautified ? 'Raw' : 'Beautify'}
                 </button>
               </div>
-              {isJsonBeautified ? (
+              {resultBeautified && resultJsonOk ? (
                 <div className="diag-highlighted-block">
                   <SyntaxHighlighter
                     style={highlighterStyle}

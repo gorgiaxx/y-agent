@@ -90,6 +90,8 @@ pub mod stage_priorities {
     pub const INJECT_BOOTSTRAP: u32 = 200;
     /// `InjectMemory`: adds long-term and working memory.
     pub const INJECT_MEMORY: u32 = 300;
+    /// `InjectKnowledge`: adds relevant knowledge from the knowledge base.
+    pub const INJECT_KNOWLEDGE: u32 = 350;
     /// `InjectSkills`: adds available skill descriptions.
     pub const INJECT_SKILLS: u32 = 400;
     /// `InjectTools`: adds tool schema summaries.
@@ -219,7 +221,8 @@ mod tests {
         use stage_priorities::*;
         assert!(BUILD_SYSTEM_PROMPT < INJECT_BOOTSTRAP);
         assert!(INJECT_BOOTSTRAP < INJECT_MEMORY);
-        assert!(INJECT_MEMORY < INJECT_SKILLS);
+        assert!(INJECT_MEMORY < INJECT_KNOWLEDGE);
+        assert!(INJECT_KNOWLEDGE < INJECT_SKILLS);
         assert!(INJECT_SKILLS < INJECT_TOOLS);
         assert!(INJECT_TOOLS < LOAD_HISTORY);
         assert!(LOAD_HISTORY < INJECT_CONTEXT_STATUS);

@@ -20,6 +20,7 @@ y-tools = { workspace = true }
 y-storage = { workspace = true }
 y-runtime = { workspace = true }
 y-guardrails = { workspace = true }
+y-browser = { workspace = true }
 
 y-skills = { workspace = true, features = [
     "skill_ingestion",
@@ -30,6 +31,7 @@ y-skills = { workspace = true, features = [
 y-prompt = { workspace = true }
 y-diagnostics = { workspace = true }
 y-service = { workspace = true }
+y-knowledge = { workspace = true }
 y-web = { workspace = true }
 axum = { workspace = true }
 anyhow = { workspace = true }
@@ -53,12 +55,7 @@ unicode-width = { workspace = true, optional = true }
 arboard = { version = "3", optional = true, default-features = false }
 
 [features]
-default = ["diagnostics_pg", "tui"]
-diagnostics_pg = [
-    "y-storage/diagnostics_pg",
-    "y-diagnostics/diagnostics_pg",
-    "y-service/diagnostics_pg",
-]
+default = ["tui"]
 tui = ["ratatui", "crossterm", "tui-textarea", "unicode-width", "arboard"]
 hook_handlers = ["y-hooks/hook_handlers"]
 llm_hooks = ["y-hooks/llm_hooks"]

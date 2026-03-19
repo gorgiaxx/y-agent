@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Puzzle, FolderOpen, Trash2, ToggleLeft, ToggleRight, ChevronRight, File, Folder, Save } from 'lucide-react';
 import type { SkillDetail, SkillFileEntry } from '../types';
+import { ConfirmDialog } from './ConfirmDialog';
 import './SkillsPanel.css';
 
 interface SkillsPanelProps {
@@ -93,40 +94,8 @@ export function SkillsPanel({
   const [fileContent, setFileContent] = useState<string>('');
   const [originalContent, setOriginalContent] = useState<string>('');
   const [saving, setSaving] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
-  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const uninstallBtnRef = useRef<HTMLButtonElement>(null);
-
-  // Auto-cancel the confirm state after a timeout, and cancel on outside clicks.
-  useEffect(() => {
-    if (!confirming) {
-      if (confirmTimerRef.current) {
-        clearTimeout(confirmTimerRef.current);
-        confirmTimerRef.current = null;
-      }
-      return;
-    }
-
-    // Auto-cancel after 3 seconds if user doesn't confirm.
-    confirmTimerRef.current = setTimeout(() => setConfirming(false), 3000);
-
-    // Cancel on clicks outside the uninstall button.
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (uninstallBtnRef.current && !uninstallBtnRef.current.contains(e.target as Node)) {
-        setConfirming(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-
-    return () => {
-      if (confirmTimerRef.current) {
-        clearTimeout(confirmTimerRef.current);
-        confirmTimerRef.current = null;
-      }
-      document.removeEventListener('mousedown', handleOutsideClick);
-    };
-  }, [confirming]);
 
   // Load skill detail and files when skill changes.
   useEffect(() => {
@@ -152,7 +121,7 @@ export function SkillsPanel({
       setSelectedFilePath(null);
       setFileContent('');
       setOriginalContent('');
-      setConfirming(false);
+      setShowUninstallConfirm(false);
       // Expand all directories by default.
       const allDirs = new Set<string>();
       const collectDirs = (entries: SkillFileEntry[]) => {
@@ -198,13 +167,9 @@ export function SkillsPanel({
 
   const handleUninstall = useCallback(async () => {
     if (!skillName) return;
-    if (!confirming) {
-      setConfirming(true);
-      return;
-    }
     await onUninstall(skillName);
-    setConfirming(false);
-  }, [skillName, confirming, onUninstall]);
+    setShowUninstallConfirm(false);
+  }, [skillName, onUninstall]);
 
   const handleToggleDir = useCallback((path: string) => {
     setExpandedDirs((prev) => {
@@ -290,10 +255,9 @@ export function SkillsPanel({
             {detail.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
           </button>
           <button
-            ref={uninstallBtnRef}
-            className={`skill-editor-btn skill-editor-btn--danger ${confirming ? 'skill-editor-btn--confirm' : ''}`}
-            onClick={handleUninstall}
-            title={confirming ? 'Confirm' : 'Uninstall'}
+            className="skill-editor-btn skill-editor-btn--danger"
+            onClick={() => setShowUninstallConfirm(true)}
+            title="Uninstall"
           >
             <Trash2 size={14} />
           </button>
@@ -360,6 +324,17 @@ export function SkillsPanel({
           )}
         </div>
       </div>
+
+      {/* Confirm Uninstall Dialog */}
+      <ConfirmDialog
+        open={showUninstallConfirm}
+        title="Uninstall Skill"
+        message={`Are you sure you want to uninstall "${detail.name}"? This will remove all skill files and cannot be undone.`}
+        confirmLabel="Uninstall"
+        variant="danger"
+        onConfirm={handleUninstall}
+        onCancel={() => setShowUninstallConfirm(false)}
+      />
     </div>
   );
 }

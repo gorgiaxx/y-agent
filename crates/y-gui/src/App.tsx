@@ -1,16 +1,21 @@
-import { useState, useEffect, useCallback, startTransition } from 'react';
+import { useState, useEffect, useCallback, useRef, startTransition } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Settings, Activity, Eye } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import type { ViewType } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
+import { WelcomePage } from './components/WelcomePage';
 import { InputArea } from './components/InputArea';
 import { StatusBar } from './components/StatusBar';
 import { SettingsOverlay } from './components/SettingsOverlay';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { ObservabilityPanel } from './components/ObservabilityPanel';
 import { SkillsPanel } from './components/SkillsPanel';
+import { KnowledgePanel } from './components/KnowledgePanel';
+import { AgentsPanel } from './components/AgentsPanel';
 import { SkillImportDialog } from './components/SkillImportDialog';
+import { WorkspaceDialog } from './components/WorkspaceDialog';
 import { useChat } from './hooks/useChat';
 import { useSessions } from './hooks/useSessions';
 import { useConfig } from './hooks/useConfig';
@@ -18,8 +23,10 @@ import { useDiagnostics } from './hooks/useDiagnostics';
 import { useObservability } from './hooks/useObservability';
 import { useWorkspaces } from './hooks/useWorkspaces';
 import { useSkills } from './hooks/useSkills';
+import { useKnowledge } from './hooks/useKnowledge';
+import { useAgents } from './hooks/useAgents';
 import { useThemeProvider, ThemeContext } from './hooks/useTheme';
-import type { SystemStatus, ProviderInfo, TurnMeta } from './types';
+import type { SystemStatus, ProviderInfo, TurnMeta, ChatCompletePayload } from './types';
 import './App.css';
 
 function App() {
@@ -50,6 +57,8 @@ function App() {
     resendLastTurn,
     restoreBranch,
     toolResults,
+    contextResetPoints,
+    addContextReset,
   } = useChat(activeSessionId);
 
   const { config, updateConfig, loadSection, saveSection, reloadConfig: rawReloadConfig } = useConfig();
@@ -65,6 +74,19 @@ function App() {
   } = useWorkspaces();
 
   const [activeView, setActiveView] = useState<ViewType>('chat');
+  const [inputExpanded, setInputExpanded] = useState(false);
+  // Track which workspace is selected on the welcome page.
+  const [welcomeWorkspaceId, setWelcomeWorkspaceId] = useState<string | null>(null);
+
+  // Default welcome workspace to first workspace (alphabetically).
+  useEffect(() => {
+    if (workspaces.length > 0 && !welcomeWorkspaceId) {
+      const sorted = [...workspaces].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+      );
+      setWelcomeWorkspaceId(sorted[0].id);
+    }
+  }, [workspaces, welcomeWorkspaceId]);
   // When not in chat view, treat diagnostics as global (no active session).
   const diagnosticSessionId = activeView === 'chat' ? activeSessionId : null;
   const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
@@ -98,7 +120,32 @@ function App() {
     }
   }, [importStatus, clearImportStatus]);
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [wsDialogOpen, setWsDialogOpen] = useState(false);
+
+  // Knowledge state
+  const {
+    collections: kbCollections,
+    entries: kbEntries,
+    selectedCollection: selectedKbCollection,
+    setSelectedCollection: setSelectedKbCollection,
+    createCollection: createKbCollection,
+    deleteCollection: deleteKbCollection,
+    renameCollection: renameKbCollection,
+    getEntryDetail: getKbEntryDetail,
+    deleteEntry: deleteKbEntry,
+    search: kbSearch,
+    ingestBatch: kbIngestBatch,
+    ingestStatus: kbIngestStatus,
+    ingestError: kbIngestError,
+    batchProgress: kbBatchProgress,
+    clearIngestStatus: clearKbIngestStatus,
+    cancelIngest: cancelKbIngest,
+  } = useKnowledge();
+
+  const { agents, getAgentDetail, saveAgent, resetAgent, reloadAgents } = useAgents();
+
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState('auto');
@@ -172,15 +219,61 @@ function App() {
       .catch(() => applyMeta(null));
   }, [activeSessionId, applyMeta]);
 
-  // When a new assistant message arrives (real-time): update from message metadata.
+  // Listen directly to chat:complete events for status bar meta.
+  // This is the authoritative source — fires once per turn completion with
+  // all fields already resolved.  Avoids the race condition where the
+  // messages-based useEffect would process the streaming placeholder
+  // (which lacks metadata) before the backend reload finishes.
+  const activeSessionIdRef = useRef(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
   useEffect(() => {
-    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
-    if (lastAssistant && lastAssistant.model) {
+    let unlisten: (() => void) | undefined;
+    listen<ChatCompletePayload>('chat:complete', (e) => {
+      const payload = e.payload;
+      // Only update if the event belongs to the currently viewed session.
+      if (payload.session_id !== activeSessionIdRef.current) return;
+      startTransition(() => {
+        setStatusBarMeta({
+          provider: payload.model || payload.provider_id || undefined,
+          tokens: { input: payload.input_tokens, output: payload.output_tokens },
+          cost: payload.cost_usd,
+          contextWindow: payload.context_window,
+        });
+      });
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, []);
+
+  // Fallback: extract status bar meta from loaded messages (session switch,
+  // page reload). Only runs if there are backend-loaded messages that
+  // aren't streaming placeholders.
+  useEffect(() => {
+    const lastAssistant = [...messages].reverse().find(
+      (m) => m.role === 'assistant' && !m.id?.startsWith('streaming-'),
+    );
+    if (!lastAssistant) return;
+
+    const meta = lastAssistant.metadata as Record<string, unknown> | undefined;
+    const usage = meta?.usage as Record<string, unknown> | undefined;
+    const model = lastAssistant.model
+      || (meta?.model as string | undefined)
+      || (meta?.provider_id as string | undefined);
+    const tokens = lastAssistant.tokens
+      || (meta?.input_tokens != null && meta?.output_tokens != null
+        ? { input: meta.input_tokens as number, output: meta.output_tokens as number }
+        : undefined)
+      || (usage?.input_tokens != null && usage?.output_tokens != null
+        ? { input: usage.input_tokens as number, output: usage.output_tokens as number }
+        : undefined);
+    const cost = lastAssistant.cost ?? (meta?.cost_usd as number | undefined);
+    const contextWindow = lastAssistant.context_window ?? (meta?.context_window as number | undefined);
+
+    if (model || tokens || cost != null || contextWindow != null) {
       setStatusBarMeta({
-        provider: lastAssistant.model || lastAssistant.provider_id || undefined,
-        tokens: lastAssistant.tokens,
-        cost: lastAssistant.cost,
-        contextWindow: lastAssistant.context_window,
+        provider: model || undefined,
+        tokens,
+        cost,
+        contextWindow: contextWindow ?? undefined,
       });
     }
   }, [messages]);
@@ -190,20 +283,20 @@ function App() {
   // ------------------------------------------------------------------
 
   const handleSend = useCallback(
-    async (message: string, skillNames?: string[]) => {
+    async (message: string, skillNames?: string[], knowledgeCollections?: string[]) => {
       let sid = activeSessionId;
       if (!sid) {
         const session = await createSession();
         if (!session) return;
         sid = session.id;
+
+        // If a workspace is selected on the welcome page, assign the session.
+        if (welcomeWorkspaceId) {
+          await assignSession(welcomeWorkspaceId, sid);
+        }
       }
 
       const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
-
-      // TODO: pass skillNames to the backend when skill-aware chat is implemented.
-      if (skillNames && skillNames.length > 0) {
-        console.log('Skills attached to message:', skillNames);
-      }
 
       // If in edit mode, use the transactional editAndResend.
       if (pendingEdit) {
@@ -218,9 +311,9 @@ function App() {
         return;
       }
 
-      // Normal send.
+      // Normal send — pass skills and knowledge collections to the backend.
       addUserMessage(message, sid);
-      const result = await sendMessage(message, sid, providerArg);
+      const result = await sendMessage(message, sid, providerArg, skillNames, knowledgeCollections);
       if (result) {
         if (result.session_id !== activeSessionId) {
           selectSession(result.session_id);
@@ -228,7 +321,7 @@ function App() {
         refreshSessions();
       }
     },
-    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage, selectedProviderId, pendingEdit, editAndResend],
+    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage, selectedProviderId, pendingEdit, editAndResend, welcomeWorkspaceId, assignSession],
   );
 
   const handleEditMessage = useCallback((content: string, messageId: string) => {
@@ -263,6 +356,12 @@ function App() {
     },
     [activeSessionId, resendLastTurn, selectedProviderId],
   );
+
+  const handleClearSession = useCallback(async () => {
+    if (!activeSessionId) return;
+    await deleteSession(activeSessionId);
+    clearMessages();
+  }, [activeSessionId, deleteSession, clearMessages]);
 
   const handleNewChat = useCallback(async () => {
     clearMessages();
@@ -382,6 +481,18 @@ function App() {
         onDeleteWorkspace={deleteWorkspace}
         onAssignSession={assignSession}
         onUnassignSession={unassignSession}
+        knowledgeCollections={kbCollections}
+        selectedKbCollection={selectedKbCollection}
+        onSelectKbCollection={(name) => { setActiveView('knowledge'); setSelectedKbCollection(name); }}
+        onCreateKbCollection={createKbCollection}
+        kbIngestStatus={kbIngestStatus}
+        kbBatchProgress={kbBatchProgress}
+        kbIngestError={kbIngestError}
+        onClearKbIngestStatus={clearKbIngestStatus}
+        onCancelKbIngest={cancelKbIngest}
+        agents={agents}
+        activeAgentId={activeAgentId}
+        onSelectAgent={(id) => { setActiveView('agents'); setActiveAgentId(id); }}
       />
 
       <main className="main-panel">
@@ -389,6 +500,10 @@ function App() {
           <h1 className="app-title">
             {activeView === 'skills'
               ? 'Skills'
+              : activeView === 'knowledge'
+                ? 'Knowledge'
+              : activeView === 'agents'
+              ? 'Agents'
               : activeSessionId
                 ? sessions.find((s) => s.id === activeSessionId)?.title || 'Untitled'
                 : 'y-agent'}
@@ -423,7 +538,17 @@ function App() {
 
         {activeView === 'chat' && (
           <>
-            <ChatPanel messages={messages} isStreaming={isStreaming} isLoading={isLoadingMessages} error={error} onEditMessage={handleEditMessage} onUndoMessage={handleUndoMessage} onResendMessage={handleResendMessage} onRestoreBranch={handleRestoreBranch} toolResults={toolResults} />
+            {!inputExpanded && activeSessionId && (
+              <ChatPanel messages={messages} isStreaming={isStreaming} isLoading={isLoadingMessages} error={error} onEditMessage={handleEditMessage} onUndoMessage={handleUndoMessage} onResendMessage={handleResendMessage} onRestoreBranch={handleRestoreBranch} toolResults={toolResults} contextResetPoints={contextResetPoints} />
+            )}
+            {!inputExpanded && !activeSessionId && (
+              <WelcomePage
+                workspaces={workspaces}
+                selectedWorkspaceId={welcomeWorkspaceId}
+                onSelectWorkspace={setWelcomeWorkspaceId}
+                onCreateWorkspace={() => setWsDialogOpen(true)}
+              />
+            )}
             <InputArea
               onSend={handleSend}
               onStop={cancelRun}
@@ -436,6 +561,11 @@ function App() {
               pendingEdit={pendingEdit}
               onCancelEdit={handleCancelEdit}
               skills={skills.filter((s) => s.enabled)}
+              knowledgeCollections={kbCollections}
+              expanded={inputExpanded}
+              onExpandChange={setInputExpanded}
+              onClearSession={handleClearSession}
+              onAddContextReset={addContextReset}
             />
             <StatusBar
               providerCount={systemStatus?.provider_count ?? 0}
@@ -464,6 +594,32 @@ function App() {
               await setSkillEnabled(name, enabled);
             }}
             onOpenFolder={openSkillFolder}
+          />
+        )}
+
+        {activeView === 'knowledge' && (
+          <KnowledgePanel
+            collections={kbCollections}
+            entries={kbEntries}
+            selectedCollection={selectedKbCollection}
+            onSelectCollection={setSelectedKbCollection}
+            onCreateCollection={createKbCollection}
+            onDeleteCollection={deleteKbCollection}
+            onRenameCollection={renameKbCollection}
+            onGetEntryDetail={getKbEntryDetail}
+            onDeleteEntry={deleteKbEntry}
+            onSearch={kbSearch}
+            onIngestBatch={kbIngestBatch}
+          />
+        )}
+
+        {activeView === 'agents' && (
+          <AgentsPanel
+            agentId={activeAgentId}
+            onGetDetail={getAgentDetail}
+            onSave={saveAgent}
+            onReset={resetAgent}
+            onReload={reloadAgents}
           />
         )}
       </main>
@@ -523,6 +679,16 @@ function App() {
             importSkill(path, sanitize);
           }}
           onClose={() => setImportDialogOpen(false)}
+        />
+      )}
+
+      {wsDialogOpen && (
+        <WorkspaceDialog
+          onConfirm={(name, path) => {
+            handleCreateWorkspace(name, path);
+            setWsDialogOpen(false);
+          }}
+          onClose={() => setWsDialogOpen(false)}
         />
       )}
     </div>

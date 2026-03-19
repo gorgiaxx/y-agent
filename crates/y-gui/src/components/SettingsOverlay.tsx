@@ -13,7 +13,7 @@ interface SettingsOverlayProps {
   reloadConfig: () => Promise<string>;
 }
 
-type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'prompts' | 'about';
+type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'prompts' | 'about';
 
 // ---------------------------------------------------------------------------
 // Provider form types (mirrors Rust ProviderConfig)
@@ -76,6 +76,29 @@ interface RuntimeFormData {
   docker_dns: string[];
   docker_cap_add: string[];
   docker_cap_drop: string[];
+  // Python venv (uv) fields
+  python_venv_enabled: boolean;
+  python_uv_path: string;
+  python_version: string;
+  python_venv_dir: string;
+  python_working_dir: string;
+  // Bun venv fields
+  bun_venv_enabled: boolean;
+  bun_path: string;
+  bun_version: string;
+  bun_working_dir: string;
+}
+
+interface BrowserFormData {
+  enabled: boolean;
+  auto_launch: boolean;
+  chrome_path: string;
+  local_cdp_port: number;
+  cdp_url: string;
+  timeout_ms: number;
+  allowed_domains: string[];
+  block_private_networks: boolean;
+  max_screenshot_dim: number;
 }
 
 function emptyProvider(): ProviderFormData {
@@ -524,6 +547,23 @@ function runtimeToToml(r: RuntimeFormData): string {
     lines.push(`mode = "${vol.mode}"`);
   }
 
+  // Python venv section.
+  lines.push('');
+  lines.push('[python_venv]');
+  lines.push(`enabled = ${r.python_venv_enabled}`);
+  lines.push(`uv_path = "${r.python_uv_path}"`);
+  lines.push(`python_version = "${r.python_version}"`);
+  lines.push(`venv_dir = "${r.python_venv_dir}"`);
+  if (r.python_working_dir) lines.push(`working_dir = "${r.python_working_dir}"`);
+
+  // Bun venv section.
+  lines.push('');
+  lines.push('[bun_venv]');
+  lines.push(`enabled = ${r.bun_venv_enabled}`);
+  lines.push(`bun_path = "${r.bun_path}"`);
+  lines.push(`bun_version = "${r.bun_version}"`);
+  if (r.bun_working_dir) lines.push(`working_dir = "${r.bun_working_dir}"`);
+
   lines.push('');
   return lines.join('\n');
 }
@@ -575,6 +615,8 @@ function jsonToSession(json: any): SessionFormData {
 function jsonToRuntime(json: any): RuntimeFormData {
   const ssh = json?.ssh ?? {};
   const docker = json?.docker ?? {};
+  const pythonVenv = json?.python_venv ?? {};
+  const bunVenv = json?.bun_venv ?? {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const volumes: VolumeMappingData[] = (docker.default_volumes ?? []).map((v: any) => ({
     host_path: v.host_path ?? '',
@@ -606,18 +648,59 @@ function jsonToRuntime(json: any): RuntimeFormData {
     docker_dns: docker.dns ?? [],
     docker_cap_add: docker.cap_add ?? [],
     docker_cap_drop: docker.cap_drop ?? ['ALL'],
+    python_venv_enabled: pythonVenv.enabled ?? false,
+    python_uv_path: pythonVenv.uv_path ?? 'uv',
+    python_version: pythonVenv.python_version ?? '3.12',
+    python_venv_dir: pythonVenv.venv_dir ?? '.venv',
+    python_working_dir: pythonVenv.working_dir ?? '',
+    bun_venv_enabled: bunVenv.enabled ?? false,
+    bun_path: bunVenv.bun_path ?? 'bun',
+    bun_version: bunVenv.bun_version ?? 'latest',
+    bun_working_dir: bunVenv.working_dir ?? '',
   };
 }
 
+
+function browserToToml(b: BrowserFormData): string {
+  const lines: string[] = [
+    `enabled = ${b.enabled}`,
+    `auto_launch = ${b.auto_launch}`,
+  ];
+  if (b.chrome_path) lines.push(`chrome_path = "${b.chrome_path}"`);
+  lines.push(`local_cdp_port = ${b.local_cdp_port}`);
+  lines.push(`cdp_url = "${b.cdp_url}"`);
+  lines.push(`timeout_ms = ${b.timeout_ms}`);
+  lines.push(`allowed_domains = [${b.allowed_domains.map(d => `"${d}"`).join(', ')}]`);
+  lines.push(`block_private_networks = ${b.block_private_networks}`);
+  lines.push(`max_screenshot_dim = ${b.max_screenshot_dim}`);
+  return lines.join('\n') + '\n';
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function jsonToBrowser(json: any): BrowserFormData {
+  return {
+    enabled: json?.enabled ?? true,
+    auto_launch: json?.auto_launch ?? false,
+    chrome_path: json?.chrome_path ?? '',
+    local_cdp_port: json?.local_cdp_port ?? 9222,
+    cdp_url: json?.cdp_url ?? 'http://127.0.0.1:9222',
+    timeout_ms: json?.timeout_ms ?? 30000,
+    allowed_domains: Array.isArray(json?.allowed_domains) ? json.allowed_domains : ['*'],
+    block_private_networks: json?.block_private_networks ?? true,
+    max_screenshot_dim: json?.max_screenshot_dim ?? 4096,
+  };
+}
 
 const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [
   { key: 'providers', label: 'Providers' },
   { key: 'session', label: 'Session' },
   { key: 'runtime', label: 'Runtime' },
+  { key: 'browser', label: 'Browser' },
   { key: 'storage', label: 'Storage' },
   { key: 'hooks', label: 'Hooks' },
   { key: 'tools', label: 'Tools' },
   { key: 'guardrails', label: 'Guardrails' },
+  { key: 'knowledge', label: 'Knowledge' },
 ];
 
 export function SettingsOverlay({
@@ -682,13 +765,37 @@ export function SettingsOverlay({
     docker_dns: [],
     docker_cap_add: [],
     docker_cap_drop: ['ALL'],
+    python_venv_enabled: false,
+    python_uv_path: 'uv',
+    python_version: '3.12',
+    python_venv_dir: '.venv',
+    python_working_dir: '',
+    bun_venv_enabled: false,
+    bun_path: 'bun',
+    bun_version: 'latest',
+    bun_working_dir: '',
   });
   const [runtimeFormLoading, setRuntimeFormLoading] = useState(false);
+
+  // Structured browser form state.
+  const [browserForm, setBrowserForm] = useState<BrowserFormData>({
+    enabled: true,
+    auto_launch: false,
+    chrome_path: '',
+    local_cdp_port: 9222,
+    cdp_url: 'http://127.0.0.1:9222',
+    timeout_ms: 30000,
+    allowed_domains: ['*'],
+    block_private_networks: true,
+    max_screenshot_dim: 4096,
+  });
+  const [browserFormLoading, setBrowserFormLoading] = useState(false);
 
   // Dirty flags -- track which sections have unsaved changes.
   const [dirtyProviders, setDirtyProviders] = useState(false);
   const [dirtySession, setDirtySession] = useState(false);
   const [dirtyRuntime, setDirtyRuntime] = useState(false);
+  const [dirtyBrowser, setDirtyBrowser] = useState(false);
   // Per-section raw TOML drafts for the raw-editor sections (hooks, tools, etc.).
   const [tomlDraftsBySection, setTomlDraftsBySection] = useState<Record<string, string>>({});
   // Whether the unified Save Changes is currently writing.
@@ -729,6 +836,13 @@ export function SettingsOverlay({
       } catch (e) { errors.push(`runtime: ${e}`); }
     }
 
+    if (dirtyBrowser) {
+      try {
+        await saveSection('browser', browserToToml(browserForm));
+        setDirtyBrowser(false);
+      } catch (e) { errors.push(`browser: ${e}`); }
+    }
+
     for (const [section, content] of Object.entries(tomlDraftsBySection)) {
       try {
         await saveSection(section, content);
@@ -759,8 +873,8 @@ export function SettingsOverlay({
     onClose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    dirtyProviders, dirtySession, dirtyRuntime,
-    providersList, providersMeta, sessionForm, runtimeForm,
+    dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser,
+    providersList, providersMeta, sessionForm, runtimeForm, browserForm,
     tomlDraftsBySection, dirtyPrompts, saveSection, localConfig, onSave, onClose,
   ]);
 
@@ -850,6 +964,21 @@ export function SettingsOverlay({
     }
   }, []);
 
+  // Load browser config as structured JSON via config_get.
+  const loadBrowserForm = useCallback(async () => {
+    setBrowserFormLoading(true);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const allConfig = await invoke<any>('config_get');
+      const browserJson = allConfig?.browser ?? {};
+      setBrowserForm(jsonToBrowser(browserJson));
+    } catch {
+      // Use defaults if section not found.
+    } finally {
+      setBrowserFormLoading(false);
+    }
+  }, []);
+
   // Load prompt file list and first file content when switching to prompts tab.
   const loadPromptFile = useCallback(async (filename: string) => {
     setPromptLoading(true);
@@ -896,12 +1025,14 @@ export function SettingsOverlay({
       loadSessionForm();
     } else if (activeTab === 'runtime') {
       loadRuntimeForm();
+    } else if (activeTab === 'browser') {
+      loadBrowserForm();
     } else if (activeTab === 'prompts') {
       loadPromptFiles();
     } else if (selectedSection) {
       doLoadSection(activeTab);
     }
-  }, [activeTab, selectedSection, doLoadSection, loadProviders, loadSessionForm, loadRuntimeForm, loadPromptFiles]);
+  }, [activeTab, selectedSection, doLoadSection, loadProviders, loadSessionForm, loadRuntimeForm, loadBrowserForm, loadPromptFiles]);
 
   // Toggle sensitive field visibility.
   const handleToggleSensitive = useCallback(() => {
@@ -964,6 +1095,7 @@ export function SettingsOverlay({
   const isProviderSection = activeTab === 'providers';
   const isSessionSection = activeTab === 'session';
   const isRuntimeSection = activeTab === 'runtime';
+  const isBrowserSection = activeTab === 'browser';
   const isPromptsSection = activeTab === 'prompts';
 
   // Handler: switch prompt sub-tab.
@@ -1108,7 +1240,7 @@ export function SettingsOverlay({
                     {CONFIG_SECTIONS.find((s) => s.key === activeTab)?.label ?? activeTab}
                   </h3>
                   <div className="provider-actions">
-                    {!isProviderSection && !isSessionSection && !isRuntimeSection && (
+                    {!isProviderSection && !isSessionSection && !isRuntimeSection && !isBrowserSection && (
                       <button
                         className="btn-provider-action"
                         onClick={handleToggleSensitive}
@@ -1629,6 +1761,249 @@ export function SettingsOverlay({
                               >+ Add Volume</button>
                             </div>
                           </div>
+                        </div>
+                      </div>
+
+                      {/* --- Python Environment (uv) section --- */}
+                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 'var(--space-sm)', paddingTop: 'var(--space-sm)' }}>
+                        <h4 style={{ margin: '0 0 var(--space-xs)', fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Python Environment (uv)</h4>
+                        <div className="pf-row">
+                          <div className="pf-field pf-field-full">
+                            <label className="pf-label">
+                              <input
+                                type="checkbox"
+                                className="form-checkbox"
+                                checked={runtimeForm.python_venv_enabled}
+                                onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_venv_enabled: e.target.checked }); setDirtyRuntime(true); }}
+                              />
+                              {' '}Enable Python environment
+                            </label>
+                            <span className="pf-hint">When enabled, the Python venv path is injected into the system prompt so the LLM uses the correct runtime</span>
+                          </div>
+                        </div>
+                        {runtimeForm.python_venv_enabled && (
+                          <>
+                            <div className="pf-row">
+                              <div className="pf-field">
+                                <label className="pf-label">uv Binary Path</label>
+                                <input
+                                  className="pf-input"
+                                  value={runtimeForm.python_uv_path}
+                                  onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_uv_path: e.target.value }); setDirtyRuntime(true); }}
+                                  placeholder="uv"
+                                />
+                              </div>
+                              <div className="pf-field">
+                                <label className="pf-label">Python Version</label>
+                                <input
+                                  className="pf-input"
+                                  value={runtimeForm.python_version}
+                                  onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_version: e.target.value }); setDirtyRuntime(true); }}
+                                  placeholder="3.12"
+                                />
+                              </div>
+                            </div>
+                            <div className="pf-row">
+                              <div className="pf-field">
+                                <label className="pf-label">Venv Directory</label>
+                                <input
+                                  className="pf-input"
+                                  value={runtimeForm.python_venv_dir}
+                                  onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_venv_dir: e.target.value }); setDirtyRuntime(true); }}
+                                  placeholder=".venv"
+                                />
+                              </div>
+                              <div className="pf-field">
+                                <label className="pf-label">Working Directory</label>
+                                <input
+                                  className="pf-input"
+                                  value={runtimeForm.python_working_dir}
+                                  onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_working_dir: e.target.value }); setDirtyRuntime(true); }}
+                                  placeholder="(uses current dir)"
+                                />
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* --- JavaScript Environment (bun) section --- */}
+                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 'var(--space-sm)', paddingTop: 'var(--space-sm)' }}>
+                        <h4 style={{ margin: '0 0 var(--space-xs)', fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>JavaScript Environment (bun)</h4>
+                        <div className="pf-row">
+                          <div className="pf-field pf-field-full">
+                            <label className="pf-label">
+                              <input
+                                type="checkbox"
+                                className="form-checkbox"
+                                checked={runtimeForm.bun_venv_enabled}
+                                onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_venv_enabled: e.target.checked }); setDirtyRuntime(true); }}
+                              />
+                              {' '}Enable JavaScript environment
+                            </label>
+                            <span className="pf-hint">When enabled, the Bun path is injected into the system prompt so the LLM uses the correct JS runtime</span>
+                          </div>
+                        </div>
+                        {runtimeForm.bun_venv_enabled && (
+                          <>
+                            <div className="pf-row">
+                              <div className="pf-field">
+                                <label className="pf-label">bun Binary Path</label>
+                                <input
+                                  className="pf-input"
+                                  value={runtimeForm.bun_path}
+                                  onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_path: e.target.value }); setDirtyRuntime(true); }}
+                                  placeholder="bun"
+                                />
+                              </div>
+                              <div className="pf-field">
+                                <label className="pf-label">Bun Version</label>
+                                <input
+                                  className="pf-input"
+                                  value={runtimeForm.bun_version}
+                                  onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_version: e.target.value }); setDirtyRuntime(true); }}
+                                  placeholder="latest"
+                                />
+                              </div>
+                            </div>
+                            <div className="pf-row">
+                              <div className="pf-field pf-field-full">
+                                <label className="pf-label">Working Directory</label>
+                                <input
+                                  className="pf-input"
+                                  value={runtimeForm.bun_working_dir}
+                                  onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_working_dir: e.target.value }); setDirtyRuntime(true); }}
+                                  placeholder="(uses current dir)"
+                                />
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )
+                ) : isBrowserSection ? (
+                  /* Structured browser (CDP) form */
+                  browserFormLoading ? (
+                    <div className="section-loading">Loading...</div>
+                  ) : (
+                    <div className="provider-form-wrap">
+                      <div className="pf-row">
+                        <div className="pf-field pf-field-full">
+                          <label className="pf-label">
+                            <input
+                              type="checkbox"
+                              className="form-checkbox"
+                              checked={browserForm.enabled}
+                              onChange={(e) => { setBrowserForm({ ...browserForm, enabled: e.target.checked }); setDirtyBrowser(true); }}
+                            />
+                            {' '}Enable browser tool
+                          </label>
+                          <span className="pf-hint">When disabled, the agent cannot use browser automation</span>
+                        </div>
+                      </div>
+
+                      <div className="pf-row">
+                        <div className="pf-field pf-field-full">
+                          <label className="pf-label">
+                            <input
+                              type="checkbox"
+                              className="form-checkbox"
+                              checked={browserForm.auto_launch}
+                              onChange={(e) => { setBrowserForm({ ...browserForm, auto_launch: e.target.checked }); setDirtyBrowser(true); }}
+                            />
+                            {' '}Launch local Chrome automatically
+                          </label>
+                          <span className="pf-hint">When enabled, y-agent spawns a headless Chrome instance. When disabled, connects to a remote CDP endpoint.</span>
+                        </div>
+                      </div>
+
+                      {browserForm.auto_launch ? (
+                        /* Local Chrome mode */
+                        <div className="pf-row">
+                          <div className="pf-field" style={{ flex: 2 }}>
+                            <label className="pf-label">Chrome Path</label>
+                            <input
+                              className="pf-input"
+                              value={browserForm.chrome_path}
+                              onChange={(e) => { setBrowserForm({ ...browserForm, chrome_path: e.target.value }); setDirtyBrowser(true); }}
+                              placeholder="Auto-detect (leave empty)"
+                            />
+                            <span className="pf-hint">Path to Chrome/Chromium executable. Empty = auto-detect.</span>
+                          </div>
+                          <div className="pf-field" style={{ maxWidth: '140px' }}>
+                            <label className="pf-label">Debug Port</label>
+                            <input
+                              className="pf-input pf-input-num"
+                              type="number"
+                              min={1024}
+                              max={65535}
+                              value={browserForm.local_cdp_port}
+                              onChange={(e) => { setBrowserForm({ ...browserForm, local_cdp_port: Number(e.target.value) || 9222 }); setDirtyBrowser(true); }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        /* Remote CDP mode */
+                        <div className="pf-row">
+                          <div className="pf-field pf-field-full">
+                            <label className="pf-label">CDP Endpoint URL</label>
+                            <input
+                              className="pf-input"
+                              value={browserForm.cdp_url}
+                              onChange={(e) => { setBrowserForm({ ...browserForm, cdp_url: e.target.value }); setDirtyBrowser(true); }}
+                              placeholder="http://127.0.0.1:9222"
+                            />
+                            <span className="pf-hint">Remote Chrome DevTools Protocol endpoint. Supports http://, https://, ws://, wss://</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="pf-row">
+                        <div className="pf-field">
+                          <label className="pf-label">Timeout (ms)</label>
+                          <input
+                            className="pf-input pf-input-num"
+                            type="number"
+                            min={1000}
+                            step={1000}
+                            value={browserForm.timeout_ms}
+                            onChange={(e) => { setBrowserForm({ ...browserForm, timeout_ms: Number(e.target.value) || 30000 }); setDirtyBrowser(true); }}
+                          />
+                        </div>
+                        <div className="pf-field">
+                          <label className="pf-label">Max Screenshot Dimension (px)</label>
+                          <input
+                            className="pf-input pf-input-num"
+                            type="number"
+                            min={256}
+                            step={256}
+                            value={browserForm.max_screenshot_dim}
+                            onChange={(e) => { setBrowserForm({ ...browserForm, max_screenshot_dim: Number(e.target.value) || 4096 }); setDirtyBrowser(true); }}
+                          />
+                        </div>
+                      </div>
+                      <div className="pf-row">
+                        <div className="pf-field pf-field-full">
+                          <label className="pf-label">Allowed Domains</label>
+                          <TagChipInput
+                            tags={browserForm.allowed_domains}
+                            onChange={(next) => { setBrowserForm({ ...browserForm, allowed_domains: next }); setDirtyBrowser(true); }}
+                          />
+                          <span className="pf-hint">Domains the browser can navigate to. Use * to allow all public domains. Empty = all blocked.</span>
+                        </div>
+                      </div>
+                      <div className="pf-row">
+                        <div className="pf-field pf-field-full">
+                          <label className="pf-label">
+                            <input
+                              type="checkbox"
+                              className="form-checkbox"
+                              checked={browserForm.block_private_networks}
+                              onChange={(e) => { setBrowserForm({ ...browserForm, block_private_networks: e.target.checked }); setDirtyBrowser(true); }}
+                            />
+                            {' '}Block private networks (SSRF protection)
+                          </label>
                         </div>
                       </div>
                     </div>

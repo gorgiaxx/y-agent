@@ -157,6 +157,9 @@ mod tests {
             temperature: Some(0.5),
             max_tokens: Some(100),
             timeout_secs: 10,
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            max_iterations: 1,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -186,6 +189,9 @@ mod tests {
             temperature: None,
             max_tokens: None,
             timeout_secs: 10,
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            max_iterations: 1,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -207,6 +213,9 @@ mod tests {
             temperature: None,
             max_tokens: None,
             timeout_secs: 10,
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            max_iterations: 1,
         };
 
         let route = SingleTurnRunner::build_route(&config);

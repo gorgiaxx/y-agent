@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use y_bot::feishu::FeishuBot;
 use y_service::ServiceContainer;
 
 /// Configuration for the web server.
@@ -29,6 +30,8 @@ pub struct AppState {
     pub container: Arc<ServiceContainer>,
     /// Application version string.
     pub version: String,
+    /// Feishu bot adapter (None if not configured).
+    pub feishu_bot: Option<Arc<FeishuBot>>,
 }
 
 impl AppState {
@@ -37,6 +40,14 @@ impl AppState {
         Self {
             container,
             version: version.to_string(),
+            feishu_bot: None,
         }
     }
+
+    /// Create a new `AppState` with a Feishu bot adapter.
+    pub fn with_feishu_bot(mut self, bot: FeishuBot) -> Self {
+        self.feishu_bot = Some(Arc::new(bot));
+        self
+    }
 }
+

@@ -38,6 +38,7 @@ fn sample_request() -> ContextRequest {
         user_query: "How do I fix this bug?".into(),
         agent_mode: "general".into(),
         tools_enabled: vec!["read_file".into(), "write_file".into()],
+        knowledge_collections: vec![],
     }
 }
 
@@ -57,7 +58,7 @@ async fn test_full_pipeline_all_providers() {
         content: "# Test Project\nA Rust project for testing.".into(),
     }])));
 
-    pipeline.register(Box::new(InjectSkills::new(vec![SkillSummary {
+    pipeline.register(Box::new(InjectSkills::from_summaries(vec![SkillSummary {
         name: "code_review".into(),
         description: "Reviews code for best practices.".into(),
         triggers: vec!["review".into()],

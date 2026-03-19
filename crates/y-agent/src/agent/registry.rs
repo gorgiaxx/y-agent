@@ -6,8 +6,13 @@
 //! - `BuiltIn`: shipped with the framework (tool-engineer, agent-architect)
 //! - `UserDefined`: loaded from TOML configuration files
 //! - `Dynamic`: created at runtime by other agents
+//!
+//! **Override support**: User-defined agents with the same `id` as a built-in
+//! agent will replace the built-in definition. The original built-in can be
+//! restored via [`AgentRegistry::reset_builtin`].
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::agent::definition::{AgentDefinition, AgentMode};
 use crate::agent::error::MultiAgentError;
@@ -42,22 +47,43 @@ pub struct SearchCriteria {
 #[derive(Debug)]
 pub struct AgentRegistry {
     definitions: HashMap<String, AgentDefinition>,
+    /// Original built-in definitions, preserved for reset support.
+    builtin_originals: HashMap<String, AgentDefinition>,
 }
 
 impl AgentRegistry {
     /// Create a new registry with built-in agent definitions pre-registered.
-    pub fn new() -> Self {
+    ///
+    /// If `user_agents_dir` is provided and exists, user-defined agent TOML
+    /// files in that directory are loaded and may override built-in agents.
+    pub fn new_with_user_agents(user_agents_dir: Option<&Path>) -> Self {
         let mut registry = Self {
             definitions: HashMap::new(),
+            builtin_originals: HashMap::new(),
         };
         registry.register_builtins();
+
+        if let Some(dir) = user_agents_dir {
+            if let Err(errors) = registry.load_user_agents(dir) {
+                for (file, err) in errors {
+                    tracing::warn!("failed to load user agent from {file}: {err}");
+                }
+            }
+        }
+
         registry
+    }
+
+    /// Create a new registry with built-in agent definitions pre-registered.
+    pub fn new() -> Self {
+        Self::new_with_user_agents(None)
     }
 
     /// Create an empty registry (no built-ins). Useful for testing.
     pub fn empty() -> Self {
         Self {
             definitions: HashMap::new(),
+            builtin_originals: HashMap::new(),
         }
     }
 
@@ -248,6 +274,114 @@ impl AgentRegistry {
         }
     }
 
+    /// Register or override an existing agent definition.
+    ///
+    /// Unlike [`register`], this replaces any existing definition with the
+    /// same ID. This is the primary mechanism for user-defined overrides
+    /// of built-in agents.
+    pub fn register_or_override(&mut self, definition: AgentDefinition) -> Result<(), MultiAgentError> {
+        definition.validate()?;
+        self.definitions.insert(definition.id.clone(), definition);
+        Ok(())
+    }
+
+    /// Load user-defined agent definitions from a directory.
+    ///
+    /// Scans `dir` for `*.toml` files, parses each as an `AgentDefinition`,
+    /// and calls [`register_or_override`] to register (or override built-ins).
+    ///
+    /// Returns `Ok(())` on success, or a list of `(filename, error)` pairs
+    /// for any files that failed to parse. Successfully parsed files are
+    /// still registered even if some files fail.
+    pub fn load_user_agents(&mut self, dir: &Path) -> Result<(), Vec<(String, String)>> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+
+        let mut errors = Vec::new();
+
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                errors.push((dir.display().to_string(), e.to_string()));
+                return Err(errors);
+            }
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+
+            let filename = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match AgentDefinition::from_toml(&content) {
+                    Ok(mut def) => {
+                        // User-loaded agents are always UserDefined tier,
+                        // even if they override a built-in.
+                        def.trust_tier = TrustTier::UserDefined;
+                        if let Err(e) = self.register_or_override(def) {
+                            errors.push((filename, e.to_string()));
+                        }
+                    }
+                    Err(e) => {
+                        errors.push((filename, e.to_string()));
+                    }
+                },
+                Err(e) => {
+                    errors.push((filename, e.to_string()));
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Check if a built-in agent has been overridden by a user-defined agent.
+    pub fn is_overridden(&self, id: &str) -> bool {
+        if !self.builtin_originals.contains_key(id) {
+            return false;
+        }
+        // Overridden if the current definition's trust tier differs from BuiltIn.
+        self.definitions
+            .get(id)
+            .map(|def| def.trust_tier != TrustTier::BuiltIn)
+            .unwrap_or(false)
+    }
+
+    /// Return the IDs of all built-in agents that have been overridden.
+    pub fn list_overridden_ids(&self) -> Vec<&str> {
+        self.builtin_originals
+            .keys()
+            .filter(|id| self.is_overridden(id))
+            .map(|id| id.as_str())
+            .collect()
+    }
+
+    /// Reset an overridden built-in agent to its original definition.
+    ///
+    /// Returns an error if the agent was never a built-in.
+    pub fn reset_builtin(&mut self, id: &str) -> Result<(), MultiAgentError> {
+        match self.builtin_originals.get(id) {
+            Some(original) => {
+                self.definitions.insert(id.to_string(), original.clone());
+                Ok(())
+            }
+            None => Err(MultiAgentError::InvalidDefinition {
+                message: format!("agent '{id}' is not a built-in agent"),
+            }),
+        }
+    }
+
     /// List definitions filtered by trust tier.
     pub fn list_by_tier(&self, tier: TrustTier) -> Vec<&AgentDefinition> {
         self.definitions
@@ -262,10 +396,14 @@ impl AgentRegistry {
     }
 
     /// Register the built-in agent definitions from embedded TOML files.
+    ///
+    /// Also saves a copy of each original definition for reset support.
     fn register_builtins(&mut self) {
         for (name, toml_str) in Self::builtin_toml_sources() {
             let def = AgentDefinition::from_toml(toml_str)
                 .unwrap_or_else(|e| panic!("built-in agent '{name}' should parse: {e}"));
+            self.builtin_originals
+                .insert(def.id.clone(), def.clone());
             self.definitions.insert(def.id.clone(), def);
         }
     }
@@ -273,7 +411,7 @@ impl AgentRegistry {
     /// Returns (name, TOML content) pairs for all built-in agents.
     ///
     /// TOML files are embedded at compile time via `include_str!`.
-    fn builtin_toml_sources() -> Vec<(&'static str, &'static str)> {
+    pub fn builtin_toml_sources() -> Vec<(&'static str, &'static str)> {
         vec![
             (
                 "compaction-summarizer",
@@ -395,7 +533,7 @@ mod tests {
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 11); // 9 built-in + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 12); // 10 built-in + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -485,7 +623,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 9);
+        assert_eq!(builtins.len(), 10);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
         assert_eq!(user_defs.len(), 1);
@@ -567,7 +705,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 9);
+        assert_eq!(builtins.len(), 10);
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
@@ -682,6 +820,7 @@ mod tests {
             "tool-engineer",
             "agent-architect",
             "skill-ingestion",
+            "skill-security-check",
         ];
 
         for id in expected_ids {
@@ -693,6 +832,154 @@ mod tests {
             assert!(!def.system_prompt.is_empty());
         }
 
-        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 9);
+        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 10);
+    }
+
+    /// Override a built-in agent with register_or_override.
+    #[test]
+    fn test_register_or_override_replaces_builtin() {
+        let mut registry = AgentRegistry::new();
+        let original = registry.get("tool-engineer").unwrap();
+        assert_eq!(original.trust_tier, TrustTier::BuiltIn);
+
+        let mut override_def = user_definition("tool-engineer", "Custom Tool Engineer");
+        override_def.system_prompt = "Custom prompt for tool engineer".to_string();
+        registry.register_or_override(override_def).unwrap();
+
+        let updated = registry.get("tool-engineer").unwrap();
+        assert_eq!(updated.name, "Custom Tool Engineer");
+        assert_eq!(updated.system_prompt, "Custom prompt for tool engineer");
+        assert_eq!(updated.trust_tier, TrustTier::UserDefined);
+    }
+
+    /// Overriding one built-in does not affect others.
+    #[test]
+    fn test_register_or_override_preserves_non_overridden() {
+        let mut registry = AgentRegistry::new();
+
+        let override_def = user_definition("tool-engineer", "Custom Tool Engineer");
+        registry.register_or_override(override_def).unwrap();
+
+        // agent-architect should remain unchanged
+        let aa = registry.get("agent-architect").unwrap();
+        assert_eq!(aa.trust_tier, TrustTier::BuiltIn);
+        assert_eq!(aa.mode, AgentMode::Plan);
+    }
+
+    /// Reset an overridden built-in to its original definition.
+    #[test]
+    fn test_reset_builtin_restores_original() {
+        let mut registry = AgentRegistry::new();
+
+        let original_prompt = registry
+            .get("tool-engineer")
+            .unwrap()
+            .system_prompt
+            .clone();
+
+        let mut override_def = user_definition("tool-engineer", "Custom");
+        override_def.system_prompt = "Override prompt".to_string();
+        registry.register_or_override(override_def).unwrap();
+        assert_eq!(
+            registry.get("tool-engineer").unwrap().system_prompt,
+            "Override prompt"
+        );
+
+        registry.reset_builtin("tool-engineer").unwrap();
+
+        let restored = registry.get("tool-engineer").unwrap();
+        assert_eq!(restored.trust_tier, TrustTier::BuiltIn);
+        assert_eq!(restored.system_prompt, original_prompt);
+    }
+
+    /// Reset for a non-built-in agent returns an error.
+    #[test]
+    fn test_reset_builtin_rejects_non_builtin() {
+        let mut registry = AgentRegistry::new();
+        let result = registry.reset_builtin("nonexistent-agent");
+        assert!(result.is_err());
+    }
+
+    /// is_overridden and list_overridden_ids track overrides correctly.
+    #[test]
+    fn test_is_overridden_tracking() {
+        let mut registry = AgentRegistry::new();
+        assert!(!registry.is_overridden("tool-engineer"));
+        assert!(registry.list_overridden_ids().is_empty());
+
+        let override_def = user_definition("tool-engineer", "Custom");
+        registry.register_or_override(override_def).unwrap();
+
+        assert!(registry.is_overridden("tool-engineer"));
+        assert!(registry.list_overridden_ids().contains(&"tool-engineer"));
+
+        // Reset clears the override
+        registry.reset_builtin("tool-engineer").unwrap();
+        assert!(!registry.is_overridden("tool-engineer"));
+    }
+
+    /// Load user agents from a directory.
+    #[test]
+    fn test_load_user_agents_from_directory() {
+        let tmp = std::env::temp_dir().join("y-agent-test-user-agents");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Write a valid user agent TOML
+        let toml_content = r#"
+id = "my-custom-agent"
+name = "My Custom Agent"
+description = "A custom user agent"
+mode = "general"
+trust_tier = "built_in"
+system_prompt = "You are a custom agent."
+"#;
+        std::fs::write(tmp.join("my-custom-agent.toml"), toml_content).unwrap();
+
+        let mut registry = AgentRegistry::new();
+        let result = registry.load_user_agents(&tmp);
+        assert!(result.is_ok());
+
+        let loaded = registry.get("my-custom-agent").unwrap();
+        assert_eq!(loaded.name, "My Custom Agent");
+        // Trust tier is forced to UserDefined regardless of TOML content
+        assert_eq!(loaded.trust_tier, TrustTier::UserDefined);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// User agent with same ID as built-in overrides it.
+    #[test]
+    fn test_load_user_agents_override_builtin() {
+        let tmp = std::env::temp_dir().join("y-agent-test-override-builtin");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let toml_content = r#"
+id = "tool-engineer"
+name = "My Custom Tool Engineer"
+description = "Overridden tool engineer"
+mode = "build"
+trust_tier = "built_in"
+system_prompt = "You are my custom tool engineer."
+"#;
+        std::fs::write(tmp.join("tool-engineer.toml"), toml_content).unwrap();
+
+        let registry = AgentRegistry::new_with_user_agents(Some(&tmp));
+
+        let def = registry.get("tool-engineer").unwrap();
+        assert_eq!(def.name, "My Custom Tool Engineer");
+        assert_eq!(def.trust_tier, TrustTier::UserDefined);
+        assert!(registry.is_overridden("tool-engineer"));
+
+        // Other built-ins remain untouched
+        assert_eq!(
+            registry.get("agent-architect").unwrap().trust_tier,
+            TrustTier::BuiltIn
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -5,6 +5,7 @@ pub mod chat;
 pub mod config_cmd;
 pub mod diag;
 pub mod init;
+pub mod kb;
 pub mod serve;
 pub mod session;
 pub mod skills;
@@ -76,6 +77,12 @@ pub enum Commands {
     Skill {
         #[command(subcommand)]
         action: skills::SkillAction,
+    },
+
+    /// Knowledge base management.
+    Kb {
+        #[command(subcommand)]
+        action: kb::KbAction,
     },
 
     /// Launch the TUI interface.

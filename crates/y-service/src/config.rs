@@ -9,8 +9,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use tracing::warn;
 
+use y_browser::BrowserConfig;
 use y_guardrails::GuardrailConfig;
 use y_hooks::HookConfig;
+use y_knowledge::config::KnowledgeConfig;
 use y_provider::ProviderPoolConfig;
 use y_runtime::RuntimeConfig;
 use y_session::SessionConfig;
@@ -47,10 +49,21 @@ pub struct ServiceConfig {
     /// Guardrail/security configuration.
     pub guardrails: GuardrailConfig,
 
+    /// Browser (CDP) configuration.
+    pub browser: BrowserConfig,
+
+    /// Knowledge base configuration (chunking, embedding, retrieval).
+    pub knowledge: KnowledgeConfig,
+
     /// Path to the user prompts override directory (`~/.config/y-agent/prompts/`).
     /// When set, prompt files here take priority over compiled-in defaults.
     #[serde(skip)]
     pub prompts_dir: Option<PathBuf>,
+
+    /// Path to the skills store directory (`~/.config/y-agent/skills/`).
+    /// When set, `InjectSkills` reads skill content from here.
+    #[serde(skip)]
+    pub skills_dir: Option<PathBuf>,
 }
 
 /// Config file basenames (without `.toml` extension) mapping to `ServiceConfig` fields.
@@ -62,6 +75,8 @@ const CONFIG_SECTIONS: &[&str] = &[
     "hooks",
     "tools",
     "guardrails",
+    "browser",
+    "knowledge",
 ];
 
 impl ServiceConfig {
@@ -79,6 +94,10 @@ impl ServiceConfig {
         if prompts_dir.is_dir() {
             config.prompts_dir = Some(prompts_dir);
         }
+
+        // Set skills store directory to <config_dir>/skills/.
+        let skills_dir = config_dir.join("skills");
+        config.skills_dir = Some(skills_dir);
 
         if !config_dir.is_dir() {
             warn!(
@@ -134,6 +153,14 @@ impl ServiceConfig {
                 "guardrails" => match toml::from_str(&content) {
                     Ok(v) => config.guardrails = v,
                     Err(e) => warn!(file = "guardrails.toml", error = %e, "Parse error"),
+                },
+                "browser" => match toml::from_str(&content) {
+                    Ok(v) => config.browser = v,
+                    Err(e) => warn!(file = "browser.toml", error = %e, "Parse error"),
+                },
+                "knowledge" => match toml::from_str(&content) {
+                    Ok(v) => config.knowledge = v,
+                    Err(e) => warn!(file = "knowledge.toml", error = %e, "Parse error"),
                 },
                 _ => {}
             }

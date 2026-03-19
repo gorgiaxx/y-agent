@@ -28,6 +28,8 @@ export interface Message {
   content: string;
   timestamp: string;
   tool_calls: ToolCallBrief[];
+  /** Skill names attached to this user message (if any). */
+  skills?: string[];
   model?: string;
   provider_id?: string;
   tokens?: { input: number; output: number };
@@ -60,6 +62,7 @@ export interface ChatStartedPayload {
 
 export interface ChatCompletePayload {
   run_id: string;
+  session_id: string;
   content: string;
   model: string;
   provider_id?: string;
@@ -79,6 +82,7 @@ export interface ToolCallInfo {
 
 export interface ChatErrorPayload {
   run_id: string;
+  session_id: string;
   error: string;
 }
 
@@ -106,6 +110,7 @@ export interface ToolResultEvent {
   name: string;
   success: boolean;
   duration_ms: number;
+  input_preview?: string;
   result_preview: string;
 }
 
@@ -313,6 +318,14 @@ export interface SkillFileEntry {
   children?: SkillFileEntry[];
 }
 
+/** Permissions the skill requires, as assessed by the security screening agent. */
+export interface PermissionsNeeded {
+  files_read: string[];
+  files_write: string[];
+  network: string[];
+  commands: string[];
+}
+
 /** Result of a skill import operation (from `skill_import`). */
 export interface SkillImportResult {
   decision: 'accepted' | 'rejected' | 'partial_accept';
@@ -320,5 +333,99 @@ export interface SkillImportResult {
   skill_id: string | null;
   error: string | null;
   security_issues: string[];
+  permissions_needed: PermissionsNeeded | null;
 }
 
+// ---------------------------------------------------------------------------
+// Knowledge
+// ---------------------------------------------------------------------------
+
+/** Collection summary (from `kb_collection_list`). */
+export interface KnowledgeCollectionInfo {
+  id: string;
+  name: string;
+  description: string;
+  entry_count: number;
+  chunk_count: number;
+  total_bytes: number;
+  created_at: string;
+}
+
+/** Knowledge entry summary (from `kb_entry_list`). */
+export interface KnowledgeEntryInfo {
+  id: string;
+  title: string;
+  source_uri: string;
+  source_type: string;
+  domains: string[];
+  quality_score: number;
+  chunk_count: number;
+  content_size: number;
+  state: 'active' | 'inactive' | 'processing';
+  hit_count: number;
+  updated_at: string;
+}
+
+/** Entry detail with L0/L1/L2 content (from `kb_entry_detail`). */
+export interface KnowledgeEntryDetail {
+  id: string;
+  title: string;
+  source_uri: string;
+  domains: string[];
+  quality_score: number;
+  state: string;
+  hit_count: number;
+  total_chunk_count: number;
+  l0_summary: string;
+  l1_sections: KnowledgeSection[];
+  l2_chunks: KnowledgeChunk[];
+}
+
+/** A section header+summary (L1 resolution). */
+export interface KnowledgeSection {
+  index: number;
+  title: string;
+  summary: string;
+}
+
+/** A content chunk (L2 resolution). */
+export interface KnowledgeChunk {
+  id: string;
+  content: string;
+  token_estimate: number;
+  section_index: number;
+}
+
+/** Search result item (from `kb_search`). */
+export interface KnowledgeSearchResult {
+  chunk_id: string;
+  title: string;
+  content: string;
+  relevance: number;
+  domains: string[];
+}
+
+/** Ingest result (from `kb_ingest`). */
+export interface KnowledgeIngestResult {
+  success: boolean;
+  entry_id: string | null;
+  chunk_count: number;
+  domains: string[];
+  quality_score: number;
+  message: string;
+}
+
+/** Ingest progress event payload (from `kb:ingest_progress` event). */
+export interface KnowledgeIngestProgress {
+  stage: 'fetching' | 'chunking' | 'classifying' | 'indexing' | 'done' | 'error';
+  chunk_progress?: { current: number; total: number };
+  message: string;
+}
+
+/** Global knowledge base stats (from `kb_stats`). */
+export interface KnowledgeStats {
+  total_collections: number;
+  total_entries: number;
+  total_chunks: number;
+  total_hits: number;
+}

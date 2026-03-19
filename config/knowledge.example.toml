@@ -1,0 +1,47 @@
+# ==============================================================================
+# y-agent -- Knowledge Base Configuration
+# ==============================================================================
+
+# --- Chunking ----------------------------------------------------------------
+
+# Maximum tokens per chunk level.
+l0_max_tokens = 200           # L0: summary (~100 tokens)
+l1_max_tokens = 500           # L1: section overview (~500 tokens)
+l2_max_tokens = 450           # L2: paragraph (default ingestion level)
+
+# Maximum chunks per entry. Large files exceeding this have adjacent
+# chunks merged automatically. Prevents extreme chunk counts.
+max_chunks_per_entry = 5000
+
+# Default collection name for entries without explicit collection.
+default_collection = "default"
+
+# Minimum similarity threshold (0.0-1.0). Results below are discarded.
+min_similarity_threshold = 0.65
+
+# --- Embedding ---------------------------------------------------------------
+# When enabled, ingested documents are embedded for vector-based semantic search.
+# Requires an OpenAI-compatible embedding API.
+
+embedding_enabled = false
+embedding_model = "text-embedding-3-small"
+embedding_dimensions = 1536
+embedding_base_url = "https://api.openai.com/v1"
+embedding_api_key_env = "OPENAI_API_KEY"
+# embedding_api_key = ""         # Direct key value (takes precedence over env var)
+
+# Maximum tokens the embedding model can accept per chunk.
+# Set this to your model's context window size. Common values:
+#   512  — most local GGUF embedding models (e.g. bge-small, gte-small)
+#   8192 — OpenAI text-embedding-3-small / text-embedding-3-large
+# When set to 0 (default), falls back to l2_max_tokens.
+embedding_max_tokens = 0
+
+# --- Retrieval Tuning --------------------------------------------------------
+
+# Strategy: "hybrid" (vector + BM25), "keyword" (BM25 only), "semantic" (vector only).
+retrieval_strategy = "hybrid"
+
+# Weights for blend fusion (only used when strategy = "hybrid").
+bm25_weight = 1.0
+vector_weight = 1.0

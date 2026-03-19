@@ -41,12 +41,16 @@ toml = { workspace = true }
 tracing = { workspace = true }
 
 # Internal crates
+y-agent = { workspace = true }
 y-service = { workspace = true }
 y-core = { workspace = true }
 y-provider = { workspace = true }
 y-diagnostics = { workspace = true }
 y-prompt = { workspace = true }
 y-skills = { workspace = true }
+y-knowledge = { workspace = true }
+y-tools = { workspace = true }
+y-context = { workspace = true }
 
 # Time
 chrono = { workspace = true }

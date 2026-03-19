@@ -1,0 +1,228 @@
+/* ---- Welcome Page ---- */
+.welcome-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xl);
+  animation: welcome-fade-in 0.5s ease-out;
+}
+
+@keyframes welcome-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.welcome-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-lg);
+  max-width: 420px;
+  text-align: center;
+}
+
+/* ---- Logo ---- */
+.welcome-logo {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-style: italic;
+  font-size: 72px;
+  font-weight: 400;
+  color: var(--accent);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 40px var(--accent-glow), 0 0 80px var(--accent-glow);
+  user-select: none;
+}
+
+/* ---- Introduction ---- */
+.welcome-intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.welcome-title {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 20px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--text-primary);
+  margin: 0;
+  letter-spacing: 0.01em;
+  opacity: 0.9;
+}
+
+.welcome-description {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.65;
+}
+
+/* ---- Workspace Selector ---- */
+.welcome-workspace-selector {
+  position: relative;
+  margin-top: var(--space-sm);
+}
+
+.welcome-workspace-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  min-width: 200px;
+}
+
+.welcome-workspace-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--surface-tertiary);
+}
+
+.welcome-workspace-btn.open {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.welcome-workspace-btn-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+.welcome-workspace-btn-label {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome-workspace-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+  opacity: 0.5;
+}
+
+.welcome-workspace-chevron--open {
+  transform: rotate(180deg);
+}
+
+/* ---- Dropdown ---- */
+.welcome-workspace-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 260px;
+  max-width: 340px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+  overflow: hidden;
+  animation: welcome-dropdown-slide 0.15s ease-out;
+}
+
+@keyframes welcome-dropdown-slide {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.welcome-workspace-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-xs) 0;
+}
+
+.welcome-workspace-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.welcome-workspace-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.welcome-workspace-item.active {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.welcome-workspace-item-name {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.welcome-workspace-item-path {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.welcome-workspace-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.welcome-workspace-create {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: background 0.1s ease;
+}
+
+.welcome-workspace-create:hover {
+  background: var(--accent-subtle);
+}

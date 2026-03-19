@@ -8,13 +8,21 @@
 .input-container {
   position: relative;
   display: flex;
-  align-items: flex-end;
-  gap: var(--space-sm);
+  flex-direction: column;
   background: var(--surface-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 10px var(--space-md);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input-container > .input-content {
+  padding: 10px var(--space-md);
+}
+
+.input-container > .btn-stop {
+  position: absolute;
+  top: 8px;
+  right: 8px;
 }
 
 .input-container:focus-within {
@@ -22,27 +30,102 @@
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.03);
 }
 
-.input-textarea {
+/* ---- Contenteditable input ---- */
+
+.input-editable {
   flex: 1;
   border: none;
   background: transparent;
   color: var(--text-primary);
+  -webkit-text-fill-color: var(--text-primary);
+  caret-color: var(--text-primary);
   font-size: 14px;
   line-height: 1.55;
-  resize: none;
   outline: none;
   font-family: inherit;
   max-height: 180px;
+  overflow-y: auto;
   padding: 0;
+  min-height: 22px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.input-textarea::placeholder {
+.input-editable:empty::before {
+  content: attr(data-placeholder);
   color: var(--text-muted);
+  -webkit-text-fill-color: var(--text-muted);
+  pointer-events: none;
 }
 
-.input-textarea:disabled {
+.input-editable[contenteditable="false"] {
   opacity: 0.4;
 }
+
+/* ---- Inline skill mention tokens ---- */
+
+.skill-mention {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  margin: 0 2px;
+  background: rgba(200, 181, 96, 0.15);
+  border: 1px solid rgba(200, 181, 96, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  user-select: all;
+  vertical-align: baseline;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  cursor: default;
+  animation: skillMentionAppear 0.15s ease-out;
+}
+
+@keyframes skillMentionAppear {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.skill-mention::selection {
+  background: rgba(200, 181, 96, 0.35);
+}
+
+/* ---- Inline knowledge collection mention tokens ---- */
+
+.kb-mention {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  margin: 0 2px;
+  background: rgba(100, 160, 220, 0.15);
+  border: 1px solid rgba(100, 160, 220, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: rgb(120, 180, 240);
+  user-select: all;
+  vertical-align: baseline;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  cursor: default;
+  animation: skillMentionAppear 0.15s ease-out;
+}
+
+.kb-mention::selection {
+  background: rgba(100, 160, 220, 0.35);
+}
+
+/* ---- Send / Stop buttons ---- */
 
 .btn-send {
   display: flex;
@@ -69,11 +152,269 @@
   cursor: not-allowed;
 }
 
-.input-footer {
+/* ---- Toolbar row ---- */
+
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-tertiary);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.toolbar-btn--active {
+  color: var(--accent);
+  background: rgba(200, 181, 96, 0.08);
+}
+
+.toolbar-btn--active:hover:not(:disabled) {
+  color: var(--accent);
+  background: rgba(200, 181, 96, 0.14);
+}
+
+.toolbar-btn--danger:hover:not(:disabled) {
+  color: var(--error);
+}
+
+.toolbar-btn-label {
+  font-size: 11px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Hover tooltip bubble */
+.has-tooltip {
+  position: relative;
+}
+
+.has-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+  padding: 4px 10px;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 300;
+}
+
+.has-tooltip:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+/* Provider dropdown */
+.toolbar-btn-group {
+  position: relative;
+}
+
+.toolbar-provider-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  min-width: 220px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 200;
+  padding: 4px;
+  animation: toolbarDropdownIn 0.1s ease-out;
+}
+
+@keyframes toolbarDropdownIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.toolbar-provider-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.toolbar-provider-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-provider-item.selected {
+  color: var(--accent);
+}
+
+/* Knowledge base picker dropdown */
+.toolbar-kb-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  min-width: 240px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 200;
+  padding: 0;
+  animation: toolbarDropdownIn 0.1s ease-out;
+}
+
+.toolbar-kb-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 6px;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-kb-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.toolbar-kb-clear {
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--error);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.toolbar-kb-clear:hover {
+  background: var(--error-subtle, rgba(239, 68, 68, 0.1));
+}
+
+.toolbar-kb-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.toolbar-kb-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-kb-item.selected {
+  background: rgba(100, 160, 220, 0.06);
+  color: var(--text-primary);
+}
+
+
+
+
+.toolbar-kb-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.toolbar-kb-item-count {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ---- Expanded mode ---- */
+
+.input-area--expanded {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.input-area--expanded .input-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.input-area--expanded .input-content {
+  flex: 1;
+}
+
+.input-area--expanded .input-editable {
+  max-height: none;
+  flex: 1;
+  min-height: 200px;
+}
+
+/* ---- Footer ---- */
+
+.input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 4px;
 }
 
 .input-hint {
@@ -149,61 +490,4 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-}
-
-/* ---- Skill tags ---- */
-
-.skill-tags-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.skill-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  background: rgba(200, 181, 96, 0.15);
-  border: 1px solid rgba(200, 181, 96, 0.25);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--accent);
-  user-select: none;
-  animation: skillTagAppear 0.15s ease-out;
-}
-
-@keyframes skillTagAppear {
-  from {
-    opacity: 0;
-    transform: scale(0.9);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.skill-tag-name {
-  font-weight: 500;
-  letter-spacing: 0.01em;
-}
-
-.skill-tag-remove {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px;
-  border: none;
-  border-radius: 2px;
-  background: transparent;
-  color: var(--accent);
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.12s ease, background 0.12s ease;
-}
-
-.skill-tag-remove:hover {
-  opacity: 1;
-  background: rgba(200, 181, 96, 0.2);
 }

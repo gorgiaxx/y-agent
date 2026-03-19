@@ -23,6 +23,7 @@ pub mod inject_bootstrap;
 pub mod inject_memory;
 pub mod inject_skills;
 pub mod inject_tools;
+pub mod knowledge_provider;
 pub mod load_history;
 pub mod memory;
 pub mod middleware_adapter;
@@ -42,14 +43,18 @@ pub use context_status::InjectContextStatus;
 pub use guard::{ContextWindowGuard, GuardMode, GuardVerdict, TokenBudget};
 pub use inject_bootstrap::{BootstrapEntry, InjectBootstrap};
 pub use inject_memory::InjectMemory;
-pub use inject_skills::{InjectSkills, SkillSummary};
+pub use inject_skills::{InjectSkills, InjectSkillsStatic, SkillSummary};
 pub use inject_tools::InjectTools;
 pub use load_history::LoadHistory;
 pub use middleware_adapter::{stage_priorities, ContextMiddlewareAdapter};
+pub use knowledge_provider::KnowledgeContextProvider;
 pub use pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipeline, ContextPipelineError,
     ContextProvider, ContextRequest,
 };
 pub use recall::{RecallConfig, RecallMethod, RecallStore, RecalledMemory};
 pub use repair::{repair_history, HistoryMessage, RepairReport};
-pub use system_prompt::{BuildSystemPromptProvider, SystemPromptConfig};
+pub use system_prompt::{
+    BuildSystemPromptProvider, BunVenvPromptInfo, PythonVenvPromptInfo, SystemPromptConfig,
+    VenvPromptInfo,
+};

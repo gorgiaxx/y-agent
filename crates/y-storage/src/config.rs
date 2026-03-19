@@ -33,15 +33,6 @@ pub struct StorageConfig {
     #[serde(default = "default_migrations_dir")]
     pub migrations_dir: PathBuf,
 
-    /// `PostgreSQL` connection URL for diagnostics (optional).
-    /// Required when the `diagnostics_pg` feature is enabled.
-    /// Example: `postgres://user:pass@localhost:5432/y_agent`
-    #[serde(default)]
-    pub postgres_url: Option<String>,
-
-    /// `PostgreSQL` connection pool size.
-    #[serde(default = "default_pg_pool_size")]
-    pub pg_pool_size: u32,
 }
 
 fn default_db_path() -> String {
@@ -68,10 +59,6 @@ fn default_migrations_dir() -> PathBuf {
     PathBuf::from("migrations/sqlite")
 }
 
-fn default_pg_pool_size() -> u32 {
-    5
-}
-
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
@@ -81,8 +68,6 @@ impl Default for StorageConfig {
             busy_timeout_ms: default_busy_timeout_ms(),
             transcript_dir: default_transcript_dir(),
             migrations_dir: default_migrations_dir(),
-            postgres_url: None,
-            pg_pool_size: default_pg_pool_size(),
         }
     }
 }
@@ -117,8 +102,6 @@ impl StorageConfig {
             db_path: ":memory:".to_string(),
             pool_size: 1,
             wal_enabled: false, // WAL not meaningful for :memory:
-            postgres_url: None,
-            pg_pool_size: default_pg_pool_size(),
             ..Self::default()
         }
     }

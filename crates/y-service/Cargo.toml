@@ -7,6 +7,7 @@ description = "Business/service layer for y-agent — shared by CLI, TUI, and fu
 
 [dependencies]
 y-core = { workspace = true }
+y-bot = { workspace = true }
 y-agent = { workspace = true }
 y-provider = { workspace = true }
 y-session = { workspace = true }
@@ -16,6 +17,8 @@ y-tools = { workspace = true }
 y-storage = { workspace = true }
 y-runtime = { workspace = true }
 y-guardrails = { workspace = true }
+y-knowledge = { workspace = true }
+y-browser = { workspace = true }
 
 y-prompt = { workspace = true }
 y-diagnostics = { workspace = true }
@@ -40,7 +43,6 @@ reqwest = { workspace = true }
 
 [features]
 default = []
-diagnostics_pg = ["y-storage/diagnostics_pg", "y-diagnostics/diagnostics_pg"]
 hook_handlers = ["y-hooks/hook_handlers"]
 llm_hooks = ["y-hooks/llm_hooks"]
 

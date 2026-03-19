@@ -22,6 +22,7 @@ pub enum ContextCategory {
     SystemPrompt,
     Bootstrap,
     Memory,
+    Knowledge,
     Skills,
     Tools,
     History,
@@ -40,6 +41,11 @@ pub struct ContextRequest {
     pub agent_mode: String,
     /// Tool names currently enabled for the agent.
     pub tools_enabled: Vec<String>,
+    /// Knowledge collection names explicitly selected by the user.
+    ///
+    /// When empty, knowledge retrieval is skipped entirely (no embedding
+    /// API calls). When populated, only the listed collections are searched.
+    pub knowledge_collections: Vec<String>,
 }
 
 /// Assembled context ready for the LLM.

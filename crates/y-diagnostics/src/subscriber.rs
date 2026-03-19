@@ -143,9 +143,13 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
             }
         }
 
-        // Store the final output on the trace metadata for queryability.
+        // Merge the final output into trace metadata (preserve existing keys).
         if let Some(text) = output {
-            trace.metadata = serde_json::json!({ "output": text });
+            if let serde_json::Value::Object(ref mut map) = trace.metadata {
+                map.insert("output".to_string(), serde_json::Value::String(text.to_string()));
+            } else {
+                trace.metadata = serde_json::json!({ "output": text });
+            }
         }
 
         self.store.update_trace(trace).await

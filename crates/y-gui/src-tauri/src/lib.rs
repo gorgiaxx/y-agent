@@ -63,18 +63,50 @@ pub fn run() {
                     &config_path,
                     state_dir().as_deref(),
                 );
-                ServiceContainer::from_config(&config)
+                let container = ServiceContainer::from_config(&config)
                     .await
-                    .expect("Failed to initialize ServiceContainer")
+                    .expect("Failed to initialize ServiceContainer");
+
+                // Register the knowledge_search tool using the container's
+                // knowledge service (which already has embedding configured).
+                // NOTE: KnowledgeContextProvider is already registered by
+                // ServiceContainer::from_config (with embedding support).
+                {
+                    let ks = container.knowledge_service.lock().await;
+                    let kb_handle = ks.knowledge_handle();
+                    drop(ks);
+
+                    let kb_tool = std::sync::Arc::new(
+                        y_tools::builtin::knowledge_search::KnowledgeSearchTool::new(
+                            std::sync::Arc::clone(&kb_handle),
+                        ),
+                    );
+                    let kb_def =
+                        y_tools::builtin::knowledge_search::KnowledgeSearchTool::tool_definition();
+                    if let Err(e) = container.tool_registry.register_tool(kb_tool, kb_def).await {
+                        tracing::warn!(error = %e, "failed to register knowledge_search tool");
+                    }
+                }
+
+                container
             });
+
+            // Create KnowledgeState wrapping the container's shared knowledge
+            // service. This ensures the GUI knowledge panel, context pipeline,
+            // and knowledge_search tool all operate on the same KnowledgeService
+            // instance (with embedding provider if configured).
+            let knowledge_state = commands::knowledge::KnowledgeState::from_shared(
+                Arc::clone(&container.knowledge_service),
+            );
 
             // Keep the runtime alive for async Tauri commands.
             // Leak it so it stays active for the app's entire lifetime.
             let rt = Box::leak(Box::new(rt));
             let _guard = rt.enter();
 
-            let app_state = AppState::new(Arc::new(container), config_path);
+            let app_state = AppState::new(Arc::new(container), config_path.clone());
             app.manage(app_state);
+            app.manage(knowledge_state);
 
             Ok(())
         })
@@ -135,6 +167,24 @@ pub fn run() {
             commands::skills::skill_get_files,
             commands::skills::skill_read_file,
             commands::skills::skill_save_file,
+            // Knowledge
+            commands::knowledge::kb_collection_list,
+            commands::knowledge::kb_collection_create,
+            commands::knowledge::kb_collection_delete,
+            commands::knowledge::kb_collection_rename,
+            commands::knowledge::kb_entry_list,
+            commands::knowledge::kb_entry_detail,
+            commands::knowledge::kb_search,
+            commands::knowledge::kb_ingest,
+            commands::knowledge::kb_entry_delete,
+            commands::knowledge::kb_stats,
+            commands::knowledge::kb_expand_folder,
+            // Agents
+            commands::agents::agent_list,
+            commands::agents::agent_get,
+            commands::agents::agent_save,
+            commands::agents::agent_reset,
+            commands::agents::agent_reload,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

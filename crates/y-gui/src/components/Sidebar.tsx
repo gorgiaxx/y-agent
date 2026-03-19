@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import type { SessionInfo, WorkspaceInfo, SkillInfo } from '../types';
+import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, BookOpen, Database, Bot, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import type { SessionInfo, WorkspaceInfo, SkillInfo, KnowledgeCollectionInfo } from '../types';
 import type { ImportStatus } from '../hooks/useSkills';
+import type { KbIngestStatus, KbBatchProgress } from '../hooks/useKnowledge';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import './Sidebar.css';
 
-export type ViewType = 'chat' | 'automation' | 'skills';
+export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents';
 
 interface SidebarProps {
   sessions: SessionInfo[];
@@ -18,6 +19,17 @@ interface SidebarProps {
   activeSkillName: string | null;
   importStatus: ImportStatus;
   importError: string | null;
+  // Knowledge props
+  knowledgeCollections: KnowledgeCollectionInfo[];
+  selectedKbCollection: string | null;
+  onSelectKbCollection: (name: string) => void;
+  onCreateKbCollection: (name: string, description: string) => void;
+  // Knowledge ingest status (shown below collection list)
+  kbIngestStatus: KbIngestStatus;
+  kbBatchProgress: KbBatchProgress | null;
+  kbIngestError: string | null;
+  onClearKbIngestStatus: () => void;
+  onCancelKbIngest: () => void;
   onSelectView: (view: ViewType) => void;
   onSelectSession: (id: string) => void;
   onSelectSkill: (name: string) => void;
@@ -31,6 +43,10 @@ interface SidebarProps {
   onDeleteWorkspace: (id: string) => void;
   onAssignSession: (workspaceId: string, sessionId: string) => void;
   onUnassignSession: (sessionId: string) => void;
+  // Agent props
+  agents: { id: string; name: string; description: string; mode: string; trust_tier: string; is_overridden: boolean }[];
+  activeAgentId: string | null;
+  onSelectAgent: (id: string) => void;
 }
 
 /** Return relative time string for a session item. */
@@ -55,8 +71,17 @@ export function Sidebar({
   activeView,
   skills,
   activeSkillName,
+  knowledgeCollections,
+  selectedKbCollection,
+  onSelectKbCollection,
+  onCreateKbCollection,
   importStatus,
   importError,
+  kbIngestStatus,
+  kbBatchProgress,
+  kbIngestError,
+  onClearKbIngestStatus,
+  onCancelKbIngest,
   onSelectView,
   onSelectSession,
   onSelectSkill,
@@ -70,9 +95,16 @@ export function Sidebar({
   onDeleteWorkspace,
   onAssignSession,
   onUnassignSession,
+  agents,
+  activeAgentId,
+  onSelectAgent,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
+  const [kbSearchQuery, setKbSearchQuery] = useState('');
+  const [showNewKbCollection, setShowNewKbCollection] = useState(false);
+  const [newKbCollName, setNewKbCollName] = useState('');
+  const [newKbCollDesc, setNewKbCollDesc] = useState('');
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<WorkspaceInfo | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -228,33 +260,47 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      {/* Navigation tabs */}
-      <div className="sidebar-nav">
+      {/* VS Code-style vertical icon bar */}
+      <div className="sidebar-icon-bar">
         <button
           className={`sidebar-nav-btn ${activeView === 'chat' ? 'active' : ''}`}
           onClick={() => onSelectView('chat')}
           title="Sessions"
         >
-          <MessageSquare size={16} />
-          <span className="sidebar-nav-label">Sessions</span>
+          <MessageSquare size={20} />
         </button>
         <button
           className={`sidebar-nav-btn ${activeView === 'automation' ? 'active' : ''}`}
           onClick={() => onSelectView('automation')}
           title="Automation"
         >
-          <Zap size={16} />
-          <span className="sidebar-nav-label">Automation</span>
+          <Zap size={20} />
         </button>
         <button
           className={`sidebar-nav-btn ${activeView === 'skills' ? 'active' : ''}`}
           onClick={() => onSelectView('skills')}
           title="Skills"
         >
-          <Puzzle size={16} />
-          <span className="sidebar-nav-label">Skills</span>
+          <Puzzle size={20} />
+        </button>
+        <button
+          className={`sidebar-nav-btn ${activeView === 'knowledge' ? 'active' : ''}`}
+          onClick={() => onSelectView('knowledge')}
+          title="Knowledge"
+        >
+          <BookOpen size={20} />
+        </button>
+        <button
+          className={`sidebar-nav-btn ${activeView === 'agents' ? 'active' : ''}`}
+          onClick={() => onSelectView('agents')}
+          title="Agents"
+        >
+          <Bot size={20} />
         </button>
       </div>
+
+      {/* Sidebar panel content */}
+      <div className="sidebar-panel">
 
       {/* Sessions content (only when chat view is active) */}
       {activeView === 'chat' && (
@@ -396,6 +442,52 @@ export function Sidebar({
         </div>
       )}
 
+      {/* Agents view — agent list */}
+      {activeView === 'agents' && (
+        <div className="skill-sidebar-list">
+          {(() => {
+            if (agents.length === 0) {
+              return (
+                <div className="session-empty">No agents registered</div>
+              );
+            }
+            const tiers = ['BuiltIn', 'UserDefined', 'Dynamic'] as const;
+            const tierLabels: Record<string, string> = {
+              BuiltIn: 'Built-in',
+              UserDefined: 'User-Defined',
+              Dynamic: 'Dynamic',
+            };
+            return tiers.map((tier) => {
+              const tierAgents = agents.filter((a) => a.trust_tier === tier);
+              if (tierAgents.length === 0) return null;
+              return (
+                <div key={tier}>
+                  <div className="workspace-label workspace-label--general">
+                    <span className="workspace-name">{tierLabels[tier]} ({tierAgents.length})</span>
+                  </div>
+                  {tierAgents.map((agent) => (
+                    <div
+                      key={agent.id}
+                      className={`skill-sidebar-item ${activeAgentId === agent.id ? 'active' : ''}`}
+                      onClick={() => onSelectAgent(agent.id)}
+                    >
+                      <div className="skill-sidebar-item-header">
+                        <Bot size={14} className="skill-sidebar-item-icon" />
+                        <span className="skill-sidebar-item-name">{agent.name}</span>
+                        {agent.is_overridden && (
+                          <span className="skill-sidebar-item-badge" style={{ color: '#ffc107' }}>OVR</span>
+                        )}
+                      </div>
+                      <p className="skill-sidebar-item-desc">{agent.description}</p>
+                    </div>
+                  ))}
+                </div>
+              );
+            });
+          })()}
+        </div>
+      )}
+
       {/* Skills view — skill list */}
       {activeView === 'skills' && (
         <>
@@ -510,6 +602,179 @@ export function Sidebar({
         </>
       )}
 
+      {/* Knowledge view — collection list */}
+      {activeView === 'knowledge' && (
+        <>
+          <div className="sidebar-header">
+            <div className="sidebar-search">
+              <input
+                type="text"
+                placeholder="Search collections..."
+                value={kbSearchQuery}
+                onChange={(e) => setKbSearchQuery(e.target.value)}
+                className="search-input"
+              />
+            </div>
+            <div className="sidebar-header-actions">
+              <button
+                className="btn-new-chat"
+                onClick={() => setShowNewKbCollection(true)}
+                title="New Collection"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="skill-sidebar-list">
+            {(() => {
+              const q = kbSearchQuery.toLowerCase();
+              const filtered = q
+                ? knowledgeCollections.filter(c =>
+                    c.name.toLowerCase().includes(q) ||
+                    c.description.toLowerCase().includes(q)
+                  )
+                : knowledgeCollections;
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="session-empty">
+                    {kbSearchQuery ? 'No matching collections' : 'No collections yet'}
+                  </div>
+                );
+              }
+
+              return filtered.map((coll) => {
+                const sizeLabel = coll.total_bytes > 0
+                  ? coll.total_bytes >= 1048576
+                    ? `${(coll.total_bytes / 1048576).toFixed(1)} MB`
+                    : coll.total_bytes >= 1024
+                      ? `${(coll.total_bytes / 1024).toFixed(1)} KB`
+                      : `${coll.total_bytes} B`
+                  : null;
+                const chunkLabel = coll.chunk_count >= 1000
+                  ? `${(coll.chunk_count / 1000).toFixed(1)}K`
+                  : String(coll.chunk_count);
+                return (
+                  <div
+                    key={coll.name}
+                    className={`skill-sidebar-item ${selectedKbCollection === coll.name ? 'active' : ''}`}
+                    onClick={() => onSelectKbCollection(coll.name)}
+                  >
+                    <div className="skill-sidebar-item-header">
+                      <Database size={14} className="skill-sidebar-item-icon" />
+                      <span className="skill-sidebar-item-name">{coll.name}</span>
+                      <span className="skill-sidebar-item-badge">{coll.entry_count}</span>
+                    </div>
+                    <p className="skill-sidebar-item-desc">
+                      {coll.entry_count > 0
+                        ? `${coll.entry_count} entries · ${chunkLabel} chunks${sizeLabel ? ` · ${sizeLabel}` : ''}`
+                        : coll.description || 'No description'}
+                    </p>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+
+          {/* Inline new collection form */}
+          {showNewKbCollection && (
+            <div className="kb-new-collection-form">
+              <div className="kb-new-collection-form-header">
+                <span className="kb-new-collection-form-title">New Collection</span>
+                <button
+                  className="kb-new-collection-form-close"
+                  onClick={() => setShowNewKbCollection(false)}
+                  title="Close"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+              <input
+                className="search-input"
+                placeholder="Collection name"
+                value={newKbCollName}
+                onChange={e => setNewKbCollName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newKbCollName.trim()) {
+                    onCreateKbCollection(newKbCollName.trim(), newKbCollDesc.trim());
+                    setNewKbCollName('');
+                    setNewKbCollDesc('');
+                    setShowNewKbCollection(false);
+                  }
+                }}
+                autoFocus
+              />
+              <input
+                className="search-input"
+                placeholder="Description (optional)"
+                value={newKbCollDesc}
+                onChange={e => setNewKbCollDesc(e.target.value)}
+              />
+              <button
+                className="kb-new-collection-create-btn"
+                disabled={!newKbCollName.trim()}
+                onClick={() => {
+                  if (newKbCollName.trim()) {
+                    onCreateKbCollection(newKbCollName.trim(), newKbCollDesc.trim());
+                    setNewKbCollName('');
+                    setNewKbCollDesc('');
+                    setShowNewKbCollection(false);
+                  }
+                }}
+              >
+                Create
+              </button>
+            </div>
+          )}
+
+          {/* Knowledge ingest status bar */}
+          {kbIngestStatus !== 'idle' && (
+            <div className={`skill-import-status skill-import-status--${kbIngestStatus === 'ingesting' ? 'importing' : kbIngestStatus}`}>
+              <div className="skill-import-status-row">
+                {kbIngestStatus === 'ingesting' && (
+                  <>
+                    <Loader2 size={14} className="skill-import-status-spinner" />
+                    <span className="skill-import-status-msg">
+                      {kbBatchProgress
+                        ? `Importing ${kbBatchProgress.current}/${kbBatchProgress.total}…`
+                        : 'Importing…'}
+                    </span>
+                  </>
+                )}
+                {kbIngestStatus === 'success' && (
+                  <>
+                    <CheckCircle2 size={14} />
+                    <span className="skill-import-status-msg">
+                      {kbBatchProgress
+                        ? `${kbBatchProgress.total} file${kbBatchProgress.total > 1 ? 's' : ''} imported`
+                        : 'Import complete'}
+                    </span>
+                  </>
+                )}
+                {kbIngestStatus === 'error' && (
+                  <>
+                    <AlertCircle size={14} />
+                    <span className="skill-import-status-msg">{kbIngestError || 'Import failed'}</span>
+                  </>
+                )}
+                <div className="skill-import-status-actions">
+                  {kbIngestStatus === 'ingesting' && (
+                    <button className="skill-import-status-dismiss" onClick={onCancelKbIngest} title="Cancel">
+                      <X size={12} />
+                    </button>
+                  )}
+                  {kbIngestStatus !== 'ingesting' && (
+                    <button className="skill-import-status-dismiss" onClick={onClearKbIngestStatus} title="Dismiss">
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
       {/* Workspace creation dialog */}
       {wsDialogOpen && (
         <WorkspaceDialog
@@ -533,6 +798,7 @@ export function Sidebar({
           onClose={() => setEditingWorkspace(null)}
         />
       )}
+      </div>{/* end sidebar-panel */}
     </aside>
   );
 }

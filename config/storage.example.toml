@@ -1,8 +1,8 @@
 # ==============================================================================
-# y-agent — Storage Configuration (SQLite + PostgreSQL)
+# y-agent — Storage Configuration (SQLite)
 # ==============================================================================
 
-# ── SQLite (Operational State) ──────────────────────────────────
+# ── SQLite (Operational State + Diagnostics) ────────────────────
 
 # Path to the SQLite database file. Use ":memory:" for in-memory (testing).
 db_path = "data/y-agent.db"
@@ -21,11 +21,3 @@ transcript_dir = "data/transcripts"
 
 # Path to migrations directory.
 migrations_dir = "migrations"
-
-# ── PostgreSQL (Diagnostics) ────────────────────────────────────
-
-# Connection URL for PostgreSQL diagnostics backend.
-postgres_url = "postgres://y_agent:y_agent@localhost:5432/y_agent"
-
-# PostgreSQL connection pool size.
-pg_pool_size = 5

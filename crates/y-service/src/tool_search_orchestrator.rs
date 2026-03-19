@@ -49,8 +49,13 @@ impl ToolSearchOrchestrator {
             Self::handle_get_tool(name, registry, activation_set).await
         } else if let Some(cat) = category {
             Self::handle_browse_category(cat, taxonomy).await
+        } else if let Some(q) = query {
+            Self::handle_search(q, registry, taxonomy, activation_set).await
         } else {
-            Self::handle_search(query.unwrap(), registry, taxonomy, activation_set).await
+            // Unreachable: the is_none() guard above ensures at least one param is present.
+            Err(y_core::tool::ToolError::ValidationError {
+                message: "at least one of 'tool', 'category', or 'query' must be provided".into(),
+            })
         }
     }
 

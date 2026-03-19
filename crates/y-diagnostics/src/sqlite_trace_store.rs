@@ -14,7 +14,8 @@ use uuid::Uuid;
 
 use crate::trace_store::{TraceStore, TraceStoreError};
 use crate::types::{
-    Observation, ObservationStatus, ObservationType, Score, Trace, TraceStatus,
+    Observation, ObservationStatus, ObservationType, Score, ScoreSource, ScoreValue, Trace,
+    TraceStatus,
 };
 
 // ---------------------------------------------------------------------------
@@ -120,6 +121,8 @@ struct TraceRow {
     total_cost_usd: Option<f64>,
     llm_duration_ms: Option<i64>,
     tool_duration_ms: Option<i64>,
+    tags: Option<String>,
+    replay_context: Option<String>,
 }
 
 impl TraceRow {
@@ -135,12 +138,21 @@ impl TraceRow {
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(serde_json::Value::Null);
         let status = str_to_trace_status(self.status.as_deref().unwrap_or("active"));
+        let tags: Vec<String> = self
+            .tags
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        let replay_context: Option<serde_json::Value> = self
+            .replay_context
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
         Some(Trace {
             id,
             session_id,
             name: self.name,
             metadata,
-            tags: vec![],
+            tags,
             status,
             started_at,
             completed_at,
@@ -152,7 +164,7 @@ impl TraceRow {
                 .map(|end| (end - started_at).num_milliseconds().max(0) as u64),
             llm_duration_ms: self.llm_duration_ms.unwrap_or(0) as u64,
             tool_duration_ms: self.tool_duration_ms.unwrap_or(0) as u64,
-            replay_context: None,
+            replay_context,
         })
     }
 }
@@ -176,6 +188,9 @@ struct ObsRow {
     sequence: Option<i64>,
     started_at: String,
     completed_at: Option<String>,
+    depth: Option<i64>,
+    path: Option<String>,
+    error_message: Option<String>,
 }
 
 impl ObsRow {
@@ -200,6 +215,12 @@ impl ObsRow {
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(serde_json::Value::Null);
+        let path: Vec<Uuid> = self
+            .path
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+            .map(|ids| ids.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect())
+            .unwrap_or_default();
         Some(Observation {
             id,
             trace_id,
@@ -218,9 +239,59 @@ impl ObsRow {
             completed_at,
             metadata,
             sequence: self.sequence.unwrap_or(0) as u32,
-            depth: 0,
-            path: vec![],
-            error_message: None,
+            depth: self.depth.unwrap_or(0) as u32,
+            path,
+            error_message: self.error_message,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct ScoreRow {
+    id: String,
+    trace_id: String,
+    observation_id: Option<String>,
+    name: String,
+    value: Option<f64>,
+    data_type: Option<String>,
+    string_value: Option<String>,
+    comment: Option<String>,
+    source: Option<String>,
+    created_at: String,
+}
+
+impl ScoreRow {
+    fn into_score(self) -> Option<Score> {
+        let id = Uuid::parse_str(&self.id).ok()?;
+        let trace_id = Uuid::parse_str(&self.trace_id).ok()?;
+        let observation_id = self
+            .observation_id
+            .as_deref()
+            .and_then(|s| Uuid::parse_str(s).ok());
+        let created_at: DateTime<Utc> = self.created_at.parse().ok()?;
+        let data_type = self.data_type.as_deref().unwrap_or("numeric");
+        let value = match data_type {
+            "boolean" => ScoreValue::Boolean(self.value.unwrap_or(0.0) != 0.0),
+            "categorical" => {
+                ScoreValue::Categorical(self.string_value.unwrap_or_default())
+            }
+            _ => ScoreValue::Numeric(self.value.unwrap_or(0.0)),
+        };
+        let source = match self.source.as_deref() {
+            Some("llm") => ScoreSource::Llm,
+            Some("human") => ScoreSource::Human,
+            Some("user_feedback") => ScoreSource::UserFeedback,
+            _ => ScoreSource::System,
+        };
+        Some(Score {
+            id,
+            trace_id,
+            observation_id,
+            name: self.name,
+            value,
+            source,
+            comment: self.comment,
+            created_at,
         })
     }
 }
@@ -259,11 +330,18 @@ impl TraceStore for SqliteTraceStore {
         let llm_ms = trace.llm_duration_ms as i64;
         let tool_ms = trace.tool_duration_ms as i64;
 
+        let tags = serde_json::to_string(&trace.tags).unwrap_or_else(|_| "[]".into());
+        let replay_context = trace
+            .replay_context
+            .as_ref()
+            .and_then(|v| serde_json::to_string(v).ok());
+
         sqlx::query(
             "INSERT INTO diag_traces \
              (id, session_id, name, status, user_input, metadata, started_at, completed_at, \
-              total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+              total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms, \
+              tags, replay_context) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
              ON CONFLICT(id) DO NOTHING",
         )
         .bind(&id)
@@ -279,6 +357,8 @@ impl TraceStore for SqliteTraceStore {
         .bind(trace.total_cost_usd)
         .bind(llm_ms)
         .bind(tool_ms)
+        .bind(&tags)
+        .bind(&replay_context)
         .execute(&self.pool)
         .await
         .map_err(|e| storage_err(format!("insert_trace: {e}")))?;
@@ -289,7 +369,8 @@ impl TraceStore for SqliteTraceStore {
         let id_str = id.to_string();
         let row: Option<TraceRow> = sqlx::query_as(
             "SELECT id, session_id, name, status, user_input, metadata, started_at, completed_at, \
-             total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms \
+             total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms, \
+             tags, replay_context \
              FROM diag_traces WHERE id = ?1",
         )
         .bind(&id_str)
@@ -312,12 +393,18 @@ impl TraceStore for SqliteTraceStore {
         let llm_ms = trace.llm_duration_ms as i64;
         let tool_ms = trace.tool_duration_ms as i64;
 
+        let tags = serde_json::to_string(&trace.tags).unwrap_or_else(|_| "[]".into());
+        let replay_context = trace
+            .replay_context
+            .as_ref()
+            .and_then(|v| serde_json::to_string(v).ok());
+
         let rows = sqlx::query(
             "UPDATE diag_traces SET \
              status = ?1, metadata = ?2, completed_at = ?3, \
              total_input_tokens = ?4, total_output_tokens = ?5, total_cost_usd = ?6, \
-             llm_duration_ms = ?7, tool_duration_ms = ?8 \
-             WHERE id = ?9",
+             llm_duration_ms = ?7, tool_duration_ms = ?8, tags = ?9, replay_context = ?10 \
+             WHERE id = ?11",
         )
         .bind(status)
         .bind(&metadata)
@@ -327,6 +414,8 @@ impl TraceStore for SqliteTraceStore {
         .bind(trace.total_cost_usd)
         .bind(llm_ms)
         .bind(tool_ms)
+        .bind(&tags)
+        .bind(&replay_context)
         .bind(&id)
         .execute(&self.pool)
         .await
@@ -346,30 +435,26 @@ impl TraceStore for SqliteTraceStore {
         limit: usize,
     ) -> Result<Vec<Trace>, TraceStoreError> {
         let limit_i64 = limit as i64;
+        let status_str = status.map(trace_status_to_str);
+        let since_str = since.map(|s| s.to_rfc3339());
+
         let rows: Vec<TraceRow> = sqlx::query_as(
             "SELECT id, session_id, name, status, user_input, metadata, started_at, completed_at, \
-             total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms \
-             FROM diag_traces ORDER BY started_at DESC LIMIT ?1",
+             total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms, \
+             tags, replay_context \
+             FROM diag_traces \
+             WHERE (?1 IS NULL OR status = ?1) \
+               AND (?2 IS NULL OR started_at >= ?2) \
+             ORDER BY started_at DESC LIMIT ?3",
         )
+        .bind(&status_str)
+        .bind(&since_str)
         .bind(limit_i64)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| storage_err(format!("list_traces: {e}")))?;
 
-        let traces = rows
-            .into_iter()
-            .filter_map(|row| {
-                let t = row.into_trace()?;
-                if let Some(s) = since {
-                    if t.started_at < s { return None; }
-                }
-                if let Some(filter) = status {
-                    if t.status != filter { return None; }
-                }
-                Some(t)
-            })
-            .collect();
-        Ok(traces)
+        Ok(rows.into_iter().filter_map(TraceRow::into_trace).collect())
     }
 
     async fn insert_observation(&self, obs: Observation) -> Result<(), TraceStoreError> {
@@ -388,12 +473,17 @@ impl TraceStore for SqliteTraceStore {
         let output_toks = obs.output_tokens as i64;
         let seq = obs.sequence as i64;
 
+        let depth = obs.depth as i64;
+        let path_json: String = serde_json::to_string(
+            &obs.path.iter().map(Uuid::to_string).collect::<Vec<_>>()
+        ).unwrap_or_else(|_| "[]".into());
+
         sqlx::query(
             "INSERT INTO diag_observations \
              (id, trace_id, parent_id, session_id, obs_type, name, status, model, \
               input_tokens, output_tokens, cost_usd, input, output, metadata, \
-              sequence, started_at, completed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) \
+              sequence, started_at, completed_at, depth, path, error_message) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20) \
              ON CONFLICT(id) DO NOTHING",
         )
         .bind(&id)
@@ -413,6 +503,9 @@ impl TraceStore for SqliteTraceStore {
         .bind(seq)
         .bind(&started_at)
         .bind(&completed_at)
+        .bind(depth)
+        .bind(&path_json)
+        .bind(&obs.error_message)
         .execute(&self.pool)
         .await
         .map_err(|e| storage_err(format!("insert_observation: {e}")))?;
@@ -424,7 +517,7 @@ impl TraceStore for SqliteTraceStore {
         let rows: Vec<ObsRow> = sqlx::query_as(
             "SELECT id, trace_id, parent_id, session_id, obs_type, name, status, model, \
              input_tokens, output_tokens, cost_usd, input, output, metadata, sequence, \
-             started_at, completed_at \
+             started_at, completed_at, depth, path, error_message \
              FROM diag_observations WHERE trace_id = ?1 ORDER BY sequence ASC",
         )
         .bind(&trace_id_str)
@@ -435,13 +528,65 @@ impl TraceStore for SqliteTraceStore {
         Ok(rows.into_iter().filter_map(ObsRow::into_observation).collect())
     }
 
-    async fn insert_score(&self, _score: Score) -> Result<(), TraceStoreError> {
-        // No scores table in the SQLite schema yet -- silently ignore.
+    async fn insert_score(&self, score: Score) -> Result<(), TraceStoreError> {
+        let id = score.id.to_string();
+        let trace_id = score.trace_id.to_string();
+        let observation_id = score.observation_id.map(|u| u.to_string());
+        let created_at = score.created_at.to_rfc3339();
+
+        // Decompose ScoreValue enum into flat DB columns.
+        let (value_f64, data_type, string_value): (f64, &str, Option<String>) =
+            match &score.value {
+                ScoreValue::Numeric(v) => (*v, "numeric", None),
+                ScoreValue::Boolean(b) => {
+                    (if *b { 1.0 } else { 0.0 }, "boolean", None)
+                }
+                ScoreValue::Categorical(s) => (0.0, "categorical", Some(s.clone())),
+            };
+
+        let source_str = match score.source {
+            ScoreSource::System => "system",
+            ScoreSource::Llm => "llm",
+            ScoreSource::Human => "human",
+            ScoreSource::UserFeedback => "user_feedback",
+        };
+
+        sqlx::query(
+            "INSERT INTO diag_scores \
+             (id, trace_id, observation_id, name, value, data_type, string_value, \
+              comment, source, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+             ON CONFLICT(id) DO NOTHING",
+        )
+        .bind(&id)
+        .bind(&trace_id)
+        .bind(&observation_id)
+        .bind(&score.name)
+        .bind(value_f64)
+        .bind(data_type)
+        .bind(&string_value)
+        .bind(&score.comment)
+        .bind(source_str)
+        .bind(&created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| storage_err(format!("insert_score: {e}")))?;
         Ok(())
     }
 
-    async fn get_scores(&self, _trace_id: Uuid) -> Result<Vec<Score>, TraceStoreError> {
-        Ok(vec![])
+    async fn get_scores(&self, trace_id: Uuid) -> Result<Vec<Score>, TraceStoreError> {
+        let trace_id_str = trace_id.to_string();
+        let rows: Vec<ScoreRow> = sqlx::query_as(
+            "SELECT id, trace_id, observation_id, name, value, data_type, string_value, \
+             comment, source, created_at \
+             FROM diag_scores WHERE trace_id = ?1 ORDER BY created_at ASC",
+        )
+        .bind(&trace_id_str)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| storage_err(format!("get_scores: {e}")))?;
+
+        Ok(rows.into_iter().filter_map(ScoreRow::into_score).collect())
     }
 
     async fn delete_before(&self, before: DateTime<Utc>) -> Result<u64, TraceStoreError> {
@@ -463,7 +608,8 @@ impl TraceStore for SqliteTraceStore {
         let limit_i64 = limit as i64;
         let rows: Vec<TraceRow> = sqlx::query_as(
             "SELECT id, session_id, name, status, user_input, metadata, started_at, completed_at, \
-             total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms \
+             total_input_tokens, total_output_tokens, total_cost_usd, llm_duration_ms, tool_duration_ms, \
+             tags, replay_context \
              FROM diag_traces WHERE session_id = ?1 ORDER BY started_at ASC LIMIT ?2",
         )
         .bind(session_id)
@@ -490,7 +636,7 @@ impl TraceStore for SqliteTraceStore {
         let sql = format!(
             "SELECT id, trace_id, parent_id, session_id, obs_type, name, status, model, \
              input_tokens, output_tokens, cost_usd, input, output, metadata, sequence, \
-             started_at, completed_at \
+             started_at, completed_at, depth, path, error_message \
              FROM diag_observations WHERE trace_id IN ({}) ORDER BY sequence ASC",
             placeholders.join(", ")
         );

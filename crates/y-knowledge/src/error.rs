@@ -17,6 +17,15 @@ pub enum KnowledgeError {
     #[error("chunk error: {message}")]
     ChunkError { message: String },
 
+    #[error("embedding error: {message}")]
+    EmbeddingError { message: String },
+
+    #[error("vector store error: {message}")]
+    VectorStoreError { message: String },
+
+    #[error("normalization error: {message}")]
+    NormalizationError { message: String },
+
     #[error("{message}")]
     Other { message: String },
 }

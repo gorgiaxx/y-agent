@@ -33,6 +33,9 @@ pub struct MessageInfo {
     /// Arbitrary metadata (model info, tool results, usage, etc.).
     #[serde(skip_serializing_if = "serde_json::Value::is_null")]
     pub metadata: serde_json::Value,
+    /// Skill names attached to this user message (if any).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<String>>,
 }
 
 /// Brief tool call info for display.
@@ -119,21 +122,36 @@ pub async fn session_get_messages(
 
     Ok(messages
         .iter()
-        .map(|m| MessageInfo {
-            id: m.message_id.clone(),
-            role: format!("{:?}", m.role).to_lowercase(),
-            content: m.content.clone(),
-            timestamp: m.timestamp.to_rfc3339(),
-            tool_calls: m
-                .tool_calls
-                .iter()
-                .map(|tc| ToolCallBrief {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.to_string(),
+        .map(|m| {
+            // Extract skills from metadata if present.
+            let skills = m
+                .metadata
+                .get("skills")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<String>>()
                 })
-                .collect(),
-            metadata: m.metadata.clone(),
+                .filter(|v| !v.is_empty());
+
+            MessageInfo {
+                id: m.message_id.clone(),
+                role: format!("{:?}", m.role).to_lowercase(),
+                content: m.content.clone(),
+                timestamp: m.timestamp.to_rfc3339(),
+                tool_calls: m
+                    .tool_calls
+                    .iter()
+                    .map(|tc| ToolCallBrief {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.to_string(),
+                    })
+                    .collect(),
+                metadata: m.metadata.clone(),
+                skills,
+            }
         })
         .collect())
 }

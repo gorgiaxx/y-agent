@@ -1,0 +1,21 @@
+{
+  "default": {
+    "id": "e7b1a716-79b8-4e24-8598-a042dc36ac36",
+    "name": "default",
+    "description": "Default knowledge collection",
+    "workspace_id": "default",
+    "config": {
+      "chunk_size": 256,
+      "overlap": 32,
+      "embedding_model": "text-embedding-3-small",
+      "refresh_policy": "manual"
+    },
+    "stats": {
+      "entry_count": 0,
+      "chunk_count": 0,
+      "total_bytes": 0
+    },
+    "created_at": "2026-03-17T14:25:52.952546Z",
+    "updated_at": "2026-03-17T14:25:52.952546Z"
+  }
+}

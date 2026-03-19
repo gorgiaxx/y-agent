@@ -146,6 +146,7 @@ async function loadSubagentHistory() {
             name: item.name as string,
             success: item.success as boolean,
             duration_ms: item.duration_ms as number,
+            input_preview: (item.input_preview as string) ?? undefined,
             result_preview: item.result_preview as string,
           };
           break;
@@ -313,6 +314,7 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
                 name: item.name as string,
                 success: item.success as boolean,
                 duration_ms: item.duration_ms as number,
+                input_preview: (item.input_preview as string) ?? undefined,
                 result_preview: item.result_preview as string,
               };
               break;

@@ -234,13 +234,14 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 history: &history,
                 turn_number,
                 provider_id: None,
+                knowledge_collections: vec![],
             };
 
             match orchestrator::execute_turn(services, &turn_input).await {
                 Ok(result) => {
                     // Print tool call summaries.
                     for tc in &result.tool_calls_executed {
-                        let status = if tc.success { "✓" } else { "✗" };
+                        let status = if tc.success { "[OK]" } else { "[FAIL]" };
                         println!("\n  [tool: {}] {status}", tc.name);
                     }
 

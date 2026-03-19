@@ -18,6 +18,8 @@ sha2 = { workspace = true }
 chrono = { workspace = true }
 y-prompt = { workspace = true }
 y-hooks = { version = "0.1.0", path = "../y-hooks" }
+y-skills = { version = "0.1.0", path = "../y-skills" }
+y-knowledge = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

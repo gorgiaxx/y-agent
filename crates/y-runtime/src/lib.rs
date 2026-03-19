@@ -35,11 +35,12 @@ pub mod native;
 pub mod resource_monitor;
 pub mod security_policy;
 pub mod ssh;
+pub mod venv;
 
 // Re-export primary types.
 pub use audit::{AuditEntry, AuditEventType, AuditOutcome, AuditTrail};
 pub use capability::CapabilityChecker;
-pub use config::RuntimeConfig;
+pub use config::{BunVenvConfig, PythonVenvConfig, RuntimeConfig};
 pub use docker::DockerRuntime;
 pub use error::RuntimeModuleError;
 pub use image_whitelist::{ImageWhitelist, WhitelistEntry};
@@ -50,3 +51,4 @@ pub use resource_monitor::{
 };
 pub use security_policy::{SecurityPolicy, SecurityProfile};
 pub use ssh::SshRuntime;
+pub use venv::{VenvInitReport, VenvManager, VenvStatus};

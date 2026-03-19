@@ -121,7 +121,7 @@ impl ProviderPoolImpl {
             let proxy_url = config.resolve_proxy_url(&cfg.id, &cfg.tags);
 
             let provider: Arc<dyn LlmProvider> = match cfg.provider_type.as_str() {
-                "openai" | "openai_compatible" | "custom" => {
+                "openai" | "openai-compat" | "openai_compatible" | "custom" => {
                     Arc::new(crate::providers::openai::OpenAiProvider::new(
                         &cfg.id,
                         &cfg.model,
@@ -173,6 +173,22 @@ impl ProviderPoolImpl {
                     cfg.max_concurrency,
                     cfg.context_window,
                 )),
+                "deepseek" => {
+                    let base_url = cfg
+                        .base_url
+                        .clone()
+                        .or_else(|| Some("https://api.deepseek.com/v1".to_string()));
+                    Arc::new(crate::providers::openai::OpenAiProvider::new(
+                        &cfg.id,
+                        &cfg.model,
+                        api_key,
+                        base_url,
+                        proxy_url,
+                        cfg.tags.clone(),
+                        cfg.max_concurrency,
+                        cfg.context_window,
+                    ))
+                }
                 unknown => {
                     return Err(ProviderPoolError::Config {
                         message: format!("unknown provider_type: \"{unknown}\""),

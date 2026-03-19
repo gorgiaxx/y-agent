@@ -74,6 +74,8 @@ async fn chat_turn(
             session_id: body.session_id.map(|s| SessionId(s)),
             user_input: body.message,
             provider_id: None,
+            skills: None,
+            knowledge_collections: None,
         },
     )
     .await

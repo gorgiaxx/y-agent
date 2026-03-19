@@ -17,6 +17,8 @@ uuid = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+y-browser = { workspace = true }
+y-knowledge = { workspace = true }
 y-mcp = { version = "0.1.0", path = "../y-mcp" }
 toml.workspace = true
 

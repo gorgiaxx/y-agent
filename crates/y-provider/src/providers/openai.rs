@@ -321,6 +321,7 @@ impl LlmProvider for OpenAiProvider {
             SseState {
                 byte_stream: Box::pin(byte_stream),
                 buffer: String::new(),
+                bytes_remainder: Vec::new(),
                 tool_calls_acc: Vec::new(),
                 done: false,
             },
@@ -367,18 +368,32 @@ impl LlmProvider for OpenAiProvider {
 
                         // Need more data from the network.
                         match state.byte_stream.next().await {
-                            Some(Ok(bytes)) => match std::str::from_utf8(&bytes) {
-                                Ok(text) => state.buffer.push_str(text),
-                                Err(e) => {
-                                    state.done = true;
-                                    return Some((
-                                        Err(ProviderError::ParseError {
-                                            message: format!("invalid UTF-8 in SSE stream: {e}"),
-                                        }),
-                                        state,
-                                    ));
+                            Some(Ok(bytes)) => {
+                                // Prepend any leftover bytes from a previous incomplete UTF-8 sequence.
+                                let combined = if state.bytes_remainder.is_empty() {
+                                    bytes.to_vec()
+                                } else {
+                                    let mut combined = std::mem::take(&mut state.bytes_remainder);
+                                    combined.extend_from_slice(&bytes);
+                                    combined
+                                };
+                                match std::str::from_utf8(&combined) {
+                                    Ok(text) => state.buffer.push_str(text),
+                                    Err(e) => {
+                                        // Decode as much valid UTF-8 as possible.
+                                        let valid_up_to = e.valid_up_to();
+                                        if valid_up_to > 0 {
+                                            // Safety: valid_up_to is guaranteed to be a valid UTF-8 boundary.
+                                            let valid_text = unsafe {
+                                                std::str::from_utf8_unchecked(&combined[..valid_up_to])
+                                            };
+                                            state.buffer.push_str(valid_text);
+                                        }
+                                        // Keep the remaining bytes for the next chunk.
+                                        state.bytes_remainder = combined[valid_up_to..].to_vec();
+                                    }
                                 }
-                            },
+                            }
                             Some(Err(e)) => {
                                 state.done = true;
                                 return Some((
@@ -436,6 +451,8 @@ struct SseState {
     byte_stream:
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
     buffer: String,
+    /// Leftover bytes from the previous chunk that form an incomplete UTF-8 sequence.
+    bytes_remainder: Vec<u8>,
     /// Accumulated tool calls for incremental assembly.
     tool_calls_acc: Vec<ToolCallAccumulator>,
     done: bool,

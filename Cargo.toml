@@ -21,6 +21,8 @@ members = [
     "crates/y-journal",
     "crates/y-diagnostics",
     "crates/y-service",
+    "crates/y-bot",
+    "crates/y-browser",
     "crates/y-web",
     "crates/y-cli",
     "crates/y-test-utils",
@@ -59,6 +61,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Hashing
 sha2 = "0.10"
+chardetng = "0.1"
+encoding_rs = "0.8"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -68,7 +72,6 @@ croner = "2"
 sqlx = { version = "0.8", features = [
     "runtime-tokio",
     "sqlite",
-    "postgres",
     "uuid",
     "chrono",
     "json",
@@ -110,6 +113,7 @@ y-hooks = { path = "crates/y-hooks" }
 y-tools = { path = "crates/y-tools" }
 y-storage = { path = "crates/y-storage" }
 y-runtime = { path = "crates/y-runtime" }
+y-knowledge = { path = "crates/y-knowledge" }
 
 y-agent = { path = "crates/y-agent" }
 y-guardrails = { path = "crates/y-guardrails" }
@@ -117,6 +121,8 @@ y-skills = { path = "crates/y-skills" }
 y-prompt = { path = "crates/y-prompt" }
 y-diagnostics = { path = "crates/y-diagnostics" }
 y-service = { path = "crates/y-service" }
+y-bot = { path = "crates/y-bot" }
+y-browser = { path = "crates/y-browser" }
 y-web = { path = "crates/y-web" }
 y-test-utils = { path = "crates/y-test-utils" }
 

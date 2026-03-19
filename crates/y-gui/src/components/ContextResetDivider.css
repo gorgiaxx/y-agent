@@ -1,0 +1,26 @@
+.context-reset-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+}
+
+.context-reset-divider-line {
+  flex: 1;
+  height: 1px;
+  background: rgba(251, 191, 36, 0.3);
+}
+
+.context-reset-divider-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px dashed rgba(251, 191, 36, 0.4);
+  border-radius: var(--radius-md);
+  background: rgba(251, 191, 36, 0.06);
+  color: rgba(251, 191, 36, 0.8);
+  font-size: 11px;
+  white-space: nowrap;
+  user-select: none;
+}

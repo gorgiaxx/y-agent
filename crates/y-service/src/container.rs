@@ -11,8 +11,9 @@ use tracing::{info, warn};
 
 use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
 use y_context::{
-    BuildSystemPromptProvider, ContextPipeline, InjectContextStatus, InjectTools,
-    SystemPromptConfig,
+    BuildSystemPromptProvider, BunVenvPromptInfo, ContextPipeline, InjectContextStatus,
+    InjectSkills, InjectTools, KnowledgeContextProvider, PythonVenvPromptInfo,
+    SystemPromptConfig, VenvPromptInfo,
 };
 use y_core::agent::AgentDelegator;
 use y_core::provider::LlmProvider;
@@ -28,7 +29,7 @@ use y_provider::providers::ollama::OllamaProvider;
 use y_provider::providers::openai::OpenAiProvider;
 use y_provider::ProviderPoolImpl;
 use y_provider::SingleTurnRunner;
-use y_runtime::RuntimeManager;
+use y_runtime::{RuntimeManager, VenvManager};
 use y_session::{ChatCheckpointManager, SessionManager};
 use y_skills::SkillRegistryImpl;
 use y_storage::{
@@ -38,6 +39,7 @@ use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
 use crate::config::ServiceConfig;
 use crate::diagnostics::DiagnosticsAgentDelegator;
+use crate::knowledge_service::KnowledgeService;
 use crate::skill_ingestion::SkillIngestionService;
 
 /// Embedded default taxonomy TOML (compiled into binary).
@@ -82,6 +84,7 @@ pub struct ServiceContainer {
     pub agent_pool: Mutex<AgentPool>,
 
     /// Agent delegator for delegating tasks to agents (wired through `AgentPool` + `SingleTurnRunner`).
+    /// Once `init_agent_runner` is called post-construction, sub-agents use `ServiceAgentRunner`.
     pub agent_delegator: Arc<dyn AgentDelegator>,
 
     /// Shared delegation tracker: records active delegations from `agent_delegator`
@@ -112,6 +115,12 @@ pub struct ServiceContainer {
 
     /// Chat message store for session history tree (Phase 2).
     pub chat_message_store: Arc<SqliteChatMessageStore>,
+
+    /// Knowledge base service (ingestion, retrieval, embedding).
+    ///
+    /// Uses `tokio::sync::Mutex` so the GUI layer can share this `Arc` and
+    /// hold the lock across `.await` points (e.g. `ingest().await`).
+    pub knowledge_service: Arc<Mutex<KnowledgeService>>,
 }
 
 impl ServiceContainer {
@@ -191,7 +200,7 @@ impl ServiceContainer {
 
         // 8. Tool registry.
         let tool_registry = ToolRegistryImpl::new(config.tools.clone());
-        y_tools::builtin::register_builtin_tools(&tool_registry).await;
+        y_tools::builtin::register_builtin_tools(&tool_registry, config.browser.clone(), None).await;
 
         // 8b. Tool taxonomy (loaded from embedded TOML).
         let tool_taxonomy = Arc::new(
@@ -227,14 +236,45 @@ tools = ["tool_search"]
         // 9. Runtime manager.
         let runtime_manager = Arc::new(RuntimeManager::new(config.runtime.clone(), None));
 
+        // 9b. Initialise virtual environments (uv / bun).
+        let venv_report = VenvManager::init_all(&config.runtime).await;
+        let venv_info = VenvPromptInfo {
+            python: venv_report.python.as_ref().and_then(|s| {
+                if s.ready {
+                    Some(PythonVenvPromptInfo {
+                        uv_path: s.binary_path.clone(),
+                        python_version: config.runtime.python_venv.python_version.clone(),
+                        venv_dir: config.runtime.python_venv.venv_dir.clone(),
+                        working_dir: config.runtime.python_venv.working_dir.clone(),
+                    })
+                } else {
+                    warn!(msg = %s.message, "Python venv not ready");
+                    None
+                }
+            }),
+            bun: venv_report.bun.as_ref().and_then(|s| {
+                if s.ready {
+                    Some(BunVenvPromptInfo {
+                        bun_path: s.binary_path.clone(),
+                        bun_version: config.runtime.bun_venv.bun_version.clone(),
+                        working_dir: config.runtime.bun_venv.working_dir.clone(),
+                    })
+                } else {
+                    warn!(msg = %s.message, "Bun venv not ready");
+                    None
+                }
+            }),
+        };
+
         // 10. Context pipeline.
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
         let mut context_pipeline = ContextPipeline::new();
-        context_pipeline.register(Box::new(BuildSystemPromptProvider::new(
+        context_pipeline.register(Box::new(BuildSystemPromptProvider::with_venv_info(
             default_template(),
             builtin_section_store_with_overrides(config.prompts_dir.as_deref()),
             Arc::clone(&prompt_context),
             SystemPromptConfig::default(),
+            venv_info,
         )));
         context_pipeline.register(Box::new(InjectContextStatus::new(4096)));
 
@@ -244,6 +284,83 @@ tools = ["tool_search"]
             tool_taxonomy.root_summary(),
             Arc::clone(&dynamic_tool_schemas),
         )));
+
+        // 10c. Register InjectSkills (dynamic -- reads active_skills from PromptContext).
+        if let Some(ref skills_dir) = config.skills_dir {
+            context_pipeline.register(Box::new(InjectSkills::new(
+                Arc::clone(&prompt_context),
+                skills_dir.clone(),
+            )));
+        }
+
+        // 10d. Knowledge service + embedding provider.
+        //
+        // Derive knowledge data dir from the storage db_path parent. This
+        // places knowledge data alongside the SQLite database (e.g.,
+        // `~/.local/state/y-agent/data/knowledge/`).
+        let knowledge_data_dir = {
+            let db_path = std::path::Path::new(&config.storage.db_path);
+            db_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("knowledge")
+        };
+        let mut knowledge_service =
+            KnowledgeService::with_data_dir(config.knowledge.clone(), knowledge_data_dir);
+
+        // Construct embedding provider if enabled.
+        let embedding_provider: Option<Arc<dyn y_core::embedding::EmbeddingProvider>> =
+            if config.knowledge.embedding_enabled {
+                let embedding_config = y_provider::EmbeddingConfig {
+                    enabled: true,
+                    model: config.knowledge.embedding_model.clone(),
+                    dimensions: config.knowledge.embedding_dimensions,
+                    base_url: config.knowledge.embedding_base_url.clone(),
+                    api_key_env: config.knowledge.embedding_api_key_env.clone(),
+                    api_key: config.knowledge.embedding_api_key.clone(),
+                    ..Default::default()
+                };
+                match y_provider::OpenAiEmbeddingProvider::from_config(&embedding_config) {
+                    Ok(provider) => {
+                        info!(
+                            model = %embedding_config.model,
+                            dimensions = embedding_config.dimensions,
+                            "Embedding provider initialized"
+                        );
+                        Some(Arc::new(provider))
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to initialize embedding provider; knowledge will use keyword-only search");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+        if let Some(ref provider) = embedding_provider {
+            knowledge_service.set_embedding_provider(Arc::clone(provider));
+        }
+
+        let knowledge_service = Arc::new(Mutex::new(knowledge_service));
+
+        // 10e. Register KnowledgeContextProvider in context pipeline.
+        {
+            let ks = knowledge_service.lock().await;
+            let knowledge_handle = ks.knowledge_handle();
+            if let Some(ref provider) = embedding_provider {
+                context_pipeline.register(Box::new(
+                    KnowledgeContextProvider::with_embedding(
+                        knowledge_handle,
+                        Arc::clone(provider),
+                    ),
+                ));
+            } else {
+                context_pipeline.register(Box::new(
+                    KnowledgeContextProvider::new(knowledge_handle),
+                ));
+            }
+        }
 
         // 11. Agent registry + pool.
         let agent_registry = Mutex::new(AgentRegistry::new());
@@ -302,6 +419,7 @@ tools = ["tool_search"]
             tool_taxonomy,
             dynamic_tool_schemas,
             chat_message_store,
+            knowledge_service,
         })
     }
 
@@ -338,6 +456,22 @@ tools = ["tool_search"]
         registry: Arc<RwLock<SkillRegistryImpl>>,
     ) -> SkillIngestionService {
         SkillIngestionService::new(Arc::clone(&self.agent_delegator), registry)
+    }
+
+    /// Two-phase initialisation: swap the agent runner from `SingleTurnRunner`
+    /// to [`ServiceAgentRunner`] so that sub-agents use the unified
+    /// `AgentService::execute()` loop.
+    ///
+    /// Must be called **after** the container has been wrapped in `Arc`.
+    pub fn init_agent_runner(self: &Arc<Self>) {
+        let runner = Arc::new(crate::agent_service::ServiceAgentRunner::new(
+            Arc::clone(self),
+        ));
+        // The agent_pool held by the container is behind a Mutex.
+        // We acquire it synchronously (blocking_lock) since this runs once
+        // during startup, before any async work begins.
+        self.agent_pool.blocking_lock().set_runner(runner);
+        tracing::info!("ServiceAgentRunner initialised for sub-agent delegation");
     }
 }
 
@@ -627,7 +761,7 @@ mod tests {
         config.storage.db_path = ":memory:".to_string();
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
-        assert_eq!(sc.context_pipeline.provider_count(), 3);
+        assert_eq!(sc.context_pipeline.provider_count(), 4);
     }
 
     #[tokio::test]

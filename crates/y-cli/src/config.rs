@@ -7,8 +7,10 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use y_browser::BrowserConfig;
 use y_guardrails::GuardrailConfig;
 use y_hooks::HookConfig;
+use y_knowledge::config::KnowledgeConfig;
 use y_provider::ProviderPoolConfig;
 use y_runtime::RuntimeConfig;
 use y_session::SessionConfig;
@@ -43,6 +45,12 @@ pub struct YAgentConfig {
     /// Guardrail configuration.
     pub guardrails: GuardrailConfig,
 
+    /// Browser (CDP) configuration.
+    pub browser: BrowserConfig,
+
+    /// Knowledge base configuration (chunking, embedding, retrieval).
+    pub knowledge: KnowledgeConfig,
+
     /// Log level (trace, debug, info, warn, error).
     pub log_level: String,
 
@@ -66,6 +74,8 @@ impl Default for YAgentConfig {
             hooks: HookConfig::default(),
             tools: ToolRegistryConfig::default(),
             guardrails: GuardrailConfig::default(),
+            browser: BrowserConfig::default(),
+            knowledge: KnowledgeConfig::default(),
             log_level: "info".to_string(),
             output_format: "plain".to_string(),
             log_dir: None,
@@ -108,6 +118,8 @@ const CONFIG_FILE_SECTIONS: &[&str] = &[
     "hooks",
     "tools",
     "guardrails",
+    "browser",
+    "knowledge",
 ];
 
 impl ConfigLoader {
@@ -279,6 +291,14 @@ impl ConfigLoader {
                     config.guardrails = toml::from_str(&content)
                         .with_context(|| format!("parsing {}", path.display()))?;
                 }
+                "browser" => {
+                    config.browser = toml::from_str(&content)
+                        .with_context(|| format!("parsing {}", path.display()))?;
+                }
+                "knowledge" => {
+                    config.knowledge = toml::from_str(&content)
+                        .with_context(|| format!("parsing {}", path.display()))?;
+                }
                 _ => {}
             }
         }
@@ -305,14 +325,6 @@ impl ConfigLoader {
         if let Some(val) = get_env(&format!("{ENV_PREFIX}DB_PATH")) {
             config.storage.db_path = val;
         }
-        if let Some(val) = get_env(&format!("{ENV_PREFIX}POSTGRES_URL")) {
-            config.storage.postgres_url = Some(val);
-        }
-        if let Some(val) = get_env(&format!("{ENV_PREFIX}PG_POOL_SIZE")) {
-            if let Ok(size) = val.parse::<u32>() {
-                config.storage.pg_pool_size = size;
-            }
-        }
         if let Some(val) = get_env(&format!("{ENV_PREFIX}LOG_DIR")) {
             config.log_dir = Some(val);
         }
@@ -333,9 +345,6 @@ impl ConfigLoader {
         }
         if let Some(val) = self.cli_overrides.get("db_path") {
             config.storage.db_path = val.clone();
-        }
-        if let Some(val) = self.cli_overrides.get("postgres_url") {
-            config.storage.postgres_url = Some(val.clone());
         }
         if let Some(val) = self.cli_overrides.get("log_dir") {
             config.log_dir = Some(val.clone());
@@ -714,12 +723,12 @@ log_level = "debug"
     fn test_user_config_dir_loads_split_files() {
         let dir = tempfile::tempdir().unwrap();
 
-        // User config dir: sets postgres_url in storage.toml.
+        // User config dir: sets db_path in storage.toml.
         let user_config_dir = dir.path().join("user_config");
         std::fs::create_dir_all(&user_config_dir).unwrap();
         std::fs::write(
             user_config_dir.join("storage.toml"),
-            "db_path = \"data/y-agent.db\"\npostgres_url = \"postgres://localhost/test\"\n",
+            "db_path = \"/tmp/user-test.db\"\n",
         )
         .unwrap();
 
@@ -727,9 +736,8 @@ log_level = "debug"
         let config = loader.load().expect("user config dir should load");
 
         assert_eq!(
-            config.storage.postgres_url,
-            Some("postgres://localhost/test".to_string()),
-            "postgres_url from user config dir should be loaded"
+            config.storage.db_path, "/tmp/user-test.db",
+            "db_path from user config dir should be loaded"
         );
     }
 
@@ -738,7 +746,7 @@ log_level = "debug"
     fn test_user_config_dir_overrides_project_config() {
         let dir = tempfile::tempdir().unwrap();
 
-        // Project config dir: sets storage with no postgres_url.
+        // Project config dir: sets storage with project db_path.
         let project_dir = dir.path().join("config");
         std::fs::create_dir_all(&project_dir).unwrap();
         std::fs::write(
@@ -747,12 +755,12 @@ log_level = "debug"
         )
         .unwrap();
 
-        // User config dir: sets postgres_url (higher priority).
+        // User config dir: sets db_path (higher priority).
         let user_dir = dir.path().join("user_config");
         std::fs::create_dir_all(&user_dir).unwrap();
         std::fs::write(
             user_dir.join("storage.toml"),
-            "db_path = \"data/user.db\"\npostgres_url = \"postgres://user@localhost/db\"\n",
+            "db_path = \"data/user.db\"\n",
         )
         .unwrap();
 
@@ -761,11 +769,6 @@ log_level = "debug"
             .with_user_config_dir(Some(user_dir));
         let config = loader.load().expect("override should work");
 
-        assert_eq!(
-            config.storage.postgres_url,
-            Some("postgres://user@localhost/db".to_string()),
-            "user config dir should override project config dir"
-        );
         assert!(
             config.storage.db_path.ends_with("data/user.db"),
             "user config dir should override project config dir, got: {}",

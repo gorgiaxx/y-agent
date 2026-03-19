@@ -67,6 +67,8 @@ struct AgentIngestionOutput {
     sub_documents: Vec<AgentSubDocOutput>,
     #[serde(default)]
     extracted_tools: Vec<AgentExtractedTool>,
+    #[serde(default)]
+    companion_decisions: Vec<CompanionDecision>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +130,22 @@ pub struct AgentExtractedTool {
     pub content: String,
 }
 
+/// Agent's decision on how to handle a companion file.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CompanionDecision {
+    /// Relative path within the skill directory.
+    pub path: String,
+    /// Action: "keep" (copy as-is), "transform" (write transformed_content),
+    /// or "discard" (skip).
+    pub action: String,
+    /// Reason for the decision.
+    #[serde(default)]
+    pub reason: String,
+    /// Transformed content (only if action is "transform").
+    #[serde(default)]
+    pub transformed_content: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Import error
 // ---------------------------------------------------------------------------
@@ -161,9 +179,10 @@ pub enum ImportError {
 /// Flow:
 /// 1. Read source file (deterministic)
 /// 2. Format detection (deterministic — `FormatDetector`)
-/// 3. Delegate to `skill-ingestion` agent (LLM-assisted)
+/// 3. Delegate to `skill-ingestion` agent (LLM-assisted, with tool calling)
 /// 4. Parse structured output
 /// 5. Register in `SkillRegistry`
+/// 6. Handle companion files based on agent decisions
 ///
 /// Security screening is NOT performed here; it is the caller's
 /// responsibility to invoke the `skill-security-check` agent beforehand.
@@ -200,25 +219,22 @@ impl SkillIngestionService {
         let format = FormatDetector::from_path(path);
         let format_str = format_to_str(&format);
 
-        // 2b. Collect companion file listing from the source directory
-        let source_dir = path.parent();
+        // 2b. Resolve source directory and main file name for agent tool calls
+        let source_dir = path.parent().map(|d| d.to_string_lossy().to_string());
         let main_file_name = path.file_name().and_then(|n| n.to_str()).map(String::from);
-        let companion_files: Vec<String> = if let Some(dir) = source_dir {
-            collect_companion_listing(dir, dir, main_file_name.as_deref())
-        } else {
-            vec![]
-        };
 
         // 3. Gather existing skills for dedup context
         let existing_skills: Vec<String> = self.registry.read().await.list_names().await;
 
         // 4. Delegate to skill-ingestion agent
+        //    The agent now has file_read + file_list tools to explore the directory.
         let input = serde_json::json!({
             "source_content": source_content,
             "source_format": format_str,
+            "source_dir": source_dir,
+            "main_file_name": main_file_name,
             "existing_skills": existing_skills,
             "existing_tools": [],
-            "companion_files": companion_files,
         });
 
         info!(
@@ -377,21 +393,84 @@ impl SkillIngestionService {
             );
         }
 
-        // 12. Copy companion files from the source directory
-        if let Some(dir) = source_dir {
+        // 12. Handle companion files based on agent decisions
+        let source_dir_path = path.parent();
+        if let Some(dir) = source_dir_path {
             if let Some(store_base) = reg.store_base_path() {
                 let store = FilesystemSkillStore::new(store_base)
                     .map_err(|e| ImportError::IoError(format!("failed to open store: {e}")))?;
-                if let Err(e) = store.copy_companion_files(
-                    &skill_name,
-                    dir,
-                    main_file_name.as_deref(),
-                ) {
-                    warn!(
-                        skill = %skill_name,
-                        error = %e,
-                        "Failed to copy companion files"
-                    );
+
+                // Process companion decisions from agent
+                for decision in &agent_output.companion_decisions {
+                    let source_file = dir.join(&decision.path);
+                    match decision.action.as_str() {
+                        "keep" => {
+                            // Copy the file as-is
+                            if source_file.exists() {
+                                let target = store.base_path().join(&skill_name).join(&decision.path);
+                                if let Some(parent) = target.parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                if let Err(e) = std::fs::copy(&source_file, &target) {
+                                    warn!(
+                                        skill = %skill_name,
+                                        path = %decision.path,
+                                        error = %e,
+                                        "Failed to copy companion file"
+                                    );
+                                }
+                            }
+                        }
+                        "transform" => {
+                            // Write transformed content
+                            if let Some(ref content) = decision.transformed_content {
+                                let target = store.base_path().join(&skill_name).join(&decision.path);
+                                if let Some(parent) = target.parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                if let Err(e) = std::fs::write(&target, content) {
+                                    warn!(
+                                        skill = %skill_name,
+                                        path = %decision.path,
+                                        error = %e,
+                                        "Failed to write transformed companion file"
+                                    );
+                                }
+                            }
+                        }
+                        "discard" => {
+                            info!(
+                                skill = %skill_name,
+                                path = %decision.path,
+                                reason = %decision.reason,
+                                "Discarded companion file per agent decision"
+                            );
+                        }
+                        _ => {
+                            warn!(
+                                skill = %skill_name,
+                                path = %decision.path,
+                                action = %decision.action,
+                                "Unknown companion decision action, skipping"
+                            );
+                        }
+                    }
+                }
+
+                // Fallback: if agent provided no companion decisions, copy
+                // all companion files (backwards compatibility).
+                if agent_output.companion_decisions.is_empty() {
+                    if let Err(e) = store.copy_companion_files(
+                        &skill_name,
+                        dir,
+                        main_file_name.as_deref(),
+                    ) {
+                        warn!(
+                            skill = %skill_name,
+                            error = %e,
+                            "Failed to copy companion files (fallback)"
+                        );
+                    }
                 }
             }
         }
@@ -425,41 +504,6 @@ fn format_to_str(format: &IngestionFormat) -> &'static str {
         IngestionFormat::PlainText => "plaintext",
         IngestionFormat::Directory => "directory",
     }
-}
-
-/// Recursively collect relative paths of companion files in `current`,
-/// skipping the main file and hidden entries.
-fn collect_companion_listing(
-    root: &Path,
-    current: &Path,
-    main_file_name: Option<&str>,
-) -> Vec<String> {
-    let mut listing = Vec::new();
-    let entries = match std::fs::read_dir(current) {
-        Ok(e) => e,
-        Err(_) => return listing,
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with('.') {
-            continue;
-        }
-        if let Some(main) = main_file_name {
-            if name_str == main && current == root {
-                continue;
-            }
-        }
-        let abs = entry.path();
-        let rel = abs.strip_prefix(root).unwrap_or(&abs);
-        if abs.is_dir() {
-            listing.push(format!("{}/", rel.display()));
-            listing.extend(collect_companion_listing(root, &abs, main_file_name));
-        } else {
-            listing.push(rel.display().to_string());
-        }
-    }
-    listing
 }
 
 #[cfg(test)]

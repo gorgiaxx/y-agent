@@ -77,3 +77,26 @@ cap_drop = ["ALL"]
 # host_path = "/data"
 # container_path = "/mnt/data"
 # mode = "ro"                     # "ro" | "rw"
+
+# --- Python Virtual Environment (uv) ------------------------------------
+# Managed Python environment using the uv package manager.
+# When enabled, the environment path is injected into the system prompt
+# so the LLM automatically uses the correct Python runtime.
+
+[python_venv]
+enabled = false
+uv_path = "uv"                    # path to uv binary
+python_version = "3.12"           # default python version
+venv_dir = ".venv"                # venv directory name
+working_dir = "~/.local/state/y-agent/python"  # working directory for uv commands
+
+# --- JavaScript Environment (bun) ----------------------------------------
+# Managed JavaScript/TypeScript environment using Bun.
+# When enabled, the environment path is injected into the system prompt
+# so the LLM automatically uses the correct JS runtime.
+
+[bun_venv]
+enabled = false
+bun_path = "bun"                  # path to bun binary
+bun_version = "latest"            # default bun version
+working_dir = "~/.local/state/y-agent/nodejs"  # working directory for bun commands

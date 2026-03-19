@@ -152,6 +152,13 @@ pub struct AgentRunConfig {
     pub max_tokens: Option<u32>,
     /// Timeout for the entire run in seconds.
     pub timeout_secs: u64,
+    /// Tools the agent is allowed to use (from `AgentDefinition`).
+    /// Empty = no tool calling (single-turn mode).
+    pub allowed_tools: Vec<String>,
+    /// Tools explicitly denied (from `AgentDefinition`).
+    pub denied_tools: Vec<String>,
+    /// Maximum agent loop iterations (tool-call loop limit).
+    pub max_iterations: usize,
 }
 
 /// Output from a single agent execution.
@@ -313,6 +320,9 @@ mod tests {
             temperature: Some(0.3),
             max_tokens: Some(30),
             timeout_secs: 30,
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            max_iterations: 1,
         };
         assert_eq!(config.agent_name, "title-generator");
         assert_eq!(config.preferred_models.len(), 1);

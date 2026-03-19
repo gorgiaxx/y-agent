@@ -20,7 +20,8 @@ pub async fn config_get(state: State<'_, AppState>) -> Result<Value, String> {
     let mut merged = serde_json::Map::new();
 
     let sections = [
-        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails",
+        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails", "browser",
+        "knowledge",
     ];
 
     for section in &sections {
@@ -47,7 +48,8 @@ pub async fn config_set_section(
     content: Value,
 ) -> Result<(), String> {
     let allowed = [
-        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails",
+        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails", "browser",
+        "knowledge",
     ];
     if !allowed.contains(&section.as_str()) {
         return Err(format!("Unknown config section: {section}"));
@@ -97,7 +99,8 @@ pub async fn config_get_section(
     section: String,
 ) -> Result<String, String> {
     let allowed = [
-        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails",
+        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails", "browser",
+        "knowledge",
     ];
     if !allowed.contains(&section.as_str()) {
         return Err(format!("Unknown config section: {section}"));
@@ -122,7 +125,8 @@ pub async fn config_save_section(
     content: String,
 ) -> Result<(), String> {
     let allowed = [
-        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails",
+        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails", "browser",
+        "knowledge",
     ];
     if !allowed.contains(&section.as_str()) {
         return Err(format!("Unknown config section: {section}"));
