@@ -493,18 +493,18 @@ impl AgentService {
 
         let gen_id = container
             .diagnostics
-            .on_generation(
-                tid,
-                None,
-                Some(config.session_uuid),
-                &response.model,
-                data.resp_input_tokens,
-                data.resp_output_tokens,
-                data.cost,
-                diag_input,
-                diag_output,
-                data.llm_elapsed_ms,
-            )
+            .on_generation(y_diagnostics::GenerationParams {
+                trace_id: tid,
+                parent_id: None,
+                session_id: Some(config.session_uuid),
+                model: response.model.clone(),
+                input_tokens: data.resp_input_tokens,
+                output_tokens: data.resp_output_tokens,
+                cost_usd: data.cost,
+                input: diag_input,
+                output: diag_output,
+                duration_ms: data.llm_elapsed_ms,
+            })
             .await
             .ok();
         *last_gen_id = gen_id;
