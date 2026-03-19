@@ -79,7 +79,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             platform: linux-amd64
             target: x86_64-unknown-linux-gnu
             binary: y-agent
@@ -115,7 +115,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            libsqlite3-dev
+            libsqlite3-dev \
+            libgtk-3-dev
 
       - uses: actions/setup-node@v4
         with:
@@ -145,11 +146,14 @@ jobs:
       # -- GUI (Tauri) App -----------------------------------------------------
       - name: Install frontend dependencies
         working-directory: crates/y-gui
-        run: npm install
+        run: npm ci || npm install
 
       - name: Build Tauri app
         working-directory: crates/y-gui
-        run: npx @tauri-apps/cli build --target ${{ matrix.target }}
+        env:
+          CI: true
+          TAURI_SIGNING_PRIVATE_KEY: ""
+        run: npx @tauri-apps/cli build --ci --target ${{ matrix.target }}
 
       # -- Package CLI zip (Unix) ------------------------------------------------
       - name: Package CLI zip (Unix)
@@ -161,8 +165,10 @@ jobs:
           cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${CLI_ARCHIVE}/"
           cp -r config "dist/${CLI_ARCHIVE}/config"
           cp -r builtin-skills "dist/${CLI_ARCHIVE}/builtin-skills"
+          cp -r data "dist/${CLI_ARCHIVE}/data" 2>/dev/null || true
           cp README.md "dist/${CLI_ARCHIVE}/"
-          cd dist && zip -r "${CLI_ARCHIVE}.zip" "${CLI_ARCHIVE}"
+          cd dist && tar czf "${CLI_ARCHIVE}.tar.gz" "${CLI_ARCHIVE}"
+          cd .. && cd dist && zip -r "${CLI_ARCHIVE}.zip" "${CLI_ARCHIVE}"
 
       - name: Package CLI zip (Windows)
         if: runner.os == 'Windows'
@@ -174,44 +180,50 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${CLI_ARCHIVE}/"
           Copy-Item -Recurse "config" "dist/${CLI_ARCHIVE}/config"
           Copy-Item -Recurse "builtin-skills" "dist/${CLI_ARCHIVE}/builtin-skills"
+          if (Test-Path "data") { Copy-Item -Recurse "data" "dist/${CLI_ARCHIVE}/data" }
           Copy-Item "README.md" "dist/${CLI_ARCHIVE}/"
           Compress-Archive -Path "dist/${CLI_ARCHIVE}" -DestinationPath "dist/${CLI_ARCHIVE}.zip"
 
-      # -- Package GUI zip (Unix) ------------------------------------------------
-      - name: Package GUI zip (Unix)
+      # -- Package GUI installers (Unix) -----------------------------------------
+      - name: Package GUI installers (Unix)
         if: runner.os != 'Windows'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          GUI_ARCHIVE="y-agent-gui-${VERSION}-${{ matrix.platform }}"
           BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
-          mkdir -p "dist/${GUI_ARCHIVE}"
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            cp "${BUNDLE_DIR}"/dmg/*.dmg "dist/${GUI_ARCHIVE}/" 2>/dev/null || true
-          else
-            cp "${BUNDLE_DIR}"/deb/*.deb "dist/${GUI_ARCHIVE}/" 2>/dev/null || true
-            cp "${BUNDLE_DIR}"/appimage/*.AppImage "dist/${GUI_ARCHIVE}/" 2>/dev/null || true
-          fi
-          cp README.md "dist/${GUI_ARCHIVE}/"
-          cd dist && zip -r "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
 
-      - name: Package GUI zip (Windows)
+          # Copy native installers directly to dist (no extra zip wrapping)
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            cp "${BUNDLE_DIR}"/dmg/*.dmg dist/ 2>/dev/null || true
+          else
+            cp "${BUNDLE_DIR}"/deb/*.deb dist/ 2>/dev/null || true
+            cp "${BUNDLE_DIR}"/appimage/*.AppImage dist/ 2>/dev/null || true
+            cp "${BUNDLE_DIR}"/rpm/*.rpm dist/ 2>/dev/null || true
+          fi
+
+      - name: Package GUI installers (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $VERSION = "${{ steps.version.outputs.version }}"
-          $GUI_ARCHIVE = "y-agent-gui-${VERSION}-${{ matrix.platform }}"
           $BUNDLE_DIR = "target/${{ matrix.target }}/release/bundle"
-          New-Item -ItemType Directory -Force -Path "dist/${GUI_ARCHIVE}"
-          Copy-Item "${BUNDLE_DIR}/msi/*.msi" "dist/${GUI_ARCHIVE}/" -ErrorAction SilentlyContinue
-          Copy-Item "${BUNDLE_DIR}/nsis/*.exe" "dist/${GUI_ARCHIVE}/" -ErrorAction SilentlyContinue
-          Copy-Item "README.md" "dist/${GUI_ARCHIVE}/"
-          Compress-Archive -Path "dist/${GUI_ARCHIVE}" -DestinationPath "dist/${GUI_ARCHIVE}.zip"
+          New-Item -ItemType Directory -Force -Path "dist"
+          Copy-Item "${BUNDLE_DIR}/msi/*.msi" "dist/" -ErrorAction SilentlyContinue
+          Copy-Item "${BUNDLE_DIR}/nsis/*.exe" "dist/" -ErrorAction SilentlyContinue
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}
-          path: dist/*.zip
+          name: release-${{ matrix.platform }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.dmg
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.rpm
+            dist/*.msi
+            dist/*.exe
 
   # -- Create GitHub Release ---------------------------------------------------
   release:
@@ -231,8 +243,9 @@ jobs:
 
       - name: List release assets
         run: |
-          echo "Release assets:"
-          ls -lah dist/
+          echo "=== Release assets ==="
+          find dist/ -type f | sort
+          echo "======================"
 
       - name: Generate changelog
         id: changelog
@@ -250,11 +263,20 @@ jobs:
           echo "---" >> CHANGELOG.md
           echo "## Downloads" >> CHANGELOG.md
           echo "" >> CHANGELOG.md
-          echo "Each zip contains both CLI binary and GUI installer, plus config and README." >> CHANGELOG.md
+          echo "### CLI (command-line)" >> CHANGELOG.md
+          echo "| Platform | Archive |" >> CHANGELOG.md
+          echo "|----------|---------|" >> CHANGELOG.md
+          for f in dist/y-agent-cli-*.zip dist/y-agent-cli-*.tar.gz; do
+            [ -f "$f" ] || continue
+            fname=$(basename "$f")
+            echo "| ${fname} | [Download](${fname}) |" >> CHANGELOG.md
+          done
+
           echo "" >> CHANGELOG.md
-          echo "| Platform | File |" >> CHANGELOG.md
-          echo "|----------|------|" >> CHANGELOG.md
-          for f in dist/y-agent-*.zip; do
+          echo "### GUI (desktop app)" >> CHANGELOG.md
+          echo "| Platform | Installer |" >> CHANGELOG.md
+          echo "|----------|-----------|" >> CHANGELOG.md
+          for f in dist/*.dmg dist/*.deb dist/*.AppImage dist/*.rpm dist/*.msi dist/*.exe; do
             [ -f "$f" ] || continue
             fname=$(basename "$f")
             echo "| ${fname} | [Download](${fname}) |" >> CHANGELOG.md
@@ -264,7 +286,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: CHANGELOG.md
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.dmg
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.rpm
+            dist/*.msi
+            dist/*.exe
           generate_release_notes: true
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
