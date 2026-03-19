@@ -21,8 +21,7 @@ impl MarkdownConnector {
 #[async_trait]
 impl SourceConnector for MarkdownConnector {
     async fn fetch(&self, uri: &str) -> Result<RawDocument, KnowledgeError> {
-        let (content, detected_encoding) =
-            super::encoding::read_file_as_utf8(uri).await?;
+        let (content, detected_encoding) = super::encoding::read_file_as_utf8(uri).await?;
 
         if detected_encoding != "UTF-8" {
             tracing::info!(
@@ -142,14 +141,8 @@ mod tests {
             extract_markdown_title("# My Title\n\nContent"),
             Some("My Title".to_string())
         );
-        assert_eq!(
-            extract_markdown_title("## Not H1\n\nContent"),
-            None
-        );
-        assert_eq!(
-            extract_markdown_title("No headings at all"),
-            None
-        );
+        assert_eq!(extract_markdown_title("## Not H1\n\nContent"), None);
+        assert_eq!(extract_markdown_title("No headings at all"), None);
         assert_eq!(
             extract_markdown_title("  # Indented Title  \n\nContent"),
             Some("Indented Title".to_string())

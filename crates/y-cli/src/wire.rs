@@ -101,8 +101,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let providers =
-            y_service::container::build_providers_from_config(&pool_config);
+        let providers = y_service::container::build_providers_from_config(&pool_config);
         assert!(providers.is_empty());
     }
 
@@ -130,8 +129,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let providers =
-            y_service::container::build_providers_from_config(&pool_config);
+        let providers = y_service::container::build_providers_from_config(&pool_config);
         assert!(providers.is_empty());
 
         std::env::remove_var("Y_AGENT_TEST_WIRE_KEY");

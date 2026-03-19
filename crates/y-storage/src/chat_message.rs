@@ -268,7 +268,13 @@ mod tests {
         SqliteChatMessageStore::new(pool)
     }
 
-    fn make_record(id: &str, session_id: &str, role: &str, content: &str, cp: Option<&str>) -> ChatMessageRecord {
+    fn make_record(
+        id: &str,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        cp: Option<&str>,
+    ) -> ChatMessageRecord {
         ChatMessageRecord {
             id: id.to_string(),
             session_id: SessionId(session_id.to_string()),
@@ -289,10 +295,19 @@ mod tests {
     async fn test_insert_and_list() {
         let store = setup().await;
         let sid = "s1";
-        store.insert(&make_record("m1", sid, "user", "hello", None)).await.unwrap();
-        store.insert(&make_record("m2", sid, "assistant", "hi", None)).await.unwrap();
+        store
+            .insert(&make_record("m1", sid, "user", "hello", None))
+            .await
+            .unwrap();
+        store
+            .insert(&make_record("m2", sid, "assistant", "hi", None))
+            .await
+            .unwrap();
 
-        let all = store.list_by_session(&SessionId(sid.to_string())).await.unwrap();
+        let all = store
+            .list_by_session(&SessionId(sid.to_string()))
+            .await
+            .unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].content, "hello");
         assert_eq!(all[1].content, "hi");
@@ -312,19 +327,34 @@ mod tests {
         .await
         .unwrap();
 
-        store.insert(&make_record("m1", sid, "user", "hello", Some("cp1"))).await.unwrap();
-        store.insert(&make_record("m2", sid, "assistant", "hi", Some("cp1"))).await.unwrap();
+        store
+            .insert(&make_record("m1", sid, "user", "hello", Some("cp1")))
+            .await
+            .unwrap();
+        store
+            .insert(&make_record("m2", sid, "assistant", "hi", Some("cp1")))
+            .await
+            .unwrap();
 
         // Tombstone messages for cp1.
-        let count = store.tombstone_after(&SessionId(sid.to_string()), "cp1").await.unwrap();
+        let count = store
+            .tombstone_after(&SessionId(sid.to_string()), "cp1")
+            .await
+            .unwrap();
         assert_eq!(count, 2);
 
         // list_active should return empty.
-        let active = store.list_active(&SessionId(sid.to_string())).await.unwrap();
+        let active = store
+            .list_active(&SessionId(sid.to_string()))
+            .await
+            .unwrap();
         assert_eq!(active.len(), 0);
 
         // list_by_session should return all (tombstoned).
-        let all = store.list_by_session(&SessionId(sid.to_string())).await.unwrap();
+        let all = store
+            .list_by_session(&SessionId(sid.to_string()))
+            .await
+            .unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].status, ChatMessageStatus::Tombstone);
     }
@@ -342,14 +372,26 @@ mod tests {
         .await
         .unwrap();
 
-        store.insert(&make_record("m1", sid, "user", "hello", Some("cp1"))).await.unwrap();
-        store.tombstone_after(&SessionId(sid.to_string()), "cp1").await.unwrap();
+        store
+            .insert(&make_record("m1", sid, "user", "hello", Some("cp1")))
+            .await
+            .unwrap();
+        store
+            .tombstone_after(&SessionId(sid.to_string()), "cp1")
+            .await
+            .unwrap();
 
         // Restore.
-        let restored = store.restore_tombstoned(&SessionId(sid.to_string()), "cp1").await.unwrap();
+        let restored = store
+            .restore_tombstoned(&SessionId(sid.to_string()), "cp1")
+            .await
+            .unwrap();
         assert_eq!(restored, 1);
 
-        let active = store.list_active(&SessionId(sid.to_string())).await.unwrap();
+        let active = store
+            .list_active(&SessionId(sid.to_string()))
+            .await
+            .unwrap();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].status, ChatMessageStatus::Active);
     }
@@ -368,22 +410,67 @@ mod tests {
         .unwrap();
 
         // Branch A: active messages.
-        store.insert(&make_record("m1", sid, "user", "branch-a-user", Some("cp1"))).await.unwrap();
-        store.insert(&make_record("m2", sid, "assistant", "branch-a-asst", Some("cp1"))).await.unwrap();
+        store
+            .insert(&make_record(
+                "m1",
+                sid,
+                "user",
+                "branch-a-user",
+                Some("cp1"),
+            ))
+            .await
+            .unwrap();
+        store
+            .insert(&make_record(
+                "m2",
+                sid,
+                "assistant",
+                "branch-a-asst",
+                Some("cp1"),
+            ))
+            .await
+            .unwrap();
 
         // Tombstone branch A (simulating undo).
-        store.tombstone_after(&SessionId(sid.to_string()), "cp1").await.unwrap();
+        store
+            .tombstone_after(&SessionId(sid.to_string()), "cp1")
+            .await
+            .unwrap();
 
         // Insert branch B messages (new active branch).
-        store.insert(&make_record("m3", sid, "user", "branch-b-user", Some("cp1"))).await.unwrap();
-        store.insert(&make_record("m4", sid, "assistant", "branch-b-asst", Some("cp1"))).await.unwrap();
+        store
+            .insert(&make_record(
+                "m3",
+                sid,
+                "user",
+                "branch-b-user",
+                Some("cp1"),
+            ))
+            .await
+            .unwrap();
+        store
+            .insert(&make_record(
+                "m4",
+                sid,
+                "assistant",
+                "branch-b-asst",
+                Some("cp1"),
+            ))
+            .await
+            .unwrap();
 
         // Now swap: branch B -> tombstone, branch A -> active.
-        let (t, r) = store.swap_branches(&SessionId(sid.to_string()), "cp1").await.unwrap();
+        let (t, r) = store
+            .swap_branches(&SessionId(sid.to_string()), "cp1")
+            .await
+            .unwrap();
         assert_eq!(t, 2); // branch B tombstoned
         assert_eq!(r, 2); // branch A restored
 
-        let active = store.list_active(&SessionId(sid.to_string())).await.unwrap();
+        let active = store
+            .list_active(&SessionId(sid.to_string()))
+            .await
+            .unwrap();
         assert_eq!(active.len(), 2);
         assert!(active.iter().any(|m| m.content == "branch-a-user"));
         assert!(active.iter().any(|m| m.content == "branch-a-asst"));

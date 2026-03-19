@@ -75,11 +75,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
                 plain_lines.push(raw_text);
             } else {
                 // Re-build styled lines for each wrapped segment.
-                let style = raw_line
-                    .spans
-                    .first()
-                    .map(|s| s.style)
-                    .unwrap_or_default();
+                let style = raw_line.spans.first().map(|s| s.style).unwrap_or_default();
                 for wp in wrapped_plain {
                     lines.push(Line::from(Span::styled(wp.clone(), style)));
                     plain_lines.push(wp);

@@ -93,9 +93,10 @@ impl FeishuBot {
     async fn tenant_access_token(&self) -> Result<String, BotError> {
         // Check cache first.
         {
-            let guard = self.cached_token.read().map_err(|e| {
-                BotError::ApiError(format!("token lock poisoned: {e}"))
-            })?;
+            let guard = self
+                .cached_token
+                .read()
+                .map_err(|e| BotError::ApiError(format!("token lock poisoned: {e}")))?;
             if let Some(ref cached) = *guard {
                 if cached.expires_at > std::time::Instant::now() {
                     return Ok(cached.token.clone());
@@ -113,12 +114,7 @@ impl FeishuBot {
             "app_secret": self.config.app_secret,
         });
 
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await?;
+        let resp = self.http.post(&url).json(&body).send().await?;
 
         let status = resp.status();
         let json: serde_json::Value = resp.json().await?;
@@ -139,16 +135,14 @@ impl FeishuBot {
             .ok_or_else(|| BotError::ApiError("missing tenant_access_token in response".into()))?
             .to_string();
 
-        let expire_secs = json
-            .get("expire")
-            .and_then(|e| e.as_u64())
-            .unwrap_or(7200);
+        let expire_secs = json.get("expire").and_then(|e| e.as_u64()).unwrap_or(7200);
         // Refresh 5 minutes early to avoid edge cases.
         let ttl = std::time::Duration::from_secs(expire_secs.saturating_sub(300));
 
-        let mut guard = self.cached_token.write().map_err(|e| {
-            BotError::ApiError(format!("token lock poisoned: {e}"))
-        })?;
+        let mut guard = self
+            .cached_token
+            .write()
+            .map_err(|e| BotError::ApiError(format!("token lock poisoned: {e}")))?;
         *guard = Some(CachedToken {
             token: token.clone(),
             expires_at: std::time::Instant::now() + ttl,
@@ -326,9 +320,7 @@ impl BotPlatform for FeishuBot {
                 msg = api_msg,
                 "Feishu send_message failed"
             );
-            return Err(BotError::ApiError(format!(
-                "Feishu send failed: {api_msg}"
-            )));
+            return Err(BotError::ApiError(format!("Feishu send failed: {api_msg}")));
         }
 
         let sent_message_id = json
@@ -443,12 +435,11 @@ fn parse_post_content(raw: &str) -> String {
 
     // Try zh_cn, en_us, or the first available locale.
     let post_obj = parsed.as_object();
-    let locale_content = post_obj
-        .and_then(|obj| {
-            obj.get("zh_cn")
-                .or_else(|| obj.get("en_us"))
-                .or_else(|| obj.values().next())
-        });
+    let locale_content = post_obj.and_then(|obj| {
+        obj.get("zh_cn")
+            .or_else(|| obj.get("en_us"))
+            .or_else(|| obj.values().next())
+    });
 
     let content_arr = locale_content
         .and_then(|lc| lc.get("content"))
@@ -662,7 +653,10 @@ mod tests {
         let expected = format!("{:x}", hasher.finalize());
 
         let mut headers = HashMap::new();
-        headers.insert("x-lark-request-timestamp".to_string(), timestamp.to_string());
+        headers.insert(
+            "x-lark-request-timestamp".to_string(),
+            timestamp.to_string(),
+        );
         headers.insert("x-lark-request-nonce".to_string(), nonce.to_string());
         headers.insert("x-lark-signature".to_string(), expected);
 

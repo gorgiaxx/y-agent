@@ -32,8 +32,7 @@ fn default_tz() -> String {
 }
 
 /// Per-schedule execution policies.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SchedulePolicies {
     /// How to handle missed fires (e.g., during downtime).
     #[serde(default)]
@@ -45,7 +44,6 @@ pub struct SchedulePolicies {
     #[serde(default)]
     pub max_executions_per_hour: u32,
 }
-
 
 /// A schedule definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,7 +79,12 @@ pub struct Schedule {
 
 impl Schedule {
     /// Create a new schedule with sensible defaults.
-    pub fn new(id: impl Into<String>, name: impl Into<String>, trigger: TriggerConfig, workflow_id: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        trigger: TriggerConfig,
+        workflow_id: impl Into<String>,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: id.into(),
@@ -230,8 +233,15 @@ mod tests {
     use crate::config::{ConcurrencyPolicy, MissedPolicy};
 
     fn make_schedule(id: &str) -> Schedule {
-        Schedule::new(id, format!("Schedule {id}"), TriggerConfig::Interval { interval_secs: 3600 }, "test-wf")
-            .with_tags(vec!["maintenance".into()])
+        Schedule::new(
+            id,
+            format!("Schedule {id}"),
+            TriggerConfig::Interval {
+                interval_secs: 3600,
+            },
+            "test-wf",
+        )
+        .with_tags(vec!["maintenance".into()])
     }
 
     #[test]
@@ -282,17 +292,25 @@ mod tests {
 
     #[test]
     fn test_schedule_with_policies() {
-        let schedule = Schedule::new("s1", "Test", TriggerConfig::Interval { interval_secs: 60 }, "wf")
-            .with_policies(SchedulePolicies {
-                missed_policy: MissedPolicy::CatchUp,
-                concurrency_policy: ConcurrencyPolicy::Queue,
-                max_executions_per_hour: 5,
-            })
-            .with_description("A test schedule")
-            .with_tags(vec!["test".into(), "daily".into()]);
+        let schedule = Schedule::new(
+            "s1",
+            "Test",
+            TriggerConfig::Interval { interval_secs: 60 },
+            "wf",
+        )
+        .with_policies(SchedulePolicies {
+            missed_policy: MissedPolicy::CatchUp,
+            concurrency_policy: ConcurrencyPolicy::Queue,
+            max_executions_per_hour: 5,
+        })
+        .with_description("A test schedule")
+        .with_tags(vec!["test".into(), "daily".into()]);
 
         assert_eq!(schedule.policies.missed_policy, MissedPolicy::CatchUp);
-        assert_eq!(schedule.policies.concurrency_policy, ConcurrencyPolicy::Queue);
+        assert_eq!(
+            schedule.policies.concurrency_policy,
+            ConcurrencyPolicy::Queue
+        );
         assert_eq!(schedule.policies.max_executions_per_hour, 5);
         assert_eq!(schedule.description, "A test schedule");
         assert_eq!(schedule.tags.len(), 2);
@@ -312,7 +330,12 @@ mod tests {
     fn test_store_list_by_tag() {
         let mut store = ScheduleStore::new();
         store.register(make_schedule("s1")); // has "maintenance" tag
-        store.register(Schedule::new("s2", "No tag", TriggerConfig::Interval { interval_secs: 60 }, "wf"));
+        store.register(Schedule::new(
+            "s2",
+            "No tag",
+            TriggerConfig::Interval { interval_secs: 60 },
+            "wf",
+        ));
         assert_eq!(store.list_by_tag("maintenance").len(), 1);
         assert_eq!(store.list_by_tag("nonexistent").len(), 0);
     }

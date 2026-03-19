@@ -51,8 +51,7 @@ impl SshRuntime {
             cmd.arg("-o").arg("StrictHostKeyChecking=no");
             cmd.arg("-o").arg("UserKnownHostsFile=/dev/null");
         } else if let Some(ref kh) = self.config.known_hosts_path {
-            cmd.arg("-o")
-                .arg(format!("UserKnownHostsFile={}", kh));
+            cmd.arg("-o").arg(format!("UserKnownHostsFile={}", kh));
         }
 
         // Auth method.
@@ -214,9 +213,7 @@ impl RuntimeAdapter for SshRuntime {
             Ok(Err(e)) => Ok(RuntimeHealth {
                 backend: RuntimeBackend::Ssh,
                 available: false,
-                message: Some(format!(
-                    "SSH health check failed: {e}. Is `ssh` in PATH?"
-                )),
+                message: Some(format!("SSH health check failed: {e}. Is `ssh` in PATH?")),
             }),
             Err(_) => Ok(RuntimeHealth {
                 backend: RuntimeBackend::Ssh,

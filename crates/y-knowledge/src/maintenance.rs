@@ -30,8 +30,7 @@ impl HitTracker {
     /// Record a hit for a chunk.
     pub fn record_hit(&mut self, chunk_id: &str) {
         *self.hits.entry(chunk_id.to_string()).or_insert(0) += 1;
-        self.last_hit
-            .insert(chunk_id.to_string(), Utc::now());
+        self.last_hit.insert(chunk_id.to_string(), Utc::now());
     }
 
     /// Get hit count for a chunk.
@@ -153,16 +152,10 @@ impl MaintenanceManager {
     }
 
     /// Register an entry for tracking.
-    pub fn register_entry(
-        &mut self,
-        entry_id: &str,
-        content_hash: &str,
-        source_uri: &str,
-    ) {
+    pub fn register_entry(&mut self, entry_id: &str, content_hash: &str, source_uri: &str) {
         self.content_hashes
             .insert(entry_id.to_string(), content_hash.to_string());
-        self.refresh_times
-            .insert(entry_id.to_string(), Utc::now());
+        self.refresh_times.insert(entry_id.to_string(), Utc::now());
         // Initialize hit counter.
         self.hit_tracker
             .hits
@@ -215,8 +208,7 @@ impl MaintenanceManager {
     pub fn mark_refreshed(&mut self, entry_id: &str, new_hash: &str) {
         self.content_hashes
             .insert(entry_id.to_string(), new_hash.to_string());
-        self.refresh_times
-            .insert(entry_id.to_string(), Utc::now());
+        self.refresh_times.insert(entry_id.to_string(), Utc::now());
     }
 
     /// Get entries that need attention (stale or expired).
@@ -339,10 +331,8 @@ mod tests {
         let mut mgr = MaintenanceManager::new(config);
         mgr.register_entry("e1", "hash123", "/path/to/file.md");
         // Force old refresh time.
-        mgr.refresh_times.insert(
-            "e1".to_string(),
-            Utc::now() - Duration::hours(1),
-        );
+        mgr.refresh_times
+            .insert("e1".to_string(), Utc::now() - Duration::hours(1));
 
         let report = mgr.check_staleness("e1", "hash123", "/path/to/file.md");
         assert!(report.ttl_expired);
@@ -366,10 +356,8 @@ mod tests {
         };
         let mut mgr = MaintenanceManager::new(config);
         mgr.register_entry("e1", "h1", "/p1");
-        mgr.refresh_times.insert(
-            "e1".to_string(),
-            Utc::now() - Duration::hours(1),
-        );
+        mgr.refresh_times
+            .insert("e1".to_string(), Utc::now() - Duration::hours(1));
         mgr.register_entry("e2", "h2", "/p2");
         // e2 is fresh, e1 is stale.
 

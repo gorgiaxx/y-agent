@@ -124,10 +124,14 @@ async fn cmd_get(services: &AppServices, identifier: &str, mode: OutputMode) -> 
     // Try by ID first, then by name.
     let row = match services.workflow_store.get(identifier).await? {
         Some(r) => r,
-        None => if let Some(r) = services.workflow_store.get_by_name(identifier).await? { r } else {
-            output::print_error(&format!("Workflow not found: {identifier}"));
-            return Ok(());
-        },
+        None => {
+            if let Some(r) = services.workflow_store.get_by_name(identifier).await? {
+                r
+            } else {
+                output::print_error(&format!("Workflow not found: {identifier}"));
+                return Ok(());
+            }
+        }
     };
 
     if mode == OutputMode::Json {

@@ -65,7 +65,9 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
             },
             BuiltinSkillFile {
                 relative_path: "details/tone-guidelines.md",
-                content: include_str!("../../../builtin-skills/humanizer-zh/details/tone-guidelines.md"),
+                content: include_str!(
+                    "../../../builtin-skills/humanizer-zh/details/tone-guidelines.md"
+                ),
             },
         ],
     },
@@ -82,11 +84,15 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
             },
             BuiltinSkillFile {
                 relative_path: "details/error-handling-patterns.md",
-                content: include_str!("../../../builtin-skills/code-review-rust/details/error-handling-patterns.md"),
+                content: include_str!(
+                    "../../../builtin-skills/code-review-rust/details/error-handling-patterns.md"
+                ),
             },
             BuiltinSkillFile {
                 relative_path: "details/unsafe-review-checklist.md",
-                content: include_str!("../../../builtin-skills/code-review-rust/details/unsafe-review-checklist.md"),
+                content: include_str!(
+                    "../../../builtin-skills/code-review-rust/details/unsafe-review-checklist.md"
+                ),
             },
         ],
     },

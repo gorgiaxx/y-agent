@@ -113,14 +113,14 @@ impl ChatCheckpointStore for SqliteChatCheckpointStore {
             message: format!("list chat checkpoints: {e}"),
         })?;
 
-        Ok(rows.into_iter().map(ChatCheckpointRow::into_checkpoint).collect())
+        Ok(rows
+            .into_iter()
+            .map(ChatCheckpointRow::into_checkpoint)
+            .collect())
     }
 
     #[instrument(skip(self), fields(session_id = %session_id))]
-    async fn latest(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<Option<ChatCheckpoint>, SessionError> {
+    async fn latest(&self, session_id: &SessionId) -> Result<Option<ChatCheckpoint>, SessionError> {
         let row: Option<ChatCheckpointRow> = sqlx::query_as(
             r"SELECT checkpoint_id, session_id, turn_number, message_count_before,
                      journal_scope_id, invalidated, created_at
@@ -179,7 +179,8 @@ struct ChatCheckpointRow {
 
 impl ChatCheckpointRow {
     fn into_checkpoint(self) -> ChatCheckpoint {
-        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
+        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at)
+            .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
         ChatCheckpoint {
             checkpoint_id: self.checkpoint_id,
@@ -274,7 +275,11 @@ mod tests {
             if cp.turn_number <= 2 {
                 assert!(!cp.invalidated, "turn {} should be valid", cp.turn_number);
             } else {
-                assert!(cp.invalidated, "turn {} should be invalidated", cp.turn_number);
+                assert!(
+                    cp.invalidated,
+                    "turn {} should be invalidated",
+                    cp.turn_number
+                );
             }
         }
     }

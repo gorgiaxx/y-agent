@@ -268,10 +268,7 @@ impl HookHandlerExecutor {
                     } else {
                         Some(regex::Regex::new(&group.matcher).map_err(|e| {
                             HookError::HookHandlerValidation {
-                                message: format!(
-                                    "invalid matcher regex '{}': {e}",
-                                    group.matcher
-                                ),
+                                message: format!("invalid matcher regex '{}': {e}", group.matcher),
                             }
                         })?)
                     };
@@ -335,11 +332,7 @@ impl HookHandlerExecutor {
     /// Execute all matching handlers for a hook point.
     /// Returns aggregate decision.
     /// Per design §Failure Handling: if any sync handler returns "block", aggregate is "block".
-    pub async fn execute(
-        &self,
-        hook_point: HookPoint,
-        input: &HookInput,
-    ) -> HookHandlerResult {
+    pub async fn execute(&self, hook_point: HookPoint, input: &HookInput) -> HookHandlerResult {
         let groups = match self.handlers.get(&hook_point) {
             Some(groups) => groups,
             None => return HookHandlerResult::default(),
@@ -384,7 +377,9 @@ impl HookHandlerExecutor {
                             let json = input_json.clone();
                             let allowed = self.allowed_hook_dirs.clone();
                             tokio::spawn(async move {
-                                let executor = CommandExecutor { allowed_hook_dirs: allowed };
+                                let executor = CommandExecutor {
+                                    allowed_hook_dirs: allowed,
+                                };
                                 if let Err(e) = executor.execute(&cmd, &json, timeout).await {
                                     warn!(error = %e, command = %cmd, "async command hook failed");
                                 }
@@ -604,8 +599,7 @@ pub fn aggregate_decisions(
     let mut result = HookHandlerResult::default();
     let mut block_count = 0_usize;
 
-    result.handler_count =
-        cmd_http_decisions.len() + prompt_agent_decisions.len();
+    result.handler_count = cmd_http_decisions.len() + prompt_agent_decisions.len();
 
     for d in cmd_http_decisions {
         if d.decision == "block" {
@@ -670,7 +664,10 @@ impl CommandExecutor {
         }
 
         if !self.allowed_hook_dirs.is_empty() {
-            let in_allowed = self.allowed_hook_dirs.iter().any(|dir| cmd.starts_with(dir));
+            let in_allowed = self
+                .allowed_hook_dirs
+                .iter()
+                .any(|dir| cmd.starts_with(dir));
             if !in_allowed {
                 return Err(HookError::HookHandlerValidation {
                     message: format!(
@@ -743,10 +740,9 @@ impl CommandExecutor {
                 if stdout.trim().is_empty() {
                     Ok(CommandHttpDecision::default())
                 } else {
-                    serde_json::from_str(stdout.trim()).unwrap_or_else(|_| {
-                        CommandHttpDecision::default()
-                    })
-                    .pipe(Ok)
+                    serde_json::from_str(stdout.trim())
+                        .unwrap_or_else(|_| CommandHttpDecision::default())
+                        .pipe(Ok)
                 }
             }
             1 => {
@@ -1051,10 +1047,7 @@ mod tests {
 
     #[test]
     fn test_expand_env_vars_missing() {
-        assert_eq!(
-            expand_env_vars("$NONEXISTENT_VAR_12345"),
-            ""
-        );
+        assert_eq!(expand_env_vars("$NONEXISTENT_VAR_12345"), "");
     }
 
     #[test]
@@ -1257,11 +1250,7 @@ mod tests {
                 allowed_hook_dirs: vec![],
             };
             let result = executor
-                .execute(
-                    "/bin/sleep 60",
-                    b"{}",
-                    Duration::from_millis(100),
-                )
+                .execute("/bin/sleep 60", b"{}", Duration::from_millis(100))
                 .await;
             assert!(matches!(result, Err(HookError::HookHandlerTimeout { .. })));
         }
@@ -1335,7 +1324,9 @@ mod tests {
                 timestamp: "2026-01-01T00:00:00Z".into(),
                 extra: serde_json::json!({ "tool_name": "Bash" }),
             };
-            let result = executor.execute(HookPoint::PreToolExecute, &input_bash).await;
+            let result = executor
+                .execute(HookPoint::PreToolExecute, &input_bash)
+                .await;
             assert_eq!(result.handler_count, 1);
 
             // Should NOT match "Search"
@@ -1561,10 +1552,7 @@ mod tests {
         #[test]
         fn test_json_with_surrounding_text() {
             let input = "Here is my decision:\n{\"ok\": true}\nThat's it.";
-            assert_eq!(
-                extract_json_from_response(input),
-                r#"{"ok": true}"#
-            );
+            assert_eq!(extract_json_from_response(input), r#"{"ok": true}"#);
         }
 
         #[test]

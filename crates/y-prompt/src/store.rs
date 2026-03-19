@@ -48,9 +48,9 @@ impl SectionStore {
     /// For file sources, reads from disk.
     /// For store sources, looks up the referenced key.
     pub fn load_content(&self, id: &str) -> Result<String, StoreError> {
-        let section = self.get(id).ok_or_else(|| StoreError::NotFound {
-            id: id.to_string(),
-        })?;
+        let section = self
+            .get(id)
+            .ok_or_else(|| StoreError::NotFound { id: id.to_string() })?;
 
         match &section.content_source {
             ContentSource::Inline(text) => Ok(text.clone()),

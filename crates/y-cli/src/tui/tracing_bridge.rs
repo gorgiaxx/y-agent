@@ -109,10 +109,7 @@ mod tests {
     fn test_bridge_layer_creation() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let layer = ToastBridgeLayer::new(tx);
-        assert_eq!(
-            layer.counter.load(std::sync::atomic::Ordering::Relaxed),
-            0
-        );
+        assert_eq!(layer.counter.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 
     // T-BRIDGE-02: WARN events are forwarded as Warning toasts.

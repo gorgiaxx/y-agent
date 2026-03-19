@@ -56,7 +56,9 @@ impl<'a> CapabilityChecker<'a> {
                 for domain in domains {
                     if !self.config.allowed_domains.contains(domain) {
                         return Err(RuntimeModuleError::CapabilityDenied {
-                            capability: format!("network: external domain '{domain}' not whitelisted"),
+                            capability: format!(
+                                "network: external domain '{domain}' not whitelisted"
+                            ),
                         });
                     }
                 }
@@ -348,7 +350,10 @@ mod tests {
         });
         let result = checker.validate(&request).unwrap();
         // Should be capped to 512 MB.
-        assert_eq!(result.container.resources.memory_bytes, Some(512 * 1024 * 1024));
+        assert_eq!(
+            result.container.resources.memory_bytes,
+            Some(512 * 1024 * 1024)
+        );
     }
 
     // T-RT-001-10

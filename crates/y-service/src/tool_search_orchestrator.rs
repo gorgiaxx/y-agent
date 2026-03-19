@@ -67,12 +67,11 @@ impl ToolSearchOrchestrator {
     ) -> Result<ToolOutput, y_core::tool::ToolError> {
         let tool_name = ToolName::from_string(name);
 
-        let definition = registry
-            .get_definition(&tool_name)
-            .await
-            .ok_or_else(|| y_core::tool::ToolError::NotFound {
+        let definition = registry.get_definition(&tool_name).await.ok_or_else(|| {
+            y_core::tool::ToolError::NotFound {
                 name: name.to_string(),
-            })?;
+            }
+        })?;
 
         // Activate the tool.
         {
@@ -96,11 +95,11 @@ impl ToolSearchOrchestrator {
         registry: &ToolRegistryImpl,
         activation_set: &Arc<RwLock<ToolActivationSet>>,
     ) -> Result<ToolOutput, y_core::tool::ToolError> {
-        let detail = taxonomy
-            .category_detail(category)
-            .ok_or_else(|| y_core::tool::ToolError::NotFound {
+        let detail = taxonomy.category_detail(category).ok_or_else(|| {
+            y_core::tool::ToolError::NotFound {
                 name: format!("category: {category}"),
-            })?;
+            }
+        })?;
 
         let tools = taxonomy.tools_in_category(category);
 
@@ -168,10 +167,8 @@ impl ToolSearchOrchestrator {
             }
         }
 
-        let results_json: Vec<serde_json::Value> = result_defs
-            .iter()
-            .map(Self::definition_to_json)
-            .collect();
+        let results_json: Vec<serde_json::Value> =
+            result_defs.iter().map(Self::definition_to_json).collect();
 
         Ok(ToolOutput {
             success: true,
@@ -273,10 +270,9 @@ tools = ["tool_search"]
         let (registry, taxonomy, activation_set) = setup().await;
 
         let args = serde_json::json!({"tool": "file_read"});
-        let result =
-            ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
-                .await
-                .unwrap();
+        let result = ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert_eq!(result.content["name"], "file_read");
@@ -303,10 +299,9 @@ tools = ["tool_search"]
         let (registry, taxonomy, activation_set) = setup().await;
 
         let args = serde_json::json!({"category": "file"});
-        let result =
-            ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
-                .await
-                .unwrap();
+        let result = ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert_eq!(result.content["category"], "file");
@@ -345,10 +340,9 @@ tools = ["tool_search"]
         let (registry, taxonomy, activation_set) = setup().await;
 
         let args = serde_json::json!({"query": "file"});
-        let result =
-            ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
-                .await
-                .unwrap();
+        let result = ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
+            .await
+            .unwrap();
 
         assert!(result.success);
         let activated = result.content["activated"].as_array().unwrap();
@@ -377,10 +371,9 @@ tools = ["tool_search"]
 
         // Both `tool` and `category` provided — `tool` should take precedence.
         let args = serde_json::json!({"tool": "shell_exec", "category": "file"});
-        let result =
-            ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
-                .await
-                .unwrap();
+        let result = ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
+            .await
+            .unwrap();
 
         assert_eq!(result.content["name"], "shell_exec");
     }

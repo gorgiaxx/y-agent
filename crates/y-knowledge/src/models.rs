@@ -108,7 +108,11 @@ pub struct SourceRef {
 
 impl SourceRef {
     /// Create a new `SourceRef` for a local file.
-    pub fn file(uri: impl Into<String>, title: impl Into<String>, content_hash: impl Into<String>) -> Self {
+    pub fn file(
+        uri: impl Into<String>,
+        title: impl Into<String>,
+        content_hash: impl Into<String>,
+    ) -> Self {
         Self {
             source_type: SourceType::File,
             uri: uri.into(),
@@ -383,11 +387,7 @@ mod tests {
     use super::*;
 
     fn test_source() -> SourceRef {
-        SourceRef::file(
-            "/path/to/doc.md",
-            "Test Document",
-            "abc123hash",
-        )
+        SourceRef::file("/path/to/doc.md", "Test Document", "abc123hash")
     }
 
     #[test]

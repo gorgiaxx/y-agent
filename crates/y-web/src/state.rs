@@ -50,4 +50,3 @@ impl AppState {
         self
     }
 }
-

@@ -205,9 +205,7 @@ impl SecurityPolicy {
             let canonical = match std::fs::canonicalize(dir) {
                 Ok(p) => p,
                 Err(_) if self.profile == SecurityProfile::Strict => {
-                    return Err(RuntimeError::PathTraversalAttempt {
-                        path: dir.clone(),
-                    });
+                    return Err(RuntimeError::PathTraversalAttempt { path: dir.clone() });
                 }
                 Err(_) => return Ok(()),
             };
@@ -220,9 +218,7 @@ impl SecurityPolicy {
                 }
             }
 
-            return Err(RuntimeError::PathTraversalAttempt {
-                path: dir.clone(),
-            });
+            return Err(RuntimeError::PathTraversalAttempt { path: dir.clone() });
         }
 
         Ok(())
@@ -316,9 +312,7 @@ mod tests {
     #[test]
     fn test_standard_allows_whitelisted_domains() {
         let mut config = default_config();
-        config
-            .allowed_domains
-            .insert("api.example.com".to_string());
+        config.allowed_domains.insert("api.example.com".to_string());
 
         let policy = SecurityPolicy::with_profile(&config, SecurityProfile::Standard);
         let req = make_request(NetworkCapability::External {
@@ -330,9 +324,7 @@ mod tests {
     #[test]
     fn test_standard_denies_non_whitelisted_domain() {
         let mut config = default_config();
-        config
-            .allowed_domains
-            .insert("api.example.com".to_string());
+        config.allowed_domains.insert("api.example.com".to_string());
 
         let policy = SecurityPolicy::with_profile(&config, SecurityProfile::Standard);
         let req = make_request(NetworkCapability::External {

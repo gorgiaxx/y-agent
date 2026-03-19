@@ -146,23 +146,13 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             {
                 match arboard::Clipboard::new() {
                     Ok(mut clipboard) => match clipboard.set_text(&formatted) {
-                        Ok(()) => {
-                            CommandResult::Ok(Some(format!(
-                                "Copied {} messages to clipboard.",
-                                state.messages.len()
-                            )))
-                        }
-                        Err(e) => {
-                            CommandResult::Error(format!(
-                                "Failed to set clipboard: {e}"
-                            ))
-                        }
+                        Ok(()) => CommandResult::Ok(Some(format!(
+                            "Copied {} messages to clipboard.",
+                            state.messages.len()
+                        ))),
+                        Err(e) => CommandResult::Error(format!("Failed to set clipboard: {e}")),
                     },
-                    Err(e) => {
-                        CommandResult::Error(format!(
-                            "Failed to access clipboard: {e}"
-                        ))
-                    }
+                    Err(e) => CommandResult::Error(format!("Failed to access clipboard: {e}")),
                 }
             }
 
@@ -224,40 +214,52 @@ fn generate_command_help(cmd_name: &str) -> String {
 fn generate_shortcuts_text() -> String {
     let mut text = String::from("Keyboard Shortcuts:\n\n");
 
-    text.push_str("  [Global]
+    text.push_str(
+        "  [Global]
     Ctrl+Q / Ctrl+D / Ctrl+C  Quit
-    Ctrl+B                    Toggle sidebar\n\n");
+    Ctrl+B                    Toggle sidebar\n\n",
+    );
 
-    text.push_str("  [Input Panel]
+    text.push_str(
+        "  [Input Panel]
     Enter                     Send message
     Shift+Enter               New line
     Tab                       Cycle focus (Input → Chat → Sidebar)
     /                         Open command palette (on empty input)
     :                         Open command palette (vim-style)
-    Esc                       Return to normal mode\n\n");
+    Esc                       Return to normal mode\n\n",
+    );
 
-    text.push_str("  [Chat Panel]
+    text.push_str(
+        "  [Chat Panel]
     j / ↓ / PageDown          Scroll down
     k / ↑ / PageUp            Scroll up
     i                         Return focus to input
-    Tab                       Cycle focus\n\n");
+    Tab                       Cycle focus\n\n",
+    );
 
-    text.push_str("  [Sidebar]
+    text.push_str(
+        "  [Sidebar]
     Tab                       Cycle focus
     Shift+Tab                 Switch sidebar view
-    Esc                       Return focus to input\n\n");
+    Esc                       Return focus to input\n\n",
+    );
 
-    text.push_str("  [Command Palette]
+    text.push_str(
+        "  [Command Palette]
     ↑ / ↓                     Navigate suggestions
     Tab                       Next suggestion
     Enter                     Execute selected command
-    Esc                       Close palette\n\n");
+    Esc                       Close palette\n\n",
+    );
 
-    text.push_str("  [Mouse]
+    text.push_str(
+        "  [Mouse]
     Click                     Focus panel (Chat/Input/Sidebar)
     Scroll wheel              Scroll chat history
     Shift + drag              Native text selection (terminal)
-    /copy                     Copy full transcript to clipboard\n");
+    /copy                     Copy full transcript to clipboard\n",
+    );
 
     text
 }

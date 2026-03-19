@@ -189,10 +189,7 @@ mod tests {
 
     #[test]
     fn test_extract_text_single_line() {
-        let lines = vec![
-            "Hello, world!".to_string(),
-            "Second line".to_string(),
-        ];
+        let lines = vec!["Hello, world!".to_string(), "Second line".to_string()];
         let mut sel = TextSelection::default();
         sel.start = (0, 7);
         sel.end = (0, 12);

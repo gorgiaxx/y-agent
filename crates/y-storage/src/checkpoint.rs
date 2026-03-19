@@ -312,8 +312,8 @@ impl CheckpointRow {
             }
         };
 
-        let committed_state: serde_json::Value =
-            serde_json::from_str(&self.committed_state).map_err(|e| CheckpointError::Other {
+        let committed_state: serde_json::Value = serde_json::from_str(&self.committed_state)
+            .map_err(|e| CheckpointError::Other {
                 message: format!("parse committed_state: {e}"),
             })?;
 
@@ -340,9 +340,11 @@ impl CheckpointRow {
                 message: format!("parse versions_seen: {e}"),
             })?;
 
-        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
+        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at)
+            .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
-        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at)
+            .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
         Ok(WorkflowCheckpoint {
             workflow_id: WorkflowId::from_string(self.workflow_id),
@@ -493,7 +495,10 @@ mod tests {
         storage.commit(&wf_id, 1).await.unwrap();
 
         let interrupt = serde_json::json!({"reason": "user_input_needed"});
-        storage.set_interrupted(&wf_id, interrupt.clone()).await.unwrap();
+        storage
+            .set_interrupted(&wf_id, interrupt.clone())
+            .await
+            .unwrap();
 
         let cp = storage.read_committed(&wf_id).await.unwrap().unwrap();
         assert_eq!(cp.status, CheckpointStatus::Interrupted);
@@ -515,7 +520,10 @@ mod tests {
         .unwrap();
 
         let state = serde_json::json!({"data": "test"});
-        storage.write_pending(&wf_id, &sess_id, 1, &state).await.unwrap();
+        storage
+            .write_pending(&wf_id, &sess_id, 1, &state)
+            .await
+            .unwrap();
         storage.commit(&wf_id, 1).await.unwrap();
         storage.set_completed(&wf_id).await.unwrap();
 
@@ -538,7 +546,10 @@ mod tests {
         .unwrap();
 
         let state = serde_json::json!({"data": "test"});
-        storage.write_pending(&wf_id, &sess_id, 1, &state).await.unwrap();
+        storage
+            .write_pending(&wf_id, &sess_id, 1, &state)
+            .await
+            .unwrap();
         storage.commit(&wf_id, 1).await.unwrap();
         storage.set_failed(&wf_id, "something broke").await.unwrap();
 
@@ -561,7 +572,10 @@ mod tests {
         .unwrap();
 
         let state = serde_json::json!({"step": 1});
-        storage.write_pending(&wf_id, &sess_id, 1, &state).await.unwrap();
+        storage
+            .write_pending(&wf_id, &sess_id, 1, &state)
+            .await
+            .unwrap();
         storage.commit(&wf_id, 1).await.unwrap();
 
         // Prune steps before 5 — should delete the step 1 checkpoint.

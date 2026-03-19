@@ -64,10 +64,7 @@ impl ChainRunner {
             match self.run_one(mw, ctx).await {
                 Ok(MiddlewareResult::Continue) => {}
                 Ok(MiddlewareResult::ShortCircuit) => {
-                    tracing::info!(
-                        middleware = mw.name(),
-                        "middleware short-circuited chain"
-                    );
+                    tracing::info!(middleware = mw.name(), "middleware short-circuited chain");
                     break;
                 }
                 Err(MiddlewareError::Timeout { ref name, .. }) => {

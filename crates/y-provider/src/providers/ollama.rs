@@ -206,8 +206,8 @@ impl LlmProvider for OllamaProvider {
                 message: format!("parse response JSON: {e}"),
             })?;
 
-        let ollama_response: OllamaResponse =
-            serde_json::from_value(raw_response.clone()).map_err(|e| ProviderError::Other {
+        let ollama_response: OllamaResponse = serde_json::from_value(raw_response.clone())
+            .map_err(|e| ProviderError::Other {
                 message: format!("parse response: {e}"),
             })?;
 
@@ -717,7 +717,8 @@ mod tests {
         let request = ChatRequest {
             messages: vec![
                 Message {
-                    message_id: String::new(),                    role: Role::System,
+                    message_id: String::new(),
+                    role: Role::System,
                     content: "Be helpful".into(),
                     tool_call_id: None,
                     tool_calls: vec![],
@@ -725,7 +726,8 @@ mod tests {
                     metadata: serde_json::Value::Null,
                 },
                 Message {
-                    message_id: String::new(),                    role: Role::User,
+                    message_id: String::new(),
+                    role: Role::User,
                     content: "Hello".into(),
                     tool_call_id: None,
                     tool_calls: vec![],

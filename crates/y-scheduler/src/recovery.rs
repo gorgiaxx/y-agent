@@ -90,9 +90,7 @@ pub fn recover_missed(
 /// Compute the effective interval for a schedule (for recovery purposes).
 fn compute_interval(schedule: &Schedule) -> Option<Duration> {
     match &schedule.trigger {
-        TriggerConfig::Interval { interval_secs } => {
-            Some(Duration::seconds(*interval_secs as i64))
-        }
+        TriggerConfig::Interval { interval_secs } => Some(Duration::seconds(*interval_secs as i64)),
         TriggerConfig::Cron { expression, .. } => {
             // Approximate interval by computing two consecutive next-fires.
             use crate::cron::CronSchedule;
@@ -128,12 +126,13 @@ mod tests {
     use crate::store::SchedulePolicies;
 
     fn interval_schedule(id: &str, interval_secs: u64, policy: MissedPolicy) -> Schedule {
-        Schedule::new(id, id, TriggerConfig::Interval { interval_secs }, "wf")
-            .with_policies(SchedulePolicies {
+        Schedule::new(id, id, TriggerConfig::Interval { interval_secs }, "wf").with_policies(
+            SchedulePolicies {
                 missed_policy: policy,
                 concurrency_policy: ConcurrencyPolicy::default(),
                 max_executions_per_hour: 0,
-            })
+            },
+        )
     }
 
     #[test]

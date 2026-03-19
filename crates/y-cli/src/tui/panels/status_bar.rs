@@ -82,10 +82,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 /// - Red    : > 80%
 fn build_context_spans(state: &AppState) -> Vec<Span<'static>> {
     if state.context_window == 0 {
-        return vec![Span::styled(
-            "ctx: —",
-            Style::default().fg(Color::DarkGray),
-        )];
+        return vec![Span::styled("ctx: —", Style::default().fg(Color::DarkGray))];
     }
 
     let pct = state.context_usage_percent().min(100.0);
@@ -188,7 +185,10 @@ mod tests {
         let label = &spans[2].content;
         assert!(label.contains("50%"), "expected 50% in label, got: {label}");
         assert!(label.contains("64k"), "expected 64k in label, got: {label}");
-        assert!(label.contains("128k"), "expected 128k in label, got: {label}");
+        assert!(
+            label.contains("128k"),
+            "expected 128k in label, got: {label}"
+        );
     }
 
     #[test]

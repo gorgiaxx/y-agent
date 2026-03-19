@@ -90,7 +90,8 @@ impl TokenBucket {
             Duration::ZERO
         } else {
             let needed = 1.0 - self.tokens;
-            let refill_rate = f64::from(self.config.max_requests) / self.config.window.as_secs_f64();
+            let refill_rate =
+                f64::from(self.config.max_requests) / self.config.window.as_secs_f64();
             if refill_rate <= 0.0 {
                 Duration::from_secs(60) // Fallback
             } else {

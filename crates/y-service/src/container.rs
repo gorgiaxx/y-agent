@@ -12,8 +12,8 @@ use tracing::{info, warn};
 use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
 use y_context::{
     BuildSystemPromptProvider, BunVenvPromptInfo, ContextPipeline, InjectContextStatus,
-    InjectSkills, InjectTools, KnowledgeContextProvider, PythonVenvPromptInfo,
-    SystemPromptConfig, VenvPromptInfo,
+    InjectSkills, InjectTools, KnowledgeContextProvider, PythonVenvPromptInfo, SystemPromptConfig,
+    VenvPromptInfo,
 };
 use y_core::agent::AgentDelegator;
 use y_core::provider::LlmProvider;
@@ -200,7 +200,8 @@ impl ServiceContainer {
 
         // 8. Tool registry.
         let tool_registry = ToolRegistryImpl::new(config.tools.clone());
-        y_tools::builtin::register_builtin_tools(&tool_registry, config.browser.clone(), None).await;
+        y_tools::builtin::register_builtin_tools(&tool_registry, config.browser.clone(), None)
+            .await;
 
         // 8b. Tool taxonomy (loaded from embedded TOML).
         let tool_taxonomy = Arc::new(
@@ -309,34 +310,36 @@ tools = ["tool_search"]
             KnowledgeService::with_data_dir(config.knowledge.clone(), knowledge_data_dir);
 
         // Construct embedding provider if enabled.
-        let embedding_provider: Option<Arc<dyn y_core::embedding::EmbeddingProvider>> =
-            if config.knowledge.embedding_enabled {
-                let embedding_config = y_provider::EmbeddingConfig {
-                    enabled: true,
-                    model: config.knowledge.embedding_model.clone(),
-                    dimensions: config.knowledge.embedding_dimensions,
-                    base_url: config.knowledge.embedding_base_url.clone(),
-                    api_key_env: config.knowledge.embedding_api_key_env.clone(),
-                    api_key: config.knowledge.embedding_api_key.clone(),
-                    ..Default::default()
-                };
-                match y_provider::OpenAiEmbeddingProvider::from_config(&embedding_config) {
-                    Ok(provider) => {
-                        info!(
-                            model = %embedding_config.model,
-                            dimensions = embedding_config.dimensions,
-                            "Embedding provider initialized"
-                        );
-                        Some(Arc::new(provider))
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to initialize embedding provider; knowledge will use keyword-only search");
-                        None
-                    }
-                }
-            } else {
-                None
+        let embedding_provider: Option<Arc<dyn y_core::embedding::EmbeddingProvider>> = if config
+            .knowledge
+            .embedding_enabled
+        {
+            let embedding_config = y_provider::EmbeddingConfig {
+                enabled: true,
+                model: config.knowledge.embedding_model.clone(),
+                dimensions: config.knowledge.embedding_dimensions,
+                base_url: config.knowledge.embedding_base_url.clone(),
+                api_key_env: config.knowledge.embedding_api_key_env.clone(),
+                api_key: config.knowledge.embedding_api_key.clone(),
+                ..Default::default()
             };
+            match y_provider::OpenAiEmbeddingProvider::from_config(&embedding_config) {
+                Ok(provider) => {
+                    info!(
+                        model = %embedding_config.model,
+                        dimensions = embedding_config.dimensions,
+                        "Embedding provider initialized"
+                    );
+                    Some(Arc::new(provider))
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to initialize embedding provider; knowledge will use keyword-only search");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         if let Some(ref provider) = embedding_provider {
             knowledge_service.set_embedding_provider(Arc::clone(provider));
@@ -349,16 +352,13 @@ tools = ["tool_search"]
             let ks = knowledge_service.lock().await;
             let knowledge_handle = ks.knowledge_handle();
             if let Some(ref provider) = embedding_provider {
-                context_pipeline.register(Box::new(
-                    KnowledgeContextProvider::with_embedding(
-                        knowledge_handle,
-                        Arc::clone(provider),
-                    ),
-                ));
+                context_pipeline.register(Box::new(KnowledgeContextProvider::with_embedding(
+                    knowledge_handle,
+                    Arc::clone(provider),
+                )));
             } else {
-                context_pipeline.register(Box::new(
-                    KnowledgeContextProvider::new(knowledge_handle),
-                ));
+                context_pipeline
+                    .register(Box::new(KnowledgeContextProvider::new(knowledge_handle)));
             }
         }
 
@@ -396,8 +396,10 @@ tools = ["tool_search"]
         // 13b. Wrap the agent delegator with diagnostics recording so subagent
         // LLM calls (title-generator, skill-ingestion, etc.) appear in the
         // DIAGNOSTICS panel.
-        let agent_delegator: Arc<dyn AgentDelegator> =
-            Arc::new(DiagnosticsAgentDelegator::new(agent_delegator, Arc::clone(&diagnostics)));
+        let agent_delegator: Arc<dyn AgentDelegator> = Arc::new(DiagnosticsAgentDelegator::new(
+            agent_delegator,
+            Arc::clone(&diagnostics),
+        ));
 
         Ok(Self {
             provider_pool: RwLock::new(provider_pool),
@@ -474,7 +476,11 @@ tools = ["tool_search"]
     /// Looks up the registered `browser` tool by name and calls its
     /// `reload_config` method. No-op if the browser tool is not registered.
     pub async fn reload_browser(&self, new_config: y_browser::BrowserConfig) {
-        if let Some(tool) = self.tool_registry.get_tool(&y_core::types::ToolName::from_string("browser")).await {
+        if let Some(tool) = self
+            .tool_registry
+            .get_tool(&y_core::types::ToolName::from_string("browser"))
+            .await
+        {
             // Downcast the Arc<dyn Tool> to BrowserTool.
             if let Some(bt) = tool.as_any().downcast_ref::<y_browser::BrowserTool>() {
                 bt.reload_config(new_config);
@@ -502,9 +508,9 @@ tools = ["tool_search"]
     ///
     /// Must be called **after** the container has been wrapped in `Arc`.
     pub fn init_agent_runner(self: &Arc<Self>) {
-        let runner = Arc::new(crate::agent_service::ServiceAgentRunner::new(
-            Arc::clone(self),
-        ));
+        let runner = Arc::new(crate::agent_service::ServiceAgentRunner::new(Arc::clone(
+            self,
+        )));
         // The agent_pool held by the container is behind a Mutex.
         // We acquire it synchronously (blocking_lock) since this runs once
         // during startup, before any async work begins.

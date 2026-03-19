@@ -442,8 +442,7 @@ impl ChatService {
 
         // 4. Derive turn number and session UUID.
         let turn_number = u32::try_from(history.len()).unwrap_or(u32::MAX);
-        let session_uuid = Uuid::parse_str(session_id.as_str())
-            .unwrap_or_else(|_| Uuid::new_v4());
+        let session_uuid = Uuid::parse_str(session_id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
 
         Ok(PreparedTurn {
             session_id,
@@ -516,8 +515,8 @@ impl ChatService {
         // 5. Build PreparedTurn from the truncated transcript.
         let user_input = history.last().unwrap().content.clone();
         let turn_number = history.len() as u32;
-        let session_uuid = Uuid::parse_str(request.session_id.as_str())
-            .unwrap_or_else(|_| Uuid::new_v4());
+        let session_uuid =
+            Uuid::parse_str(request.session_id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
 
         Ok(PreparedTurn {
             session_id: request.session_id,
@@ -564,9 +563,7 @@ impl ChatService {
             .rev()
             .find(|o| o.obs_type == y_diagnostics::ObservationType::Generation);
 
-        let model = last_gen
-            .and_then(|o| o.model.clone())
-            .unwrap_or_default();
+        let model = last_gen.and_then(|o| o.model.clone()).unwrap_or_default();
 
         let pool = container.provider_pool().await;
         let metadata_list = pool.list_metadata();
@@ -595,7 +592,7 @@ impl ChatService {
         progress: Option<TurnEventSender>,
         cancel: Option<TurnCancellationToken>,
     ) -> Result<TurnResult, TurnError> {
-        use crate::agent_service::{AgentExecutionConfig, AgentService, AgentExecutionError};
+        use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentService};
         use y_core::provider::ToolCallingMode;
 
         // 1. Build tool definitions (all tools for root agent).
@@ -666,7 +663,12 @@ impl ChatService {
         });
 
         // Preserve reasoning_content from new_messages if present.
-        if let Some(last_assistant) = result.new_messages.iter().rev().find(|m| m.role == Role::Assistant) {
+        if let Some(last_assistant) = result
+            .new_messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::Assistant)
+        {
             if let Some(rc) = last_assistant.metadata.get("reasoning_content") {
                 meta["reasoning_content"] = rc.clone();
             }
@@ -721,8 +723,14 @@ impl ChatService {
         let system_parts: Vec<&str> = assembled
             .items
             .iter()
-            .filter(|item| matches!(item.category,
-                ContextCategory::SystemPrompt | ContextCategory::Skills | ContextCategory::Knowledge))
+            .filter(|item| {
+                matches!(
+                    item.category,
+                    ContextCategory::SystemPrompt
+                        | ContextCategory::Skills
+                        | ContextCategory::Knowledge
+                )
+            })
             .map(|item| item.content.as_str())
             .collect();
 
@@ -746,9 +754,7 @@ impl ChatService {
     }
 
     /// Build tool definitions in `OpenAI` function-calling JSON format.
-    pub async fn build_tool_definitions(
-        container: &ServiceContainer,
-    ) -> Vec<serde_json::Value> {
+    pub async fn build_tool_definitions(container: &ServiceContainer) -> Vec<serde_json::Value> {
         let defs = container.tool_registry.get_all_definitions().await;
         defs.iter()
             .map(|def| {
@@ -763,7 +769,6 @@ impl ChatService {
             })
             .collect()
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -996,7 +1001,10 @@ mod tests {
             .unwrap();
 
         // History should contain at least the user message.
-        let last = prepared.history.last().expect("history should not be empty");
+        let last = prepared
+            .history
+            .last()
+            .expect("history should not be empty");
         assert_eq!(last.role, Role::User);
         assert_eq!(last.content, "test message");
     }
@@ -1032,7 +1040,9 @@ mod tests {
             skills: None,
             knowledge_collections: None,
         };
-        let p1 = ChatService::prepare_turn(&container, request).await.unwrap();
+        let p1 = ChatService::prepare_turn(&container, request)
+            .await
+            .unwrap();
         assert_eq!(p1.turn_number, p1.history.len() as u32);
 
         // Second message in same session.
@@ -1043,7 +1053,9 @@ mod tests {
             skills: None,
             knowledge_collections: None,
         };
-        let p2 = ChatService::prepare_turn(&container, request2).await.unwrap();
+        let p2 = ChatService::prepare_turn(&container, request2)
+            .await
+            .unwrap();
         assert_eq!(p2.turn_number, p2.history.len() as u32);
         assert!(p2.turn_number > p1.turn_number);
     }

@@ -53,8 +53,7 @@ impl SingleTurnRunner {
         // User message: serialize input JSON to string for the LLM.
         let user_content = match &config.input {
             serde_json::Value::String(s) => s.clone(),
-            other => serde_json::to_string_pretty(other)
-                .unwrap_or_else(|_| other.to_string()),
+            other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
         };
 
         messages.push(Message {
@@ -97,10 +96,7 @@ impl SingleTurnRunner {
 #[async_trait]
 impl AgentRunner for SingleTurnRunner {
     #[instrument(skip(self, config), fields(agent = %config.agent_name))]
-    async fn run(
-        &self,
-        config: AgentRunConfig,
-    ) -> Result<AgentRunOutput, DelegationError> {
+    async fn run(&self, config: AgentRunConfig) -> Result<AgentRunOutput, DelegationError> {
         let start = std::time::Instant::now();
 
         let request = Self::build_request(&config);
@@ -114,11 +110,7 @@ impl AgentRunner for SingleTurnRunner {
                 message: format!("LLM call failed for agent '{}': {e}", config.agent_name),
             })?;
 
-        let text = response
-            .content
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+        let text = response.content.unwrap_or_default().trim().to_string();
 
         if text.is_empty() {
             return Err(DelegationError::DelegationFailed {
@@ -126,8 +118,7 @@ impl AgentRunner for SingleTurnRunner {
             });
         }
 
-        let tokens_used =
-            response.usage.input_tokens as u32 + response.usage.output_tokens as u32;
+        let tokens_used = response.usage.input_tokens as u32 + response.usage.output_tokens as u32;
 
         Ok(AgentRunOutput {
             text,

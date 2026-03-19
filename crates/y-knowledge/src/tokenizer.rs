@@ -211,10 +211,7 @@ mod tests {
         assert!(!tokens.is_empty());
         // Should use Chinese tokenizer.
         let joined = tokens.join(" ");
-        assert!(
-            joined.contains("北京"),
-            "expected '北京', got: {joined}"
-        );
+        assert!(joined.contains("北京"), "expected '北京', got: {joined}");
     }
 
     // --- CJK detection ---

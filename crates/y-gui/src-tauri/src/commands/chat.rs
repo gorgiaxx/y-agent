@@ -142,10 +142,7 @@ pub async fn chat_send(
     // Resolve workspace path for this session and update prompt context.
     // Also set active_skills if the user attached skills to this message.
     {
-        let workspace_path = super::workspace::resolve_workspace_path(
-            &state.config_dir,
-            &sid.0,
-        );
+        let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &sid.0);
         tracing::info!(
             session_id = %sid.0,
             workspace_path = ?workspace_path,
@@ -164,10 +161,13 @@ pub async fn chat_send(
 
     // Emit chat:started so the frontend can map run_id -> session_id
     // before any chat:progress events arrive.
-    let _ = app.emit("chat:started", ChatStartedPayload {
-        run_id: run_id.clone(),
-        session_id: sid.0.clone(),
-    });
+    let _ = app.emit(
+        "chat:started",
+        ChatStartedPayload {
+            run_id: run_id.clone(),
+            session_id: sid.0.clone(),
+        },
+    );
 
     // Create a cancellation token for this run and register it so chat_cancel
     // can trigger it for immediate mid-LLM-call termination.
@@ -237,20 +237,18 @@ fn spawn_llm_worker(
         let run_id_progress = run_id_clone.clone();
         let progress_task = tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
-                let _ = app_progress.emit("chat:progress", ProgressPayload {
-                    run_id: run_id_progress.clone(),
-                    event,
-                });
+                let _ = app_progress.emit(
+                    "chat:progress",
+                    ProgressPayload {
+                        run_id: run_id_progress.clone(),
+                        event,
+                    },
+                );
             }
         });
 
-        match ChatService::execute_turn_with_progress(
-            &container,
-            &input,
-            tx,
-            Some(cancel_clone),
-        )
-        .await
+        match ChatService::execute_turn_with_progress(&container, &input, tx, Some(cancel_clone))
+            .await
         {
             Ok(result) => {
                 // Cache last-turn metadata so the frontend can restore the
@@ -539,10 +537,13 @@ pub async fn chat_resend(
     let result_sid = session_id.clone();
     let result_run_id = run_id.clone();
 
-    let _ = app.emit("chat:started", ChatStartedPayload {
-        run_id: run_id.clone(),
-        session_id: session_id.clone(),
-    });
+    let _ = app.emit(
+        "chat:started",
+        ChatStartedPayload {
+            run_id: run_id.clone(),
+            session_id: session_id.clone(),
+        },
+    );
 
     // Register cancellation token.
     let cancel_token = CancellationToken::new();
@@ -661,9 +662,7 @@ pub async fn chat_find_checkpoint_for_resend(
     let message_index = match message_index {
         Some(idx) => idx,
         None => {
-            tracing::warn!(
-                "chat_find_checkpoint_for_resend: user message not found in transcript"
-            );
+            tracing::warn!("chat_find_checkpoint_for_resend: user message not found in transcript");
             return Ok(None);
         }
     };

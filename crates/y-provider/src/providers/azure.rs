@@ -381,7 +381,9 @@ impl LlmProvider for AzureOpenAiProvider {
                                         if valid_up_to > 0 {
                                             // Safety: valid_up_to is guaranteed to be a valid UTF-8 boundary.
                                             let valid_text = unsafe {
-                                                std::str::from_utf8_unchecked(&combined[..valid_up_to])
+                                                std::str::from_utf8_unchecked(
+                                                    &combined[..valid_up_to],
+                                                )
                                             };
                                             state.buffer.push_str(valid_text);
                                         }

@@ -60,12 +60,13 @@ impl ToolExecutor {
             })?;
 
         // 2. Validate parameters against the tool's JSON Schema.
-        let definition = registry
-            .get_definition(name)
-            .await
-            .ok_or_else(|| ToolRegistryError::NotFound {
-                name: name.as_str().to_string(),
-            })?;
+        let definition =
+            registry
+                .get_definition(name)
+                .await
+                .ok_or_else(|| ToolRegistryError::NotFound {
+                    name: name.as_str().to_string(),
+                })?;
 
         self.validator
             .validate(&definition.parameters, &input.arguments)?;
@@ -84,11 +85,12 @@ impl ToolExecutor {
                 abort_reason: None,
             };
 
-            chain.execute(&mut ctx).await.map_err(|e| {
-                ToolRegistryError::MiddlewareError {
+            chain
+                .execute(&mut ctx)
+                .await
+                .map_err(|e| ToolRegistryError::MiddlewareError {
                     message: e.to_string(),
-                }
-            })?;
+                })?;
 
             if ctx.aborted {
                 return Err(ToolRegistryError::ExecutionError {
@@ -101,11 +103,12 @@ impl ToolExecutor {
         }
 
         // 4. Execute the tool.
-        let output = tool.execute(input).await.map_err(|e| {
-            ToolRegistryError::ExecutionError {
+        let output = tool
+            .execute(input)
+            .await
+            .map_err(|e| ToolRegistryError::ExecutionError {
                 message: e.to_string(),
-            }
-        })?;
+            })?;
 
         // 5. Run post-execution middleware (if configured).
         if let Some(ref chain) = self.middleware_chain {
@@ -219,7 +222,10 @@ mod tests {
         let result = executor
             .execute(&reg, &ToolName::from_string("echo"), input)
             .await;
-        assert!(matches!(result, Err(ToolRegistryError::ValidationError { .. })));
+        assert!(matches!(
+            result,
+            Err(ToolRegistryError::ValidationError { .. })
+        ));
     }
 
     #[tokio::test]
@@ -251,8 +257,14 @@ mod tests {
         let mut executor = ToolExecutor::new();
         let input1 = make_input(serde_json::json!({"message": "first"}));
         let input2 = make_input(serde_json::json!({"message": "second"}));
-        executor.execute(&reg, &ToolName::from_string("echo"), input1).await.unwrap();
-        executor.execute(&reg, &ToolName::from_string("echo"), input2).await.unwrap();
+        executor
+            .execute(&reg, &ToolName::from_string("echo"), input1)
+            .await
+            .unwrap();
+        executor
+            .execute(&reg, &ToolName::from_string("echo"), input2)
+            .await
+            .unwrap();
         let schema = serde_json::json!({
             "type": "object",
             "properties": { "message": { "type": "string" } },

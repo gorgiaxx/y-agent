@@ -10,9 +10,9 @@
 //!
 //! It also manages `SQLite` connection pools (WAL mode) and migration execution.
 
+pub mod chat_message;
 pub mod checkpoint;
 pub mod checkpoint_chat;
-pub mod chat_message;
 pub mod config;
 pub mod error;
 pub mod migration;
@@ -25,9 +25,9 @@ pub mod transcript_display;
 pub mod workflow_store;
 
 // Re-export primary types for convenient access.
+pub use chat_message::SqliteChatMessageStore;
 pub use checkpoint::SqliteCheckpointStorage;
 pub use checkpoint_chat::SqliteChatCheckpointStore;
-pub use chat_message::SqliteChatMessageStore;
 pub use config::StorageConfig;
 pub use error::StorageError;
 pub use pool::create_pool;

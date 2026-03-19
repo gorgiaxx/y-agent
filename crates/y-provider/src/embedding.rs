@@ -164,12 +164,7 @@ impl OpenAiEmbeddingProvider {
     }
 
     /// Create a new provider with explicit parameters.
-    pub fn new(
-        api_key: String,
-        base_url: String,
-        model: String,
-        dimensions: usize,
-    ) -> Self {
+    pub fn new(api_key: String, base_url: String, model: String, dimensions: usize) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key,
@@ -202,9 +197,12 @@ impl OpenAiEmbeddingProvider {
             })?;
 
         let status = response.status();
-        let body = response.bytes().await.map_err(|e| EmbeddingError::ProviderError {
-            message: format!("failed to read response body: {e}"),
-        })?;
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| EmbeddingError::ProviderError {
+                message: format!("failed to read response body: {e}"),
+            })?;
 
         if !status.is_success() {
             let error_msg = if let Ok(err) = serde_json::from_slice::<EmbeddingErrorResponse>(&body)
@@ -262,9 +260,12 @@ impl std::fmt::Debug for OpenAiEmbeddingProvider {
 impl EmbeddingProvider for OpenAiEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<EmbeddingResult, EmbeddingError> {
         let results = self.call_api(&[text]).await?;
-        results.into_iter().next().ok_or(EmbeddingError::ProviderError {
-            message: "embedding API returned empty results".to_string(),
-        })
+        results
+            .into_iter()
+            .next()
+            .ok_or(EmbeddingError::ProviderError {
+                message: "embedding API returned empty results".to_string(),
+            })
     }
 
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingResult>, EmbeddingError> {

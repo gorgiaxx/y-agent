@@ -30,16 +30,11 @@ pub enum ChatEvent {
         duration_ms: u64,
     },
     /// Incremental text delta from the LLM stream.
-    StreamDelta {
-        content: String,
-    },
+    StreamDelta { content: String },
     /// LLM request failed.
     Error(String),
     /// Session title was updated by the background summarizer.
-    TitleUpdated {
-        session_id: String,
-        title: String,
-    },
+    TitleUpdated { session_id: String, title: String },
     /// A new session was lazily created on first message.
     SessionCreated {
         id: String,
@@ -177,8 +172,8 @@ pub fn submit_message(
             .await;
 
         // Parse session UUID for diagnostics.
-        let session_uuid = uuid::Uuid::parse_str(&session_id_str)
-            .unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let session_uuid =
+            uuid::Uuid::parse_str(&session_id_str).unwrap_or_else(|_| uuid::Uuid::new_v4());
 
         // Delegate to the shared orchestrator.
         let turn_input = TurnInput {

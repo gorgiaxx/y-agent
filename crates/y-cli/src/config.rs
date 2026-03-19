@@ -485,7 +485,10 @@ pub fn cleanup_old_logs(log_dir: &std::path::Path, retention_days: u32) -> std::
         // legacy format (y-agent.YYYY-MM-DD without .log suffix).
         let is_log_file = name_str.starts_with("y-agent.")
             && (name_str.ends_with(".log")
-                || name_str.chars().skip("y-agent.".len()).all(|c| c.is_ascii_digit() || c == '-'));
+                || name_str
+                    .chars()
+                    .skip("y-agent.".len())
+                    .all(|c| c.is_ascii_digit() || c == '-'));
         if !is_log_file {
             continue;
         }

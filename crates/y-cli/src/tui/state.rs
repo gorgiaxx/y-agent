@@ -244,11 +244,16 @@ impl AppState {
         let valid = matches!(
             (self.mode, mode),
             // From Normal to any other mode
-            (InteractionMode::Normal,
-InteractionMode::Command | InteractionMode::Search | InteractionMode::Select |
-InteractionMode::Normal) |
-(InteractionMode::Command | InteractionMode::Search | InteractionMode::Select,
-InteractionMode::Normal)
+            (
+                InteractionMode::Normal,
+                InteractionMode::Command
+                    | InteractionMode::Search
+                    | InteractionMode::Select
+                    | InteractionMode::Normal
+            ) | (
+                InteractionMode::Command | InteractionMode::Search | InteractionMode::Select,
+                InteractionMode::Normal
+            )
         );
 
         if valid {
@@ -413,7 +418,9 @@ InteractionMode::Normal)
                     None
                 } else {
                     self.history_index = Some(next);
-                    self.input_history.get(next).map(std::string::String::as_str)
+                    self.input_history
+                        .get(next)
+                        .map(std::string::String::as_str)
                 }
             }
             None => None,

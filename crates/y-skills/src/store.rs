@@ -249,10 +249,9 @@ impl FilesystemSkillStore {
         }
 
         let mut results = Vec::new();
-        let entries =
-            std::fs::read_dir(&details_dir).map_err(|e| SkillModuleError::Other {
-                message: format!("failed to read details dir: {e}"),
-            })?;
+        let entries = std::fs::read_dir(&details_dir).map_err(|e| SkillModuleError::Other {
+            message: format!("failed to read details dir: {e}"),
+        })?;
 
         for entry in entries {
             let entry = entry.map_err(|e| SkillModuleError::Other {
@@ -295,10 +294,7 @@ impl FilesystemSkillStore {
         let skill_dir = self.base_path.join(skill_name);
         if !skill_dir.exists() {
             return Err(SkillModuleError::Other {
-                message: format!(
-                    "skill directory does not exist: {}",
-                    skill_dir.display()
-                ),
+                message: format!("skill directory does not exist: {}", skill_dir.display()),
             });
         }
 
@@ -341,9 +337,7 @@ impl FilesystemSkillStore {
             }
 
             let abs_path = entry.path();
-            let rel = abs_path
-                .strip_prefix(source_root)
-                .unwrap_or(&abs_path);
+            let rel = abs_path.strip_prefix(source_root).unwrap_or(&abs_path);
 
             let target_path = target_root.join(rel);
 
@@ -367,10 +361,7 @@ impl FilesystemSkillStore {
             } else {
                 if let Some(parent) = target_path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| SkillModuleError::Other {
-                        message: format!(
-                            "failed to create parent dir {}: {e}",
-                            parent.display()
-                        ),
+                        message: format!("failed to create parent dir {}: {e}", parent.display()),
                     })?;
                 }
                 std::fs::copy(&abs_path, &target_path).map_err(|e| SkillModuleError::Other {
@@ -464,10 +455,7 @@ mod tests {
         assert_eq!(loaded.name, "roundtrip-test");
         assert_eq!(loaded.description, "Test skill: roundtrip-test");
         // root_content is loaded from root.md
-        assert_eq!(
-            loaded.root_content,
-            "Root content for testing persistence."
-        );
+        assert_eq!(loaded.root_content, "Root content for testing persistence.");
 
         // Verify sub-document content can be read back
         let sub_docs = store.load_sub_documents("roundtrip-test").unwrap();

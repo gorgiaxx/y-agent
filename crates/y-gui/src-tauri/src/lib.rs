@@ -56,8 +56,7 @@ pub fn run() {
             // so we create a temporary one for async initialization.
             let config_path = config_dir();
             let data_dir = state_dir();
-            let rt = tokio::runtime::Runtime::new()
-                .expect("Failed to create Tokio runtime");
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
             // First-run auto-init: seed configs, prompts, skills, agents
             // if they don't already exist. This makes the GUI work
@@ -69,10 +68,7 @@ pub fn run() {
             }
 
             let container = rt.block_on(async {
-                let config = ServiceConfig::load_from_directory(
-                    &config_path,
-                    data_dir.as_deref(),
-                );
+                let config = ServiceConfig::load_from_directory(&config_path, data_dir.as_deref());
                 let container = ServiceContainer::from_config(&config)
                     .await
                     .expect("Failed to initialize ServiceContainer");
@@ -105,9 +101,9 @@ pub fn run() {
             // service. This ensures the GUI knowledge panel, context pipeline,
             // and knowledge_search tool all operate on the same KnowledgeService
             // instance (with embedding provider if configured).
-            let knowledge_state = commands::knowledge::KnowledgeState::from_shared(
-                Arc::clone(&container.knowledge_service),
-            );
+            let knowledge_state = commands::knowledge::KnowledgeState::from_shared(Arc::clone(
+                &container.knowledge_service,
+            ));
 
             // Keep the runtime alive for async Tauri commands.
             // Leak it so it stays active for the app's entire lifetime.

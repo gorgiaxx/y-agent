@@ -320,7 +320,8 @@ mod tests {
     fn test_validate_permission_coverage() {
         let validator = StructuralValidator::new();
         let used = vec!["web_search".into(), "file_write".into()];
-        let permissions: HashSet<String> = ["web_search"].iter().map(|s| (*s).to_string()).collect();
+        let permissions: HashSet<String> =
+            ["web_search"].iter().map(|s| (*s).to_string()).collect();
 
         let result = validator.validate_permission_coverage(&used, &permissions);
         assert!(result.is_valid()); // Warnings don't block.

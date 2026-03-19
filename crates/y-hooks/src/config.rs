@@ -311,7 +311,9 @@ mod tests {
         }
         let w: Wrapper = toml::from_str(toml).unwrap();
         assert_eq!(w.handlers.len(), 1);
-        assert!(matches!(&w.handlers[0], HandlerConfig::Command { command, .. } if command == "/usr/local/bin/hook.sh"));
+        assert!(
+            matches!(&w.handlers[0], HandlerConfig::Command { command, .. } if command == "/usr/local/bin/hook.sh")
+        );
         assert!(!w.handlers[0].is_async());
     }
 
@@ -329,8 +331,10 @@ mod tests {
             handlers: Vec<HandlerConfig>,
         }
         let w: Wrapper = toml::from_str(toml).unwrap();
-        assert!(matches!(&w.handlers[0], HandlerConfig::Http { url, headers, .. }
-            if url == "http://localhost:8080/hook" && headers.contains_key("Authorization")));
+        assert!(
+            matches!(&w.handlers[0], HandlerConfig::Http { url, headers, .. }
+            if url == "http://localhost:8080/hook" && headers.contains_key("Authorization"))
+        );
     }
 
     #[test]
@@ -347,8 +351,10 @@ mod tests {
             handlers: Vec<HandlerConfig>,
         }
         let w: Wrapper = toml::from_str(toml).unwrap();
-        assert!(matches!(&w.handlers[0], HandlerConfig::Prompt { prompt, model }
-            if prompt == "Evaluate: $ARGUMENTS" && model.as_deref() == Some("haiku")));
+        assert!(
+            matches!(&w.handlers[0], HandlerConfig::Prompt { prompt, model }
+            if prompt == "Evaluate: $ARGUMENTS" && model.as_deref() == Some("haiku"))
+        );
     }
 
     #[test]
@@ -364,8 +370,10 @@ mod tests {
             handlers: Vec<HandlerConfig>,
         }
         let w: Wrapper = toml::from_str(toml).unwrap();
-        assert!(matches!(&w.handlers[0], HandlerConfig::Agent { prompt, model }
-            if prompt == "Verify safety: $ARGUMENTS" && model.is_none()));
+        assert!(
+            matches!(&w.handlers[0], HandlerConfig::Agent { prompt, model }
+            if prompt == "Verify safety: $ARGUMENTS" && model.is_none())
+        );
     }
 
     #[test]

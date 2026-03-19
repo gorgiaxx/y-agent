@@ -215,7 +215,9 @@ impl SchedulerManager {
         executor: &Arc<Mutex<ScheduleExecutor>>,
     ) {
         let mut store_guard = store.lock().await;
-        let schedule = if let Some(s) = store_guard.get(&fired.schedule_id) { s.clone() } else {
+        let schedule = if let Some(s) = store_guard.get(&fired.schedule_id) {
+            s.clone()
+        } else {
             warn!(schedule_id = %fired.schedule_id, "Schedule not found, skipping");
             return;
         };
@@ -289,8 +291,13 @@ mod tests {
     #[tokio::test]
     async fn test_manager_remove() {
         let mgr = SchedulerManager::with_defaults();
-        mgr.register(Schedule::new("s1", "S1", TriggerConfig::Interval { interval_secs: 60 }, "wf"))
-            .await;
+        mgr.register(Schedule::new(
+            "s1",
+            "S1",
+            TriggerConfig::Interval { interval_secs: 60 },
+            "wf",
+        ))
+        .await;
         assert!(mgr.remove("s1").await);
         assert!(mgr.get_schedule("s1").await.is_none());
     }
@@ -298,8 +305,13 @@ mod tests {
     #[tokio::test]
     async fn test_manager_pause_resume() {
         let mgr = SchedulerManager::with_defaults();
-        mgr.register(Schedule::new("s1", "S1", TriggerConfig::Interval { interval_secs: 60 }, "wf"))
-            .await;
+        mgr.register(Schedule::new(
+            "s1",
+            "S1",
+            TriggerConfig::Interval { interval_secs: 60 },
+            "wf",
+        ))
+        .await;
 
         mgr.pause("s1").await;
         assert!(!mgr.get_schedule("s1").await.unwrap().enabled);
@@ -349,10 +361,20 @@ mod tests {
     #[tokio::test]
     async fn test_manager_list_schedules() {
         let mgr = SchedulerManager::with_defaults();
-        mgr.register(Schedule::new("s1", "S1", TriggerConfig::Interval { interval_secs: 60 }, "wf"))
-            .await;
-        mgr.register(Schedule::new("s2", "S2", TriggerConfig::Interval { interval_secs: 120 }, "wf"))
-            .await;
+        mgr.register(Schedule::new(
+            "s1",
+            "S1",
+            TriggerConfig::Interval { interval_secs: 60 },
+            "wf",
+        ))
+        .await;
+        mgr.register(Schedule::new(
+            "s2",
+            "S2",
+            TriggerConfig::Interval { interval_secs: 120 },
+            "wf",
+        ))
+        .await;
 
         let list = mgr.list_schedules().await;
         assert_eq!(list.len(), 2);

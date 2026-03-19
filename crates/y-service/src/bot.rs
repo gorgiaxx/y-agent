@@ -6,8 +6,8 @@
 
 use tracing::{info, warn};
 
-use y_core::types::SessionId;
 use y_bot::{BotPlatform, InboundMessage, OutboundMessage, PlatformKind};
+use y_core::types::SessionId;
 
 use crate::chat::ChatService;
 use crate::container::ServiceContainer;

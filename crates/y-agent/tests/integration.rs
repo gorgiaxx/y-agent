@@ -7,7 +7,7 @@ use y_agent::agent::context::ContextMessage;
 use y_agent::agent::definition::{AgentMode, ContextStrategy};
 use y_agent::agent::delegation::DelegationProtocol;
 use y_agent::agent::dynamic_agent::{
-    CreatorPermissionSnapshot, DynamicAgentStore, DynamicAgentStoreBackend, make_dynamic_agent,
+    make_dynamic_agent, CreatorPermissionSnapshot, DynamicAgentStore, DynamicAgentStoreBackend,
 };
 use y_agent::agent::executor::AgentExecutor;
 use y_agent::agent::gap::{AgentGapDetector, AgentGapType, GapResolution};
@@ -72,7 +72,10 @@ fn test_gap_detection_and_resolution() {
     // Detect gap for non-existent agent
     let gap = AgentGapDetector::detect(&registry, "test-runner-agent", &[], None);
     assert!(gap.is_some());
-    assert!(matches!(gap.as_ref().unwrap(), AgentGapType::AgentNotFound { .. }));
+    assert!(matches!(
+        gap.as_ref().unwrap(),
+        AgentGapType::AgentNotFound { .. }
+    ));
 
     // Attempt resolution → HITL required (no orchestrator integration)
     let resolution = AgentGapDetector::resolve(&registry, gap.as_ref().unwrap());
@@ -102,7 +105,10 @@ fn test_permission_inheritance_e2e() {
     );
     let parent = store.create(parent).unwrap();
     assert_eq!(parent.effective_permissions.delegation_depth, 2);
-    assert!(parent.effective_permissions.tools_allowed.contains(&"file_read".to_string()));
+    assert!(parent
+        .effective_permissions
+        .tools_allowed
+        .contains(&"file_read".to_string()));
 
     // Create child using parent's permissions (depth 2 → effective depth 1)
     let child_creator = CreatorPermissionSnapshot {
@@ -195,9 +201,24 @@ fn test_micro_pipeline_e2e() {
     wm.set("code", "fn main() { todo!() }");
 
     let steps = vec![
-        PipelineStep::new("analyzer", "Analyze: {code}", vec!["code".to_string()], "analysis"),
-        PipelineStep::new("reviewer", "Review: {analysis}", vec!["analysis".to_string()], "review"),
-        PipelineStep::new("reporter", "Report: {review}", vec!["review".to_string()], "report"),
+        PipelineStep::new(
+            "analyzer",
+            "Analyze: {code}",
+            vec!["code".to_string()],
+            "analysis",
+        ),
+        PipelineStep::new(
+            "reviewer",
+            "Review: {analysis}",
+            vec!["analysis".to_string()],
+            "review",
+        ),
+        PipelineStep::new(
+            "reporter",
+            "Report: {review}",
+            vec!["review".to_string()],
+            "report",
+        ),
     ];
 
     let result = MicroPipeline::execute(&protocol, &steps, wm).unwrap();

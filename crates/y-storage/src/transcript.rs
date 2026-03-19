@@ -109,21 +109,25 @@ impl TranscriptStore for JsonlTranscriptStore {
             return Ok(0);
         }
 
-        let file = tokio::fs::File::open(&path)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("open transcript: {e}"),
-            })?;
+        let file =
+            tokio::fs::File::open(&path)
+                .await
+                .map_err(|e| SessionError::TranscriptError {
+                    message: format!("open transcript: {e}"),
+                })?;
 
         let reader = tokio::io::BufReader::new(file);
         let mut lines = reader.lines();
         let mut count = 0;
 
-        while let Some(line) = lines.next_line().await.map_err(|e| {
-            SessionError::TranscriptError {
-                message: format!("read line: {e}"),
-            }
-        })? {
+        while let Some(line) =
+            lines
+                .next_line()
+                .await
+                .map_err(|e| SessionError::TranscriptError {
+                    message: format!("read line: {e}"),
+                })?
+        {
             if !line.trim().is_empty() {
                 count += 1;
             }
@@ -152,10 +156,9 @@ impl TranscriptStore for JsonlTranscriptStore {
 
         let mut content = String::new();
         for msg in kept {
-            let line =
-                serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
-                    message: format!("serialize message: {e}"),
-                })?;
+            let line = serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
+                message: format!("serialize message: {e}"),
+            })?;
             content.push_str(&line);
             content.push('\n');
         }
@@ -188,11 +191,13 @@ pub(crate) async fn read_messages_from_file(path: &Path) -> Result<Vec<Message>,
     let mut lines = reader.lines();
     let mut messages = Vec::new();
 
-    while let Some(line) = lines.next_line().await.map_err(|e| {
-        SessionError::TranscriptError {
+    while let Some(line) = lines
+        .next_line()
+        .await
+        .map_err(|e| SessionError::TranscriptError {
             message: format!("read line: {e}"),
-        }
-    })? {
+        })?
+    {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -235,8 +240,14 @@ mod tests {
         let (_dir, store) = temp_store();
         let session_id = SessionId::new();
 
-        store.append(&session_id, &test_message("hello")).await.unwrap();
-        store.append(&session_id, &test_message("world")).await.unwrap();
+        store
+            .append(&session_id, &test_message("hello"))
+            .await
+            .unwrap();
+        store
+            .append(&session_id, &test_message("world"))
+            .await
+            .unwrap();
         store.append(&session_id, &test_message("!")).await.unwrap();
 
         let messages = store.read_all(&session_id).await.unwrap();
@@ -295,7 +306,10 @@ mod tests {
         let (dir, store) = temp_store();
         let session_id = SessionId::new();
 
-        store.append(&session_id, &test_message("test")).await.unwrap();
+        store
+            .append(&session_id, &test_message("test"))
+            .await
+            .unwrap();
 
         // Read the raw file and verify each line is valid JSON.
         let path = dir.path().join(format!("{}.jsonl", session_id.as_str()));
@@ -334,6 +348,10 @@ mod tests {
         }
 
         let messages = store.read_all(&session_id).await.unwrap();
-        assert_eq!(messages.len(), 10, "all concurrent messages should be present");
+        assert_eq!(
+            messages.len(),
+            10,
+            "all concurrent messages should be present"
+        );
     }
 }

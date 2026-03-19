@@ -110,7 +110,10 @@ impl std::fmt::Debug for ToolInput {
             .field("name", &self.name)
             .field("arguments", &self.arguments)
             .field("session_id", &self.session_id)
-            .field("command_runner", &self.command_runner.as_ref().map(|_| ".."))
+            .field(
+                "command_runner",
+                &self.command_runner.as_ref().map(|_| ".."),
+            )
             .finish()
     }
 }

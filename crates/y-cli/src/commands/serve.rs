@@ -6,7 +6,7 @@ use anyhow::Result;
 use tracing::info;
 
 use y_service::ServiceContainer;
-use y_web::{AppState, WebConfig, create_router};
+use y_web::{create_router, AppState, WebConfig};
 
 /// CLI arguments for the serve subcommand.
 #[derive(Debug, clap::Args)]
@@ -27,10 +27,7 @@ pub async fn run(services: Arc<ServiceContainer>, args: &ServeArgs) -> Result<()
         port: args.port,
     };
 
-    let state = AppState::new(
-        services,
-        env!("CARGO_PKG_VERSION"),
-    );
+    let state = AppState::new(services, env!("CARGO_PKG_VERSION"));
 
     let app = create_router(state);
 

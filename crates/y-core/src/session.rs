@@ -254,8 +254,7 @@ pub trait ChatCheckpointStore: Send + Sync {
     ) -> Result<Vec<ChatCheckpoint>, SessionError>;
 
     /// Get the latest non-invalidated checkpoint for a session.
-    async fn latest(&self, session_id: &SessionId)
-        -> Result<Option<ChatCheckpoint>, SessionError>;
+    async fn latest(&self, session_id: &SessionId) -> Result<Option<ChatCheckpoint>, SessionError>;
 
     /// Invalidate all checkpoints after a given turn number.
     async fn invalidate_after(
@@ -336,4 +335,3 @@ pub trait ChatMessageStore: Send + Sync {
         checkpoint_id: &str,
     ) -> Result<(u32, u32), SessionError>;
 }
-

@@ -130,10 +130,7 @@ impl ChatCheckpointManager {
 
         if target.invalidated {
             return Err(SessionError::Other {
-                message: format!(
-                    "checkpoint {} is already invalidated",
-                    target.checkpoint_id
-                ),
+                message: format!("checkpoint {} is already invalidated", target.checkpoint_id),
             });
         }
 
@@ -202,10 +199,7 @@ impl ChatCheckpointManager {
     }
 
     /// Get the current turn number for a session (based on checkpoint count).
-    pub async fn current_turn(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<u32, SessionError> {
+    pub async fn current_turn(&self, session_id: &SessionId) -> Result<u32, SessionError> {
         let latest = self.checkpoint_store.latest(session_id).await?;
         Ok(latest.map_or(0, |cp| cp.turn_number))
     }
@@ -221,8 +215,10 @@ impl std::fmt::Debug for ChatCheckpointManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use y_test_utils::fixtures::{make_user_message, make_assistant_message};
-    use y_test_utils::mock_storage::{MockDisplayTranscriptStore, MockSessionStore, MockTranscriptStore};
+    use y_test_utils::fixtures::{make_assistant_message, make_user_message};
+    use y_test_utils::mock_storage::{
+        MockDisplayTranscriptStore, MockSessionStore, MockTranscriptStore,
+    };
 
     /// In-memory `ChatCheckpointStore` for tests.
     #[derive(Debug, Default)]
@@ -408,10 +404,7 @@ mod tests {
 
         // Rollback to turn 1 (undoing turns 2 and 3).
         let checkpoints = mgr.list_checkpoints(&sid).await.unwrap();
-        let turn1_cp = checkpoints
-            .iter()
-            .find(|cp| cp.turn_number == 1)
-            .unwrap();
+        let turn1_cp = checkpoints.iter().find(|cp| cp.turn_number == 1).unwrap();
 
         let result = mgr
             .rollback_to(&sid, &turn1_cp.checkpoint_id)

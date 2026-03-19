@@ -68,8 +68,7 @@ impl ChromeLauncher {
         info!(path = %exe.display(), port = actual_port, "launching Chrome");
 
         // Create a temporary user-data-dir so multiple instances don't clash.
-        let user_data_dir = std::env::temp_dir()
-            .join(format!("y-agent-chrome-{actual_port}"));
+        let user_data_dir = std::env::temp_dir().join(format!("y-agent-chrome-{actual_port}"));
         std::fs::create_dir_all(&user_data_dir).ok();
 
         let mut cmd = Command::new(&exe);
@@ -98,7 +97,10 @@ impl ChromeLauncher {
             .kill_on_drop(true)
             .spawn()?;
 
-        let mut launcher = Self { child, port: actual_port };
+        let mut launcher = Self {
+            child,
+            port: actual_port,
+        };
 
         // Wait for CDP to become ready.
         launcher.wait_ready(Duration::from_secs(15)).await?;
@@ -240,10 +242,7 @@ fn detect_chrome() -> Option<PathBuf> {
         }
         // For Linux, also check $PATH via `which`.
         if cfg!(not(target_os = "macos")) && cfg!(not(target_os = "windows")) {
-            if let Ok(output) = std::process::Command::new("which")
-                .arg(candidate)
-                .output()
-            {
+            if let Ok(output) = std::process::Command::new("which").arg(candidate).output() {
                 if output.status.success() {
                     let found = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if !found.is_empty() {
@@ -270,4 +269,3 @@ fn find_free_port() -> Option<u16> {
     drop(listener);
     Some(port)
 }
-

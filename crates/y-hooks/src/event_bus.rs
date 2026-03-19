@@ -107,11 +107,7 @@ impl EventBus {
         let id = self.next_subscriber_id.fetch_add(1, Ordering::SeqCst);
         let (sender, receiver) = mpsc::channel(self.capacity);
 
-        let entry = SubscriberEntry {
-            id,
-            filter,
-            sender,
-        };
+        let entry = SubscriberEntry { id, filter, sender };
 
         self.subscribers.write().await.push(entry);
 
@@ -164,7 +160,10 @@ impl EventBus {
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     self.metrics.dropped.fetch_add(1, Ordering::Relaxed);
-                    tracing::warn!(subscriber_id = entry.id, "subscriber channel full, event dropped");
+                    tracing::warn!(
+                        subscriber_id = entry.id,
+                        "subscriber channel full, event dropped"
+                    );
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     to_remove.push(entry.id);

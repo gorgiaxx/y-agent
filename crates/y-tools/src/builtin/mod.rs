@@ -98,7 +98,12 @@ mod tests {
         let config = RetrievalConfig::default();
         let retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
         let knowledge = Arc::new(Mutex::new(InjectKnowledge::new(retriever)));
-        register_builtin_tools(&registry, y_browser::BrowserConfig::default(), Some(knowledge)).await;
+        register_builtin_tools(
+            &registry,
+            y_browser::BrowserConfig::default(),
+            Some(knowledge),
+        )
+        .await;
         // 7 + knowledge_search = 8
         assert_eq!(registry.len().await, 8);
     }
@@ -117,4 +122,3 @@ mod tests {
         assert!(names.contains(&"tool_search"));
     }
 }
-

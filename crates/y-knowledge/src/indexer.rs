@@ -56,7 +56,9 @@ impl VectorIndexer {
         _name: &str,
         _vector_size: u64,
     ) -> Result<(), KnowledgeError> {
-        tracing::warn!("VectorIndexer: create_collection is a no-op (enable vector_qdrant feature)");
+        tracing::warn!(
+            "VectorIndexer: create_collection is a no-op (enable vector_qdrant feature)"
+        );
         Ok(())
     }
 
@@ -71,11 +73,7 @@ impl VectorIndexer {
     }
 
     /// Delete points (no-op without Qdrant).
-    pub async fn delete(
-        &self,
-        _collection: &str,
-        _ids: &[String],
-    ) -> Result<(), KnowledgeError> {
+    pub async fn delete(&self, _collection: &str, _ids: &[String]) -> Result<(), KnowledgeError> {
         tracing::warn!("VectorIndexer: delete is a no-op (enable vector_qdrant feature)");
         Ok(())
     }
@@ -98,7 +96,9 @@ impl VectorIndexer {
 
     /// Delete a collection (no-op without Qdrant).
     pub async fn delete_collection(&self, _name: &str) -> Result<(), KnowledgeError> {
-        tracing::warn!("VectorIndexer: delete_collection is a no-op (enable vector_qdrant feature)");
+        tracing::warn!(
+            "VectorIndexer: delete_collection is a no-op (enable vector_qdrant feature)"
+        );
         Ok(())
     }
 }
@@ -110,9 +110,8 @@ impl VectorIndexer {
 #[cfg(feature = "vector_qdrant")]
 use qdrant_client::{
     qdrant::{
-        CreateCollectionBuilder, DeleteCollectionBuilder, DeletePointsBuilder, Distance,
-        Filter, PointStruct, PointsIdsList, QueryPointsBuilder, UpsertPointsBuilder,
-        VectorParamsBuilder,
+        CreateCollectionBuilder, DeleteCollectionBuilder, DeletePointsBuilder, Distance, Filter,
+        PointStruct, PointsIdsList, QueryPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
     },
     Qdrant,
 };
@@ -139,9 +138,11 @@ impl VectorIndexer {
         if let Some(key) = api_key {
             builder = builder.api_key(key);
         }
-        let client = builder.build().map_err(|e| KnowledgeError::VectorStoreError {
-            message: format!("failed to connect to Qdrant: {e}"),
-        })?;
+        let client = builder
+            .build()
+            .map_err(|e| KnowledgeError::VectorStoreError {
+                message: format!("failed to connect to Qdrant: {e}"),
+            })?;
         Ok(Self { client })
     }
 
@@ -204,11 +205,7 @@ impl VectorIndexer {
     }
 
     /// Delete points by ID from a collection.
-    pub async fn delete(
-        &self,
-        collection: &str,
-        ids: &[String],
-    ) -> Result<(), KnowledgeError> {
+    pub async fn delete(&self, collection: &str, ids: &[String]) -> Result<(), KnowledgeError> {
         let point_ids: Vec<qdrant_client::qdrant::PointId> = ids
             .iter()
             .map(|id| qdrant_client::qdrant::PointId::from(id.clone()))
@@ -216,8 +213,7 @@ impl VectorIndexer {
 
         self.client
             .delete_points(
-                DeletePointsBuilder::new(collection)
-                    .points(PointsIdsList { ids: point_ids }),
+                DeletePointsBuilder::new(collection).points(PointsIdsList { ids: point_ids }),
             )
             .await
             .map_err(|e| KnowledgeError::VectorStoreError {
@@ -414,4 +410,3 @@ mod tests {
         assert!(indexer.delete_collection("test").await.is_ok());
     }
 }
-

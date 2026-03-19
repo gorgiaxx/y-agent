@@ -63,10 +63,7 @@ impl SessionManager {
             let max_depth = self.config.read().unwrap().max_depth;
             if parent.depth >= max_depth {
                 return Err(SessionManagerError::Config {
-                    message: format!(
-                        "maximum tree depth {} exceeded",
-                        max_depth
-                    ),
+                    message: format!("maximum tree depth {} exceeded", max_depth),
                 });
             }
         }
@@ -77,10 +74,7 @@ impl SessionManager {
 
     /// Get a session by ID.
     #[instrument(skip(self), fields(session_id = %id))]
-    pub async fn get_session(
-        &self,
-        id: &SessionId,
-    ) -> Result<SessionNode, SessionManagerError> {
+    pub async fn get_session(&self, id: &SessionId) -> Result<SessionNode, SessionManagerError> {
         Ok(self.session_store.get(id).await?)
     }
 
@@ -212,10 +206,7 @@ impl SessionManager {
         let max_depth = self.config.read().unwrap().max_depth;
         if parent.depth >= max_depth {
             return Err(SessionManagerError::Config {
-                message: format!(
-                    "maximum tree depth {} exceeded",
-                    max_depth
-                ),
+                message: format!("maximum tree depth {} exceeded", max_depth),
             });
         }
 
@@ -367,9 +358,7 @@ mod tests {
         let session_store = Arc::new(y_storage::SqliteSessionStore::new(pool));
         let transcript_dir = tempfile::tempdir().unwrap();
         let transcript_path = transcript_dir.into_path();
-        let transcript_store = Arc::new(y_storage::JsonlTranscriptStore::new(
-            &transcript_path,
-        ));
+        let transcript_store = Arc::new(y_storage::JsonlTranscriptStore::new(&transcript_path));
         let display_transcript_store = Arc::new(y_storage::JsonlDisplayTranscriptStore::new(
             &transcript_path,
         ));
@@ -515,10 +504,7 @@ mod tests {
             .await
             .unwrap();
 
-        let branch = mgr
-            .branch(&main.id, Some("Branch 1".into()))
-            .await
-            .unwrap();
+        let branch = mgr.branch(&main.id, Some("Branch 1".into())).await.unwrap();
 
         assert_eq!(branch.session_type, SessionType::Branch);
         assert_eq!(branch.parent_id, Some(main.id.clone()));

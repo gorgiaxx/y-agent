@@ -15,9 +15,7 @@ use encoding_rs::Encoding;
 /// content is converted to UTF-8.
 ///
 /// Returns the UTF-8 content and the name of the detected encoding.
-pub async fn read_file_as_utf8(
-    path: &str,
-) -> Result<(String, &'static str), KnowledgeError> {
+pub async fn read_file_as_utf8(path: &str) -> Result<(String, &'static str), KnowledgeError> {
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|e| KnowledgeError::IngestionError {
@@ -137,13 +135,9 @@ mod tests {
         let dir = std::env::temp_dir().join("y-knowledge-test-encoding");
         let _ = tokio::fs::create_dir_all(&dir).await;
         let path = dir.join("utf8.txt");
-        tokio::fs::write(&path, "Hello, UTF-8! 你好")
-            .await
-            .unwrap();
+        tokio::fs::write(&path, "Hello, UTF-8! 你好").await.unwrap();
 
-        let (content, encoding) = read_file_as_utf8(path.to_str().unwrap())
-            .await
-            .unwrap();
+        let (content, encoding) = read_file_as_utf8(path.to_str().unwrap()).await.unwrap();
         assert_eq!(content, "Hello, UTF-8! 你好");
         assert_eq!(encoding, "UTF-8");
 
@@ -158,12 +152,11 @@ mod tests {
 
         // Write Big5-encoded content
         let big5 = encoding_rs::BIG5;
-        let (encoded, _, _) = big5.encode("這是繁體中文測試文件的內容。包含多個句子用於測試編碼偵測。");
+        let (encoded, _, _) =
+            big5.encode("這是繁體中文測試文件的內容。包含多個句子用於測試編碼偵測。");
         tokio::fs::write(&path, &*encoded).await.unwrap();
 
-        let (content, encoding) = read_file_as_utf8(path.to_str().unwrap())
-            .await
-            .unwrap();
+        let (content, encoding) = read_file_as_utf8(path.to_str().unwrap()).await.unwrap();
         assert!(content.contains("繁體中文"), "got: {content}");
         assert!(
             encoding == "Big5" || encoding == "big5",

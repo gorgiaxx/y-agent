@@ -151,9 +151,7 @@ impl ToolTaxonomy {
     pub fn root_summary(&self) -> String {
         let mut lines = Vec::new();
         lines.push("## Tool Categories\n".to_string());
-        lines.push(
-            "Use `tool_search` with a category or keyword to discover tools.\n".to_string(),
-        );
+        lines.push("Use `tool_search` with a category or keyword to discover tools.\n".to_string());
         lines.push("| Category | Description |".to_string());
         lines.push("|----------|-------------|".to_string());
 
@@ -190,7 +188,10 @@ impl ToolTaxonomy {
                 } else {
                     format!(" — tools: {}", sub.tools.join(", "))
                 };
-                lines.push(format!("- **{}** ({}): {}{}", sub.label, sk, sub.description, tools_str));
+                lines.push(format!(
+                    "- **{}** ({}): {}{}",
+                    sub.label, sk, sub.description, tools_str
+                ));
             }
         }
 

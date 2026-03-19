@@ -193,12 +193,7 @@ impl<T: Tokenizer> HybridRetriever<T> {
     }
 
     /// Index a chunk with an embedding vector and quality score.
-    pub fn index_with_embedding(
-        &mut self,
-        chunk: Chunk,
-        embedding: Vec<f32>,
-        quality_score: f32,
-    ) {
+    pub fn index_with_embedding(&mut self, chunk: Chunk, embedding: Vec<f32>, quality_score: f32) {
         self.embeddings.insert(chunk.id.clone(), embedding);
         self.index_with_quality(chunk, quality_score);
     }
@@ -354,14 +349,13 @@ impl<T: Tokenizer> HybridRetriever<T> {
             .iter()
             .filter(|c| Self::matches_filter(c, filter))
             .filter_map(|c| {
-                let score = if let (Some(qe), Some(ce)) =
-                    (query_embedding, self.embeddings.get(&c.id))
-                {
-                    cosine_similarity(qe, ce)
-                } else {
-                    let content_lower = c.content.to_lowercase();
-                    Self::compute_text_similarity(&query_lower, &content_lower)
-                };
+                let score =
+                    if let (Some(qe), Some(ce)) = (query_embedding, self.embeddings.get(&c.id)) {
+                        cosine_similarity(qe, ce)
+                    } else {
+                        let content_lower = c.content.to_lowercase();
+                        Self::compute_text_similarity(&query_lower, &content_lower)
+                    };
 
                 if score > 0.0 {
                     Some(RetrievalResult {
@@ -399,35 +393,29 @@ impl<T: Tokenizer> HybridRetriever<T> {
             .collect();
 
         // Normalize BM25 scores to 0-1 range.
-        let max_bm25 = bm25_results
-            .iter()
-            .map(|r| r.score)
-            .fold(0.0_f64, f64::max);
+        let max_bm25 = bm25_results.iter().map(|r| r.score).fold(0.0_f64, f64::max);
 
         self.chunks
             .iter()
             .filter(|c| Self::matches_filter(c, filter))
             .filter_map(|c| {
                 // Semantic score: use cosine similarity when embeddings available.
-                let semantic = if let (Some(qe), Some(ce)) =
-                    (query_embedding, self.embeddings.get(&c.id))
-                {
-                    cosine_similarity(qe, ce)
-                } else {
-                    let content_lower = c.content.to_lowercase();
-                    Self::compute_text_similarity(&query_lower, &content_lower)
-                };
+                let semantic =
+                    if let (Some(qe), Some(ce)) = (query_embedding, self.embeddings.get(&c.id)) {
+                        cosine_similarity(qe, ce)
+                    } else {
+                        let content_lower = c.content.to_lowercase();
+                        Self::compute_text_similarity(&query_lower, &content_lower)
+                    };
 
                 // BM25 score (normalized).
-                let bm25 = bm25_map
-                    .get(c.id.as_str())
-                    .copied()
-                    .unwrap_or(0.0);
+                let bm25 = bm25_map.get(c.id.as_str()).copied().unwrap_or(0.0);
                 let bm25_normalized = if max_bm25 > 0.0 { bm25 / max_bm25 } else { 0.0 };
 
                 #[allow(clippy::cast_possible_truncation)]
                 let blended = (self.config.vector_weight * f64::from(semantic)
-                    + self.config.bm25_weight * bm25_normalized) as f32;
+                    + self.config.bm25_weight * bm25_normalized)
+                    as f32;
 
                 if blended > 0.0 {
                     Some(RetrievalResult {
@@ -614,13 +602,22 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 #[async_trait::async_trait]
 pub trait SummaryGenerator: Send + Sync {
     /// Generate a ~100 token L0 summary of the content.
-    async fn generate_l0_summary(&self, content: &str) -> Result<String, crate::error::KnowledgeError>;
+    async fn generate_l0_summary(
+        &self,
+        content: &str,
+    ) -> Result<String, crate::error::KnowledgeError>;
 
     /// Generate a ~500 token L1 overview of the content.
-    async fn generate_l1_overview(&self, content: &str) -> Result<String, crate::error::KnowledgeError>;
+    async fn generate_l1_overview(
+        &self,
+        content: &str,
+    ) -> Result<String, crate::error::KnowledgeError>;
 
     /// Generate FAQ questions for retrieval augmentation.
-    async fn generate_faq(&self, content: &str) -> Result<Vec<String>, crate::error::KnowledgeError>;
+    async fn generate_faq(
+        &self,
+        content: &str,
+    ) -> Result<Vec<String>, crate::error::KnowledgeError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -672,7 +669,10 @@ mod tests {
         let mut retriever = make_retriever();
         retriever.config.strategy = SearchStrategy::KeywordSearch;
 
-        let filter = RetrievalFilter { limit: 10, ..Default::default() };
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
         let results = retriever.search("Rust error", &filter);
         assert!(!results.is_empty(), "keyword search should find results");
         assert!(results[0].bm25_score.is_some());
@@ -683,7 +683,10 @@ mod tests {
         let mut retriever = make_retriever();
         retriever.config.strategy = SearchStrategy::SemanticSearch;
 
-        let filter = RetrievalFilter { limit: 10, ..Default::default() };
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
         let results = retriever.search("error handling", &filter);
         assert!(!results.is_empty(), "semantic search should find results");
         assert!(results[0].vector_score.is_some());
@@ -692,7 +695,10 @@ mod tests {
     #[test]
     fn test_retrieval_hybrid_blend() {
         let retriever = make_retriever();
-        let filter = RetrievalFilter { limit: 10, ..Default::default() };
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
         let results = retriever.search("Rust", &filter);
         assert!(!results.is_empty(), "blend search should find results");
         // Blend results should have both scores.
@@ -721,7 +727,10 @@ mod tests {
     #[test]
     fn test_retrieval_respects_limit() {
         let retriever = make_retriever();
-        let filter = RetrievalFilter { limit: 1, ..Default::default() };
+        let filter = RetrievalFilter {
+            limit: 1,
+            ..Default::default()
+        };
         let results = retriever.search("Rust", &filter);
         assert!(results.len() <= 1);
     }
@@ -738,12 +747,30 @@ mod tests {
         let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
 
         // Two chunks from the same document + section.
-        retriever.index(make_chunk_with_section("c1", "Rust error handling step 1", "rust", 0));
-        retriever.index(make_chunk_with_section("c2", "Rust error handling step 2", "rust", 0));
+        retriever.index(make_chunk_with_section(
+            "c1",
+            "Rust error handling step 1",
+            "rust",
+            0,
+        ));
+        retriever.index(make_chunk_with_section(
+            "c2",
+            "Rust error handling step 2",
+            "rust",
+            0,
+        ));
         // Different section.
-        retriever.index(make_chunk_with_section("c3", "Rust error recovery", "rust", 1));
+        retriever.index(make_chunk_with_section(
+            "c3",
+            "Rust error recovery",
+            "rust",
+            1,
+        ));
 
-        let filter = RetrievalFilter { limit: 10, ..Default::default() };
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
         let results = retriever.search("Rust error", &filter);
 
         // After dedup, should have at most 2 results (one per section).
@@ -767,7 +794,10 @@ mod tests {
         retriever.index(make_chunk("c1", "Rust programming", "rust"));
         retriever.index(make_chunk("c2", "Python programming", "python"));
 
-        let filter = RetrievalFilter { limit: 10, ..Default::default() };
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
         // "Rust" alone may not score above 0.9 in blend mode.
         let results = retriever.search("Rust", &filter);
         for r in &results {
@@ -796,11 +826,17 @@ mod tests {
         retriever.index_with_quality(c1, 1.0); // High quality.
         retriever.index_with_quality(c2, 0.1); // Low quality.
 
-        let filter = RetrievalFilter { limit: 10, ..Default::default() };
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
         let results = retriever.search("Rust error", &filter);
         assert!(results.len() >= 2);
         // Higher quality should rank first.
-        assert_eq!(results[0].chunk.id, "c1", "higher quality should rank first");
+        assert_eq!(
+            results[0].chunk.id, "c1",
+            "higher quality should rank first"
+        );
     }
 
     // --- Search Strategy ---
@@ -872,11 +908,17 @@ mod tests {
 
         // Query embedding close to c1.
         let query_embedding = vec![0.95, 0.05, 0.0];
-        let filter = RetrievalFilter { limit: 10, ..Default::default() };
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
         let results = retriever.search_with_embedding("ml", Some(&query_embedding), &filter);
 
         assert!(!results.is_empty());
-        assert_eq!(results[0].chunk.id, "c1", "closest embedding should rank first");
+        assert_eq!(
+            results[0].chunk.id, "c1",
+            "closest embedding should rank first"
+        );
         assert!(
             results[0].vector_score.unwrap() > results.last().unwrap().vector_score.unwrap(),
             "first result should have higher vector score"
@@ -900,8 +942,12 @@ mod tests {
         retriever.index_with_embedding(c2, vec![0.1, 0.9], 1.0);
 
         let query_embedding = vec![0.85, 0.15];
-        let filter = RetrievalFilter { limit: 10, ..Default::default() };
-        let results = retriever.search_with_embedding("Rust error", Some(&query_embedding), &filter);
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
+        let results =
+            retriever.search_with_embedding("Rust error", Some(&query_embedding), &filter);
 
         assert!(!results.is_empty());
         // Blend should have both vector and BM25 scores.

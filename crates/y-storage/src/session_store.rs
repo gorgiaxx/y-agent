@@ -307,9 +307,11 @@ impl SessionRow {
         let session_type = str_to_session_type(&self.session_type)?;
         let state = str_to_state(&self.state)?;
 
-        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
+        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at)
+            .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
-        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at).map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at)
+            .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
 
         Ok(SessionNode {
             id: SessionId::from_string(self.id),

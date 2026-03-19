@@ -134,7 +134,11 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
 
         // Accumulate duration breakdowns from observation metadata.
         for obs in &observations {
-            if let Some(dur) = obs.metadata.get("duration_ms").and_then(serde_json::Value::as_u64) {
+            if let Some(dur) = obs
+                .metadata
+                .get("duration_ms")
+                .and_then(serde_json::Value::as_u64)
+            {
                 match obs.obs_type {
                     ObservationType::Generation => trace.llm_duration_ms += dur,
                     ObservationType::ToolCall => trace.tool_duration_ms += dur,
@@ -146,7 +150,10 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
         // Merge the final output into trace metadata (preserve existing keys).
         if let Some(text) = output {
             if let serde_json::Value::Object(ref mut map) = trace.metadata {
-                map.insert("output".to_string(), serde_json::Value::String(text.to_string()));
+                map.insert(
+                    "output".to_string(),
+                    serde_json::Value::String(text.to_string()),
+                );
             } else {
                 trace.metadata = serde_json::json!({ "output": text });
             }

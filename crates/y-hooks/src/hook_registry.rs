@@ -117,9 +117,7 @@ impl HookRegistry {
             });
 
             if let Err(e) = handle.await {
-                self.metrics
-                    .handler_errors
-                    .fetch_add(1, Ordering::Relaxed);
+                self.metrics.handler_errors.fetch_add(1, Ordering::Relaxed);
                 tracing::error!(
                     hook_point = %hook_point,
                     error = %e,

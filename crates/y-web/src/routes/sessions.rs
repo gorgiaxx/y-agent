@@ -91,7 +91,10 @@ async fn create_session(
         .await
         .map_err(|e| ApiError::Internal(format!("{e}")))?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(session).unwrap_or_default())))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(session).unwrap_or_default()),
+    ))
 }
 
 /// `GET /api/v1/sessions/:id`
@@ -143,7 +146,10 @@ async fn branch_session(
         .await
         .map_err(|e| ApiError::Internal(format!("branch failed: {e}")))?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(branch).unwrap_or_default())))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(branch).unwrap_or_default()),
+    ))
 }
 
 /// `GET /api/v1/sessions/:id/messages`
@@ -191,12 +197,6 @@ pub fn router() -> Router<AppState> {
             "/api/v1/sessions/{session_id}/archive",
             post(archive_session),
         )
-        .route(
-            "/api/v1/sessions/{session_id}/branch",
-            post(branch_session),
-        )
-        .route(
-            "/api/v1/sessions/{session_id}/messages",
-            get(list_messages),
-        )
+        .route("/api/v1/sessions/{session_id}/branch", post(branch_session))
+        .route("/api/v1/sessions/{session_id}/messages", get(list_messages))
 }

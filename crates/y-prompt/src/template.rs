@@ -79,8 +79,7 @@ impl PromptTemplate {
             .filter(|s| s.enabled)
             .filter(|s| {
                 // Exclude if the overlay says so.
-                overlay
-                    .is_none_or(|o| !o.exclude.contains(&s.section_id))
+                overlay.is_none_or(|o| !o.exclude.contains(&s.section_id))
             })
             .map(|s| {
                 let priority = overlay

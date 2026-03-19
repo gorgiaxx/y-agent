@@ -121,10 +121,14 @@ impl AgentInstance {
     pub fn transition(&mut self, next: InstanceState) -> Result<(), MultiAgentError> {
         let valid = matches!(
             (self.state, next),
-            (InstanceState::Creating, InstanceState::Configuring | InstanceState::Running)
-| (InstanceState::Configuring, InstanceState::Running) |
-(InstanceState::Running,
-InstanceState::Completed | InstanceState::Failed | InstanceState::Interrupted)
+            (
+                InstanceState::Creating,
+                InstanceState::Configuring | InstanceState::Running
+            ) | (InstanceState::Configuring, InstanceState::Running)
+                | (
+                    InstanceState::Running,
+                    InstanceState::Completed | InstanceState::Failed | InstanceState::Interrupted
+                )
         );
 
         if valid {
@@ -419,22 +423,31 @@ impl AgentDelegator for AgentPool {
     ) -> Result<DelegationOutput, DelegationError> {
         // Step 1: Resolve agent definition from registry (scoped to drop guard before await)
         let definition = {
-            let registry = self.registry.read().map_err(|_| DelegationError::DelegationFailed {
-                message: "registry lock poisoned".to_string(),
-            })?;
+            let registry = self
+                .registry
+                .read()
+                .map_err(|_| DelegationError::DelegationFailed {
+                    message: "registry lock poisoned".to_string(),
+                })?;
 
-            registry.get(agent_name).ok_or_else(|| DelegationError::AgentNotFound {
-                name: agent_name.to_string(),
-            })?.clone()
+            registry
+                .get(agent_name)
+                .ok_or_else(|| DelegationError::AgentNotFound {
+                    name: agent_name.to_string(),
+                })?
+                .clone()
         };
 
         // Step 2: Build AgentRunConfig from definition
-        let runner = self.runner.as_ref().ok_or_else(|| DelegationError::DelegationFailed {
-            message: format!(
-                "no AgentRunner configured -- cannot execute agent '{agent_name}'. \
+        let runner = self
+            .runner
+            .as_ref()
+            .ok_or_else(|| DelegationError::DelegationFailed {
+                message: format!(
+                    "no AgentRunner configured -- cannot execute agent '{agent_name}'. \
                  Call AgentPool::set_runner() at startup.",
-            ),
-        })?;
+                ),
+            })?;
 
         let config = AgentRunConfig {
             agent_name: definition.id.clone(),
@@ -636,10 +649,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl AgentRunner for MockRunner {
-            async fn run(
-                &self,
-                config: AgentRunConfig,
-            ) -> Result<AgentRunOutput, DelegationError> {
+            async fn run(&self, config: AgentRunConfig) -> Result<AgentRunOutput, DelegationError> {
                 Ok(AgentRunOutput {
                     text: format!("agent '{}' responded", config.agent_name),
                     tokens_used: 10,
@@ -697,10 +707,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl AgentRunner for MockRunner {
-            async fn run(
-                &self,
-                config: AgentRunConfig,
-            ) -> Result<AgentRunOutput, DelegationError> {
+            async fn run(&self, config: AgentRunConfig) -> Result<AgentRunOutput, DelegationError> {
                 Ok(AgentRunOutput {
                     text: format!("processed input: {}", config.input),
                     tokens_used: 15,

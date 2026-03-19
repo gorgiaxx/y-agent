@@ -294,24 +294,19 @@ impl AgentService {
                     let llm_elapsed_ms = llm_start.elapsed().as_millis() as u64;
                     let resp_input_tokens = u64::from(response.usage.input_tokens);
                     let resp_output_tokens = u64::from(response.usage.output_tokens);
-                    let cost =
-                        CostService::compute_cost(resp_input_tokens, resp_output_tokens);
+                    let cost = CostService::compute_cost(resp_input_tokens, resp_output_tokens);
 
                     cumulative_input_tokens += resp_input_tokens;
                     cumulative_output_tokens += resp_output_tokens;
                     cumulative_cost += cost;
                     final_model = response.model.clone();
-                    final_provider_id =
-                        response.provider_id.as_ref().map(|id| id.to_string());
+                    final_provider_id = response.provider_id.as_ref().map(|id| id.to_string());
 
                     // Prompt preview.
                     let prompt_preview = response
                         .raw_request
                         .as_ref()
-                        .map(|v| {
-                            serde_json::to_string_pretty(v)
-                                .unwrap_or_else(|_| v.to_string())
-                        })
+                        .map(|v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()))
                         .unwrap_or_else(|| prompt_preview_fallback.clone());
 
                     // Response text for diagnostics.
@@ -333,13 +328,10 @@ impl AgentService {
 
                     // Diagnostics: record generation observation.
                     if let Some(tid) = trace_id {
-                        let diag_input = response
-                            .raw_request
-                            .clone()
-                            .unwrap_or_else(|| {
-                                serde_json::from_str(&prompt_preview_fallback)
-                                    .unwrap_or(serde_json::Value::Null)
-                            });
+                        let diag_input = response.raw_request.clone().unwrap_or_else(|| {
+                            serde_json::from_str(&prompt_preview_fallback)
+                                .unwrap_or(serde_json::Value::Null)
+                        });
                         let diag_output = response.raw_response.clone().unwrap_or_else(|| {
                             serde_json::json!({
                                 "content": response.content.clone().unwrap_or_default(),
@@ -381,8 +373,11 @@ impl AgentService {
                     }
 
                     // Gather tool call names for the progress event.
-                    let native_tc_names: Vec<String> =
-                        response.tool_calls.iter().map(|tc| tc.name.clone()).collect();
+                    let native_tc_names: Vec<String> = response
+                        .tool_calls
+                        .iter()
+                        .map(|tc| tc.name.clone())
+                        .collect();
 
                     // Handle native tool calls.
                     if !response.tool_calls.is_empty() {
@@ -403,8 +398,7 @@ impl AgentService {
 
                         let mut meta = serde_json::json!({ "model": response.model });
                         if let Some(ref rc) = response.reasoning_content {
-                            meta["reasoning_content"] =
-                                serde_json::Value::String(rc.clone());
+                            meta["reasoning_content"] = serde_json::Value::String(rc.clone());
                         }
                         let assistant_msg = Message {
                             message_id: y_core::types::generate_message_id(),
@@ -425,24 +419,20 @@ impl AgentService {
                             let tool_result = Self::execute_tool_call(
                                 container,
                                 tc,
-                                session_id_ref
-                                    .unwrap_or(&SessionId("agent".into())),
+                                session_id_ref.unwrap_or(&SessionId("agent".into())),
                             )
                             .await;
-                            let tool_elapsed_ms =
-                                tool_start.elapsed().as_millis() as u64;
+                            let tool_elapsed_ms = tool_start.elapsed().as_millis() as u64;
 
                             let (tool_success, result_content) = match &tool_result {
                                 Ok(output) => {
-                                    let content =
-                                        serde_json::to_string(&output.content)
-                                            .unwrap_or_else(|_| "{}".to_string());
+                                    let content = serde_json::to_string(&output.content)
+                                        .unwrap_or_else(|_| "{}".to_string());
                                     (output.success, content)
                                 }
                                 Err(e) => {
                                     let content =
-                                        serde_json::json!({ "error": e.to_string() })
-                                            .to_string();
+                                        serde_json::json!({ "error": e.to_string() }).to_string();
                                     (false, content)
                                 }
                             };
@@ -460,21 +450,18 @@ impl AgentService {
                                     name: tc.name.clone(),
                                     success: tool_success,
                                     duration_ms: tool_elapsed_ms,
-                                    input_preview: serde_json::to_string(
-                                        &tc.arguments,
-                                    )
-                                    .unwrap_or_default(),
+                                    input_preview: serde_json::to_string(&tc.arguments)
+                                        .unwrap_or_default(),
                                     result_preview: result_content.clone(),
                                 });
                             }
 
                             // Diagnostics: record tool call observation.
                             if let Some(tid) = trace_id {
-                                let tool_output_json: serde_json::Value =
-                                    serde_json::from_str(&result_content)
-                                        .unwrap_or(serde_json::Value::String(
-                                            result_content.clone(),
-                                        ));
+                                let tool_output_json: serde_json::Value = serde_json::from_str(
+                                    &result_content,
+                                )
+                                .unwrap_or(serde_json::Value::String(result_content.clone()));
                                 let _ = container
                                     .diagnostics
                                     .on_tool_call(
@@ -530,8 +517,7 @@ impl AgentService {
                                         response_text: response_text_raw.clone(),
                                     });
                                 }
-                                let mut meta =
-                                    serde_json::json!({ "model": response.model });
+                                let mut meta = serde_json::json!({ "model": response.model });
                                 if let Some(ref rc) = response.reasoning_content {
                                     meta["reasoning_content"] =
                                         serde_json::Value::String(rc.clone());
@@ -554,10 +540,7 @@ impl AgentService {
                                 let mut result_blocks = Vec::new();
                                 for ptc in &parse_result.tool_calls {
                                     let tc = ToolCallRequest {
-                                        id: format!(
-                                            "prompt_{}",
-                                            uuid::Uuid::new_v4()
-                                        ),
+                                        id: format!("prompt_{}", uuid::Uuid::new_v4()),
                                         name: ptc.name.clone(),
                                         arguments: ptc.arguments.clone(),
                                     };
@@ -566,34 +549,25 @@ impl AgentService {
                                     let tool_result = Self::execute_tool_call(
                                         container,
                                         &tc,
-                                        session_id_ref
-                                            .unwrap_or(&SessionId("agent".into())),
+                                        session_id_ref.unwrap_or(&SessionId("agent".into())),
                                     )
                                     .await;
-                                    let tool_elapsed_ms =
-                                        tool_start.elapsed().as_millis() as u64;
+                                    let tool_elapsed_ms = tool_start.elapsed().as_millis() as u64;
 
-                                    let (tool_success, result_content) =
-                                        match &tool_result {
-                                            Ok(output) => {
-                                                let content =
-                                                    serde_json::to_string(
-                                                        &output.content,
-                                                    )
-                                                    .unwrap_or_else(|_| {
-                                                        "{}".to_string()
-                                                    });
-                                                (output.success, content)
-                                            }
-                                            Err(e) => {
-                                                let content =
-                                                    serde_json::json!({
-                                                        "error": e.to_string()
-                                                    })
-                                                    .to_string();
-                                                (false, content)
-                                            }
-                                        };
+                                    let (tool_success, result_content) = match &tool_result {
+                                        Ok(output) => {
+                                            let content = serde_json::to_string(&output.content)
+                                                .unwrap_or_else(|_| "{}".to_string());
+                                            (output.success, content)
+                                        }
+                                        Err(e) => {
+                                            let content = serde_json::json!({
+                                                "error": e.to_string()
+                                            })
+                                            .to_string();
+                                            (false, content)
+                                        }
+                                    };
 
                                     tool_calls_executed.push(ToolCallRecord {
                                         name: tc.name.clone(),
@@ -607,10 +581,8 @@ impl AgentService {
                                             name: tc.name.clone(),
                                             success: tool_success,
                                             duration_ms: tool_elapsed_ms,
-                                            input_preview: serde_json::to_string(
-                                                &tc.arguments,
-                                            )
-                                            .unwrap_or_default(),
+                                            input_preview: serde_json::to_string(&tc.arguments)
+                                                .unwrap_or_default(),
                                             result_preview: result_content.clone(),
                                         });
                                     }
@@ -618,12 +590,9 @@ impl AgentService {
                                     // Diagnostics.
                                     if let Some(tid) = trace_id {
                                         let tool_output_json: serde_json::Value =
-                                            serde_json::from_str(&result_content)
-                                                .unwrap_or(
-                                                    serde_json::Value::String(
-                                                        result_content.clone(),
-                                                    ),
-                                                );
+                                            serde_json::from_str(&result_content).unwrap_or(
+                                                serde_json::Value::String(result_content.clone()),
+                                            );
                                         let _ = container
                                             .diagnostics
                                             .on_tool_call(
@@ -639,11 +608,10 @@ impl AgentService {
                                             .await;
                                     }
 
-                                    let result_value: serde_json::Value =
-                                        serde_json::from_str(&result_content)
-                                            .unwrap_or(serde_json::Value::String(
-                                                result_content.clone(),
-                                            ));
+                                    let result_value: serde_json::Value = serde_json::from_str(
+                                        &result_content,
+                                    )
+                                    .unwrap_or(serde_json::Value::String(result_content.clone()));
                                     result_blocks.push(format_tool_result(
                                         &tc.name,
                                         tool_success,
@@ -694,17 +662,16 @@ impl AgentService {
                     }
 
                     // Sanitize: strip any remaining <tool_call> XML.
-                    let content =
-                        if config.tool_calling_mode == ToolCallingMode::PromptBased {
-                            let stripped = strip_tool_call_blocks(&raw_content);
-                            if stripped.is_empty() {
-                                raw_content
-                            } else {
-                                stripped
-                            }
-                        } else {
+                    let content = if config.tool_calling_mode == ToolCallingMode::PromptBased {
+                        let stripped = strip_tool_call_blocks(&raw_content);
+                        if stripped.is_empty() {
                             raw_content
-                        };
+                        } else {
+                            stripped
+                        }
+                    } else {
+                        raw_content
+                    };
 
                     if let Some(tid) = trace_id {
                         let _ = container
@@ -721,8 +688,7 @@ impl AgentService {
                     };
 
                     // Compute context_window.
-                    let metadata_list =
-                        container.provider_pool().await.list_metadata();
+                    let metadata_list = container.provider_pool().await.list_metadata();
                     let ctx_window = if let Some(ref pid) = final_provider_id {
                         metadata_list
                             .iter()
@@ -767,10 +733,7 @@ impl AgentService {
     // -----------------------------------------------------------------------
 
     /// Build LLM messages by prepending system prompt from assembled context.
-    pub fn build_chat_messages(
-        assembled: &AssembledContext,
-        history: &[Message],
-    ) -> Vec<Message> {
+    pub fn build_chat_messages(assembled: &AssembledContext, history: &[Message]) -> Vec<Message> {
         let system_parts: Vec<&str> = assembled
             .items
             .iter()
@@ -825,8 +788,7 @@ impl AgentService {
         defs.iter()
             .filter(|def| {
                 let name = def.name.as_str();
-                let is_allowed =
-                    allow_all || allowed.iter().any(|a| a == name);
+                let is_allowed = allow_all || allowed.iter().any(|a| a == name);
                 let is_denied = denied.iter().any(|d| d == name);
                 is_allowed && !is_denied
             })
@@ -853,19 +815,17 @@ impl AgentService {
     ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
         // Intercept tool_search calls.
         if tc.name == "tool_search" {
-            let result =
-                crate::tool_search_orchestrator::ToolSearchOrchestrator::handle(
-                    &tc.arguments,
-                    &container.tool_registry,
-                    &container.tool_taxonomy,
-                    &container.tool_activation_set,
-                )
-                .await;
+            let result = crate::tool_search_orchestrator::ToolSearchOrchestrator::handle(
+                &tc.arguments,
+                &container.tool_registry,
+                &container.tool_taxonomy,
+                &container.tool_activation_set,
+            )
+            .await;
 
             // Sync activated tool schemas into dynamic_tool_schemas.
             if result.is_ok() {
-                let activation_set =
-                    container.tool_activation_set.read().await;
+                let activation_set = container.tool_activation_set.read().await;
                 let schemas: Vec<String> = activation_set
                     .active_definitions()
                     .iter()
@@ -879,8 +839,7 @@ impl AgentService {
                         )
                     })
                     .collect();
-                let mut dynamic =
-                    container.dynamic_tool_schemas.write().await;
+                let mut dynamic = container.dynamic_tool_schemas.write().await;
                 *dynamic = schemas;
             }
 
@@ -902,10 +861,7 @@ impl AgentService {
             name: tool_name,
             arguments: tc.arguments.clone(),
             session_id: session_id.clone(),
-            command_runner: Some(
-                Arc::clone(&container.runtime_manager)
-                    as Arc<dyn CommandRunner>,
-            ),
+            command_runner: Some(Arc::clone(&container.runtime_manager) as Arc<dyn CommandRunner>),
         };
 
         tool.execute(input).await
@@ -929,8 +885,7 @@ impl AgentService {
         use y_core::provider::{ChatResponse, FinishReason, ProviderError};
         use y_core::types::TokenUsage;
 
-        let stream_response =
-            pool.chat_completion_stream(request, route).await?;
+        let stream_response = pool.chat_completion_stream(request, route).await?;
         let raw_request = stream_response.raw_request;
         let provider_id = stream_response.provider_id;
         let model_name = stream_response.model;
@@ -1081,10 +1036,7 @@ impl ServiceAgentRunner {
 
 #[async_trait::async_trait]
 impl AgentRunner for ServiceAgentRunner {
-    async fn run(
-        &self,
-        config: AgentRunConfig,
-    ) -> Result<AgentRunOutput, DelegationError> {
+    async fn run(&self, config: AgentRunConfig) -> Result<AgentRunOutput, DelegationError> {
         let start = std::time::Instant::now();
 
         // Build messages: system_prompt + input as user message.
@@ -1101,10 +1053,7 @@ impl AgentRunner for ServiceAgentRunner {
 
         let user_content = match &config.input {
             serde_json::Value::String(s) => s.clone(),
-            other => {
-                serde_json::to_string_pretty(other)
-                    .unwrap_or_else(|_| other.to_string())
-            }
+            other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
         };
         messages.push(Message {
             message_id: y_core::types::generate_message_id(),
@@ -1171,15 +1120,11 @@ impl AgentRunner for ServiceAgentRunner {
 
         if result.content.is_empty() {
             return Err(DelegationError::DelegationFailed {
-                message: format!(
-                    "agent '{}' returned empty response",
-                    config.agent_name
-                ),
+                message: format!("agent '{}' returned empty response", config.agent_name),
             });
         }
 
-        let tokens_used =
-            result.input_tokens as u32 + result.output_tokens as u32;
+        let tokens_used = result.input_tokens as u32 + result.output_tokens as u32;
 
         Ok(AgentRunOutput {
             text: result.content,
@@ -1249,11 +1194,13 @@ mod tests {
         assert!(AgentExecutionError::LlmError("timeout".into())
             .to_string()
             .contains("timeout"));
-        assert!(AgentExecutionError::ToolLoopLimitExceeded {
-            max_iterations: 10
-        }
-        .to_string()
-        .contains("10"));
-        assert!(AgentExecutionError::Cancelled.to_string().contains("Cancelled"));
+        assert!(
+            AgentExecutionError::ToolLoopLimitExceeded { max_iterations: 10 }
+                .to_string()
+                .contains("10")
+        );
+        assert!(AgentExecutionError::Cancelled
+            .to_string()
+            .contains("Cancelled"));
     }
 }

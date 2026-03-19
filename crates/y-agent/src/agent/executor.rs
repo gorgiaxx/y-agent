@@ -347,9 +347,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(prepared.filtered.mode, AgentMode::Plan);
-        assert!(!prepared.filtered.allowed_tools.contains(&"file_write".to_string()));
-        assert!(!prepared.filtered.allowed_tools.contains(&"shell_exec".to_string()));
-        assert!(prepared.filtered.allowed_tools.contains(&"file_read".to_string()));
+        assert!(!prepared
+            .filtered
+            .allowed_tools
+            .contains(&"file_write".to_string()));
+        assert!(!prepared
+            .filtered
+            .allowed_tools
+            .contains(&"shell_exec".to_string()));
+        assert!(prepared
+            .filtered
+            .allowed_tools
+            .contains(&"file_read".to_string()));
     }
 
     /// T-MA-P6-03: Context injection with summary strategy.

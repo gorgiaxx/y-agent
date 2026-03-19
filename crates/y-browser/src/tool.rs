@@ -23,7 +23,7 @@ use crate::cdp_client::CdpClient;
 use crate::config::BrowserConfig;
 use crate::launcher::ChromeLauncher;
 use crate::security::SecurityPolicy;
-use crate::snapshot::{SnapshotFormat, truncate_output};
+use crate::snapshot::{truncate_output, SnapshotFormat};
 
 /// Maximum output characters before truncation.
 const MAX_OUTPUT_CHARS: usize = 50_000;
@@ -88,8 +88,8 @@ impl BrowserAction {
             "scroll" | "scroll_page" | "scroll_down" | "scroll_up" => Some(Self::Scroll),
             // Get full page text
             "get_page_text" | "page_text" | "get_content" | "get_page_content" | "read_page"
-            | "page_content" | "body_text" | "get_body" | "read" | "read_content"
-            | "extract" | "scrape" => Some(Self::GetPageText),
+            | "page_content" | "body_text" | "get_body" | "read" | "read_content" | "extract"
+            | "scrape" => Some(Self::GetPageText),
             // Console logs
             "get_console_logs" | "console" | "console_logs" | "logs" | "get_logs"
             | "get_errors" | "errors" => Some(Self::GetConsoleLogs),
@@ -278,7 +278,9 @@ impl BrowserTool {
                     &config.chrome_path,
                     config.local_cdp_port,
                     config.headless,
-                ).await.map_err(|e| ToolError::ExternalServiceError {
+                )
+                .await
+                .map_err(|e| ToolError::ExternalServiceError {
                     name: "browser".into(),
                     message: format!("Failed to launch Chrome: {e}"),
                 })?;
@@ -352,24 +354,24 @@ impl Tool for BrowserTool {
             });
         }
 
-        let action_str = input.arguments["action"]
-            .as_str()
-            .ok_or_else(|| ToolError::ValidationError {
-                message: format!(
-                    "Missing 'action' parameter. Valid actions: {}",
-                    BrowserAction::all_names()
-                ),
-            })?;
+        let action_str =
+            input.arguments["action"]
+                .as_str()
+                .ok_or_else(|| ToolError::ValidationError {
+                    message: format!(
+                        "Missing 'action' parameter. Valid actions: {}",
+                        BrowserAction::all_names()
+                    ),
+                })?;
 
-        let action = BrowserAction::from_str(action_str).ok_or_else(|| {
-            ToolError::ValidationError {
+        let action =
+            BrowserAction::from_str(action_str).ok_or_else(|| ToolError::ValidationError {
                 message: format!(
                     "Unknown browser action: '{}'. Valid actions: {}",
                     action_str,
                     BrowserAction::all_names()
                 ),
-            }
-        })?;
+            })?;
 
         // Close doesn't need connection.
         if matches!(action, BrowserAction::Close) {
@@ -396,25 +398,27 @@ impl Tool for BrowserTool {
                     })?;
 
                 // Security check.
-                self.security.read().unwrap().validate_url(url).map_err(|e| {
-                    ToolError::PermissionDenied {
+                self.security
+                    .read()
+                    .unwrap()
+                    .validate_url(url)
+                    .map_err(|e| ToolError::PermissionDenied {
                         name: "browser".into(),
                         reason: e.to_string(),
-                    }
-                })?;
+                    })?;
 
-                let nav = self.actions.navigate(url).await.map_err(cdp_to_tool_error)?;
+                let nav = self
+                    .actions
+                    .navigate(url)
+                    .await
+                    .map_err(cdp_to_tool_error)?;
                 serde_json::to_value(nav).unwrap_or_default()
             }
 
             BrowserAction::Screenshot => {
                 let full_page = input.arguments["full_page"].as_bool().unwrap_or(false);
-                let format = input.arguments["format"]
-                    .as_str()
-                    .unwrap_or("png");
-                let quality = input.arguments["quality"]
-                    .as_u64()
-                    .map(|q| q as u32);
+                let format = input.arguments["format"].as_str().unwrap_or("png");
+                let quality = input.arguments["quality"].as_u64().map(|q| q as u32);
 
                 let shot = self
                     .actions
@@ -429,21 +433,20 @@ impl Tool for BrowserTool {
                     Some("dom") => SnapshotFormat::Dom,
                     _ => SnapshotFormat::Aria,
                 };
-                let limit = input.arguments["limit"]
-                    .as_u64()
-                    .unwrap_or(500) as usize;
+                let limit = input.arguments["limit"].as_u64().unwrap_or(500) as usize;
                 let interactive_only = input.arguments["interactive_only"]
                     .as_bool()
                     .unwrap_or(true);
 
                 let mut snap = match format {
-                    SnapshotFormat::Aria => {
-                        self.actions.snapshot_aria(limit, interactive_only).await.map_err(cdp_to_tool_error)?
-                    }
+                    SnapshotFormat::Aria => self
+                        .actions
+                        .snapshot_aria(limit, interactive_only)
+                        .await
+                        .map_err(cdp_to_tool_error)?,
                     SnapshotFormat::Dom => {
-                        let max_text = input.arguments["max_text_chars"]
-                            .as_u64()
-                            .unwrap_or(220) as usize;
+                        let max_text =
+                            input.arguments["max_text_chars"].as_u64().unwrap_or(220) as usize;
                         self.actions
                             .snapshot_dom(limit, max_text)
                             .await
@@ -461,7 +464,10 @@ impl Tool for BrowserTool {
                     .map_err(|_| ToolError::ValidationError {
                         message: "Missing 'selector' for click. Use an @ref from snapshot (e.g. '@e1') or a CSS selector (e.g. '#submit-btn').".into(),
                     })?;
-                self.actions.click(selector).await.map_err(cdp_to_tool_error)?;
+                self.actions
+                    .click(selector)
+                    .await
+                    .map_err(cdp_to_tool_error)?;
                 serde_json::json!({"action": "click", "selector": selector, "ok": true})
             }
 
@@ -486,7 +492,11 @@ impl Tool for BrowserTool {
                     .map_err(|_| ToolError::ValidationError {
                         message: "Missing 'selector' for get_text. Use an @ref (e.g. '@e5') or CSS selector.".into(),
                     })?;
-                let text = self.actions.get_text(selector).await.map_err(cdp_to_tool_error)?;
+                let text = self
+                    .actions
+                    .get_text(selector)
+                    .await
+                    .map_err(cdp_to_tool_error)?;
                 let text = truncate_output(&text, MAX_OUTPUT_CHARS);
                 serde_json::json!({"text": text, "selector": selector})
             }
@@ -529,17 +539,16 @@ impl Tool for BrowserTool {
                     .map_err(|_| ToolError::ValidationError {
                         message: "Missing 'key' for press_key. Example: {\"action\": \"press_key\", \"key\": \"Enter\"}".into(),
                     })?;
-                self.actions.press_key(key).await.map_err(cdp_to_tool_error)?;
+                self.actions
+                    .press_key(key)
+                    .await
+                    .map_err(cdp_to_tool_error)?;
                 serde_json::json!({"action": "press_key", "key": key, "ok": true})
             }
 
             BrowserAction::Scroll => {
-                let direction = input.arguments["direction"]
-                    .as_str()
-                    .unwrap_or("down");
-                let pixels = input.arguments["pixels"]
-                    .as_u64()
-                    .unwrap_or(300) as u32;
+                let direction = input.arguments["direction"].as_str().unwrap_or("down");
+                let pixels = input.arguments["pixels"].as_u64().unwrap_or(300) as u32;
                 self.actions
                     .scroll(direction, pixels)
                     .await
@@ -598,9 +607,11 @@ impl Tool for BrowserTool {
 
 /// Extract a required string parameter.
 fn require_str<'a>(args: &'a serde_json::Value, key: &str) -> Result<&'a str, ToolError> {
-    args[key].as_str().ok_or_else(|| ToolError::ValidationError {
-        message: format!("missing '{key}' parameter"),
-    })
+    args[key]
+        .as_str()
+        .ok_or_else(|| ToolError::ValidationError {
+            message: format!("missing '{key}' parameter"),
+        })
 }
 
 /// Convert CDP errors to tool errors.

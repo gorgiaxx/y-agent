@@ -107,18 +107,12 @@ mod tests {
 
     #[test]
     fn test_normalize_leading_trailing_trim() {
-        assert_eq!(
-            normalize_for_embedding("   hello world   "),
-            "hello world"
-        );
+        assert_eq!(normalize_for_embedding("   hello world   "), "hello world");
     }
 
     #[test]
     fn test_normalize_emoji_removal() {
-        assert_eq!(
-            normalize_for_embedding("Hello 🎉 World 🚀"),
-            "Hello World"
-        );
+        assert_eq!(normalize_for_embedding("Hello 🎉 World 🚀"), "Hello World");
     }
 
     #[test]

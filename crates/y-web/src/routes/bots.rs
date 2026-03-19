@@ -106,10 +106,7 @@ async fn feishu_webhook(
         }
     });
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "status": "ok" })),
-    )
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
 // ---------------------------------------------------------------------------

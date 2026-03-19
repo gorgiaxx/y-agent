@@ -7,7 +7,10 @@
 
 use std::sync::Arc;
 
-use y_core::hook::{ChainType, Event, EventFilter, EventSubscriber, HookData, HookHandler, Middleware, MiddlewareContext, MiddlewareError};
+use y_core::hook::{
+    ChainType, Event, EventFilter, EventSubscriber, HookData, HookHandler, Middleware,
+    MiddlewareContext, MiddlewareError,
+};
 
 use crate::chain::MiddlewareChain;
 use crate::chain_runner::ChainRunner;
@@ -48,9 +51,7 @@ impl HookSystem {
     /// Create a new hook system from configuration.
     pub fn new(config: &HookConfig) -> Self {
         #[cfg(feature = "hook_handlers")]
-        let handler_executor = if config.handlers_enabled
-            && !config.hook_handlers.is_empty()
-        {
+        let handler_executor = if config.handlers_enabled && !config.hook_handlers.is_empty() {
             match crate::hook_handler::HookHandlerExecutor::from_config(config) {
                 Ok(executor) => Some(executor),
                 Err(e) => {
@@ -158,7 +159,10 @@ impl HookSystem {
     // --- Middleware registration ---
 
     /// Register a middleware into the appropriate chain based on its `chain_type()`.
-    pub fn register_middleware(&mut self, middleware: Arc<dyn Middleware>) -> Result<(), HookError> {
+    pub fn register_middleware(
+        &mut self,
+        middleware: Arc<dyn Middleware>,
+    ) -> Result<(), HookError> {
         let chain = self.chain_mut(middleware.chain_type());
         chain.register(middleware)
     }
@@ -205,10 +209,7 @@ impl HookSystem {
     }
 
     /// Subscribe to events with a filter.
-    pub async fn subscribe_events(
-        &self,
-        filter: EventFilter,
-    ) -> crate::event_bus::Subscription {
+    pub async fn subscribe_events(&self, filter: EventFilter) -> crate::event_bus::Subscription {
         self.events.subscribe(filter).await
     }
 
@@ -370,7 +371,10 @@ mod tests {
             aborted: false,
             abort_reason: None,
         };
-        system.execute_chain(ChainType::Context, &mut ctx).await.unwrap();
+        system
+            .execute_chain(ChainType::Context, &mut ctx)
+            .await
+            .unwrap();
 
         let order: Vec<String> = serde_json::from_value(ctx.metadata).unwrap();
         assert_eq!(order, vec!["a"]);

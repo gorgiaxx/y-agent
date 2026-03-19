@@ -135,10 +135,7 @@ impl ContextProvider for InjectTools {
 
 impl InjectTools {
     /// `PromptBased` mode: inject taxonomy summary + activated tool schemas.
-    fn provide_prompt_based(
-        &self,
-        ctx: &mut AssembledContext,
-    ) -> Result<(), ContextPipelineError> {
+    fn provide_prompt_based(&self, ctx: &mut AssembledContext) -> Result<(), ContextPipelineError> {
         let mut content = String::new();
 
         // Inject taxonomy root summary.

@@ -141,11 +141,7 @@ impl ContextProvider for KnowledgeContextProvider {
 
         // Retrieve relevant knowledge, filtering by selected collections.
         let knowledge = self.knowledge.lock().unwrap_or_else(|e| e.into_inner());
-        let items = knowledge.retrieve_for_context(
-            &user_query,
-            query_embedding.as_deref(),
-            None,
-        );
+        let items = knowledge.retrieve_for_context(&user_query, query_embedding.as_deref(), None);
 
         if items.is_empty() {
             tracing::info!(
@@ -241,7 +237,10 @@ mod tests {
         };
 
         provider.provide(&mut ctx).await.unwrap();
-        assert!(ctx.items.is_empty(), "should skip when no collections selected");
+        assert!(
+            ctx.items.is_empty(),
+            "should skip when no collections selected"
+        );
     }
 
     #[tokio::test]

@@ -149,8 +149,7 @@ pub async fn agent_save(
 
     // Write to disk.
     let dir = agents_dir(&state.config_dir);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create agents directory: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create agents directory: {e}"))?;
 
     let file_path = dir.join(format!("{id}.toml"));
     std::fs::write(&file_path, &toml_content)
@@ -197,13 +196,10 @@ pub async fn agent_reload(state: State<'_, AppState>) -> Result<(), String> {
     }
 
     let mut registry = state.container.agent_registry.lock().await;
-    registry
-        .load_user_agents(&dir)
-        .map_err(|errs| {
-            let msgs: Vec<String> = errs.iter().map(|(f, e)| format!("{f}: {e}")).collect();
-            format!("Errors loading agents: {}", msgs.join("; "))
-        })?;
+    registry.load_user_agents(&dir).map_err(|errs| {
+        let msgs: Vec<String> = errs.iter().map(|(f, e)| format!("{f}: {e}")).collect();
+        format!("Errors loading agents: {}", msgs.join("; "))
+    })?;
 
     Ok(())
 }
-

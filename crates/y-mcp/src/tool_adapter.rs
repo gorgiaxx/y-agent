@@ -23,7 +23,12 @@ pub struct McpToolAdapter {
 
 impl McpToolAdapter {
     /// Create a new adapter for an MCP tool.
-    pub fn new(client: Arc<McpClient>, name: &str, description: &str, schema: serde_json::Value) -> Self {
+    pub fn new(
+        client: Arc<McpClient>,
+        name: &str,
+        description: &str,
+        schema: serde_json::Value,
+    ) -> Self {
         let def = ToolDefinition {
             name: ToolName::from_string(name),
             description: description.to_string(),

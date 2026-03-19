@@ -33,6 +33,6 @@ pub use hook_system::HookSystem;
 // Re-export hook handler types.
 #[cfg(feature = "hook_handlers")]
 pub use hook_handler::{
-    CommandHttpDecision, HookDecision, HookHandlerExecutor, HookHandlerMetrics,
-    HookHandlerResult, HookInput, PromptAgentDecision,
+    CommandHttpDecision, HookDecision, HookHandlerExecutor, HookHandlerMetrics, HookHandlerResult,
+    HookInput, PromptAgentDecision,
 };

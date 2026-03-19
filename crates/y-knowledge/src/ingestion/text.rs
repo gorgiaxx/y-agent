@@ -21,8 +21,7 @@ impl TextConnector {
 #[async_trait]
 impl SourceConnector for TextConnector {
     async fn fetch(&self, uri: &str) -> Result<RawDocument, KnowledgeError> {
-        let (content, detected_encoding) =
-            super::encoding::read_file_as_utf8(uri).await?;
+        let (content, detected_encoding) = super::encoding::read_file_as_utf8(uri).await?;
 
         if detected_encoding != "UTF-8" {
             tracing::info!(

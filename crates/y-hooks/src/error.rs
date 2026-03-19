@@ -19,10 +19,16 @@ pub enum HookError {
     ChainError { message: String },
 
     #[error("hook handler error ({handler_type}): {message}")]
-    HookHandlerError { handler_type: String, message: String },
+    HookHandlerError {
+        handler_type: String,
+        message: String,
+    },
 
     #[error("hook handler timeout ({handler_type}): exceeded {timeout_ms}ms")]
-    HookHandlerTimeout { handler_type: String, timeout_ms: u64 },
+    HookHandlerTimeout {
+        handler_type: String,
+        timeout_ms: u64,
+    },
 
     #[error("hook handler validation error: {message}")]
     HookHandlerValidation { message: String },

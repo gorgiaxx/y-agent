@@ -91,7 +91,10 @@ fn write_session_workspaces(
 ///
 /// Returns `Some(path)` if the session is assigned to a workspace,
 /// `None` otherwise.
-pub(crate) fn resolve_workspace_path(config_dir: &std::path::Path, session_id: &str) -> Option<String> {
+pub(crate) fn resolve_workspace_path(
+    config_dir: &std::path::Path,
+    session_id: &str,
+) -> Option<String> {
     let sw = read_session_workspaces(config_dir);
     let ws_id = sw.assignments.get(session_id)?;
     let ws_data = read_workspaces(config_dir);
@@ -155,10 +158,7 @@ pub async fn workspace_update(
 
 /// Delete a workspace and remove all its session assignments.
 #[tauri::command]
-pub async fn workspace_delete(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn workspace_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mut data = read_workspaces(&state.config_dir);
     data.workspaces.retain(|w| w.id != id);
     write_workspaces(&state.config_dir, &data)

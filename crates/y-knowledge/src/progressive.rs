@@ -20,19 +20,34 @@ impl ProgressiveLoader {
     }
 
     /// Load chunks at L0 level (summaries).
-    pub fn load_l0(&self, document_id: &str, content: &str, metadata: &ChunkMetadata) -> Vec<Chunk> {
+    pub fn load_l0(
+        &self,
+        document_id: &str,
+        content: &str,
+        metadata: &ChunkMetadata,
+    ) -> Vec<Chunk> {
         self.strategy
             .chunk(document_id, content, ChunkLevel::L0, metadata)
     }
 
     /// Load chunks at L1 level (sections).
-    pub fn load_l1(&self, document_id: &str, content: &str, metadata: &ChunkMetadata) -> Vec<Chunk> {
+    pub fn load_l1(
+        &self,
+        document_id: &str,
+        content: &str,
+        metadata: &ChunkMetadata,
+    ) -> Vec<Chunk> {
         self.strategy
             .chunk(document_id, content, ChunkLevel::L1, metadata)
     }
 
     /// Load chunks at L2 level (full detail).
-    pub fn load_l2(&self, document_id: &str, content: &str, metadata: &ChunkMetadata) -> Vec<Chunk> {
+    pub fn load_l2(
+        &self,
+        document_id: &str,
+        content: &str,
+        metadata: &ChunkMetadata,
+    ) -> Vec<Chunk> {
         self.strategy
             .chunk(document_id, content, ChunkLevel::L2, metadata)
     }

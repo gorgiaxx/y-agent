@@ -5,9 +5,7 @@ use y_core::session::{
     CreateSessionOptions, SessionState, SessionStore, SessionType, TranscriptStore,
 };
 use y_core::types::{AgentId, Role};
-use y_test_utils::{
-    make_user_message, MockProvider, MockSessionStore, MockTranscriptStore,
-};
+use y_test_utils::{make_user_message, MockProvider, MockSessionStore, MockTranscriptStore};
 
 #[tokio::test]
 async fn e2e_parent_delegates_to_child() {

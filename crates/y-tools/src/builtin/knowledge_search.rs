@@ -93,14 +93,17 @@ impl KnowledgeSearchTool {
 #[async_trait]
 impl Tool for KnowledgeSearchTool {
     async fn execute(&self, input: ToolInput) -> Result<ToolOutput, ToolError> {
-        let query = input.arguments["query"]
-            .as_str()
-            .ok_or_else(|| ToolError::ValidationError {
-                message: "missing 'query' parameter".into(),
-            })?;
+        let query =
+            input.arguments["query"]
+                .as_str()
+                .ok_or_else(|| ToolError::ValidationError {
+                    message: "missing 'query' parameter".into(),
+                })?;
 
         let domain = input.arguments.get("domain").and_then(|v| v.as_str());
-        let _limit = input.arguments.get("limit")
+        let _limit = input
+            .arguments
+            .get("limit")
             .and_then(|v| v.as_u64())
             .unwrap_or(5)
             .min(20) as usize;

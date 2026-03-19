@@ -20,7 +20,14 @@ pub async fn config_get(state: State<'_, AppState>) -> Result<Value, String> {
     let mut merged = serde_json::Map::new();
 
     let sections = [
-        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails", "browser",
+        "providers",
+        "storage",
+        "session",
+        "runtime",
+        "hooks",
+        "tools",
+        "guardrails",
+        "browser",
         "knowledge",
     ];
 
@@ -48,7 +55,14 @@ pub async fn config_set_section(
     content: Value,
 ) -> Result<(), String> {
     let allowed = [
-        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails", "browser",
+        "providers",
+        "storage",
+        "session",
+        "runtime",
+        "hooks",
+        "tools",
+        "guardrails",
+        "browser",
         "knowledge",
     ];
     if !allowed.contains(&section.as_str()) {
@@ -59,11 +73,10 @@ pub async fn config_set_section(
     std::fs::create_dir_all(&state.config_dir)
         .map_err(|e| format!("Failed to create config dir: {e}"))?;
 
-    let toml_str = toml::to_string_pretty(&content)
-        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+    let toml_str =
+        toml::to_string_pretty(&content).map_err(|e| format!("Failed to serialize config: {e}"))?;
 
-    std::fs::write(&path, toml_str)
-        .map_err(|e| format!("Failed to write {section}.toml: {e}"))?;
+    std::fs::write(&path, toml_str).map_err(|e| format!("Failed to write {section}.toml: {e}"))?;
 
     Ok(())
 }
@@ -77,10 +90,7 @@ pub async fn config_get_gui(state: State<'_, AppState>) -> Result<GuiConfig, Str
 
 /// Set the GUI-specific configuration and persist to disk.
 #[tauri::command]
-pub async fn config_set_gui(
-    state: State<'_, AppState>,
-    config: GuiConfig,
-) -> Result<(), String> {
+pub async fn config_set_gui(state: State<'_, AppState>, config: GuiConfig) -> Result<(), String> {
     save_gui_config(&state.config_dir, &config)
         .map_err(|e| format!("Failed to save GUI config: {e}"))?;
 
@@ -99,7 +109,14 @@ pub async fn config_get_section(
     section: String,
 ) -> Result<String, String> {
     let allowed = [
-        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails", "browser",
+        "providers",
+        "storage",
+        "session",
+        "runtime",
+        "hooks",
+        "tools",
+        "guardrails",
+        "browser",
         "knowledge",
     ];
     if !allowed.contains(&section.as_str()) {
@@ -111,8 +128,7 @@ pub async fn config_get_section(
         return Ok(String::new());
     }
 
-    std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {section}.toml: {e}"))
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {section}.toml: {e}"))
 }
 
 /// Save a single config section from raw TOML content.
@@ -125,7 +141,14 @@ pub async fn config_save_section(
     content: String,
 ) -> Result<(), String> {
     let allowed = [
-        "providers", "storage", "session", "runtime", "hooks", "tools", "guardrails", "browser",
+        "providers",
+        "storage",
+        "session",
+        "runtime",
+        "hooks",
+        "tools",
+        "guardrails",
+        "browser",
         "knowledge",
     ];
     if !allowed.contains(&section.as_str()) {
@@ -133,15 +156,13 @@ pub async fn config_save_section(
     }
 
     // Validate TOML syntax before writing.
-    let _: Value = toml::from_str(&content)
-        .map_err(|e| format!("Invalid TOML syntax: {e}"))?;
+    let _: Value = toml::from_str(&content).map_err(|e| format!("Invalid TOML syntax: {e}"))?;
 
     let path = state.config_dir.join(format!("{section}.toml"));
     std::fs::create_dir_all(&state.config_dir)
         .map_err(|e| format!("Failed to create config dir: {e}"))?;
 
-    std::fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write {section}.toml: {e}"))?;
+    std::fs::write(&path, &content).map_err(|e| format!("Failed to write {section}.toml: {e}"))?;
 
     Ok(())
 }
@@ -168,7 +189,8 @@ pub async fn config_reload(state: State<'_, AppState>) -> Result<String, String>
     // 1. Providers.
     if let Some(content) = read_toml("providers")? {
         let count =
-            y_service::SystemService::reload_providers_from_toml(&state.container, &content).await?;
+            y_service::SystemService::reload_providers_from_toml(&state.container, &content)
+                .await?;
         results.push(format!("{count} provider(s)"));
     }
 
@@ -260,10 +282,7 @@ pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<String>, Stri
 
 /// Read a single prompt file's content.
 #[tauri::command]
-pub async fn prompt_get(
-    state: State<'_, AppState>,
-    filename: String,
-) -> Result<String, String> {
+pub async fn prompt_get(state: State<'_, AppState>, filename: String) -> Result<String, String> {
     // Validate: no path separators allowed.
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
         return Err("Invalid filename".into());
@@ -274,8 +293,7 @@ pub async fn prompt_get(
         return Ok(String::new());
     }
 
-    std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {filename}: {e}"))
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {filename}: {e}"))
 }
 
 /// Save content to a single prompt file.

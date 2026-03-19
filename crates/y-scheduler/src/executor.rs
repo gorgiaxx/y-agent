@@ -123,7 +123,9 @@ mod tests {
         let schedule = Schedule::new(
             "daily-cleanup",
             "Daily Cleanup",
-            TriggerConfig::Interval { interval_secs: 3600 },
+            TriggerConfig::Interval {
+                interval_secs: 3600,
+            },
             "cleanup-wf",
         );
         store.register(schedule.clone());

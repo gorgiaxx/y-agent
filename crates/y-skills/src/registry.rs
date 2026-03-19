@@ -145,10 +145,11 @@ impl SkillRegistryImpl {
 
         // Persist to filesystem.
         if let Some(ref store) = self.store {
-            Self::save_disabled_to_path(store.base_path(), &inner.disabled)
-                .map_err(|e| SkillError::StorageError {
+            Self::save_disabled_to_path(store.base_path(), &inner.disabled).map_err(|e| {
+                SkillError::StorageError {
                     message: format!("failed to persist disabled state: {e}"),
-                })?;
+                }
+            })?;
         }
         Ok(())
     }
@@ -174,8 +175,8 @@ impl SkillRegistryImpl {
     ) -> Result<(), String> {
         let path = base_path.join("disabled_skills.json");
         let list: Vec<&String> = disabled.iter().collect();
-        let content = serde_json::to_string_pretty(&list)
-            .map_err(|e| format!("Failed to serialize: {e}"))?;
+        let content =
+            serde_json::to_string_pretty(&list).map_err(|e| format!("Failed to serialize: {e}"))?;
         std::fs::write(path, content)
             .map_err(|e| format!("Failed to write disabled_skills.json: {e}"))
     }

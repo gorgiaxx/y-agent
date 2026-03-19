@@ -1,6 +1,8 @@
 //! Factory functions for creating test data.
 
-use y_core::provider::{ChatRequest, ChatResponse, FinishReason, ProviderMetadata, ProviderType, ToolCallingMode};
+use y_core::provider::{
+    ChatRequest, ChatResponse, FinishReason, ProviderMetadata, ProviderType, ToolCallingMode,
+};
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::types::{Message, ProviderId, Role, SessionId, TokenUsage, WorkflowId};
 

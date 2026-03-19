@@ -65,11 +65,17 @@ async fn list_agents(State(state): State<AppState>) -> Json<Vec<AgentInfo>> {
 }
 
 /// `GET /api/v1/agents/:id` — get a single agent definition.
-async fn get_agent(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<AgentDetail>, (axum::http::StatusCode, String)> {
+async fn get_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<AgentDetail>, (axum::http::StatusCode, String)> {
     let registry = state.container.agent_registry.lock().await;
-    let def = registry
-        .get(&id)
-        .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, format!("Agent not found: {id}")))?;
+    let def = registry.get(&id).ok_or_else(|| {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            format!("Agent not found: {id}"),
+        )
+    })?;
 
     Ok(Json(AgentDetail {
         id: def.id.clone(),

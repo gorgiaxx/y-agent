@@ -4,9 +4,7 @@
 //! `crate::orchestrator` without changes.
 
 // Re-export all service types for backward compatibility within y-cli.
-pub use y_service::chat::{
-    ChatService, TurnError, TurnEventSender, TurnInput, TurnResult,
-};
+pub use y_service::chat::{ChatService, TurnError, TurnEventSender, TurnInput, TurnResult};
 
 use crate::wire::AppServices;
 

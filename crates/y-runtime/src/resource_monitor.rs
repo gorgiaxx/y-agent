@@ -227,7 +227,8 @@ impl ResourceMonitor {
         let inner = self.inner.lock().await;
         ResourceUtilization {
             memory: inner.current.memory_bytes as f64 / inner.thresholds.max_memory_bytes as f64,
-            open_files: f64::from(inner.current.open_files) / f64::from(inner.thresholds.max_open_files),
+            open_files: f64::from(inner.current.open_files)
+                / f64::from(inner.thresholds.max_open_files),
             active_tasks: f64::from(inner.current.active_tasks)
                 / f64::from(inner.thresholds.max_active_tasks),
             disk: inner.current.disk_bytes as f64 / inner.thresholds.max_disk_bytes as f64,

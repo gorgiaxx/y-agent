@@ -43,7 +43,9 @@ pub use executor::ToolExecutor;
 pub use formatter::{FormattedResult, FormatterConfig, ResultFormat, ResultFormatter};
 pub use index::ToolIndex;
 pub use mcp_integration::{McpDiscoveryResult, McpServerConfig};
-pub use parser::{format_tool_result, parse_tool_calls, strip_tool_call_blocks, ParseResult, ParsedToolCall};
+pub use parser::{
+    format_tool_result, parse_tool_calls, strip_tool_call_blocks, ParseResult, ParsedToolCall,
+};
 pub use rate_limiter::{RateLimitConfig, RateLimitResult, RateLimiter};
 pub use registry::ToolRegistryImpl;
 pub use taxonomy::ToolTaxonomy;

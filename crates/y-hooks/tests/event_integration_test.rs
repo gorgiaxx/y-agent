@@ -1,6 +1,6 @@
 //! Integration tests for the event bus under load.
 
-use y_core::hook::{Event, EventFilter, EventCategory};
+use y_core::hook::{Event, EventCategory, EventFilter};
 use y_hooks::event_bus::EventBus;
 
 // T-HOOK-INT-04: Event bus under load.
@@ -53,7 +53,10 @@ async fn test_event_bus_under_load() {
             let _ = event;
             count += 1;
         }
-        assert_eq!(count, 1000, "all-event subscriber {i} should get 1000 events");
+        assert_eq!(
+            count, 1000,
+            "all-event subscriber {i} should get 1000 events"
+        );
     }
 
     // Verify tool-only subscribers got only tool events (~334).
@@ -64,6 +67,9 @@ async fn test_event_bus_under_load() {
             assert!(matches!(event.as_ref(), Event::ToolExecuted { .. }));
             count += 1;
         }
-        assert_eq!(count, tool_event_count, "tool-only subscriber {i} should get {tool_event_count} events");
+        assert_eq!(
+            count, tool_event_count,
+            "tool-only subscriber {i} should get {tool_event_count} events"
+        );
     }
 }

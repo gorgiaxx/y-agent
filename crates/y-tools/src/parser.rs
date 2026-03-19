@@ -177,7 +177,11 @@ fn try_parse_xml_tool_call(inner: &str) -> Result<ParsedToolCall, String> {
     if !arguments.is_object() {
         return Err(format!(
             "<arguments> must contain a JSON object, got {}",
-            if arguments.is_array() { "array" } else { "non-object" }
+            if arguments.is_array() {
+                "array"
+            } else {
+                "non-object"
+            }
         ));
     }
 
@@ -339,7 +343,11 @@ not valid json or xml
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].name, "tool_search");
         assert!(result.tool_calls[0].arguments.is_object());
-        assert!(result.tool_calls[0].arguments.as_object().unwrap().is_empty());
+        assert!(result.tool_calls[0]
+            .arguments
+            .as_object()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -440,7 +448,8 @@ not valid json or xml
 
     #[test]
     fn test_parse_text_cleanup_no_extra_whitespace() {
-        let input = "Before.\n\n<tool_call>\n{\"name\": \"t\", \"arguments\": {}}\n</tool_call>\n\nAfter.";
+        let input =
+            "Before.\n\n<tool_call>\n{\"name\": \"t\", \"arguments\": {}}\n</tool_call>\n\nAfter.";
         let result = parse_tool_calls(input);
         assert_eq!(result.text, "Before.\n\n\n\nAfter.");
     }
@@ -497,7 +506,11 @@ not valid json or xml
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].name, "tool_search");
         assert!(result.tool_calls[0].arguments.is_object());
-        assert!(result.tool_calls[0].arguments.as_object().unwrap().is_empty());
+        assert!(result.tool_calls[0]
+            .arguments
+            .as_object()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

@@ -23,7 +23,9 @@ use crate::types::{
 // ---------------------------------------------------------------------------
 
 fn storage_err(msg: impl ToString) -> TraceStoreError {
-    TraceStoreError::Storage { message: msg.to_string() }
+    TraceStoreError::Storage {
+        message: msg.to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +226,14 @@ impl ObsRow {
         Some(Observation {
             id,
             trace_id,
-            parent_id: self.parent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
-            session_id: self.session_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
+            parent_id: self
+                .parent_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
+            session_id: self
+                .session_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
             obs_type: str_to_obs_type(self.obs_type.as_deref().unwrap_or("generation")),
             name: self.name,
             input,
@@ -272,9 +280,7 @@ impl ScoreRow {
         let data_type = self.data_type.as_deref().unwrap_or("numeric");
         let value = match data_type {
             "boolean" => ScoreValue::Boolean(self.value.unwrap_or(0.0) != 0.0),
-            "categorical" => {
-                ScoreValue::Categorical(self.string_value.unwrap_or_default())
-            }
+            "categorical" => ScoreValue::Categorical(self.string_value.unwrap_or_default()),
             _ => ScoreValue::Numeric(self.value.unwrap_or(0.0)),
         };
         let source = match self.source.as_deref() {
@@ -321,8 +327,7 @@ impl TraceStore for SqliteTraceStore {
         let id = trace.id.to_string();
         let session_id = trace.session_id.to_string();
         let status = trace_status_to_str(trace.status);
-        let metadata =
-            serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into());
+        let metadata = serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into());
         let started_at = trace.started_at.to_rfc3339();
         let completed_at = trace.completed_at.map(|t| t.to_rfc3339());
         let input_toks = trace.total_input_tokens as i64;
@@ -385,8 +390,7 @@ impl TraceStore for SqliteTraceStore {
     async fn update_trace(&self, trace: Trace) -> Result<(), TraceStoreError> {
         let id = trace.id.to_string();
         let status = trace_status_to_str(trace.status);
-        let metadata =
-            serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into());
+        let metadata = serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into());
         let completed_at = trace.completed_at.map(|t| t.to_rfc3339());
         let input_toks = trace.total_input_tokens as i64;
         let output_toks = trace.total_output_tokens as i64;
@@ -474,9 +478,9 @@ impl TraceStore for SqliteTraceStore {
         let seq = obs.sequence as i64;
 
         let depth = obs.depth as i64;
-        let path_json: String = serde_json::to_string(
-            &obs.path.iter().map(Uuid::to_string).collect::<Vec<_>>()
-        ).unwrap_or_else(|_| "[]".into());
+        let path_json: String =
+            serde_json::to_string(&obs.path.iter().map(Uuid::to_string).collect::<Vec<_>>())
+                .unwrap_or_else(|_| "[]".into());
 
         sqlx::query(
             "INSERT INTO diag_observations \
@@ -525,7 +529,10 @@ impl TraceStore for SqliteTraceStore {
         .await
         .map_err(|e| storage_err(format!("get_observations: {e}")))?;
 
-        Ok(rows.into_iter().filter_map(ObsRow::into_observation).collect())
+        Ok(rows
+            .into_iter()
+            .filter_map(ObsRow::into_observation)
+            .collect())
     }
 
     async fn insert_score(&self, score: Score) -> Result<(), TraceStoreError> {
@@ -535,14 +542,11 @@ impl TraceStore for SqliteTraceStore {
         let created_at = score.created_at.to_rfc3339();
 
         // Decompose ScoreValue enum into flat DB columns.
-        let (value_f64, data_type, string_value): (f64, &str, Option<String>) =
-            match &score.value {
-                ScoreValue::Numeric(v) => (*v, "numeric", None),
-                ScoreValue::Boolean(b) => {
-                    (if *b { 1.0 } else { 0.0 }, "boolean", None)
-                }
-                ScoreValue::Categorical(s) => (0.0, "categorical", Some(s.clone())),
-            };
+        let (value_f64, data_type, string_value): (f64, &str, Option<String>) = match &score.value {
+            ScoreValue::Numeric(v) => (*v, "numeric", None),
+            ScoreValue::Boolean(b) => (if *b { 1.0 } else { 0.0 }, "boolean", None),
+            ScoreValue::Categorical(s) => (0.0, "categorical", Some(s.clone())),
+        };
 
         let source_str = match score.source {
             ScoreSource::System => "system",
@@ -630,9 +634,7 @@ impl TraceStore for SqliteTraceStore {
         }
 
         // Build a single query with IN (...) placeholders.
-        let placeholders: Vec<String> = (1..=trace_ids.len())
-            .map(|i| format!("?{i}"))
-            .collect();
+        let placeholders: Vec<String> = (1..=trace_ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
             "SELECT id, trace_id, parent_id, session_id, obs_type, name, status, model, \
              input_tokens, output_tokens, cost_usd, input, output, metadata, sequence, \
@@ -651,6 +653,9 @@ impl TraceStore for SqliteTraceStore {
             .await
             .map_err(|e| storage_err(format!("get_observations_by_trace_ids: {e}")))?;
 
-        Ok(rows.into_iter().filter_map(ObsRow::into_observation).collect())
+        Ok(rows
+            .into_iter()
+            .filter_map(ObsRow::into_observation)
+            .collect())
     }
 }

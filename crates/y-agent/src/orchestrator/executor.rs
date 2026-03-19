@@ -6,7 +6,9 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::orchestrator::channel::WorkflowContext;
-use crate::orchestrator::checkpoint::{ChannelSnapshot, CheckpointStore, TaskOutput, WorkflowCheckpoint};
+use crate::orchestrator::checkpoint::{
+    ChannelSnapshot, CheckpointStore, TaskOutput, WorkflowCheckpoint,
+};
 use crate::orchestrator::dag::{TaskDag, TaskId};
 
 /// Workflow execution state.

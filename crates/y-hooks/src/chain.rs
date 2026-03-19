@@ -62,8 +62,7 @@ impl MiddlewareChain {
     /// Unregister a middleware by name.
     pub fn unregister(&mut self, name: &str) -> Result<(), HookError> {
         let before = self.entries.len();
-        self.entries
-            .retain(|e| e.middleware.name() != name);
+        self.entries.retain(|e| e.middleware.name() != name);
         if self.entries.len() == before {
             return Err(HookError::MiddlewareNotFound {
                 name: name.to_string(),

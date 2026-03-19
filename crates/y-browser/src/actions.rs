@@ -157,10 +157,7 @@ impl BrowserActions {
 
         let result = self
             .client
-            .send(
-                "Page.navigate",
-                Some(serde_json::json!({ "url": url })),
-            )
+            .send("Page.navigate", Some(serde_json::json!({ "url": url })))
             .await?;
 
         // Invalidate refs after navigation.
@@ -201,10 +198,7 @@ impl BrowserActions {
 
         if full_page {
             // Get full page dimensions.
-            let metrics = self
-                .client
-                .send("Page.getLayoutMetrics", None)
-                .await?;
+            let metrics = self.client.send("Page.getLayoutMetrics", None).await?;
 
             let content_size = metrics
                 .get("cssContentSize")
@@ -230,13 +224,14 @@ impl BrowserActions {
             .send("Page.captureScreenshot", Some(params))
             .await?;
 
-        let data = result
-            .get("data")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| CdpError::ProtocolError {
-                code: -1,
-                message: "screenshot returned no data".into(),
-            })?;
+        let data =
+            result
+                .get("data")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| CdpError::ProtocolError {
+                    code: -1,
+                    message: "screenshot returned no data".into(),
+                })?;
 
         Ok(ScreenshotResult {
             data_base64: data.to_string(),
@@ -478,11 +473,7 @@ impl BrowserActions {
     }
 
     /// Wait for a condition: time (ms), or selector to appear.
-    pub async fn wait(
-        &self,
-        selector: Option<&str>,
-        ms: Option<u64>,
-    ) -> Result<(), CdpError> {
+    pub async fn wait(&self, selector: Option<&str>, ms: Option<u64>) -> Result<(), CdpError> {
         if let Some(ms) = ms {
             debug!(ms, "browser wait (time)");
             tokio::time::sleep(Duration::from_millis(ms)).await;
@@ -660,18 +651,20 @@ impl BrowserActions {
     /// Helper: resolve a ref id (e.g. "e1") to a CDP RemoteObject objectId.
     async fn resolve_ref_to_object_id(&self, ref_id: &str) -> Result<String, CdpError> {
         let registry = self.ref_registry.lock().await;
-        let backend_id = registry.get(ref_id).ok_or_else(|| CdpError::ProtocolError {
-            code: -1,
-            message: format!(
-                "Ref '@{}' not found. {}Run 'snapshot' to get fresh refs.",
-                ref_id,
-                if registry.is_empty() {
-                    "No refs available. "
-                } else {
-                    ""
-                }
-            ),
-        })?;
+        let backend_id = registry
+            .get(ref_id)
+            .ok_or_else(|| CdpError::ProtocolError {
+                code: -1,
+                message: format!(
+                    "Ref '@{}' not found. {}Run 'snapshot' to get fresh refs.",
+                    ref_id,
+                    if registry.is_empty() {
+                        "No refs available. "
+                    } else {
+                        ""
+                    }
+                ),
+            })?;
         let backend_id = *backend_id;
         drop(registry);
 

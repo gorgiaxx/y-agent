@@ -175,7 +175,8 @@ async fn run_trace(
         } else {
             // Render tree format.
             let duration = trace
-                .total_duration_ms.map_or_else(|| "…".to_string(), |d| format!("{:.1}s", d as f64 / 1000.0));
+                .total_duration_ms
+                .map_or_else(|| "…".to_string(), |d| format!("{:.1}s", d as f64 / 1000.0));
             println!(
                 "Trace: {} (status: {:?}, {}, ${:.4})",
                 trace.id, trace.status, duration, trace.total_cost_usd
@@ -187,9 +188,7 @@ async fn run_trace(
                 let model_info = obs
                     .model
                     .as_deref()
-                    .map(|m| {
-                        format!(" ({m}, {}→{} tokens)", obs.input_tokens, obs.output_tokens)
-                    })
+                    .map(|m| format!(" ({m}, {}→{} tokens)", obs.input_tokens, obs.output_tokens))
                     .unwrap_or_default();
                 let duration_ms = obs.duration_ms().unwrap_or(0);
 
@@ -271,7 +270,8 @@ async fn run_trace(
                             o.model.clone().unwrap_or_else(|| "—".into()),
                             format!("{}→{}", o.input_tokens, o.output_tokens),
                             format!("{:.4}", o.cost_usd),
-                            o.duration_ms().map_or_else(|| "—".into(), |d| format!("{d}ms")),
+                            o.duration_ms()
+                                .map_or_else(|| "—".into(), |d| format!("{d}ms")),
                         ],
                     })
                     .collect();

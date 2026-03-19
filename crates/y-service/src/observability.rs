@@ -249,7 +249,10 @@ mod tests {
         // Agent pool should exist with zero instances.
         assert_eq!(snap.agents.total_instances, 0);
         assert_eq!(snap.agents.active_instances, 0);
-        assert!(snap.agents.available_slots > 0, "should have concurrency slots");
+        assert!(
+            snap.agents.available_slots > 0,
+            "should have concurrency slots"
+        );
         assert!(snap.agents.instances.is_empty());
 
         // Scheduler not yet wired.

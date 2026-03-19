@@ -101,9 +101,9 @@ fn try_resolve_expression(s: &str, ctx: &ResolutionContext) -> Option<Value> {
         "execution.sequence" => Some(Value::Number(ctx.execution_sequence.into())),
         _ if expr.starts_with("event.payload.") => {
             let field = &expr["event.payload.".len()..];
-            ctx.event_payload.as_ref().and_then(|payload| {
-                resolve_json_path(payload, field)
-            })
+            ctx.event_payload
+                .as_ref()
+                .and_then(|payload| resolve_json_path(payload, field))
         }
         _ => None, // Unknown expression — leave as-is.
     }

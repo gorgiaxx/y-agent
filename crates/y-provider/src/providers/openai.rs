@@ -210,8 +210,8 @@ impl LlmProvider for OpenAiProvider {
                 message: format!("parse response JSON: {e}"),
             })?;
 
-        let openai_response: OpenAiResponse =
-            serde_json::from_value(raw_response.clone()).map_err(|e| ProviderError::Other {
+        let openai_response: OpenAiResponse = serde_json::from_value(raw_response.clone())
+            .map_err(|e| ProviderError::Other {
                 message: format!("parse response: {e}"),
             })?;
 
@@ -385,7 +385,9 @@ impl LlmProvider for OpenAiProvider {
                                         if valid_up_to > 0 {
                                             // Safety: valid_up_to is guaranteed to be a valid UTF-8 boundary.
                                             let valid_text = unsafe {
-                                                std::str::from_utf8_unchecked(&combined[..valid_up_to])
+                                                std::str::from_utf8_unchecked(
+                                                    &combined[..valid_up_to],
+                                                )
                                             };
                                             state.buffer.push_str(valid_text);
                                         }

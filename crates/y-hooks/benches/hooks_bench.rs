@@ -55,7 +55,8 @@ fn bench_middleware_chain(c: &mut Criterion) {
             rt.block_on(async {
                 let mut chain = MiddlewareChain::new(ChainType::Context);
                 for i in 0..10 {
-                    let mw: Arc<dyn Middleware> = Arc::new(NoOpMiddleware::new(&format!("mw-{i}"), i * 100));
+                    let mw: Arc<dyn Middleware> =
+                        Arc::new(NoOpMiddleware::new(&format!("mw-{i}"), i * 100));
                     chain.register(mw).unwrap();
                 }
                 let mut ctx = MiddlewareContext::new(
@@ -72,7 +73,8 @@ fn bench_middleware_chain(c: &mut Criterion) {
             rt.block_on(async {
                 let mut chain = MiddlewareChain::new(ChainType::Context);
                 for i in 0..50 {
-                    let mw: Arc<dyn Middleware> = Arc::new(NoOpMiddleware::new(&format!("mw-{i}"), i * 100));
+                    let mw: Arc<dyn Middleware> =
+                        Arc::new(NoOpMiddleware::new(&format!("mw-{i}"), i * 100));
                     chain.register(mw).unwrap();
                 }
                 let mut ctx = MiddlewareContext::new(
@@ -111,7 +113,8 @@ fn bench_middleware_register(c: &mut Criterion) {
         b.iter(|| {
             let mut chain = MiddlewareChain::new(ChainType::Context);
             for i in 0..10 {
-                let mw: Arc<dyn Middleware> = Arc::new(NoOpMiddleware::new(&format!("mw-{i}"), i * 100));
+                let mw: Arc<dyn Middleware> =
+                    Arc::new(NoOpMiddleware::new(&format!("mw-{i}"), i * 100));
                 chain.register(mw).unwrap();
             }
             for i in 0..10 {

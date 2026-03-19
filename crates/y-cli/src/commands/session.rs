@@ -252,7 +252,8 @@ async fn run_traces(
             .iter()
             .map(|t| {
                 let duration = t
-                    .total_duration_ms.map_or_else(|| "…".to_string(), |d| format!("{:.1}s", d as f64 / 1000.0));
+                    .total_duration_ms
+                    .map_or_else(|| "…".to_string(), |d| format!("{:.1}s", d as f64 / 1000.0));
                 TableRow {
                     cells: vec![
                         t.id.to_string()[..8].to_string(),
@@ -348,4 +349,3 @@ mod tests {
         }
     }
 }
-

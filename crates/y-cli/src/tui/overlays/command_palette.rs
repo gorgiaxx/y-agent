@@ -76,7 +76,9 @@ impl CommandPaletteState {
 
     /// Get the currently selected command name (if any).
     pub fn selected_command(&self) -> Option<&str> {
-        self.filtered_names.get(self.selected).map(std::string::String::as_str)
+        self.filtered_names
+            .get(self.selected)
+            .map(std::string::String::as_str)
     }
 
     /// Push a character to the input.

@@ -351,13 +351,14 @@ impl ManifestParser {
                 source_format: manifest.source_format.clone(),
                 source_hash: manifest.source_hash.clone(),
                 created: None,
-                classification: manifest.classification.as_ref().map(|c| {
-                    NestedClassification {
+                classification: manifest
+                    .classification
+                    .as_ref()
+                    .map(|c| NestedClassification {
                         skill_type: c.skill_type,
                         domain: c.domain.clone(),
                         atomic: c.atomic,
-                    }
-                }),
+                    }),
                 constraints: manifest.constraints.as_ref().map(|c| NestedConstraints {
                     max_input_tokens: c.max_input_tokens,
                     max_output_tokens: c.max_output_tokens,

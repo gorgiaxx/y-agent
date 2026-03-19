@@ -66,10 +66,7 @@ impl InjectSkills {
 
     /// Format a ContextItem from skill name, description and content.
     fn format_skill_item(name: &str, description: &str, root_content: &str) -> ContextItem {
-        let formatted = format!(
-            "### Skill: {}\n{}\n\n{}",
-            name, description, root_content
-        );
+        let formatted = format!("### Skill: {}\n{}\n\n{}", name, description, root_content);
 
         let mut tokens = estimate_tokens(&formatted);
 

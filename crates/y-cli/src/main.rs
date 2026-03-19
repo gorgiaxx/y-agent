@@ -125,7 +125,9 @@ async fn main() -> Result<()> {
     let (toast_tx, toast_rx) = tokio::sync::mpsc::unbounded_channel();
 
     // Build and init layered subscriber.
-    let registry = tracing_subscriber::registry().with(env_filter).with(file_layer);
+    let registry = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(file_layer);
 
     if is_tui {
         // TUI mode: file layer + toast bridge (no stderr).

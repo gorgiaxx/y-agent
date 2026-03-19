@@ -589,12 +589,18 @@ mod tests {
 
     #[test]
     fn test_extract_section_title_h2() {
-        assert_eq!(extract_section_title("## Sub Heading\ncontent here", 0), "Sub Heading");
+        assert_eq!(
+            extract_section_title("## Sub Heading\ncontent here", 0),
+            "Sub Heading"
+        );
     }
 
     #[test]
     fn test_extract_section_title_fallback() {
-        assert_eq!(extract_section_title("plain text without heading", 0), "Section 1");
+        assert_eq!(
+            extract_section_title("plain text without heading", 0),
+            "Section 1"
+        );
         assert_eq!(extract_section_title("plain text", 2), "Section 3");
     }
 
@@ -609,4 +615,3 @@ mod tests {
         assert_eq!(extract_section_title("##\ncontent", 0), "Section 1");
     }
 }
-

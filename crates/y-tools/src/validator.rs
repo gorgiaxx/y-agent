@@ -41,21 +41,20 @@ impl JsonSchemaValidator {
         let validator = if let Some(cached) = self.cache.get(&key) {
             cached.clone()
         } else {
-            let compiled = Validator::new(schema).map_err(|e| {
-                ToolRegistryError::ValidationError {
+            let compiled =
+                Validator::new(schema).map_err(|e| ToolRegistryError::ValidationError {
                     message: format!("invalid schema: {e}"),
-                }
-            })?;
+                })?;
             let arc = Arc::new(compiled);
             self.cache.insert(key, arc.clone());
             arc
         };
 
-        validator.validate(params).map_err(|e| {
-            ToolRegistryError::ValidationError {
+        validator
+            .validate(params)
+            .map_err(|e| ToolRegistryError::ValidationError {
                 message: e.to_string(),
-            }
-        })
+            })
     }
 
     /// Check if a schema is already cached.

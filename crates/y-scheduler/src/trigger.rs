@@ -160,7 +160,9 @@ mod tests {
         let mut schedule = Schedule::new(
             "test-interval",
             "Test Interval",
-            TriggerConfig::Interval { interval_secs: 3600 },
+            TriggerConfig::Interval {
+                interval_secs: 3600,
+            },
             "wf",
         );
         schedule.last_fire = Some(Utc::now() - Duration::seconds(10));
@@ -216,12 +218,24 @@ mod tests {
     fn test_evaluate_all() {
         let schedules = vec![
             {
-                let mut s = Schedule::new("s1", "S1", TriggerConfig::Interval { interval_secs: 60 }, "wf");
+                let mut s = Schedule::new(
+                    "s1",
+                    "S1",
+                    TriggerConfig::Interval { interval_secs: 60 },
+                    "wf",
+                );
                 s.last_fire = Some(Utc::now() - Duration::seconds(120));
                 s
             },
             {
-                let mut s = Schedule::new("s2", "S2", TriggerConfig::Interval { interval_secs: 3600 }, "wf");
+                let mut s = Schedule::new(
+                    "s2",
+                    "S2",
+                    TriggerConfig::Interval {
+                        interval_secs: 3600,
+                    },
+                    "wf",
+                );
                 s.last_fire = Some(Utc::now() - Duration::seconds(10));
                 s
             },

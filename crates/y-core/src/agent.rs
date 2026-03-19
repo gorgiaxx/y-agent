@@ -194,10 +194,7 @@ pub trait AgentRunner: Send + Sync {
     ///
     /// The runner builds the appropriate `ChatRequest` from the config,
     /// routes it to an available provider, and returns the result.
-    async fn run(
-        &self,
-        config: AgentRunConfig,
-    ) -> Result<AgentRunOutput, DelegationError>;
+    async fn run(&self, config: AgentRunConfig) -> Result<AgentRunOutput, DelegationError>;
 }
 
 #[cfg(test)]

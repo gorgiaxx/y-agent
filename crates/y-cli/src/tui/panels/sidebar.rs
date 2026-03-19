@@ -95,8 +95,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     .take(visible_height)
                     .map(|(i, s)| {
                         let is_selected = state.selected_session_index == Some(i);
-                        let is_current =
-                            state.current_session_id.as_deref() == Some(s.id.as_str());
+                        let is_current = state.current_session_id.as_deref() == Some(s.id.as_str());
 
                         // Build display label: title or truncated ID.
                         // Use char-boundary-aware truncation to avoid panics

@@ -7,8 +7,8 @@ pub mod encoding;
 pub mod markdown;
 pub mod text;
 
-use crate::chunking::{ChunkMetadata, ChunkerType, ChunkingStrategy, coalesce_chunks};
 use crate::chunking::extract_section_title;
+use crate::chunking::{coalesce_chunks, ChunkMetadata, ChunkerType, ChunkingStrategy};
 use crate::classifier::Classifier;
 use crate::config::KnowledgeConfig;
 use crate::error::KnowledgeError;
@@ -190,9 +190,7 @@ impl IngestionPipeline {
             entry.quality_score = score;
             if !accepted {
                 return Err(KnowledgeError::IngestionError {
-                    message: format!(
-                        "entry rejected by quality filter (score={score:.2})"
-                    ),
+                    message: format!("entry rejected by quality filter (score={score:.2})"),
                 });
             }
             entry.transition(EntryState::Filtered);
@@ -236,7 +234,10 @@ mod tests {
         // L0 summary should be generated.
         assert!(entry.summary.is_some(), "L0 summary should be generated");
         // L1 sections should be generated.
-        assert!(!entry.l1_sections.is_empty(), "L1 sections should be generated");
+        assert!(
+            !entry.l1_sections.is_empty(),
+            "L1 sections should be generated"
+        );
     }
 
     #[test]
@@ -246,13 +247,7 @@ mod tests {
 
         let classifier = crate::classifier::RuleBasedClassifier::default_taxonomy();
         let entry = pipeline
-            .ingest(
-                test_raw_doc(),
-                "ws-1",
-                "default",
-                Some(&classifier),
-                None,
-            )
+            .ingest(test_raw_doc(), "ws-1", "default", Some(&classifier), None)
             .expect("ingestion should succeed");
 
         assert_eq!(entry.state, EntryState::Classified);
@@ -271,13 +266,7 @@ mod tests {
         let filter = QualityFilter::new();
 
         let entry = pipeline
-            .ingest(
-                test_raw_doc(),
-                "ws-1",
-                "default",
-                None,
-                Some(&filter),
-            )
+            .ingest(test_raw_doc(), "ws-1", "default", None, Some(&filter))
             .expect("ingestion should succeed");
 
         assert_eq!(entry.state, EntryState::Filtered);
@@ -300,8 +289,7 @@ mod tests {
     #[test]
     fn test_pipeline_with_sentence_boundary_chunker() {
         let config = KnowledgeConfig::default();
-        let pipeline = IngestionPipeline::new(config)
-            .with_chunker(ChunkerType::SentenceBoundary);
+        let pipeline = IngestionPipeline::new(config).with_chunker(ChunkerType::SentenceBoundary);
 
         let entry = pipeline
             .ingest(test_raw_doc(), "ws-1", "default", None, None)
@@ -335,14 +323,26 @@ mod tests {
             .ingest(test_raw_doc(), "ws-1", "default", None, None)
             .expect("ingestion should succeed");
 
-        assert!(!entry.l1_sections.is_empty(), "L1 sections should be generated");
+        assert!(
+            !entry.l1_sections.is_empty(),
+            "L1 sections should be generated"
+        );
         // Each section should have content.
         for section in &entry.l1_sections {
-            assert!(!section.content.is_empty(), "L1 section content should not be empty");
-            assert!(!section.title.is_empty(), "L1 section title should not be empty");
+            assert!(
+                !section.content.is_empty(),
+                "L1 section content should not be empty"
+            );
+            assert!(
+                !section.title.is_empty(),
+                "L1 section title should not be empty"
+            );
         }
         // Overview should be synced.
-        assert!(entry.overview.is_some(), "overview should be set from L1 sections");
+        assert!(
+            entry.overview.is_some(),
+            "overview should be set from L1 sections"
+        );
     }
 
     #[test]
@@ -361,10 +361,18 @@ mod tests {
             .expect("ingestion should succeed");
 
         // At least some sections should have heading-derived titles.
-        let has_heading_title = entry.l1_sections.iter().any(|s| {
-            s.title != format!("Section {}", s.index + 1)
-        });
-        assert!(has_heading_title, "at least one L1 section should have a heading-derived title, got: {:?}",
-            entry.l1_sections.iter().map(|s| &s.title).collect::<Vec<_>>());
+        let has_heading_title = entry
+            .l1_sections
+            .iter()
+            .any(|s| s.title != format!("Section {}", s.index + 1));
+        assert!(
+            has_heading_title,
+            "at least one L1 section should have a heading-derived title, got: {:?}",
+            entry
+                .l1_sections
+                .iter()
+                .map(|s| &s.title)
+                .collect::<Vec<_>>()
+        );
     }
 }

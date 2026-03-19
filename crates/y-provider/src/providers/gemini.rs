@@ -259,19 +259,20 @@ impl GeminiProvider {
             }
         };
 
-        let usage = gemini_response
-            .usage_metadata
-            .map_or(TokenUsage {
+        let usage = gemini_response.usage_metadata.map_or(
+            TokenUsage {
                 input_tokens: 0,
                 output_tokens: 0,
                 cache_read_tokens: None,
                 cache_write_tokens: None,
-            }, |u| TokenUsage {
+            },
+            |u| TokenUsage {
                 input_tokens: u.prompt_token_count.unwrap_or(0),
                 output_tokens: u.candidates_token_count.unwrap_or(0),
                 cache_read_tokens: u.cached_content_token_count,
                 cache_write_tokens: None,
-            });
+            },
+        );
 
         Ok(ChatResponse {
             id: String::new(), // Gemini doesn't return a response ID in the same way.
@@ -344,8 +345,8 @@ impl LlmProvider for GeminiProvider {
                 message: format!("parse response JSON: {e}"),
             })?;
 
-        let gemini_response: GeminiResponse =
-            serde_json::from_value(raw_response.clone()).map_err(|e| ProviderError::Other {
+        let gemini_response: GeminiResponse = serde_json::from_value(raw_response.clone())
+            .map_err(|e| ProviderError::Other {
                 message: format!("parse response: {e}"),
             })?;
 
@@ -457,7 +458,9 @@ impl LlmProvider for GeminiProvider {
                                         if valid_up_to > 0 {
                                             // Safety: valid_up_to is guaranteed to be a valid UTF-8 boundary.
                                             let valid_text = unsafe {
-                                                std::str::from_utf8_unchecked(&combined[..valid_up_to])
+                                                std::str::from_utf8_unchecked(
+                                                    &combined[..valid_up_to],
+                                                )
                                             };
                                             state.buffer.push_str(valid_text);
                                         }
@@ -908,7 +911,8 @@ mod tests {
         let request = ChatRequest {
             messages: vec![
                 Message {
-                    message_id: String::new(),                    role: Role::System,
+                    message_id: String::new(),
+                    role: Role::System,
                     content: "Be helpful".into(),
                     tool_call_id: None,
                     tool_calls: vec![],
@@ -916,7 +920,8 @@ mod tests {
                     metadata: serde_json::Value::Null,
                 },
                 Message {
-                    message_id: String::new(),                    role: Role::User,
+                    message_id: String::new(),
+                    role: Role::User,
                     content: "Hello".into(),
                     tool_call_id: None,
                     tool_calls: vec![],
@@ -924,7 +929,8 @@ mod tests {
                     metadata: serde_json::Value::Null,
                 },
                 Message {
-                    message_id: String::new(),                    role: Role::Assistant,
+                    message_id: String::new(),
+                    role: Role::Assistant,
                     content: "Hi there!".into(),
                     tool_call_id: None,
                     tool_calls: vec![],

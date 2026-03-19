@@ -118,7 +118,9 @@ impl DiagnosticsService {
         for trace in &traces {
             let mut obs_sorted = obs_by_trace.remove(&trace.id).unwrap_or_default();
             obs_sorted.sort_by(|a, b| {
-                a.sequence.cmp(&b.sequence).then(a.started_at.cmp(&b.started_at))
+                a.sequence
+                    .cmp(&b.sequence)
+                    .then(a.started_at.cmp(&b.started_at))
             });
 
             let mut llm_iter = 0usize;
@@ -294,7 +296,10 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
             .ok();
 
         // Delegate to the inner delegator.
-        let result = self.inner.delegate(agent_name, input, context_strategy).await;
+        let result = self
+            .inner
+            .delegate(agent_name, input, context_strategy)
+            .await;
 
         match &result {
             Ok(output) => {

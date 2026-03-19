@@ -153,9 +153,7 @@ impl EventSubscriber for SkillUsageAuditSubscriber {
 
             debug!(
                 injected_count = tracker.injected_skills.len(),
-                input_tokens,
-                output_tokens,
-                "Auditing skill usage after LLM call"
+                input_tokens, output_tokens, "Auditing skill usage after LLM call"
             );
 
             let mut metrics = self.metrics.write().await;

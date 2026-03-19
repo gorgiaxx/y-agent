@@ -296,7 +296,8 @@ impl CompactionEngine {
         let summary_of_rest = if to_summarize.is_empty() {
             String::new()
         } else {
-            let summarize_strs: Vec<String> = to_summarize.iter().map(|s| (*s).to_string()).collect();
+            let summarize_strs: Vec<String> =
+                to_summarize.iter().map(|s| (*s).to_string()).collect();
             let prompt = build_summarize_prompt(&summarize_strs);
             self.call_with_retry(llm, &prompt)
                 .await
@@ -453,27 +454,18 @@ fn extract_identifiers(messages: &[String]) -> Vec<String> {
     for word in combined.split_whitespace() {
         // URLs
         if word.starts_with("http://") || word.starts_with("https://") {
-            identifiers.push(
-                word.trim_end_matches([',', '.', ')'])
-                    .to_string(),
-            );
+            identifiers.push(word.trim_end_matches([',', '.', ')']).to_string());
         }
         // Email-like
         if word.contains('@') && word.contains('.') && word.len() > 5 {
-            identifiers.push(
-                word.trim_end_matches([',', '.'])
-                    .to_string(),
-            );
+            identifiers.push(word.trim_end_matches([',', '.']).to_string());
         }
         // File paths
         if (word.contains('/') || word.starts_with("./") || word.starts_with("../"))
             && word.contains('.')
             && word.len() > 3
         {
-            identifiers.push(
-                word.trim_end_matches([',', '.'])
-                    .to_string(),
-            );
+            identifiers.push(word.trim_end_matches([',', '.']).to_string());
         }
     }
 

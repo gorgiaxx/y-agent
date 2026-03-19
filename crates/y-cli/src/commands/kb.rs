@@ -73,10 +73,7 @@ pub enum CollectionAction {
 }
 
 /// Run a kb subcommand.
-pub async fn run(
-    action: &KbAction,
-    _mode: OutputMode,
-) -> Result<()> {
+pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
     use y_knowledge::config::KnowledgeConfig;
     use y_service::knowledge_service::KnowledgeService;
 
@@ -179,12 +176,7 @@ pub async fn run(
                     result.total_matches, result.strategy
                 ));
                 for (i, r) in result.results.iter().enumerate() {
-                    println!(
-                        "\n  {}. {} (relevance: {:.2})",
-                        i + 1,
-                        r.title,
-                        r.relevance
-                    );
+                    println!("\n  {}. {} (relevance: {:.2})", i + 1, r.title, r.relevance);
                     // Show first 200 chars of content.
                     let preview: String = r.content.chars().take(200).collect();
                     println!("     {preview}");

@@ -60,17 +60,128 @@ impl DomainTaxonomy {
         let mut taxonomy = Self::new();
 
         taxonomy
-            .add_domain("rust", vec!["rustc", "cargo", "crate", "rust programming", "rustfmt", "clippy", "rust-analyzer", "cargo.toml"])
-            .add_domain("rust/async", vec!["tokio", "async-trait", "futures-rs", "async_std", "tokio::spawn"])
-            .add_domain("rust/error", vec!["thiserror", "anyhow", "error chain", "impl error"])
-            .add_domain("python", vec!["python", "pip install", "django", "flask", "pytorch", "numpy", "pandas", "pyproject"])
-            .add_domain("javascript", vec!["javascript", "typescript", "react", "vue.js", "angular", "npm install", "package.json", "webpack", "vite"])
-            .add_domain("testing", vec!["unittest", "pytest", "jest", "test suite", "#[test]", "test coverage", "integration test"])
-            .add_domain("testing/automation", vec!["github actions", "ci/cd", "pipeline", "gitlab ci", "jenkins"])
-            .add_domain("database", vec!["postgres", "postgresql", "sqlite", "mysql", "database schema", "sql query", "migration"])
-            .add_domain("database/vector", vec!["qdrant", "pinecone", "weaviate", "vector database", "embedding model", "cosine similarity"])
-            .add_domain("devops", vec!["docker", "kubernetes", "dockerfile", "helm", "terraform", "container image"])
-            .add_domain("ai/llm", vec!["llm", "openai", "claude", "language model", "prompt engineering", "fine-tuning", "transformer"]);
+            .add_domain(
+                "rust",
+                vec![
+                    "rustc",
+                    "cargo",
+                    "crate",
+                    "rust programming",
+                    "rustfmt",
+                    "clippy",
+                    "rust-analyzer",
+                    "cargo.toml",
+                ],
+            )
+            .add_domain(
+                "rust/async",
+                vec![
+                    "tokio",
+                    "async-trait",
+                    "futures-rs",
+                    "async_std",
+                    "tokio::spawn",
+                ],
+            )
+            .add_domain(
+                "rust/error",
+                vec!["thiserror", "anyhow", "error chain", "impl error"],
+            )
+            .add_domain(
+                "python",
+                vec![
+                    "python",
+                    "pip install",
+                    "django",
+                    "flask",
+                    "pytorch",
+                    "numpy",
+                    "pandas",
+                    "pyproject",
+                ],
+            )
+            .add_domain(
+                "javascript",
+                vec![
+                    "javascript",
+                    "typescript",
+                    "react",
+                    "vue.js",
+                    "angular",
+                    "npm install",
+                    "package.json",
+                    "webpack",
+                    "vite",
+                ],
+            )
+            .add_domain(
+                "testing",
+                vec![
+                    "unittest",
+                    "pytest",
+                    "jest",
+                    "test suite",
+                    "#[test]",
+                    "test coverage",
+                    "integration test",
+                ],
+            )
+            .add_domain(
+                "testing/automation",
+                vec![
+                    "github actions",
+                    "ci/cd",
+                    "pipeline",
+                    "gitlab ci",
+                    "jenkins",
+                ],
+            )
+            .add_domain(
+                "database",
+                vec![
+                    "postgres",
+                    "postgresql",
+                    "sqlite",
+                    "mysql",
+                    "database schema",
+                    "sql query",
+                    "migration",
+                ],
+            )
+            .add_domain(
+                "database/vector",
+                vec![
+                    "qdrant",
+                    "pinecone",
+                    "weaviate",
+                    "vector database",
+                    "embedding model",
+                    "cosine similarity",
+                ],
+            )
+            .add_domain(
+                "devops",
+                vec![
+                    "docker",
+                    "kubernetes",
+                    "dockerfile",
+                    "helm",
+                    "terraform",
+                    "container image",
+                ],
+            )
+            .add_domain(
+                "ai/llm",
+                vec![
+                    "llm",
+                    "openai",
+                    "claude",
+                    "language model",
+                    "prompt engineering",
+                    "fine-tuning",
+                    "transformer",
+                ],
+            );
 
         taxonomy
     }
@@ -129,9 +240,8 @@ impl Classifier for RuleBasedClassifier {
                         // Short keyword: require exact word match to
                         // avoid false positives (e.g. "ci" in "recipes").
                         words.iter().any(|w| {
-                            let stripped: String = w.chars()
-                                .filter(|c| c.is_alphanumeric())
-                                .collect();
+                            let stripped: String =
+                                w.chars().filter(|c| c.is_alphanumeric()).collect();
                             stripped == kw.as_str()
                         })
                     } else {
@@ -149,7 +259,10 @@ impl Classifier for RuleBasedClassifier {
         let mut sorted: Vec<(&str, usize)> = scores.into_iter().collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
 
-        sorted.into_iter().map(|(path, _)| path.to_string()).collect()
+        sorted
+            .into_iter()
+            .map(|(path, _)| path.to_string())
+            .collect()
     }
 }
 
@@ -164,7 +277,10 @@ impl Classifier for RuleBasedClassifier {
 #[async_trait::async_trait]
 pub trait LlmClassifier: Send + Sync {
     /// Classify content using an LLM.
-    async fn classify_with_llm(&self, content: &str) -> Result<Vec<String>, crate::error::KnowledgeError>;
+    async fn classify_with_llm(
+        &self,
+        content: &str,
+    ) -> Result<Vec<String>, crate::error::KnowledgeError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +295,8 @@ mod tests {
     fn test_rule_based_classifier_rust() {
         let classifier = RuleBasedClassifier::default_taxonomy();
         // Need at least 2 keyword hits per domain
-        let domains = classifier.classify("Rust programming with cargo build using tokio and async-trait");
+        let domains =
+            classifier.classify("Rust programming with cargo build using tokio and async-trait");
 
         assert!(
             domains.iter().any(|d| d == "rust"),
@@ -194,7 +311,8 @@ mod tests {
     #[test]
     fn test_rule_based_classifier_python() {
         let classifier = RuleBasedClassifier::default_taxonomy();
-        let domains = classifier.classify("Python web framework with Django and numpy data processing");
+        let domains =
+            classifier.classify("Python web framework with Django and numpy data processing");
 
         assert!(
             domains.iter().any(|d| d == "python"),

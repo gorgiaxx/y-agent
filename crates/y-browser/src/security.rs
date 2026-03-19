@@ -38,10 +38,7 @@ impl SecurityPolicy {
         // Only allow http(s).
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(SecurityError::BlockedScheme(
-                url.split("://")
-                    .next()
-                    .unwrap_or("unknown")
-                    .into(),
+                url.split("://").next().unwrap_or("unknown").into(),
             ));
         }
 
@@ -179,10 +176,7 @@ mod tests {
     use super::*;
 
     fn policy(domains: &[&str]) -> SecurityPolicy {
-        SecurityPolicy::new(
-            domains.iter().map(|s| s.to_string()).collect(),
-            true,
-        )
+        SecurityPolicy::new(domains.iter().map(|s| s.to_string()).collect(), true)
     }
 
     #[test]

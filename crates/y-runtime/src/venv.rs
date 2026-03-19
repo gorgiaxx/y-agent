@@ -93,12 +93,7 @@ impl VenvManager {
                 "creating Python venv via uv"
             );
             let result = Command::new(&binary_path)
-                .args([
-                    "venv",
-                    "--python",
-                    &config.python_version,
-                    &config.venv_dir,
-                ])
+                .args(["venv", "--python", &config.python_version, &config.venv_dir])
                 .current_dir(work_dir)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -242,11 +237,7 @@ impl VenvManager {
             .ok()?;
 
         if output.status.success() {
-            Some(
-                String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .to_string(),
-            )
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
             None
         }

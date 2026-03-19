@@ -180,7 +180,10 @@ pub fn agent_create(
 }
 
 /// Update an existing dynamic agent definition.
-pub fn agent_update(store: &dyn DynamicAgentStoreBackend, params: AgentUpdateParams) -> MetaToolResult {
+pub fn agent_update(
+    store: &dyn DynamicAgentStoreBackend,
+    params: AgentUpdateParams,
+) -> MetaToolResult {
     let Some(existing) = store.get(&params.id) else {
         return MetaToolResult::error(&format!("Agent '{}' not found", params.id));
     };
@@ -223,7 +226,10 @@ pub fn agent_deactivate(
 }
 
 /// Search for agent definitions.
-pub fn agent_search(store: &dyn DynamicAgentStoreBackend, params: &AgentSearchParams) -> MetaToolResult {
+pub fn agent_search(
+    store: &dyn DynamicAgentStoreBackend,
+    params: &AgentSearchParams,
+) -> MetaToolResult {
     let mut results = store.search(&params.query);
 
     // Apply optional filters

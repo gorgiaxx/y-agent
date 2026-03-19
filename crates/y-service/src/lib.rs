@@ -35,6 +35,7 @@ pub use agent_service::{
     AgentExecutionConfig, AgentExecutionError, AgentExecutionResult, AgentService,
     ServiceAgentRunner,
 };
+pub use bot::{BotService, BotServiceError};
 pub use chat::{
     ChatService, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError,
     ResendTurnRequest, ToolCallRecord, TurnError, TurnEvent, TurnEventSender, TurnInput,
@@ -44,7 +45,6 @@ pub use config::ServiceConfig;
 pub use container::ServiceContainer;
 pub use cost::CostService;
 pub use diagnostics::{DiagnosticsAgentDelegator, DiagnosticsService, HistoricalEntry};
-pub use bot::{BotService, BotServiceError};
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,
@@ -54,6 +54,4 @@ pub use skill_evolution::{
     SkillUsageAuditSubscriber, UsageMetrics,
 };
 pub use skill_ingestion::{ImportDecision, ImportError, ImportResult, SkillIngestionService};
-pub use system::{
-    HealthReport, ProviderInfo, ProviderTestRequest, StatusReport, SystemService,
-};
+pub use system::{HealthReport, ProviderInfo, ProviderTestRequest, StatusReport, SystemService};

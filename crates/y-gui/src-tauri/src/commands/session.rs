@@ -161,10 +161,7 @@ pub async fn session_get_messages(
 /// This permanently removes the session metadata and clears its transcript.
 /// Any in-progress runs for this session should have completed before calling this.
 #[tauri::command]
-pub async fn session_delete(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
+pub async fn session_delete(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     let sid = SessionId(session_id);
     state
         .container

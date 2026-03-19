@@ -146,10 +146,9 @@ impl AnthropicProvider {
                                     .get("description")
                                     .and_then(|d| d.as_str())
                                     .map(String::from),
-                                input_schema: func
-                                    .get("parameters")
-                                    .cloned()
-                                    .unwrap_or(serde_json::json!({"type": "object", "properties": {}})),
+                                input_schema: func.get("parameters").cloned().unwrap_or(
+                                    serde_json::json!({"type": "object", "properties": {}}),
+                                ),
                             })
                         })
                         .collect();
@@ -237,8 +236,8 @@ impl LlmProvider for AnthropicProvider {
                 message: format!("parse response JSON: {e}"),
             })?;
 
-        let anthropic_response: AnthropicResponse =
-            serde_json::from_value(raw_response.clone()).map_err(|e| ProviderError::Other {
+        let anthropic_response: AnthropicResponse = serde_json::from_value(raw_response.clone())
+            .map_err(|e| ProviderError::Other {
                 message: format!("parse response: {e}"),
             })?;
 
@@ -904,7 +903,8 @@ mod tests {
         let request = ChatRequest {
             messages: vec![
                 Message {
-                    message_id: String::new(),                    role: Role::System,
+                    message_id: String::new(),
+                    role: Role::System,
                     content: "You are helpful.".into(),
                     tool_call_id: None,
                     tool_calls: vec![],
@@ -912,7 +912,8 @@ mod tests {
                     metadata: serde_json::Value::Null,
                 },
                 Message {
-                    message_id: String::new(),                    role: Role::User,
+                    message_id: String::new(),
+                    role: Role::User,
                     content: "Hello".into(),
                     tool_call_id: None,
                     tool_calls: vec![],

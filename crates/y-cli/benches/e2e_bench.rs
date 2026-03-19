@@ -46,7 +46,11 @@ fn bench_session_recovery(c: &mut Criterion) {
                 for i in 0..1000 {
                     let msg = Message {
                         message_id: y_core::types::generate_message_id(),
-                        role: if i % 2 == 0 { Role::User } else { Role::Assistant },
+                        role: if i % 2 == 0 {
+                            Role::User
+                        } else {
+                            Role::Assistant
+                        },
                         content: format!("Message {i}"),
                         tool_call_id: None,
                         tool_calls: vec![],
@@ -64,8 +68,8 @@ fn bench_session_recovery(c: &mut Criterion) {
 }
 
 fn bench_provider_routing(c: &mut Criterion) {
-    use y_core::provider::ProviderMetadata;
     use std::collections::HashMap;
+    use y_core::provider::ProviderMetadata;
 
     // Simulate 10 providers with tag-based routing
     let mut providers: HashMap<String, ProviderMetadata> = HashMap::new();
@@ -150,8 +154,14 @@ fn bench_context_assembly(c: &mut Criterion) {
                 for i in 0..100 {
                     messages.push(Message {
                         message_id: y_core::types::generate_message_id(),
-                        role: if i % 2 == 0 { Role::User } else { Role::Assistant },
-                        content: format!("Message {i} with some content to simulate real token usage"),
+                        role: if i % 2 == 0 {
+                            Role::User
+                        } else {
+                            Role::Assistant
+                        },
+                        content: format!(
+                            "Message {i} with some content to simulate real token usage"
+                        ),
                         tool_call_id: None,
                         tool_calls: vec![],
                         timestamp: y_core::types::now(),

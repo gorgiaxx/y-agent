@@ -407,7 +407,8 @@ impl SkillIngestionService {
                         "keep" => {
                             // Copy the file as-is
                             if source_file.exists() {
-                                let target = store.base_path().join(&skill_name).join(&decision.path);
+                                let target =
+                                    store.base_path().join(&skill_name).join(&decision.path);
                                 if let Some(parent) = target.parent() {
                                     let _ = std::fs::create_dir_all(parent);
                                 }
@@ -424,7 +425,8 @@ impl SkillIngestionService {
                         "transform" => {
                             // Write transformed content
                             if let Some(ref content) = decision.transformed_content {
-                                let target = store.base_path().join(&skill_name).join(&decision.path);
+                                let target =
+                                    store.base_path().join(&skill_name).join(&decision.path);
                                 if let Some(parent) = target.parent() {
                                     let _ = std::fs::create_dir_all(parent);
                                 }
@@ -460,11 +462,9 @@ impl SkillIngestionService {
                 // Fallback: if agent provided no companion decisions, copy
                 // all companion files (backwards compatibility).
                 if agent_output.companion_decisions.is_empty() {
-                    if let Err(e) = store.copy_companion_files(
-                        &skill_name,
-                        dir,
-                        main_file_name.as_deref(),
-                    ) {
+                    if let Err(e) =
+                        store.copy_companion_files(&skill_name, dir, main_file_name.as_deref())
+                    {
                         warn!(
                             skill = %skill_name,
                             error = %e,

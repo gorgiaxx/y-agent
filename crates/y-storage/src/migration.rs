@@ -14,12 +14,18 @@ pub async fn run_migrations(pool: &SqlitePool, migrations_dir: &Path) -> Result<
     let migrator = sqlx::migrate::Migrator::new(migrations_dir)
         .await
         .map_err(|e| StorageError::Migration {
-            message: format!("failed to load migrations from {}: {e}", migrations_dir.display()),
+            message: format!(
+                "failed to load migrations from {}: {e}",
+                migrations_dir.display()
+            ),
         })?;
 
-    migrator.run(pool).await.map_err(|e| StorageError::Migration {
-        message: format!("migration execution failed: {e}"),
-    })?;
+    migrator
+        .run(pool)
+        .await
+        .map_err(|e| StorageError::Migration {
+            message: format!("migration execution failed: {e}"),
+        })?;
 
     info!(
         migrations_dir = %migrations_dir.display(),
@@ -51,7 +57,6 @@ mod tests {
     use super::*;
     use crate::config::StorageConfig;
     use crate::pool::create_pool;
-    
 
     async fn setup_pool_with_migrations() -> SqlitePool {
         let config = StorageConfig::in_memory();
@@ -90,7 +95,9 @@ mod tests {
 
         // Run migrations twice — second run should be a no-op.
         run_embedded_migrations(&pool).await.expect("first run");
-        run_embedded_migrations(&pool).await.expect("second run should not fail");
+        run_embedded_migrations(&pool)
+            .await
+            .expect("second run should not fail");
     }
 
     #[tokio::test]

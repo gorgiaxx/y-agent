@@ -18,9 +18,11 @@ pub async fn create_pool(config: &StorageConfig) -> Result<SqlitePool, StorageEr
     } else {
         // Ensure parent directory exists.
         if let Some(dir) = config.db_dir() {
-            tokio::fs::create_dir_all(dir).await.map_err(|e| StorageError::Config {
-                message: format!("failed to create database directory: {e}"),
-            })?;
+            tokio::fs::create_dir_all(dir)
+                .await
+                .map_err(|e| StorageError::Config {
+                    message: format!("failed to create database directory: {e}"),
+                })?;
         }
         SqliteConnectOptions::new()
             .filename(&config.db_path)

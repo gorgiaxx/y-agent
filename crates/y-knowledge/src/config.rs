@@ -33,7 +33,6 @@ pub struct KnowledgeConfig {
     pub max_chunks_per_entry: usize,
 
     // -- Embedding configuration --
-
     /// Whether embedding-based semantic search is enabled.
     #[serde(default)]
     pub embedding_enabled: bool,
@@ -68,7 +67,6 @@ pub struct KnowledgeConfig {
     pub embedding_max_tokens: u32,
 
     // -- Retrieval tuning --
-
     /// Retrieval strategy: "hybrid", "keyword", or "semantic".
     #[serde(default = "default_retrieval_strategy")]
     pub retrieval_strategy: String,

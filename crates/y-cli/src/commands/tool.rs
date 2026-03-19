@@ -95,16 +95,18 @@ pub async fn run(action: &ToolAction, services: &AppServices, mode: OutputMode) 
         ToolAction::Info { name } => {
             let tool_name = ToolName(name.clone());
             match services.tool_registry.get_definition(&tool_name).await {
-                Some(def) => if mode == OutputMode::Json {
-                    let json = serde_json::to_string_pretty(&def)?;
-                    println!("{json}");
-                } else {
-                    println!("Tool: {}", def.name.0);
-                    println!("Type: {:?}", def.tool_type);
-                    println!("Description: {}", def.description);
-                    println!("Category: {:?}", def.category);
-                    println!("Capabilities: {:?}", def.capabilities);
-                },
+                Some(def) => {
+                    if mode == OutputMode::Json {
+                        let json = serde_json::to_string_pretty(&def)?;
+                        println!("{json}");
+                    } else {
+                        println!("Tool: {}", def.name.0);
+                        println!("Type: {:?}", def.tool_type);
+                        println!("Description: {}", def.description);
+                        println!("Category: {:?}", def.category);
+                        println!("Capabilities: {:?}", def.capabilities);
+                    }
+                }
                 None => {
                     output::print_error(&format!("Tool not found: {name}"));
                 }

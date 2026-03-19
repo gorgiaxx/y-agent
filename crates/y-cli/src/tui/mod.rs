@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -191,7 +191,11 @@ impl TuiApp {
                             } else {
                                 // Check if `/` typed on empty input → enter command mode.
                                 if key.code == crossterm::event::KeyCode::Char('/')
-                                    && self.textarea.lines().iter().all(std::string::String::is_empty)
+                                    && self
+                                        .textarea
+                                        .lines()
+                                        .iter()
+                                        .all(std::string::String::is_empty)
                                 {
                                     self.state.set_mode(InteractionMode::Command);
                                     self.palette = CommandPaletteState::new();
@@ -243,16 +247,14 @@ impl TuiApp {
                                 self.textarea = TextArea::new(vec![entry.to_string()]);
                             }
                         }
-                        KeyAction::HistoryNext => {
-                            match self.state.history_next() {
-                                Some(entry) => {
-                                    self.textarea = TextArea::new(vec![entry.to_string()]);
-                                }
-                                None => {
-                                    self.textarea = TextArea::default();
-                                }
+                        KeyAction::HistoryNext => match self.state.history_next() {
+                            Some(entry) => {
+                                self.textarea = TextArea::new(vec![entry.to_string()]);
                             }
-                        }
+                            None => {
+                                self.textarea = TextArea::default();
+                            }
+                        },
                         KeyAction::Consumed | KeyAction::Unhandled => {}
                         KeyAction::SelectSessionItem => {
                             self.switch_to_selected_session().await;
@@ -272,9 +274,7 @@ impl TuiApp {
                                 } else if contains(chunks.chat, x, y) {
                                     self.state.set_focus(PanelFocus::Chat);
                                     // Start text selection in chat.
-                                    let (row, col) = self.terminal_to_content(
-                                        x, y, chunks.chat,
-                                    );
+                                    let (row, col) = self.terminal_to_content(x, y, chunks.chat);
                                     self.state.selection.start(row, col);
                                 } else if let Some(sb) = chunks.sidebar {
                                     if contains(sb, x, y) {
@@ -289,7 +289,9 @@ impl TuiApp {
                             if self.state.selection.active {
                                 if let Some(ref chunks) = self.last_chunks {
                                     let (row, col) = self.terminal_to_content(
-                                        mouse.column, mouse.row, chunks.chat,
+                                        mouse.column,
+                                        mouse.row,
+                                        chunks.chat,
                                     );
                                     self.state.selection.update(row, col);
                                 }
@@ -300,7 +302,9 @@ impl TuiApp {
                             if self.state.selection.active {
                                 if let Some(ref chunks) = self.last_chunks {
                                     let (row, col) = self.terminal_to_content(
-                                        mouse.column, mouse.row, chunks.chat,
+                                        mouse.column,
+                                        mouse.row,
+                                        chunks.chat,
                                     );
                                     self.state.selection.update(row, col);
                                 }
@@ -325,7 +329,8 @@ impl TuiApp {
                             self.state.selection.reset();
                         }
                         MouseEventKind::ScrollUp => {
-                            let over_sidebar = self.last_chunks
+                            let over_sidebar = self
+                                .last_chunks
                                 .as_ref()
                                 .and_then(|c| c.sidebar)
                                 .is_some_and(|sb| contains(sb, mouse.column, mouse.row));
@@ -337,7 +342,8 @@ impl TuiApp {
                             }
                         }
                         MouseEventKind::ScrollDown => {
-                            let over_sidebar = self.last_chunks
+                            let over_sidebar = self
+                                .last_chunks
                                 .as_ref()
                                 .and_then(|c| c.sidebar)
                                 .is_some_and(|sb| contains(sb, mouse.column, mouse.row));
@@ -474,7 +480,8 @@ impl TuiApp {
                 self.state.push_toast(msg, ToastLevel::Info);
             }
             CommandResult::Error(msg) => {
-                self.state.push_toast(format!("Error: {msg}"), ToastLevel::Error);
+                self.state
+                    .push_toast(format!("Error: {msg}"), ToastLevel::Error);
             }
             CommandResult::Quit => {
                 // Handled in the run loop.
@@ -487,7 +494,8 @@ impl TuiApp {
                 // current_session_id set to None, user_message_count reset).
                 // Actual session creation is deferred to first message.
                 self.state.sync_selected_session_index();
-                self.state.push_toast("New session started.".into(), ToastLevel::Info);
+                self.state
+                    .push_toast("New session started.".into(), ToastLevel::Info);
             }
         }
     }
@@ -522,7 +530,12 @@ impl TuiApp {
     /// The returned `col` is a **character index**, not a display column,
     /// so that it aligns with `TextSelection` and `extract_text` which
     /// both operate on character indices.
-    fn terminal_to_content(&self, x: u16, y: u16, chat_area: ratatui::layout::Rect) -> (usize, usize) {
+    fn terminal_to_content(
+        &self,
+        x: u16,
+        y: u16,
+        chat_area: ratatui::layout::Rect,
+    ) -> (usize, usize) {
         // Display column within the content area (after border).
         let display_col = (x.saturating_sub(chat_area.x).saturating_sub(1)) as usize;
         let content_y = (y.saturating_sub(chat_area.y).saturating_sub(1)) as usize;
@@ -553,7 +566,11 @@ impl TuiApp {
     /// Restore the terminal to its original state.
     fn restore_terminal(&mut self) -> Result<()> {
         disable_raw_mode()?;
-        execute!(self.terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)?;
+        execute!(
+            self.terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        )?;
         self.terminal.show_cursor()?;
         Ok(())
     }
@@ -562,7 +579,12 @@ impl TuiApp {
     async fn load_sessions(&mut self) {
         use y_core::session::SessionFilter;
 
-        match self.services.session_manager.list_sessions(&SessionFilter::default()).await {
+        match self
+            .services
+            .session_manager
+            .list_sessions(&SessionFilter::default())
+            .await
+        {
             Ok(mut nodes) => {
                 // Sort by updated_at descending (most recent first).
                 nodes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -593,7 +615,12 @@ impl TuiApp {
 
     /// Load a session's transcript into the chat panel.
     async fn load_session_transcript(&mut self, session_id: &y_core::types::SessionId) {
-        match self.services.session_manager.read_transcript(session_id).await {
+        match self
+            .services
+            .session_manager
+            .read_transcript(session_id)
+            .await
+        {
             Ok(messages) => {
                 self.state.messages = messages
                     .into_iter()
@@ -678,7 +705,11 @@ fn contains(rect: ratatui::layout::Rect, x: u16, y: u16) -> bool {
 impl Drop for TuiApp {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(self.terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen);
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         let _ = self.terminal.show_cursor();
     }
 }

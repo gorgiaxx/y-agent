@@ -109,21 +109,25 @@ impl DisplayTranscriptStore for JsonlDisplayTranscriptStore {
             return Ok(0);
         }
 
-        let file = tokio::fs::File::open(&path)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("open display transcript: {e}"),
-            })?;
+        let file =
+            tokio::fs::File::open(&path)
+                .await
+                .map_err(|e| SessionError::TranscriptError {
+                    message: format!("open display transcript: {e}"),
+                })?;
 
         let reader = tokio::io::BufReader::new(file);
         let mut lines = reader.lines();
         let mut count = 0;
 
-        while let Some(line) = lines.next_line().await.map_err(|e| {
-            SessionError::TranscriptError {
-                message: format!("read line: {e}"),
-            }
-        })? {
+        while let Some(line) =
+            lines
+                .next_line()
+                .await
+                .map_err(|e| SessionError::TranscriptError {
+                    message: format!("read line: {e}"),
+                })?
+        {
             if !line.trim().is_empty() {
                 count += 1;
             }
@@ -152,10 +156,9 @@ impl DisplayTranscriptStore for JsonlDisplayTranscriptStore {
 
         let mut content = String::new();
         for msg in kept {
-            let line =
-                serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
-                    message: format!("serialize message: {e}"),
-                })?;
+            let line = serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
+                message: format!("serialize message: {e}"),
+            })?;
             content.push_str(&line);
             content.push('\n');
         }
@@ -212,10 +215,7 @@ mod tests {
             .append(&session_id, &test_message("world"))
             .await
             .unwrap();
-        store
-            .append(&session_id, &test_message("!"))
-            .await
-            .unwrap();
+        store.append(&session_id, &test_message("!")).await.unwrap();
 
         let messages = store.read_all(&session_id).await.unwrap();
         assert_eq!(messages.len(), 3);
@@ -300,7 +300,10 @@ mod tests {
         let path = dir
             .path()
             .join(format!("{}.display.jsonl", session_id.as_str()));
-        assert!(path.exists(), "display transcript should use .display.jsonl");
+        assert!(
+            path.exists(),
+            "display transcript should use .display.jsonl"
+        );
     }
 
     #[tokio::test]

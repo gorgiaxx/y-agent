@@ -209,19 +209,15 @@ impl<T: Tokenizer> InjectKnowledge<T> {
             let content = if let Some(meta) = metadata {
                 Self::format_structured(result, meta)
             } else if self.config.context_window > 0 {
-                let neighbors = self.retriever.get_neighboring_chunks(
-                    &result.chunk.id,
-                    self.config.context_window,
-                );
+                let neighbors = self
+                    .retriever
+                    .get_neighboring_chunks(&result.chunk.id, self.config.context_window);
 
                 // Filter out sections we've already included.
                 let new_neighbors: Vec<&&crate::chunking::Chunk> = neighbors
                     .iter()
                     .filter(|c| {
-                        !seen_sections.contains(&(
-                            c.document_id.clone(),
-                            c.metadata.section_index,
-                        ))
+                        !seen_sections.contains(&(c.document_id.clone(), c.metadata.section_index))
                     })
                     .collect();
 
@@ -233,10 +229,8 @@ impl<T: Tokenizer> InjectKnowledge<T> {
                     Self::format_chunk(result)
                 } else {
                     for chunk in &new_neighbors {
-                        seen_sections.insert((
-                            chunk.document_id.clone(),
-                            chunk.metadata.section_index,
-                        ));
+                        seen_sections
+                            .insert((chunk.document_id.clone(), chunk.metadata.section_index));
                     }
 
                     let joined: String = new_neighbors
@@ -374,7 +368,8 @@ mod tests {
             id: "c2".to_string(),
             document_id: "doc-2".to_string(),
             level: ChunkLevel::L2,
-            content: "Python exception handling uses try-except blocks for error management.".to_string(),
+            content: "Python exception handling uses try-except blocks for error management."
+                .to_string(),
             token_estimate: 15,
             metadata: ChunkMetadata {
                 source: "test".to_string(),
@@ -438,7 +433,10 @@ mod tests {
         let mw = make_middleware();
         let items = mw.retrieve_for_context("quantum physics", None, None);
         // No matches for unrelated query.
-        assert!(items.is_empty(), "should find no results for unrelated query");
+        assert!(
+            items.is_empty(),
+            "should find no results for unrelated query"
+        );
     }
 
     #[test]
@@ -467,28 +465,49 @@ mod tests {
         let mut mw = make_middleware();
 
         // Register L0/L1 metadata for doc-1.
-        mw.register_entry_metadata("doc-1", EntryMetadata {
-            title: "Rust Error Handling".to_string(),
-            summary: Some("Guide covering Result type, ? operator, and custom errors.".to_string()),
-            section_titles: vec![
-                "Result Type".to_string(),
-                "The ? Operator".to_string(),
-                "Custom Errors".to_string(),
-            ],
-        });
+        mw.register_entry_metadata(
+            "doc-1",
+            EntryMetadata {
+                title: "Rust Error Handling".to_string(),
+                summary: Some(
+                    "Guide covering Result type, ? operator, and custom errors.".to_string(),
+                ),
+                section_titles: vec![
+                    "Result Type".to_string(),
+                    "The ? Operator".to_string(),
+                    "Custom Errors".to_string(),
+                ],
+            },
+        );
 
         let items = mw.retrieve_for_context("Rust error handling", None, None);
         assert!(!items.is_empty(), "should find results");
 
         let item = &items[0];
         // Should use structured format (not raw L2 chunk text).
-        assert!(item.content.contains("Summary:"), "should contain L0 summary, got: {}", item.content);
-        assert!(item.content.contains("Sections:"), "should contain L1 sections, got: {}", item.content);
-        assert!(item.content.contains("Result Type"), "should list section titles");
-        assert!(item.content.contains("The ? Operator"), "should list section titles");
+        assert!(
+            item.content.contains("Summary:"),
+            "should contain L0 summary, got: {}",
+            item.content
+        );
+        assert!(
+            item.content.contains("Sections:"),
+            "should contain L1 sections, got: {}",
+            item.content
+        );
+        assert!(
+            item.content.contains("Result Type"),
+            "should list section titles"
+        );
+        assert!(
+            item.content.contains("The ? Operator"),
+            "should list section titles"
+        );
         // Should NOT contain the raw L2 chunk content.
-        assert!(!item.content.contains("recoverable errors and panic"),
-            "should not contain raw L2 text when metadata available");
+        assert!(
+            !item.content.contains("recoverable errors and panic"),
+            "should not contain raw L2 text when metadata available"
+        );
         // Meta fields should be populated.
         assert!(item.summary.is_some());
         assert!(!item.section_titles.is_empty());
@@ -503,7 +522,10 @@ mod tests {
 
         let item = &items[0];
         // Should contain the raw L2 chunk text.
-        assert!(item.content.contains("Result type"), "should contain L2 content");
+        assert!(
+            item.content.contains("Result type"),
+            "should contain L2 content"
+        );
         // Meta fields should be empty.
         assert!(item.summary.is_none());
         assert!(item.section_titles.is_empty());
@@ -513,11 +535,14 @@ mod tests {
     fn test_register_and_remove_metadata() {
         let mut mw = make_middleware();
 
-        mw.register_entry_metadata("doc-1", EntryMetadata {
-            title: "Test".to_string(),
-            summary: Some("Test summary".to_string()),
-            section_titles: vec![],
-        });
+        mw.register_entry_metadata(
+            "doc-1",
+            EntryMetadata {
+                title: "Test".to_string(),
+                summary: Some("Test summary".to_string()),
+                section_titles: vec![],
+            },
+        );
 
         // Should use structured format.
         let items = mw.retrieve_for_context("Rust error", None, None);
@@ -528,6 +553,9 @@ mod tests {
         mw.remove_entry_metadata("doc-1");
         let items = mw.retrieve_for_context("Rust error", None, None);
         assert!(!items.is_empty());
-        assert!(!items[0].content.contains("Summary:"), "should fall back after removal");
+        assert!(
+            !items[0].content.contains("Summary:"),
+            "should fall back after removal"
+        );
     }
 }

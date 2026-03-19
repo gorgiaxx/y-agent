@@ -177,9 +177,7 @@ impl<T: Tokenizer> Bm25Index<T> {
                 let idf = ((f64::from(self.doc_count) - n + 0.5) / (n + 0.5) + 1.0).ln();
 
                 for posting in postings {
-                    let dl = f64::from(
-                        *self.doc_lengths.get(&posting.chunk_id).unwrap_or(&1),
-                    );
+                    let dl = f64::from(*self.doc_lengths.get(&posting.chunk_id).unwrap_or(&1));
                     let tf = f64::from(posting.tf);
 
                     // BM25 TF component.
@@ -199,7 +197,11 @@ impl<T: Tokenizer> Bm25Index<T> {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k);
         results
     }

@@ -33,7 +33,9 @@ pub mod router;
 pub mod scheduler;
 
 // Re-export primary types.
+pub use agent_runner::SingleTurnRunner;
 pub use config::{ProviderConfig, ProviderPoolConfig, ProxySpec};
+pub use embedding::{EmbeddingConfig, OpenAiEmbeddingProvider};
 pub use error::ProviderPoolError;
 pub use error_classifier::{classify, classify_provider_error, StandardError};
 pub use freeze::FreezeManager;
@@ -50,5 +52,3 @@ pub use providers::ollama::OllamaProvider;
 pub use providers::openai::OpenAiProvider;
 pub use router::{SelectionStrategy, TagBasedRouter};
 pub use scheduler::{PriorityScheduler, SchedulerSnapshot};
-pub use agent_runner::SingleTurnRunner;
-pub use embedding::{EmbeddingConfig, OpenAiEmbeddingProvider};

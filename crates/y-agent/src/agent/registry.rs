@@ -279,7 +279,10 @@ impl AgentRegistry {
     /// Unlike [`register`], this replaces any existing definition with the
     /// same ID. This is the primary mechanism for user-defined overrides
     /// of built-in agents.
-    pub fn register_or_override(&mut self, definition: AgentDefinition) -> Result<(), MultiAgentError> {
+    pub fn register_or_override(
+        &mut self,
+        definition: AgentDefinition,
+    ) -> Result<(), MultiAgentError> {
         definition.validate()?;
         self.definitions.insert(definition.id.clone(), definition);
         Ok(())
@@ -402,8 +405,7 @@ impl AgentRegistry {
         for (name, toml_str) in Self::builtin_toml_sources() {
             let def = AgentDefinition::from_toml(toml_str)
                 .unwrap_or_else(|e| panic!("built-in agent '{name}' should parse: {e}"));
-            self.builtin_originals
-                .insert(def.id.clone(), def.clone());
+            self.builtin_originals.insert(def.id.clone(), def.clone());
             self.definitions.insert(def.id.clone(), def);
         }
     }
@@ -871,11 +873,7 @@ mod tests {
     fn test_reset_builtin_restores_original() {
         let mut registry = AgentRegistry::new();
 
-        let original_prompt = registry
-            .get("tool-engineer")
-            .unwrap()
-            .system_prompt
-            .clone();
+        let original_prompt = registry.get("tool-engineer").unwrap().system_prompt.clone();
 
         let mut override_def = user_definition("tool-engineer", "Custom");
         override_def.system_prompt = "Override prompt".to_string();

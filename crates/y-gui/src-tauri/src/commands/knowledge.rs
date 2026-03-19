@@ -53,8 +53,11 @@ impl KnowledgeState {
     #[allow(dead_code)]
     pub async fn knowledge_handle(
         &self,
-    ) -> std::sync::Arc<std::sync::Mutex<y_knowledge::middleware::InjectKnowledge<y_knowledge::tokenizer::SimpleTokenizer>>>
-    {
+    ) -> std::sync::Arc<
+        std::sync::Mutex<
+            y_knowledge::middleware::InjectKnowledge<y_knowledge::tokenizer::SimpleTokenizer>,
+        >,
+    > {
         self.service.lock().await.knowledge_handle()
     }
 }
@@ -280,31 +283,36 @@ pub async fn kb_entry_detail(
     _resolution: String,
 ) -> Result<EntryDetail, String> {
     let service = kb.service.lock().await;
-    let entry = service.get_entry(&entry_id)
+    let entry = service
+        .get_entry(&entry_id)
         .ok_or_else(|| format!("Entry '{}' not found", entry_id))?;
 
     let l0_summary = entry.summary.clone().unwrap_or_default();
-    let l1_sections: Vec<SectionInfo> = entry.l1_sections.iter().map(|s| {
-        SectionInfo {
+    let l1_sections: Vec<SectionInfo> = entry
+        .l1_sections
+        .iter()
+        .map(|s| SectionInfo {
             index: s.index,
             title: s.title.clone(),
             summary: s.content.clone(),
-        }
-    }).collect();
+        })
+        .collect();
 
     let total_chunk_count = entry.chunks.len();
     // Cap at 200 chunks to avoid flooding the IPC channel / UI.
     const MAX_L2_CHUNKS: usize = 200;
-    let l2_chunks: Vec<ChunkInfo> = entry.chunks.iter().enumerate()
+    let l2_chunks: Vec<ChunkInfo> = entry
+        .chunks
+        .iter()
+        .enumerate()
         .take(MAX_L2_CHUNKS)
-        .map(|(i, content)| {
-            ChunkInfo {
-                id: format!("{}-{}", entry.id, i),
-                content: content.clone(),
-                token_estimate: content.len() / 4,
-                section_index: i,
-            }
-        }).collect();
+        .map(|(i, content)| ChunkInfo {
+            id: format!("{}-{}", entry.id, i),
+            content: content.clone(),
+            token_estimate: content.len() / 4,
+            section_index: i,
+        })
+        .collect();
 
     Ok(EntryDetail {
         id: entry.id.to_string(),
@@ -413,9 +421,7 @@ pub async fn kb_entry_delete(
 
 /// Get global knowledge base statistics.
 #[tauri::command]
-pub async fn kb_stats(
-    kb: State<'_, KnowledgeState>,
-) -> Result<KbStats, String> {
+pub async fn kb_stats(kb: State<'_, KnowledgeState>) -> Result<KbStats, String> {
     let service = kb.service.lock().await;
     let collections = service.list_collections();
 

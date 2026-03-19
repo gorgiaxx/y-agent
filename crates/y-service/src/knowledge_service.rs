@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use y_core::embedding::EmbeddingProvider;
 use y_knowledge::config::KnowledgeConfig;
 use y_knowledge::ingestion::IngestionPipeline;
-use y_knowledge::middleware::{EntryMetadata, InjectKnowledge, InjectKnowledgeConfig, KnowledgeContextItem};
+use y_knowledge::middleware::{
+    EntryMetadata, InjectKnowledge, InjectKnowledgeConfig, KnowledgeContextItem,
+};
 use y_knowledge::models::{KnowledgeCollection, KnowledgeEntry};
 use y_knowledge::quality::QualityFilter;
 use y_knowledge::retrieval::HybridRetriever;
@@ -23,7 +25,7 @@ use y_knowledge::tools::{
 };
 use y_knowledge::{
     classifier::RuleBasedClassifier,
-    ingestion::{text::TextConnector, markdown::MarkdownConnector, SourceConnector},
+    ingestion::{markdown::MarkdownConnector, text::TextConnector, SourceConnector},
 };
 
 /// Knowledge service error.
@@ -148,9 +150,10 @@ impl KnowledgeService {
         inject_config: InjectKnowledgeConfig,
     ) -> Self {
         let retriever = HybridRetriever::new(SimpleTokenizer::new());
-        let inject_knowledge = Arc::new(StdMutex::new(
-            InjectKnowledge::with_config(retriever, inject_config),
-        ));
+        let inject_knowledge = Arc::new(StdMutex::new(InjectKnowledge::with_config(
+            retriever,
+            inject_config,
+        )));
         let pipeline = IngestionPipeline::new(config.clone());
         let classifier = RuleBasedClassifier::default_taxonomy();
         let quality_filter = QualityFilter::new();
@@ -363,13 +366,17 @@ impl KnowledgeService {
             } else {
                 usize::MAX
             };
-            let texts: Vec<String> = entry.chunks.iter().map(|c| {
-                if c.chars().count() > max_chars {
-                    c.chars().take(max_chars).collect()
-                } else {
-                    c.clone()
-                }
-            }).collect();
+            let texts: Vec<String> = entry
+                .chunks
+                .iter()
+                .map(|c| {
+                    if c.chars().count() > max_chars {
+                        c.chars().take(max_chars).collect()
+                    } else {
+                        c.clone()
+                    }
+                })
+                .collect();
             match provider.embed_batch(&texts).await {
                 Ok(results) => {
                     let embeddings: Vec<Vec<f32>> = results.into_iter().map(|r| r.vector).collect();
@@ -380,7 +387,9 @@ impl KnowledgeService {
                     Some(embeddings)
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to generate embeddings, falling back to keyword-only: {e}");
+                    tracing::warn!(
+                        "Failed to generate embeddings, falling back to keyword-only: {e}"
+                    );
                     None
                 }
             }
@@ -391,11 +400,17 @@ impl KnowledgeService {
         // Index chunks for retrieval (batch — much faster than per-chunk).
         {
             use y_knowledge::chunking::{Chunk, ChunkLevel, ChunkMetadata};
-            let mut knowledge = self.inject_knowledge.lock().unwrap_or_else(|e| e.into_inner());
+            let mut knowledge = self
+                .inject_knowledge
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
 
             let domain = domains.first().cloned().unwrap_or_default();
-            let chunks_for_index: Vec<Chunk> = entry.chunks.iter().enumerate().map(|(i, chunk_content)| {
-                Chunk {
+            let chunks_for_index: Vec<Chunk> = entry
+                .chunks
+                .iter()
+                .enumerate()
+                .map(|(i, chunk_content)| Chunk {
                     id: format!("{entry_id}-{i}"),
                     document_id: entry_id.clone(),
                     level: ChunkLevel::L2,
@@ -407,8 +422,8 @@ impl KnowledgeService {
                         title: entry.source.title.clone(),
                         section_index: i,
                     },
-                }
-            }).collect();
+                })
+                .collect();
 
             if let Some(ref embeddings) = chunk_embeddings {
                 knowledge.retriever_mut().index_batch_with_embeddings(
@@ -417,18 +432,20 @@ impl KnowledgeService {
                     quality_score,
                 );
             } else {
-                knowledge.retriever_mut().index_batch_with_quality(
-                    chunks_for_index,
-                    quality_score,
-                );
+                knowledge
+                    .retriever_mut()
+                    .index_batch_with_quality(chunks_for_index, quality_score);
             }
 
             // Register L0/L1 metadata for progressive context injection.
-            knowledge.register_entry_metadata(&entry_id, EntryMetadata {
-                title: entry.source.title.clone(),
-                summary: entry.summary.clone(),
-                section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
-            });
+            knowledge.register_entry_metadata(
+                &entry_id,
+                EntryMetadata {
+                    title: entry.source.title.clone(),
+                    summary: entry.summary.clone(),
+                    section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
+                },
+            );
         }
 
         // Update collection stats.
@@ -466,12 +483,12 @@ impl KnowledgeService {
     // -------------------------------------------------------------------
 
     /// Search the knowledge base.
-    pub fn search(
-        &self,
-        params: &KnowledgeSearchParams,
-    ) -> KnowledgeSearchResult {
+    pub fn search(&self, params: &KnowledgeSearchParams) -> KnowledgeSearchResult {
         let domain = params.domain.as_deref();
-        let knowledge = self.inject_knowledge.lock().unwrap_or_else(|e| e.into_inner());
+        let knowledge = self
+            .inject_knowledge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let items = knowledge.retrieve_for_context(&params.query, None, domain);
 
         let results: Vec<SearchResultItem> = items
@@ -532,13 +549,19 @@ impl KnowledgeService {
             // Update collection stats.
             if let Some(coll) = self.collections.get_mut(&entry.collection) {
                 coll.stats.entry_count = coll.stats.entry_count.saturating_sub(1);
-                coll.stats.chunk_count = coll.stats.chunk_count.saturating_sub(entry.chunks.len() as u64);
+                coll.stats.chunk_count = coll
+                    .stats
+                    .chunk_count
+                    .saturating_sub(entry.chunks.len() as u64);
                 coll.stats.total_bytes = coll.stats.total_bytes.saturating_sub(content_size);
             }
 
             // Remove chunks from the in-memory retriever index.
             {
-                let mut knowledge = self.inject_knowledge.lock().unwrap_or_else(|e| e.into_inner());
+                let mut knowledge = self
+                    .inject_knowledge
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 let removed = knowledge.retriever_mut().remove_by_document(entry_id);
                 knowledge.remove_entry_metadata(entry_id);
                 tracing::debug!(entry_id, removed, "Removed chunks from retriever index");
@@ -603,7 +626,15 @@ impl KnowledgeService {
         let mut embedding_count = 0usize;
 
         // Collect entry data first to avoid borrow conflict.
-        let entries_data: Vec<(String, Vec<String>, String, String, f32, Option<String>, Vec<String>)> = self
+        let entries_data: Vec<(
+            String,
+            Vec<String>,
+            String,
+            String,
+            f32,
+            Option<String>,
+            Vec<String>,
+        )> = self
             .entries
             .iter()
             .filter(|(_, entry)| !entry.chunks.is_empty())
@@ -620,9 +651,14 @@ impl KnowledgeService {
             })
             .collect();
 
-        let mut knowledge = self.inject_knowledge.lock().unwrap_or_else(|e| e.into_inner());
+        let mut knowledge = self
+            .inject_knowledge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
-        for (entry_id, chunks, source_uri, title, quality_score, summary, section_titles) in &entries_data {
+        for (entry_id, chunks, source_uri, title, quality_score, summary, section_titles) in
+            &entries_data
+        {
             let domain = self
                 .entries
                 .get(entry_id)
@@ -630,8 +666,10 @@ impl KnowledgeService {
                 .unwrap_or_default();
 
             // Build all Chunk structs for this entry.
-            let all_chunks: Vec<Chunk> = chunks.iter().enumerate().map(|(i, chunk_content)| {
-                Chunk {
+            let all_chunks: Vec<Chunk> = chunks
+                .iter()
+                .enumerate()
+                .map(|(i, chunk_content)| Chunk {
                     id: format!("{entry_id}-{i}"),
                     document_id: entry_id.clone(),
                     level: ChunkLevel::L2,
@@ -643,8 +681,8 @@ impl KnowledgeService {
                         title: title.clone(),
                         section_index: i,
                     },
-                }
-            }).collect();
+                })
+                .collect();
 
             total_chunks += all_chunks.len();
 
@@ -665,21 +703,26 @@ impl KnowledgeService {
 
             if !chunks_with_emb.is_empty() {
                 knowledge.retriever_mut().index_batch_with_embeddings(
-                    chunks_with_emb, embs, *quality_score,
+                    chunks_with_emb,
+                    embs,
+                    *quality_score,
                 );
             }
             if !chunks_without_emb.is_empty() {
-                knowledge.retriever_mut().index_batch_with_quality(
-                    chunks_without_emb, *quality_score,
-                );
+                knowledge
+                    .retriever_mut()
+                    .index_batch_with_quality(chunks_without_emb, *quality_score);
             }
 
             // Register L0/L1 metadata for progressive context injection.
-            knowledge.register_entry_metadata(entry_id, EntryMetadata {
-                title: title.clone(),
-                summary: summary.clone(),
-                section_titles: section_titles.clone(),
-            });
+            knowledge.register_entry_metadata(
+                entry_id,
+                EntryMetadata {
+                    title: title.clone(),
+                    summary: summary.clone(),
+                    section_titles: section_titles.clone(),
+                },
+            );
         }
 
         if total_chunks > 0 {
@@ -772,10 +815,7 @@ impl KnowledgeService {
         match fs::read_to_string(&path) {
             Ok(json) => match serde_json::from_str::<HashMap<String, KnowledgeEntry>>(&json) {
                 Ok(entries) => {
-                    tracing::info!(
-                        "Loaded {} knowledge entries from disk",
-                        entries.len()
-                    );
+                    tracing::info!("Loaded {} knowledge entries from disk", entries.len());
                     self.entries = entries;
                 }
                 Err(e) => {
@@ -807,7 +847,10 @@ impl KnowledgeService {
         }
         let path = dir.join("knowledge_embeddings.bin");
 
-        let knowledge = self.inject_knowledge.lock().unwrap_or_else(|e| e.into_inner());
+        let knowledge = self
+            .inject_knowledge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let embeddings = knowledge.retriever().embeddings();
         if embeddings.is_empty() {
             return;
@@ -898,10 +941,7 @@ impl KnowledgeService {
         match result {
             Ok(map) => {
                 if !map.is_empty() {
-                    tracing::info!(
-                        count = map.len(),
-                        "Loaded embedding vectors from disk"
-                    );
+                    tracing::info!(count = map.len(), "Loaded embedding vectors from disk");
                 }
                 map
             }

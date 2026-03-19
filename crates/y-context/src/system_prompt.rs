@@ -160,18 +160,18 @@ impl BuildSystemPromptProvider {
 
         // Append Python (uv) venv info.
         if let Some(ref py) = venv_info.python {
-            env_str.push_str(
-                &format!(", python_env=uv(version={}, venv={}, uv_path={}, working_dir={})",
-                    py.python_version, py.venv_dir, py.uv_path, py.working_dir),
-            );
+            env_str.push_str(&format!(
+                ", python_env=uv(version={}, venv={}, uv_path={}, working_dir={})",
+                py.python_version, py.venv_dir, py.uv_path, py.working_dir
+            ));
         }
 
         // Append JavaScript (bun) venv info.
         if let Some(ref bun) = venv_info.bun {
-            env_str.push_str(
-                &format!(", js_env=bun(version={}, bun_path={}, working_dir={})",
-                    bun.bun_version, bun.bun_path, bun.working_dir),
-            );
+            env_str.push_str(&format!(
+                ", js_env=bun(version={}, bun_path={}, working_dir={})",
+                bun.bun_version, bun.bun_path, bun.working_dir
+            ));
         }
 
         env_str
@@ -250,9 +250,10 @@ impl ContextProvider for BuildSystemPromptProvider {
             // Dynamic section replacement.
             let content = match eff.section_id.as_str() {
                 "core.datetime" => Self::generate_datetime(),
-                "core.environment" => {
-                    Self::generate_environment(prompt_ctx.working_directory.as_deref(), &self.venv_info)
-                }
+                "core.environment" => Self::generate_environment(
+                    prompt_ctx.working_directory.as_deref(),
+                    &self.venv_info,
+                ),
                 _ => content,
             };
 

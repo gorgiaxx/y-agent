@@ -192,7 +192,11 @@ pub fn format_aria_snapshot(
 
     let root = nodes
         .iter()
-        .find(|n| n.node_id.as_deref().is_some_and(|id| !referenced.contains(id)))
+        .find(|n| {
+            n.node_id
+                .as_deref()
+                .is_some_and(|id| !referenced.contains(id))
+        })
         .or(nodes.first());
 
     let Some(root) = root else {
@@ -221,10 +225,7 @@ pub fn format_aria_snapshot(
             let Some(node_id) = node.node_id.as_deref() else {
                 continue;
             };
-            let role = node
-                .role
-                .as_ref()
-                .map_or_else(String::new, |v| v.as_str());
+            let role = node.role.as_ref().map_or_else(String::new, |v| v.as_str());
             if is_interactive_role(&role) {
                 // Mark this node and all ancestors
                 let mut current = Some(node_id);
@@ -252,14 +253,8 @@ pub fn format_aria_snapshot(
             continue;
         };
 
-        let role = node
-            .role
-            .as_ref()
-            .map_or_else(String::new, |v| v.as_str());
-        let name = node
-            .name
-            .as_ref()
-            .map_or_else(String::new, |v| v.as_str());
+        let role = node.role.as_ref().map_or_else(String::new, |v| v.as_str());
+        let name = node.name.as_ref().map_or_else(String::new, |v| v.as_str());
 
         // Apply interactive filter
         if let Some(ref keep) = keep_ids {

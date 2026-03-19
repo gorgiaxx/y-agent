@@ -112,13 +112,19 @@ fn compute_structure_score(content: &str) -> f32 {
     let mut score = 0.0_f32;
 
     // Paragraph count.
-    let paragraphs = content.split("\n\n").filter(|s| !s.trim().is_empty()).count();
+    let paragraphs = content
+        .split("\n\n")
+        .filter(|s| !s.trim().is_empty())
+        .count();
     if paragraphs >= 2 {
         score += 0.1;
     }
 
     // Heading count.
-    let headings = content.lines().filter(|l| l.trim_start().starts_with('#')).count();
+    let headings = content
+        .lines()
+        .filter(|l| l.trim_start().starts_with('#'))
+        .count();
     if headings >= 1 {
         score += 0.1;
     }
@@ -191,7 +197,9 @@ mod tests {
     #[test]
     fn test_quality_filter_rejects_inactive() {
         let filter = QualityFilter::new();
-        let mut entry = make_entry("Enough content to pass length check, this is a test document with many words.");
+        let mut entry = make_entry(
+            "Enough content to pass length check, this is a test document with many words.",
+        );
         entry.is_active = false;
         let (accepted, _) = filter.evaluate(&entry);
         assert!(!accepted, "inactive entry should be rejected");
@@ -234,9 +242,18 @@ mod tests {
     #[test]
     fn test_deduplication() {
         let mut filter = QualityFilter::new();
-        assert!(filter.check_duplicate("hash1"), "first occurrence should be new");
-        assert!(!filter.check_duplicate("hash1"), "second occurrence should be duplicate");
-        assert!(filter.check_duplicate("hash2"), "different hash should be new");
+        assert!(
+            filter.check_duplicate("hash1"),
+            "first occurrence should be new"
+        );
+        assert!(
+            !filter.check_duplicate("hash1"),
+            "second occurrence should be duplicate"
+        );
+        assert!(
+            filter.check_duplicate("hash2"),
+            "different hash should be new"
+        );
     }
 
     #[test]

@@ -32,7 +32,6 @@ pub struct StorageConfig {
     /// Path to the migrations directory.
     #[serde(default = "default_migrations_dir")]
     pub migrations_dir: PathBuf,
-
 }
 
 fn default_db_path() -> String {

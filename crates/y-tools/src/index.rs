@@ -140,7 +140,11 @@ mod tests {
         assert_eq!(index.len(), 2);
         assert!(index.remove(&ToolName::from_string("file_read")));
         assert_eq!(index.len(), 1);
-        let names: Vec<_> = index.entries().iter().map(|e| e.name.as_str().to_string()).collect();
+        let names: Vec<_> = index
+            .entries()
+            .iter()
+            .map(|e| e.name.as_str().to_string())
+            .collect();
         assert!(!names.contains(&"file_read".to_string()));
     }
 }

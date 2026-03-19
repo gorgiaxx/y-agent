@@ -238,11 +238,7 @@ impl SqliteScheduleStore {
 
     /// Update just the `last_fire` timestamp.
     #[instrument(skip(self))]
-    pub async fn update_last_fire(
-        &self,
-        id: &str,
-        last_fire: &str,
-    ) -> Result<bool, StorageError> {
+    pub async fn update_last_fire(&self, id: &str, last_fire: &str) -> Result<bool, StorageError> {
         let result = sqlx::query(
             r"UPDATE schedule_definitions SET
                 last_fire = ?1,
@@ -298,10 +294,7 @@ impl SqliteScheduleStore {
 
     /// Record a schedule execution.
     #[instrument(skip(self, row), fields(execution_id = %row.id, schedule_id = %row.schedule_id))]
-    pub async fn record_execution(
-        &self,
-        row: &ScheduleExecutionRow,
-    ) -> Result<(), StorageError> {
+    pub async fn record_execution(&self, row: &ScheduleExecutionRow) -> Result<(), StorageError> {
         sqlx::query(
             r"INSERT INTO schedule_executions
               (id, schedule_id, session_id, status, resolved_params, error_message, started_at, completed_at)
@@ -474,10 +467,11 @@ mod tests {
         sqlx::query(
             r"INSERT INTO orchestrator_workflows
               (id, name, definition, compiled_dag, tags, creator)
-              VALUES ('wf-1', 'test-wf', 'a >> b', '{}', '[]', 'user')")
-            .execute(&pool)
-            .await
-            .unwrap();
+              VALUES ('wf-1', 'test-wf', 'a >> b', '{}', '[]', 'user')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         (pool, store)
     }
 
@@ -506,7 +500,10 @@ mod tests {
     #[tokio::test]
     async fn test_save_and_get() {
         let (_pool, store) = setup().await;
-        store.save(&sample_row("s1", "daily-cleanup")).await.unwrap();
+        store
+            .save(&sample_row("s1", "daily-cleanup"))
+            .await
+            .unwrap();
 
         let loaded = store.get("s1").await.unwrap().expect("should exist");
         assert_eq!(loaded.name, "daily-cleanup");
@@ -584,7 +581,10 @@ mod tests {
         let (_pool, store) = setup().await;
         store.save(&sample_row("s1", "fire-test")).await.unwrap();
 
-        store.update_last_fire("s1", "2026-03-11T09:00:00Z").await.unwrap();
+        store
+            .update_last_fire("s1", "2026-03-11T09:00:00Z")
+            .await
+            .unwrap();
         let loaded = store.get("s1").await.unwrap().unwrap();
         assert_eq!(loaded.last_fire.as_deref(), Some("2026-03-11T09:00:00Z"));
     }
@@ -639,7 +639,12 @@ mod tests {
         store.record_execution(&exec).await.unwrap();
 
         store
-            .update_execution_status("exec-2", "failed", Some("timeout"), Some("2026-03-11T09:05:00Z"))
+            .update_execution_status(
+                "exec-2",
+                "failed",
+                Some("timeout"),
+                Some("2026-03-11T09:05:00Z"),
+            )
             .await
             .unwrap();
 

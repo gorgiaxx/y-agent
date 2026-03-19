@@ -213,7 +213,12 @@ mod tests {
 
         let steps = vec![
             PipelineStep::new("step-1", "Do task A", vec![], "out_a"),
-            PipelineStep::new("step-2", "Do task B with {out_a}", vec!["out_a".to_string()], "out_b"),
+            PipelineStep::new(
+                "step-2",
+                "Do task B with {out_a}",
+                vec!["out_a".to_string()],
+                "out_b",
+            ),
         ];
 
         let result = MicroPipeline::execute(&protocol, &steps, WorkingMemory::new()).unwrap();
@@ -264,6 +269,9 @@ mod tests {
         );
 
         let rendered = step.render_prompt(&wm);
-        assert_eq!(rendered, "Write about Rust ownership focusing on borrowing rules");
+        assert_eq!(
+            rendered,
+            "Write about Rust ownership focusing on borrowing rules"
+        );
     }
 }

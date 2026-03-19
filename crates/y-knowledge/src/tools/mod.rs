@@ -230,10 +230,8 @@ mod tests {
 
     #[test]
     fn test_search_params_defaults() {
-        let params: KnowledgeSearchParams = serde_json::from_str(
-            r#"{"query": "rust error handling"}"#,
-        )
-        .unwrap();
+        let params: KnowledgeSearchParams =
+            serde_json::from_str(r#"{"query": "rust error handling"}"#).unwrap();
         assert_eq!(params.query, "rust error handling");
         assert_eq!(params.resolution, "l0");
         assert_eq!(params.limit, 5);
@@ -253,20 +251,16 @@ mod tests {
 
     #[test]
     fn test_lookup_params_defaults() {
-        let params: KnowledgeLookupParams = serde_json::from_str(
-            r#"{"chunk_id": "abc123"}"#,
-        )
-        .unwrap();
+        let params: KnowledgeLookupParams =
+            serde_json::from_str(r#"{"chunk_id": "abc123"}"#).unwrap();
         assert_eq!(params.chunk_id, "abc123");
         assert_eq!(params.resolution, "l0");
     }
 
     #[test]
     fn test_ingest_params_defaults() {
-        let params: KnowledgeIngestParams = serde_json::from_str(
-            r#"{"source": "/path/to/file.md"}"#,
-        )
-        .unwrap();
+        let params: KnowledgeIngestParams =
+            serde_json::from_str(r#"{"source": "/path/to/file.md"}"#).unwrap();
         assert_eq!(params.source, "/path/to/file.md");
         assert_eq!(params.collection, "default");
         assert!(params.domain.is_none());

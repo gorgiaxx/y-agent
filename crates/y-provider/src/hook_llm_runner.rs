@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use tracing::debug;
 
 use y_core::hook::HookLlmRunner;
-use y_core::provider::{ChatRequest, ProviderPool, RouteRequest, RoutePriority, ToolCallingMode};
+use y_core::provider::{ChatRequest, ProviderPool, RoutePriority, RouteRequest, ToolCallingMode};
 use y_core::types::{Message, Role};
 
 /// An implementation of `HookLlmRunner` backed by a `ProviderPool`.
@@ -63,7 +63,7 @@ impl HookLlmRunner for ProviderPoolHookLlmRunner {
                 },
             ],
             model: model.map(std::string::ToString::to_string),
-            max_tokens: Some(256), // Hook responses are short JSON.
+            max_tokens: Some(256),  // Hook responses are short JSON.
             temperature: Some(0.0), // Deterministic for safety decisions.
             top_p: None,
             tools: vec![],
@@ -87,7 +87,12 @@ impl HookLlmRunner for ProviderPoolHookLlmRunner {
 
         let response = tokio::time::timeout(timeout, self.pool.chat_completion(&request, &route))
             .await
-            .map_err(|_| format!("prompt hook LLM call timed out after {}ms", timeout.as_millis()))?
+            .map_err(|_| {
+                format!(
+                    "prompt hook LLM call timed out after {}ms",
+                    timeout.as_millis()
+                )
+            })?
             .map_err(|e| format!("prompt hook LLM call failed: {e}"))?;
 
         response

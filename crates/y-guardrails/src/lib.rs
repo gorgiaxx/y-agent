@@ -67,7 +67,9 @@ impl std::fmt::Debug for GuardrailManager {
 impl GuardrailManager {
     /// Create a new guardrail manager.
     pub fn new(config: GuardrailConfig) -> Self {
-        Self { config: std::sync::RwLock::new(config) }
+        Self {
+            config: std::sync::RwLock::new(config),
+        }
     }
 
     /// Get a snapshot of the current guardrail configuration.

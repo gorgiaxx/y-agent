@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, broadcast, oneshot};
+use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, trace, warn};
@@ -123,9 +123,7 @@ pub struct CdpClient {
 }
 
 type WriterHalf = futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     Message,
 >;
 
@@ -344,9 +342,7 @@ impl CdpClient {
             .web_socket_debugger_url
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                CdpError::DiscoveryFailed(
-                    "/json/version missing webSocketDebuggerUrl".into(),
-                )
+                CdpError::DiscoveryFailed("/json/version missing webSocketDebuggerUrl".into())
             })?;
 
         let browser_ws = normalize_ws_url(&browser_ws_url, url);
@@ -429,9 +425,7 @@ impl CdpClient {
         .await
         {
             Ok(result) => result?,
-            Err(_) => {
-                return Err(CdpError::Timeout(response_timeout.as_millis() as u64))
-            }
+            Err(_) => return Err(CdpError::Timeout(response_timeout.as_millis() as u64)),
         };
 
         // Close the temporary connection.
@@ -578,8 +572,7 @@ fn normalize_ws_url(ws_url: &str, cdp_url: &str) -> String {
         || ws_host == "localhost"
         || ws_host == "0.0.0.0"
         || ws_host == "[::]";
-    let is_cdp_loopback =
-        cdp_host == "127.0.0.1" || cdp_host == "localhost";
+    let is_cdp_loopback = cdp_host == "127.0.0.1" || cdp_host == "localhost";
 
     if is_ws_loopback && !is_cdp_loopback {
         let _ = ws.set_host(Some(cdp_host));

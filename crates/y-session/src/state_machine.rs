@@ -26,12 +26,19 @@ impl StateMachine {
         matches!(
             (from, to),
             // Active → anything except itself
-            (SessionState::Active,
-SessionState::Paused | SessionState::Archived | SessionState::Merged |
-SessionState::Tombstone) |
-(SessionState::Paused,
-SessionState::Active | SessionState::Archived | SessionState::Tombstone) |
-(SessionState::Archived | SessionState::Merged, SessionState::Tombstone)
+            (
+                SessionState::Active,
+                SessionState::Paused
+                    | SessionState::Archived
+                    | SessionState::Merged
+                    | SessionState::Tombstone
+            ) | (
+                SessionState::Paused,
+                SessionState::Active | SessionState::Archived | SessionState::Tombstone
+            ) | (
+                SessionState::Archived | SessionState::Merged,
+                SessionState::Tombstone
+            )
         )
     }
 
@@ -155,10 +162,8 @@ mod tests {
 
     #[test]
     fn test_same_state_transition_invalid() {
-        let result = StateMachine::validate_transition(
-            &SessionState::Active,
-            &SessionState::Active,
-        );
+        let result =
+            StateMachine::validate_transition(&SessionState::Active, &SessionState::Active);
         assert!(result.is_err());
     }
 
