@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # y-agent Engineering Protocol
 
 Scope: entire repository. All rules are mandatory.
@@ -10,59 +14,50 @@ Goals: async-first (P95 tool dispatch < 100ms) · model-agnostic · full observa
 
 ### 1.1 Workspace Crates
 
-| Layer | Crates |
-|-------|--------|
-| **Core** | `y-core` |
-| **Infrastructure** | `y-provider` · `y-session` · `y-context` · `y-storage` · `y-knowledge` · `y-diagnostics` |
-| **Middleware** | `y-hooks` · `y-guardrails` · `y-prompt` · `y-mcp` |
-| **Capabilities** | `y-tools` · `y-skills` · `y-runtime` · `y-scheduler` · `y-browser` · `y-journal` |
-| **Orchestration** | `y-agent` · `y-bot` |
-| **Service** | `y-service` (all business logic) |
-| **Presentation** | `y-cli` (CLI + TUI) · `y-web` (REST API) · `y-gui` (Tauri desktop app) |
-| **Testing** | `y-test-utils` |
+**Core**: `y-core`
+**Infrastructure**: `y-provider` · `y-session` · `y-context` · `y-storage` · `y-knowledge` · `y-diagnostics`
+**Middleware**: `y-hooks` · `y-guardrails` · `y-prompt` · `y-mcp`
+**Capabilities**: `y-tools` · `y-skills` · `y-runtime` · `y-scheduler` · `y-browser` · `y-journal`
+**Orchestration**: `y-agent` · `y-bot`
+**Service**: `y-service` (all business logic)
+**Presentation**: `y-cli` (CLI + TUI) · `y-web` (REST API) · `y-gui` (Tauri desktop app)
+**Testing**: `y-test-utils`
 
 ### 1.2 Repository Layout
 
 ```
 y-agent/
-  VISION.md / DESIGN_RULE.md / DESIGN_OVERVIEW.md / CLAUDE.md / README.md
-  Cargo.toml          — workspace root with shared deps and clippy lint config
-  clippy.toml          — clippy threshold overrides
-  rustfmt.toml         — formatting rules (max_width=100, edition=2021)
-  deny.toml            — cargo-deny configuration
   docs/
-    design/            — 29 detailed design documents
-    standards/         — ENGINEERING_STANDARDS, TEST_STRATEGY, DATABASE_SCHEMA,
-                         AGENT_AUTONOMY, DSL_STANDARD, SKILLS_STANDARD, TOOL_CALL_PROTOCOL
+    design/            — detailed design documents
+    standards/         —
     plan/              — project & per-module plans and remediation docs
-    guides/            — ARCHITECTURE, CONFIGURATION, SKILL_AUTHORING, TOOL_AUTHORING, WEB_API
-    api/               — OpenAPI spec (openapi.yaml)
-    research/          — competitive analysis, architecture studies
-    schema/            — schema documentation
+    guides/            —
+    api/               —
+    research/          — just for research
+    schema/            —
   config/              — TOML config templates (providers, runtime, guardrails, browser, etc.)
   builtin-skills/      — built-in skill packages (code-review-rust, humanizer-zh)
   migrations/sqlite/   — SQLite migrations
   scripts/             — build-release.sh, deploy.sh, health-check.sh, native-install.sh
   data/                — SQLite database (runtime data)
   tests/               — workspace-level integration tests
-  .github/workflows/   — CI (ci.yml), deploy (deploy.yml), release (release.yml)
   crates/              — 24 Rust crates (see table above)
 ```
 
 ## 2) Engineering Principles
 
-| # | Principle | Key rules |
-|---|-----------|-----------|
-| 2.1 | **Architectural Stability** | Extend via traits/middleware/plugins; feature-flag every new subsystem. |
-| 2.2 | **Separation of Concerns** | Tools = business logic; Runtime = isolation; Guardrails = middleware only; Memory = 3 disjoint tiers. |
-| 2.3 | **Explicit Over Implicit** | State assumptions; document rejected alternatives; measurable success criteria. |
-| 2.4 | **Token Efficiency** | Skill root docs <= 2 000 tokens; MAP steps <= 2 000 tokens; Working Memory carries `token_estimate`. |
-| 2.5 | **Defense in Depth** | Runtime (OS) -> Guardrails (app) -> Permission Model (user); no single layer removal makes system unsafe. |
-| 2.6 | **Fail Fast, Recover Cheap** | Checkpoint at task level; retry from failed step; freeze/thaw providers; compensation for side effects. |
-| 2.7 | **TDD** | Red -> Green -> Refactor. No production code without a preceding test. See `TEST_STRATEGY.md`. |
-| 2.8 | **English** | All docs, comments, commits in English. `VISION.md` is the sole exception. |
-| 2.9 | **No Emoji** | No emoji in any artifact: code, docs, comments, commits, diagrams, or agent output. Use plain text only. |
-| 2.10 | **Service-Layer Ownership** | All business logic lives in `y-service`; `y-cli`, `y-web`, `y-gui` (Tauri) are thin presentation layers -- they handle I/O, rendering, and user interaction only. No domain logic in presentation crates. |
+| #    | Principle                    | Key rules                                                                                                                                                                                                 |
+| ---- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.1  | **Architectural Stability**  | Extend via traits/middleware/plugins; feature-flag every new subsystem.                                                                                                                                   |
+| 2.2  | **Separation of Concerns**   | Tools = business logic; Runtime = isolation; Guardrails = middleware only; Memory = 3 disjoint tiers.                                                                                                     |
+| 2.3  | **Explicit Over Implicit**   | State assumptions; document rejected alternatives; measurable success criteria.                                                                                                                           |
+| 2.4  | **Token Efficiency**         | Skill root docs <= 2 000 tokens; MAP steps <= 2 000 tokens; Working Memory carries `token_estimate`.                                                                                                      |
+| 2.5  | **Defense in Depth**         | Runtime (OS) -> Guardrails (app) -> Permission Model (user); no single layer removal makes system unsafe.                                                                                                 |
+| 2.6  | **Fail Fast, Recover Cheap** | Checkpoint at task level; retry from failed step; freeze/thaw providers; compensation for side effects.                                                                                                   |
+| 2.7  | **TDD**                      | Red -> Green -> Refactor. No production code without a preceding test. See `TEST_STRATEGY.md`.                                                                                                            |
+| 2.8  | **English**                  | All docs, comments, commits in English. `VISION.md` is the sole exception.                                                                                                                                |
+| 2.9  | **No Emoji**                 | No emoji in any artifact: code, docs, comments, commits, diagrams, or agent output. Use plain text only.                                                                                                  |
+| 2.10 | **Service-Layer Ownership**  | All business logic lives in `y-service`; `y-cli`, `y-web`, `y-gui` (Tauri) are thin presentation layers -- they handle I/O, rendering, and user interaction only. No domain logic in presentation crates. |
 
 ## 3) Risk Tiers
 
@@ -75,6 +70,7 @@ When uncertain -> High.
 ## 4) Agent Workflow
 
 ### 4.1 Design Document Changes
+
 > Full workflow: `DESIGN_RULE.md` S7-11.
 
 1. Read target doc + `DESIGN_OVERVIEW.md` + `DESIGN_RULE.md` first.
@@ -83,6 +79,7 @@ When uncertain -> High.
 4. Update `DESIGN_OVERVIEW.md`; bump version in every modified doc; run S10 checklist.
 
 ### 4.2 Implementation (TDD)
+
 > Standards: `TEST_STRATEGY.md` · `ENGINEERING_STANDARDS.md`
 
 - **Before coding**: read the design doc in `docs/design/` + `DESIGN_OVERVIEW.md`. Implementation must conform. Impractical design -> update doc first, then code.
@@ -91,15 +88,19 @@ When uncertain -> High.
 - Dependencies point inward to `y-core`; every subsystem behind a feature flag.
 
 ### 4.3 Sub-Agent Work
+
 - Read `docs/standards/AGENT_AUTONOMY.md` before designing or implementing any sub-agent component (delegation, agent pools, autonomy).
 
 ### 4.4 R&D Planning
+
 - **Before any R&D action**: write a plan to `docs/plan/` covering scope, steps, dependencies, and verification criteria. No implementation until the plan exists.
 
 ### 4.5 Commit Discipline
+
 - One concern per change; cross-doc changes in one batch; English commit messages; no secrets.
 
 ### 4.6 Post-Development Quality Gates
+
 After completing any code change, run the following checks **in order** and fix all issues before considering the task done:
 
 ```bash
@@ -115,42 +116,33 @@ cargo check --workspace
 No task is complete until all three commands pass cleanly.
 
 ### 4.7 CI Pipeline
+
 The GitHub Actions CI (`.github/workflows/ci.yml`) enforces:
 
-| Job | Command |
-|-----|---------|
-| Format | `cargo fmt --check` |
-| Clippy | `cargo clippy --workspace -- -D warnings` |
-| Check | `cargo check --workspace` |
-| Test | `cargo test --workspace` |
-| Documentation | `cargo doc --workspace --no-deps` (with `-D warnings`) |
-| Security Audit | `rustsec/audit-check` |
+| Job            | Command                                                |
+| -------------- | ------------------------------------------------------ |
+| Format         | `cargo fmt --check`                                    |
+| Clippy         | `cargo clippy --workspace -- -D warnings`              |
+| Check          | `cargo check --workspace`                              |
+| Test           | `cargo test --workspace`                               |
+| Documentation  | `cargo doc --workspace --no-deps` (with `-D warnings`) |
+| Security Audit | `rustsec/audit-check`                                  |
 
 All jobs must pass before merge. The `RUSTFLAGS="-D warnings"` env var is set globally, so any Rust warning is a build failure.
 
 ## 5) Key References
 
-| Document | Purpose |
-|----------|---------|
-| `DESIGN_RULE.md` | Design doc standards, playbooks, validation checklist |
-| `DESIGN_OVERVIEW.md` | Authoritative index, cross-cutting alignment |
-| `docs/standards/TEST_STRATEGY.md` | TDD methodology, pyramid, quality gates |
-| `docs/standards/ENGINEERING_STANDARDS.md` | Rust coding standards |
-| `docs/standards/DATABASE_SCHEMA.md` | SQLite / Qdrant schema |
-| `docs/standards/AGENT_AUTONOMY.md` | Sub-agent autonomy model & delegation protocol |
-| `docs/standards/DSL_STANDARD.md` | DSL specification |
-| `docs/standards/SKILLS_STANDARD.md` | Skills format and authoring standard |
-| `docs/standards/TOOL_CALL_PROTOCOL.md` | Tool call protocol specification |
-| `docs/guides/ARCHITECTURE.md` | Architecture overview guide |
-| `docs/guides/CONFIGURATION.md` | Configuration guide |
-| `docs/guides/SKILL_AUTHORING.md` | Skill authoring guide |
-| `docs/guides/TOOL_AUTHORING.md` | Tool authoring guide |
-| `docs/guides/WEB_API.md` | Web API usage guide |
-| `docs/api/openapi.yaml` | OpenAPI specification |
-| `docs/plan/PROJECT_PLAN.md` | Implementation phases |
-| `docs/plan/R&D_PLAN.md` | Per-module R&D details |
-| `VISION.md` | Project vision (Chinese) |
-| `README.md` | User-facing documentation and setup instructions |
+| Document                                  | Purpose                                               |
+| ----------------------------------------- | ----------------------------------------------------- |
+| `DESIGN_RULE.md`                          | Design doc standards, playbooks, validation checklist |
+| `docs/standards/TEST_STRATEGY.md`         | TDD methodology, pyramid, quality gates               |
+| `docs/standards/ENGINEERING_STANDARDS.md` | Rust coding standards                                 |
+| `docs/standards/DATABASE_SCHEMA.md`       | SQLite / Qdrant schema                                |
+| `docs/standards/AGENT_AUTONOMY.md`        | Sub-agent autonomy model & delegation protocol        |
+| `docs/standards/DSL_STANDARD.md`          | DSL specification                                     |
+| `docs/standards/SKILLS_STANDARD.md`       | Skills format and authoring standard                  |
+| `docs/standards/TOOL_CALL_PROTOCOL.md`    | Tool call protocol specification                      |
+| `VISION.md`                               | Project vision (Chinese)                              |
 
 ## 6) Formatting Constraints
 

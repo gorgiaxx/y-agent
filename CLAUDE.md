@@ -10,42 +10,33 @@ Goals: async-first (P95 tool dispatch < 100ms) · model-agnostic · full observa
 
 ### 1.1 Workspace Crates
 
-| Layer              | Crates                                                                                   |
-| ------------------ | ---------------------------------------------------------------------------------------- |
-| **Core**           | `y-core`                                                                                 |
-| **Infrastructure** | `y-provider` · `y-session` · `y-context` · `y-storage` · `y-knowledge` · `y-diagnostics` |
-| **Middleware**     | `y-hooks` · `y-guardrails` · `y-prompt` · `y-mcp`                                        |
-| **Capabilities**   | `y-tools` · `y-skills` · `y-runtime` · `y-scheduler` · `y-browser` · `y-journal`         |
-| **Orchestration**  | `y-agent` · `y-bot`                                                                      |
-| **Service**        | `y-service` (all business logic)                                                         |
-| **Presentation**   | `y-cli` (CLI + TUI) · `y-web` (REST API) · `y-gui` (Tauri desktop app)                   |
-| **Testing**        | `y-test-utils`                                                                           |
+**Core**: `y-core`
+**Infrastructure**: `y-provider` · `y-session` · `y-context` · `y-storage` · `y-knowledge` · `y-diagnostics`
+**Middleware**: `y-hooks` · `y-guardrails` · `y-prompt` · `y-mcp`
+**Capabilities**: `y-tools` · `y-skills` · `y-runtime` · `y-scheduler` · `y-browser` · `y-journal`
+**Orchestration**: `y-agent` · `y-bot`
+**Service**: `y-service` (all business logic)
+**Presentation**: `y-cli` (CLI + TUI) · `y-web` (REST API) · `y-gui` (Tauri desktop app)
+**Testing**: `y-test-utils`
 
 ### 1.2 Repository Layout
 
 ```
 y-agent/
-  VISION.md / DESIGN_RULE.md / DESIGN_OVERVIEW.md / CLAUDE.md / README.md
-  Cargo.toml          — workspace root with shared deps and clippy lint config
-  clippy.toml          — clippy threshold overrides
-  rustfmt.toml         — formatting rules (max_width=100, edition=2021)
-  deny.toml            — cargo-deny configuration
   docs/
-    design/            — 29 detailed design documents
-    standards/         — ENGINEERING_STANDARDS, TEST_STRATEGY, DATABASE_SCHEMA,
-                         AGENT_AUTONOMY, DSL_STANDARD, SKILLS_STANDARD, TOOL_CALL_PROTOCOL
+    design/            — detailed design documents
+    standards/         —
     plan/              — project & per-module plans and remediation docs
-    guides/            — ARCHITECTURE, CONFIGURATION, SKILL_AUTHORING, TOOL_AUTHORING, WEB_API
-    api/               — OpenAPI spec (openapi.yaml)
-    research/          — competitive analysis, architecture studies
-    schema/            — schema documentation
+    guides/            —
+    api/               —
+    research/          — just for research
+    schema/            —
   config/              — TOML config templates (providers, runtime, guardrails, browser, etc.)
   builtin-skills/      — built-in skill packages (code-review-rust, humanizer-zh)
   migrations/sqlite/   — SQLite migrations
   scripts/             — build-release.sh, deploy.sh, health-check.sh, native-install.sh
   data/                — SQLite database (runtime data)
   tests/               — workspace-level integration tests
-  .github/workflows/   — CI (ci.yml), deploy (deploy.yml), release (release.yml)
   crates/              — 24 Rust crates (see table above)
 ```
 
@@ -140,7 +131,6 @@ All jobs must pass before merge. The `RUSTFLAGS="-D warnings"` env var is set gl
 | Document                                  | Purpose                                               |
 | ----------------------------------------- | ----------------------------------------------------- |
 | `DESIGN_RULE.md`                          | Design doc standards, playbooks, validation checklist |
-| `DESIGN_OVERVIEW.md`                      | Authoritative index, cross-cutting alignment          |
 | `docs/standards/TEST_STRATEGY.md`         | TDD methodology, pyramid, quality gates               |
 | `docs/standards/ENGINEERING_STANDARDS.md` | Rust coding standards                                 |
 | `docs/standards/DATABASE_SCHEMA.md`       | SQLite / Qdrant schema                                |
@@ -148,16 +138,7 @@ All jobs must pass before merge. The `RUSTFLAGS="-D warnings"` env var is set gl
 | `docs/standards/DSL_STANDARD.md`          | DSL specification                                     |
 | `docs/standards/SKILLS_STANDARD.md`       | Skills format and authoring standard                  |
 | `docs/standards/TOOL_CALL_PROTOCOL.md`    | Tool call protocol specification                      |
-| `docs/guides/ARCHITECTURE.md`             | Architecture overview guide                           |
-| `docs/guides/CONFIGURATION.md`            | Configuration guide                                   |
-| `docs/guides/SKILL_AUTHORING.md`          | Skill authoring guide                                 |
-| `docs/guides/TOOL_AUTHORING.md`           | Tool authoring guide                                  |
-| `docs/guides/WEB_API.md`                  | Web API usage guide                                   |
-| `docs/api/openapi.yaml`                   | OpenAPI specification                                 |
-| `docs/plan/PROJECT_PLAN.md`               | Implementation phases                                 |
-| `docs/plan/R&D_PLAN.md`                   | Per-module R&D details                                |
 | `VISION.md`                               | Project vision (Chinese)                              |
-| `README.md`                               | User-facing documentation and setup instructions      |
 
 ## 6) Formatting Constraints
 
