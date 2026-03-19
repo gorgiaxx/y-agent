@@ -89,7 +89,7 @@ impl KnowledgeContextProvider {
             // L2 raw content (fallback when no structured info).
             if item.summary.is_none() {
                 block.push_str(&item.content);
-                block.push_str("\n");
+                block.push('\n');
             }
             block.push('\n');
         }
@@ -101,6 +101,7 @@ impl KnowledgeContextProvider {
 
 #[async_trait]
 impl ContextProvider for KnowledgeContextProvider {
+    #[allow(clippy::unnecessary_literal_bound)]
     fn name(&self) -> &str {
         "inject_knowledge"
     }

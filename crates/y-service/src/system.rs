@@ -192,13 +192,16 @@ impl SystemService {
 
         match request.provider_type.as_str() {
             "openai" | "openai-compat" | "azure" | "ollama" | "deepseek" => {
-                let resolved_base = request.base_url.as_deref().unwrap_or_else(|| {
-                    match request.provider_type.as_str() {
-                        "azure" => "https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT",
-                        "ollama" => "http://localhost:11434/v1",
-                        "deepseek" => "https://api.deepseek.com/v1",
-                        _ => "https://api.openai.com/v1",
+                let resolved_base = request
+                    .base_url
+                    .as_deref()
+                    .unwrap_or(match request.provider_type.as_str() {
+                    "azure" => {
+                        "https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT"
                     }
+                    "ollama" => "http://localhost:11434/v1",
+                    "deepseek" => "https://api.deepseek.com/v1",
+                    _ => "https://api.openai.com/v1",
                 });
 
                 let url = format!("{}/chat/completions", resolved_base.trim_end_matches('/'));

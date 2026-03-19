@@ -385,28 +385,25 @@ impl ChatService {
         use y_core::types::{generate_message_id, now};
 
         // 1. Resolve or create session.
-        let (session_id, session_created) = match request.session_id {
-            Some(sid) => {
-                container
-                    .session_manager
-                    .get_session(&sid)
-                    .await
-                    .map_err(|e| PrepareTurnError::SessionNotFound(e.to_string()))?;
-                (sid, false)
-            }
-            None => {
-                let session = container
-                    .session_manager
-                    .create_session(CreateSessionOptions {
-                        parent_id: None,
-                        session_type: SessionType::Main,
-                        agent_id: None,
-                        title: None,
-                    })
-                    .await
-                    .map_err(|e| PrepareTurnError::SessionCreationFailed(e.to_string()))?;
-                (session.id, true)
-            }
+        let (session_id, session_created) = if let Some(sid) = request.session_id {
+            container
+                .session_manager
+                .get_session(&sid)
+                .await
+                .map_err(|e| PrepareTurnError::SessionNotFound(e.to_string()))?;
+            (sid, false)
+        } else {
+            let session = container
+                .session_manager
+                .create_session(CreateSessionOptions {
+                    parent_id: None,
+                    session_type: SessionType::Main,
+                    agent_id: None,
+                    title: None,
+                })
+                .await
+                .map_err(|e| PrepareTurnError::SessionCreationFailed(e.to_string()))?;
+            (session.id, true)
         };
 
         // 2. Build and persist the user message.
@@ -425,7 +422,7 @@ impl ChatService {
             timestamp: now(),
             metadata,
         };
-        let _ = container
+        container
             .session_manager
             .append_message(&session_id, &user_msg)
             .await
@@ -568,7 +565,7 @@ impl ChatService {
         let pool = container.provider_pool().await;
         let metadata_list = pool.list_metadata();
         let matched = metadata_list.iter().find(|m| m.model == model);
-        let context_window = matched.map(|m| m.context_window).unwrap_or(0);
+        let context_window = matched.map_or(0, |m| m.context_window);
         let provider_id = matched.map(|m| m.id.to_string());
 
         Ok(Some(TurnMetaSummary {

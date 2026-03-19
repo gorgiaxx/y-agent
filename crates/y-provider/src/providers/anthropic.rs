@@ -376,12 +376,12 @@ impl LlmProvider for AnthropicProvider {
                                 }
                             },
                             AnthropicSseEvent::ContentBlockStart { content_block } => {
-                                if let Some(block) = content_block {
-                                    if let AnthropicContentBlock::ToolUse { id, name, .. } = block {
-                                        state.current_tool_id = Some(id);
-                                        state.current_tool_name = Some(name);
-                                        state.current_tool_args.clear();
-                                    }
+                                if let Some(AnthropicContentBlock::ToolUse { id, name, .. }) =
+                                    content_block
+                                {
+                                    state.current_tool_id = Some(id);
+                                    state.current_tool_name = Some(name);
+                                    state.current_tool_args.clear();
                                 }
                                 continue;
                             }

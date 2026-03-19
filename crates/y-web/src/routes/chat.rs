@@ -71,7 +71,7 @@ async fn chat_turn(
     let prepared = ChatService::prepare_turn(
         &state.container,
         PrepareTurnRequest {
-            session_id: body.session_id.map(|s| SessionId(s)),
+            session_id: body.session_id.map(SessionId),
             user_input: body.message,
             provider_id: None,
             skills: None,

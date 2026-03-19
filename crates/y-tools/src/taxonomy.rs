@@ -149,11 +149,12 @@ impl ToolTaxonomy {
     ///
     /// This should be ~100 tokens — category names and one-line descriptions.
     pub fn root_summary(&self) -> String {
-        let mut lines = Vec::new();
-        lines.push("## Tool Categories\n".to_string());
-        lines.push("Use `tool_search` with a category or keyword to discover tools.\n".to_string());
-        lines.push("| Category | Description |".to_string());
-        lines.push("|----------|-------------|".to_string());
+        let mut lines = vec![
+            "## Tool Categories\n".to_string(),
+            "Use `tool_search` with a category or keyword to discover tools.\n".to_string(),
+            "| Category | Description |".to_string(),
+            "|----------|-------------|".to_string(),
+        ];
 
         let mut keys: Vec<&String> = self.categories.keys().collect();
         keys.sort();

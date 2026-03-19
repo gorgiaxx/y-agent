@@ -313,12 +313,12 @@ impl CompactionEngine {
             );
         }
 
-        for i in 0..messages.len() {
+        for (i, message) in messages.iter().enumerate() {
             if retain_indices.contains(&i) {
                 if !result.is_empty() {
                     result.push_str("\n\n");
                 }
-                let _ = write!(result, "[Retained] {}", messages[i]);
+                let _ = write!(result, "[Retained] {}", message);
             }
         }
 

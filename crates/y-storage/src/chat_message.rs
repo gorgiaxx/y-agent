@@ -203,8 +203,7 @@ impl ChatMessageRow {
             _ => ChatMessageStatus::Active,
         };
         let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now());
+            .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc));
         ChatMessageRecord {
             id: self.id,
             session_id: SessionId(self.session_id),

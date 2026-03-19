@@ -166,7 +166,7 @@ impl ChromeLauncher {
                 // Give Chrome a moment to shut down gracefully.
                 tokio::select! {
                     _ = self.child.wait() => {},
-                    _ = tokio::time::sleep(Duration::from_secs(3)) => {
+                    () = tokio::time::sleep(Duration::from_secs(3)) => {
                         warn!("Chrome did not exit gracefully, force-killing");
                         let _ = self.child.kill().await;
                     }

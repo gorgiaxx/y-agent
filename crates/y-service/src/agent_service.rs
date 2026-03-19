@@ -249,10 +249,7 @@ impl AgentService {
             };
 
             let route = RouteRequest {
-                preferred_provider_id: config
-                    .provider_id
-                    .as_ref()
-                    .map(|id| ProviderId::from_string(id)),
+                preferred_provider_id: config.provider_id.as_ref().map(ProviderId::from_string),
                 preferred_model: config.preferred_models.first().cloned(),
                 required_tags: config.provider_tags.clone(),
                 ..RouteRequest::default()
@@ -280,7 +277,7 @@ impl AgentService {
                 if let Some(ref tok) = cancel {
                     tokio::select! {
                         res = llm_future => res,
-                        _ = tok.cancelled() => {
+                        () = tok.cancelled() => {
                             return Err(AgentExecutionError::Cancelled);
                         }
                     }
@@ -303,18 +300,14 @@ impl AgentService {
                     final_provider_id = response.provider_id.as_ref().map(|id| id.to_string());
 
                     // Prompt preview.
-                    let prompt_preview = response
-                        .raw_request
-                        .as_ref()
-                        .map(|v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()))
-                        .unwrap_or_else(|| prompt_preview_fallback.clone());
+                    let prompt_preview = response.raw_request.as_ref().map_or_else(
+                        || prompt_preview_fallback.clone(),
+                        |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()),
+                    );
 
                     // Response text for diagnostics.
-                    let response_text_raw = response
-                        .raw_response
-                        .as_ref()
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| {
+                    let response_text_raw = response.raw_response.as_ref().map_or_else(
+                        || {
                             serde_json::json!({
                                 "content": response.content.clone().unwrap_or_default(),
                                 "model": response.model,
@@ -324,7 +317,9 @@ impl AgentService {
                                 }
                             })
                             .to_string()
-                        });
+                        },
+                        |v| v.to_string(),
+                    );
 
                     // Diagnostics: record generation observation.
                     if let Some(tid) = trace_id {
@@ -913,7 +908,7 @@ impl AgentService {
             let chunk_result = if let Some(tok) = cancel {
                 tokio::select! {
                     next = stream.next() => next,
-                    _ = tok.cancelled() => {
+                    () = tok.cancelled() => {
                         return Err(ProviderError::Cancelled);
                     }
                 }

@@ -386,9 +386,6 @@ impl Tool for BrowserTool {
 
         self.ensure_connected().await?;
 
-        // Collect console warnings to attach to the response.
-        let console_warnings: Vec<String>;
-
         let result = match action {
             BrowserAction::Navigate => {
                 let url = input.arguments["url"]
@@ -578,7 +575,7 @@ impl Tool for BrowserTool {
         };
 
         // Attach any console errors/warnings that occurred during the action.
-        console_warnings = self
+        let console_warnings: Vec<String> = self
             .actions
             .peek_console_logs()
             .await

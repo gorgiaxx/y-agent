@@ -152,7 +152,7 @@ impl ObservabilityService {
                     model: meta.model.clone(),
                     provider_type: format!("{:?}", meta.provider_type),
                     tags: meta.tags.clone(),
-                    is_frozen: status.map_or(false, |s| s.is_frozen),
+                    is_frozen: status.is_some_and(|s| s.is_frozen),
                     freeze_reason: status.and_then(|s| s.freeze_reason.clone()),
                     max_concurrency: meta.max_concurrency,
                     active_requests: status.map_or(0, |s| s.active_requests),

@@ -130,14 +130,12 @@ y-test-utils = { path = "crates/y-test-utils" }
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
+return_self_not_must_use = "allow"
 missing_errors_doc = "allow"
 undocumented_unsafe_blocks = "deny"
 
 # Casting lints — these are pervasive and usually intentional
-cast_possible_truncation = "allow"
 cast_precision_loss = "allow"
-cast_sign_loss = "allow"
-cast_possible_wrap = "allow"
 cast_lossless = "allow"
 
 # Documentation lints — too noisy for backtick/panics requirements
@@ -166,4 +164,14 @@ items_after_statements = "allow"
 manual_let_else = "allow"
 needless_raw_string_hashes = "allow"
 struct_excessive_bools = "allow"
-
+type_complexity = "allow"
+similar_names = "allow"
+trivially_copy_pass_by_ref = "allow"
+used_underscore_binding = "allow"
+manual_clamp = "allow"
+needless_range_loop = "allow"
+if_not_else = "allow"
+option_if_let_else = "allow"
+ref_option = "allow"
+comparison_chain = "allow"
+unused_async = "allow"

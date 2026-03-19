@@ -451,7 +451,7 @@ impl TraceStore for SqliteTraceStore {
                AND (?2 IS NULL OR started_at >= ?2) \
              ORDER BY started_at DESC LIMIT ?3",
         )
-        .bind(&status_str)
+        .bind(status_str)
         .bind(&since_str)
         .bind(limit_i64)
         .fetch_all(&self.pool)

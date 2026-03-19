@@ -451,9 +451,8 @@ pub async fn kb_expand_folder(path: String) -> Result<Vec<String>, String> {
     if root.is_file() {
         if y_knowledge::supported_formats::is_supported(&root) {
             return Ok(vec![path]);
-        } else {
-            return Ok(vec![]);
         }
+        return Ok(vec![]);
     }
 
     // Directory: recursively collect supported files.

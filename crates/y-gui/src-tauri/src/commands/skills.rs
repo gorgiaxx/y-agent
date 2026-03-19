@@ -368,8 +368,8 @@ pub async fn skill_import(
         } else {
             match source_path.extension().and_then(|e| e.to_str()) {
                 Some("toml") => "toml",
-                Some("md") | Some("markdown") => "markdown",
-                Some("yaml") | Some("yml") => "yaml",
+                Some("md" | "markdown") => "markdown",
+                Some("yaml" | "yml") => "yaml",
                 Some("json") => "json",
                 _ => "plaintext",
             }

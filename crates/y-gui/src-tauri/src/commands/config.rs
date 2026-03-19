@@ -38,7 +38,7 @@ pub async fn config_get(state: State<'_, AppState>) -> Result<Value, String> {
                 .map_err(|e| format!("Failed to read {section}.toml: {e}"))?;
             let value: Value = toml::from_str(&content)
                 .map_err(|e| format!("Failed to parse {section}.toml: {e}"))?;
-            merged.insert(section.to_string(), value);
+            merged.insert((*section).to_string(), value);
         }
     }
 
@@ -269,7 +269,11 @@ pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<String>, Stri
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".txt") && entry.file_type().ok()?.is_file() {
+            if std::path::Path::new(&name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+                && entry.file_type().ok()?.is_file()
+            {
                 Some(name)
             } else {
                 None

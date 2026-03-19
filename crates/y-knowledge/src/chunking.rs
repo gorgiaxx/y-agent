@@ -201,8 +201,7 @@ fn truncate_to_chars(s: &str, max_chars: usize) -> &str {
     let byte_offset = s
         .char_indices()
         .nth(max_chars)
-        .map(|(idx, _)| idx)
-        .unwrap_or(s.len());
+        .map_or(s.len(), |(idx, _)| idx);
     &s[..byte_offset]
 }
 

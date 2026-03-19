@@ -117,7 +117,7 @@ pub async fn chat_send(
     let mut prepared = ChatService::prepare_turn(
         &state.container,
         PrepareTurnRequest {
-            session_id: session_id.map(|s| SessionId(s)),
+            session_id: session_id.map(SessionId),
             user_input: message.clone(),
             provider_id: provider_id.clone(),
             skills: skills.clone(),
@@ -435,7 +435,7 @@ pub async fn session_last_turn_meta(
     // --- Tier 2: diagnostics database via service layer ---
     let summary = ChatService::get_last_turn_meta(&state.container, &session_id)
         .await
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| e.to_string())?;
 
     let meta = match summary {
         Some(s) => TurnMeta {
@@ -659,12 +659,9 @@ pub async fn chat_find_checkpoint_for_resend(
                 .map(|(idx, _)| idx)
         });
 
-    let message_index = match message_index {
-        Some(idx) => idx,
-        None => {
-            tracing::warn!("chat_find_checkpoint_for_resend: user message not found in transcript");
-            return Ok(None);
-        }
+    let Some(message_index) = message_index else {
+        tracing::warn!("chat_find_checkpoint_for_resend: user message not found in transcript");
+        return Ok(None);
     };
 
     tracing::info!(

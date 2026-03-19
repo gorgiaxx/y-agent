@@ -360,10 +360,7 @@ impl ProviderPool for ProviderPoolImpl {
                     (inner, Some(guard)),
                     |(mut s, g)| async move {
                         use futures::StreamExt;
-                        match s.next().await {
-                            Some(item) => Some((item, (s, g))),
-                            None => None,
-                        }
+                        s.next().await.map(|item| (item, (s, g)))
                     },
                 ));
 
