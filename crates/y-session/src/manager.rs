@@ -63,7 +63,7 @@ impl SessionManager {
             let max_depth = self.config.read().unwrap().max_depth;
             if parent.depth >= max_depth {
                 return Err(SessionManagerError::Config {
-                    message: format!("maximum tree depth {} exceeded", max_depth),
+                    message: format!("maximum tree depth {max_depth} exceeded"),
                 });
             }
         }
@@ -206,7 +206,7 @@ impl SessionManager {
         let max_depth = self.config.read().unwrap().max_depth;
         if parent.depth >= max_depth {
             return Err(SessionManagerError::Config {
-                message: format!("maximum tree depth {} exceeded", max_depth),
+                message: format!("maximum tree depth {max_depth} exceeded"),
             });
         }
 
@@ -357,7 +357,7 @@ mod tests {
 
         let session_store = Arc::new(y_storage::SqliteSessionStore::new(pool));
         let transcript_dir = tempfile::tempdir().unwrap();
-        let transcript_path = transcript_dir.into_path();
+        let transcript_path = transcript_dir.path().to_path_buf();
         let transcript_store = Arc::new(y_storage::JsonlTranscriptStore::new(&transcript_path));
         let display_transcript_store = Arc::new(y_storage::JsonlDisplayTranscriptStore::new(
             &transcript_path,
@@ -514,7 +514,7 @@ mod tests {
     #[tokio::test]
     async fn test_manager_max_depth_enforced() {
         let td = tempfile::tempdir().unwrap();
-        let tp = td.into_path();
+        let tp = td.path().to_path_buf();
         let mgr = SessionManager::new(
             {
                 let config = y_storage::StorageConfig::in_memory();

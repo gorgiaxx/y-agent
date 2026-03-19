@@ -97,7 +97,7 @@ pub struct ToolInput {
     /// Session context for the execution.
     pub session_id: SessionId,
     /// Runtime command runner, injected by the executor.
-    /// `None` for tools that don't execute shell commands (file_read, etc.).
+    /// `None` for tools that don't execute shell commands (`file_read`, etc.).
     /// When `Some`, tools like `shell_exec` delegate execution through this
     /// runner instead of spawning local processes directly.
     pub command_runner: Option<Arc<dyn CommandRunner>>,

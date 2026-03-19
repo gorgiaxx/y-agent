@@ -143,7 +143,7 @@ pub struct AgentRunConfig {
     pub preferred_models: Vec<String>,
     /// Fallback models if preferred are unavailable.
     pub fallback_models: Vec<String>,
-    /// Provider routing tags (e.g. ["general"], ["title"]).
+    /// Provider routing tags (e.g. `["general"]`, `["title"]`).
     /// Used as `required_tags` in `RouteRequest` for provider selection.
     pub provider_tags: Vec<String>,
     /// Sampling temperature override (from agent definition).

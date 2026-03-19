@@ -3,7 +3,7 @@
 //! Implements [`BotPlatform`] for the Feishu messaging platform using
 //! webhook-based event delivery and REST API for outbound messages.
 //!
-//! **Reference**: Patterns adapted from OpenClaw's `extensions/feishu/src/`.
+//! **Reference**: Patterns adapted from `OpenClaw`'s `extensions/feishu/src/`.
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -119,7 +119,7 @@ impl FeishuBot {
         let status = resp.status();
         let json: serde_json::Value = resp.json().await?;
 
-        if !status.is_success() || json.get("code").and_then(|c| c.as_i64()) != Some(0) {
+        if !status.is_success() || json.get("code").and_then(serde_json::Value::as_i64) != Some(0) {
             let msg = json
                 .get("msg")
                 .and_then(|m| m.as_str())
@@ -135,7 +135,10 @@ impl FeishuBot {
             .ok_or_else(|| BotError::ApiError("missing tenant_access_token in response".into()))?
             .to_string();
 
-        let expire_secs = json.get("expire").and_then(|e| e.as_u64()).unwrap_or(7200);
+        let expire_secs = json
+            .get("expire")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(7200);
         // Refresh 5 minutes early to avoid edge cases.
         let ttl = std::time::Duration::from_secs(expire_secs.saturating_sub(300));
 
@@ -310,7 +313,7 @@ impl BotPlatform for FeishuBot {
         let status = resp.status();
         let json: serde_json::Value = resp.json().await?;
 
-        if !status.is_success() || json.get("code").and_then(|c| c.as_i64()) != Some(0) {
+        if !status.is_success() || json.get("code").and_then(serde_json::Value::as_i64) != Some(0) {
             let api_msg = json
                 .get("msg")
                 .and_then(|m| m.as_str())
@@ -399,7 +402,7 @@ impl BotPlatform for FeishuBot {
 
 /// Parse Feishu message content based on message type.
 ///
-/// Inspired by OpenClaw's `parseMessageContent()` in `bot.ts`.
+/// Inspired by `OpenClaw`'s `parseMessageContent()` in `bot.ts`.
 fn parse_feishu_content(raw: &str, message_type: &str) -> String {
     match message_type {
         "text" => {

@@ -72,6 +72,21 @@ When uncertain → High.
 ### 5.5 Commit Discipline
 - One concern per change; cross-doc changes in one batch; English commit messages; no secrets.
 
+### 5.6 Post-Development Quality Gates
+After completing any code change, run the following checks **in order** and fix all issues before considering the task done:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace -- -D warnings
+cargo check --workspace
+```
+
+- **`cargo fmt --check`** — Verify formatting conforms to `rustfmt.toml`. If it fails, run `cargo fmt` to fix, then re-check.
+- **`cargo clippy --workspace -- -D warnings`** — All Clippy lints must pass with zero warnings. Treat every warning as an error.
+- **`cargo check --workspace`** — Full workspace compilation must succeed with no errors.
+
+No task is complete until all three commands pass cleanly.
+
 ## 6) Key References
 
 | Document | Purpose |

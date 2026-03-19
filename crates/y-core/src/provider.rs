@@ -72,7 +72,7 @@ pub struct ChatResponse {
     pub model: String,
     /// Generated content (may be empty if tool calls are present).
     pub content: Option<String>,
-    /// Reasoning/thinking content from thinking-mode LLMs (e.g. DeepSeek-R1, QwQ).
+    /// Reasoning/thinking content from thinking-mode LLMs (e.g. DeepSeek-R1, `QwQ`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
     /// Tool calls requested by the model.

@@ -704,9 +704,9 @@ fn extract_console_text(event: &CdpEvent) -> String {
             args.iter()
                 .filter_map(|arg| {
                     arg.get("value")
-                        .and_then(|v| match v {
-                            serde_json::Value::String(s) => Some(s.clone()),
-                            other => Some(other.to_string()),
+                        .map(|v| match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
                         })
                         .or_else(|| {
                             arg.get("description")

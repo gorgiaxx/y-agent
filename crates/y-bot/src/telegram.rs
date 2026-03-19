@@ -12,22 +12,13 @@ use crate::{BotError, BotPlatform, InboundMessage, OutboundMessage, PlatformKind
 // ---------------------------------------------------------------------------
 
 /// Configuration for a Telegram bot.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct TelegramBotConfig {
     /// Telegram Bot API token (from `@BotFather`).
     pub token: String,
     /// Optional webhook secret for request verification.
     pub webhook_secret: Option<String>,
-}
-
-impl Default for TelegramBotConfig {
-    fn default() -> Self {
-        Self {
-            token: String::new(),
-            webhook_secret: None,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

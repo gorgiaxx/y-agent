@@ -357,8 +357,7 @@ impl AgentRegistry {
         // Overridden if the current definition's trust tier differs from BuiltIn.
         self.definitions
             .get(id)
-            .map(|def| def.trust_tier != TrustTier::BuiltIn)
-            .unwrap_or(false)
+            .is_some_and(|def| def.trust_tier != TrustTier::BuiltIn)
     }
 
     /// Return the IDs of all built-in agents that have been overridden.

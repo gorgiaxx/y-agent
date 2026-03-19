@@ -124,7 +124,8 @@ impl StructuralValidator {
 
         for node in edges.keys() {
             if !visited.contains(node.as_str()) {
-                if let Some(cycle) = self.dfs_detect_cycle(node, edges, &mut visited, &mut in_stack)
+                if let Some(cycle) =
+                    Self::dfs_detect_cycle(node, edges, &mut visited, &mut in_stack)
                 {
                     result.violations.push(StructuralViolation {
                         rule_id: "dag_no_cycles".into(),
@@ -141,7 +142,6 @@ impl StructuralValidator {
 
     /// DFS cycle detection. Returns the cycle path if found.
     fn dfs_detect_cycle(
-        &self,
         node: &str,
         edges: &HashMap<String, Vec<String>>,
         visited: &mut HashSet<String>,
@@ -154,7 +154,7 @@ impl StructuralValidator {
             for neighbor in neighbors {
                 if !visited.contains(neighbor.as_str()) {
                     if let Some(mut cycle) =
-                        self.dfs_detect_cycle(neighbor, edges, visited, in_stack)
+                        Self::dfs_detect_cycle(neighbor, edges, visited, in_stack)
                     {
                         cycle.insert(0, node.to_string());
                         return Some(cycle);

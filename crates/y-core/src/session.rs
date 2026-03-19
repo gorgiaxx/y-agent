@@ -276,7 +276,7 @@ pub enum ChatMessageStatus {
     Tombstone,
 }
 
-/// A persisted chat message record stored in SQLite (Phase 2).
+/// A persisted chat message record stored in `SQLite` (Phase 2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessageRecord {
     pub id: String,

@@ -40,9 +40,8 @@ pub fn recover_missed(
             continue;
         };
 
-        let interval = match compute_interval(schedule) {
-            Some(i) => i,
-            None => continue, // OneTime or Event — skip recovery.
+        let Some(interval) = compute_interval(schedule) else {
+            continue; // OneTime or Event — skip recovery.
         };
 
         if interval.is_zero() {

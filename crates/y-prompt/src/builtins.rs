@@ -155,13 +155,13 @@ enum ConditionTag {
 }
 
 impl ConditionTag {
-    fn into_condition(self) -> Option<SectionCondition> {
+    fn into_condition(self) -> SectionCondition {
         match self {
-            Self::Always => Some(SectionCondition::Always),
-            Self::HasToolWildcard => Some(SectionCondition::HasTool("*".into())),
-            Self::PersonaEnabled => Some(SectionCondition::ConfigFlag("persona.enabled".into())),
-            Self::ModePlan => Some(SectionCondition::ModeIs("plan".into())),
-            Self::ModeExplore => Some(SectionCondition::ModeIs("explore".into())),
+            Self::Always => SectionCondition::Always,
+            Self::HasToolWildcard => SectionCondition::HasTool("*".into()),
+            Self::PersonaEnabled => SectionCondition::ConfigFlag("persona.enabled".into()),
+            Self::ModePlan => SectionCondition::ModeIs("plan".into()),
+            Self::ModeExplore => SectionCondition::ModeIs("explore".into()),
         }
     }
 }
@@ -198,7 +198,7 @@ pub fn builtin_section_store_with_overrides(prompts_dir: Option<&Path>) -> Secti
             content_source: ContentSource::Inline(content),
             token_budget,
             priority,
-            condition: cond_tag.into_condition(),
+            condition: Some(cond_tag.into_condition()),
             category: cat_tag.into_category(),
         });
     }

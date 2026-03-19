@@ -333,9 +333,8 @@ impl HookHandlerExecutor {
     /// Returns aggregate decision.
     /// Per design §Failure Handling: if any sync handler returns "block", aggregate is "block".
     pub async fn execute(&self, hook_point: HookPoint, input: &HookInput) -> HookHandlerResult {
-        let groups = match self.handlers.get(&hook_point) {
-            Some(groups) => groups,
-            None => return HookHandlerResult::default(),
+        let Some(groups) = self.handlers.get(&hook_point) else {
+            return HookHandlerResult::default();
         };
 
         let input_json = match serde_json::to_vec(input) {
@@ -351,7 +350,8 @@ impl HookHandlerExecutor {
         let match_subject = extract_match_subject(input);
 
         let mut cmd_http_decisions: Vec<CommandHttpDecision> = Vec::new();
-        let mut _prompt_agent_decisions: Vec<PromptAgentDecision> = Vec::new();
+        #[allow(unused_mut)]
+        let mut prompt_agent_decisions: Vec<PromptAgentDecision> = Vec::new();
         let mut handler_count: usize = 0;
 
         let start = std::time::Instant::now();
@@ -443,7 +443,7 @@ impl HookHandlerExecutor {
                         )
                         .await
                         {
-                            Ok(decision) => _prompt_agent_decisions.push(decision),
+                            Ok(decision) => prompt_agent_decisions.push(decision),
                             Err(e) => {
                                 warn!(error = %e, "prompt hook failed, defaulting to allow");
                                 self.metrics.errors.fetch_add(1, Ordering::Relaxed);
@@ -461,7 +461,7 @@ impl HookHandlerExecutor {
                         )
                         .await
                         {
-                            Ok(decision) => _prompt_agent_decisions.push(decision),
+                            Ok(decision) => prompt_agent_decisions.push(decision),
                             Err(e) => {
                                 warn!(error = %e, "agent hook failed, defaulting to allow");
                                 self.metrics.errors.fetch_add(1, Ordering::Relaxed);
@@ -486,7 +486,7 @@ impl HookHandlerExecutor {
             .duration_us
             .fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
 
-        let result = aggregate_decisions(&cmd_http_decisions, &_prompt_agent_decisions);
+        let result = aggregate_decisions(&cmd_http_decisions, &prompt_agent_decisions);
 
         if result.block_count > 0 {
             self.metrics
@@ -654,6 +654,7 @@ impl CommandExecutor {
         input_json: &[u8],
         timeout: Duration,
     ) -> Result<CommandHttpDecision, HookError> {
+        use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
 
         // Validate script path.
@@ -720,7 +721,6 @@ impl CommandExecutor {
         };
 
         // Read stdout and stderr.
-        use tokio::io::AsyncReadExt;
         let mut stdout_buf = Vec::new();
         let mut stderr_buf = Vec::new();
         if let Some(mut h) = stdout_handle {

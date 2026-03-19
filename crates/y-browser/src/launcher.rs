@@ -123,9 +123,10 @@ impl ChromeLauncher {
                 )));
             }
 
-            match reqwest::get(&url).await {
-                Ok(resp) if resp.status().is_success() => return Ok(()),
-                _ => {}
+            if let Ok(resp) = reqwest::get(&url).await {
+                if resp.status().is_success() {
+                    return Ok(());
+                }
             }
 
             if tokio::time::Instant::now() >= deadline {
