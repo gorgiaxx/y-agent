@@ -117,16 +117,15 @@ No task is complete until all three commands pass cleanly.
 
 ### 4.7 CI Pipeline
 
-The GitHub Actions CI (`.github/workflows/ci.yml`) enforces:
+The GitHub Actions CI (`.github/workflows/ci.yml`) enforces three jobs:
 
-| Job            | Command                                                |
-| -------------- | ------------------------------------------------------ |
-| Format         | `cargo fmt --check`                                    |
-| Clippy         | `cargo clippy --workspace -- -D warnings`              |
-| Check          | `cargo check --workspace`                              |
-| Test           | `cargo test --workspace`                               |
-| Documentation  | `cargo doc --workspace --no-deps` (with `-D warnings`) |
-| Security Audit | `rustsec/audit-check`                                  |
+| Job            | Steps                                                                       |
+| -------------- | --------------------------------------------------------------------------- |
+| Format         | `cargo fmt --check`                                                         |
+| Build & Test   | clippy, check, test, doc (single runner, shared deps and compilation cache) |
+| Security Audit | `rustsec/audit-check`                                                       |
+
+The **Build & Test** job runs clippy, check, test, and doc sequentially in one runner to avoid redundant system-dependency installs and to reuse compilation artifacts across steps.
 
 All jobs must pass before merge. The `RUSTFLAGS="-D warnings"` env var is set globally, so any Rust warning is a build failure.
 
