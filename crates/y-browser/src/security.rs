@@ -140,7 +140,6 @@ fn normalize_domains(domains: Vec<String>) -> Vec<String> {
 fn is_private_host(host: &str) -> bool {
     let h = host.to_lowercase();
 
-    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     if h == "localhost" || h.ends_with(".localhost") || h == "::1" || h.ends_with(".local") {
         return true;
     }

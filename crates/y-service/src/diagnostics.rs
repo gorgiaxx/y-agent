@@ -267,7 +267,7 @@ impl std::fmt::Debug for DiagnosticsAgentDelegator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DiagnosticsAgentDelegator")
             .field("inner", &self.inner)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -307,25 +307,25 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
                 if let Some(tid) = trace_id {
                     let _ = self
                         .diagnostics
-                        .on_generation(
-                            tid,
-                            None,
-                            None,
-                            &output.model_used,
-                            output.input_tokens,
-                            output.output_tokens,
-                            crate::cost::CostService::compute_cost(
+                        .on_generation(y_diagnostics::GenerationParams {
+                            trace_id: tid,
+                            parent_id: None,
+                            session_id: None,
+                            model: output.model_used.clone(),
+                            input_tokens: output.input_tokens,
+                            output_tokens: output.output_tokens,
+                            cost_usd: crate::cost::CostService::compute_cost(
                                 output.input_tokens,
                                 output.output_tokens,
                             ),
-                            serde_json::json!({
+                            input: serde_json::json!({
                                 "agent": agent_name,
                                 "type": "subagent_delegation",
                             }),
-                            serde_json::from_str::<serde_json::Value>(&output.text)
+                            output: serde_json::from_str::<serde_json::Value>(&output.text)
                                 .unwrap_or_else(|_| serde_json::Value::String(output.text.clone())),
-                            output.duration_ms,
-                        )
+                            duration_ms: output.duration_ms,
+                        })
                         .await;
 
                     let _ = self

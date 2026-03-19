@@ -107,10 +107,10 @@ impl NativeRuntime {
     }
 
     /// Build a command, optionally wrapping it with bubblewrap.
-    fn build_command(&self, request: &ExecutionRequest) -> tokio::process::Command {
+    fn build_command(request: &ExecutionRequest) -> tokio::process::Command {
         #[cfg(feature = "sandbox_bwrap")]
         {
-            if let Some(cmd) = self.try_build_bwrap_command(request) {
+            if let Some(cmd) = Self::try_build_bwrap_command(request) {
                 return cmd;
             }
         }
@@ -134,10 +134,7 @@ impl NativeRuntime {
     ///
     /// Returns `None` if bwrap is not available, logging a warning.
     #[cfg(feature = "sandbox_bwrap")]
-    fn try_build_bwrap_command(
-        &self,
-        request: &ExecutionRequest,
-    ) -> Option<tokio::process::Command> {
+    fn try_build_bwrap_command(request: &ExecutionRequest) -> Option<tokio::process::Command> {
         // Check if bwrap is available.
         let bwrap_check = std::process::Command::new("which")
             .arg("bwrap")
@@ -235,7 +232,7 @@ impl RuntimeAdapter for NativeRuntime {
         let timeout = self.effective_timeout(&request);
         let max_output = self.effective_max_output(&request);
 
-        let mut cmd = self.build_command(&request);
+        let mut cmd = Self::build_command(&request);
 
         // Set up pipes.
         cmd.stdout(std::process::Stdio::piped());
@@ -335,7 +332,7 @@ impl RuntimeAdapter for NativeRuntime {
             self.validate_working_dir(dir)?;
         }
 
-        let mut cmd = self.build_command(&request);
+        let mut cmd = Self::build_command(&request);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         cmd.stdin(std::process::Stdio::null());

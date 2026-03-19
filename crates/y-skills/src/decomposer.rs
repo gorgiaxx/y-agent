@@ -43,7 +43,6 @@ pub struct DocumentDecomposer {
     token_threshold: u32,
 }
 
-#[allow(clippy::unused_self)]
 impl DocumentDecomposer {
     /// Create a new decomposer with default threshold (2000 tokens).
     pub fn new() -> Self {

@@ -101,7 +101,6 @@ fn jaccard_similarity(a: &str, b: &str) -> f32 {
         return 0.0;
     }
 
-    #[allow(clippy::cast_precision_loss)]
     let sim = intersection as f32 / union as f32;
     sim
 }

@@ -228,13 +228,13 @@ fn seed_builtin_skills(data_dir: &Path) -> Result<Vec<String>> {
     let mut seeded = Vec::new();
 
     for skill in BUILTIN_SKILLS {
-        let skill_dir = skills_dir.join(skill.name);
-        if skill_dir.exists() {
+        let dest_path = skills_dir.join(skill.name);
+        if dest_path.exists() {
             continue;
         }
 
         for file in skill.files {
-            let file_path = skill_dir.join(file.relative_path);
+            let file_path = dest_path.join(file.relative_path);
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("creating dir: {}", parent.display()))?;
@@ -245,7 +245,7 @@ fn seed_builtin_skills(data_dir: &Path) -> Result<Vec<String>> {
 
         // Create empty lineage.toml (required by standard).
         std::fs::write(
-            skill_dir.join("lineage.toml"),
+            dest_path.join("lineage.toml"),
             "# Transformation lineage (builtin skill)\n",
         )
         .with_context(|| format!("writing lineage.toml for {}", skill.name))?;

@@ -12,6 +12,30 @@ use uuid::Uuid;
 use crate::trace_store::TraceStore;
 use crate::types::{Observation, ObservationStatus, ObservationType, Trace};
 
+/// Parameters for recording a generation (LLM call) observation.
+pub struct GenerationParams {
+    /// The trace this generation belongs to.
+    pub trace_id: Uuid,
+    /// Optional parent observation ID.
+    pub parent_id: Option<Uuid>,
+    /// Optional session ID.
+    pub session_id: Option<Uuid>,
+    /// Model name used.
+    pub model: String,
+    /// Input tokens consumed.
+    pub input_tokens: u64,
+    /// Output tokens produced.
+    pub output_tokens: u64,
+    /// Cost in USD.
+    pub cost_usd: f64,
+    /// Full request payload.
+    pub input: serde_json::Value,
+    /// Full response payload.
+    pub output: serde_json::Value,
+    /// Wall-clock execution time in milliseconds.
+    pub duration_ms: u64,
+}
+
 /// Subscriber that listens to y-hooks events and auto-captures diagnostics.
 pub struct DiagnosticsSubscriber<S: ?Sized> {
     store: Arc<S>,
@@ -49,29 +73,20 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
     /// response, captured for diagnostics and debugging replay.
     pub async fn on_generation(
         &self,
-        trace_id: Uuid,
-        parent_id: Option<Uuid>,
-        session_id: Option<Uuid>,
-        model: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-        cost_usd: f64,
-        input: serde_json::Value,
-        output: serde_json::Value,
-        duration_ms: u64,
+        params: GenerationParams,
     ) -> Result<Uuid, crate::trace_store::TraceStoreError> {
-        let mut obs = Observation::new(trace_id, ObservationType::Generation, "llm-generation");
-        obs.parent_id = parent_id;
-        obs.session_id = session_id;
-        obs.model = Some(model.to_string());
-        obs.input_tokens = input_tokens;
-        obs.output_tokens = output_tokens;
-        obs.cost_usd = cost_usd;
-        obs.input = input;
-        obs.output = output;
+        let mut obs = Observation::new(params.trace_id, ObservationType::Generation, "llm-generation");
+        obs.parent_id = params.parent_id;
+        obs.session_id = params.session_id;
+        obs.model = Some(params.model.to_string());
+        obs.input_tokens = params.input_tokens;
+        obs.output_tokens = params.output_tokens;
+        obs.cost_usd = params.cost_usd;
+        obs.input = params.input;
+        obs.output = params.output;
         obs.status = ObservationStatus::Completed;
         obs.completed_at = Some(Utc::now());
-        obs.metadata = serde_json::json!({ "duration_ms": duration_ms });
+        obs.metadata = serde_json::json!({ "duration_ms": params.duration_ms });
         let obs_id = obs.id;
         self.store.insert_observation(obs).await?;
         Ok(obs_id)
@@ -183,18 +198,18 @@ mod tests {
 
         // LLM call.
         let gen_id = subscriber
-            .on_generation(
+            .on_generation(GenerationParams {
                 trace_id,
-                None,
-                None,
-                "gpt-4",
-                100,
-                50,
-                0.005,
-                serde_json::json!({"messages": [{"role": "user", "content": "What is Rust?"}]}),
-                serde_json::json!({"content": "Rust is a systems programming language."}),
-                250,
-            )
+                parent_id: None,
+                session_id: None,
+                model: "gpt-4".to_string(),
+                input_tokens: 100,
+                output_tokens: 50,
+                cost_usd: 0.005,
+                input: serde_json::json!({"messages": [{"role": "user", "content": "What is Rust?"}]}),
+                output: serde_json::json!({"content": "Rust is a systems programming language."}),
+                duration_ms: 250,
+            })
             .await
             .unwrap();
 

@@ -82,9 +82,9 @@ impl ResultFormatter {
 
         let formatted = match format {
             ResultFormat::Raw => output.to_string(),
-            ResultFormat::Json => self.format_json(output),
-            ResultFormat::Markdown => self.format_markdown(output),
-            ResultFormat::Compact => self.format_compact(output),
+            ResultFormat::Json => Self::format_json(output),
+            ResultFormat::Markdown => Self::format_markdown(output),
+            ResultFormat::Compact => Self::format_compact(output),
         };
 
         let (content, truncated) = self.truncate_if_needed(&formatted);
@@ -98,7 +98,7 @@ impl ResultFormatter {
     }
 
     /// Format output as pretty-printed JSON.
-    fn format_json(&self, output: &str) -> String {
+    fn format_json(output: &str) -> String {
         match serde_json::from_str::<Value>(output) {
             Ok(value) => {
                 serde_json::to_string_pretty(&value).unwrap_or_else(|_| output.to_string())
@@ -108,7 +108,7 @@ impl ResultFormatter {
     }
 
     /// Format output as a Markdown code block.
-    fn format_markdown(&self, output: &str) -> String {
+    fn format_markdown(output: &str) -> String {
         // Detect if the output is JSON, and use appropriate language tag.
         let lang = if serde_json::from_str::<Value>(output).is_ok() {
             "json"
@@ -119,7 +119,7 @@ impl ResultFormatter {
     }
 
     /// Format output in compact form: collapse whitespace, single line.
-    fn format_compact(&self, output: &str) -> String {
+    fn format_compact(output: &str) -> String {
         output
             .lines()
             .map(str::trim)

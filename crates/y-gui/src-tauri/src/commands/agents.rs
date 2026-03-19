@@ -145,7 +145,7 @@ pub async fn agent_save(
         toml::from_str(&toml_content).map_err(|e| format!("Invalid agent TOML: {e}"))?;
 
     // Ensure the ID matches.
-    def.id = id.clone();
+    def.id.clone_from(&id);
 
     // Write to disk.
     let dir = agents_dir(&state.config_dir);

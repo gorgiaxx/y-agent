@@ -45,6 +45,10 @@ impl FreezeManager {
     }
 
     /// Check if the provider is currently frozen.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal state lock is poisoned.
     pub fn is_frozen(&self) -> bool {
         let state = self.state.read().expect("lock poisoned");
 
@@ -69,6 +73,10 @@ impl FreezeManager {
     ///
     /// If duration is `None`, the adaptive duration is calculated based
     /// on consecutive freezes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal state lock is poisoned.
     pub fn freeze(&self, reason: String, duration: Option<Duration>) {
         let mut state = self.state.write().expect("lock poisoned");
         state.frozen = true;
@@ -87,6 +95,10 @@ impl FreezeManager {
     }
 
     /// Freeze permanently (e.g., authentication failure).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal state lock is poisoned.
     pub fn freeze_permanent(&self, reason: String) {
         let mut state = self.state.write().expect("lock poisoned");
         state.frozen = true;
@@ -97,6 +109,10 @@ impl FreezeManager {
     }
 
     /// Manually thaw the provider.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal state lock is poisoned.
     pub fn thaw(&self) {
         let mut state = self.state.write().expect("lock poisoned");
         state.frozen = false;
@@ -113,6 +129,10 @@ impl FreezeManager {
     }
 
     /// Get freeze status information.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal state lock is poisoned.
     pub fn status(&self) -> FreezeStatus {
         let state = self.state.read().expect("lock poisoned");
         FreezeStatus {

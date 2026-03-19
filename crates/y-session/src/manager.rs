@@ -45,6 +45,10 @@ impl SessionManager {
     }
 
     /// Hot-reload the session configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal config `RwLock` is poisoned.
     pub fn reload_config(&self, new_config: SessionConfig) {
         let mut guard = self.config.write().unwrap();
         *guard = new_config;
@@ -52,6 +56,10 @@ impl SessionManager {
     }
 
     /// Create a new root session.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the session configuration lock is poisoned.
     #[instrument(skip(self))]
     pub async fn create_session(
         &self,
@@ -201,6 +209,10 @@ impl SessionManager {
     /// Create a branch session from an existing one.
     ///
     /// The branch is a new child of the specified session with type Branch.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the session configuration lock is poisoned.
     #[instrument(skip(self), fields(parent_id = %parent_id))]
     pub async fn branch(
         &self,
@@ -319,6 +331,10 @@ impl SessionManager {
     }
 
     /// Check if a session should trigger compaction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the session configuration lock is poisoned.
     pub fn should_compact(&self, session: &SessionNode) -> bool {
         session.token_count >= self.config.read().unwrap().compaction_threshold
     }
@@ -334,6 +350,10 @@ impl SessionManager {
     }
 
     /// Get a snapshot of the session configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration lock is poisoned.
     pub fn config(&self) -> SessionConfig {
         self.config.read().unwrap().clone()
     }
@@ -343,7 +363,7 @@ impl std::fmt::Debug for SessionManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionManager")
             .field("config", &*self.config.read().unwrap())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

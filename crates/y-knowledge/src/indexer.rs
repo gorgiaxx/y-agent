@@ -44,14 +44,13 @@ pub struct VectorSearchResult {
 pub struct VectorIndexer;
 
 #[cfg(not(feature = "vector_qdrant"))]
-#[allow(clippy::unused_async)]
 impl VectorIndexer {
     pub fn new() -> Self {
         Self
     }
 
     /// Create a collection (no-op without Qdrant).
-    pub async fn create_collection(
+    pub fn create_collection(
         &self,
         _name: &str,
         _vector_size: u64,
@@ -63,7 +62,7 @@ impl VectorIndexer {
     }
 
     /// Upsert points (no-op without Qdrant).
-    pub async fn upsert(
+    pub fn upsert(
         &self,
         _collection: &str,
         _points: Vec<VectorPoint>,
@@ -73,13 +72,13 @@ impl VectorIndexer {
     }
 
     /// Delete points (no-op without Qdrant).
-    pub async fn delete(&self, _collection: &str, _ids: &[String]) -> Result<(), KnowledgeError> {
+    pub fn delete(&self, _collection: &str, _ids: &[String]) -> Result<(), KnowledgeError> {
         tracing::warn!("VectorIndexer: delete is a no-op (enable vector_qdrant feature)");
         Ok(())
     }
 
     /// Search for nearest neighbors (no-op without Qdrant).
-    pub async fn search(
+    pub fn search(
         &self,
         _collection: &str,
         _query_vector: Vec<f32>,
@@ -90,12 +89,12 @@ impl VectorIndexer {
     }
 
     /// Check if a collection exists (no-op without Qdrant).
-    pub async fn collection_exists(&self, _name: &str) -> Result<bool, KnowledgeError> {
+    pub fn collection_exists(&self, _name: &str) -> Result<bool, KnowledgeError> {
         Ok(false)
     }
 
     /// Delete a collection (no-op without Qdrant).
-    pub async fn delete_collection(&self, _name: &str) -> Result<(), KnowledgeError> {
+    pub fn delete_collection(&self, _name: &str) -> Result<(), KnowledgeError> {
         tracing::warn!(
             "VectorIndexer: delete_collection is a no-op (enable vector_qdrant feature)"
         );
@@ -397,16 +396,16 @@ mod tests {
     }
 
     #[cfg(not(feature = "vector_qdrant"))]
-    #[tokio::test]
-    async fn test_noop_indexer_operations() {
+    #[test]
+    fn test_noop_indexer_operations() {
         let indexer = VectorIndexer::new();
         // All operations should succeed as no-ops.
-        assert!(indexer.create_collection("test", 128).await.is_ok());
-        assert!(indexer.upsert("test", vec![]).await.is_ok());
-        assert!(indexer.delete("test", &[]).await.is_ok());
-        let results = indexer.search("test", vec![0.1], 5).await.unwrap();
+        assert!(indexer.create_collection("test", 128).is_ok());
+        assert!(indexer.upsert("test", vec![]).is_ok());
+        assert!(indexer.delete("test", &[]).is_ok());
+        let results = indexer.search("test", vec![0.1], 5).unwrap();
         assert!(results.is_empty());
-        assert!(!indexer.collection_exists("test").await.unwrap());
-        assert!(indexer.delete_collection("test").await.is_ok());
+        assert!(!indexer.collection_exists("test").unwrap());
+        assert!(indexer.delete_collection("test").is_ok());
     }
 }

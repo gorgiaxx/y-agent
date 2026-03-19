@@ -170,26 +170,6 @@ impl Default for PruningEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use y_core::session::ChatMessageStatus;
-
-    fn make_msg(id: &str, role: &str, content: &str) -> ChatMessageRecord {
-        ChatMessageRecord {
-            id: id.to_string(),
-            session_id: SessionId("test".to_string()),
-            role: role.to_string(),
-            content: content.to_string(),
-            status: ChatMessageStatus::Active,
-            checkpoint_id: None,
-            model: None,
-            input_tokens: None,
-            output_tokens: None,
-            cost_usd: None,
-            context_window: None,
-            parent_message_id: None,
-            pruning_group_id: None,
-            created_at: chrono::Utc::now(),
-        }
-    }
 
     #[test]
     fn test_engine_default() {

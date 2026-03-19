@@ -90,15 +90,13 @@ fn skills_store_path(config_dir: &Path) -> PathBuf {
 
 fn build_file_tree(dir: &Path, relative_base: &Path) -> Vec<SkillFileEntry> {
     let mut entries = Vec::new();
-    let read_dir = match std::fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(_) => return entries,
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return entries;
     };
 
     for entry in read_dir.flatten() {
-        let meta = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
+        let Ok(meta) = entry.metadata() else {
+            continue;
         };
         let file_name = entry.file_name().to_string_lossy().to_string();
         let abs_path = entry.path();

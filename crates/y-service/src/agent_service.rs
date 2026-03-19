@@ -21,7 +21,7 @@ use y_core::provider::{ChatRequest, ProviderPool, RouteRequest, ToolCallingMode}
 use y_core::runtime::CommandRunner;
 use y_core::tool::ToolInput;
 use y_core::types::{Message, ProviderId, Role, SessionId, ToolCallRequest, ToolName};
-use y_tools::{format_tool_result, parse_tool_calls, strip_tool_call_blocks};
+use y_tools::{format_tool_result, parse_tool_calls, strip_tool_call_blocks, ParseResult};
 
 use crate::container::ServiceContainer;
 use crate::cost::CostService;
@@ -132,12 +132,45 @@ impl std::fmt::Display for AgentExecutionError {
 impl std::error::Error for AgentExecutionError {}
 
 // ---------------------------------------------------------------------------
+// Internal mutable state for the tool-call loop
+// ---------------------------------------------------------------------------
+
+/// Carries mutable state across iterations of the agent execution loop.
+///
+/// Extracted to reduce parameter count on helper methods.
+struct ToolExecContext {
+    iteration: usize,
+    last_gen_id: Option<Uuid>,
+    tool_calls_executed: Vec<ToolCallRecord>,
+    new_messages: Vec<Message>,
+    cumulative_input_tokens: u64,
+    cumulative_output_tokens: u64,
+    cumulative_cost: f64,
+    trace_id: Option<Uuid>,
+    session_id: SessionId,
+    working_history: Vec<Message>,
+    accumulated_content: String,
+}
+
+/// Per-iteration LLM response data bundle.
+///
+/// Avoids passing 7+ scalar arguments to helpers.
+struct LlmIterationData {
+    resp_input_tokens: u64,
+    resp_output_tokens: u64,
+    cost: f64,
+    llm_elapsed_ms: u64,
+    prompt_preview: String,
+    response_text_raw: String,
+}
+
+// ---------------------------------------------------------------------------
 // AgentService
 // ---------------------------------------------------------------------------
 
 /// Unified agent execution service.
 ///
-/// All agents — interactive chat (root), sub-agents, and system agents —
+/// All agents -- interactive chat (root), sub-agents, and system agents --
 /// run through [`AgentService::execute`]. The difference between agents is
 /// configuration, not code path.
 pub struct AgentService;
@@ -157,7 +190,7 @@ impl AgentService {
         progress: Option<TurnEventSender>,
         cancel: Option<CancellationToken>,
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
-        // 1. Context assembly (optional — root agent uses pipeline, sub-agents don't).
+        // 1. Context assembly (optional -- root agent uses pipeline, sub-agents don't).
         let assembled = if config.use_context_pipeline {
             let context_request = ContextRequest {
                 user_query: config.user_query.clone(),
@@ -185,533 +218,126 @@ impl AgentService {
             .ok();
 
         // 3. Build initial working history.
-        //    For context-pipeline agents (root), prepend system prompt from assembled context.
-        //    For sub-agents, the system prompt is already in config.messages.
-        let mut working_history = if config.use_context_pipeline {
+        let working_history = if config.use_context_pipeline {
             Self::build_chat_messages(&assembled, &config.messages)
         } else {
             config.messages.clone()
         };
 
+        let session_id = config
+            .session_id
+            .clone()
+            .unwrap_or_else(|| SessionId("agent".into()));
+
         // Mutable state for the tool-call loop.
-        let mut iteration = 0usize;
-        let mut last_gen_id: Option<Uuid> = None;
-        let mut tool_calls_executed: Vec<ToolCallRecord> = Vec::new();
-        let mut new_messages: Vec<Message> = Vec::new();
-        let mut cumulative_input_tokens: u64 = 0;
-        let mut cumulative_output_tokens: u64 = 0;
-        let mut cumulative_cost: f64 = 0.0;
+        let mut ctx = ToolExecContext {
+            iteration: 0,
+            last_gen_id: None,
+            tool_calls_executed: Vec::new(),
+            new_messages: Vec::new(),
+            cumulative_input_tokens: 0,
+            cumulative_output_tokens: 0,
+            cumulative_cost: 0.0,
+            trace_id,
+            session_id,
+            working_history,
+            accumulated_content: String::new(),
+        };
         #[allow(unused_assignments)]
         let mut final_model = String::new();
         #[allow(unused_assignments)]
         let mut final_provider_id: Option<String> = None;
-        let mut accumulated_content = String::new();
 
         let max_iterations = config.max_iterations;
-        let session_id_ref = config.session_id.as_ref();
 
         loop {
-            // Check for cancellation at the top of every iteration.
             if let Some(ref tok) = cancel {
                 if tok.is_cancelled() {
                     return Err(AgentExecutionError::Cancelled);
                 }
             }
 
-            iteration += 1;
-            if iteration > max_iterations {
-                if let Some(ref tx) = progress {
-                    let _ = tx.send(TurnEvent::LoopLimitHit {
-                        iterations: iteration - 1,
-                        max_iterations,
-                    });
-                }
-                if let Some(tid) = trace_id {
-                    let _ = container
-                        .diagnostics
-                        .on_trace_end(tid, false, Some("tool loop limit exceeded"))
-                        .await;
-                }
+            ctx.iteration += 1;
+            if ctx.iteration > max_iterations {
+                Self::emit_loop_limit(&progress, &ctx, max_iterations, container).await;
                 return Err(AgentExecutionError::ToolLoopLimitExceeded { max_iterations });
             }
 
-            // Build ChatRequest.
-            let request = ChatRequest {
-                messages: working_history.clone(),
-                model: None,
-                max_tokens: config.max_tokens,
-                temperature: config.temperature,
-                top_p: None,
-                tools: config.tool_definitions.clone(),
-                tool_calling_mode: config.tool_calling_mode,
-                stop: vec![],
-                extra: serde_json::Value::Null,
-            };
-
-            let route = RouteRequest {
-                preferred_provider_id: config.provider_id.as_ref().map(ProviderId::from_string),
-                preferred_model: config.preferred_models.first().cloned(),
-                required_tags: config.provider_tags.clone(),
-                ..RouteRequest::default()
-            };
-
-            // Fallback prompt preview.
-            let prompt_preview_fallback =
-                serde_json::to_string(&request.messages).unwrap_or_default();
+            let request = Self::build_chat_request(config, &ctx);
+            let route = Self::build_route_request(config);
+            let fallback = serde_json::to_string(&request.messages).unwrap_or_default();
 
             let llm_start = std::time::Instant::now();
             let pool = container.provider_pool().await;
 
-            // Streaming vs non-streaming.
-            let llm_result = if progress.is_some() {
-                Self::call_llm_streaming(
-                    &*pool,
-                    &request,
-                    &route,
-                    progress.as_ref(),
-                    cancel.as_ref(),
-                )
-                .await
-            } else {
-                let llm_future = pool.chat_completion(&request, &route);
-                if let Some(ref tok) = cancel {
-                    tokio::select! {
-                        res = llm_future => res,
-                        () = tok.cancelled() => {
-                            return Err(AgentExecutionError::Cancelled);
-                        }
-                    }
-                } else {
-                    llm_future.await
-                }
-            };
+            let llm_result = Self::call_llm(&*pool, &request, &route, &progress, &cancel).await;
 
             match llm_result {
                 Ok(response) => {
-                    let llm_elapsed_ms =
-                        u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(0);
-                    let resp_input_tokens = u64::from(response.usage.input_tokens);
-                    let resp_output_tokens = u64::from(response.usage.output_tokens);
-                    let cost = CostService::compute_cost(resp_input_tokens, resp_output_tokens);
+                    let iter_data = Self::build_iteration_data(&response, &fallback, llm_start);
 
-                    cumulative_input_tokens += resp_input_tokens;
-                    cumulative_output_tokens += resp_output_tokens;
-                    cumulative_cost += cost;
-                    final_model = response.model.clone();
-                    final_provider_id = response.provider_id.as_ref().map(std::string::ToString::to_string);
+                    ctx.cumulative_input_tokens += iter_data.resp_input_tokens;
+                    ctx.cumulative_output_tokens += iter_data.resp_output_tokens;
+                    ctx.cumulative_cost += iter_data.cost;
+                    final_model.clone_from(&response.model);
+                    final_provider_id = response
+                        .provider_id
+                        .as_ref()
+                        .map(std::string::ToString::to_string);
 
-                    // Prompt preview.
-                    let prompt_preview = response.raw_request.as_ref().map_or_else(
-                        || prompt_preview_fallback.clone(),
-                        |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()),
-                    );
+                    Self::record_generation_diagnostics(
+                        container,
+                        config,
+                        &response,
+                        &fallback,
+                        &iter_data,
+                        &mut ctx.last_gen_id,
+                        ctx.trace_id,
+                    )
+                    .await;
 
-                    // Response text for diagnostics.
-                    let response_text_raw = response.raw_response.as_ref().map_or_else(
-                        || {
-                            serde_json::json!({
-                                "content": response.content.clone().unwrap_or_default(),
-                                "model": response.model,
-                                "usage": {
-                                    "input_tokens": resp_input_tokens,
-                                    "output_tokens": resp_output_tokens,
-                                }
-                            })
-                            .to_string()
-                        },
-                        std::string::ToString::to_string,
-                    );
-
-                    // Diagnostics: record generation observation.
-                    if let Some(tid) = trace_id {
-                        let diag_input = response.raw_request.clone().unwrap_or_else(|| {
-                            serde_json::from_str(&prompt_preview_fallback)
-                                .unwrap_or(serde_json::Value::Null)
-                        });
-                        let diag_output = response.raw_response.clone().unwrap_or_else(|| {
-                            serde_json::json!({
-                                "content": response.content.clone().unwrap_or_default(),
-                                "model": response.model,
-                                "usage": {
-                                    "input_tokens": resp_input_tokens,
-                                    "output_tokens": resp_output_tokens,
-                                }
-                            })
-                        });
-
-                        let gen_id = container
-                            .diagnostics
-                            .on_generation(
-                                tid,
-                                None,
-                                Some(config.session_uuid),
-                                &response.model,
-                                resp_input_tokens,
-                                resp_output_tokens,
-                                cost,
-                                diag_input,
-                                diag_output,
-                                llm_elapsed_ms,
-                            )
-                            .await
-                            .ok();
-                        last_gen_id = gen_id;
-
-                        tracing::debug!(
-                            trace_id = %tid,
-                            agent = %config.agent_name,
-                            model = %response.model,
-                            input_tokens = resp_input_tokens,
-                            output_tokens = resp_output_tokens,
-                            llm_ms = llm_elapsed_ms,
-                            "Diagnostics: agent LLM call recorded"
-                        );
-                    }
-
-                    // Gather tool call names for the progress event.
-                    let native_tc_names: Vec<String> = response
-                        .tool_calls
-                        .iter()
-                        .map(|tc| tc.name.clone())
-                        .collect();
-
-                    // Handle native tool calls.
                     if !response.tool_calls.is_empty() {
-                        // Emit LlmResponse progress event.
-                        if let Some(ref tx) = progress {
-                            let _ = tx.send(TurnEvent::LlmResponse {
-                                iteration,
-                                model: response.model.clone(),
-                                input_tokens: resp_input_tokens,
-                                output_tokens: resp_output_tokens,
-                                duration_ms: llm_elapsed_ms,
-                                cost_usd: cost,
-                                tool_calls_requested: native_tc_names,
-                                prompt_preview: prompt_preview.clone(),
-                                response_text: response_text_raw.clone(),
-                            });
-                        }
-
-                        let mut meta = serde_json::json!({ "model": response.model });
-                        if let Some(ref rc) = response.reasoning_content {
-                            meta["reasoning_content"] = serde_json::Value::String(rc.clone());
-                        }
-                        let assistant_msg = Message {
-                            message_id: y_core::types::generate_message_id(),
-                            role: Role::Assistant,
-                            content: response.content.clone().unwrap_or_default(),
-                            tool_call_id: None,
-                            tool_calls: response.tool_calls.clone(),
-                            timestamp: y_core::types::now(),
-                            metadata: meta,
-                        };
-                        accumulated_content.push_str(&assistant_msg.content);
-                        accumulated_content.push('\n');
-                        working_history.push(assistant_msg.clone());
-                        new_messages.push(assistant_msg);
-
-                        for tc in &response.tool_calls {
-                            let tool_start = std::time::Instant::now();
-                            let tool_result = Self::execute_tool_call(
-                                container,
-                                tc,
-                                session_id_ref.unwrap_or(&SessionId("agent".into())),
-                            )
-                            .await;
-                            let tool_elapsed_ms =
-                                u64::try_from(tool_start.elapsed().as_millis()).unwrap_or(0);
-
-                            let (tool_success, result_content) = match &tool_result {
-                                Ok(output) => {
-                                    let content = serde_json::to_string(&output.content)
-                                        .unwrap_or_else(|_| "{}".to_string());
-                                    (output.success, content)
-                                }
-                                Err(e) => {
-                                    let content =
-                                        serde_json::json!({ "error": e.to_string() }).to_string();
-                                    (false, content)
-                                }
-                            };
-
-                            tool_calls_executed.push(ToolCallRecord {
-                                name: tc.name.clone(),
-                                success: tool_success,
-                                duration_ms: tool_elapsed_ms,
-                                result_content: result_content.clone(),
-                            });
-
-                            // Emit ToolResult progress event.
-                            if let Some(ref tx) = progress {
-                                let _ = tx.send(TurnEvent::ToolResult {
-                                    name: tc.name.clone(),
-                                    success: tool_success,
-                                    duration_ms: tool_elapsed_ms,
-                                    input_preview: serde_json::to_string(&tc.arguments)
-                                        .unwrap_or_default(),
-                                    result_preview: result_content.clone(),
-                                });
-                            }
-
-                            // Diagnostics: record tool call observation.
-                            if let Some(tid) = trace_id {
-                                let tool_output_json: serde_json::Value = serde_json::from_str(
-                                    &result_content,
-                                )
-                                .unwrap_or(serde_json::Value::String(result_content.clone()));
-                                let _ = container
-                                    .diagnostics
-                                    .on_tool_call(
-                                        tid,
-                                        last_gen_id,
-                                        Some(config.session_uuid),
-                                        &tc.name,
-                                        tc.arguments.clone(),
-                                        tool_output_json,
-                                        tool_elapsed_ms,
-                                        tool_success,
-                                    )
-                                    .await;
-                            }
-
-                            let tool_msg = Message {
-                                message_id: y_core::types::generate_message_id(),
-                                role: Role::Tool,
-                                content: result_content,
-                                tool_call_id: Some(tc.id.clone()),
-                                tool_calls: vec![],
-                                timestamp: y_core::types::now(),
-                                metadata: serde_json::Value::Null,
-                            };
-                            working_history.push(tool_msg.clone());
-                            new_messages.push(tool_msg);
-                        }
-
+                        Self::handle_native_tool_calls(
+                            container, config, &response, &progress, &iter_data, &mut ctx,
+                        )
+                        .await;
                         continue;
                     }
 
-                    // PromptBased mode: parse <tool_call> tags from text.
                     if config.tool_calling_mode == ToolCallingMode::PromptBased {
                         if let Some(ref text) = response.content {
                             let parse_result = parse_tool_calls(text);
                             if !parse_result.tool_calls.is_empty() {
-                                // Emit LlmResponse progress event.
-                                if let Some(ref tx) = progress {
-                                    let prompt_tc_names: Vec<String> = parse_result
-                                        .tool_calls
-                                        .iter()
-                                        .map(|ptc| ptc.name.clone())
-                                        .collect();
-                                    let _ = tx.send(TurnEvent::LlmResponse {
-                                        iteration,
-                                        model: response.model.clone(),
-                                        input_tokens: resp_input_tokens,
-                                        output_tokens: resp_output_tokens,
-                                        duration_ms: llm_elapsed_ms,
-                                        cost_usd: cost,
-                                        tool_calls_requested: prompt_tc_names,
-                                        prompt_preview: prompt_preview.clone(),
-                                        response_text: response_text_raw.clone(),
-                                    });
-                                }
-                                let mut meta = serde_json::json!({ "model": response.model });
-                                if let Some(ref rc) = response.reasoning_content {
-                                    meta["reasoning_content"] =
-                                        serde_json::Value::String(rc.clone());
-                                }
-                                let assistant_msg = Message {
-                                    message_id: y_core::types::generate_message_id(),
-                                    role: Role::Assistant,
-                                    content: text.clone(),
-                                    tool_call_id: None,
-                                    tool_calls: vec![],
-                                    timestamp: y_core::types::now(),
-                                    metadata: meta,
-                                };
-                                accumulated_content.push_str(text);
-                                accumulated_content.push('\n');
-                                working_history.push(assistant_msg.clone());
-                                new_messages.push(assistant_msg);
-
-                                // Execute each parsed tool call.
-                                let mut result_blocks = Vec::new();
-                                for ptc in &parse_result.tool_calls {
-                                    let tc = ToolCallRequest {
-                                        id: format!("prompt_{}", uuid::Uuid::new_v4()),
-                                        name: ptc.name.clone(),
-                                        arguments: ptc.arguments.clone(),
-                                    };
-
-                                    let tool_start = std::time::Instant::now();
-                                    let tool_result = Self::execute_tool_call(
-                                        container,
-                                        &tc,
-                                        session_id_ref.unwrap_or(&SessionId("agent".into())),
-                                    )
-                                    .await;
-                                    let tool_elapsed_ms =
-                                        u64::try_from(tool_start.elapsed().as_millis())
-                                            .unwrap_or(0);
-
-                                    let (tool_success, result_content) = match &tool_result {
-                                        Ok(output) => {
-                                            let content = serde_json::to_string(&output.content)
-                                                .unwrap_or_else(|_| "{}".to_string());
-                                            (output.success, content)
-                                        }
-                                        Err(e) => {
-                                            let content = serde_json::json!({
-                                                "error": e.to_string()
-                                            })
-                                            .to_string();
-                                            (false, content)
-                                        }
-                                    };
-
-                                    tool_calls_executed.push(ToolCallRecord {
-                                        name: tc.name.clone(),
-                                        success: tool_success,
-                                        duration_ms: tool_elapsed_ms,
-                                        result_content: result_content.clone(),
-                                    });
-
-                                    if let Some(ref tx) = progress {
-                                        let _ = tx.send(TurnEvent::ToolResult {
-                                            name: tc.name.clone(),
-                                            success: tool_success,
-                                            duration_ms: tool_elapsed_ms,
-                                            input_preview: serde_json::to_string(&tc.arguments)
-                                                .unwrap_or_default(),
-                                            result_preview: result_content.clone(),
-                                        });
-                                    }
-
-                                    // Diagnostics.
-                                    if let Some(tid) = trace_id {
-                                        let tool_output_json: serde_json::Value =
-                                            serde_json::from_str(&result_content).unwrap_or(
-                                                serde_json::Value::String(result_content.clone()),
-                                            );
-                                        let _ = container
-                                            .diagnostics
-                                            .on_tool_call(
-                                                tid,
-                                                last_gen_id,
-                                                Some(config.session_uuid),
-                                                &tc.name,
-                                                tc.arguments.clone(),
-                                                tool_output_json,
-                                                tool_elapsed_ms,
-                                                tool_success,
-                                            )
-                                            .await;
-                                    }
-
-                                    let result_value: serde_json::Value = serde_json::from_str(
-                                        &result_content,
-                                    )
-                                    .unwrap_or(serde_json::Value::String(result_content.clone()));
-                                    result_blocks.push(format_tool_result(
-                                        &tc.name,
-                                        tool_success,
-                                        &result_value,
-                                    ));
-                                }
-
-                                // Append results as a user message.
-                                let results_text = result_blocks.join("\n");
-                                let user_msg = Message {
-                                    message_id: y_core::types::generate_message_id(),
-                                    role: Role::User,
-                                    content: results_text,
-                                    tool_call_id: None,
-                                    tool_calls: vec![],
-                                    timestamp: y_core::types::now(),
-                                    metadata: serde_json::json!({
-                                        "type": "tool_result"
-                                    }),
-                                };
-                                working_history.push(user_msg.clone());
-                                new_messages.push(user_msg);
-
+                                Self::handle_prompt_based_tool_calls(
+                                    container,
+                                    config,
+                                    &response,
+                                    &parse_result,
+                                    text,
+                                    &progress,
+                                    &iter_data,
+                                    &mut ctx,
+                                )
+                                .await;
                                 continue;
                             }
                         }
                     }
 
-                    // No tool calls — text response.
-                    let raw_content = response
-                        .content
-                        .clone()
-                        .unwrap_or_else(|| "(no content)".to_string());
-
-                    // Emit LlmResponse progress event for final iteration.
-                    if let Some(ref tx) = progress {
-                        let _ = tx.send(TurnEvent::LlmResponse {
-                            iteration,
-                            model: response.model.clone(),
-                            input_tokens: resp_input_tokens,
-                            output_tokens: resp_output_tokens,
-                            duration_ms: llm_elapsed_ms,
-                            cost_usd: cost,
-                            tool_calls_requested: vec![],
-                            prompt_preview: prompt_preview.clone(),
-                            response_text: response_text_raw.clone(),
-                        });
-                    }
-
-                    // Sanitize: strip any remaining <tool_call> XML.
-                    let content = if config.tool_calling_mode == ToolCallingMode::PromptBased {
-                        let stripped = strip_tool_call_blocks(&raw_content);
-                        if stripped.is_empty() {
-                            raw_content
-                        } else {
-                            stripped
-                        }
-                    } else {
-                        raw_content
-                    };
-
-                    if let Some(tid) = trace_id {
-                        let _ = container
-                            .diagnostics
-                            .on_trace_end(tid, true, Some(&content))
-                            .await;
-                    }
-
-                    // Build the final content.
-                    let final_content = if accumulated_content.is_empty() {
-                        content.clone()
-                    } else {
-                        format!("{accumulated_content}{content}")
-                    };
-
-                    // Compute context_window.
-                    let metadata_list = container.provider_pool().await.list_metadata();
-                    let ctx_window = if let Some(ref pid) = final_provider_id {
-                        metadata_list
-                            .iter()
-                            .find(|m| m.id.to_string() == *pid)
-                            .map_or(0, |m| m.context_window)
-                    } else {
-                        metadata_list.first().map_or(0, |m| m.context_window)
-                    };
-
-                    return Ok(AgentExecutionResult {
-                        content: final_content,
-                        model: final_model,
-                        provider_id: final_provider_id,
-                        input_tokens: cumulative_input_tokens,
-                        output_tokens: cumulative_output_tokens,
-                        context_window: ctx_window,
-                        cost_usd: cumulative_cost,
-                        tool_calls_executed,
-                        iterations: iteration,
-                        new_messages,
-                    });
+                    // No tool calls -- final text response.
+                    return Self::build_final_result(
+                        container,
+                        config,
+                        &response,
+                        &progress,
+                        &iter_data,
+                        ctx,
+                        final_model,
+                        final_provider_id,
+                    )
+                    .await;
                 }
                 Err(e) => {
-                    // Convert streaming cancellation into Cancelled.
                     if matches!(e, y_core::provider::ProviderError::Cancelled) {
                         return Err(AgentExecutionError::Cancelled);
                     }
@@ -725,6 +351,447 @@ impl AgentService {
                 }
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Execute-loop helpers
+    // -----------------------------------------------------------------------
+
+    fn build_chat_request(config: &AgentExecutionConfig, ctx: &ToolExecContext) -> ChatRequest {
+        ChatRequest {
+            messages: ctx.working_history.clone(),
+            model: None,
+            max_tokens: config.max_tokens,
+            temperature: config.temperature,
+            top_p: None,
+            tools: config.tool_definitions.clone(),
+            tool_calling_mode: config.tool_calling_mode,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+        }
+    }
+
+    fn build_route_request(config: &AgentExecutionConfig) -> RouteRequest {
+        RouteRequest {
+            preferred_provider_id: config.provider_id.as_ref().map(ProviderId::from_string),
+            preferred_model: config.preferred_models.first().cloned(),
+            required_tags: config.provider_tags.clone(),
+            ..RouteRequest::default()
+        }
+    }
+
+    fn build_iteration_data(
+        response: &y_core::provider::ChatResponse,
+        fallback: &str,
+        llm_start: std::time::Instant,
+    ) -> LlmIterationData {
+        let resp_input_tokens = u64::from(response.usage.input_tokens);
+        let resp_output_tokens = u64::from(response.usage.output_tokens);
+        let cost = CostService::compute_cost(resp_input_tokens, resp_output_tokens);
+        let llm_elapsed_ms = u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(0);
+
+        let prompt_preview = response.raw_request.as_ref().map_or_else(
+            || fallback.to_string(),
+            |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()),
+        );
+
+        let response_text_raw = response.raw_response.as_ref().map_or_else(
+            || {
+                serde_json::json!({
+                    "content": response.content.clone().unwrap_or_default(),
+                    "model": response.model,
+                    "usage": {
+                        "input_tokens": resp_input_tokens,
+                        "output_tokens": resp_output_tokens,
+                    }
+                })
+                .to_string()
+            },
+            std::string::ToString::to_string,
+        );
+
+        LlmIterationData {
+            resp_input_tokens,
+            resp_output_tokens,
+            cost,
+            llm_elapsed_ms,
+            prompt_preview,
+            response_text_raw,
+        }
+    }
+
+    /// Dispatch to streaming or non-streaming LLM call.
+    async fn call_llm(
+        pool: &dyn ProviderPool,
+        request: &ChatRequest,
+        route: &RouteRequest,
+        progress: &Option<TurnEventSender>,
+        cancel: &Option<CancellationToken>,
+    ) -> Result<y_core::provider::ChatResponse, y_core::provider::ProviderError> {
+        if progress.is_some() {
+            Self::call_llm_streaming(pool, request, route, progress.as_ref(), cancel.as_ref()).await
+        } else {
+            let llm_future = pool.chat_completion(request, route);
+            if let Some(ref tok) = cancel {
+                tokio::select! {
+                    res = llm_future => res,
+                    () = tok.cancelled() => {
+                        Err(y_core::provider::ProviderError::Cancelled)
+                    }
+                }
+            } else {
+                llm_future.await
+            }
+        }
+    }
+
+    async fn emit_loop_limit(
+        progress: &Option<TurnEventSender>,
+        ctx: &ToolExecContext,
+        max_iterations: usize,
+        container: &ServiceContainer,
+    ) {
+        if let Some(ref tx) = progress {
+            let _ = tx.send(TurnEvent::LoopLimitHit {
+                iterations: ctx.iteration - 1,
+                max_iterations,
+            });
+        }
+        if let Some(tid) = ctx.trace_id {
+            let _ = container
+                .diagnostics
+                .on_trace_end(tid, false, Some("tool loop limit exceeded"))
+                .await;
+        }
+    }
+
+    /// Record a generation observation in the diagnostics subsystem.
+    async fn record_generation_diagnostics(
+        container: &ServiceContainer,
+        config: &AgentExecutionConfig,
+        response: &y_core::provider::ChatResponse,
+        prompt_preview_fallback: &str,
+        data: &LlmIterationData,
+        last_gen_id: &mut Option<Uuid>,
+        trace_id: Option<Uuid>,
+    ) {
+        let Some(tid) = trace_id else { return };
+
+        let diag_input = response.raw_request.clone().unwrap_or_else(|| {
+            serde_json::from_str(prompt_preview_fallback).unwrap_or(serde_json::Value::Null)
+        });
+        let diag_output = response.raw_response.clone().unwrap_or_else(|| {
+            serde_json::json!({
+                "content": response.content.clone().unwrap_or_default(),
+                "model": response.model,
+                "usage": {
+                    "input_tokens": data.resp_input_tokens,
+                    "output_tokens": data.resp_output_tokens,
+                }
+            })
+        });
+
+        let gen_id = container
+            .diagnostics
+            .on_generation(
+                tid,
+                None,
+                Some(config.session_uuid),
+                &response.model,
+                data.resp_input_tokens,
+                data.resp_output_tokens,
+                data.cost,
+                diag_input,
+                diag_output,
+                data.llm_elapsed_ms,
+            )
+            .await
+            .ok();
+        *last_gen_id = gen_id;
+
+        tracing::debug!(
+            trace_id = %tid,
+            agent = %config.agent_name,
+            model = %response.model,
+            input_tokens = data.resp_input_tokens,
+            output_tokens = data.resp_output_tokens,
+            llm_ms = data.llm_elapsed_ms,
+            "Diagnostics: agent LLM call recorded"
+        );
+    }
+
+    /// Execute a single tool call, record it, and emit progress events.
+    ///
+    /// Returns `(success, result_content)`.
+    async fn execute_and_record_tool(
+        container: &ServiceContainer,
+        config: &AgentExecutionConfig,
+        tc: &ToolCallRequest,
+        progress: &Option<TurnEventSender>,
+        ctx: &mut ToolExecContext,
+    ) -> (bool, String) {
+        let tool_start = std::time::Instant::now();
+        let tool_result = Self::execute_tool_call(container, tc, &ctx.session_id).await;
+        let tool_elapsed_ms = u64::try_from(tool_start.elapsed().as_millis()).unwrap_or(0);
+
+        let (tool_success, result_content) = match &tool_result {
+            Ok(output) => {
+                let content =
+                    serde_json::to_string(&output.content).unwrap_or_else(|_| "{}".to_string());
+                (output.success, content)
+            }
+            Err(e) => {
+                let content = serde_json::json!({ "error": e.to_string() }).to_string();
+                (false, content)
+            }
+        };
+
+        ctx.tool_calls_executed.push(ToolCallRecord {
+            name: tc.name.clone(),
+            success: tool_success,
+            duration_ms: tool_elapsed_ms,
+            result_content: result_content.clone(),
+        });
+
+        if let Some(ref tx) = progress {
+            let _ = tx.send(TurnEvent::ToolResult {
+                name: tc.name.clone(),
+                success: tool_success,
+                duration_ms: tool_elapsed_ms,
+                input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                result_preview: result_content.clone(),
+            });
+        }
+
+        if let Some(tid) = ctx.trace_id {
+            let tool_output_json: serde_json::Value = serde_json::from_str(&result_content)
+                .unwrap_or(serde_json::Value::String(result_content.clone()));
+            let _ = container
+                .diagnostics
+                .on_tool_call(
+                    tid,
+                    ctx.last_gen_id,
+                    Some(config.session_uuid),
+                    &tc.name,
+                    tc.arguments.clone(),
+                    tool_output_json,
+                    tool_elapsed_ms,
+                    tool_success,
+                )
+                .await;
+        }
+
+        (tool_success, result_content)
+    }
+
+    /// Emit `LlmResponse` progress event with the given tool call names.
+    fn emit_llm_response(
+        progress: &Option<TurnEventSender>,
+        response: &y_core::provider::ChatResponse,
+        data: &LlmIterationData,
+        iteration: usize,
+        tool_call_names: Vec<String>,
+    ) {
+        if let Some(ref tx) = progress {
+            let _ = tx.send(TurnEvent::LlmResponse {
+                iteration,
+                model: response.model.clone(),
+                input_tokens: data.resp_input_tokens,
+                output_tokens: data.resp_output_tokens,
+                duration_ms: data.llm_elapsed_ms,
+                cost_usd: data.cost,
+                tool_calls_requested: tool_call_names,
+                prompt_preview: data.prompt_preview.clone(),
+                response_text: data.response_text_raw.clone(),
+            });
+        }
+    }
+
+    /// Build an assistant `Message` with reasoning metadata.
+    fn build_assistant_msg(
+        response: &y_core::provider::ChatResponse,
+        content: String,
+        tool_calls: Vec<ToolCallRequest>,
+    ) -> Message {
+        let mut meta = serde_json::json!({ "model": response.model });
+        if let Some(ref rc) = response.reasoning_content {
+            meta["reasoning_content"] = serde_json::Value::String(rc.clone());
+        }
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content,
+            tool_call_id: None,
+            tool_calls,
+            timestamp: y_core::types::now(),
+            metadata: meta,
+        }
+    }
+
+    /// Handle native (function-calling) tool calls from an LLM response.
+    async fn handle_native_tool_calls(
+        container: &ServiceContainer,
+        config: &AgentExecutionConfig,
+        response: &y_core::provider::ChatResponse,
+        progress: &Option<TurnEventSender>,
+        data: &LlmIterationData,
+        ctx: &mut ToolExecContext,
+    ) {
+        let tc_names: Vec<String> = response
+            .tool_calls
+            .iter()
+            .map(|tc| tc.name.clone())
+            .collect();
+
+        Self::emit_llm_response(progress, response, data, ctx.iteration, tc_names);
+
+        let assistant_msg = Self::build_assistant_msg(
+            response,
+            response.content.clone().unwrap_or_default(),
+            response.tool_calls.clone(),
+        );
+        ctx.accumulated_content.push_str(&assistant_msg.content);
+        ctx.accumulated_content.push('\n');
+        ctx.working_history.push(assistant_msg.clone());
+        ctx.new_messages.push(assistant_msg);
+
+        for tc in &response.tool_calls {
+            let (_success, result_content) =
+                Self::execute_and_record_tool(container, config, tc, progress, ctx).await;
+
+            let tool_msg = Message {
+                message_id: y_core::types::generate_message_id(),
+                role: Role::Tool,
+                content: result_content,
+                tool_call_id: Some(tc.id.clone()),
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            };
+            ctx.working_history.push(tool_msg.clone());
+            ctx.new_messages.push(tool_msg);
+        }
+    }
+
+    /// Handle prompt-based tool calls parsed from LLM response text.
+    async fn handle_prompt_based_tool_calls(
+        container: &ServiceContainer,
+        config: &AgentExecutionConfig,
+        response: &y_core::provider::ChatResponse,
+        parse_result: &ParseResult,
+        text: &str,
+        progress: &Option<TurnEventSender>,
+        data: &LlmIterationData,
+        ctx: &mut ToolExecContext,
+    ) {
+        let tc_names: Vec<String> = parse_result
+            .tool_calls
+            .iter()
+            .map(|ptc| ptc.name.clone())
+            .collect();
+
+        Self::emit_llm_response(progress, response, data, ctx.iteration, tc_names);
+
+        let assistant_msg = Self::build_assistant_msg(response, text.to_string(), vec![]);
+        ctx.accumulated_content.push_str(text);
+        ctx.accumulated_content.push('\n');
+        ctx.working_history.push(assistant_msg.clone());
+        ctx.new_messages.push(assistant_msg);
+
+        let mut result_blocks = Vec::new();
+        for ptc in &parse_result.tool_calls {
+            let tc = ToolCallRequest {
+                id: format!("prompt_{}", uuid::Uuid::new_v4()),
+                name: ptc.name.clone(),
+                arguments: ptc.arguments.clone(),
+            };
+
+            let (tool_success, result_content) =
+                Self::execute_and_record_tool(container, config, &tc, progress, ctx).await;
+
+            let result_value: serde_json::Value = serde_json::from_str(&result_content)
+                .unwrap_or(serde_json::Value::String(result_content));
+            result_blocks.push(format_tool_result(&tc.name, tool_success, &result_value));
+        }
+
+        let results_text = result_blocks.join("\n");
+        let user_msg = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::User,
+            content: results_text,
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::json!({ "type": "tool_result" }),
+        };
+        ctx.working_history.push(user_msg.clone());
+        ctx.new_messages.push(user_msg);
+    }
+
+    /// Build the final result when no tool calls are requested.
+    async fn build_final_result(
+        container: &ServiceContainer,
+        config: &AgentExecutionConfig,
+        response: &y_core::provider::ChatResponse,
+        progress: &Option<TurnEventSender>,
+        data: &LlmIterationData,
+        ctx: ToolExecContext,
+        final_model: String,
+        final_provider_id: Option<String>,
+    ) -> Result<AgentExecutionResult, AgentExecutionError> {
+        let raw_content = response
+            .content
+            .clone()
+            .unwrap_or_else(|| "(no content)".to_string());
+
+        Self::emit_llm_response(progress, response, data, ctx.iteration, vec![]);
+
+        let content = if config.tool_calling_mode == ToolCallingMode::PromptBased {
+            let stripped = strip_tool_call_blocks(&raw_content);
+            if stripped.is_empty() {
+                raw_content
+            } else {
+                stripped
+            }
+        } else {
+            raw_content
+        };
+
+        if let Some(tid) = ctx.trace_id {
+            let _ = container
+                .diagnostics
+                .on_trace_end(tid, true, Some(&content))
+                .await;
+        }
+
+        let final_content = if ctx.accumulated_content.is_empty() {
+            content.clone()
+        } else {
+            format!("{}{content}", ctx.accumulated_content)
+        };
+
+        let metadata_list = container.provider_pool().await.list_metadata();
+        let ctx_window = if let Some(ref pid) = final_provider_id {
+            metadata_list
+                .iter()
+                .find(|m| m.id.to_string() == *pid)
+                .map_or(0, |m| m.context_window)
+        } else {
+            metadata_list.first().map_or(0, |m| m.context_window)
+        };
+
+        Ok(AgentExecutionResult {
+            content: final_content,
+            model: final_model,
+            provider_id: final_provider_id,
+            input_tokens: ctx.cumulative_input_tokens,
+            output_tokens: ctx.cumulative_output_tokens,
+            context_window: ctx_window,
+            cost_usd: ctx.cumulative_cost,
+            tool_calls_executed: ctx.tool_calls_executed,
+            iterations: ctx.iteration,
+            new_messages: ctx.new_messages,
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -967,11 +1034,10 @@ impl AgentService {
 
         // Build synthetic raw response for diagnostics.
         let finish_reason_str = match finish_reason {
-            FinishReason::Stop => "stop",
             FinishReason::Length => "length",
             FinishReason::ToolUse => "tool_calls",
             FinishReason::ContentFilter => "content_filter",
-            FinishReason::Unknown => "stop",
+            FinishReason::Unknown | FinishReason::Stop => "stop",
         };
         let raw_response = serde_json::json!({
             "id": "",

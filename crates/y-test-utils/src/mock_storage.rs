@@ -1,6 +1,5 @@
 //! Mock storage implementations for `CheckpointStorage`, `SessionStore`, and
 //! `TranscriptStore`.
-#![allow(clippy::assigning_clones)]
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -257,7 +256,7 @@ impl SessionStore for MockSessionStore {
         while let Some(cid) = current_id.take() {
             if let Some(node) = map.get(&cid.to_string()) {
                 result.push(node.clone());
-                current_id = node.parent_id.clone();
+                current_id.clone_from(&node.parent_id);
             } else {
                 break;
             }

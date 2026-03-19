@@ -92,13 +92,10 @@ impl ImageWhitelist {
     /// 2. Tag is in the allowed tags (if restriction is set)
     /// 3. Digest matches expected (if digest provided)
     pub fn verify(&self, name: &str, tag: &str, actual_digest: Option<&str>) -> VerifyResult {
-        let entry = match self.entries.get(name) {
-            Some(e) => e,
-            None => {
-                return VerifyResult::NotWhitelisted {
-                    image: name.to_string(),
-                }
-            }
+        let Some(entry) = self.entries.get(name) else {
+            return VerifyResult::NotWhitelisted {
+                image: name.to_string(),
+            };
         };
 
         // Check tag restrictions.

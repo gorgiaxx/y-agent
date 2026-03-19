@@ -22,9 +22,9 @@ use crate::types::{
 // Error helper
 // ---------------------------------------------------------------------------
 
-fn storage_err(msg: impl ToString) -> TraceStoreError {
+fn storage_err(msg: impl Into<String>) -> TraceStoreError {
     TraceStoreError::Storage {
-        message: msg.to_string(),
+        message: msg.into(),
     }
 }
 

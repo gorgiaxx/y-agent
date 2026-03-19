@@ -346,7 +346,6 @@ fn tokens_to_max_chars(max_tokens: u32, content: &str) -> usize {
 
     // Weighted chars-per-token: CJK ≈ 0.67 chars/token, Latin ≈ 4.0 chars/token.
     let chars_per_token = cjk_ratio * 0.67 + (1.0 - cjk_ratio) * 4.0;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let max_chars = (f64::from(max_tokens) * chars_per_token) as usize;
     max_chars
 }

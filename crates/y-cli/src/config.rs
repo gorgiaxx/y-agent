@@ -532,12 +532,6 @@ impl ConfigLoader {
         self.env_overrides = overrides;
         self
     }
-
-    /// Override the user config path.
-    pub fn with_user_config(mut self, path: Option<PathBuf>) -> Self {
-        self.user_config_path = path;
-        self
-    }
 }
 
 #[cfg(test)]

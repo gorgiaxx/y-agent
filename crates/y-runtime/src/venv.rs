@@ -55,16 +55,13 @@ impl VenvManager {
     ///    with `uv venv --python <version> <venv_dir>`.
     pub async fn init_python(config: &PythonVenvConfig) -> VenvStatus {
         // 1. Find binary.
-        let binary_path = match Self::which(&config.uv_path).await {
-            Some(p) => p,
-            None => {
-                return VenvStatus {
-                    ready: false,
-                    binary_path: config.uv_path.clone(),
-                    version: String::new(),
-                    message: format!("`{}` not found in PATH", config.uv_path),
-                };
-            }
+        let Some(binary_path) = Self::which(&config.uv_path).await else {
+            return VenvStatus {
+                ready: false,
+                binary_path: config.uv_path.clone(),
+                version: String::new(),
+                message: format!("`{}` not found in PATH", config.uv_path),
+            };
         };
 
         // 2. Query version.
@@ -137,16 +134,13 @@ impl VenvManager {
     /// Unlike Python, bun does not require a separate venv creation step.
     pub async fn init_bun(config: &BunVenvConfig) -> VenvStatus {
         // 1. Find binary.
-        let binary_path = match Self::which(&config.bun_path).await {
-            Some(p) => p,
-            None => {
-                return VenvStatus {
-                    ready: false,
-                    binary_path: config.bun_path.clone(),
-                    version: String::new(),
-                    message: format!("`{}` not found in PATH", config.bun_path),
-                };
-            }
+        let Some(binary_path) = Self::which(&config.bun_path).await else {
+            return VenvStatus {
+                ready: false,
+                binary_path: config.bun_path.clone(),
+                version: String::new(),
+                message: format!("`{}` not found in PATH", config.bun_path),
+            };
         };
 
         // 2. Query version.

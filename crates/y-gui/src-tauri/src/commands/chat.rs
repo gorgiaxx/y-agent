@@ -153,7 +153,7 @@ pub async fn chat_send(
         let mut ctx = state.container.prompt_context.write().await;
         ctx.working_directory = workspace_path;
         if let Some(ref skill_names) = skills {
-            ctx.active_skills = skill_names.clone();
+            ctx.active_skills.clone_from(skill_names);
         } else {
             ctx.active_skills.clear();
         }

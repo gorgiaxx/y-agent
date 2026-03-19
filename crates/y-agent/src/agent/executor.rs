@@ -58,7 +58,6 @@ impl AgentExecutor {
     /// 4. Inject context based on strategy.
     ///
     /// Returns the prepared execution context.
-    #[allow(clippy::too_many_arguments)]
     #[instrument(skip_all, fields(agent_id, mode = ?mode_override, strategy = ?context_strategy))]
     pub fn prepare(
         registry: &AgentRegistry,

@@ -466,6 +466,7 @@ pub async fn kb_expand_folder(path: String) -> Result<Vec<String>, String> {
 }
 
 /// Progress event payload emitted during batch ingestion.
+/// KnowledgeBase statistics.
 #[derive(Debug, Serialize, Clone)]
 pub struct BatchProgressPayload {
     pub current: usize,

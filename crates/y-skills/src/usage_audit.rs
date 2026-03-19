@@ -116,7 +116,6 @@ impl SkillUsageAudit {
             .collect()
     }
 
-    #[allow(clippy::cast_precision_loss)]
     fn word_overlap(output_words: &HashSet<String>, skill_words: &HashSet<String>) -> f64 {
         if skill_words.is_empty() {
             return 0.0;

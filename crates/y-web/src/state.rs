@@ -45,6 +45,7 @@ impl AppState {
     }
 
     /// Create a new `AppState` with a Feishu bot adapter.
+    #[must_use]
     pub fn with_feishu_bot(mut self, bot: FeishuBot) -> Self {
         self.feishu_bot = Some(Arc::new(bot));
         self

@@ -287,6 +287,7 @@ impl<T: Tokenizer> InjectKnowledge<T> {
     /// Produces a compact representation: L0 summary + L1 section titles,
     /// guiding the LLM to use `knowledge_search` for full content.
     fn format_structured(result: &RetrievalResult, meta: &EntryMetadata) -> String {
+        use std::fmt::Write;
         let mut out = format!(
             "[Knowledge: {} (relevance: {:.2})]",
             result.chunk.metadata.title, result.relevance,
@@ -294,14 +295,14 @@ impl<T: Tokenizer> InjectKnowledge<T> {
 
         // L0 summary
         if let Some(ref summary) = meta.summary {
-            out.push_str(&format!("\nSummary: {summary}"));
+            write!(&mut out, "\nSummary: {summary}").unwrap();
         }
 
         // L1 section titles
         if !meta.section_titles.is_empty() {
             out.push_str("\nSections:");
             for (i, title) in meta.section_titles.iter().enumerate() {
-                out.push_str(&format!("\n  {}. {}", i + 1, title));
+                write!(&mut out, "\n  {}. {}", i + 1, title).unwrap();
             }
         }
 

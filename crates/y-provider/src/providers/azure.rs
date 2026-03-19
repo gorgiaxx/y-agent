@@ -56,8 +56,8 @@ impl AzureOpenAiProvider {
         let endpoint = base_url.unwrap_or_default();
 
         let mut builder = Client::builder();
-        if let Some(ref proxy) = proxy_url {
-            if let Ok(p) = reqwest::Proxy::all(proxy) {
+        if let Some(proxy) = proxy_url {
+            if let Ok(p) = reqwest::Proxy::all(&proxy) {
                 builder = builder.proxy(p);
             }
         }
@@ -109,7 +109,7 @@ impl AzureOpenAiProvider {
     }
 
     /// Build the request body (same format as `OpenAI`).
-    fn build_request_body(&self, request: &ChatRequest, stream: bool) -> AzureRequest {
+    fn build_request_body(request: &ChatRequest, stream: bool) -> AzureRequest {
         use y_core::provider::ToolCallingMode;
 
         // PromptBased mode: never send tool definitions to the provider.
@@ -151,7 +151,7 @@ impl AzureOpenAiProvider {
 impl LlmProvider for AzureOpenAiProvider {
     #[instrument(skip(self, request), fields(model = %self.metadata.model, provider_id = %self.metadata.id))]
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
-        let body = self.build_request_body(request, false);
+        let body = Self::build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
         let response = self
@@ -232,7 +232,6 @@ impl LlmProvider for AzureOpenAiProvider {
             .collect();
 
         let finish_reason = match choice.finish_reason.as_deref() {
-            Some("stop") => FinishReason::Stop,
             Some("tool_calls") => FinishReason::ToolUse,
             Some("length") => FinishReason::Length,
             Some("content_filter") => FinishReason::ContentFilter,
@@ -270,7 +269,7 @@ impl LlmProvider for AzureOpenAiProvider {
         &self,
         request: &ChatRequest,
     ) -> Result<ChatStreamResponse, ProviderError> {
-        let body = self.build_request_body(request, true);
+        let body = Self::build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 
         let response = self
@@ -495,11 +494,11 @@ fn map_stream_chunk(
                 }
                 let acc = &mut tool_calls_acc[idx];
                 if let Some(ref id) = tc.id {
-                    acc.id = id.clone();
+                    acc.id.clone_from(id);
                 }
                 if let Some(ref func) = tc.function {
                     if let Some(ref name) = func.name {
-                        acc.name = name.clone();
+                        acc.name.clone_from(name);
                     }
                     if let Some(ref args) = func.arguments {
                         acc.arguments.push_str(args);

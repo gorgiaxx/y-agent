@@ -226,7 +226,9 @@ impl SkillRegistryImpl {
 
     /// Returns the filesystem store's base path, if a store is configured.
     pub fn store_base_path(&self) -> Option<&Path> {
-        self.store.as_ref().map(super::store::FilesystemSkillStore::base_path)
+        self.store
+            .as_ref()
+            .map(super::store::FilesystemSkillStore::base_path)
     }
 }
 

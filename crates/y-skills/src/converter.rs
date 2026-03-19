@@ -105,7 +105,6 @@ impl FormatConverter {
         })
     }
 
-    #[allow(clippy::unused_self)]
     fn build_manifest(&self, name: &str, decomposed: &DecomposedSkill) -> String {
         let root_tokens = crate::manifest::estimate_tokens(&decomposed.root_content);
         let mut manifest = format!(

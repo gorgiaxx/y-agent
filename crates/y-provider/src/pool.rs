@@ -52,7 +52,7 @@ impl std::fmt::Debug for ProviderPoolImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProviderPoolImpl")
             .field("provider_count", &self.providers.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -350,7 +350,7 @@ impl ProviderPool for ProviderPoolImpl {
         match stream_result {
             Ok(mut stream_response) => {
                 stream_response.provider_id = Some(meta.id.clone());
-                stream_response.model = meta.model.clone();
+                stream_response.model.clone_from(&meta.model);
                 stream_response.context_window = meta.context_window;
 
                 // Wrap the inner stream so `guard` is held until the stream

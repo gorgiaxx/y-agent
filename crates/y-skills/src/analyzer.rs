@@ -49,7 +49,6 @@ pub struct EmbeddedScript {
 }
 
 /// Security flags detected during content analysis.
-#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SecurityFlags {
     /// Content contains patterns suggesting external API calls.
@@ -76,7 +75,6 @@ pub struct SecurityFlags {
 #[derive(Debug)]
 pub struct ContentAnalyzer;
 
-#[allow(clippy::unused_self)]
 impl ContentAnalyzer {
     /// Create a new content analyzer.
     pub fn new() -> Self {

@@ -48,6 +48,10 @@ impl ToolRegistryImpl {
     }
 
     /// Hot-reload the tool registry configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration lock is poisoned.
     pub fn reload_config(&self, new_config: ToolRegistryConfig) {
         *self.config.write().unwrap() = new_config;
         tracing::info!("Tool registry config hot-reloaded");
@@ -87,6 +91,10 @@ impl ToolRegistryImpl {
     }
 
     /// Search for tools by keyword in name/description and optional category.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration lock is poisoned.
     pub async fn search_tools(
         &self,
         query: &str,

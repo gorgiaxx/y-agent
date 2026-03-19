@@ -510,7 +510,11 @@ impl ChatService {
         }
 
         // 5. Build PreparedTurn from the truncated transcript.
-        let user_input = history.last().unwrap().content.clone();
+        let user_input = if let Some(msg) = history.last() {
+            msg.content.clone()
+        } else {
+            return Err(ResendTurnError::TranscriptEmpty);
+        };
         let turn_number = u32::try_from(history.len()).unwrap_or(0);
         let session_uuid =
             Uuid::parse_str(request.session_id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
@@ -538,9 +542,8 @@ impl ChatService {
         container: &ServiceContainer,
         session_id: &str,
     ) -> Result<Option<TurnMetaSummary>, String> {
-        let session_uuid = match Uuid::parse_str(session_id) {
-            Ok(u) => u,
-            Err(_) => return Ok(None),
+        let Ok(session_uuid) = Uuid::parse_str(session_id) else {
+            return Ok(None);
         };
 
         let store = container.diagnostics.store();
@@ -549,9 +552,8 @@ impl ChatService {
             .await
             .unwrap_or_default();
 
-        let trace = match traces.first() {
-            Some(t) => t,
-            None => return Ok(None),
+        let Some(trace) = traces.first() else {
+            return Ok(None);
         };
 
         let observations = store.get_observations(trace.id).await.unwrap_or_default();

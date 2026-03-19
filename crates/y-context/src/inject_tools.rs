@@ -130,12 +130,13 @@ impl ContextProvider for InjectTools {
             ToolCallingMode::PromptBased => self.provide_prompt_based(ctx),
             ToolCallingMode::Native => self.provide_native(ctx),
         }
+        Ok(())
     }
 }
 
 impl InjectTools {
     /// `PromptBased` mode: inject taxonomy summary + activated tool schemas.
-    fn provide_prompt_based(&self, ctx: &mut AssembledContext) -> Result<(), ContextPipelineError> {
+    fn provide_prompt_based(&self, ctx: &mut AssembledContext) {
         let mut content = String::new();
 
         // Inject taxonomy root summary.
@@ -162,7 +163,7 @@ impl InjectTools {
         }
 
         if content.is_empty() {
-            return Ok(());
+            return;
         }
 
         let tokens = estimate_tokens(&content);
@@ -180,14 +181,12 @@ impl InjectTools {
             tokens,
             "tool context injected (PromptBased mode)"
         );
-
-        Ok(())
     }
 
     /// Native mode: inject flat tool name list + `tool_search`.
-    fn provide_native(&self, ctx: &mut AssembledContext) -> Result<(), ContextPipelineError> {
+    fn provide_native(&self, ctx: &mut AssembledContext) {
         if self.tool_names.is_empty() {
-            return Ok(());
+            return;
         }
 
         let mut index = String::from("## Available Tools\n\n");
@@ -219,8 +218,6 @@ impl InjectTools {
             tokens,
             "tool index injected (Native mode)"
         );
-
-        Ok(())
     }
 }
 

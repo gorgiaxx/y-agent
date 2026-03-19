@@ -225,6 +225,7 @@ impl ResourceMonitor {
     /// how close it is to exceeding the threshold.
     pub async fn utilization(&self) -> ResourceUtilization {
         let inner = self.inner.lock().await;
+
         ResourceUtilization {
             memory: inner.current.memory_bytes as f64 / inner.thresholds.max_memory_bytes as f64,
             open_files: f64::from(inner.current.open_files)

@@ -165,6 +165,10 @@ impl RateLimiter {
     ///
     /// Returns `Allowed` if the request can proceed, or `Denied` with
     /// a retry-after duration if rate limited.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock is poisoned.
     pub async fn check(&self, tool_name: &str) -> RateLimitResult {
         let mut inner = self.inner.lock().await;
 

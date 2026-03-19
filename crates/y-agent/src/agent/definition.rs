@@ -79,7 +79,7 @@ pub struct AgentDefinition {
     /// Fallback models when preferred are unavailable.
     #[serde(default)]
     pub fallback_models: Vec<String>,
-    /// Provider routing tags (e.g. ["general"], ["title"]).
+    /// Provider routing tags (e.g. `["general"]`, `["title"]`).
     /// Used as `required_tags` in `RouteRequest` for provider selection.
     #[serde(default)]
     pub provider_tags: Vec<String>,

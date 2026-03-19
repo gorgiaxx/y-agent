@@ -159,7 +159,6 @@ impl FilterGate {
             let total_items = report.embedded_tools.len() + report.embedded_scripts.len();
             let llm_portion = if total_items > 0 {
                 // Rough estimate: ratio of reasoning content
-                #[allow(clippy::cast_precision_loss)] // total_items is always small
                 let items_f = total_items as f64;
                 1.0 - (items_f * 0.1).min(0.5)
             } else {

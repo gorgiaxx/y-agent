@@ -531,7 +531,7 @@ impl std::fmt::Debug for HookHandlerExecutor {
                 &self.handlers.values().map(Vec::len).sum::<usize>(),
             )
             .field("metrics", &self.metrics.snapshot())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

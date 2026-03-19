@@ -72,7 +72,8 @@ impl ContextProvider for InjectContextStatus {
             }
         }
         if !breakdown_parts.is_empty() {
-            status.push_str(&format!(" | {}", breakdown_parts.join(", ")));
+            use std::fmt::Write;
+            let _ = write!(status, " | {}", breakdown_parts.join(", "));
         }
 
         if usage_pct > 90.0 {

@@ -84,7 +84,6 @@ pub struct SecurityScreener {
     block_threshold: u8,
 }
 
-#[allow(clippy::unused_self)]
 impl SecurityScreener {
     /// Create a new security screener with default threshold (3).
     pub fn new() -> Self {

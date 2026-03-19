@@ -129,6 +129,10 @@ impl ServiceContainer {
     /// This is the sole dependency-wiring entry point. Presentation layers
     /// call this once and pass the resulting `ServiceContainer` to service
     /// methods and command handlers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fallback tool taxonomy TOML is invalid.
     pub async fn from_config(config: &ServiceConfig) -> Result<Self> {
         // 1. Storage layer — SQLite pool.
         let pool = y_storage::create_pool(&config.storage)
@@ -530,9 +534,7 @@ pub fn build_providers_from_config(
     let mut providers: Vec<Arc<dyn LlmProvider>> = Vec::new();
 
     for config in &pool_config.providers {
-        let api_key = if let Some(key) = config.resolve_api_key() {
-            key
-        } else {
+        let Some(api_key) = config.resolve_api_key() else {
             let env_var = config.api_key_env.as_deref().unwrap_or("(not configured)");
             warn!(
                 provider_id = %config.id,

@@ -483,12 +483,7 @@ impl TuiApp {
                 self.state
                     .push_toast(format!("Error: {msg}"), ToastLevel::Error);
             }
-            CommandResult::Quit => {
-                // Handled in the run loop.
-            }
-            CommandResult::Ok(None) => {
-                // Handler already modified state directly.
-            }
+            CommandResult::Quit | CommandResult::Ok(None) => {}
             CommandResult::NewSession => {
                 // State has been reset by the handler (messages cleared,
                 // current_session_id set to None, user_message_count reset).

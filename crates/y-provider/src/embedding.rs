@@ -164,7 +164,7 @@ impl OpenAiEmbeddingProvider {
     }
 
     /// Create a new provider with explicit parameters.
-    pub fn new(api_key: String, base_url: String, model: String, dimensions: usize) -> Self {
+    pub fn new(api_key: String, base_url: &str, model: String, dimensions: usize) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key,
@@ -252,7 +252,7 @@ impl std::fmt::Debug for OpenAiEmbeddingProvider {
             .field("base_url", &self.base_url)
             .field("model", &self.model)
             .field("dimensions", &self.dimensions)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -269,12 +269,13 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
     }
 
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingResult>, EmbeddingError> {
+        // OpenAI allows up to 2048 inputs per batch. Split if necessary.
+        const MAX_BATCH: usize = 2048;
+
         if texts.is_empty() {
             return Ok(vec![]);
         }
 
-        // OpenAI allows up to 2048 inputs per batch. Split if necessary.
-        const MAX_BATCH: usize = 2048;
         let mut all_results = Vec::with_capacity(texts.len());
 
         for chunk in texts.chunks(MAX_BATCH) {
@@ -340,7 +341,7 @@ mod tests {
     fn test_provider_debug() {
         let provider = OpenAiEmbeddingProvider::new(
             "test-key".to_string(),
-            "http://localhost:8080".to_string(),
+            "http://localhost:8080",
             "test-model".to_string(),
             384,
         );
@@ -353,7 +354,7 @@ mod tests {
     fn test_provider_dimensions_and_model() {
         let provider = OpenAiEmbeddingProvider::new(
             "key".to_string(),
-            "http://localhost".to_string(),
+            "http://localhost",
             "my-model".to_string(),
             768,
         );

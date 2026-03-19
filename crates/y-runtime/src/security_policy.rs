@@ -106,7 +106,9 @@ impl SecurityPolicy {
             }
             SecurityProfile::Standard => {
                 match cap {
-                    NetworkCapability::None => {}
+                    NetworkCapability::None | NetworkCapability::Internal { .. } => {
+                        // Internal CIDRs and None allowed in standard mode.
+                    }
                     NetworkCapability::Full => {
                         return Err(RuntimeError::CapabilityDenied {
                             capability:
@@ -125,9 +127,6 @@ impl SecurityPolicy {
                                 });
                             }
                         }
-                    }
-                    NetworkCapability::Internal { .. } => {
-                        // Internal CIDRs allowed in standard mode.
                     }
                 }
             }

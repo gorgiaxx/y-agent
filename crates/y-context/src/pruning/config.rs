@@ -40,14 +40,12 @@ impl Default for ProgressivePruningConfig {
 }
 
 /// Configuration for retry pruning.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RetryPruningConfig {
     /// Additional regex patterns for failure detection.
     #[serde(default)]
     pub heuristic_patterns: Vec<String>,
 }
-
 
 /// Top-level pruning configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

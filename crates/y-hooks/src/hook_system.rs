@@ -282,7 +282,7 @@ impl std::fmt::Debug for HookSystem {
             .field("events", &self.events);
         #[cfg(feature = "hook_handlers")]
         s.field("handler_executor", &self.handler_executor.is_some());
-        s.finish()
+        s.finish_non_exhaustive()
     }
 }
 

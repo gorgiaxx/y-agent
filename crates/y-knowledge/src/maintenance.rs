@@ -182,7 +182,6 @@ impl MaintenanceManager {
             .get(entry_id)
             .map_or(Duration::hours(i64::from(u32::MAX)), |t| Utc::now() - *t);
 
-        #[allow(clippy::cast_possible_wrap)]
         let ttl = Duration::hours(self.config.default_ttl_hours as i64);
         let ttl_expired = age > ttl;
 
@@ -213,7 +212,6 @@ impl MaintenanceManager {
 
     /// Get entries that need attention (stale or expired).
     pub fn entries_needing_attention(&self) -> Vec<String> {
-        #[allow(clippy::cast_possible_wrap)]
         let ttl = Duration::hours(self.config.default_ttl_hours as i64);
 
         self.refresh_times

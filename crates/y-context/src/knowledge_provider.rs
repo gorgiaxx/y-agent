@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 
+use std::fmt::Write;
 use y_core::embedding::EmbeddingProvider;
 use y_knowledge::middleware::{InjectKnowledge, KnowledgeContextItem};
 use y_knowledge::tokenizer::SimpleTokenizer;
@@ -68,22 +69,23 @@ impl KnowledgeContextProvider {
         }
 
         for (i, item) in items.iter().enumerate() {
-            block.push_str(&format!(
-                "--- Knowledge Item {} (relevance: {:.0}%) ---\n",
+            let _ = writeln!(
+                &mut block,
+                "--- Knowledge Item {} (relevance: {:.0}%) ---",
                 i + 1,
                 item.relevance * 100.0
-            ));
+            );
             if !item.title.is_empty() {
-                block.push_str(&format!("Source: {}\n", item.title));
+                let _ = writeln!(&mut block, "Source: {}", item.title);
             }
             // Structured L0/L1 info (if available).
             if let Some(ref summary) = item.summary {
-                block.push_str(&format!("Summary: {summary}\n"));
+                let _ = writeln!(&mut block, "Summary: {summary}");
             }
             if !item.section_titles.is_empty() {
                 block.push_str("Sections:\n");
                 for (j, title) in item.section_titles.iter().enumerate() {
-                    block.push_str(&format!("  {}. {}\n", j + 1, title));
+                    let _ = writeln!(&mut block, "  {}. {}", j + 1, title);
                 }
             }
             // L2 raw content (fallback when no structured info).
@@ -101,7 +103,6 @@ impl KnowledgeContextProvider {
 
 #[async_trait]
 impl ContextProvider for KnowledgeContextProvider {
-    #[allow(clippy::unnecessary_literal_bound)]
     fn name(&self) -> &str {
         "inject_knowledge"
     }
@@ -141,7 +142,10 @@ impl ContextProvider for KnowledgeContextProvider {
         };
 
         // Retrieve relevant knowledge, filtering by selected collections.
-        let knowledge = self.knowledge.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let knowledge = self
+            .knowledge
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let items = knowledge.retrieve_for_context(&user_query, query_embedding.as_deref(), None);
 
         if items.is_empty() {

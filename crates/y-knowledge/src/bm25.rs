@@ -163,7 +163,6 @@ impl<T: Tokenizer> Bm25Index<T> {
             return vec![];
         }
 
-        #[allow(clippy::cast_precision_loss)]
         let avgdl = self.total_length as f64 / f64::from(self.doc_count);
 
         // Accumulate BM25 scores per chunk.
@@ -172,7 +171,6 @@ impl<T: Tokenizer> Bm25Index<T> {
         for term in &query_tokens {
             if let Some(postings) = self.index.get(term) {
                 // IDF: log((N - n + 0.5) / (n + 0.5) + 1)
-                #[allow(clippy::cast_precision_loss)]
                 let n = postings.len() as f64;
                 let idf = ((f64::from(self.doc_count) - n + 0.5) / (n + 0.5) + 1.0).ln();
 

@@ -42,7 +42,7 @@ pub fn decode_bytes_as_utf8(
     detector.feed(bytes, true);
     let encoding = detector.guess(None, true);
 
-    decode_with_encoding(bytes, encoding, source_hint)
+    Ok(decode_with_encoding(bytes, encoding, source_hint))
 }
 
 /// Decode bytes using a specific encoding, returning UTF-8 string.
@@ -50,7 +50,7 @@ fn decode_with_encoding(
     bytes: &[u8],
     encoding: &'static Encoding,
     source_hint: &str,
-) -> Result<(String, &'static str), KnowledgeError> {
+) -> (String, &'static str) {
     let (cow, actual_encoding, had_errors) = encoding.decode(bytes);
 
     if had_errors {
@@ -68,7 +68,7 @@ fn decode_with_encoding(
         actual_encoding.name()
     );
 
-    Ok((cow.into_owned(), actual_encoding.name()))
+    (cow.into_owned(), actual_encoding.name())
 }
 
 #[cfg(test)]

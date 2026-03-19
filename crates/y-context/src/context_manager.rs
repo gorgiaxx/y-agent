@@ -210,7 +210,6 @@ impl ContextManager {
     }
 
     /// Recovery action 2: Trim bootstrap items.
-    #[allow(clippy::unused_self)]
     fn recover_by_trimming_bootstrap(&self, assembled: &mut AssembledContext) {
         let before = assembled.items.len();
         assembled
@@ -223,7 +222,6 @@ impl ContextManager {
     }
 
     /// Recovery action 3: Evict tool items.
-    #[allow(clippy::unused_self)]
     fn recover_by_evicting_tools(&self, assembled: &mut AssembledContext) {
         let before = assembled.items.len();
         assembled

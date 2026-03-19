@@ -276,7 +276,6 @@ impl CompactionEngine {
             .collect();
 
         // Keep top 30% verbatim, summarize the rest.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let threshold_index = (scored.len() as f64 * 0.3).ceil() as usize;
         let mut sorted = scored.clone();
         sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -485,7 +484,9 @@ fn score_importance(message: &str) -> f64 {
     let mut score: f64 = 0.0;
 
     // Longer messages tend to contain more information.
-    score += (message.len() as f64).min(500.0) / 500.0;
+    {
+        score += (message.len() as f64).min(500.0) / 500.0;
+    }
 
     // Messages with code-like content are important.
     if message.contains("```") || message.contains("fn ") || message.contains("pub ") {

@@ -22,7 +22,7 @@ impl std::fmt::Debug for RoutableProvider {
         f.debug_struct("RoutableProvider")
             .field("id", &self.provider.metadata().id)
             .field("frozen", &self.freeze_manager.is_frozen())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -156,19 +156,15 @@ impl TagBasedRouter {
         }
 
         // Step 4: Apply selection strategy among remaining candidates.
-        self.apply_strategy(providers, &candidates)
+        Ok(self.apply_strategy(providers, &candidates))
     }
 
     /// Apply the configured selection strategy to the candidate list.
-    fn apply_strategy(
-        &self,
-        providers: &[RoutableProvider],
-        candidates: &[usize],
-    ) -> Result<usize, ProviderError> {
+    fn apply_strategy(&self, providers: &[RoutableProvider], candidates: &[usize]) -> usize {
         match self.strategy {
             SelectionStrategy::Priority => {
                 // First candidate in declaration order.
-                Ok(candidates[0])
+                candidates[0]
             }
             SelectionStrategy::Random => {
                 // Use a simple pseudo-random index based on the atomic counter and time.
@@ -176,24 +172,24 @@ impl TagBasedRouter {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .subsec_nanos() as usize;
-                Ok(candidates[seed % candidates.len()])
+                candidates[seed % candidates.len()]
             }
             SelectionStrategy::LeastLoaded => {
                 // Select the provider with the most available permits.
-                Ok(*candidates
+                *candidates
                     .iter()
                     .max_by_key(|&&idx| providers[idx].concurrency_semaphore.available_permits())
-                    .expect("candidates is non-empty"))
+                    .expect("candidates is non-empty")
             }
             SelectionStrategy::RoundRobin => {
                 let counter = self
                     .next_index
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                Ok(candidates[counter % candidates.len()])
+                candidates[counter % candidates.len()]
             }
             SelectionStrategy::CostOptimized => {
                 // Select the cheapest provider by input token cost.
-                Ok(*candidates
+                *candidates
                     .iter()
                     .min_by(|&&a, &&b| {
                         let cost_a = providers[a].provider.metadata().cost_per_1k_input;
@@ -202,7 +198,7 @@ impl TagBasedRouter {
                             .partial_cmp(&cost_b)
                             .unwrap_or(std::cmp::Ordering::Equal)
                     })
-                    .expect("candidates is non-empty"))
+                    .expect("candidates is non-empty")
             }
         }
     }

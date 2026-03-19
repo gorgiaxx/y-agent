@@ -139,6 +139,7 @@ async fn e2e_session_filter_by_state() {
     let store = MockSessionStore::new();
 
     // Create 3 sessions
+    #[allow(unused_variables)]
     let s1 = store
         .create(CreateSessionOptions {
             parent_id: None,

@@ -23,7 +23,6 @@ impl FastPathExtractor {
     /// Returns `Some(pattern)` only if:
     /// - Evidence is from `UserCorrection` or `UserStated`
     /// - Pattern type is `BetterPhrasing` or `CommonError`
-    #[allow(clippy::unused_self)]
     pub fn try_extract(&self, experience: &ExperienceRecord) -> Option<ExtractedPattern> {
         // Must have a skill
         let skill_id = experience.skill_id.as_ref()?;
@@ -71,7 +70,6 @@ impl FastPathExtractor {
         })
     }
 
-    #[allow(clippy::unused_self)]
     fn classify_fast_path(
         &self,
         experience: &ExperienceRecord,

@@ -71,7 +71,6 @@ pub struct SkillMetrics {
     pub actual_usage_count: u64,
 }
 
-#[allow(clippy::cast_precision_loss)]
 impl SkillMetrics {
     /// Success rate as a fraction (0.0–1.0).
     pub fn success_rate(&self) -> f64 {

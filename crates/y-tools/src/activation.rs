@@ -33,7 +33,6 @@ impl ToolActivationSet {
     }
 
     /// Activate a tool (add to the active set).
-    #[allow(clippy::map_entry)] // entry() borrows self.active mutably, conflicting with refresh_lru
     pub fn activate(&mut self, definition: ToolDefinition) {
         let name = definition.name.clone();
 

@@ -155,6 +155,10 @@ impl RecallStore {
     }
 
     /// Recall with an optional query embedding for vector search.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `use_mmr` is true and `query_embedding` is successfully unwrapped because we checked it's `is_some`, but then some other code path might panic. Actually, `unwrap()` is used on `query_embedding` when `use_mmr` is enabled.
     pub fn recall_with_embedding(
         &self,
         query: &str,
@@ -168,16 +172,16 @@ impl RecallStore {
                 let score = match self.config.method {
                     RecallMethod::Text
                     | RecallMethod::TimeWeighted
-                    | RecallMethod::ImportanceBased => self.text_score(query, m),
+                    | RecallMethod::ImportanceBased => Self::text_score(query, m),
                     RecallMethod::Vector => {
                         if let (Some(qe), Some(me)) = (query_embedding, m.embedding.as_ref()) {
                             cosine_similarity(qe, me) * m.importance
                         } else {
-                            self.text_score(query, m) // Fallback to text.
+                            Self::text_score(query, m) // Fallback to text.
                         }
                     }
                     RecallMethod::Hybrid => {
-                        let text = self.text_score(query, m);
+                        let text = Self::text_score(query, m);
                         let vector =
                             if let (Some(qe), Some(me)) = (query_embedding, m.embedding.as_ref()) {
                                 cosine_similarity(qe, me) * m.importance
@@ -204,7 +208,6 @@ impl RecallStore {
             // SAFETY: we just checked is_some() above, but clippy prefers
             // avoiding .unwrap() after .is_some(). We keep it for readability
             // since `if let` would force restructuring the else branch.
-            #[allow(clippy::unnecessary_unwrap)]
             self.mmr_select(&scored, query_embedding.unwrap(), self.config.max_results)
         } else {
             scored
@@ -230,7 +233,7 @@ impl RecallStore {
     }
 
     /// Compute text-based relevance score.
-    fn text_score(&self, query: &str, memory: &StoredMemory) -> f64 {
+    fn text_score(query: &str, memory: &StoredMemory) -> f64 {
         let query_lower = query.to_lowercase();
         let content_lower = memory.content.to_lowercase();
 
@@ -246,7 +249,6 @@ impl RecallStore {
         let overlap = query_words.intersection(&content_words).count();
 
         if overlap > 0 {
-            #[allow(clippy::cast_precision_loss)]
             let score = (overlap as f64 / query_words.len().max(1) as f64) * memory.importance;
             return score;
         }

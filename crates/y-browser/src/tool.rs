@@ -155,6 +155,10 @@ impl BrowserTool {
     /// Updates the stored config and rebuilds the security policy.
     /// Does NOT affect an already-running Chrome session; changes
     /// take effect on the next connection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal locks are poisoned.
     pub fn reload_config(&self, new_config: BrowserConfig) {
         let new_security = SecurityPolicy::new(
             new_config.allowed_domains.clone(),

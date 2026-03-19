@@ -110,9 +110,7 @@ impl EffectivePermissions {
         Self {
             tools_allowed,
             tools_denied,
-            #[allow(clippy::cast_possible_truncation)]
             max_iterations: (declared.max_iterations as u32).min(creator.max_iterations),
-            #[allow(clippy::cast_possible_truncation)]
             max_tool_calls: (declared.max_tool_calls as u32).min(creator.max_tool_calls),
             max_tokens: (declared.max_context_tokens as u64).min(creator.max_tokens),
             delegation_depth: creator.delegation_depth.saturating_sub(1),

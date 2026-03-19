@@ -315,14 +315,11 @@ impl<T: Tokenizer> HybridRetriever<T> {
             .iter()
             .filter(|c| Self::matches_filter(c, filter))
             .filter_map(|c| {
-                bm25_map.get(c.id.as_str()).map(|&score| {
-                    #[allow(clippy::cast_possible_truncation)]
-                    RetrievalResult {
-                        chunk: c.clone(),
-                        relevance: score as f32,
-                        vector_score: None,
-                        bm25_score: Some(score),
-                    }
+                bm25_map.get(c.id.as_str()).map(|&score| RetrievalResult {
+                    chunk: c.clone(),
+                    relevance: score as f32,
+                    vector_score: None,
+                    bm25_score: Some(score),
                 })
             })
             .collect()
@@ -407,7 +404,6 @@ impl<T: Tokenizer> HybridRetriever<T> {
                 let bm25 = bm25_map.get(c.id.as_str()).copied().unwrap_or(0.0);
                 let bm25_normalized = if max_bm25 > 0.0 { bm25 / max_bm25 } else { 0.0 };
 
-                #[allow(clippy::cast_possible_truncation)]
                 let blended = (self.config.vector_weight * f64::from(semantic)
                     + self.config.bm25_weight * bm25_normalized)
                     as f32;
@@ -438,7 +434,7 @@ impl<T: Tokenizer> HybridRetriever<T> {
                 return 0.0;
             }
             let matches = query_words.iter().filter(|w| content.contains(**w)).count();
-            #[allow(clippy::cast_precision_loss)]
+
             let score = matches as f32 / query_words.len() as f32;
             score * 0.8 // Scale down partial matches.
         }
@@ -525,9 +521,8 @@ impl<T: Tokenizer> HybridRetriever<T> {
     /// for LLM comprehension.
     pub fn get_neighboring_chunks(&self, chunk_id: &str, window: usize) -> Vec<&Chunk> {
         // Find the target chunk.
-        let target = match self.chunks.iter().find(|c| c.id == chunk_id) {
-            Some(c) => c,
-            None => return Vec::new(),
+        let Some(target) = self.chunks.iter().find(|c| c.id == chunk_id) else {
+            return Vec::new();
         };
 
         let doc_id = &target.document_id;

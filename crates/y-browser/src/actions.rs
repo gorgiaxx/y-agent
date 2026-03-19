@@ -205,8 +205,14 @@ impl BrowserActions {
                 .or_else(|| metrics.get("contentSize"));
 
             if let Some(size) = content_size {
-                let width = size.get("width").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
-                let height = size.get("height").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+                let width = size
+                    .get("width")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0);
+                let height = size
+                    .get("height")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0);
                 if width > 0.0 && height > 0.0 {
                     params["clip"] = serde_json::json!({
                         "x": 0,
@@ -461,7 +467,6 @@ impl BrowserActions {
         debug!(direction, pixels, "browser scroll");
         let (dx, dy) = match direction {
             "up" => (0, -(i32::try_from(pixels).unwrap_or(i32::MAX))),
-            "down" => (0, i32::try_from(pixels).unwrap_or(i32::MAX)),
             "left" => (-(i32::try_from(pixels).unwrap_or(i32::MAX)), 0),
             "right" => (i32::try_from(pixels).unwrap_or(i32::MAX), 0),
             _ => (0, i32::try_from(pixels).unwrap_or(i32::MAX)),
@@ -616,14 +621,15 @@ impl BrowserActions {
         let text = dom_nodes
             .iter()
             .map(|n| {
+                use std::fmt::Write;
                 let indent = "  ".repeat(n.depth);
                 let mut line = format!("{indent}<{}>", n.tag);
                 if let Some(id) = &n.id {
-                    line.push_str(&format!(" id=\"{id}\""));
+                    write!(&mut line, " id=\"{id}\"").unwrap();
                 }
                 if let Some(text) = &n.text {
                     if text.len() <= 80 {
-                        line.push_str(&format!(" \"{text}\""));
+                        write!(&mut line, " \"{text}\"").unwrap();
                     }
                 }
                 line

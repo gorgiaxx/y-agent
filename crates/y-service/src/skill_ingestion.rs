@@ -217,7 +217,7 @@ impl SkillIngestionService {
 
         // 2. Format detection (deterministic)
         let format = FormatDetector::from_path(path);
-        let format_str = format_to_str(&format);
+        let format_str = format_to_str(format);
 
         // 2b. Resolve source directory and main file name for agent tool calls
         let source_dir = path.parent().map(|d| d.to_string_lossy().to_string());
@@ -281,18 +281,82 @@ impl SkillIngestionService {
             });
         }
 
-        // 7. Build SkillManifest from agent output
-        let manifest_data = agent_output.manifest.ok_or_else(|| {
+        // 7. Build manifest and register
+        let manifest = Self::build_manifest(&agent_output, format_str)?;
+        let skill_name = manifest.name.clone();
+        let skill_id_str = manifest.id.to_string();
+
+        let reg = self.registry.read().await;
+        let version = reg
+            .register(manifest)
+            .await
+            .map_err(|e| ImportError::RegistrationFailed(e.to_string()))?;
+
+        info!(
+            skill_id = %skill_id_str,
+            version = %version,
+            name = %skill_name,
+            classification = %agent_output.classification,
+            "Skill successfully imported and registered"
+        );
+
+        // 8. Store sub-document content
+        for sub_doc in &agent_output.sub_documents {
+            if let Err(e) = reg
+                .store_sub_document(&skill_id_str, &sub_doc.path, &sub_doc.content)
+                .await
+            {
+                warn!(
+                    skill_id = %skill_id_str,
+                    path = %sub_doc.path,
+                    error = %e,
+                    "Failed to store sub-document"
+                );
+            }
+        }
+
+        // 9. Log extracted tools (future: register in ToolRegistry)
+        if !agent_output.extracted_tools.is_empty() {
+            info!(
+                count = agent_output.extracted_tools.len(),
+                "Agent extracted tools (not yet auto-registered)"
+            );
+        }
+
+        // 10. Handle companion files based on agent decisions
+        Self::handle_companion_files(
+            path,
+            &skill_name,
+            &agent_output.companion_decisions,
+            main_file_name.as_deref(),
+            &reg,
+        )?;
+
+        Ok(ImportResult {
+            decision,
+            classification: agent_output.classification,
+            skill_id: Some(skill_id_str),
+            rejection_reason: None,
+            redirect_suggestion: None,
+            security_issues: vec![],
+        })
+    }
+
+    /// Build a `SkillManifest` from the agent's structured output.
+    fn build_manifest(
+        agent_output: &AgentIngestionOutput,
+        format_str: &str,
+    ) -> Result<SkillManifest, ImportError> {
+        let manifest_data = agent_output.manifest.as_ref().ok_or_else(|| {
             ImportError::InvalidAgentOutput("accepted skill missing manifest".to_string())
         })?;
 
-        let root_content = agent_output.root_content.ok_or_else(|| {
+        let root_content = agent_output.root_content.as_ref().ok_or_else(|| {
             ImportError::InvalidAgentOutput("accepted skill missing root_content".to_string())
         })?;
 
         let token_estimate = u32::try_from(root_content.len() / 4).unwrap_or(0);
         let now = chrono::Utc::now();
-        let skill_name = manifest_data.name.clone();
 
         let sub_doc_refs: Vec<SubDocumentRef> = agent_output
             .sub_documents
@@ -312,22 +376,21 @@ impl SkillIngestionService {
             .map(|c| c.domain.clone())
             .unwrap_or_default();
 
-        let manifest = SkillManifest {
+        Ok(SkillManifest {
             id: SkillId::from_string(&manifest_data.name),
-            name: manifest_data.name,
-            description: manifest_data.description,
-            version: SkillVersion(manifest_data.version),
+            name: manifest_data.name.clone(),
+            description: manifest_data.description.clone(),
+            version: SkillVersion(manifest_data.version.clone()),
             tags,
             trigger_patterns: vec![],
             knowledge_bases: vec![],
-            root_content,
+            root_content: root_content.clone(),
             sub_documents: sub_doc_refs,
             token_estimate,
             created_at: now,
             updated_at: now,
-            classification: manifest_data.classification.map(|c| {
+            classification: manifest_data.classification.as_ref().map(|c| {
                 let skill_type = match c.skill_type.as_str() {
-                    "llm_reasoning" => SkillClassificationType::LlmReasoning,
                     "api_call" => SkillClassificationType::ApiCall,
                     "tool_wrapper" => SkillClassificationType::ToolWrapper,
                     "agent_behavior" => SkillClassificationType::AgentBehavior,
@@ -336,15 +399,18 @@ impl SkillIngestionService {
                 };
                 SkillClassification {
                     skill_type,
-                    domain: c.domain,
+                    domain: c.domain.clone(),
                     atomic: c.atomic,
                 }
             }),
-            constraints: manifest_data.constraints.map(|c| SkillConstraints {
-                max_input_tokens: c.max_input_tokens,
-                max_output_tokens: c.max_output_tokens,
-                requires_language: c.requires_language,
-            }),
+            constraints: manifest_data
+                .constraints
+                .as_ref()
+                .map(|c| SkillConstraints {
+                    max_input_tokens: c.max_input_tokens,
+                    max_output_tokens: c.max_output_tokens,
+                    requires_language: c.requires_language.clone(),
+                }),
             security: None,
             references: None,
             author: Some("skill-ingestion-agent".to_string()),
@@ -352,137 +418,94 @@ impl SkillIngestionService {
             source_hash: None,
             state: Some(SkillState::Registered),
             root_path: Some("root.md".to_string()),
+        })
+    }
+
+    /// Process companion file decisions from the agent output.
+    fn handle_companion_files(
+        source_path: &Path,
+        skill_name: &str,
+        companion_decisions: &[CompanionDecision],
+        main_file_name: Option<&str>,
+        reg: &SkillRegistryImpl,
+    ) -> Result<(), ImportError> {
+        let Some(dir) = source_path.parent() else {
+            return Ok(());
+        };
+        let Some(store_base) = reg.store_base_path() else {
+            return Ok(());
         };
 
-        // 9. Register
-        let skill_id_str = manifest.id.to_string();
-        let reg = self.registry.read().await;
-        let version = reg
-            .register(manifest)
-            .await
-            .map_err(|e| ImportError::RegistrationFailed(e.to_string()))?;
+        let store = FilesystemSkillStore::new(store_base)
+            .map_err(|e| ImportError::IoError(format!("failed to open store: {e}")))?;
 
-        info!(
-            skill_id = %skill_id_str,
-            version = %version,
-            name = %skill_name,
-            classification = %agent_output.classification,
-            "Skill successfully imported and registered"
-        );
+        for decision in companion_decisions {
+            let source_file = dir.join(&decision.path);
+            match decision.action.as_str() {
+                "keep" => {
+                    if source_file.exists() {
+                        let target = store.base_path().join(skill_name).join(&decision.path);
+                        if let Some(parent) = target.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if let Err(e) = std::fs::copy(&source_file, &target) {
+                            warn!(
+                                skill = %skill_name,
+                                path = %decision.path,
+                                error = %e,
+                                "Failed to copy companion file"
+                            );
+                        }
+                    }
+                }
+                "transform" => {
+                    if let Some(ref content) = decision.transformed_content {
+                        let target = store.base_path().join(skill_name).join(&decision.path);
+                        if let Some(parent) = target.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if let Err(e) = std::fs::write(&target, content) {
+                            warn!(
+                                skill = %skill_name,
+                                path = %decision.path,
+                                error = %e,
+                                "Failed to write transformed companion file"
+                            );
+                        }
+                    }
+                }
+                "discard" => {
+                    info!(
+                        skill = %skill_name,
+                        path = %decision.path,
+                        reason = %decision.reason,
+                        "Discarded companion file per agent decision"
+                    );
+                }
+                _ => {
+                    warn!(
+                        skill = %skill_name,
+                        path = %decision.path,
+                        action = %decision.action,
+                        "Unknown companion decision action, skipping"
+                    );
+                }
+            }
+        }
 
-        // 10. Store sub-document content
-        for sub_doc in &agent_output.sub_documents {
-            if let Err(e) = reg
-                .store_sub_document(&skill_id_str, &sub_doc.path, &sub_doc.content)
-                .await
-            {
+        // Fallback: if agent provided no companion decisions, copy
+        // all companion files (backwards compatibility).
+        if companion_decisions.is_empty() {
+            if let Err(e) = store.copy_companion_files(skill_name, dir, main_file_name) {
                 warn!(
-                    skill_id = %skill_id_str,
-                    path = %sub_doc.path,
+                    skill = %skill_name,
                     error = %e,
-                    "Failed to store sub-document"
+                    "Failed to copy companion files (fallback)"
                 );
             }
         }
 
-        // 11. Log extracted tools (future: register in ToolRegistry)
-        if !agent_output.extracted_tools.is_empty() {
-            info!(
-                count = agent_output.extracted_tools.len(),
-                "Agent extracted tools (not yet auto-registered)"
-            );
-        }
-
-        // 12. Handle companion files based on agent decisions
-        let source_dir_path = path.parent();
-        if let Some(dir) = source_dir_path {
-            if let Some(store_base) = reg.store_base_path() {
-                let store = FilesystemSkillStore::new(store_base)
-                    .map_err(|e| ImportError::IoError(format!("failed to open store: {e}")))?;
-
-                // Process companion decisions from agent
-                for decision in &agent_output.companion_decisions {
-                    let source_file = dir.join(&decision.path);
-                    match decision.action.as_str() {
-                        "keep" => {
-                            // Copy the file as-is
-                            if source_file.exists() {
-                                let target =
-                                    store.base_path().join(&skill_name).join(&decision.path);
-                                if let Some(parent) = target.parent() {
-                                    let _ = std::fs::create_dir_all(parent);
-                                }
-                                if let Err(e) = std::fs::copy(&source_file, &target) {
-                                    warn!(
-                                        skill = %skill_name,
-                                        path = %decision.path,
-                                        error = %e,
-                                        "Failed to copy companion file"
-                                    );
-                                }
-                            }
-                        }
-                        "transform" => {
-                            // Write transformed content
-                            if let Some(ref content) = decision.transformed_content {
-                                let target =
-                                    store.base_path().join(&skill_name).join(&decision.path);
-                                if let Some(parent) = target.parent() {
-                                    let _ = std::fs::create_dir_all(parent);
-                                }
-                                if let Err(e) = std::fs::write(&target, content) {
-                                    warn!(
-                                        skill = %skill_name,
-                                        path = %decision.path,
-                                        error = %e,
-                                        "Failed to write transformed companion file"
-                                    );
-                                }
-                            }
-                        }
-                        "discard" => {
-                            info!(
-                                skill = %skill_name,
-                                path = %decision.path,
-                                reason = %decision.reason,
-                                "Discarded companion file per agent decision"
-                            );
-                        }
-                        _ => {
-                            warn!(
-                                skill = %skill_name,
-                                path = %decision.path,
-                                action = %decision.action,
-                                "Unknown companion decision action, skipping"
-                            );
-                        }
-                    }
-                }
-
-                // Fallback: if agent provided no companion decisions, copy
-                // all companion files (backwards compatibility).
-                if agent_output.companion_decisions.is_empty() {
-                    if let Err(e) =
-                        store.copy_companion_files(&skill_name, dir, main_file_name.as_deref())
-                    {
-                        warn!(
-                            skill = %skill_name,
-                            error = %e,
-                            "Failed to copy companion files (fallback)"
-                        );
-                    }
-                }
-            }
-        }
-
-        Ok(ImportResult {
-            decision,
-            classification: agent_output.classification,
-            skill_id: Some(skill_id_str),
-            rejection_reason: None,
-            redirect_suggestion: None,
-            security_issues: vec![],
-        })
+        Ok(())
     }
 
     /// Import multiple skills from paths.
@@ -495,7 +518,7 @@ impl SkillIngestionService {
     }
 }
 
-fn format_to_str(format: &IngestionFormat) -> &'static str {
+fn format_to_str(format: IngestionFormat) -> &'static str {
     match format {
         IngestionFormat::Toml => "toml",
         IngestionFormat::Markdown => "markdown",

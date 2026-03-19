@@ -57,7 +57,7 @@ impl ProviderMetrics {
         // Calculate cost in micro-dollars.
         let input_cost = f64::from(input_tokens) / 1000.0 * cost_per_1k_input;
         let output_cost = f64::from(output_tokens) / 1000.0 * cost_per_1k_output;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+
         let total_micros = ((input_cost + output_cost) * 1_000_000.0) as u64;
 
         self.estimated_cost_micros
@@ -114,12 +114,16 @@ impl MetricsSnapshot {
         if self.total_requests == 0 {
             return 0.0;
         }
-        self.total_errors as f64 / self.total_requests as f64
+        let errors = u32::try_from(self.total_errors).unwrap_or(u32::MAX);
+        let requests = u32::try_from(self.total_requests).unwrap_or(u32::MAX);
+        f64::from(errors) / f64::from(requests)
     }
 
     /// Estimated total cost in US dollars.
     pub fn estimated_cost_usd(&self) -> f64 {
-        self.estimated_cost_micros as f64 / 1_000_000.0
+        let dollars = u32::try_from(self.estimated_cost_micros / 1_000_000).unwrap_or(u32::MAX);
+        let micros = u32::try_from(self.estimated_cost_micros % 1_000_000).unwrap_or(0);
+        f64::from(dollars) + f64::from(micros) / 1_000_000.0
     }
 }
 

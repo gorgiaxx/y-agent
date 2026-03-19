@@ -46,8 +46,8 @@ impl AnthropicProvider {
         let base_url = base_url.unwrap_or_else(|| ANTHROPIC_API_URL.to_string());
 
         let mut builder = Client::builder();
-        if let Some(ref proxy) = proxy_url {
-            if let Ok(p) = reqwest::Proxy::all(proxy) {
+        if let Some(proxy) = proxy_url {
+            if let Ok(p) = reqwest::Proxy::all(&proxy) {
                 builder = builder.proxy(p);
             }
         }
@@ -91,9 +91,8 @@ impl AnthropicProvider {
             .filter(|m| m.role != y_core::types::Role::System)
             .map(|m| {
                 let role = match m.role {
-                    y_core::types::Role::User => "user",
+                    y_core::types::Role::User | y_core::types::Role::Tool => "user",
                     y_core::types::Role::Assistant => "assistant",
-                    y_core::types::Role::Tool => "user", // Tool results sent as user messages.
                     y_core::types::Role::System => unreachable!(),
                 };
 
@@ -259,7 +258,7 @@ impl LlmProvider for AnthropicProvider {
                         arguments: input.clone(),
                     });
                 }
-                _ => {} // Ignore other block types.
+                AnthropicContentBlock::ToolResult { .. } => {}
             }
         }
 
@@ -270,8 +269,6 @@ impl LlmProvider for AnthropicProvider {
         };
 
         let finish_reason = match anthropic_response.stop_reason.as_deref() {
-            Some("end_turn") => FinishReason::Stop,
-            Some("stop_sequence") => FinishReason::Stop,
             Some("tool_use") => FinishReason::ToolUse,
             Some("max_tokens") => FinishReason::Length,
             _ => FinishReason::Stop,

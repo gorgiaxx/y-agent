@@ -40,8 +40,8 @@ impl OpenAiProvider {
         let base_url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
         let mut builder = Client::builder();
-        if let Some(ref proxy) = proxy_url {
-            if let Ok(p) = reqwest::Proxy::all(proxy) {
+        if let Some(proxy) = proxy_url {
+            if let Ok(p) = reqwest::Proxy::all(&proxy) {
                 builder = builder.proxy(p);
             }
         }
@@ -240,7 +240,6 @@ impl LlmProvider for OpenAiProvider {
             .collect();
 
         let finish_reason = match choice.finish_reason.as_deref() {
-            Some("stop") => FinishReason::Stop,
             Some("tool_calls") => FinishReason::ToolUse,
             Some("length") => FinishReason::Length,
             Some("content_filter") => FinishReason::ContentFilter,
@@ -539,11 +538,11 @@ fn map_stream_chunk(
 
                 // Update with new data.
                 if let Some(ref id) = tc.id {
-                    acc.id = id.clone();
+                    acc.id.clone_from(id);
                 }
                 if let Some(ref func) = tc.function {
                     if let Some(ref name) = func.name {
-                        acc.name = name.clone();
+                        acc.name.clone_from(name);
                     }
                     if let Some(ref args) = func.arguments {
                         acc.arguments.push_str(args);

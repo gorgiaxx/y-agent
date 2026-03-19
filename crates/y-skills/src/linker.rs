@@ -115,7 +115,6 @@ impl ResourceLinker {
         let intersection = a.intersection(b).count();
         let smaller = a.len().min(b.len());
         // Values are always small (word counts), no real precision loss.
-        #[allow(clippy::cast_precision_loss)]
         let result = intersection as f64 / smaller as f64;
         result
     }

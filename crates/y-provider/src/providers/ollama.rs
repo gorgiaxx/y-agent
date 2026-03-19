@@ -49,8 +49,8 @@ impl OllamaProvider {
         // Ollama is typically local, but proxy is still applied if configured.
         // Operators should set `enabled = false` in proxy config to bypass.
         let mut builder = Client::builder();
-        if let Some(ref proxy) = proxy_url {
-            if let Ok(p) = reqwest::Proxy::all(proxy) {
+        if let Some(proxy) = proxy_url {
+            if let Ok(p) = reqwest::Proxy::all(&proxy) {
                 builder = builder.proxy(p);
             }
         }

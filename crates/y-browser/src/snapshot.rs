@@ -337,18 +337,19 @@ pub fn format_aria_snapshot(
 ///
 /// The `@eN` refs can be passed directly to click/type actions.
 pub fn aria_snapshot_to_text(nodes: &[AriaSnapshotNode]) -> String {
+    use std::fmt::Write;
     let mut lines = Vec::with_capacity(nodes.len());
     for node in nodes {
         let indent = "  ".repeat(node.depth);
         let mut line = format!("{indent}[@{}] {}", node.ref_id, node.role);
         if !node.name.is_empty() {
-            line.push_str(&format!(" \"{}\"", node.name));
+            write!(&mut line, " \"{}\"", node.name).unwrap();
         }
         if let Some(value) = &node.value {
-            line.push_str(&format!(" value=\"{value}\""));
+            write!(&mut line, " value=\"{value}\"").unwrap();
         }
         if let Some(desc) = &node.description {
-            line.push_str(&format!(" desc=\"{desc}\""));
+            write!(&mut line, " desc=\"{desc}\"").unwrap();
         }
         lines.push(line);
     }

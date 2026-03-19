@@ -126,7 +126,7 @@ impl MetricsCollector {
     pub fn record_retrieval(&mut self, latency_ms: f64) {
         self.metrics.total_retrievals += 1;
         self.retrieval_latency_sum += latency_ms;
-        #[allow(clippy::cast_precision_loss)]
+
         {
             self.metrics.avg_retrieval_latency_ms =
                 self.retrieval_latency_sum / self.metrics.total_retrievals as f64;

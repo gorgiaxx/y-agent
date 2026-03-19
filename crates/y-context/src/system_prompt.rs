@@ -145,6 +145,8 @@ impl BuildSystemPromptProvider {
     /// When `workspace_path` is provided (e.g. from a workspace-bound
     /// session), it is appended as an extra field.
     fn generate_environment(workspace_path: Option<&str>, venv_info: &VenvPromptInfo) -> String {
+        use std::fmt::Write;
+
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
         let cwd = std::env::current_dir()
@@ -160,18 +162,20 @@ impl BuildSystemPromptProvider {
 
         // Append Python (uv) venv info.
         if let Some(ref py) = venv_info.python {
-            env_str.push_str(&format!(
+            let _ = write!(
+                &mut env_str,
                 ", python_env=uv(version={}, venv={}, uv_path={}, working_dir={})",
                 py.python_version, py.venv_dir, py.uv_path, py.working_dir
-            ));
+            );
         }
 
         // Append JavaScript (bun) venv info.
         if let Some(ref bun) = venv_info.bun {
-            env_str.push_str(&format!(
+            let _ = write!(
+                &mut env_str,
                 ", js_env=bun(version={}, bun_path={}, working_dir={})",
                 bun.bun_version, bun.bun_path, bun.working_dir
-            ));
+            );
         }
 
         env_str
@@ -290,7 +294,7 @@ impl ContextProvider for BuildSystemPromptProvider {
 
         // Fallback when all sections are excluded.
         if accumulated.is_empty() {
-            accumulated = self.config.fallback_prompt.clone();
+            accumulated.clone_from(&self.config.fallback_prompt);
             cumulative_tokens = estimate_tokens(&accumulated);
         }
 

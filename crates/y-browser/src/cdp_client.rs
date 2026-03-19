@@ -143,6 +143,10 @@ impl CdpClient {
     }
 
     /// Update the CDP URL (e.g. when the launcher picks a different port).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock is poisoned.
     pub fn set_cdp_url(&self, url: String) {
         *self.cdp_url.write().unwrap() = url;
     }

@@ -99,13 +99,12 @@ impl MockProvider {
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
 #[async_trait]
 impl LlmProvider for MockProvider {
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
         let count = self.call_count.fetch_add(1, Ordering::Relaxed);
         let text = self.next_response(request, count)?;
-        let output_tokens = text.len() as u32 / 4;
+        let output_tokens = u32::try_from(text.len() / 4).unwrap_or(u32::MAX);
         Ok(ChatResponse {
             id: uuid::Uuid::new_v4().to_string(),
             model: "mock-model".into(),
@@ -116,7 +115,7 @@ impl LlmProvider for MockProvider {
                 input_tokens: request
                     .messages
                     .iter()
-                    .map(|m| m.content.len() as u32 / 4)
+                    .map(|m| u32::try_from(m.content.len() / 4).unwrap_or(u32::MAX))
                     .sum(),
                 output_tokens,
                 cache_read_tokens: None,

@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use sqlx::SqlitePool;
 use tracing::instrument;
 
+use std::fmt::Write;
 use y_core::session::{
     CreateSessionOptions, SessionError, SessionFilter, SessionNode, SessionState, SessionStore,
     SessionType,
@@ -109,22 +110,22 @@ impl SessionStore for SqliteSessionStore {
 
         if let Some(ref state) = filter.state {
             binds.push(state_to_str(state).to_string());
-            sql.push_str(&format!(" AND state = ?{}", binds.len()));
+            write!(&mut sql, " AND state = ?{}", binds.len()).unwrap();
         }
 
         if let Some(ref session_type) = filter.session_type {
             binds.push(session_type_to_str(session_type).to_string());
-            sql.push_str(&format!(" AND session_type = ?{}", binds.len()));
+            write!(&mut sql, " AND session_type = ?{}", binds.len()).unwrap();
         }
 
         if let Some(ref agent_id) = filter.agent_id {
             binds.push(agent_id.as_str().to_string());
-            sql.push_str(&format!(" AND agent_id = ?{}", binds.len()));
+            write!(&mut sql, " AND agent_id = ?{}", binds.len()).unwrap();
         }
 
         if let Some(ref root_id) = filter.root_id {
             binds.push(root_id.as_str().to_string());
-            sql.push_str(&format!(" AND root_id = ?{}", binds.len()));
+            write!(&mut sql, " AND root_id = ?{}", binds.len()).unwrap();
         }
 
         sql.push_str(" ORDER BY created_at ASC");

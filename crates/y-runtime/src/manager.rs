@@ -112,6 +112,10 @@ impl RuntimeManager {
     /// (`NativeRuntime`, `DockerRuntime`, `SshRuntime`) are created at startup and
     /// not rebuilt, but the security-relevant checks (`allow_shell`,
     /// `default_backend`, etc.) all read from the shared `self.config`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `SecurityPolicy` or `RuntimeConfig` `RwLock` is poisoned.
     pub fn reload_config(&self, new_config: RuntimeConfig) {
         let new_policy = SecurityPolicy::from_config(&new_config);
         *self.security_policy.write().unwrap() = new_policy;

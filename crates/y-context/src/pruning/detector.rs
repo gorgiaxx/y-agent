@@ -48,10 +48,10 @@ impl PruningDetector {
         self.detect_error_status(messages, &mut candidates);
 
         // Signal 2: Repeated identical tool calls.
-        self.detect_repeated_calls(messages, &mut candidates);
+        Self::detect_repeated_calls(messages, &mut candidates);
 
         // Signal 3: Empty/unhelpful results.
-        self.detect_empty_results(messages, &mut candidates);
+        Self::detect_empty_results(messages, &mut candidates);
 
         candidates
     }
@@ -109,7 +109,6 @@ impl PruningDetector {
 
     /// Signal 2: Detect repeated identical tool calls (same tool name, similar args).
     fn detect_repeated_calls(
-        &self,
         messages: &[ChatMessageRecord],
         candidates: &mut Vec<PruningCandidate>,
     ) {
@@ -163,7 +162,6 @@ impl PruningDetector {
 
     /// Signal 3: Detect tool results with empty or unhelpful content.
     fn detect_empty_results(
-        &self,
         messages: &[ChatMessageRecord],
         candidates: &mut Vec<PruningCandidate>,
     ) {

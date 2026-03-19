@@ -102,7 +102,6 @@ impl PatternExtractor {
     ///
     /// Returns newly extracted patterns. Call `PatternRegistry::register`
     /// to store them with deduplication.
-    #[allow(clippy::cast_possible_truncation)]
     pub fn extract(
         &self,
         experiences: &[crate::experience::ExperienceRecord],
@@ -200,7 +199,6 @@ impl PatternExtractor {
     ///
     /// Groups successful skillless experiences by task description similarity
     /// and proposes `WorkflowDiscovery` patterns for clusters ≥ 3.
-    #[allow(clippy::cast_possible_truncation)]
     pub fn extract_skillless(
         &self,
         experiences: &[crate::experience::ExperienceRecord],

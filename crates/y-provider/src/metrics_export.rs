@@ -33,7 +33,8 @@ pub fn render_prometheus(snapshots: &[(&str, MetricsSnapshot)]) -> String {
         "Total LLM requests made.",
     );
     for (id, snap) in snapshots {
-        write_metric_value(&mut buf, "requests_total", id, snap.total_requests as f64);
+        let val = f64::from(u32::try_from(snap.total_requests).unwrap_or(u32::MAX));
+        write_metric_value(&mut buf, "requests_total", id, val);
     }
 
     // -- errors_total (counter)
@@ -44,7 +45,8 @@ pub fn render_prometheus(snapshots: &[(&str, MetricsSnapshot)]) -> String {
         "Total failed LLM requests.",
     );
     for (id, snap) in snapshots {
-        write_metric_value(&mut buf, "errors_total", id, snap.total_errors as f64);
+        let val = f64::from(u32::try_from(snap.total_errors).unwrap_or(u32::MAX));
+        write_metric_value(&mut buf, "errors_total", id, val);
     }
 
     // -- error_rate (gauge)
@@ -66,12 +68,8 @@ pub fn render_prometheus(snapshots: &[(&str, MetricsSnapshot)]) -> String {
         "Total input tokens consumed.",
     );
     for (id, snap) in snapshots {
-        write_metric_value(
-            &mut buf,
-            "input_tokens_total",
-            id,
-            snap.total_input_tokens as f64,
-        );
+        let val = f64::from(u32::try_from(snap.total_input_tokens).unwrap_or(u32::MAX));
+        write_metric_value(&mut buf, "input_tokens_total", id, val);
     }
 
     // -- output_tokens_total (counter)
@@ -82,12 +80,8 @@ pub fn render_prometheus(snapshots: &[(&str, MetricsSnapshot)]) -> String {
         "Total output tokens generated.",
     );
     for (id, snap) in snapshots {
-        write_metric_value(
-            &mut buf,
-            "output_tokens_total",
-            id,
-            snap.total_output_tokens as f64,
-        );
+        let val = f64::from(u32::try_from(snap.total_output_tokens).unwrap_or(u32::MAX));
+        write_metric_value(&mut buf, "output_tokens_total", id, val);
     }
 
     // -- cost_usd (counter)
@@ -113,8 +107,7 @@ fn write_metric_header(buf: &mut String, name: &str, metric_type: &str, help: &s
 /// Write a single metric value line with provider label.
 fn write_metric_value(buf: &mut String, name: &str, provider_id: &str, value: f64) {
     // Prometheus recommends integer representation for counters when possible.
-    if value == value.floor() && value.abs() < 1e15 {
-        #[allow(clippy::cast_possible_truncation)]
+    if (value - value.floor()).abs() < f64::EPSILON && value.abs() < 1e15 {
         let int_value = value as i64;
         let _ = writeln!(
             buf,

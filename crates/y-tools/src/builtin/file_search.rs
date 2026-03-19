@@ -88,9 +88,8 @@ impl FileSearchTool {
             return;
         }
 
-        let entries = match std::fs::read_dir(path) {
-            Ok(entries) => entries,
-            Err(_) => return,
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
         };
 
         for entry in entries.flatten() {

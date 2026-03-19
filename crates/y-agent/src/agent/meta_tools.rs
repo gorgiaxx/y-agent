@@ -87,7 +87,6 @@ pub struct AgentSearchParams {
     pub status: Option<AgentStatus>,
 }
 
-#[allow(clippy::unnecessary_wraps)]
 fn default_status_filter() -> Option<AgentStatus> {
     Some(AgentStatus::Active)
 }

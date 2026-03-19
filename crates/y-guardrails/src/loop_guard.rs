@@ -74,7 +74,6 @@ impl LoopGuard {
 
         // Update progress tracking
         if let Some(metric) = progress_metric {
-            #[allow(clippy::float_cmp)]
             if metric > self.last_progress {
                 self.last_progress = metric;
                 self.steps_since_progress = 0;

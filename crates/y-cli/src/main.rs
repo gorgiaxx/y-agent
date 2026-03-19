@@ -105,9 +105,9 @@ async fn main() -> Result<()> {
             .filename_suffix("log")
             .build(&log_dir)
             .expect("failed to initialize rolling file appender");
-        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
         // Leak the guard to keep the writer alive for the process lifetime.
-        std::mem::forget(_guard);
+        std::mem::forget(guard);
         Some(
             tracing_subscriber::fmt::layer()
                 .with_writer(non_blocking)

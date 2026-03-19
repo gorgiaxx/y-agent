@@ -73,6 +73,10 @@ impl GuardrailManager {
     }
 
     /// Get a snapshot of the current guardrail configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal config `RwLock` is poisoned.
     pub fn config(&self) -> GuardrailConfig {
         self.config.read().unwrap().clone()
     }
@@ -81,6 +85,10 @@ impl GuardrailManager {
     ///
     /// Atomically replaces the current config. Subsequent calls to
     /// `config()` and middleware constructors will use the new values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal config `RwLock` is poisoned.
     pub fn reload_config(&self, new_config: GuardrailConfig) {
         let mut guard = self.config.write().unwrap();
         *guard = new_config;
