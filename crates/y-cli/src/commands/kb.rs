@@ -74,8 +74,8 @@ pub enum CollectionAction {
 
 /// Run a kb subcommand.
 pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
-    use y_knowledge::config::KnowledgeConfig;
     use y_service::knowledge_service::KnowledgeService;
+    use y_service::KnowledgeConfig;
 
     // Create a service instance.
     // In production, this would come from the ServiceContainer.
@@ -87,7 +87,7 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
             domain,
             collection,
         } => {
-            let params = y_knowledge::tools::KnowledgeIngestParams {
+            let params = y_service::KnowledgeIngestParams {
                 source: source.clone(),
                 domain: domain.clone(),
                 collection: collection.clone(),
@@ -158,7 +158,7 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
             domain,
             limit,
         } => {
-            let params = y_knowledge::tools::KnowledgeSearchParams {
+            let params = y_service::KnowledgeSearchParams {
                 query: query.clone(),
                 domain: domain.clone(),
                 resolution: "l0".to_string(),

@@ -612,7 +612,7 @@ pub fn seed_builtin_prompts(config_dir: &Path) -> Result<Vec<String>> {
 
     let mut seeded = Vec::new();
 
-    for &(filename, content) in y_prompt::BUILTIN_PROMPT_FILES {
+    for &(filename, content) in y_service::BUILTIN_PROMPT_FILES {
         let dest = prompts_dir.join(filename);
 
         // Skip if already exists (don't overwrite user modifications).
@@ -847,8 +847,8 @@ pub fn select_providers(args: &InitArgs, prompter: &dyn Prompter) -> Result<Prov
 /// - `data_dir` is `~/.local/state/y-agent/data/` where the database lives.
 ///
 /// Only one connection is needed since init just runs migrations.
-fn build_init_storage_config(_config_base: &Path, data_dir: &Path) -> y_storage::StorageConfig {
-    y_storage::StorageConfig {
+fn build_init_storage_config(_config_base: &Path, data_dir: &Path) -> y_service::StorageConfig {
+    y_service::StorageConfig {
         db_path: data_dir.join("y-agent.db").to_string_lossy().to_string(),
         pool_size: 1,
         wal_enabled: true,
@@ -867,11 +867,11 @@ pub async fn initialize_database(config_base: &Path, data_dir: &Path) -> Result<
     let config = build_init_storage_config(config_base, data_dir);
     let db_path = PathBuf::from(&config.db_path);
 
-    let pool = y_storage::create_pool(&config)
+    let pool = y_service::create_pool(&config)
         .await
         .context("failed to create SQLite database")?;
 
-    y_storage::migration::run_embedded_migrations(&pool)
+    y_service::migration::run_embedded_migrations(&pool)
         .await
         .context("failed to run database migrations")?;
 
@@ -1226,7 +1226,7 @@ mod tests {
 
         // Verify it parses as part of a ProviderPoolConfig.
         let pool_toml = format!("default_freeze_duration_secs = 60\n\n{toml_str}\n");
-        let parsed: y_provider::ProviderPoolConfig =
+        let parsed: y_service::ProviderPoolConfig =
             toml::from_str(&pool_toml).expect("should parse");
         assert_eq!(parsed.providers.len(), 1);
         assert_eq!(parsed.providers[0].id, "openai-main");
@@ -1281,7 +1281,7 @@ mod tests {
         assert!(data_dir.join("transcripts").is_dir());
     }
 
-    // T-INIT-009: copy_example_configs creates all 8 files directly in base.
+    // T-INIT-009: copy_example_configs creates all 10 files directly in base.
     #[test]
     fn test_copy_example_configs() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1289,7 +1289,7 @@ mod tests {
         let prompter = NonInteractivePrompter;
         let created = copy_example_configs(tmp.path(), false, &prompter).unwrap();
 
-        assert_eq!(created.len(), 8);
+        assert_eq!(created.len(), CONFIG_TEMPLATES.len());
         for (name, _) in CONFIG_TEMPLATES {
             assert!(
                 tmp.path().join(name).exists(),
@@ -1312,7 +1312,7 @@ mod tests {
         let created = copy_example_configs(tmp.path(), false, &prompter).unwrap();
 
         // The pre-existing file was skipped.
-        assert_eq!(created.len(), 7);
+        assert_eq!(created.len(), CONFIG_TEMPLATES.len() - 1);
         let content = std::fs::read_to_string(&existing).unwrap();
         assert_eq!(content, "existing content");
     }
@@ -1328,7 +1328,7 @@ mod tests {
         let prompter = NonInteractivePrompter;
         let created = copy_example_configs(tmp.path(), true, &prompter).unwrap();
 
-        assert_eq!(created.len(), 8);
+        assert_eq!(created.len(), CONFIG_TEMPLATES.len());
         let content = std::fs::read_to_string(&existing).unwrap();
         assert_ne!(content, "old content");
     }
@@ -1355,8 +1355,7 @@ mod tests {
         assert!(content.contains("default_freeze_duration_secs"));
 
         // Verify it parses.
-        let parsed: y_provider::ProviderPoolConfig =
-            toml::from_str(&content).expect("should parse");
+        let parsed: y_service::ProviderPoolConfig = toml::from_str(&content).expect("should parse");
         assert_eq!(parsed.providers.len(), 1);
         assert_eq!(parsed.providers[0].provider_type, "anthropic");
     }
@@ -1541,7 +1540,7 @@ mod tests {
 
         // Re-open the database to verify tables.
         let config = build_init_storage_config(&config_dir, &data_dir);
-        let pool = y_storage::create_pool(&config).await.unwrap();
+        let pool = y_service::create_pool(&config).await.unwrap();
 
         let tables: Vec<(String,)> = sqlx::query_as(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_sqlx_%' ORDER BY name",

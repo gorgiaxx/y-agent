@@ -83,8 +83,8 @@ mod tests {
     // T-CLI-002-03: test_build_providers_skips_missing_key
     #[test]
     fn test_build_providers_skips_missing_key() {
-        let pool_config = y_provider::config::ProviderPoolConfig {
-            providers: vec![y_provider::config::ProviderConfig {
+        let pool_config = y_service::ProviderPoolConfig {
+            providers: vec![y_service::ProviderConfig {
                 id: "test-no-key".into(),
                 provider_type: "openai".into(),
                 model: "gpt-4".into(),
@@ -111,8 +111,8 @@ mod tests {
     fn test_build_providers_skips_unsupported_type() {
         std::env::set_var("Y_AGENT_TEST_WIRE_KEY", "test-key");
 
-        let pool_config = y_provider::config::ProviderPoolConfig {
-            providers: vec![y_provider::config::ProviderConfig {
+        let pool_config = y_service::ProviderPoolConfig {
+            providers: vec![y_service::ProviderConfig {
                 id: "test-unsupported".into(),
                 provider_type: "unsupported_backend".into(),
                 model: "some-model".into(),

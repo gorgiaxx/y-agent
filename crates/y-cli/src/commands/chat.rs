@@ -8,7 +8,7 @@ use y_core::provider::ProviderPool;
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::tool::ToolRegistry;
 use y_core::types::{Message, Role, SessionId};
-use y_prompt::PromptContext;
+use y_service::PromptContext;
 
 use crate::orchestrator::{self, TurnInput};
 use crate::output;
@@ -285,8 +285,7 @@ async fn handle_slash_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use y_context::{AssembledContext, ContextCategory, ContextItem};
-    use y_service::ChatService;
+    use y_service::{AssembledContext, ChatService, ContextCategory, ContextItem};
 
     fn make_history() -> Vec<Message> {
         vec![

@@ -7,16 +7,10 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use y_browser::BrowserConfig;
-use y_context::PruningConfig;
-use y_guardrails::GuardrailConfig;
-use y_hooks::HookConfig;
-use y_knowledge::config::KnowledgeConfig;
-use y_provider::ProviderPoolConfig;
-use y_runtime::RuntimeConfig;
-use y_session::SessionConfig;
-use y_storage::StorageConfig;
-use y_tools::ToolRegistryConfig;
+use y_service::{
+    BrowserConfig, GuardrailConfig, HookConfig, KnowledgeConfig, ProviderPoolConfig, PruningConfig,
+    RuntimeConfig, SessionConfig, StorageConfig, ToolRegistryConfig,
+};
 
 /// Environment variable prefix for y-agent configuration overrides.
 const ENV_PREFIX: &str = "Y_AGENT_";

@@ -7,7 +7,7 @@ use clap::Subcommand;
 
 use y_agent::orchestrator::dag::TaskDag;
 use y_agent::orchestrator::expression_dsl;
-use y_storage::workflow_store::WorkflowRow;
+use y_service::WorkflowRow;
 
 use crate::output::{self, OutputMode, TableRow};
 use crate::wire::AppServices;

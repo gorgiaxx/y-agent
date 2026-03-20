@@ -56,3 +56,59 @@ pub use skill_evolution::{
 };
 pub use skill_ingestion::{ImportDecision, ImportError, ImportResult, SkillIngestionService};
 pub use system::{HealthReport, ProviderInfo, ProviderTestRequest, StatusReport, SystemService};
+
+// ---------------------------------------------------------------------------
+// Re-exports: infrastructure config types for presentation layers
+// ---------------------------------------------------------------------------
+// These re-exports allow presentation crates (y-cli, y-gui) to import config
+// types from `y_service` rather than depending on each infrastructure crate
+// directly, keeping the dependency graph lean.
+
+/// Config types re-exported from infrastructure crates.
+pub mod config_types {
+    pub use y_browser::BrowserConfig;
+    pub use y_context::PruningConfig;
+    pub use y_guardrails::GuardrailConfig;
+    pub use y_hooks::HookConfig;
+    pub use y_knowledge::config::KnowledgeConfig;
+    pub use y_provider::ProviderPoolConfig;
+    pub use y_runtime::RuntimeConfig;
+    pub use y_session::SessionConfig;
+    pub use y_storage::StorageConfig;
+    pub use y_tools::ToolRegistryConfig;
+}
+
+// Flat re-exports for backward compatibility and convenience.
+pub use y_browser::BrowserConfig;
+pub use y_context::PruningConfig;
+pub use y_guardrails::GuardrailConfig;
+pub use y_hooks::HookConfig;
+pub use y_knowledge::config::KnowledgeConfig;
+pub use y_provider::ProviderPoolConfig;
+pub use y_runtime::RuntimeConfig;
+pub use y_session::SessionConfig;
+pub use y_storage::StorageConfig;
+pub use y_tools::ToolRegistryConfig;
+
+// Re-export context assembly types (used in tests by presentation layers).
+pub use y_context::{AssembledContext, ContextCategory, ContextItem};
+
+// Re-export knowledge tool param types (used by CLI `kb` command).
+pub use y_knowledge::tools::{KnowledgeIngestParams, KnowledgeSearchParams};
+
+// Re-export provider config sub-types (used in test code by presentation layers).
+pub use y_provider::config::ProviderConfig;
+
+// Re-export prompt types (used by CLI chat command and init).
+pub use y_prompt::{PromptContext, BUILTIN_PROMPT_FILES};
+
+// Re-export storage functions (used by CLI `init` command for DB setup).
+pub use y_storage::create_pool;
+
+/// Storage migration helpers re-exported for presentation layers.
+pub mod migration {
+    pub use y_storage::migration::run_embedded_migrations;
+}
+
+// Re-export workflow store types (used by CLI `workflow` command).
+pub use y_storage::workflow_store::WorkflowRow;

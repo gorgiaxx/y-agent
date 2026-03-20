@@ -12,26 +12,16 @@ path = "src/main.rs"
 [dependencies]
 y-core = { workspace = true }
 y-agent = { workspace = true }
-y-provider = { workspace = true }
-y-session = { workspace = true }
-y-context = { workspace = true }
-y-hooks = { workspace = true }
-y-tools = { workspace = true }
-y-storage = { workspace = true }
-y-runtime = { workspace = true }
-y-guardrails = { workspace = true }
-y-browser = { workspace = true }
+y-service = { workspace = true }
 
+# Kept as direct dependencies because CLI commands use concrete types from these crates.
 y-skills = { workspace = true, features = [
     "skill_ingestion",
     "skill_transformation",
     "skill_security_screening",
     "skill_linkage",
 ] }
-y-prompt = { workspace = true }
 y-diagnostics = { workspace = true }
-y-service = { workspace = true }
-y-knowledge = { workspace = true }
 y-web = { workspace = true }
 axum = { workspace = true }
 anyhow = { workspace = true }
@@ -57,8 +47,8 @@ arboard = { version = "3", optional = true, default-features = false }
 [features]
 default = ["tui"]
 tui = ["ratatui", "crossterm", "tui-textarea", "unicode-width", "arboard"]
-hook_handlers = ["y-hooks/hook_handlers"]
-llm_hooks = ["y-hooks/llm_hooks"]
+hook_handlers = ["y-service/hook_handlers"]
+llm_hooks = ["y-service/llm_hooks"]
 
 [dev-dependencies]
 y-test-utils = { workspace = true }
