@@ -48,7 +48,7 @@ pub struct SearchResultItem {
     /// Content at the requested resolution.
     pub content: String,
     /// Relevance score (0.0–1.0).
-    pub relevance: f32,
+    pub relevance: f64,
     /// Domain classifications.
     pub domains: Vec<String>,
     /// Source title.

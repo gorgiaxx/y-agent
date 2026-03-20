@@ -127,7 +127,7 @@ pub struct SearchResultItem {
     pub chunk_id: String,
     pub title: String,
     pub content: String,
-    pub relevance: f32,
+    pub relevance: f64,
     pub domains: Vec<String>,
 }
 
@@ -143,10 +143,10 @@ pub struct IngestResult {
 
 #[derive(Debug, Serialize, Clone)]
 pub struct KbStats {
-    pub total_collections: usize,
-    pub total_entries: usize,
-    pub total_chunks: usize,
-    pub total_hits: u64,
+    pub collections: usize,
+    pub entries: usize,
+    pub chunks: usize,
+    pub hits: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +282,9 @@ pub async fn kb_entry_detail(
     entry_id: String,
     _resolution: String,
 ) -> Result<EntryDetail, String> {
+    // Cap at 200 chunks to avoid flooding the IPC channel / UI.
+    const MAX_L2_CHUNKS: usize = 200;
+
     let service = kb.service.lock().await;
     let entry = service
         .get_entry(&entry_id)
@@ -299,8 +302,6 @@ pub async fn kb_entry_detail(
         .collect();
 
     let total_chunk_count = entry.chunks.len();
-    // Cap at 200 chunks to avoid flooding the IPC channel / UI.
-    const MAX_L2_CHUNKS: usize = 200;
     let l2_chunks: Vec<ChunkInfo> = entry
         .chunks
         .iter()
@@ -429,10 +430,10 @@ pub async fn kb_stats(kb: State<'_, KnowledgeState>) -> Result<KbStats, String> 
     let total_chunks: u64 = collections.iter().map(|c| c.stats.chunk_count).sum();
 
     Ok(KbStats {
-        total_collections: collections.len(),
-        total_entries: usize::try_from(total_entries).unwrap_or(usize::MAX),
-        total_chunks: usize::try_from(total_chunks).unwrap_or(usize::MAX),
-        total_hits: 0,
+        collections: collections.len(),
+        entries: usize::try_from(total_entries).unwrap_or(usize::MAX),
+        chunks: usize::try_from(total_chunks).unwrap_or(usize::MAX),
+        hits: 0,
     })
 }
 
@@ -466,7 +467,7 @@ pub async fn kb_expand_folder(path: String) -> Result<Vec<String>, String> {
 }
 
 /// Progress event payload emitted during batch ingestion.
-/// KnowledgeBase statistics.
+/// `KnowledgeBase` statistics.
 #[derive(Debug, Serialize, Clone)]
 pub struct BatchProgressPayload {
     pub current: usize,

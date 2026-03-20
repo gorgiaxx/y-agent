@@ -124,7 +124,7 @@ impl TuiApp {
     pub async fn run(&mut self) -> Result<()> {
         // Load session list and create/resume a session at startup.
         self.load_sessions().await;
-        self.ensure_current_session();
+        Self::ensure_current_session();
 
         // Initialize context_window from the default provider's metadata.
         if let Some(meta) = self.services.provider_pool().await.list_metadata().first() {
@@ -132,274 +132,246 @@ impl TuiApp {
         }
 
         loop {
-            // 1. Render.
             self.draw()?;
 
-            // 2. Wait for next event.
             let Some(event) = self.events.next().await else {
-                break; // Event loop dropped.
+                break;
             };
 
-            // 3. Handle event.
             match event {
                 AppEvent::Key(key) => {
-                    let action = keys::dispatch(key, &self.state);
-                    match action {
-                        KeyAction::Quit => break,
-                        KeyAction::Submit => {
-                            if self.state.mode == InteractionMode::Command {
-                                // Execute the command.
-                                let cmd_input =
-                                    if let Some(selected) = self.palette.selected_command() {
-                                        selected.to_string()
-                                    } else {
-                                        self.palette.input.clone()
-                                    };
-                                self.execute_command(&cmd_input);
-                                self.palette = CommandPaletteState::new();
-                                self.state.set_mode(InteractionMode::Normal);
-                                self.state.set_focus(PanelFocus::Input);
-                            } else {
-                                // Normal submit: check for slash commands first.
-                                let input: String = self.textarea.lines().join("\n");
-                                let trimmed = input.trim();
-                                if trimmed.starts_with('/') && !trimmed.is_empty() {
-                                    // Route through command system (strip the leading '/').
-                                    let cmd_input = &trimmed[1..];
-                                    self.state.push_history(trimmed);
-                                    self.execute_command(cmd_input);
-                                } else if !trimmed.is_empty() {
-                                    // Push to history and send message to LLM.
-                                    self.state.push_history(trimmed);
-                                    self.llm_rx = chat_flow::submit_message(
-                                        &input,
-                                        &mut self.state,
-                                        &self.services,
-                                    );
-                                }
-                                self.textarea = TextArea::default();
-                            }
-                        }
-                        KeyAction::InputPassthrough => {
-                            if self.state.mode == InteractionMode::Command {
-                                // Forward to palette input.
-                                if let crossterm::event::KeyCode::Char(ch) = key.code {
-                                    self.palette.push_char(ch);
-                                } else if key.code == crossterm::event::KeyCode::Backspace {
-                                    self.palette.pop_char();
-                                }
-                            } else {
-                                // Check if `/` typed on empty input → enter command mode.
-                                if key.code == crossterm::event::KeyCode::Char('/')
-                                    && self
-                                        .textarea
-                                        .lines()
-                                        .iter()
-                                        .all(std::string::String::is_empty)
-                                {
-                                    self.state.set_mode(InteractionMode::Command);
-                                    self.palette = CommandPaletteState::new();
-                                } else {
-                                    self.textarea.input(key);
-                                }
-                            }
-                        }
-                        KeyAction::ToggleSidebar => {
-                            self.state.toggle_sidebar();
-                        }
-                        KeyAction::ToggleSidebarView => {
-                            self.state.toggle_sidebar_view();
-                        }
-                        KeyAction::CycleFocus => {
-                            self.state.cycle_focus_forward();
-                        }
-                        KeyAction::ScrollUp => {
-                            if self.state.mode == InteractionMode::Command {
-                                self.palette.select_prev();
-                            } else if self.state.focus == PanelFocus::Sidebar {
-                                self.state.select_session_prev();
-                            } else {
-                                self.state.scroll_offset =
-                                    self.state.scroll_offset.saturating_add(3);
-                            }
-                        }
-                        KeyAction::ScrollDown => {
-                            if self.state.mode == InteractionMode::Command {
-                                self.palette.select_next();
-                            } else if self.state.focus == PanelFocus::Sidebar {
-                                self.state.select_session_next();
-                            } else {
-                                self.state.scroll_offset =
-                                    self.state.scroll_offset.saturating_sub(3);
-                            }
-                        }
-                        KeyAction::EnterCommandMode => {
-                            self.state.set_mode(InteractionMode::Command);
-                            self.palette = CommandPaletteState::new();
-                        }
-                        KeyAction::ReturnToNormal => {
-                            self.state.set_mode(InteractionMode::Normal);
-                            self.state.set_focus(PanelFocus::Input);
-                            self.palette = CommandPaletteState::new();
-                        }
-                        KeyAction::HistoryPrev => {
-                            if let Some(entry) = self.state.history_prev() {
-                                self.textarea = TextArea::new(vec![entry.to_string()]);
-                            }
-                        }
-                        KeyAction::HistoryNext => match self.state.history_next() {
-                            Some(entry) => {
-                                self.textarea = TextArea::new(vec![entry.to_string()]);
-                            }
-                            None => {
-                                self.textarea = TextArea::default();
-                            }
-                        },
-                        KeyAction::Consumed | KeyAction::Unhandled => {}
-                        KeyAction::SelectSessionItem => {
-                            self.switch_to_selected_session().await;
-                        }
+                    if self.handle_key_event(key).await {
+                        break;
                     }
                 }
-                AppEvent::Mouse(mouse) => {
-                    use crossterm::event::{MouseButton, MouseEventKind};
-                    match mouse.kind {
-                        MouseEventKind::Down(MouseButton::Left) => {
-                            // Hit-test click position against last layout chunks.
-                            if let Some(ref chunks) = self.last_chunks {
-                                let (x, y) = (mouse.column, mouse.row);
-                                if contains(chunks.input, x, y) {
-                                    self.state.set_focus(PanelFocus::Input);
-                                    self.state.selection.reset();
-                                } else if contains(chunks.chat, x, y) {
-                                    self.state.set_focus(PanelFocus::Chat);
-                                    // Start text selection in chat.
-                                    let (row, col) = self.terminal_to_content(x, y, chunks.chat);
-                                    self.state.selection.start(row, col);
-                                } else if let Some(sb) = chunks.sidebar {
-                                    if contains(sb, x, y) {
-                                        self.state.set_focus(PanelFocus::Sidebar);
-                                        self.state.selection.reset();
-                                    }
-                                }
-                            }
-                        }
-                        MouseEventKind::Drag(MouseButton::Left) => {
-                            // Update selection during drag.
-                            if self.state.selection.active {
-                                if let Some(ref chunks) = self.last_chunks {
-                                    let (row, col) = self.terminal_to_content(
-                                        mouse.column,
-                                        mouse.row,
-                                        chunks.chat,
-                                    );
-                                    self.state.selection.update(row, col);
-                                }
-                            }
-                        }
-                        MouseEventKind::Up(MouseButton::Left) => {
-                            // Finish selection and copy to clipboard.
-                            if self.state.selection.active {
-                                if let Some(ref chunks) = self.last_chunks {
-                                    let (row, col) = self.terminal_to_content(
-                                        mouse.column,
-                                        mouse.row,
-                                        chunks.chat,
-                                    );
-                                    self.state.selection.update(row, col);
-                                }
-                                self.state.selection.finish();
-
-                                if !self.state.selection.is_empty() {
-                                    let text = selection::extract_text(
-                                        &self.chat_plain_lines,
-                                        &self.state.selection,
-                                    );
-                                    if !text.is_empty() {
-                                        #[cfg(feature = "tui")]
-                                        if let Ok(mut clip) = arboard::Clipboard::new() {
-                                            let _ = clip.set_text(&text);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        MouseEventKind::Down(_) => {
-                            // Non-left clicks: just reset selection.
-                            self.state.selection.reset();
-                        }
-                        MouseEventKind::ScrollUp => {
-                            let over_sidebar = self
-                                .last_chunks
-                                .as_ref()
-                                .and_then(|c| c.sidebar)
-                                .is_some_and(|sb| contains(sb, mouse.column, mouse.row));
-                            if over_sidebar {
-                                self.state.select_session_prev();
-                            } else {
-                                self.state.scroll_offset =
-                                    self.state.scroll_offset.saturating_add(3);
-                            }
-                        }
-                        MouseEventKind::ScrollDown => {
-                            let over_sidebar = self
-                                .last_chunks
-                                .as_ref()
-                                .and_then(|c| c.sidebar)
-                                .is_some_and(|sb| contains(sb, mouse.column, mouse.row));
-                            if over_sidebar {
-                                self.state.select_session_next();
-                            } else {
-                                self.state.scroll_offset =
-                                    self.state.scroll_offset.saturating_sub(3);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                AppEvent::Resize(_w, _h) => {
-                    // Terminal automatically knows the new size on next draw.
-                }
-                AppEvent::Tick => {
-                    // Drain toast channel from tracing bridge.
-                    if let Some(ref mut rx) = self.toast_rx {
-                        while let Ok(toast) = rx.try_recv() {
-                            self.state.push_toast(toast.message, toast.level);
-                        }
-                    }
-
-                    // Tick toast timers and expire old toasts.
-                    self.state.tick_toasts();
-
-                    // Poll LLM response channel.
-                    if let Some(ref mut rx) = self.llm_rx {
-                        // Drain all available events (e.g., Response + TitleUpdated).
-                        let mut channel_closed = false;
-                        loop {
-                            match rx.try_recv() {
-                                Ok(event) => {
-                                    chat_flow::apply_chat_event(event, &mut self.state);
-                                }
-                                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                                    break;
-                                }
-                                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                                    channel_closed = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if channel_closed {
-                            self.state.is_streaming = false;
-                            self.llm_rx = None;
-                        }
-                    }
-                }
+                AppEvent::Mouse(mouse) => self.handle_mouse_event(mouse),
+                AppEvent::Resize(_w, _h) => {}
+                AppEvent::Tick => self.handle_tick(),
             }
         }
 
         self.restore_terminal()?;
         Ok(())
+    }
+
+    /// Process a key event. Returns `true` when the app should quit.
+    async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        let action = keys::dispatch(key, &self.state);
+        match action {
+            KeyAction::Quit => return true,
+            KeyAction::Submit => {
+                if self.state.mode == InteractionMode::Command {
+                    let cmd_input = if let Some(selected) = self.palette.selected_command() {
+                        selected.to_string()
+                    } else {
+                        self.palette.input.clone()
+                    };
+                    self.execute_command(&cmd_input);
+                    self.palette = CommandPaletteState::new();
+                    self.state.set_mode(InteractionMode::Normal);
+                    self.state.set_focus(PanelFocus::Input);
+                } else {
+                    let input: String = self.textarea.lines().join("\n");
+                    let trimmed = input.trim();
+                    if trimmed.starts_with('/') && !trimmed.is_empty() {
+                        let cmd_input = &trimmed[1..];
+                        self.state.push_history(trimmed);
+                        self.execute_command(cmd_input);
+                    } else if !trimmed.is_empty() {
+                        self.state.push_history(trimmed);
+                        self.llm_rx =
+                            chat_flow::submit_message(&input, &mut self.state, &self.services);
+                    }
+                    self.textarea = TextArea::default();
+                }
+            }
+            KeyAction::InputPassthrough => {
+                if self.state.mode == InteractionMode::Command {
+                    if let crossterm::event::KeyCode::Char(ch) = key.code {
+                        self.palette.push_char(ch);
+                    } else if key.code == crossterm::event::KeyCode::Backspace {
+                        self.palette.pop_char();
+                    }
+                } else if key.code == crossterm::event::KeyCode::Char('/')
+                    && self
+                        .textarea
+                        .lines()
+                        .iter()
+                        .all(std::string::String::is_empty)
+                {
+                    self.state.set_mode(InteractionMode::Command);
+                    self.palette = CommandPaletteState::new();
+                } else {
+                    self.textarea.input(key);
+                }
+            }
+            KeyAction::ToggleSidebar => self.state.toggle_sidebar(),
+            KeyAction::ToggleSidebarView => self.state.toggle_sidebar_view(),
+            KeyAction::CycleFocus => {
+                self.state.cycle_focus_forward();
+            }
+            KeyAction::ScrollUp => {
+                if self.state.mode == InteractionMode::Command {
+                    self.palette.select_prev();
+                } else if self.state.focus == PanelFocus::Sidebar {
+                    self.state.select_session_prev();
+                } else {
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_add(3);
+                }
+            }
+            KeyAction::ScrollDown => {
+                if self.state.mode == InteractionMode::Command {
+                    self.palette.select_next();
+                } else if self.state.focus == PanelFocus::Sidebar {
+                    self.state.select_session_next();
+                } else {
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
+                }
+            }
+            KeyAction::EnterCommandMode => {
+                self.state.set_mode(InteractionMode::Command);
+                self.palette = CommandPaletteState::new();
+            }
+            KeyAction::ReturnToNormal => {
+                self.state.set_mode(InteractionMode::Normal);
+                self.state.set_focus(PanelFocus::Input);
+                self.palette = CommandPaletteState::new();
+            }
+            KeyAction::HistoryPrev => {
+                if let Some(entry) = self.state.history_prev() {
+                    self.textarea = TextArea::new(vec![entry.to_string()]);
+                }
+            }
+            KeyAction::HistoryNext => match self.state.history_next() {
+                Some(entry) => {
+                    self.textarea = TextArea::new(vec![entry.to_string()]);
+                }
+                None => {
+                    self.textarea = TextArea::default();
+                }
+            },
+            KeyAction::Consumed | KeyAction::Unhandled => {}
+            KeyAction::SelectSessionItem => {
+                self.switch_to_selected_session().await;
+            }
+        }
+        false
+    }
+
+    /// Process a mouse event.
+    fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(ref chunks) = self.last_chunks {
+                    let (x, y) = (mouse.column, mouse.row);
+                    if contains(chunks.input, x, y) {
+                        self.state.set_focus(PanelFocus::Input);
+                        self.state.selection.reset();
+                    } else if contains(chunks.chat, x, y) {
+                        self.state.set_focus(PanelFocus::Chat);
+                        let (row, col) = self.terminal_to_content(x, y, chunks.chat);
+                        self.state.selection.start(row, col);
+                    } else if let Some(sb) = chunks.sidebar {
+                        if contains(sb, x, y) {
+                            self.state.set_focus(PanelFocus::Sidebar);
+                            self.state.selection.reset();
+                        }
+                    }
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.state.selection.active {
+                    if let Some(ref chunks) = self.last_chunks {
+                        let (row, col) =
+                            self.terminal_to_content(mouse.column, mouse.row, chunks.chat);
+                        self.state.selection.update(row, col);
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if self.state.selection.active {
+                    if let Some(ref chunks) = self.last_chunks {
+                        let (row, col) =
+                            self.terminal_to_content(mouse.column, mouse.row, chunks.chat);
+                        self.state.selection.update(row, col);
+                    }
+                    self.state.selection.finish();
+
+                    if !self.state.selection.is_empty() {
+                        let text =
+                            selection::extract_text(&self.chat_plain_lines, &self.state.selection);
+                        if !text.is_empty() {
+                            #[cfg(feature = "tui")]
+                            if let Ok(mut clip) = arboard::Clipboard::new() {
+                                let _ = clip.set_text(&text);
+                            }
+                        }
+                    }
+                }
+            }
+            MouseEventKind::Down(_) => {
+                self.state.selection.reset();
+            }
+            MouseEventKind::ScrollUp => {
+                let over_sidebar = self
+                    .last_chunks
+                    .as_ref()
+                    .and_then(|c| c.sidebar)
+                    .is_some_and(|sb| contains(sb, mouse.column, mouse.row));
+                if over_sidebar {
+                    self.state.select_session_prev();
+                } else {
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_add(3);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                let over_sidebar = self
+                    .last_chunks
+                    .as_ref()
+                    .and_then(|c| c.sidebar)
+                    .is_some_and(|sb| contains(sb, mouse.column, mouse.row));
+                if over_sidebar {
+                    self.state.select_session_next();
+                } else {
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle periodic tick: drain channels and update timers.
+    fn handle_tick(&mut self) {
+        if let Some(ref mut rx) = self.toast_rx {
+            while let Ok(toast) = rx.try_recv() {
+                self.state.push_toast(toast.message, toast.level);
+            }
+        }
+
+        self.state.tick_toasts();
+
+        if let Some(ref mut rx) = self.llm_rx {
+            let mut channel_closed = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(event) => {
+                        chat_flow::apply_chat_event(event, &mut self.state);
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        channel_closed = true;
+                        break;
+                    }
+                }
+            }
+            if channel_closed {
+                self.state.is_streaming = false;
+                self.llm_rx = None;
+            }
+        }
     }
 
     /// Draw the current frame.
@@ -604,8 +576,8 @@ impl TuiApp {
     /// the most recent session — instead, we leave `current_session_id = None`
     /// so the user always starts with a clean slate. The session will be created
     /// lazily when the first message is sent (see `chat_flow::submit_message`).
-    fn ensure_current_session(&mut self) {
-        // Nothing to do — lazy creation on first message.
+    fn ensure_current_session() {
+        // Nothing to do -- lazy creation on first message.
     }
 
     /// Load a session's transcript into the chat panel.

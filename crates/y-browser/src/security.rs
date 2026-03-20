@@ -140,7 +140,15 @@ fn normalize_domains(domains: Vec<String>) -> Vec<String> {
 fn is_private_host(host: &str) -> bool {
     let h = host.to_lowercase();
 
-    if h == "localhost" || h.ends_with(".localhost") || h == "::1" || h.ends_with(".local") {
+    // Check for localhost and local-network hostname patterns.
+    // Note: `h` is already lowercased, so case-insensitive comparison is implicit.
+    let is_local_suffix = h.len() > 6 && h.as_bytes()[h.len() - 6..] == *b".local";
+    if h == "localhost"
+        || h.ends_with(".localhost")
+        || h == "::1"
+        || h == "local"
+        || is_local_suffix
+    {
         return true;
     }
 

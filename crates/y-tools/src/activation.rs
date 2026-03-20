@@ -36,20 +36,22 @@ impl ToolActivationSet {
     pub fn activate(&mut self, definition: ToolDefinition) {
         let name = definition.name.clone();
 
-        if self.active.contains_key(&name) {
-            self.refresh_lru(&name);
-            self.active.insert(name, definition);
-            return;
-        }
+        let already_active = self.active.contains_key(&name);
 
-        while self.active.len() >= self.ceiling {
-            if !self.evict_oldest() {
-                break;
+        if already_active {
+            // Refresh LRU position for existing tool.
+            self.lru_order.retain(|n| n != &name);
+            self.lru_order.push_back(name);
+            // Update the definition in-place.
+            if let Some(entry) = self.active.get_mut(&definition.name) {
+                *entry = definition;
             }
+        } else {
+            // Evict if at ceiling.
+            while self.active.len() >= self.ceiling && self.evict_oldest() {}
+            self.active.insert(name.clone(), definition);
+            self.lru_order.push_back(name);
         }
-
-        self.active.insert(name.clone(), definition);
-        self.lru_order.push_back(name);
     }
 
     /// Deactivate a specific tool.

@@ -68,8 +68,7 @@ impl MemoryClient for LtmClient {
                         .filter(|w| content_lower.contains(*w) || when_lower.contains(*w))
                         .count();
                     if matches > 0 {
-                        let rel = matches as f32 / words.len().max(1) as f32 * 0.6;
-                        rel
+                        matches as f32 / words.len().max(1) as f32 * 0.6
                     } else {
                         return None;
                     }

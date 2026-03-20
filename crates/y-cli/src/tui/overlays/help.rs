@@ -12,8 +12,8 @@ use ratatui::Frame;
 /// Render the help overlay.
 pub fn render(frame: &mut Frame, area: Rect) {
     // Calculate popup size.
-    let popup_width = area.width.min(60).max(30);
-    let popup_height = area.height.min(30).max(10);
+    let popup_width = area.width.clamp(30, 60);
+    let popup_height = area.height.clamp(10, 30);
 
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;

@@ -566,16 +566,16 @@ pub fn seed_builtin_skills(data_dir: &Path) -> Result<Vec<String>> {
     let mut seeded = Vec::new();
 
     for skill in BUILTIN_SKILLS {
-        let skill_dir = skills_dir.join(skill.name);
+        let dest_dir = skills_dir.join(skill.name);
 
         // Skip if already exists (don't overwrite user modifications).
-        if skill_dir.exists() {
+        if dest_dir.exists() {
             continue;
         }
 
         // Write all files for this skill.
         for file in skill.files {
-            let file_path = skill_dir.join(file.relative_path);
+            let file_path = dest_dir.join(file.relative_path);
 
             // Ensure parent directories exist (e.g., details/).
             if let Some(parent) = file_path.parent() {
@@ -589,7 +589,7 @@ pub fn seed_builtin_skills(data_dir: &Path) -> Result<Vec<String>> {
 
         // Create empty lineage.toml (required by standard).
         std::fs::write(
-            skill_dir.join("lineage.toml"),
+            dest_dir.join("lineage.toml"),
             "# Transformation lineage (builtin skill)\n",
         )
         .with_context(|| format!("writing lineage.toml for {}", skill.name))?;
@@ -798,28 +798,32 @@ pub fn select_providers(args: &InitArgs, prompter: &dyn Prompter) -> Result<Prov
 
         let choice = prompter.select("Select LLM provider", &display_names, 0)?;
 
-        if choice < PROVIDER_PRESETS.len() {
-            let preset = &PROVIDER_PRESETS[choice];
+        match choice.cmp(&PROVIDER_PRESETS.len()) {
+            std::cmp::Ordering::Less => {
+                let preset = &PROVIDER_PRESETS[choice];
 
-            let api_key = if preset.requires_api_key {
-                prompter.input(&format!("Enter API key for {}", preset.display_name), None)?
-            } else {
-                String::new()
-            };
+                let api_key = if preset.requires_api_key {
+                    prompter.input(&format!("Enter API key for {}", preset.display_name), None)?
+                } else {
+                    String::new()
+                };
 
-            toml_blocks.push(preset_to_toml(preset, &api_key));
-            descriptions.push(preset.display_name.to_string());
-        } else if choice == PROVIDER_PRESETS.len() {
-            // Custom provider.
-            let model = prompter.input("Model name", Some("gpt-4o"))?;
-            let base_url = prompter.input("Base URL", Some("https://api.example.com/v1"))?;
-            let api_key = prompter.input("API key (empty if none)", Some(""))?;
+                toml_blocks.push(preset_to_toml(preset, &api_key));
+                descriptions.push(preset.display_name.to_string());
+            }
+            std::cmp::Ordering::Equal => {
+                // Custom provider.
+                let model = prompter.input("Model name", Some("gpt-4o"))?;
+                let base_url = prompter.input("Base URL", Some("https://api.example.com/v1"))?;
+                let api_key = prompter.input("API key (empty if none)", Some(""))?;
 
-            toml_blocks.push(custom_provider_to_toml(&model, &base_url, &api_key));
-            descriptions.push(format!("Custom ({model})"));
-        } else {
-            // Skip.
-            break;
+                toml_blocks.push(custom_provider_to_toml(&model, &base_url, &api_key));
+                descriptions.push(format!("Custom ({model})"));
+            }
+            std::cmp::Ordering::Greater => {
+                // Skip.
+                break;
+            }
         }
 
         if !prompter.confirm("Add another provider?", false)? {

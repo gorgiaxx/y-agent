@@ -75,6 +75,7 @@ pub struct AgentDeactivateParams {
 
 /// Parameters for the `agent_search` tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AgentSearchParams {
     /// Search query (matches name, description, capabilities).
     pub query: String,
@@ -82,13 +83,19 @@ pub struct AgentSearchParams {
     pub mode: Option<AgentMode>,
     /// Filter by trust tier (optional).
     pub trust_tier: Option<TrustTier>,
-    /// Filter by status (optional).
-    #[serde(default = "default_status_filter")]
+    /// Filter by status (optional, defaults to Active).
     pub status: Option<AgentStatus>,
 }
 
-fn default_status_filter() -> Option<AgentStatus> {
-    Some(AgentStatus::Active)
+impl Default for AgentSearchParams {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            mode: None,
+            trust_tier: None,
+            status: Some(AgentStatus::Active),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

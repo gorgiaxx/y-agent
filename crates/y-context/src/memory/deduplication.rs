@@ -101,8 +101,7 @@ fn jaccard_similarity(a: &str, b: &str) -> f32 {
         return 0.0;
     }
 
-    let sim = intersection as f32 / union as f32;
-    sim
+    intersection as f32 / union as f32
 }
 
 #[cfg(test)]

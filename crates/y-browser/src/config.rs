@@ -2,6 +2,34 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How Chrome is launched and connected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchMode {
+    /// Connect to a remote Chrome instance via CDP URL (default).
+    #[default]
+    Remote,
+    /// Auto-launch a headless Chrome process.
+    AutoLaunchHeadless,
+    /// Auto-launch Chrome with a visible window (for debugging).
+    AutoLaunchVisible,
+}
+
+impl LaunchMode {
+    /// Whether to auto-launch a local Chrome process.
+    pub fn is_auto_launch(&self) -> bool {
+        matches!(
+            self,
+            LaunchMode::AutoLaunchHeadless | LaunchMode::AutoLaunchVisible
+        )
+    }
+
+    /// Whether Chrome should run headless.
+    pub fn is_headless(&self) -> bool {
+        matches!(self, LaunchMode::Remote | LaunchMode::AutoLaunchHeadless)
+    }
+}
+
 /// Configuration for browser automation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserConfig {
@@ -9,11 +37,9 @@ pub struct BrowserConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
 
-    /// Launch a local Chrome/Chromium process automatically.
-    /// When true, y-agent spawns a headless Chrome and manages its lifecycle.
-    /// When false, connects to a remote CDP endpoint via `cdp_url`.
+    /// How Chrome is launched.
     #[serde(default)]
-    pub auto_launch: bool,
+    pub launch_mode: LaunchMode,
 
     /// Path to Chrome/Chromium executable.
     /// Empty string = auto-detect from well-known locations.
@@ -24,7 +50,7 @@ pub struct BrowserConfig {
     #[serde(default = "default_local_cdp_port")]
     pub local_cdp_port: u16,
 
-    /// CDP endpoint URL (used when `auto_launch` is false).
+    /// CDP endpoint URL (used when `launch_mode` is Remote).
     /// Supports `http://`, `https://`, `ws://`, `wss://` schemes.
     ///
     /// - HTTP(S): discovers WebSocket URL via `/json/version`
@@ -50,18 +76,13 @@ pub struct BrowserConfig {
     /// Maximum screenshot dimension (width or height) in pixels.
     #[serde(default = "default_max_screenshot_dim")]
     pub max_screenshot_dim: u32,
-
-    /// Run Chrome in headless mode (no visible window).
-    /// Default: true. Set to false for debugging or visual verification.
-    #[serde(default = "default_true")]
-    pub headless: bool,
 }
 
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            auto_launch: false,
+            launch_mode: LaunchMode::default(),
             chrome_path: String::new(),
             local_cdp_port: default_local_cdp_port(),
             cdp_url: default_cdp_url(),
@@ -69,7 +90,6 @@ impl Default for BrowserConfig {
             allowed_domains: vec!["*".into()],
             block_private_networks: true,
             max_screenshot_dim: default_max_screenshot_dim(),
-            headless: true,
         }
     }
 }

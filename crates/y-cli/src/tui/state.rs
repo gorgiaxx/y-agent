@@ -374,8 +374,7 @@ impl AppState {
         self.focus = match self.focus {
             PanelFocus::Input => PanelFocus::Chat,
             PanelFocus::Chat if self.sidebar_visible => PanelFocus::Sidebar,
-            PanelFocus::Chat => PanelFocus::Input,
-            PanelFocus::Sidebar => PanelFocus::Input,
+            PanelFocus::Chat | PanelFocus::Sidebar => PanelFocus::Input,
         };
         self.focus
     }

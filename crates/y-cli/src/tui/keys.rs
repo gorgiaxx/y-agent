@@ -119,10 +119,8 @@ fn dispatch_input_normal(key: KeyEvent) -> KeyAction {
 fn dispatch_chat_normal(key: KeyEvent) -> KeyAction {
     match key.code {
         // Scroll navigation.
-        KeyCode::Up | KeyCode::Char('k') => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
-        KeyCode::PageUp => KeyAction::ScrollUp,
-        KeyCode::PageDown => KeyAction::ScrollDown,
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::PageUp => KeyAction::ScrollUp,
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::PageDown => KeyAction::ScrollDown,
         // Tab cycles focus.
         KeyCode::Tab => KeyAction::CycleFocus,
         // Ctrl+B toggles sidebar.
@@ -169,9 +167,7 @@ fn dispatch_command(key: KeyEvent, _state: &AppState) -> KeyAction {
         KeyCode::Enter => KeyAction::Submit,
         // Arrow keys navigate the palette selection.
         KeyCode::Up => KeyAction::ScrollUp,
-        KeyCode::Down => KeyAction::ScrollDown,
-        // Tab can also cycle through results.
-        KeyCode::Tab => KeyAction::ScrollDown,
+        KeyCode::Down | KeyCode::Tab => KeyAction::ScrollDown,
         // Everything else is input for the command buffer.
         _ => KeyAction::InputPassthrough,
     }

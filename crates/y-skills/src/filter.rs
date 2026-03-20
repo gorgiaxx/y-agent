@@ -159,7 +159,7 @@ impl FilterGate {
             let total_items = report.embedded_tools.len() + report.embedded_scripts.len();
             let llm_portion = if total_items > 0 {
                 // Rough estimate: ratio of reasoning content
-                let items_f = total_items as f64;
+                let items_f = f64::from(u32::try_from(total_items).unwrap_or(u32::MAX));
                 1.0 - (items_f * 0.1).min(0.5)
             } else {
                 1.0

@@ -115,7 +115,7 @@ impl ContextManager {
                     verdict,
                     GuardVerdict::Overflow { .. } | GuardVerdict::Critical { .. }
                 ) {
-                    self.recover_by_trimming_bootstrap(&mut assembled);
+                    Self::recover_by_trimming_bootstrap(&mut assembled);
                     verdict = self.guard.evaluate(&assembled);
                 }
 
@@ -124,7 +124,7 @@ impl ContextManager {
                     verdict,
                     GuardVerdict::Overflow { .. } | GuardVerdict::Critical { .. }
                 ) {
-                    self.recover_by_evicting_tools(&mut assembled);
+                    Self::recover_by_evicting_tools(&mut assembled);
                     verdict = self.guard.evaluate(&assembled);
                 }
 
@@ -210,7 +210,7 @@ impl ContextManager {
     }
 
     /// Recovery action 2: Trim bootstrap items.
-    fn recover_by_trimming_bootstrap(&self, assembled: &mut AssembledContext) {
+    fn recover_by_trimming_bootstrap(assembled: &mut AssembledContext) {
         let before = assembled.items.len();
         assembled
             .items
@@ -222,7 +222,7 @@ impl ContextManager {
     }
 
     /// Recovery action 3: Evict tool items.
-    fn recover_by_evicting_tools(&self, assembled: &mut AssembledContext) {
+    fn recover_by_evicting_tools(assembled: &mut AssembledContext) {
         let before = assembled.items.len();
         assembled
             .items

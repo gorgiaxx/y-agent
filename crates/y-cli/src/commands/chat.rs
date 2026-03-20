@@ -111,94 +111,9 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
 
         // Handle slash commands.
         if input.starts_with('/') {
-            match input {
-                "/help" => {
-                    println!("Commands:");
-                    println!("  /help         — Show this help");
-                    println!("  /status       — Show session status");
-                    println!("  /clear        — Clear conversation history");
-                    println!("  /undo         — Undo last turn");
-                    println!("  /checkpoints  — List available checkpoints");
-                    println!("  /quit         — Exit chat");
-                }
-                "/quit" | "/exit" => {
-                    output::print_info("Goodbye!");
-                    break;
-                }
-                "/clear" => {
-                    history.clear();
-                    turn_number = 0;
-                    output::print_success("Conversation history cleared");
-                }
-                "/status" => {
-                    println!("Session: {} ({:?})", session.id.0, session.state);
-                    println!("History: {} messages", history.len());
-                    println!("Turn: {turn_number}");
-                    println!("Tools: {}", services.tool_registry.len().await);
-                    let statuses = services.provider_pool().await.provider_statuses().await;
-                    println!("Providers: {}", statuses.len());
-                }
-                "/undo" => {
-                    match services
-                        .chat_checkpoint_manager
-                        .rollback_last(&session.id)
-                        .await
-                    {
-                        Ok(result) => {
-                            // Sync in-memory history from transcript.
-                            history = services
-                                .session_manager
-                                .read_transcript(&session.id)
-                                .await
-                                .unwrap_or_default();
-                            turn_number = result.rolled_back_to_turn;
-                            output::print_success(&format!(
-                                "Rolled back {} messages, {} checkpoint(s) invalidated. Now at turn {}.",
-                                result.messages_removed,
-                                result.checkpoints_invalidated,
-                                result.rolled_back_to_turn,
-                            ));
-                            if !result.scopes_rolled_back.is_empty() {
-                                output::print_info(&format!(
-                                    "File journal scopes to rollback: {:?}",
-                                    result.scopes_rolled_back
-                                ));
-                            }
-                        }
-                        Err(e) => {
-                            output::print_error(&format!("Undo failed: {e}"));
-                        }
-                    }
-                }
-                "/checkpoints" => {
-                    match services
-                        .chat_checkpoint_manager
-                        .list_checkpoints(&session.id)
-                        .await
-                    {
-                        Ok(checkpoints) => {
-                            if checkpoints.is_empty() {
-                                output::print_info("No checkpoints available.");
-                            } else {
-                                println!("Available checkpoints:");
-                                for cp in &checkpoints {
-                                    println!(
-                                        "  Turn {} | {} msgs before | ID: {}…",
-                                        cp.turn_number,
-                                        cp.message_count_before,
-                                        &cp.checkpoint_id[..8],
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            output::print_error(&format!("Failed to list checkpoints: {e}"));
-                        }
-                    }
-                }
-                other => {
-                    output::print_error(&format!("Unknown command: {other}"));
-                }
+            if handle_slash_command(input, services, &session, &mut history, &mut turn_number).await
+            {
+                break;
             }
             println!();
             print!("> ");
@@ -266,6 +181,105 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
     }
 
     Ok(())
+}
+
+/// Handle a slash command. Returns `true` if the chat should exit.
+async fn handle_slash_command(
+    input: &str,
+    services: &AppServices,
+    session: &y_core::session::SessionNode,
+    history: &mut Vec<Message>,
+    turn_number: &mut u32,
+) -> bool {
+    match input {
+        "/help" => {
+            println!("Commands:");
+            println!("  /help         -- Show this help");
+            println!("  /status       -- Show session status");
+            println!("  /clear        -- Clear conversation history");
+            println!("  /undo         -- Undo last turn");
+            println!("  /checkpoints  -- List available checkpoints");
+            println!("  /quit         -- Exit chat");
+        }
+        "/quit" | "/exit" => {
+            output::print_info("Goodbye!");
+            return true;
+        }
+        "/clear" => {
+            history.clear();
+            *turn_number = 0;
+            output::print_success("Conversation history cleared");
+        }
+        "/status" => {
+            println!("Session: {} ({:?})", session.id.0, session.state);
+            println!("History: {} messages", history.len());
+            println!("Turn: {}", *turn_number);
+            println!("Tools: {}", services.tool_registry.len().await);
+            let statuses = services.provider_pool().await.provider_statuses().await;
+            println!("Providers: {}", statuses.len());
+        }
+        "/undo" => {
+            match services
+                .chat_checkpoint_manager
+                .rollback_last(&session.id)
+                .await
+            {
+                Ok(result) => {
+                    *history = services
+                        .session_manager
+                        .read_transcript(&session.id)
+                        .await
+                        .unwrap_or_default();
+                    *turn_number = result.rolled_back_to_turn;
+                    output::print_success(&format!(
+                        "Rolled back {} messages, {} checkpoint(s) invalidated. Now at turn {}.",
+                        result.messages_removed,
+                        result.checkpoints_invalidated,
+                        result.rolled_back_to_turn,
+                    ));
+                    if !result.scopes_rolled_back.is_empty() {
+                        output::print_info(&format!(
+                            "File journal scopes to rollback: {:?}",
+                            result.scopes_rolled_back
+                        ));
+                    }
+                }
+                Err(e) => {
+                    output::print_error(&format!("Undo failed: {e}"));
+                }
+            }
+        }
+        "/checkpoints" => {
+            match services
+                .chat_checkpoint_manager
+                .list_checkpoints(&session.id)
+                .await
+            {
+                Ok(checkpoints) => {
+                    if checkpoints.is_empty() {
+                        output::print_info("No checkpoints available.");
+                    } else {
+                        println!("Available checkpoints:");
+                        for cp in &checkpoints {
+                            println!(
+                                "  Turn {} | {} msgs before | ID: {}...",
+                                cp.turn_number,
+                                cp.message_count_before,
+                                &cp.checkpoint_id[..8],
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    output::print_error(&format!("Failed to list checkpoints: {e}"));
+                }
+            }
+        }
+        other => {
+            output::print_error(&format!("Unknown command: {other}"));
+        }
+    }
+    false
 }
 
 #[cfg(test)]

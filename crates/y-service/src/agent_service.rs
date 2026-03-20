@@ -259,7 +259,7 @@ impl AgentService {
 
             ctx.iteration += 1;
             if ctx.iteration > max_iterations {
-                Self::emit_loop_limit(&progress, &ctx, max_iterations, container).await;
+                Self::emit_loop_limit(progress.as_ref(), &ctx, max_iterations, container).await;
                 return Err(AgentExecutionError::ToolLoopLimitExceeded { max_iterations });
             }
 
@@ -270,7 +270,8 @@ impl AgentService {
             let llm_start = std::time::Instant::now();
             let pool = container.provider_pool().await;
 
-            let llm_result = Self::call_llm(&*pool, &request, &route, &progress, &cancel).await;
+            let llm_result =
+                Self::call_llm(&*pool, &request, &route, progress.as_ref(), cancel.as_ref()).await;
 
             match llm_result {
                 Ok(response) => {
@@ -298,7 +299,12 @@ impl AgentService {
 
                     if !response.tool_calls.is_empty() {
                         Self::handle_native_tool_calls(
-                            container, config, &response, &progress, &iter_data, &mut ctx,
+                            container,
+                            config,
+                            &response,
+                            progress.as_ref(),
+                            &iter_data,
+                            &mut ctx,
                         )
                         .await;
                         continue;
@@ -314,7 +320,7 @@ impl AgentService {
                                     &response,
                                     &parse_result,
                                     text,
-                                    &progress,
+                                    progress.as_ref(),
                                     &iter_data,
                                     &mut ctx,
                                 )
@@ -329,7 +335,7 @@ impl AgentService {
                         container,
                         config,
                         &response,
-                        &progress,
+                        progress.as_ref(),
                         &iter_data,
                         ctx,
                         final_model,
@@ -425,14 +431,14 @@ impl AgentService {
         pool: &dyn ProviderPool,
         request: &ChatRequest,
         route: &RouteRequest,
-        progress: &Option<TurnEventSender>,
-        cancel: &Option<CancellationToken>,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<&CancellationToken>,
     ) -> Result<y_core::provider::ChatResponse, y_core::provider::ProviderError> {
         if progress.is_some() {
-            Self::call_llm_streaming(pool, request, route, progress.as_ref(), cancel.as_ref()).await
+            Self::call_llm_streaming(pool, request, route, progress, cancel).await
         } else {
             let llm_future = pool.chat_completion(request, route);
-            if let Some(ref tok) = cancel {
+            if let Some(tok) = cancel {
                 tokio::select! {
                     res = llm_future => res,
                     () = tok.cancelled() => {
@@ -446,12 +452,12 @@ impl AgentService {
     }
 
     async fn emit_loop_limit(
-        progress: &Option<TurnEventSender>,
+        progress: Option<&TurnEventSender>,
         ctx: &ToolExecContext,
         max_iterations: usize,
         container: &ServiceContainer,
     ) {
-        if let Some(ref tx) = progress {
+        if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::LoopLimitHit {
                 iterations: ctx.iteration - 1,
                 max_iterations,
@@ -527,7 +533,7 @@ impl AgentService {
         container: &ServiceContainer,
         config: &AgentExecutionConfig,
         tc: &ToolCallRequest,
-        progress: &Option<TurnEventSender>,
+        progress: Option<&TurnEventSender>,
         ctx: &mut ToolExecContext,
     ) -> (bool, String) {
         let tool_start = std::time::Instant::now();
@@ -553,7 +559,7 @@ impl AgentService {
             result_content: result_content.clone(),
         });
 
-        if let Some(ref tx) = progress {
+        if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::ToolResult {
                 name: tc.name.clone(),
                 success: tool_success,
@@ -586,13 +592,13 @@ impl AgentService {
 
     /// Emit `LlmResponse` progress event with the given tool call names.
     fn emit_llm_response(
-        progress: &Option<TurnEventSender>,
+        progress: Option<&TurnEventSender>,
         response: &y_core::provider::ChatResponse,
         data: &LlmIterationData,
         iteration: usize,
         tool_call_names: Vec<String>,
     ) {
-        if let Some(ref tx) = progress {
+        if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::LlmResponse {
                 iteration,
                 model: response.model.clone(),
@@ -633,7 +639,7 @@ impl AgentService {
         container: &ServiceContainer,
         config: &AgentExecutionConfig,
         response: &y_core::provider::ChatResponse,
-        progress: &Option<TurnEventSender>,
+        progress: Option<&TurnEventSender>,
         data: &LlmIterationData,
         ctx: &mut ToolExecContext,
     ) {
@@ -680,7 +686,7 @@ impl AgentService {
         response: &y_core::provider::ChatResponse,
         parse_result: &ParseResult,
         text: &str,
-        progress: &Option<TurnEventSender>,
+        progress: Option<&TurnEventSender>,
         data: &LlmIterationData,
         ctx: &mut ToolExecContext,
     ) {
@@ -733,7 +739,7 @@ impl AgentService {
         container: &ServiceContainer,
         config: &AgentExecutionConfig,
         response: &y_core::provider::ChatResponse,
-        progress: &Option<TurnEventSender>,
+        progress: Option<&TurnEventSender>,
         data: &LlmIterationData,
         ctx: ToolExecContext,
         final_model: String,

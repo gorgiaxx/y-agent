@@ -75,7 +75,11 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
         &self,
         params: GenerationParams,
     ) -> Result<Uuid, crate::trace_store::TraceStoreError> {
-        let mut obs = Observation::new(params.trace_id, ObservationType::Generation, "llm-generation");
+        let mut obs = Observation::new(
+            params.trace_id,
+            ObservationType::Generation,
+            "llm-generation",
+        );
         obs.parent_id = params.parent_id;
         obs.session_id = params.session_id;
         obs.model = Some(params.model.to_string());

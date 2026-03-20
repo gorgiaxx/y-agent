@@ -182,7 +182,7 @@ impl ConfigLoader {
         let mut config = YAgentConfig::default();
 
         // Layer 6: project config directory (split per-concern files).
-        self.load_config_dir_from(&self.config_dir_path, &mut config)?;
+        Self::load_config_dir_from(self.config_dir_path.as_ref(), &mut config)?;
 
         // Layer 5: project config file (monolithic, backward compat).
         if let Some(ref path) = self.project_config_path {
@@ -195,7 +195,7 @@ impl ConfigLoader {
         }
 
         // Layer 4: user config directory (split per-concern files).
-        self.load_config_dir_from(&self.user_config_dir_path, &mut config)?;
+        Self::load_config_dir_from(self.user_config_dir_path.as_ref(), &mut config)?;
 
         // Layer 3: user config file (merges over project config).
         if let Some(ref path) = self.user_config_path {
@@ -233,13 +233,9 @@ impl ConfigLoader {
     /// - `hooks.toml`     → `config.hooks`
     /// - `tools.toml`     → `config.tools`
     /// - `guardrails.toml`→ `config.guardrails`
-    fn load_config_dir_from(
-        &self,
-        dir_path: &Option<PathBuf>,
-        config: &mut YAgentConfig,
-    ) -> Result<()> {
+    fn load_config_dir_from(dir_path: Option<&PathBuf>, config: &mut YAgentConfig) -> Result<()> {
         let dir = match dir_path {
-            Some(ref p) if p.is_dir() => p,
+            Some(p) if p.is_dir() => p,
             _ => return Ok(()),
         };
 
@@ -338,13 +334,13 @@ impl ConfigLoader {
     /// Apply CLI argument overrides to the config.
     fn apply_cli_overrides(&self, config: &mut YAgentConfig) {
         if let Some(val) = self.cli_overrides.get("log_level") {
-            config.log_level = val.clone();
+            config.log_level.clone_from(val);
         }
         if let Some(val) = self.cli_overrides.get("output_format") {
-            config.output_format = val.clone();
+            config.output_format.clone_from(val);
         }
         if let Some(val) = self.cli_overrides.get("db_path") {
-            config.storage.db_path = val.clone();
+            config.storage.db_path.clone_from(val);
         }
         if let Some(val) = self.cli_overrides.get("log_dir") {
             config.log_dir = Some(val.clone());
@@ -384,9 +380,8 @@ pub fn validate_config(config: &YAgentConfig) -> Result<()> {
 ///
 /// Absolute paths and `:memory:` are left unchanged.
 pub fn resolve_storage_paths(config: &mut YAgentConfig) {
-    let base_dir = match dirs_state() {
-        Some(dir) => dir,
-        None => return, // Cannot determine home dir; leave paths as-is.
+    let Some(base_dir) = dirs_state() else {
+        return; // Cannot determine home dir; leave paths as-is.
     };
 
     // Resolve db_path.
@@ -418,10 +413,10 @@ fn merge_config(target: &mut YAgentConfig, source: &YAgentConfig) {
     let defaults = YAgentConfig::default();
 
     if source.log_level != defaults.log_level {
-        target.log_level = source.log_level.clone();
+        target.log_level.clone_from(&source.log_level);
     }
     if source.output_format != defaults.output_format {
-        target.output_format = source.output_format.clone();
+        target.output_format.clone_from(&source.output_format);
     }
     if source.log_dir != defaults.log_dir {
         target.log_dir.clone_from(&source.log_dir);

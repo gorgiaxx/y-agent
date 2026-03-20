@@ -40,7 +40,7 @@ pub struct RetrievalConfig {
     /// Search strategy.
     pub strategy: SearchStrategy,
     /// Minimum similarity threshold (0.0–1.0). Results below are discarded.
-    pub min_similarity_threshold: f32,
+    pub min_similarity_threshold: f64,
     /// Decay rate for freshness boost.
     pub freshness_decay_rate: f64,
     /// Whether to enable paragraph-level dedup.
@@ -74,9 +74,9 @@ pub struct RetrievalResult {
     /// The matched chunk.
     pub chunk: Chunk,
     /// Final blended relevance score.
-    pub relevance: f32,
+    pub relevance: f64,
     /// Vector similarity component (if applicable).
-    pub vector_score: Option<f32>,
+    pub vector_score: Option<f64>,
     /// BM25 keyword score component (if applicable).
     pub bm25_score: Option<f64>,
 }
@@ -277,7 +277,7 @@ impl<T: Tokenizer> HybridRetriever<T> {
         // Apply quality boost.
         for result in &mut results {
             if let Some(&quality) = self.quality_scores.get(&result.chunk.id) {
-                let boost = quality.sqrt();
+                let boost = f64::from(quality.sqrt());
                 result.relevance *= boost;
             }
         }
@@ -317,7 +317,7 @@ impl<T: Tokenizer> HybridRetriever<T> {
             .filter_map(|c| {
                 bm25_map.get(c.id.as_str()).map(|&score| RetrievalResult {
                     chunk: c.clone(),
-                    relevance: score as f32,
+                    relevance: score,
                     vector_score: None,
                     bm25_score: Some(score),
                 })
@@ -352,8 +352,8 @@ impl<T: Tokenizer> HybridRetriever<T> {
                 if score > 0.0 {
                     Some(RetrievalResult {
                         chunk: c.clone(),
-                        relevance: score,
-                        vector_score: Some(score),
+                        relevance: f64::from(score),
+                        vector_score: Some(f64::from(score)),
                         bm25_score: None,
                     })
                 } else {
@@ -404,15 +404,14 @@ impl<T: Tokenizer> HybridRetriever<T> {
                 let bm25 = bm25_map.get(c.id.as_str()).copied().unwrap_or(0.0);
                 let bm25_normalized = if max_bm25 > 0.0 { bm25 / max_bm25 } else { 0.0 };
 
-                let blended = (self.config.vector_weight * f64::from(semantic)
-                    + self.config.bm25_weight * bm25_normalized)
-                    as f32;
+                let blended = self.config.vector_weight * f64::from(semantic)
+                    + self.config.bm25_weight * bm25_normalized;
 
                 if blended > 0.0 {
                     Some(RetrievalResult {
                         chunk: c.clone(),
                         relevance: blended,
-                        vector_score: Some(semantic),
+                        vector_score: Some(f64::from(semantic)),
                         bm25_score: Some(bm25),
                     })
                 } else {
@@ -425,8 +424,7 @@ impl<T: Tokenizer> HybridRetriever<T> {
     /// Compute text similarity (development substitute for vector cosine similarity).
     fn compute_text_similarity(query: &str, content: &str) -> f32 {
         if content.contains(query) {
-            // Exact substring match — high score.
-            1.0
+            1.0_f32
         } else {
             // Word overlap score.
             let query_words: Vec<&str> = query.split_whitespace().collect();
@@ -435,7 +433,10 @@ impl<T: Tokenizer> HybridRetriever<T> {
             }
             let matches = query_words.iter().filter(|w| content.contains(**w)).count();
 
-            let score = matches as f32 / query_words.len() as f32;
+            // Word counts are small, u16 is always sufficient.
+            let matches_f = f32::from(u16::try_from(matches).unwrap_or(u16::MAX));
+            let total_f = f32::from(u16::try_from(query_words.len()).unwrap_or(u16::MAX));
+            let score = matches_f / total_f;
             score * 0.8 // Scale down partial matches.
         }
     }

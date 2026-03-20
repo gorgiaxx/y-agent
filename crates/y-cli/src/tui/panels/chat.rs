@@ -106,8 +106,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
         let visible_start = scroll_to;
         let visible_end = (scroll_to + inner_height).min(total_lines);
 
-        for row_idx in visible_start..visible_end {
-            lines[row_idx] = apply_selection_highlight(&lines[row_idx], row_idx, selection);
+        for (row_idx, line) in lines
+            .iter_mut()
+            .enumerate()
+            .skip(visible_start)
+            .take(visible_end - visible_start)
+        {
+            *line = apply_selection_highlight(line, row_idx, selection);
         }
     }
 

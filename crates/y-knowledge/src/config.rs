@@ -24,7 +24,7 @@ pub struct KnowledgeConfig {
     /// Minimum similarity threshold for retrieval results (0.0-1.0).
     /// Results below this score are discarded. Inspired by `MaxKB` default.
     #[serde(default = "default_min_similarity_threshold")]
-    pub min_similarity_threshold: f32,
+    pub min_similarity_threshold: f64,
 
     /// Maximum number of chunks per entry. If chunking produces more than
     /// this limit, adjacent chunks are merged to stay within budget.
@@ -129,7 +129,7 @@ const fn default_l2_max_tokens() -> u32 {
 fn default_collection() -> String {
     "default".to_string()
 }
-const fn default_min_similarity_threshold() -> f32 {
+const fn default_min_similarity_threshold() -> f64 {
     0.65
 }
 const fn default_max_chunks_per_entry() -> usize {

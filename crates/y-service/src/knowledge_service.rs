@@ -28,6 +28,17 @@ use y_knowledge::{
     ingestion::{markdown::MarkdownConnector, text::TextConnector, SourceConnector},
 };
 
+/// Snapshot of entry data used during re-indexing to avoid borrow conflicts.
+struct ReindexEntryData {
+    entry_id: String,
+    chunks: Vec<String>,
+    source_uri: String,
+    title: String,
+    quality_score: f32,
+    summary: Option<String>,
+    section_titles: Vec<String>,
+}
+
 /// Knowledge service error.
 #[derive(Debug, thiserror::Error)]
 pub enum KnowledgeServiceError {
@@ -626,28 +637,18 @@ impl KnowledgeService {
         let mut embedding_count = 0usize;
 
         // Collect entry data first to avoid borrow conflict.
-        let entries_data: Vec<(
-            String,
-            Vec<String>,
-            String,
-            String,
-            f32,
-            Option<String>,
-            Vec<String>,
-        )> = self
+        let entries_data: Vec<ReindexEntryData> = self
             .entries
             .iter()
             .filter(|(_, entry)| !entry.chunks.is_empty())
-            .map(|(entry_id, entry)| {
-                (
-                    entry_id.clone(),
-                    entry.chunks.clone(),
-                    entry.source.uri.clone(),
-                    entry.source.title.clone(),
-                    entry.quality_score,
-                    entry.summary.clone(),
-                    entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
-                )
+            .map(|(entry_id, entry)| ReindexEntryData {
+                entry_id: entry_id.clone(),
+                chunks: entry.chunks.clone(),
+                source_uri: entry.source.uri.clone(),
+                title: entry.source.title.clone(),
+                quality_score: entry.quality_score,
+                summary: entry.summary.clone(),
+                section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
             })
             .collect();
 
@@ -656,29 +657,28 @@ impl KnowledgeService {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        for (entry_id, chunks, source_uri, title, quality_score, summary, section_titles) in
-            &entries_data
-        {
+        for entry in &entries_data {
             let domain = self
                 .entries
-                .get(entry_id)
+                .get(&entry.entry_id)
                 .and_then(|e| e.domains.first().cloned())
                 .unwrap_or_default();
 
             // Build all Chunk structs for this entry.
-            let all_chunks: Vec<Chunk> = chunks
+            let all_chunks: Vec<Chunk> = entry
+                .chunks
                 .iter()
                 .enumerate()
                 .map(|(i, chunk_content)| Chunk {
-                    id: format!("{entry_id}-{i}"),
-                    document_id: entry_id.clone(),
+                    id: format!("{}-{i}", entry.entry_id),
+                    document_id: entry.entry_id.clone(),
                     level: ChunkLevel::L2,
                     content: chunk_content.clone(),
                     token_estimate: u32::try_from(chunk_content.len() / 4).unwrap_or(u32::MAX),
                     metadata: ChunkMetadata {
-                        source: source_uri.clone(),
+                        source: entry.source_uri.clone(),
                         domain: domain.clone(),
-                        title: title.clone(),
+                        title: entry.title.clone(),
                         section_index: i,
                     },
                 })
@@ -705,22 +705,22 @@ impl KnowledgeService {
                 knowledge.retriever_mut().index_batch_with_embeddings(
                     chunks_with_emb,
                     embs,
-                    *quality_score,
+                    entry.quality_score,
                 );
             }
             if !chunks_without_emb.is_empty() {
                 knowledge
                     .retriever_mut()
-                    .index_batch_with_quality(chunks_without_emb, *quality_score);
+                    .index_batch_with_quality(chunks_without_emb, entry.quality_score);
             }
 
             // Register L0/L1 metadata for progressive context injection.
             knowledge.register_entry_metadata(
-                entry_id,
+                &entry.entry_id,
                 EntryMetadata {
-                    title: title.clone(),
-                    summary: summary.clone(),
-                    section_titles: section_titles.clone(),
+                    title: entry.title.clone(),
+                    summary: entry.summary.clone(),
+                    section_titles: entry.section_titles.clone(),
                 },
             );
         }

@@ -182,7 +182,8 @@ impl MaintenanceManager {
             .get(entry_id)
             .map_or(Duration::hours(i64::from(u32::MAX)), |t| Utc::now() - *t);
 
-        let ttl = Duration::hours(self.config.default_ttl_hours as i64);
+        let ttl_hours = i64::try_from(self.config.default_ttl_hours).unwrap_or(i64::MAX);
+        let ttl = Duration::hours(ttl_hours);
         let ttl_expired = age > ttl;
 
         let action = if content_changed {
@@ -212,7 +213,8 @@ impl MaintenanceManager {
 
     /// Get entries that need attention (stale or expired).
     pub fn entries_needing_attention(&self) -> Vec<String> {
-        let ttl = Duration::hours(self.config.default_ttl_hours as i64);
+        let ttl_hours = i64::try_from(self.config.default_ttl_hours).unwrap_or(i64::MAX);
+        let ttl = Duration::hours(ttl_hours);
 
         self.refresh_times
             .iter()

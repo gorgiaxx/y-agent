@@ -457,7 +457,7 @@ impl AgentDelegator for AgentPool {
             fallback_models: definition.fallback_models.clone(),
             provider_tags: definition.provider_tags.clone(),
             temperature: definition.temperature,
-            max_tokens: Some(definition.max_context_tokens as u32),
+            max_tokens: Some(u32::try_from(definition.max_context_tokens).unwrap_or(u32::MAX)),
             timeout_secs: definition.timeout_secs,
             allowed_tools: definition.allowed_tools.clone(),
             denied_tools: definition.denied_tools.clone(),

@@ -72,7 +72,7 @@ impl DocumentDecomposer {
         }
 
         // Split by level-2 headings (## )
-        let sections = self.split_by_headings(content);
+        let sections = Self::split_by_headings(content);
 
         if sections.len() <= 1 {
             // No headings to split on — keep as single root
@@ -84,7 +84,7 @@ impl DocumentDecomposer {
         }
 
         // First section becomes root (intro/summary), rest become sub-docs
-        let root_content = self.build_root(&sections);
+        let root_content = Self::build_root(&sections);
         let mut sub_documents = Vec::new();
         let mut tree_index = Vec::new();
 
@@ -110,7 +110,7 @@ impl DocumentDecomposer {
         }
     }
 
-    fn split_by_headings(&self, content: &str) -> Vec<Section> {
+    fn split_by_headings(content: &str) -> Vec<Section> {
         let mut sections = Vec::new();
         let mut current_heading = String::new();
         let mut current_lines: Vec<&str> = Vec::new();
@@ -142,7 +142,7 @@ impl DocumentDecomposer {
         sections
     }
 
-    fn build_root(&self, sections: &[Section]) -> String {
+    fn build_root(sections: &[Section]) -> String {
         let mut root = String::new();
 
         // Keep the intro (first section) in full

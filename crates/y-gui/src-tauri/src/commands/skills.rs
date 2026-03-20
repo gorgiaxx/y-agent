@@ -12,6 +12,7 @@ use y_skills::{
     SkillRegistryImpl,
 };
 
+use y_core::agent::ContextStrategyHint;
 use y_core::skill::SkillRegistry;
 
 use crate::state::AppState;
@@ -378,7 +379,6 @@ pub async fn skill_import(
             "source_format": format_str,
         });
 
-        use y_core::agent::ContextStrategyHint;
         let security_result = state
             .container
             .agent_delegator

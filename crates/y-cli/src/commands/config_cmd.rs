@@ -21,7 +21,7 @@ pub enum ConfigAction {
 }
 
 /// Run a config subcommand.
-pub async fn run(action: &ConfigAction, config: &YAgentConfig, mode: OutputMode) -> Result<()> {
+pub fn run(action: &ConfigAction, config: &YAgentConfig, mode: OutputMode) -> Result<()> {
     match action {
         ConfigAction::Show => match mode {
             OutputMode::Json => {

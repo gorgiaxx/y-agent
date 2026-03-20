@@ -34,8 +34,8 @@ pub struct Bm25Index<T: Tokenizer> {
     doc_lengths: HashMap<String, u32>,
     /// Total number of indexed chunks.
     doc_count: u32,
-    /// Sum of all document lengths (for avg calculation).
-    total_length: u64,
+    /// Sum of all document lengths (for avg calculation, accumulated as f64).
+    total_length: f64,
 }
 
 /// A BM25 search result.
@@ -55,7 +55,7 @@ impl<T: Tokenizer> Bm25Index<T> {
             index: HashMap::new(),
             doc_lengths: HashMap::new(),
             doc_count: 0,
-            total_length: 0,
+            total_length: 0.0,
         }
     }
 
@@ -66,7 +66,7 @@ impl<T: Tokenizer> Bm25Index<T> {
 
         self.doc_lengths.insert(chunk_id.to_string(), doc_len);
         self.doc_count += 1;
-        self.total_length += u64::from(doc_len);
+        self.total_length += f64::from(doc_len);
 
         // Count term frequencies.
         let mut term_freqs: HashMap<String, u32> = HashMap::new();
@@ -97,7 +97,7 @@ impl<T: Tokenizer> Bm25Index<T> {
 
             self.doc_lengths.insert(chunk_id.to_string(), doc_len);
             self.doc_count += 1;
-            self.total_length += u64::from(doc_len);
+            self.total_length += f64::from(doc_len);
 
             let mut term_freqs: HashMap<String, u32> = HashMap::new();
             for token in tokens {
@@ -117,7 +117,7 @@ impl<T: Tokenizer> Bm25Index<T> {
     pub fn remove(&mut self, chunk_id: &str) {
         if let Some(doc_len) = self.doc_lengths.remove(chunk_id) {
             self.doc_count = self.doc_count.saturating_sub(1);
-            self.total_length = self.total_length.saturating_sub(u64::from(doc_len));
+            self.total_length -= f64::from(doc_len);
         }
 
         // Remove postings for this chunk.
@@ -143,7 +143,7 @@ impl<T: Tokenizer> Bm25Index<T> {
         for id in chunk_ids {
             if let Some(doc_len) = self.doc_lengths.remove(id) {
                 self.doc_count = self.doc_count.saturating_sub(1);
-                self.total_length = self.total_length.saturating_sub(u64::from(doc_len));
+                self.total_length -= f64::from(doc_len);
             }
         }
 
@@ -163,7 +163,7 @@ impl<T: Tokenizer> Bm25Index<T> {
             return vec![];
         }
 
-        let avgdl = self.total_length as f64 / f64::from(self.doc_count);
+        let avgdl = self.total_length / f64::from(self.doc_count);
 
         // Accumulate BM25 scores per chunk.
         let mut scores: HashMap<&str, f64> = HashMap::new();
@@ -171,7 +171,7 @@ impl<T: Tokenizer> Bm25Index<T> {
         for term in &query_tokens {
             if let Some(postings) = self.index.get(term) {
                 // IDF: log((N - n + 0.5) / (n + 0.5) + 1)
-                let n = postings.len() as f64;
+                let n = f64::from(u32::try_from(postings.len()).unwrap_or(u32::MAX));
                 let idf = ((f64::from(self.doc_count) - n + 0.5) / (n + 0.5) + 1.0).ln();
 
                 for posting in postings {

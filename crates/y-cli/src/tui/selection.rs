@@ -91,8 +91,8 @@ pub fn extract_text(lines: &[String], selection: &TextSelection) -> String {
     let ((sr, sc), (er, ec)) = selection.sorted();
     let mut result = Vec::new();
 
-    for row in sr..=er.min(lines.len().saturating_sub(1)) {
-        let line = &lines[row];
+    let end_bound = er.min(lines.len().saturating_sub(1));
+    for (row, line) in lines.iter().enumerate().take(end_bound + 1).skip(sr) {
         let chars: Vec<char> = line.chars().collect();
         let start_col = if row == sr { sc } else { 0 };
         let end_col = if row == er {

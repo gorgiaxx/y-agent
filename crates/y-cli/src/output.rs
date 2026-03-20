@@ -1,5 +1,7 @@
 //! Output formatting: JSON, table, and plain text modes.
 
+use std::fmt::Write as _;
+
 use serde::Serialize;
 
 /// Output rendering mode.
@@ -67,7 +69,7 @@ pub fn format_table(headers: &[&str], rows: &[TableRow]) -> String {
         if i > 0 {
             output.push_str("  ");
         }
-        output.push_str(&format!("{:<width$}", header, width = widths[i]));
+        let _ = write!(output, "{:<width$}", header, width = widths[i]);
     }
     output.push('\n');
 
@@ -89,7 +91,7 @@ pub fn format_table(headers: &[&str], rows: &[TableRow]) -> String {
             if i > 0 {
                 output.push_str("  ");
             }
-            output.push_str(&format!("{:<width$}", cell, width = widths[i]));
+            let _ = write!(output, "{:<width$}", cell, width = widths[i]);
         }
         output.push('\n');
     }

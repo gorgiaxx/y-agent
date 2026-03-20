@@ -19,6 +19,6 @@ pub use cost::CostIntelligence;
 pub use replay::TraceReplay;
 pub use search::{TraceSearch, TraceSearchQuery};
 pub use sqlite_trace_store::SqliteTraceStore;
-pub use subscriber::DiagnosticsSubscriber;
+pub use subscriber::{DiagnosticsSubscriber, GenerationParams};
 pub use trace_store::{InMemoryTraceStore, TraceStore, TraceStoreError};
 pub use types::*;

@@ -31,7 +31,7 @@ pub enum CommandCategory {
 }
 
 impl CommandCategory {
-    pub fn label(&self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::Session => "Session",
             Self::Agent => "Agent",

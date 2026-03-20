@@ -3,6 +3,8 @@
 //! Each handler receives a parsed command line, the mutable `AppState`,
 //! and returns a `CommandResult` indicating success, failure, or output.
 
+use std::fmt::Write as _;
+
 use crate::tui::state::{AppState, ChatMessage, MessageRole};
 use chrono::Utc;
 
@@ -175,13 +177,14 @@ fn generate_help_text() -> String {
     for cmd in reg.all() {
         if current_category != Some(cmd.category) {
             current_category = Some(cmd.category);
-            text.push_str(&format!("  [{}]\n", cmd.category.label()));
+            let _ = writeln!(text, "  [{}]", cmd.category.label());
         }
         let alias_str = cmd.alias.map(|a| format!(" (/{a})")).unwrap_or_default();
-        text.push_str(&format!(
-            "    /{}{:<10} {}\n",
+        let _ = writeln!(
+            text,
+            "    /{}{:<10} {}",
             cmd.name, alias_str, cmd.description
-        ));
+        );
     }
 
     text.push_str("\nPress Esc to dismiss. Type /help <command> for details.");

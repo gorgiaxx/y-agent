@@ -114,9 +114,10 @@ impl ResourceLinker {
         }
         let intersection = a.intersection(b).count();
         let smaller = a.len().min(b.len());
-        // Values are always small (word counts), no real precision loss.
-        let result = intersection as f64 / smaller as f64;
-        result
+        // Values are always small (word counts), u32 is sufficient.
+        let intersection_f = f64::from(u32::try_from(intersection).unwrap_or(u32::MAX));
+        let smaller_f = f64::from(u32::try_from(smaller).unwrap_or(u32::MAX));
+        intersection_f / smaller_f
     }
 }
 

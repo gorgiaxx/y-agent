@@ -342,12 +342,15 @@ fn tokens_to_max_chars(max_tokens: u32, content: &str) -> usize {
     let sample: String = content.chars().take(200).collect();
     let total = sample.chars().count().max(1);
     let cjk = sample.chars().filter(|c| is_cjk_char(*c)).count();
-    let cjk_ratio = cjk as f64 / total as f64;
+    // These values are bounded by the 200-char sample, so u32 conversion is safe.
+    let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
+    let cjk_u32 = u32::try_from(cjk).unwrap_or(u32::MAX);
+    let cjk_ratio = f64::from(cjk_u32) / f64::from(total_u32);
 
-    // Weighted chars-per-token: CJK ≈ 0.67 chars/token, Latin ≈ 4.0 chars/token.
+    // Weighted chars-per-token: CJK ~ 0.67 chars/token, Latin ~ 4.0 chars/token.
     let chars_per_token = cjk_ratio * 0.67 + (1.0 - cjk_ratio) * 4.0;
-    let max_chars = (f64::from(max_tokens) * chars_per_token) as usize;
-    max_chars
+    // Result is always non-negative and bounded by max_tokens * 4.0.
+    (f64::from(max_tokens) * chars_per_token) as usize
 }
 
 /// Check if a character is in the CJK Unified Ideographs range.

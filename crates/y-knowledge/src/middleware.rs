@@ -34,7 +34,7 @@ pub struct InjectKnowledgeConfig {
     /// Maximum number of knowledge chunks to inject.
     pub max_chunks: usize,
     /// Minimum relevance score to include a result.
-    pub min_relevance: f32,
+    pub min_relevance: f64,
     /// Default resolution level (`l0`, `l1`, `l2`).
     pub default_resolution: String,
     /// Number of neighboring chunks to include on each side of a matched
@@ -83,7 +83,7 @@ pub struct KnowledgeContextItem {
     /// Source title.
     pub title: String,
     /// Relevance score.
-    pub relevance: f32,
+    pub relevance: f64,
     /// Chunk ID for reference.
     pub chunk_id: String,
     /// Document ID that this chunk belongs to.

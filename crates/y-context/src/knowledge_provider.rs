@@ -103,7 +103,7 @@ impl KnowledgeContextProvider {
 
 #[async_trait]
 impl ContextProvider for KnowledgeContextProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "inject_knowledge"
     }
 

@@ -54,7 +54,7 @@ impl FormatConverter {
         let mut files_written = 0usize;
 
         // Write skill.toml manifest
-        let manifest_content = self.build_manifest(name, decomposed);
+        let manifest_content = Self::build_manifest(name, decomposed);
         std::fs::write(skill_dir.join("skill.toml"), &manifest_content).map_err(|e| {
             SkillModuleError::Other {
                 message: format!("failed to write skill.toml: {e}"),
@@ -105,7 +105,7 @@ impl FormatConverter {
         })
     }
 
-    fn build_manifest(&self, name: &str, decomposed: &DecomposedSkill) -> String {
+    fn build_manifest(name: &str, decomposed: &DecomposedSkill) -> String {
         let root_tokens = crate::manifest::estimate_tokens(&decomposed.root_content);
         let mut manifest = format!(
             "[skill]\n\

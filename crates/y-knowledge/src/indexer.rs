@@ -50,11 +50,7 @@ impl VectorIndexer {
     }
 
     /// Create a collection (no-op without Qdrant).
-    pub fn create_collection(
-        &self,
-        _name: &str,
-        _vector_size: u64,
-    ) -> Result<(), KnowledgeError> {
+    pub fn create_collection(&self, _name: &str, _vector_size: u64) -> Result<(), KnowledgeError> {
         tracing::warn!(
             "VectorIndexer: create_collection is a no-op (enable vector_qdrant feature)"
         );

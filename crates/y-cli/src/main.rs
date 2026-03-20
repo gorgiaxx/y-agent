@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
             commands::status::run(&services, mode).await?;
         }
         Some(Commands::Config { ref action }) => {
-            commands::config_cmd::run(action, &config, mode).await?;
+            commands::config_cmd::run(action, &config, mode)?;
         }
         Some(Commands::Session { ref action }) => {
             let services = wire::wire(&config).await?;

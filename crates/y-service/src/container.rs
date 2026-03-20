@@ -38,7 +38,7 @@ use y_storage::{
 use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
 use crate::config::ServiceConfig;
-use crate::diagnostics::DiagnosticsAgentDelegator;
+
 use crate::knowledge_service::KnowledgeService;
 use crate::skill_ingestion::SkillIngestionService;
 
@@ -299,10 +299,66 @@ tools = ["tool_search"]
         }
 
         // 10d. Knowledge service + embedding provider.
-        //
-        // Derive knowledge data dir from the storage db_path parent. This
-        // places knowledge data alongside the SQLite database (e.g.,
-        // `~/.local/state/y-agent/data/knowledge/`).
+        let (knowledge_service, embedding_provider) = Self::init_knowledge_service(config);
+
+        // 10e. Register KnowledgeContextProvider in context pipeline.
+        {
+            let ks = knowledge_service.lock().await;
+            let knowledge_handle = ks.knowledge_handle();
+            if let Some(ref provider) = embedding_provider {
+                context_pipeline.register(Box::new(KnowledgeContextProvider::with_embedding(
+                    knowledge_handle,
+                    Arc::clone(provider),
+                )));
+            } else {
+                context_pipeline
+                    .register(Box::new(KnowledgeContextProvider::new(knowledge_handle)));
+            }
+        }
+
+        // 11. Workflow store.
+        let workflow_store = SqliteWorkflowStore::new(pool.clone());
+
+        // 12. Diagnostics -- SQLite-backed for persistence.
+        let sqlite_trace_store = y_diagnostics::SqliteTraceStore::new(pool.clone());
+        let trace_store_dyn: Arc<dyn TraceStore> = Arc::new(sqlite_trace_store);
+        let diagnostics = Arc::new(DiagnosticsSubscriber::new(trace_store_dyn));
+
+        // 13. Agent infrastructure.
+        let (agent_registry, agent_pool_for_services, agent_delegator, delegation_tracker) =
+            Self::init_agent_and_diagnostics(&provider_pool, &diagnostics);
+
+        Ok(Self {
+            provider_pool: RwLock::new(provider_pool),
+            session_manager,
+            hook_system,
+            tool_registry,
+            runtime_manager,
+            context_pipeline,
+            guardrail_manager,
+            agent_registry,
+            agent_pool: agent_pool_for_services,
+            agent_delegator,
+            delegation_tracker,
+            workflow_store,
+            prompt_context,
+            diagnostics,
+            chat_checkpoint_manager,
+            tool_activation_set,
+            tool_taxonomy,
+            dynamic_tool_schemas,
+            chat_message_store,
+            knowledge_service,
+        })
+    }
+
+    /// Initialise the knowledge service and optional embedding provider.
+    fn init_knowledge_service(
+        config: &ServiceConfig,
+    ) -> (
+        Arc<Mutex<KnowledgeService>>,
+        Option<Arc<dyn y_core::embedding::EmbeddingProvider>>,
+    ) {
         let knowledge_data_dir = {
             let db_path = std::path::Path::new(&config.storage.db_path);
             db_path
@@ -313,7 +369,6 @@ tools = ["tool_search"]
         let mut knowledge_service =
             KnowledgeService::with_data_dir(config.knowledge.clone(), knowledge_data_dir);
 
-        // Construct embedding provider if enabled.
         let embedding_provider: Option<Arc<dyn y_core::embedding::EmbeddingProvider>> = if config
             .knowledge
             .embedding_enabled
@@ -349,84 +404,49 @@ tools = ["tool_search"]
             knowledge_service.set_embedding_provider(Arc::clone(provider));
         }
 
-        let knowledge_service = Arc::new(Mutex::new(knowledge_service));
+        (Arc::new(Mutex::new(knowledge_service)), embedding_provider)
+    }
 
-        // 10e. Register KnowledgeContextProvider in context pipeline.
-        {
-            let ks = knowledge_service.lock().await;
-            let knowledge_handle = ks.knowledge_handle();
-            if let Some(ref provider) = embedding_provider {
-                context_pipeline.register(Box::new(KnowledgeContextProvider::with_embedding(
-                    knowledge_handle,
-                    Arc::clone(provider),
-                )));
-            } else {
-                context_pipeline
-                    .register(Box::new(KnowledgeContextProvider::new(knowledge_handle)));
-            }
-        }
-
-        // 11. Agent registry + pool.
+    /// Initialise agent registry, pool, delegator, and wrap the delegator with diagnostics.
+    fn init_agent_and_diagnostics(
+        provider_pool: &Arc<ProviderPoolImpl>,
+        diagnostics: &Arc<DiagnosticsSubscriber<dyn TraceStore>>,
+    ) -> (
+        Mutex<AgentRegistry>,
+        Mutex<AgentPool>,
+        Arc<dyn AgentDelegator>,
+        Arc<DelegationTracker>,
+    ) {
         let agent_registry = Mutex::new(AgentRegistry::new());
         let mut agent_pool = AgentPool::new(MultiAgentConfig::default());
 
         let runner = Arc::new(SingleTurnRunner::new(
-            Arc::clone(&provider_pool) as Arc<dyn y_core::provider::ProviderPool>
+            Arc::clone(provider_pool) as Arc<dyn y_core::provider::ProviderPool>
         ));
         agent_pool.set_runner(runner);
 
-        // Extract the delegation tracker *before* the pool is consumed by Arc::new().
-        // This is the tracker that `delegate()` will write to.
         let delegation_tracker = Arc::clone(agent_pool.delegation_tracker());
 
         let agent_delegator: Arc<dyn AgentDelegator> = Arc::new(agent_pool);
-        // Create a second pool with the same config and runner for service-level use.
         let mut agent_pool_for_services = AgentPool::new(MultiAgentConfig::default());
         let runner2 = Arc::new(SingleTurnRunner::new(
-            Arc::clone(&provider_pool) as Arc<dyn y_core::provider::ProviderPool>
+            Arc::clone(provider_pool) as Arc<dyn y_core::provider::ProviderPool>
         ));
         agent_pool_for_services.set_runner(runner2);
         let agent_pool_for_services = Mutex::new(agent_pool_for_services);
 
-        // 12. Workflow store.
-        let workflow_store = SqliteWorkflowStore::new(pool.clone());
+        let agent_delegator: Arc<dyn AgentDelegator> =
+            Arc::new(crate::diagnostics::DiagnosticsAgentDelegator::new(
+                agent_delegator,
+                Arc::clone(diagnostics),
+            ));
 
-        // 13. Diagnostics -- use SQLite-backed store so data survives restarts.
-        // The store needs a SqlitePool; we clone the existing pool reference.
-        let sqlite_trace_store = y_diagnostics::SqliteTraceStore::new(pool.clone());
-        let trace_store_dyn: Arc<dyn TraceStore> = Arc::new(sqlite_trace_store);
-        let diagnostics = Arc::new(DiagnosticsSubscriber::new(trace_store_dyn));
-
-        // 13b. Wrap the agent delegator with diagnostics recording so subagent
-        // LLM calls (title-generator, skill-ingestion, etc.) appear in the
-        // DIAGNOSTICS panel.
-        let agent_delegator: Arc<dyn AgentDelegator> = Arc::new(DiagnosticsAgentDelegator::new(
-            agent_delegator,
-            Arc::clone(&diagnostics),
-        ));
-
-        Ok(Self {
-            provider_pool: RwLock::new(provider_pool),
-            session_manager,
-            hook_system,
-            tool_registry,
-            runtime_manager,
-            context_pipeline,
-            guardrail_manager,
+        (
             agent_registry,
-            agent_pool: agent_pool_for_services,
+            agent_pool_for_services,
             agent_delegator,
             delegation_tracker,
-            workflow_store,
-            prompt_context,
-            diagnostics,
-            chat_checkpoint_manager,
-            tool_activation_set,
-            tool_taxonomy,
-            dynamic_tool_schemas,
-            chat_message_store,
-            knowledge_service,
-        })
+        )
     }
 
     /// Get a snapshot of the current provider pool.

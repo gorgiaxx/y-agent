@@ -104,11 +104,11 @@ impl SecurityScreener {
     pub fn screen(&self, content: &str) -> SecurityVerdict {
         let mut findings = Vec::new();
 
-        self.check_prompt_injection(content, &mut findings);
-        self.check_privilege_escalation(content, &mut findings);
-        self.check_unconstrained_delegation(content, &mut findings);
-        self.check_data_exfiltration(content, &mut findings);
-        self.check_excessive_freedom(content, &mut findings);
+        Self::check_prompt_injection(content, &mut findings);
+        Self::check_privilege_escalation(content, &mut findings);
+        Self::check_unconstrained_delegation(content, &mut findings);
+        Self::check_data_exfiltration(content, &mut findings);
+        Self::check_excessive_freedom(content, &mut findings);
 
         let blocking: Vec<_> = findings
             .iter()
@@ -131,7 +131,7 @@ impl SecurityScreener {
         }
     }
 
-    fn check_prompt_injection(&self, content: &str, findings: &mut Vec<SecurityFinding>) {
+    fn check_prompt_injection(content: &str, findings: &mut Vec<SecurityFinding>) {
         let patterns = [
             ("ignore previous instructions", 5),
             ("ignore all instructions", 5),
@@ -158,7 +158,7 @@ impl SecurityScreener {
         }
     }
 
-    fn check_privilege_escalation(&self, content: &str, findings: &mut Vec<SecurityFinding>) {
+    fn check_privilege_escalation(content: &str, findings: &mut Vec<SecurityFinding>) {
         let patterns = [
             ("sudo ", 4),
             ("as root", 4),
@@ -186,7 +186,7 @@ impl SecurityScreener {
         }
     }
 
-    fn check_unconstrained_delegation(&self, content: &str, findings: &mut Vec<SecurityFinding>) {
+    fn check_unconstrained_delegation(content: &str, findings: &mut Vec<SecurityFinding>) {
         let patterns = [
             ("delegate any task", 4),
             ("unlimited delegation", 5),
@@ -212,7 +212,7 @@ impl SecurityScreener {
         }
     }
 
-    fn check_data_exfiltration(&self, content: &str, findings: &mut Vec<SecurityFinding>) {
+    fn check_data_exfiltration(content: &str, findings: &mut Vec<SecurityFinding>) {
         let patterns = [
             ("send all data to", 5),
             ("upload credentials", 5),
@@ -236,7 +236,7 @@ impl SecurityScreener {
         }
     }
 
-    fn check_excessive_freedom(&self, content: &str, findings: &mut Vec<SecurityFinding>) {
+    fn check_excessive_freedom(content: &str, findings: &mut Vec<SecurityFinding>) {
         let patterns = [
             ("do anything", 3),
             ("no restrictions", 4),

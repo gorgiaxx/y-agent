@@ -48,24 +48,34 @@ pub struct EmbeddedScript {
     pub line_start: usize,
 }
 
+/// Kinds of security-related patterns detected during analysis.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityFlag {
+    /// Content contains patterns suggesting external API calls.
+    ExternalCalls,
+    /// Content contains file system operation patterns.
+    FileOperations,
+    /// Content contains executable code blocks.
+    CodeExecution,
+    /// Content contains patterns suggesting data exfiltration.
+    DataExfiltration,
+    /// Content contains delegation to other agents/skills.
+    Delegation,
+}
+
 /// Security flags detected during content analysis.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SecurityFlags {
-    /// Content contains patterns suggesting external API calls.
-    #[serde(default)]
-    pub has_external_calls: bool,
-    /// Content contains file system operation patterns.
-    #[serde(default)]
-    pub has_file_operations: bool,
-    /// Content contains executable code blocks.
-    #[serde(default)]
-    pub has_code_execution: bool,
-    /// Content contains patterns suggesting data exfiltration.
-    #[serde(default)]
-    pub has_data_exfiltration: bool,
-    /// Content contains delegation to other agents/skills.
-    #[serde(default)]
-    pub has_delegation: bool,
+    /// Set of detected security flags.
+    pub flags: std::collections::HashSet<SecurityFlag>,
+}
+
+impl SecurityFlags {
+    /// Check if a specific flag is set.
+    pub fn has(&self, flag: &SecurityFlag) -> bool {
+        self.flags.contains(flag)
+    }
 }
 
 /// Content analyzer using pattern matching (deterministic).
@@ -83,17 +93,17 @@ impl ContentAnalyzer {
 
     /// Analyze skill content and produce an analysis report.
     pub fn analyze(&self, content: &str) -> AnalysisReport {
-        let embedded_tools = self.detect_tools(content);
-        let embedded_scripts = self.detect_scripts(content);
-        let security_flags = self.detect_security_flags(content);
-        let quality_issues = self.detect_quality_issues(content);
-        let classification_hint = self.classify_hint(content, &embedded_tools, &embedded_scripts);
+        let embedded_tools = Self::detect_tools(content);
+        let embedded_scripts = Self::detect_scripts(content);
+        let security_flags = Self::detect_security_flags(content);
+        let quality_issues = Self::detect_quality_issues(content);
+        let classification_hint = Self::classify_hint(content, &embedded_tools, &embedded_scripts);
         let token_estimate = crate::manifest::estimate_tokens(content);
 
         AnalysisReport {
-            purpose: self.extract_purpose(content),
+            purpose: Self::extract_purpose(content),
             classification_hint,
-            capabilities: self.extract_capabilities(content),
+            capabilities: Self::extract_capabilities(content),
             embedded_tools,
             embedded_scripts,
             quality_issues,
@@ -102,7 +112,7 @@ impl ContentAnalyzer {
         }
     }
 
-    fn extract_purpose(&self, content: &str) -> String {
+    fn extract_purpose(content: &str) -> String {
         // Extract from first heading or first paragraph
         for line in content.lines() {
             let trimmed = line.trim();
@@ -119,7 +129,7 @@ impl ContentAnalyzer {
             .to_string()
     }
 
-    fn extract_capabilities(&self, content: &str) -> Vec<String> {
+    fn extract_capabilities(content: &str) -> Vec<String> {
         let mut caps = Vec::new();
         let mut in_list = false;
         for line in content.lines() {
@@ -139,7 +149,7 @@ impl ContentAnalyzer {
         caps
     }
 
-    fn detect_tools(&self, content: &str) -> Vec<EmbeddedTool> {
+    fn detect_tools(content: &str) -> Vec<EmbeddedTool> {
         let mut tools = Vec::new();
         let patterns = [
             ("curl ", "api_endpoint", "HTTP API call"),
@@ -163,7 +173,7 @@ impl ContentAnalyzer {
         tools
     }
 
-    fn detect_scripts(&self, content: &str) -> Vec<EmbeddedScript> {
+    fn detect_scripts(content: &str) -> Vec<EmbeddedScript> {
         let mut scripts = Vec::new();
         let mut in_block = false;
         let mut block_lang = String::new();
@@ -200,31 +210,45 @@ impl ContentAnalyzer {
         scripts
     }
 
-    fn detect_security_flags(&self, content: &str) -> SecurityFlags {
+    fn detect_security_flags(content: &str) -> SecurityFlags {
         let lower = content.to_lowercase();
-        SecurityFlags {
-            has_external_calls: lower.contains("http://")
-                || lower.contains("https://")
-                || lower.contains("curl ")
-                || lower.contains("api call"),
-            has_file_operations: lower.contains("read file")
-                || lower.contains("write file")
-                || lower.contains("fs.")
-                || lower.contains("open("),
-            has_code_execution: lower.contains("exec(")
-                || lower.contains("eval(")
-                || lower.contains("subprocess")
-                || lower.contains("system("),
-            has_data_exfiltration: lower.contains("send data")
-                || lower.contains("upload")
-                || lower.contains("exfiltrat"),
-            has_delegation: lower.contains("delegate")
-                || lower.contains("sub-agent")
-                || lower.contains("invoke agent"),
+        let mut flags = std::collections::HashSet::new();
+
+        if lower.contains("http://")
+            || lower.contains("https://")
+            || lower.contains("curl ")
+            || lower.contains("api call")
+        {
+            flags.insert(SecurityFlag::ExternalCalls);
         }
+        if lower.contains("read file")
+            || lower.contains("write file")
+            || lower.contains("fs.")
+            || lower.contains("open(")
+        {
+            flags.insert(SecurityFlag::FileOperations);
+        }
+        if lower.contains("exec(")
+            || lower.contains("eval(")
+            || lower.contains("subprocess")
+            || lower.contains("system(")
+        {
+            flags.insert(SecurityFlag::CodeExecution);
+        }
+        if lower.contains("send data") || lower.contains("upload") || lower.contains("exfiltrat") {
+            flags.insert(SecurityFlag::DataExfiltration);
+        }
+        if lower.contains("delegate")
+            || lower.contains("sub-agent")
+            || lower.contains("invoke agent")
+        {
+            flags.insert(SecurityFlag::Delegation);
+        }
+
+        SecurityFlags { flags }
     }
 
-    fn detect_quality_issues(&self, content: &str) -> Vec<String> {
+    fn detect_quality_issues(content: &str) -> Vec<String> {
         let mut issues = Vec::new();
         let token_est = crate::manifest::estimate_tokens(content);
 
@@ -242,12 +266,7 @@ impl ContentAnalyzer {
         issues
     }
 
-    fn classify_hint(
-        &self,
-        content: &str,
-        tools: &[EmbeddedTool],
-        scripts: &[EmbeddedScript],
-    ) -> String {
+    fn classify_hint(content: &str, tools: &[EmbeddedTool], scripts: &[EmbeddedScript]) -> String {
         if !tools.is_empty() || !scripts.is_empty() {
             if content.to_lowercase().contains("reasoning")
                 || content.to_lowercase().contains("think step by step")
@@ -312,7 +331,7 @@ curl -X POST https://api.example.com/deploy
 
         assert!(!report.embedded_scripts.is_empty());
         assert_eq!(report.embedded_scripts[0].language, "bash");
-        assert!(report.security_flags.has_external_calls);
+        assert!(report.security_flags.has(&SecurityFlag::ExternalCalls));
     }
 
     /// Analyzer detects API tools.

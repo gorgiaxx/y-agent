@@ -204,11 +204,8 @@ impl RecallStore {
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Apply MMR if enabled and there are embeddings.
-        let selected_indices = if self.config.use_mmr && query_embedding.is_some() {
-            // SAFETY: we just checked is_some() above, but clippy prefers
-            // avoiding .unwrap() after .is_some(). We keep it for readability
-            // since `if let` would force restructuring the else branch.
-            self.mmr_select(&scored, query_embedding.unwrap(), self.config.max_results)
+        let selected_indices = if let (true, Some(qe)) = (self.config.use_mmr, query_embedding) {
+            self.mmr_select(&scored, qe, self.config.max_results)
         } else {
             scored
                 .iter()

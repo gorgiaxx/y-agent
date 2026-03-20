@@ -227,14 +227,30 @@ impl ResourceMonitor {
         let inner = self.inner.lock().await;
 
         ResourceUtilization {
-            memory: inner.current.memory_bytes as f64 / inner.thresholds.max_memory_bytes as f64,
+            memory: u64_to_ratio(
+                inner.current.memory_bytes,
+                inner.thresholds.max_memory_bytes,
+            ),
             open_files: f64::from(inner.current.open_files)
                 / f64::from(inner.thresholds.max_open_files),
             active_tasks: f64::from(inner.current.active_tasks)
                 / f64::from(inner.thresholds.max_active_tasks),
-            disk: inner.current.disk_bytes as f64 / inner.thresholds.max_disk_bytes as f64,
+            disk: u64_to_ratio(inner.current.disk_bytes, inner.thresholds.max_disk_bytes),
         }
     }
+}
+
+/// Compute a u64 ratio as f64 without direct u64-to-f64 cast.
+///
+/// Uses integer permille (parts per thousand) to avoid `cast_precision_loss`:
+/// 3 decimal digits is more than sufficient for resource utilization ratios.
+fn u64_to_ratio(numerator: u64, denominator: u64) -> f64 {
+    if denominator == 0 {
+        return 0.0;
+    }
+    let permille = numerator.saturating_mul(1000) / denominator;
+    let permille_u32 = u32::try_from(permille).unwrap_or(u32::MAX);
+    f64::from(permille_u32) / 1000.0
 }
 
 /// Utilization ratios for each monitored resource.
