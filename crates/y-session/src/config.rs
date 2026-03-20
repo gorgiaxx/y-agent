@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for the session manager.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SessionConfig {
     /// Maximum tree depth for branching sessions.
     #[serde(default = "default_max_depth")]

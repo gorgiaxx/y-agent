@@ -79,26 +79,9 @@ pub fn run() {
                     .await
                     .expect("Failed to initialize ServiceContainer");
 
-                // Register the knowledge_search tool using the container's
-                // knowledge service (which already has embedding configured).
-                // NOTE: KnowledgeContextProvider is already registered by
-                // ServiceContainer::from_config (with embedding support).
-                {
-                    let ks = container.knowledge_service.lock().await;
-                    let kb_handle = ks.knowledge_handle();
-                    drop(ks);
-
-                    let kb_tool = std::sync::Arc::new(
-                        y_tools::builtin::knowledge_search::KnowledgeSearchTool::new(
-                            std::sync::Arc::clone(&kb_handle),
-                        ),
-                    );
-                    let kb_def =
-                        y_tools::builtin::knowledge_search::KnowledgeSearchTool::tool_definition();
-                    if let Err(e) = container.tool_registry.register_tool(kb_tool, kb_def).await {
-                        tracing::warn!(error = %e, "failed to register knowledge_search tool");
-                    }
-                }
+                // NOTE: KnowledgeSearchTool and KnowledgeContextProvider are
+                // both registered by ServiceContainer::from_config (with
+                // embedding support if configured).
 
                 container
             });
@@ -144,6 +127,7 @@ pub fn run() {
             commands::diagnostics::diagnostics_get_by_session,
             // Observability
             commands::observability::observability_snapshot,
+            commands::observability::observability_history,
             // Config
             commands::config::config_get,
             commands::config::config_set_section,

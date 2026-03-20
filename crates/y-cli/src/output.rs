@@ -111,7 +111,7 @@ pub fn print_error(msg: &str) {
 
 /// Print a success message.
 pub fn print_success(msg: &str) {
-    println!("✓ {msg}");
+    println!("[OK] {msg}");
 }
 
 /// Print a warning message to stderr.
@@ -121,7 +121,7 @@ pub fn print_warning(msg: &str) {
 
 /// Print an info message.
 pub fn print_info(msg: &str) {
-    println!("ℹ {msg}");
+    println!("[info] {msg}");
 }
 
 #[cfg(test)]

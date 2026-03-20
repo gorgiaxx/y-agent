@@ -254,7 +254,7 @@ impl SkillIngestionService {
             .map_err(|e| {
                 ImportError::InvalidAgentOutput(format!(
                     "failed to parse agent response: {e}\nraw: {}",
-                    &delegation_output.text[..delegation_output.text.len().min(500)]
+                    &delegation_output.text[..delegation_output.text.floor_char_boundary(500)]
                 ))
             })?;
 

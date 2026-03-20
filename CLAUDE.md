@@ -42,19 +42,17 @@ y-agent/
 
 ## 2) Engineering Principles
 
-| #    | Principle                    | Key rules                                                                                                                                                                                                 |
-| ---- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2.1  | **Architectural Stability**  | Extend via traits/middleware/plugins; feature-flag every new subsystem.                                                                                                                                   |
-| 2.2  | **Separation of Concerns**   | Tools = business logic; Runtime = isolation; Guardrails = middleware only; Memory = 3 disjoint tiers.                                                                                                     |
-| 2.3  | **Explicit Over Implicit**   | State assumptions; document rejected alternatives; measurable success criteria.                                                                                                                           |
-| 2.4  | **Token Efficiency**         | Skill root docs <= 2 000 tokens; MAP steps <= 2 000 tokens; Working Memory carries `token_estimate`.                                                                                                      |
-| 2.5  | **Defense in Depth**         | Runtime (OS) -> Guardrails (app) -> Permission Model (user); no single layer removal makes system unsafe.                                                                                                 |
-| 2.6  | **Fail Fast, Recover Cheap** | Checkpoint at task level; retry from failed step; freeze/thaw providers; compensation for side effects.                                                                                                   |
-| 2.7  | **TDD**                      | Red -> Green -> Refactor. No production code without a preceding test. See `TEST_STRATEGY.md`.                                                                                                            |
-| 2.8  | **English**                  | All docs, comments, commits in English. `VISION.md` is the sole exception.                                                                                                                                |
-| 2.9  | **No Emoji**                 | No emoji in any artifact: code, docs, comments, commits, diagrams, or agent output. Use plain text only.                                                                                                  |
-| 2.10 | **Service-Layer Ownership**  | All business logic lives in `y-service`; `y-cli`, `y-web`, `y-gui` (Tauri) are thin presentation layers -- they handle I/O, rendering, and user interaction only. No domain logic in presentation crates. |
-| 2.11 | **No Inline Lint Suppression** | Never add `#[allow(clippy::...)]` or `#[allow(rustc_lint)]` to source code. Fix the lint or add the allow to `[workspace.lints]` in `Cargo.toml` with a comment explaining why. The sole exception is `#[allow(dead_code)]` on struct fields/variants kept for API completeness (e.g. deserialized-but-not-read fields). |
+- **2.1 Architectural Stability** -- Extend via traits/middleware/plugins; feature-flag every new subsystem.
+- **2.2 Separation of Concerns** -- Tools = business logic; Runtime = isolation; Guardrails = middleware only; Memory = 3 disjoint tiers.
+- **2.3 Explicit Over Implicit** -- State assumptions; document rejected alternatives; measurable success criteria.
+- **2.4 Token Efficiency** -- Skill root docs <= 2 000 tokens; MAP steps <= 2 000 tokens; Working Memory carries `token_estimate`.
+- **2.5 Defense in Depth** -- Runtime (OS) -> Guardrails (app) -> Permission Model (user); no single layer removal makes system unsafe.
+- **2.6 Fail Fast, Recover Cheap** -- Checkpoint at task level; retry from failed step; freeze/thaw providers; compensation for side effects.
+- **2.7 TDD** -- Red -> Green -> Refactor. No production code without a preceding test. See `TEST_STRATEGY.md`.
+- **2.8 English** -- All docs, comments, commits in English. `VISION.md` is the sole exception.
+- **2.9 No Emoji** -- No emoji in any artifact: code, docs, comments, commits, diagrams, or agent output. Use plain text only.
+- **2.10 Service-Layer Ownership** -- All business logic lives in `y-service`; `y-cli`, `y-web`, `y-gui` (Tauri) are thin presentation layers -- they handle I/O, rendering, and user interaction only. No domain logic in presentation crates.
+- **2.11 No Inline Lint Suppression** -- Never add `#[allow(clippy::...)]` or `#[allow(rustc_lint)]` to source code. Fix the lint or add the allow to `[workspace.lints]` in `Cargo.toml` with a comment explaining why. The sole exception is `#[allow(dead_code)]` on struct fields/variants kept for API completeness (e.g. deserialized-but-not-read fields).
 
 ## 3) Risk Tiers
 
@@ -109,6 +107,7 @@ cargo check --workspace
 - **`cargo fmt --check`** — Verify formatting conforms to `rustfmt.toml` (max_width=100, edition=2021). If it fails, run `cargo fmt` to fix, then re-check.
 - **`cargo clippy --workspace -- -D warnings`** — All Clippy lints must pass with zero warnings. Treat every warning as an error. Lint policy is defined in `[workspace.lints.clippy]` in `Cargo.toml` and thresholds in `clippy.toml`.
 - **`cargo check --workspace`** — Full workspace compilation must succeed with no errors.
+- **`cargo doc --workspace --no-deps`** — Documentation must build without errors.
 
 No task is complete until all three commands pass cleanly.
 
@@ -116,10 +115,8 @@ No task is complete until all three commands pass cleanly.
 
 The GitHub Actions CI (`.github/workflows/ci.yml`) enforces two jobs:
 
-| Job              | Steps                                                                        |
-| ---------------- | ---------------------------------------------------------------------------- |
-| Format           | `cargo fmt --check`                                                          |
-| Build & Test     | clippy, check, test, doc (single runner, shared deps and compilation cache)  |
+- **Format** -- `cargo fmt --check`
+- **Build & Test** -- clippy, check, test, doc (single runner, shared deps and compilation cache)
 
 The **Build & Test** job runs clippy, check, test, and doc sequentially in one runner to avoid redundant system-dependency installs and to reuse compilation artifacts across steps.
 
@@ -127,17 +124,15 @@ All jobs must pass before merge. Lint policy is defined in `[workspace.lints.cli
 
 ## 5) Key References
 
-| Document                                  | Purpose                                               |
-| ----------------------------------------- | ----------------------------------------------------- |
-| `DESIGN_RULE.md`                          | Design doc standards, playbooks, validation checklist |
-| `docs/standards/TEST_STRATEGY.md`         | TDD methodology, pyramid, quality gates               |
-| `docs/standards/ENGINEERING_STANDARDS.md` | Rust coding standards                                 |
-| `docs/standards/DATABASE_SCHEMA.md`       | SQLite / Qdrant schema                                |
-| `docs/standards/AGENT_AUTONOMY.md`        | Sub-agent autonomy model & delegation protocol        |
-| `docs/standards/DSL_STANDARD.md`          | DSL specification                                     |
-| `docs/standards/SKILLS_STANDARD.md`       | Skills format and authoring standard                  |
-| `docs/standards/TOOL_CALL_PROTOCOL.md`    | Tool call protocol specification                      |
-| `VISION.md`                               | Project vision (Chinese)                              |
+- `DESIGN_RULE.md` -- Design doc standards, playbooks, validation checklist
+- `docs/standards/TEST_STRATEGY.md` -- TDD methodology, pyramid, quality gates
+- `docs/standards/ENGINEERING_STANDARDS.md` -- Rust coding standards
+- `docs/standards/DATABASE_SCHEMA.md` -- SQLite / Qdrant schema
+- `docs/standards/AGENT_AUTONOMY.md` -- Sub-agent autonomy model & delegation protocol
+- `docs/standards/DSL_STANDARD.md` -- DSL specification
+- `docs/standards/SKILLS_STANDARD.md` -- Skills format and authoring standard
+- `docs/standards/TOOL_CALL_PROTOCOL.md` -- Tool call protocol specification
+- `VISION.md` -- Project vision (Chinese)
 
 ## 6) Formatting Constraints
 

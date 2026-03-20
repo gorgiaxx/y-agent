@@ -1,5 +1,9 @@
-//! Skill management command handlers — list, get detail, uninstall, enable/disable,
+//! Skill management command handlers -- list, get, uninstall, enable/disable,
 //! open folder, import, file tree, read/save file.
+//!
+//! CRUD operations (`skill_list`, `skill_get`, `skill_uninstall`,
+//! `skill_set_enabled`) delegate to [`y_service::SkillService`].
+//! Presentation-only commands (open folder, file tree, read/save) remain here.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,6 +19,8 @@ use y_skills::{
 use y_core::agent::ContextStrategyHint;
 use y_core::skill::SkillRegistry;
 
+use y_service::SkillService;
+
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -22,28 +28,10 @@ use crate::state::AppState;
 // ---------------------------------------------------------------------------
 
 /// Skill summary info returned to the frontend.
-#[derive(Debug, Serialize, Clone)]
-pub struct SkillInfo {
-    pub name: String,
-    pub description: String,
-    pub version: String,
-    pub tags: Vec<String>,
-    pub enabled: bool,
-}
+pub type SkillInfo = y_service::SkillInfo;
 
 /// Full skill detail returned to the frontend.
-#[derive(Debug, Serialize, Clone)]
-pub struct SkillDetail {
-    pub name: String,
-    pub description: String,
-    pub version: String,
-    pub tags: Vec<String>,
-    pub enabled: bool,
-    pub root_content: String,
-    pub author: Option<String>,
-    pub classification_type: Option<String>,
-    pub dir_path: String,
-}
+pub type SkillDetail = y_service::SkillDetail;
 
 /// Permissions the skill needs according to the security screening agent.
 #[derive(Debug, Serialize, serde::Deserialize, Clone, Default)]
@@ -144,103 +132,22 @@ fn build_file_tree(dir: &Path, relative_base: &Path) -> Vec<SkillFileEntry> {
 /// List all installed skills.
 #[tauri::command]
 pub async fn skill_list(state: State<'_, AppState>) -> Result<Vec<SkillInfo>, String> {
-    let store_path = skills_store_path(&state.config_dir);
-    if !store_path.exists() {
-        return Ok(vec![]);
-    }
-
-    let store = FilesystemSkillStore::new(&store_path)
-        .map_err(|e| format!("Failed to open skill store: {e}"))?;
-
-    let registry = SkillRegistryImpl::with_store(store)
-        .await
-        .map_err(|e| format!("Failed to create registry: {e}"))?;
-
-    let disabled = registry.read_disabled_set().await;
-
-    // Read manifests via the store (registry already loaded them).
-    let store2 = FilesystemSkillStore::new(&store_path)
-        .map_err(|e| format!("Failed to open skill store: {e}"))?;
-    let manifests = store2
-        .load_all()
-        .map_err(|e| format!("Failed to load skills: {e}"))?;
-
-    let mut infos: Vec<SkillInfo> = manifests
-        .into_iter()
-        .map(|m| SkillInfo {
-            name: m.name.clone(),
-            description: m.description.clone(),
-            version: m.version.0.clone(),
-            tags: m.tags.clone(),
-            enabled: !disabled.contains(&m.name),
-        })
-        .collect();
-
-    infos.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(infos)
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    svc.list().await
 }
 
 /// Get full detail for a single skill.
 #[tauri::command]
 pub async fn skill_get(state: State<'_, AppState>, name: String) -> Result<SkillDetail, String> {
-    let store_path = skills_store_path(&state.config_dir);
-    let store = FilesystemSkillStore::new(&store_path)
-        .map_err(|e| format!("Failed to open skill store: {e}"))?;
-
-    let manifest = store
-        .load_skill(&name)
-        .map_err(|e| format!("Skill not found: {e}"))?;
-
-    let registry = SkillRegistryImpl::with_store(
-        FilesystemSkillStore::new(&store_path)
-            .map_err(|e| format!("Failed to open skill store: {e}"))?,
-    )
-    .await
-    .map_err(|e| format!("Failed to create registry: {e}"))?;
-
-    let enabled = registry.is_enabled(&name).await;
-    let classification_type = manifest
-        .classification
-        .as_ref()
-        .map(|c| c.skill_type.to_string());
-
-    Ok(SkillDetail {
-        name: manifest.name.clone(),
-        description: manifest.description.clone(),
-        version: manifest.version.0.clone(),
-        tags: manifest.tags.clone(),
-        enabled,
-        root_content: manifest.root_content.clone(),
-        author: manifest.author.clone(),
-        classification_type,
-        dir_path: store_path
-            .join(&manifest.name)
-            .to_string_lossy()
-            .to_string(),
-    })
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    svc.get(&name).await
 }
 
 /// Uninstall (delete) a skill.
 #[tauri::command]
 pub async fn skill_uninstall(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    let store_path = skills_store_path(&state.config_dir);
-    let store = FilesystemSkillStore::new(&store_path)
-        .map_err(|e| format!("Failed to open skill store: {e}"))?;
-
-    store
-        .delete_skill(&name)
-        .map_err(|e| format!("Failed to uninstall skill: {e}"))?;
-
-    // Also remove from disabled list if present.
-    let registry = SkillRegistryImpl::with_store(
-        FilesystemSkillStore::new(&store_path)
-            .map_err(|e| format!("Failed to open skill store: {e}"))?,
-    )
-    .await
-    .map_err(|e| format!("Failed to create registry: {e}"))?;
-    let _ = registry.set_enabled(&name, true).await; // remove from disabled set
-
-    Ok(())
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    svc.uninstall(&name).await
 }
 
 /// Enable or disable a skill.
@@ -250,18 +157,8 @@ pub async fn skill_set_enabled(
     name: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let store_path = skills_store_path(&state.config_dir);
-    let store = FilesystemSkillStore::new(&store_path)
-        .map_err(|e| format!("Failed to open skill store: {e}"))?;
-
-    let registry = SkillRegistryImpl::with_store(store)
-        .await
-        .map_err(|e| format!("Failed to create registry: {e}"))?;
-
-    registry
-        .set_enabled(&name, enabled)
-        .await
-        .map_err(|e| format!("{e}"))
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    svc.set_enabled(&name, enabled).await
 }
 
 /// Open a skill's directory in the system file manager.

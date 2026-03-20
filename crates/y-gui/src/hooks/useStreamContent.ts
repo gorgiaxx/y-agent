@@ -55,6 +55,68 @@ function extractTag(block: string, tagName: string): string {
 }
 
 /**
+ * Try to parse a tool_call block using function-attribute format.
+ *
+ * Handles Llama/Qwen-family models that emit:
+ *   <tool_call>
+ *   <function=browser>
+ *   <parameter=url>https://example.com</parameter>
+ *   </function>
+ *   </tool_call>
+ */
+function tryParseFunctionFormat(block: string): { name: string; arguments: string } | null {
+  // Extract inner content between <tool_call...> and </tool_call>.
+  const openEnd = block.indexOf('>');
+  if (openEnd < 0) return null;
+  const closeStart = block.indexOf('</tool_call>');
+  if (closeStart < 0) return null;
+  const inner = block.slice(openEnd + 1, closeStart).trim();
+  if (!inner) return null;
+
+  // Match <function=NAME>
+  const funcMatch = inner.match(/<function=([^>]+)>/);
+  if (!funcMatch) return null;
+  const name = funcMatch[1].trim();
+  if (!name) return null;
+
+  // Extract body inside <function=NAME>...</function>
+  const funcOpenEnd = inner.indexOf('>', inner.indexOf('<function=')) + 1;
+  const funcCloseIdx = inner.indexOf('</function>');
+  const body = funcCloseIdx >= 0
+    ? inner.slice(funcOpenEnd, funcCloseIdx).trim()
+    : inner.slice(funcOpenEnd).trim();
+
+  // Collect <parameter=KEY>VALUE</parameter> entries.
+  const args: Record<string, string> = {};
+  const paramRegex = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/g;
+  let paramMatch;
+  while ((paramMatch = paramRegex.exec(body)) !== null) {
+    const key = paramMatch[1].trim();
+    const val = paramMatch[2].trim();
+    if (key) args[key] = val;
+  }
+
+  // Also extract <action>VALUE</action>.
+  const actionMatch = body.match(/<action>([\s\S]*?)<\/action>/);
+  if (actionMatch) {
+    args['action'] = actionMatch[1].trim();
+  }
+
+  // If body is JSON and no params found, parse it.
+  if (Object.keys(args).length === 0 && body.startsWith('{')) {
+    try {
+      JSON.parse(body);
+      return { name, arguments: body };
+    } catch { /* not JSON */ }
+  }
+
+  return {
+    name,
+    arguments: Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : '',
+  };
+}
+
+/**
  * Try to parse the inner content of a tool_call block as JSON.
  *
  * Handles the case where the LLM emits JSON format instead of XML-nested:
@@ -148,14 +210,21 @@ export function processStreamContent(raw: string): StreamContentResult {
           tcName = xmlName;
           tcArgs = xmlArgs;
         } else {
-          // JSON fallback: {"name": "tool", "arguments": {...}}
-          const jsonResult = tryParseToolCallJson(block);
-          if (jsonResult) {
-            tcName = jsonResult.name;
-            tcArgs = jsonResult.arguments;
+          // Try function-attribute format: <function=name><parameter=k>v</parameter></function>
+          const funcResult = tryParseFunctionFormat(block);
+          if (funcResult) {
+            tcName = funcResult.name;
+            tcArgs = funcResult.arguments;
           } else {
-            tcName = 'unknown';
-            tcArgs = xmlArgs;
+            // JSON fallback: {"name": "tool", "arguments": {...}}
+            const jsonResult = tryParseToolCallJson(block);
+            if (jsonResult) {
+              tcName = jsonResult.name;
+              tcArgs = jsonResult.arguments;
+            } else {
+              tcName = 'unknown';
+              tcArgs = xmlArgs;
+            }
           }
         }
 

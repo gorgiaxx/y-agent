@@ -1,9 +1,10 @@
 // ObservabilityPanel -- live system state visualization.
 
-import { useState } from 'react';
-import { Eye, X, Maximize2, Minimize2, Server, Bot, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Eye, X, Maximize2, Minimize2, Server, Bot, ChevronDown, ChevronRight, Filter } from 'lucide-react';
 
 import type { SystemSnapshot, ProviderSnapshot as ProviderSnap, AgentInstanceSnapshot } from '../types';
+import type { TimeRange } from '../hooks/useObservability';
 import './ObservabilityPanel.css';
 
 // ---------------------------------------------------------------------------
@@ -137,11 +138,36 @@ interface ObservabilityPanelProps {
   expanded: boolean;
   onToggleExpand: () => void;
   onClose: () => void;
+  timeRange: TimeRange;
+  onTimeRangeChange: (range: TimeRange) => void;
 }
 
-export function ObservabilityPanel({ snapshot, loading, expanded, onToggleExpand, onClose }: ObservabilityPanelProps) {
+const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
+  { value: '15m', label: '15 min' },
+  { value: '30m', label: '30 min' },
+  { value: '1h', label: '1 hour' },
+  { value: '6h', label: '6 hours' },
+  { value: '24h', label: '24 hours' },
+  { value: 'all', label: 'All time' },
+];
+
+export function ObservabilityPanel({ snapshot, loading, expanded, onToggleExpand, onClose, timeRange, onTimeRangeChange }: ObservabilityPanelProps) {
   const [providersOpen, setProvidersOpen] = useState(true);
   const [agentsOpen, setAgentsOpen] = useState(true);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
+
+  // Close filter popover on click outside.
+  useEffect(() => {
+    if (!filterOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setFilterOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [filterOpen]);
 
   const providerCount = snapshot?.providers.length ?? 0;
   const activeAgents = snapshot?.agents.active_instances ?? 0;
@@ -157,6 +183,32 @@ export function ObservabilityPanel({ snapshot, loading, expanded, onToggleExpand
           {loading && !snapshot && <span className="obs-summary-label">loading...</span>}
         </div>
         <div className="obs-header-actions">
+          <div className="obs-filter-wrapper" ref={filterRef}>
+            <button
+              className={`obs-btn${timeRange !== 'all' ? ' obs-btn-active' : ''}`}
+              onClick={() => setFilterOpen(!filterOpen)}
+              title="Filter by time range"
+            >
+              <Filter size={14} />
+            </button>
+            {filterOpen && (
+              <div className="obs-filter-popover">
+                <div className="obs-filter-title">Time range</div>
+                {TIME_RANGE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    className={`obs-filter-option${timeRange === opt.value ? ' active' : ''}`}
+                    onClick={() => {
+                      onTimeRangeChange(opt.value);
+                      setFilterOpen(false);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button className="obs-btn" onClick={onToggleExpand} title={expanded ? 'Collapse' : 'Expand'}>
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>

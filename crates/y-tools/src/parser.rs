@@ -65,9 +65,15 @@ pub fn parse_tool_calls(raw: &str) -> ParseResult {
                     // Try XML-nested format first (primary, more token-efficient):
                     //   <name>tool_name</name>
                     //   <arguments>{"key": "value"}</arguments>
+                    // Then function-attribute format (common in Llama/Qwen models):
+                    //   <function=tool_name>
+                    //   <parameter=key>value</parameter>
+                    //   </function>
                     // Fall back to JSON format for backward compatibility:
                     //   {"name": "tool_name", "arguments": {"key": "value"}}
                     if let Ok(tc) = try_parse_xml_tool_call(inner) {
+                        tool_calls.push(tc);
+                    } else if let Ok(tc) = try_parse_function_format(inner) {
                         tool_calls.push(tc);
                     } else if let Ok(json) = serde_json::from_str::<serde_json::Value>(inner) {
                         match extract_tool_call(&json) {
@@ -80,7 +86,7 @@ pub fn parse_tool_calls(raw: &str) -> ParseResult {
                     } else {
                         warnings.push(
                             "invalid content in <tool_call>: \
-                             not XML-nested nor JSON format"
+                             not XML-nested, function-attribute, nor JSON format"
                                 .into(),
                         );
                         // Malformed: keep as text.
@@ -188,6 +194,106 @@ fn try_parse_xml_tool_call(inner: &str) -> Result<ParsedToolCall, String> {
     Ok(ParsedToolCall {
         name: name.to_string(),
         arguments,
+    })
+}
+
+/// Try to parse a tool call from function-attribute format.
+///
+/// Handles formats commonly produced by Llama/Qwen-family models:
+/// ```xml
+/// <function=browser>
+/// <parameter=url>https://example.com</parameter>
+/// <parameter=query>hello</parameter>
+/// </function>
+/// ```
+///
+/// Also handles `<action>` tags and bare text inside the `<function>` block.
+fn try_parse_function_format(inner: &str) -> Result<ParsedToolCall, String> {
+    // Match <function=NAME> ... </function>
+    let func_prefix = "<function=";
+    let func_start = inner
+        .find(func_prefix)
+        .ok_or_else(|| "no <function=...> tag found".to_string())?;
+    let after_prefix = func_start + func_prefix.len();
+
+    // Find the closing `>` of the opening tag.
+    let tag_close = inner[after_prefix..]
+        .find('>')
+        .ok_or_else(|| "unclosed <function= tag".to_string())?;
+    let name = inner[after_prefix..after_prefix + tag_close].trim();
+    if name.is_empty() {
+        return Err("empty function name in <function=...> tag".into());
+    }
+
+    // Extract body between `<function=NAME>` and `</function>`.
+    let body_start = after_prefix + tag_close + 1;
+    let body = if let Some(end_offset) = inner[body_start..].find("</function>") {
+        inner[body_start..body_start + end_offset].trim()
+    } else {
+        // No closing </function> -- use everything after the opening tag.
+        inner[body_start..].trim()
+    };
+
+    // Collect parameters from <parameter=KEY>VALUE</parameter> tags.
+    let mut args = serde_json::Map::new();
+    let param_prefix = "<parameter=";
+    let mut cursor = 0;
+    while cursor < body.len() {
+        if let Some(p_start) = body[cursor..].find(param_prefix) {
+            let abs_start = cursor + p_start + param_prefix.len();
+            if let Some(key_end) = body[abs_start..].find('>') {
+                let key = body[abs_start..abs_start + key_end].trim();
+                let val_start = abs_start + key_end + 1;
+                let close_tag = "</parameter>";
+                let val_end = body[val_start..]
+                    .find(close_tag)
+                    .map_or(body.len(), |i| val_start + i);
+                let value = body[val_start..val_end].trim();
+                if !key.is_empty() {
+                    args.insert(
+                        key.to_string(),
+                        serde_json::Value::String(value.to_string()),
+                    );
+                }
+                cursor = if val_end < body.len() {
+                    val_end + close_tag.len()
+                } else {
+                    body.len()
+                };
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    // Also extract <action>VALUE</action> tags (variant seen in some models).
+    if let Some(action_val) = extract_xml_tag(body, "action") {
+        let action = action_val.trim();
+        if !action.is_empty() {
+            args.insert(
+                "action".to_string(),
+                serde_json::Value::String(action.to_string()),
+            );
+        }
+    }
+
+    // If the body looks like a JSON object, try parsing it directly.
+    if args.is_empty() && body.starts_with('{') {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+            if json.is_object() {
+                return Ok(ParsedToolCall {
+                    name: name.to_string(),
+                    arguments: json,
+                });
+            }
+        }
+    }
+
+    Ok(ParsedToolCall {
+        name: name.to_string(),
+        arguments: serde_json::Value::Object(args),
     })
 }
 
@@ -570,5 +676,108 @@ not valid json or xml
         // they're at least not tool-protocol looking.
         assert!(stripped.contains("Before"));
         assert!(stripped.contains("After"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Function-attribute format tests (Llama/Qwen compatibility)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_function_format_with_parameters() {
+        let input = r#"<tool_call>
+<function=browser>
+<action>navigate</action>
+<parameter=url>https://www.google.com/search?q=weather</parameter>
+</function>
+</tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "browser");
+        assert_eq!(
+            result.tool_calls[0].arguments["url"],
+            "https://www.google.com/search?q=weather"
+        );
+        assert_eq!(result.tool_calls[0].arguments["action"], "navigate");
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_function_format_multiple_params() {
+        let input = r#"<tool_call>
+<function=file_write>
+<parameter=path>/src/main.rs</parameter>
+<parameter=content>fn main() {}</parameter>
+</function>
+</tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "file_write");
+        assert_eq!(result.tool_calls[0].arguments["path"], "/src/main.rs");
+        assert_eq!(result.tool_calls[0].arguments["content"], "fn main() {}");
+    }
+
+    #[test]
+    fn test_parse_function_format_with_json_body() {
+        let input = r#"<tool_call>
+<function=shell_exec>{"command": "ls -la"}</function>
+</tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].arguments["command"], "ls -la");
+    }
+
+    #[test]
+    fn test_parse_function_format_no_closing_function_tag() {
+        let input = r#"<tool_call>
+<function=browser>
+<parameter=url>https://example.com</parameter>
+</tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "browser");
+        assert_eq!(result.tool_calls[0].arguments["url"], "https://example.com");
+    }
+
+    #[test]
+    fn test_parse_function_format_empty_name_fails() {
+        let input = r#"<tool_call>
+<function=>
+<parameter=url>https://example.com</parameter>
+</function>
+</tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert!(result.tool_calls.is_empty());
+        assert!(!result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mixed_all_three_formats() {
+        let input = r#"<tool_call>
+<name>file_read</name>
+<arguments>{"path": "/a.rs"}</arguments>
+</tool_call>
+
+<tool_call>
+<function=browser>
+<parameter=url>https://example.com</parameter>
+</function>
+</tool_call>
+
+<tool_call>
+{"name": "shell_exec", "arguments": {"command": "ls"}}
+</tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 3);
+        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[1].name, "browser");
+        assert_eq!(result.tool_calls[2].name, "shell_exec");
+        assert!(result.warnings.is_empty());
     }
 }

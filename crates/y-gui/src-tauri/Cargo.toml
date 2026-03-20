@@ -27,6 +27,7 @@ serde_json = { workspace = true }
 # Async
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+futures = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }

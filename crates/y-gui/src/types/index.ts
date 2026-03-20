@@ -72,6 +72,7 @@ export interface ChatCompletePayload {
   tool_calls: ToolCallInfo[];
   iterations: number;
   context_window: number;
+  context_tokens_used: number;
 }
 
 export interface ToolCallInfo {
@@ -177,6 +178,7 @@ export interface TurnMeta {
   output_tokens: number;
   cost_usd: number;
   context_window: number;
+  context_tokens_used: number;
 }
 
 /** Result of a chat undo operation (from `chat_undo`). */

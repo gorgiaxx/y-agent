@@ -17,6 +17,7 @@ pub mod config;
 pub mod error;
 pub mod migration;
 pub mod pool;
+pub mod provider_metrics_store;
 pub mod repository;
 pub mod schedule_store;
 pub mod session_store;
@@ -31,6 +32,9 @@ pub use checkpoint_chat::SqliteChatCheckpointStore;
 pub use config::StorageConfig;
 pub use error::StorageError;
 pub use pool::create_pool;
+pub use provider_metrics_store::{
+    AggregatedProviderMetrics, ProviderMetricsEvent, SqliteProviderMetricsStore,
+};
 pub use schedule_store::SqliteScheduleStore;
 pub use session_store::SqliteSessionStore;
 pub use sqlx::SqlitePool;

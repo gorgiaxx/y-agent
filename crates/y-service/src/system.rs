@@ -133,13 +133,28 @@ impl SystemService {
     }
 
     /// Hot-reload the session config from a TOML config string.
+    ///
+    /// `session.toml` now contains both session fields and a `[pruning]` section.
+    /// The session portion is hot-reloaded; the pruning portion is parsed but
+    /// not hot-reloaded (`PruningEngine` does not support runtime reconfiguration).
     pub fn reload_session_from_toml(
         container: &ServiceContainer,
         toml_content: &str,
     ) -> Result<(), String> {
-        let config: y_session::SessionConfig = toml::from_str(toml_content)
+        /// Combined struct matching the `session.toml` layout.
+        #[derive(serde::Deserialize)]
+        struct SessionFileConfig {
+            #[serde(flatten)]
+            session: y_session::SessionConfig,
+            #[serde(default)]
+            #[allow(dead_code)]
+            pruning: y_context::PruningConfig,
+        }
+
+        let combined: SessionFileConfig = toml::from_str(toml_content)
             .map_err(|e| format!("Failed to parse session config: {e}"))?;
-        container.reload_session(config);
+        container.reload_session(combined.session);
+        // NOTE: pruning config is not hot-reloaded; restart required for changes.
         Ok(())
     }
 
@@ -240,12 +255,145 @@ impl SystemService {
                             .and_then(|m| m.as_str())
                             .map(std::borrow::ToOwned::to_owned)
                     })
-                    .unwrap_or_else(|| body_text.chars().take(200).collect());
+                    .unwrap_or_else(|| {
+                        if body_text.is_empty() {
+                            format!("(no response body, HTTP {status})")
+                        } else {
+                            body_text.chars().take(200).collect()
+                        }
+                    });
 
                 if status == reqwest::StatusCode::UNAUTHORIZED
                     || status == reqwest::StatusCode::FORBIDDEN
                 {
-                    return Err(format!("Authentication failed: {detail}"));
+                    return Err(format!("Authentication failed (HTTP {status}): {detail}"));
+                }
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    return Err(format!("Rate limited by provider: {detail}"));
+                }
+
+                Err(format!("Provider returned HTTP {status}: {detail}"))
+            }
+            "anthropic" => {
+                let resolved_base = request
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("https://api.anthropic.com/v1");
+
+                let url = format!("{}/messages", resolved_base.trim_end_matches('/'));
+
+                let body = serde_json::json!({
+                    "model": request.model,
+                    "max_tokens": 1,
+                    "messages": [{ "role": "user", "content": "ping" }]
+                });
+
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(15))
+                    .build()
+                    .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+                let response = client
+                    .post(&url)
+                    .header("x-api-key", &effective_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("Content-Type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Network error: {e}"))?;
+
+                let status = response.status();
+
+                if status.is_success() {
+                    return Ok("Connection successful -- provider responded normally".into());
+                }
+
+                let body_text = response.text().await.unwrap_or_default();
+                // Anthropic error shape: {"type":"error","error":{"type":"...","message":"..."}}
+                let detail: String = serde_json::from_str::<serde_json::Value>(&body_text)
+                    .ok()
+                    .and_then(|v| {
+                        v.pointer("/error/message")
+                            .and_then(|m| m.as_str())
+                            .map(std::borrow::ToOwned::to_owned)
+                    })
+                    .unwrap_or_else(|| {
+                        if body_text.is_empty() {
+                            format!("(no response body, HTTP {status})")
+                        } else {
+                            body_text.chars().take(200).collect()
+                        }
+                    });
+
+                if status == reqwest::StatusCode::UNAUTHORIZED
+                    || status == reqwest::StatusCode::FORBIDDEN
+                {
+                    return Err(format!("Authentication failed (HTTP {status}): {detail}"));
+                }
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    return Err(format!("Rate limited by provider: {detail}"));
+                }
+
+                Err(format!("Provider returned HTTP {status}: {detail}"))
+            }
+            "gemini" => {
+                let resolved_base = request
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
+
+                let url = format!(
+                    "{}/models/{}:generateContent?key={}",
+                    resolved_base.trim_end_matches('/'),
+                    request.model,
+                    effective_key
+                );
+
+                let body = serde_json::json!({
+                    "contents": [{"parts": [{"text": "ping"}]}],
+                    "generationConfig": {"maxOutputTokens": 1}
+                });
+
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(15))
+                    .build()
+                    .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+                let response = client
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Network error: {e}"))?;
+
+                let status = response.status();
+
+                if status.is_success() {
+                    return Ok("Connection successful -- provider responded normally".into());
+                }
+
+                let body_text = response.text().await.unwrap_or_default();
+                let detail: String = serde_json::from_str::<serde_json::Value>(&body_text)
+                    .ok()
+                    .and_then(|v| {
+                        v.pointer("/error/message")
+                            .and_then(|m| m.as_str())
+                            .map(std::borrow::ToOwned::to_owned)
+                    })
+                    .unwrap_or_else(|| {
+                        if body_text.is_empty() {
+                            format!("(no response body, HTTP {status})")
+                        } else {
+                            body_text.chars().take(200).collect()
+                        }
+                    });
+
+                if status == reqwest::StatusCode::UNAUTHORIZED
+                    || status == reqwest::StatusCode::FORBIDDEN
+                {
+                    return Err(format!("Authentication failed (HTTP {status}): {detail}"));
                 }
                 if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                     return Err(format!("Rate limited by provider: {detail}"));

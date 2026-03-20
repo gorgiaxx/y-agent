@@ -32,6 +32,8 @@ pub struct TurnMeta {
     pub cost_usd: f64,
     /// Provider context-window size in tokens.
     pub context_window: usize,
+    /// Tokens occupying the context window (from last LLM iteration).
+    pub context_tokens_used: u64,
 }
 
 /// GUI-specific configuration (persisted to `gui.toml`).
@@ -71,7 +73,10 @@ pub struct AppState {
     /// Path to the user config directory (`~/.config/y-agent/`).
     pub config_dir: PathBuf,
     /// In-flight LLM cancellation tokens keyed by `run_id`.
-    pub pending_runs: Mutex<HashMap<String, CancellationToken>>,
+    ///
+    /// Arc-wrapped so the spawned LLM worker task can clean up its entry
+    /// when the turn completes (or panics).
+    pub pending_runs: Arc<Mutex<HashMap<String, CancellationToken>>>,
     /// Last completed turn metadata keyed by `session_id` string.
     ///
     /// Arc-wrapped so the spawned chat task can clone it and write after a
@@ -87,7 +92,7 @@ impl AppState {
             container,
             gui_config: RwLock::new(gui_config),
             config_dir,
-            pending_runs: Mutex::new(HashMap::new()),
+            pending_runs: Arc::new(Mutex::new(HashMap::new())),
             turn_meta_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }

@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use futures::FutureExt;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
@@ -46,6 +47,9 @@ pub struct ChatCompletePayload {
     pub iterations: usize,
     /// Context window size of the serving provider (tokens).
     pub context_window: usize,
+    /// Tokens actually occupying the context window (last LLM call's prompt
+    /// size). Use this for the context-usage progress bar.
+    pub context_tokens_used: u64,
 }
 
 /// Tool call summary in the completion payload.
@@ -182,6 +186,7 @@ pub async fn chat_send(
         prepared,
         run_id.clone(),
         Arc::clone(&state.turn_meta_cache),
+        Arc::clone(&state.pending_runs),
         cancel_token,
         true, // may generate title
     );
@@ -206,146 +211,191 @@ fn spawn_llm_worker(
     prepared: PreparedTurn,
     run_id: String,
     turn_meta_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, TurnMeta>>>,
+    pending_runs: Arc<std::sync::Mutex<std::collections::HashMap<String, CancellationToken>>>,
     cancel_token: CancellationToken,
     should_generate_title: bool,
 ) {
     let sid_clone = prepared.session_id.clone();
     let run_id_clone = run_id;
+    // Keep a copy outside the catch_unwind boundary so the panic
+    // handler can emit the correct run_id to the frontend.
+    let panic_run_id = run_id_clone.clone();
     let cancel_clone = cancel_token;
 
     tokio::spawn(async move {
-        let input = prepared.as_turn_input();
+        // Wrap the entire body in catch_unwind so that panics are caught
+        // and the frontend always receives a terminal event.
+        let result = std::panic::AssertUnwindSafe(async {
+            let input = prepared.as_turn_input();
 
-        // Check whether title generation should actually fire for this turn.
-        let do_title = if should_generate_title {
-            let title_interval = container.session_manager.config().title_summarize_interval;
-            let user_msg_count = prepared
-                .history
-                .iter()
-                .filter(|m| m.role == y_core::types::Role::User)
-                .count();
-            title_interval > 0
-                && user_msg_count > 0
-                && (user_msg_count == 1 || user_msg_count % title_interval as usize == 0)
-        } else {
-            false
-        };
+            // Check whether title generation should actually fire for this turn.
+            let do_title = if should_generate_title {
+                ChatService::should_generate_title(&container, &prepared.history)
+            } else {
+                false
+            };
 
-        // Set up progress channel -- forward TurnEvents as Tauri events.
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let app_progress = app.clone();
-        let run_id_progress = run_id_clone.clone();
-        let progress_task = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let _ = app_progress.emit(
-                    "chat:progress",
-                    ProgressPayload {
-                        run_id: run_id_progress.clone(),
-                        event,
-                    },
-                );
-            }
-        });
-
-        match ChatService::execute_turn_with_progress(&container, &input, tx, Some(cancel_clone))
-            .await
-        {
-            Ok(result) => {
-                // Cache last-turn metadata so the frontend can restore the
-                // status bar when switching back to this session.
-                let meta = TurnMeta {
-                    provider_id: result.provider_id.clone(),
-                    model: result.model.clone(),
-                    input_tokens: result.input_tokens,
-                    output_tokens: result.output_tokens,
-                    cost_usd: result.cost_usd,
-                    context_window: result.context_window,
-                };
-                if let Ok(mut cache) = turn_meta_cache.lock() {
-                    cache.insert(sid_clone.0.clone(), meta);
+            // Set up progress channel -- forward TurnEvents as Tauri events.
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let app_progress = app.clone();
+            let run_id_progress = run_id_clone.clone();
+            let progress_task = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let _ = app_progress.emit(
+                        "chat:progress",
+                        ProgressPayload {
+                            run_id: run_id_progress.clone(),
+                            event,
+                        },
+                    );
                 }
+            });
 
-                let _ = app.emit(
-                    "chat:complete",
-                    ChatCompletePayload {
-                        run_id: run_id_clone,
-                        session_id: sid_clone.0.clone(),
-                        content: result.content,
-                        model: result.model,
-                        provider_id: result.provider_id,
+            // `tx` is moved into execute_turn_with_progress; when the call
+            // returns (Ok or Err), tx is dropped, which closes the channel.
+            // Awaiting progress_task guarantees all queued events are forwarded
+            // to the frontend BEFORE we emit the terminal event.
+            let turn_result =
+                ChatService::execute_turn_with_progress(&container, &input, tx, Some(cancel_clone))
+                    .await;
+
+            // Flush all remaining progress events before emitting the terminal
+            // event. This prevents late-arriving stream_delta events from
+            // re-creating a streaming message after the frontend has already
+            // processed chat:complete / chat:error.
+            let _ = progress_task.await;
+
+            match turn_result {
+                Ok(result) => {
+                    // Cache last-turn metadata so the frontend can restore the
+                    // status bar when switching back to this session.
+                    let meta = TurnMeta {
+                        provider_id: result.provider_id.clone(),
+                        model: result.model.clone(),
                         input_tokens: result.input_tokens,
                         output_tokens: result.output_tokens,
                         cost_usd: result.cost_usd,
-                        tool_calls: result
-                            .tool_calls_executed
-                            .iter()
-                            .map(|tc| ToolCallInfo {
-                                name: tc.name.clone(),
-                                success: tc.success,
-                                duration_ms: tc.duration_ms,
-                            })
-                            .collect(),
-                        iterations: result.iterations,
                         context_window: result.context_window,
-                    },
-                );
+                        context_tokens_used: result.last_input_tokens,
+                    };
+                    if let Ok(mut cache) = turn_meta_cache.lock() {
+                        cache.insert(sid_clone.0.clone(), meta);
+                    }
 
-                // Trigger title generation if the interval is reached.
-                if do_title {
-                    match container.session_manager.read_transcript(&sid_clone).await {
-                        Ok(transcript) => {
-                            match container
-                                .session_manager
-                                .generate_title(
-                                    &*container.agent_delegator,
-                                    &sid_clone,
-                                    &transcript,
-                                )
-                                .await
-                            {
-                                Ok(title) => {
-                                    let _ = app.emit(
-                                        "session:title_updated",
-                                        TitleUpdatedPayload {
-                                            session_id: sid_clone.0.clone(),
-                                            title,
-                                        },
-                                    );
+                    let _ = app.emit(
+                        "chat:complete",
+                        ChatCompletePayload {
+                            run_id: run_id_clone.clone(),
+                            session_id: sid_clone.0.clone(),
+                            content: result.content,
+                            model: result.model,
+                            provider_id: result.provider_id,
+                            input_tokens: result.input_tokens,
+                            output_tokens: result.output_tokens,
+                            cost_usd: result.cost_usd,
+                            tool_calls: result
+                                .tool_calls_executed
+                                .iter()
+                                .map(|tc| ToolCallInfo {
+                                    name: tc.name.clone(),
+                                    success: tc.success,
+                                    duration_ms: tc.duration_ms,
+                                })
+                                .collect(),
+                            iterations: result.iterations,
+                            context_window: result.context_window,
+                            context_tokens_used: result.last_input_tokens,
+                        },
+                    );
+
+                    // Trigger title generation if the interval is reached.
+                    if do_title {
+                        match container.session_manager.read_transcript(&sid_clone).await {
+                            Ok(transcript) => {
+                                match container
+                                    .session_manager
+                                    .generate_title(
+                                        &*container.agent_delegator,
+                                        &sid_clone,
+                                        &transcript,
+                                    )
+                                    .await
+                                {
+                                    Ok(title) => {
+                                        let _ = app.emit(
+                                            "session:title_updated",
+                                            TitleUpdatedPayload {
+                                                session_id: sid_clone.0.clone(),
+                                                title,
+                                            },
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            "title generation failed"
+                                        );
+                                    }
                                 }
-                                Err(e) => {
-                                    tracing::warn!(error = %e, "title generation failed");
-                                }
+                                let _ = app.emit(
+                                    "diagnostics:subagent_completed",
+                                    SubagentCompletedPayload {
+                                        agent_name: "title-generator".to_string(),
+                                    },
+                                );
                             }
-                            let _ = app.emit(
-                                "diagnostics:subagent_completed",
-                                SubagentCompletedPayload {
-                                    agent_name: "title-generator".to_string(),
-                                },
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "failed to read transcript for title generation"
-                            );
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "failed to read transcript for title generation"
+                                );
+                            }
                         }
                     }
                 }
+                Err(e) => {
+                    let _ = app.emit(
+                        "chat:error",
+                        ChatErrorPayload {
+                            run_id: run_id_clone.clone(),
+                            session_id: sid_clone.0.clone(),
+                            error: e.to_string(),
+                        },
+                    );
+                }
             }
-            Err(e) => {
-                let _ = app.emit(
-                    "chat:error",
-                    ChatErrorPayload {
-                        run_id: run_id_clone,
-                        session_id: sid_clone.0.clone(),
-                        error: e.to_string(),
-                    },
-                );
+
+            run_id_clone
+        })
+        .catch_unwind()
+        .await;
+
+        // Clean up pending_runs regardless of success/panic.
+        let final_run_id = if let Ok(rid) = result {
+            rid
+        } else {
+            // The task panicked. Emit chat:error so the frontend is
+            // never left in a permanent streaming/sending state.
+            tracing::error!(
+                session_id = %sid_clone.0,
+                "LLM worker panicked; emitting chat:error"
+            );
+            let _ = app.emit(
+                "chat:error",
+                ChatErrorPayload {
+                    run_id: panic_run_id.clone(),
+                    session_id: sid_clone.0.clone(),
+                    error: "Internal error: LLM worker panicked".to_string(),
+                },
+            );
+            panic_run_id
+        };
+
+        if !final_run_id.is_empty() {
+            if let Ok(mut runs) = pending_runs.lock() {
+                runs.remove(&final_run_id);
             }
         }
-
-        // Ensure all progress events are forwarded before returning.
-        let _ = progress_task.await;
     });
 }
 
@@ -443,6 +493,9 @@ pub async fn session_last_turn_meta(
             output_tokens: s.output_tokens,
             cost_usd: s.cost_usd,
             context_window: s.context_window,
+            // Diagnostics DB does not store per-iteration tokens;
+            // use cumulative input_tokens as a reasonable fallback.
+            context_tokens_used: s.input_tokens,
         },
         None => return Ok(None),
     };
@@ -560,8 +613,9 @@ pub async fn chat_resend(
         prepared,
         run_id.clone(),
         Arc::clone(&state.turn_meta_cache),
+        Arc::clone(&state.pending_runs),
         cancel_token,
-        false, // resend — no title generation
+        false, // resend -- no title generation
     );
 
     Ok(ChatStarted {

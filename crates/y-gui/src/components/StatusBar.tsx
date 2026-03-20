@@ -8,6 +8,8 @@ interface StatusBarProps {
   lastCost?: number;
   lastTokens?: { input: number; output: number };
   contextWindow?: number;
+  /** Actual context occupancy from last LLM call's prompt tokens. */
+  contextTokensUsed?: number;
 }
 
 function formatTokens(n: number): string {
@@ -23,10 +25,13 @@ export function StatusBar({
   lastCost,
   lastTokens,
   contextWindow,
+  contextTokensUsed,
 }: StatusBarProps) {
-  const usedTokens = lastTokens ? lastTokens.input + lastTokens.output : 0;
+  // Context occupancy: prefer the explicit context_tokens_used (last iteration's
+  // prompt size), fall back to cumulative input tokens if not available.
+  const occupancy = contextTokensUsed ?? (lastTokens ? lastTokens.input : 0);
   const pct =
-    contextWindow && contextWindow > 0 ? Math.min((usedTokens / contextWindow) * 100, 100) : null;
+    contextWindow && contextWindow > 0 ? Math.min((occupancy / contextWindow) * 100, 100) : null;
 
   return (
     <div className="status-bar">
@@ -37,10 +42,10 @@ export function StatusBar({
             {activeModel}
           </span>
         )}
-        {lastTokens && contextWindow && contextWindow > 0 ? (
+        {contextWindow && contextWindow > 0 && occupancy > 0 ? (
           <span className="status-item status-tokens">
             <span className="status-token-ratio">
-              {formatTokens(usedTokens)}/{formatTokens(contextWindow)}
+              {formatTokens(occupancy)}/{formatTokens(contextWindow)}
             </span>
             <span className="status-token-pct">({pct!.toFixed(1)}%)</span>
             <span className="status-token-bar" title={`${pct!.toFixed(1)}% context used`}>

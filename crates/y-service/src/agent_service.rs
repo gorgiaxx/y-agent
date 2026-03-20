@@ -88,6 +88,9 @@ pub struct AgentExecutionResult {
     pub input_tokens: u64,
     /// Cumulative output tokens across all LLM iterations.
     pub output_tokens: u64,
+    /// Input tokens from the **last** LLM iteration -- represents the actual
+    /// prompt size sent to the model and thus the current context occupancy.
+    pub last_input_tokens: u64,
     /// Context window size of the serving provider.
     pub context_window: usize,
     /// Total cost in USD.
@@ -108,7 +111,14 @@ pub struct AgentExecutionResult {
 #[derive(Debug)]
 pub enum AgentExecutionError {
     /// LLM request failed.
-    LlmError(String),
+    LlmError {
+        /// Human-readable error message.
+        message: String,
+        /// Messages accumulated before the failure (assistant + tool messages
+        /// from earlier successful iterations). Empty when the error occurs on
+        /// the first LLM call.
+        partial_messages: Vec<Message>,
+    },
     /// Context assembly failed.
     ContextError(String),
     /// Tool-call iteration limit exceeded.
@@ -123,7 +133,7 @@ pub enum AgentExecutionError {
 impl std::fmt::Display for AgentExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AgentExecutionError::LlmError(msg) => write!(f, "LLM error: {msg}"),
+            AgentExecutionError::LlmError { message, .. } => write!(f, "LLM error: {message}"),
             AgentExecutionError::ContextError(msg) => write!(f, "Context error: {msg}"),
             AgentExecutionError::ToolLoopLimitExceeded { max_iterations } => {
                 write!(f, "Tool call loop limit ({max_iterations}) exceeded")
@@ -150,6 +160,7 @@ struct ToolExecContext {
     cumulative_input_tokens: u64,
     cumulative_output_tokens: u64,
     cumulative_cost: f64,
+    last_input_tokens: u64,
     trace_id: Option<Uuid>,
     session_id: SessionId,
     working_history: Vec<Message>,
@@ -242,6 +253,7 @@ impl AgentService {
             cumulative_input_tokens: 0,
             cumulative_output_tokens: 0,
             cumulative_cost: 0.0,
+            last_input_tokens: 0,
             trace_id,
             session_id,
             working_history,
@@ -284,6 +296,7 @@ impl AgentService {
                     ctx.cumulative_input_tokens += iter_data.resp_input_tokens;
                     ctx.cumulative_output_tokens += iter_data.resp_output_tokens;
                     ctx.cumulative_cost += iter_data.cost;
+                    ctx.last_input_tokens = iter_data.resp_input_tokens;
                     final_model.clone_from(&response.model);
                     final_provider_id = response
                         .provider_id
@@ -351,13 +364,17 @@ impl AgentService {
                     if matches!(e, y_core::provider::ProviderError::Cancelled) {
                         return Err(AgentExecutionError::Cancelled);
                     }
-                    if let Some(tid) = trace_id {
+                    if let Some(tid) = ctx.trace_id {
                         let _ = container
                             .diagnostics
                             .on_trace_end(tid, false, Some(&e.to_string()))
                             .await;
                     }
-                    return Err(AgentExecutionError::LlmError(format!("{e}")));
+                    let partial = std::mem::take(&mut ctx.new_messages);
+                    return Err(AgentExecutionError::LlmError {
+                        message: format!("{e}"),
+                        partial_messages: partial,
+                    });
                 }
             }
         }
@@ -796,6 +813,7 @@ impl AgentService {
             provider_id: final_provider_id,
             input_tokens: ctx.cumulative_input_tokens,
             output_tokens: ctx.cumulative_output_tokens,
+            last_input_tokens: ctx.last_input_tokens,
             context_window: ctx_window,
             cost_usd: ctx.cumulative_cost,
             tool_calls_executed: ctx.tool_calls_executed,
@@ -1268,9 +1286,12 @@ mod tests {
 
     #[test]
     fn test_agent_execution_error_display() {
-        assert!(AgentExecutionError::LlmError("timeout".into())
-            .to_string()
-            .contains("timeout"));
+        assert!(AgentExecutionError::LlmError {
+            message: "timeout".into(),
+            partial_messages: vec![],
+        }
+        .to_string()
+        .contains("timeout"));
         assert!(
             AgentExecutionError::ToolLoopLimitExceeded { max_iterations: 10 }
                 .to_string()

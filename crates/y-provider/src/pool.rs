@@ -247,6 +247,32 @@ impl ProviderPoolImpl {
             .map(|e| (e.provider.metadata().id.clone(), e.metrics.snapshot()))
             .collect()
     }
+
+    /// Attach a metrics event sender to every provider's metrics tracker.
+    ///
+    /// Each provider fires [`MetricsEvent`](crate::metrics::MetricsEvent)
+    /// values through the returned receiver. The sender tags events with the
+    /// provider ID + model so the consumer can persist them without needing
+    /// a back-reference to the pool.
+    ///
+    /// Returns a list of `(provider_id, model, receiver)` tuples.
+    pub fn attach_event_senders(
+        &self,
+    ) -> Vec<(
+        String,
+        String,
+        tokio::sync::mpsc::UnboundedReceiver<crate::metrics::MetricsEvent>,
+    )> {
+        self.providers
+            .iter()
+            .map(|entry| {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                entry.metrics.set_event_sender(tx);
+                let meta = entry.provider.metadata();
+                (meta.id.to_string(), meta.model.clone(), rx)
+            })
+            .collect()
+    }
 }
 
 #[async_trait]

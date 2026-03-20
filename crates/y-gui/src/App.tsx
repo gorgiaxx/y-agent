@@ -21,6 +21,7 @@ import { useSessions } from './hooks/useSessions';
 import { useConfig } from './hooks/useConfig';
 import { useDiagnostics } from './hooks/useDiagnostics';
 import { useObservability } from './hooks/useObservability';
+import type { TimeRange } from './hooks/useObservability';
 import { useWorkspaces } from './hooks/useWorkspaces';
 import { useSkills } from './hooks/useSkills';
 import { useKnowledge } from './hooks/useKnowledge';
@@ -96,7 +97,11 @@ function App() {
   const [obsOpen, setObsOpen] = useState(false);
   const [obsExpanded, setObsExpanded] = useState(false);
   const [diagExpanded, setDiagExpanded] = useState(false);
-  const { snapshot: obsSnapshot, loading: obsLoading } = useObservability(obsOpen);
+  const [obsTimeRange, setObsTimeRange] = useState<TimeRange>('all');
+  const { snapshot: obsSnapshot, loading: obsLoading } = useObservability({
+    active: obsOpen,
+    timeRange: obsTimeRange,
+  });
   const {
     skills,
     getSkillDetail,
@@ -154,6 +159,7 @@ function App() {
     tokens?: { input: number; output: number };
     cost?: number;
     contextWindow?: number;
+    contextTokensUsed?: number;
   }>({});
 
   // Reusable: fetch the latest provider list from backend.
@@ -198,9 +204,13 @@ function App() {
       if (meta) {
         setStatusBarMeta({
           provider: meta.model || meta.provider_id || undefined,
-          tokens: { input: meta.input_tokens, output: meta.output_tokens },
+          tokens: {
+            input: meta.context_tokens_used || meta.input_tokens,
+            output: meta.output_tokens,
+          },
           cost: meta.cost_usd,
           contextWindow: meta.context_window,
+          contextTokensUsed: meta.context_tokens_used,
         });
       } else {
         setStatusBarMeta({});
@@ -235,14 +245,41 @@ function App() {
       startTransition(() => {
         setStatusBarMeta({
           provider: payload.model || payload.provider_id || undefined,
-          tokens: { input: payload.input_tokens, output: payload.output_tokens },
+          tokens: {
+            input: payload.context_tokens_used || payload.input_tokens,
+            output: payload.output_tokens,
+          },
           cost: payload.cost_usd,
           contextWindow: payload.context_window,
+          contextTokensUsed: payload.context_tokens_used,
         });
       });
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, []);
+
+  // Live update: when diagnostics entries change during an active run,
+  // extract the latest llm_response and update the status bar so the
+  // token occupancy reflects each iteration in real time.
+  useEffect(() => {
+    if (!isActive) return;
+    // Find the last llm_response entry.
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const ev = entries[i].event;
+      if (ev.type === 'llm_response') {
+        startTransition(() => {
+          setStatusBarMeta((prev) => ({
+            ...prev,
+            provider: ev.model || prev.provider,
+            tokens: { input: ev.input_tokens, output: ev.output_tokens },
+            cost: (prev.cost ?? 0) > ev.cost_usd ? prev.cost : ev.cost_usd,
+            contextTokensUsed: ev.input_tokens,
+          }));
+        });
+        break;
+      }
+    }
+  }, [entries, isActive]);
 
   // Fallback: extract status bar meta from loaded messages (session switch,
   // page reload). Only runs if there are backend-loaded messages that
@@ -267,13 +304,17 @@ function App() {
         : undefined);
     const cost = lastAssistant.cost ?? (meta?.cost_usd as number | undefined);
     const contextWindow = lastAssistant.context_window ?? (meta?.context_window as number | undefined);
+    const contextTokensUsed = (meta?.context_tokens_used as number | undefined);
 
     if (model || tokens || cost != null || contextWindow != null) {
       setStatusBarMeta({
         provider: model || undefined,
-        tokens,
+        tokens: tokens && contextTokensUsed
+          ? { input: contextTokensUsed, output: tokens.output }
+          : tokens,
         cost,
         contextWindow: contextWindow ?? undefined,
+        contextTokensUsed: contextTokensUsed ?? undefined,
       });
     }
   }, [messages]);
@@ -582,6 +623,7 @@ function App() {
               lastTokens={statusBarMeta.tokens}
               lastCost={statusBarMeta.cost}
               contextWindow={statusBarMeta.contextWindow}
+              contextTokensUsed={statusBarMeta.contextTokensUsed}
             />
           </>
         )}
@@ -657,6 +699,8 @@ function App() {
             setObsOpen(false);
             setObsExpanded(false);
           }}
+          timeRange={obsTimeRange}
+          onTimeRangeChange={setObsTimeRange}
         />
       )}
 

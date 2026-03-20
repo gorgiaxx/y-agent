@@ -5,6 +5,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
+
 /// Convert a non-negative f64 to u64 without direct f64->u64 cast.
 ///
 /// For realistic LLM cost values (always well below `u32::MAX` micro-dollars),
@@ -21,6 +23,15 @@ fn safe_f64_to_u64(value: f64) -> u64 {
     u64::from(clamped.floor() as u32)
 }
 
+/// A metrics event fired to an external consumer (e.g. persistence layer).
+#[derive(Debug, Clone)]
+pub struct MetricsEvent {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cost_micros: u64,
+    pub is_error: bool,
+}
+
 /// Per-provider metrics counters.
 ///
 /// Uses atomics for lock-free concurrent updates from multiple request tasks.
@@ -34,6 +45,8 @@ pub struct ProviderMetrics {
     pub total_output_tokens: AtomicU64,
     /// Estimated accumulated cost in micro-dollars (1e-6 USD).
     estimated_cost_micros: AtomicU64,
+    /// Optional channel for firing events to an external persistence layer.
+    event_sender: std::sync::Mutex<Option<mpsc::UnboundedSender<MetricsEvent>>>,
 }
 
 impl ProviderMetrics {
@@ -45,6 +58,17 @@ impl ProviderMetrics {
             total_input_tokens: AtomicU64::new(0),
             total_output_tokens: AtomicU64::new(0),
             estimated_cost_micros: AtomicU64::new(0),
+            event_sender: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Set the event sender channel for persistence.
+    ///
+    /// When set, each `record_success_with_cost` and `record_error` call
+    /// fires a `MetricsEvent` through this channel.
+    pub fn set_event_sender(&self, sender: mpsc::UnboundedSender<MetricsEvent>) {
+        if let Ok(mut guard) = self.event_sender.lock() {
+            *guard = Some(sender);
         }
     }
 
@@ -55,6 +79,13 @@ impl ProviderMetrics {
             .fetch_add(u64::from(input_tokens), Ordering::Relaxed);
         self.total_output_tokens
             .fetch_add(u64::from(output_tokens), Ordering::Relaxed);
+
+        self.fire_event(MetricsEvent {
+            input_tokens,
+            output_tokens,
+            cost_micros: 0,
+            is_error: false,
+        });
     }
 
     /// Record a successful request with token usage and cost calculation.
@@ -80,12 +111,26 @@ impl ProviderMetrics {
 
         self.estimated_cost_micros
             .fetch_add(total_micros, Ordering::Relaxed);
+
+        self.fire_event(MetricsEvent {
+            input_tokens,
+            output_tokens,
+            cost_micros: total_micros,
+            is_error: false,
+        });
     }
 
     /// Record a failed request.
     pub fn record_error(&self) {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
         self.total_errors.fetch_add(1, Ordering::Relaxed);
+
+        self.fire_event(MetricsEvent {
+            input_tokens: 0,
+            output_tokens: 0,
+            cost_micros: 0,
+            is_error: true,
+        });
     }
 
     /// Reset all counters to zero.
@@ -112,6 +157,18 @@ impl ProviderMetrics {
 impl Default for ProviderMetrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ProviderMetrics {
+    /// Fire a metrics event to the external consumer, if one is attached.
+    fn fire_event(&self, event: MetricsEvent) {
+        if let Ok(guard) = self.event_sender.lock() {
+            if let Some(ref sender) = *guard {
+                // Best-effort: drop the event if the receiver is gone.
+                let _ = sender.send(event);
+            }
+        }
     }
 }
 

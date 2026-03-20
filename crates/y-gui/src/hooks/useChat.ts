@@ -650,24 +650,38 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               }
             })();
           } else {
-            // Non-cancel error: remove the streaming message, then reload
-            // from the backend so cached messages stay consistent (the
-            // optimistic user message has a different ID than the real one
-            // persisted by prepare_turn).
+            // Non-cancel error: preserve any streamed content by
+            // finalizing the streaming message instead of deleting it.
+            // This keeps reasoning, tool call cards, and partial text
+            // visible so the user can see what happened before the error.
             setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
               const streamingId = `streaming-${sessionId}`;
-              return prev.filter((m) => m.id !== streamingId);
+              return prev.map((m) => {
+                if (m.id === streamingId && m.content) {
+                  return {
+                    ...m,
+                    id: `error-${payload.run_id || Date.now()}`,
+                    _streaming: undefined,
+                  } as Message;
+                }
+                if (m.id === streamingId) return null;
+                return m;
+              }).filter(Boolean) as Message[];
             });
             syncVisible(sessionId);
 
-            // Async reload: reconcile cache with the backend transcript.
+            // Async reload: merge backend messages with the preserved
+            // error message so both are visible.
             (async () => {
               try {
                 const backendMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+                const errorMsg = getCachedMessages(sessionMessagesRef.current, sessionId)
+                  .find((m) => m.id.startsWith('error-'));
                 const merged = mergeSkillsFromCache(backendMsgs, sessionMessagesRef.current, sessionId);
-                setCachedMessages(sessionMessagesRef.current, sessionId, merged);
+                const final_ = errorMsg ? [...merged, errorMsg] : merged;
+                setCachedMessages(sessionMessagesRef.current, sessionId, final_);
                 if (activeSessionIdRef.current === sessionId) {
-                  startTransition(() => setVisibleMessages(merged));
+                  startTransition(() => setVisibleMessages(final_));
                 }
               } catch (reloadErr) {
                 console.error('[chat] error handler: failed to reload messages:', reloadErr);
@@ -714,6 +728,38 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       chatBusSubscribers.delete(handler);
     };
   }, [syncVisible, setOp]);
+
+  // ------------------------------------------------------------------
+  // Safety timeout: if opStatus stays non-idle for too long without any
+  // bus activity, force-reset to idle so the session is never permanently
+  // stuck. This guards against edge cases where the backend fails to emit
+  // a terminal event (e.g. task panic, IPC failure).
+  // ------------------------------------------------------------------
+
+  useEffect(() => {
+    if (opStatus === 'idle') return;
+
+    const STUCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    const timer = setTimeout(() => {
+      if (opStatusRef.current !== 'idle') {
+        console.warn(
+          `[chat] safety timeout: opStatus=${opStatusRef.current} stuck for ${STUCK_TIMEOUT_MS}ms, forcing idle`,
+        );
+        setOp('idle');
+        // Also clear streaming state for the active session so the UI
+        // no longer shows the streaming indicator.
+        const sid = activeSessionIdRef.current;
+        if (sid) {
+          chatBusState.streamingSessions.delete(sid);
+          setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+        }
+        activeRunIdRef.current = null;
+        setActiveRunId(null);
+      }
+    }, STUCK_TIMEOUT_MS);
+
+    return () => clearTimeout(timer);
+  }, [opStatus, setOp]);
 
   // ------------------------------------------------------------------
   // Core operations

@@ -256,6 +256,14 @@ impl ContextOptimizationService {
     }
 
     /// Core pruning logic shared by conditional and forced paths.
+    ///
+    /// After the `PruningEngine` marks messages as `Pruned` in `ChatMessageStore`,
+    /// this method syncs the context transcript (JSONL) by removing pruned messages.
+    /// Without this sync, pruning would have no effect on the actual LLM context
+    /// because the JSONL transcript is the source of truth for context assembly.
+    ///
+    /// The display transcript is intentionally left unmodified -- by design it
+    /// is never compacted so users always see the full conversation history.
     async fn run_pruning_inner(
         container: &ServiceContainer,
         messages: &[y_core::session::ChatMessageRecord],
@@ -268,12 +276,91 @@ impl ContextOptimizationService {
             .await
             .map_err(|e| OptimizationError::PruningFailed(e.to_string()))?;
 
+        let mut total_pruned = 0;
         for r in &reports {
             if !r.skipped {
                 report.pruning_ran = true;
                 report.messages_pruned += r.messages_pruned;
                 report.pruning_tokens_saved += r.tokens_saved;
+                total_pruned += r.messages_pruned;
             }
+        }
+
+        // Sync context transcript: remove pruned messages from the JSONL
+        // transcript so the next LLM call sees a smaller context.
+        if total_pruned > 0 {
+            if let Err(e) = Self::sync_transcript_after_pruning(container, session_id).await {
+                tracing::warn!(
+                    error = %e,
+                    session_id = %session_id,
+                    "failed to sync context transcript after pruning"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Rebuild the context transcript to exclude pruned messages.
+    ///
+    /// Reads the active message set from `ChatMessageStore` (which has pruned
+    /// messages filtered out) and rebuilds the context transcript to match.
+    /// Uses message IDs for precise matching.
+    async fn sync_transcript_after_pruning(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Result<(), OptimizationError> {
+        // 1. Get the set of active message IDs from the SQLite store.
+        let active_records = container
+            .chat_message_store
+            .list_active(session_id)
+            .await
+            .map_err(|e| OptimizationError::PruningFailed(e.to_string()))?;
+
+        let active_ids: std::collections::HashSet<&str> =
+            active_records.iter().map(|r| r.id.as_str()).collect();
+
+        // 2. Read the current context transcript (JSONL).
+        let transcript = container
+            .session_manager
+            .read_transcript(session_id)
+            .await
+            .map_err(|e| OptimizationError::PruningFailed(e.to_string()))?;
+
+        // 3. Filter: keep only messages whose message_id is in the active set.
+        //    Also keep system messages (they have no ChatMessageStore record).
+        let retained: Vec<&y_core::types::Message> = transcript
+            .iter()
+            .filter(|m| {
+                m.role == y_core::types::Role::System || active_ids.contains(m.message_id.as_str())
+            })
+            .collect();
+
+        let pruned_count = transcript.len() - retained.len();
+        if pruned_count == 0 {
+            return Ok(());
+        }
+
+        tracing::info!(
+            session_id = %session_id,
+            transcript_before = transcript.len(),
+            retained = retained.len(),
+            pruned = pruned_count,
+            "syncing context transcript after pruning"
+        );
+
+        // 4. Truncate and re-write.
+        let transcript_store = container.session_manager.transcript_store();
+        transcript_store
+            .truncate(session_id, 0)
+            .await
+            .map_err(|e| OptimizationError::PruningFailed(e.to_string()))?;
+
+        for msg in retained {
+            transcript_store
+                .append(session_id, msg)
+                .await
+                .map_err(|e| OptimizationError::PruningFailed(e.to_string()))?;
         }
 
         Ok(())

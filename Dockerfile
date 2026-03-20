@@ -60,9 +60,8 @@ WORKDIR /app
 # Copy binary
 COPY --from=builder /app/target/release/y-agent /usr/local/bin/y-agent
 
-# Copy config and migrations
+# Copy config
 COPY config/ config/
-COPY migrations/ migrations/
 
 # Create data directory
 RUN mkdir -p /app/data && chown -R yagent:yagent /app

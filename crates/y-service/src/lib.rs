@@ -28,8 +28,10 @@ pub mod knowledge_service;
 pub mod observability;
 pub mod skill_evolution;
 pub mod skill_ingestion;
+pub mod skill_service;
 pub mod system;
 pub mod tool_search_orchestrator;
+pub mod workspace;
 
 // Re-export primary types for convenience.
 pub use agent_service::{
@@ -55,7 +57,9 @@ pub use skill_evolution::{
     SkillUsageAuditSubscriber, UsageMetrics,
 };
 pub use skill_ingestion::{ImportDecision, ImportError, ImportResult, SkillIngestionService};
+pub use skill_service::{SkillDetail, SkillInfo, SkillService};
 pub use system::{HealthReport, ProviderInfo, ProviderTestRequest, StatusReport, SystemService};
+pub use workspace::{WorkspaceRecord, WorkspaceService};
 
 // ---------------------------------------------------------------------------
 // Re-exports: infrastructure config types for presentation layers

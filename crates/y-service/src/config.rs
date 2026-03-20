@@ -20,6 +20,16 @@ use y_session::SessionConfig;
 use y_storage::StorageConfig;
 use y_tools::ToolRegistryConfig;
 
+/// Combined struct for deserializing `session.toml` which contains both
+/// session configuration and a nested `[pruning]` section.
+#[derive(Debug, Clone, Deserialize)]
+struct SessionFileConfig {
+    #[serde(flatten)]
+    session: SessionConfig,
+    #[serde(default)]
+    pruning: PruningConfig,
+}
+
 /// Configuration for constructing a [`ServiceContainer`](crate::ServiceContainer).
 ///
 /// Contains all domain-relevant sub-configs. Presentation-specific fields
@@ -57,6 +67,7 @@ pub struct ServiceConfig {
     pub knowledge: KnowledgeConfig,
 
     /// Context pruning configuration (strategies, thresholds).
+    /// Loaded from the `[pruning]` section in `session.toml`.
     pub pruning: PruningConfig,
 
     /// Path to the user prompts override directory (`~/.config/y-agent/prompts/`).
@@ -81,7 +92,6 @@ const CONFIG_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
-    "pruning",
 ];
 
 impl ServiceConfig {
@@ -139,8 +149,11 @@ impl ServiceConfig {
                     Ok(v) => config.storage = v,
                     Err(e) => warn!(file = "storage.toml", error = %e, "Parse error"),
                 },
-                "session" => match toml::from_str(&content) {
-                    Ok(v) => config.session = v,
+                "session" => match toml::from_str::<SessionFileConfig>(&content) {
+                    Ok(v) => {
+                        config.session = v.session;
+                        config.pruning = v.pruning;
+                    }
                     Err(e) => warn!(file = "session.toml", error = %e, "Parse error"),
                 },
                 "runtime" => match toml::from_str(&content) {
@@ -166,10 +179,6 @@ impl ServiceConfig {
                 "knowledge" => match toml::from_str(&content) {
                     Ok(v) => config.knowledge = v,
                     Err(e) => warn!(file = "knowledge.toml", error = %e, "Parse error"),
-                },
-                "pruning" => match toml::from_str(&content) {
-                    Ok(v) => config.pruning = v,
-                    Err(e) => warn!(file = "pruning.toml", error = %e, "Parse error"),
                 },
                 _ => {}
             }

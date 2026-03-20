@@ -503,6 +503,68 @@
   border: 1px solid var(--border);
 }
 
+/* ---- Time-range filter popover ---- */
+.obs-btn-active {
+  color: var(--accent);
+}
+
+.obs-filter-wrapper {
+  position: relative;
+}
+
+.obs-filter-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-xs);
+  z-index: 120;
+  min-width: 140px;
+  animation: obs-popover-in 0.14s ease-out;
+}
+
+@keyframes obs-popover-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.obs-filter-title {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 8px 2px;
+}
+
+.obs-filter-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.obs-filter-option:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.obs-filter-option.active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 500;
+}
+
 /* ---- Expanded mode ---- */
 .obs-expanded .obs-metrics {
   grid-template-columns: repeat(4, 1fr);

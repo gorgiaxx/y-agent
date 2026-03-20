@@ -110,6 +110,7 @@ mod tests {
             "diag_traces",
             "diag_observations",
             "diag_scores",
+            "provider_metrics_log",
         ];
         for table in &expected {
             assert!(

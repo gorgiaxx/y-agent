@@ -363,3 +363,22 @@ CREATE INDEX IF NOT EXISTS idx_diag_scores_trace
 
 CREATE INDEX IF NOT EXISTS idx_diag_scores_obs
     ON diag_scores(observation_id);
+
+------------------------------------------------------------------------
+-- 11. Provider metrics event log (observability persistence)
+------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS provider_metrics_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id     TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    event_type      TEXT NOT NULL CHECK (event_type IN ('success', 'error')),
+    input_tokens    INTEGER NOT NULL DEFAULT 0,
+    output_tokens   INTEGER NOT NULL DEFAULT 0,
+    cost_micros     INTEGER NOT NULL DEFAULT 0,
+    recorded_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_pml_provider_time
+    ON provider_metrics_log(provider_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pml_recorded_at
+    ON provider_metrics_log(recorded_at);

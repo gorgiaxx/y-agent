@@ -219,6 +219,21 @@ impl LlmProvider for AnthropicProvider {
             });
         }
 
+        // 402 Payment Required / billing error.
+        if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+            return Err(ProviderError::QuotaExhausted {
+                provider: self.metadata.id.to_string(),
+            });
+        }
+
+        // 529 Overloaded (Anthropic-specific) -- treat as transient server error.
+        if status.as_u16() == 529 {
+            return Err(ProviderError::ServerError {
+                provider: self.metadata.id.to_string(),
+                message: "API temporarily overloaded (529)".to_string(),
+            });
+        }
+
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
             return Err(ProviderError::ServerError {
@@ -240,14 +255,18 @@ impl LlmProvider for AnthropicProvider {
                 message: format!("parse response: {e}"),
             })?;
 
-        // Extract text content and tool calls from content blocks.
+        // Extract text content, thinking content, and tool calls from content blocks.
         let mut text_parts = Vec::new();
+        let mut thinking_parts = Vec::new();
         let mut tool_calls = Vec::new();
 
         for block in &anthropic_response.content {
             match block {
                 AnthropicContentBlock::Text { text } => {
                     text_parts.push(text.clone());
+                }
+                AnthropicContentBlock::Thinking { thinking, .. } => {
+                    thinking_parts.push(thinking.clone());
                 }
                 AnthropicContentBlock::ToolUse {
                     id, name, input, ..
@@ -268,6 +287,12 @@ impl LlmProvider for AnthropicProvider {
             Some(text_parts.join(""))
         };
 
+        let reasoning_content = if thinking_parts.is_empty() {
+            None
+        } else {
+            Some(thinking_parts.join(""))
+        };
+
         let finish_reason = match anthropic_response.stop_reason.as_deref() {
             Some("tool_use") => FinishReason::ToolUse,
             Some("max_tokens") => FinishReason::Length,
@@ -278,13 +303,13 @@ impl LlmProvider for AnthropicProvider {
             id: anthropic_response.id,
             model: anthropic_response.model,
             content,
-            reasoning_content: None,
+            reasoning_content,
             tool_calls,
             usage: TokenUsage {
                 input_tokens: anthropic_response.usage.input_tokens,
                 output_tokens: anthropic_response.usage.output_tokens,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
+                cache_read_tokens: anthropic_response.usage.cache_read_input_tokens,
+                cache_write_tokens: anthropic_response.usage.cache_creation_input_tokens,
             },
             finish_reason,
             raw_request,
@@ -328,6 +353,17 @@ impl LlmProvider for AnthropicProvider {
                     provider: self.metadata.id.to_string(),
                 });
             }
+            if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+                return Err(ProviderError::QuotaExhausted {
+                    provider: self.metadata.id.to_string(),
+                });
+            }
+            if status.as_u16() == 529 {
+                return Err(ProviderError::ServerError {
+                    provider: self.metadata.id.to_string(),
+                    message: "API temporarily overloaded (529)".to_string(),
+                });
+            }
             return Err(ProviderError::ServerError {
                 provider: self.metadata.id.to_string(),
                 message: format!("HTTP {status}: {error_body}"),
@@ -344,6 +380,8 @@ impl LlmProvider for AnthropicProvider {
                 current_tool_id: None,
                 current_tool_name: None,
                 current_tool_args: String::new(),
+                current_thinking: String::new(),
+                accumulated_usage: None,
                 done: false,
             },
             move |mut state| async move {
@@ -355,7 +393,7 @@ impl LlmProvider for AnthropicProvider {
                     if let Some(event) = extract_anthropic_sse_event(&mut state.buffer) {
                         match event {
                             AnthropicSseEvent::ContentBlockDelta { delta } => match delta {
-                                AnthropicDelta::TextDelta { text } => {
+                                AnthropicDelta::Text { text } => {
                                     return Some((
                                         Ok(ChatStreamChunk {
                                             delta_content: Some(text),
@@ -367,18 +405,41 @@ impl LlmProvider for AnthropicProvider {
                                         state,
                                     ));
                                 }
-                                AnthropicDelta::InputJsonDelta { partial_json } => {
+                                AnthropicDelta::Thinking { thinking } => {
+                                    state.current_thinking.push_str(&thinking);
+                                    return Some((
+                                        Ok(ChatStreamChunk {
+                                            delta_content: None,
+                                            delta_reasoning_content: Some(thinking),
+                                            delta_tool_calls: vec![],
+                                            usage: None,
+                                            finish_reason: None,
+                                        }),
+                                        state,
+                                    ));
+                                }
+                                AnthropicDelta::InputJson { partial_json } => {
                                     state.current_tool_args.push_str(&partial_json);
+                                    continue;
+                                }
+                                // Signature deltas are accumulated silently.
+                                AnthropicDelta::Signature { .. } => {
                                     continue;
                                 }
                             },
                             AnthropicSseEvent::ContentBlockStart { content_block } => {
-                                if let Some(AnthropicContentBlock::ToolUse { id, name, .. }) =
-                                    content_block
-                                {
-                                    state.current_tool_id = Some(id);
-                                    state.current_tool_name = Some(name);
-                                    state.current_tool_args.clear();
+                                if let Some(ref block) = content_block {
+                                    match block {
+                                        AnthropicContentBlock::ToolUse { id, name, .. } => {
+                                            state.current_tool_id = Some(id.clone());
+                                            state.current_tool_name = Some(name.clone());
+                                            state.current_tool_args.clear();
+                                        }
+                                        AnthropicContentBlock::Thinking { .. } => {
+                                            state.current_thinking.clear();
+                                        }
+                                        _ => {}
+                                    }
                                 }
                                 continue;
                             }
@@ -407,6 +468,19 @@ impl LlmProvider for AnthropicProvider {
                                 }
                                 continue;
                             }
+                            AnthropicSseEvent::MessageStart { usage, .. } => {
+                                // Capture initial usage from message_start (Anthropic
+                                // reports input_tokens only here, not in message_delta).
+                                if let Some(u) = usage {
+                                    state.accumulated_usage = Some(TokenUsage {
+                                        input_tokens: u.input_tokens.unwrap_or(0),
+                                        output_tokens: u.output_tokens.unwrap_or(0),
+                                        cache_read_tokens: u.cache_read_input_tokens,
+                                        cache_write_tokens: u.cache_creation_input_tokens,
+                                    });
+                                }
+                                continue;
+                            }
                             AnthropicSseEvent::MessageDelta { delta, usage } => {
                                 let finish_reason =
                                     delta.and_then(|d| d.stop_reason).map(|r| match r.as_str() {
@@ -415,12 +489,31 @@ impl LlmProvider for AnthropicProvider {
                                         "max_tokens" => FinishReason::Length,
                                         _ => FinishReason::Unknown,
                                     });
-                                let usage_info = usage.map(|u| TokenUsage {
-                                    input_tokens: u.input_tokens.unwrap_or(0),
-                                    output_tokens: u.output_tokens.unwrap_or(0),
-                                    cache_read_tokens: None,
-                                    cache_write_tokens: None,
-                                });
+                                // Merge message_delta usage with accumulated
+                                // message_start usage.
+                                let usage_info = if let Some(u) = usage {
+                                    let mut merged =
+                                        state.accumulated_usage.take().unwrap_or(TokenUsage {
+                                            input_tokens: 0,
+                                            output_tokens: 0,
+                                            cache_read_tokens: None,
+                                            cache_write_tokens: None,
+                                        });
+                                    // output_tokens is typically in message_delta.
+                                    if let Some(out) = u.output_tokens {
+                                        merged.output_tokens = out;
+                                    }
+                                    // input_tokens may be present in message_delta
+                                    // on some proxies.
+                                    if let Some(inp) = u.input_tokens {
+                                        if inp > 0 {
+                                            merged.input_tokens = inp;
+                                        }
+                                    }
+                                    Some(merged)
+                                } else {
+                                    state.accumulated_usage.take()
+                                };
                                 return Some((
                                     Ok(ChatStreamChunk {
                                         delta_content: None,
@@ -437,7 +530,6 @@ impl LlmProvider for AnthropicProvider {
                                 return None;
                             }
                             AnthropicSseEvent::Ping
-                            | AnthropicSseEvent::MessageStart { .. }
                             | AnthropicSseEvent::Error { .. }
                             | AnthropicSseEvent::Unknown => {
                                 continue;
@@ -518,6 +610,9 @@ struct AnthropicSseState {
     current_tool_id: Option<String>,
     current_tool_name: Option<String>,
     current_tool_args: String,
+    current_thinking: String,
+    /// Usage accumulated from `message_start` event.
+    accumulated_usage: Option<TokenUsage>,
     done: bool,
 }
 
@@ -527,6 +622,7 @@ enum AnthropicSseEvent {
     MessageStart {
         #[allow(dead_code)]
         message: Option<serde_json::Value>,
+        usage: Option<AnthropicStreamUsage>,
     },
     ContentBlockStart {
         content_block: Option<AnthropicContentBlock>,
@@ -556,11 +652,24 @@ struct AnthropicMessageDelta {
 struct AnthropicStreamUsage {
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,
+    cache_read_input_tokens: Option<u32>,
+    cache_creation_input_tokens: Option<u32>,
 }
 
 enum AnthropicDelta {
-    TextDelta { text: String },
-    InputJsonDelta { partial_json: String },
+    Text {
+        text: String,
+    },
+    Thinking {
+        thinking: String,
+    },
+    Signature {
+        #[allow(dead_code)]
+        signature: String,
+    },
+    InputJson {
+        partial_json: String,
+    },
 }
 
 /// Extract one Anthropic SSE event from the buffer.
@@ -590,10 +699,16 @@ fn extract_anthropic_sse_event(buffer: &mut String) -> Option<AnthropicSseEvent>
     match event_type.as_str() {
         "ping" => Some(AnthropicSseEvent::Ping),
         "message_start" => {
-            let msg = serde_json::from_str::<serde_json::Value>(&data)
-                .ok()
-                .and_then(|v| v.get("message").cloned());
-            Some(AnthropicSseEvent::MessageStart { message: msg })
+            let parsed = serde_json::from_str::<serde_json::Value>(&data).ok();
+            let msg = parsed.as_ref().and_then(|v| v.get("message").cloned());
+            let usage = parsed
+                .as_ref()
+                .and_then(|v| v.pointer("/message/usage"))
+                .and_then(|u| serde_json::from_value::<AnthropicStreamUsage>(u.clone()).ok());
+            Some(AnthropicSseEvent::MessageStart {
+                message: msg,
+                usage,
+            })
         }
         "content_block_start" => {
             let block = serde_json::from_str::<serde_json::Value>(&data)
@@ -619,7 +734,27 @@ fn extract_anthropic_sse_event(buffer: &mut String) -> Option<AnthropicSseEvent>
                         .unwrap_or("")
                         .to_string();
                     Some(AnthropicSseEvent::ContentBlockDelta {
-                        delta: AnthropicDelta::TextDelta { text },
+                        delta: AnthropicDelta::Text { text },
+                    })
+                }
+                "thinking_delta" => {
+                    let thinking = delta_obj
+                        .get("thinking")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some(AnthropicSseEvent::ContentBlockDelta {
+                        delta: AnthropicDelta::Thinking { thinking },
+                    })
+                }
+                "signature_delta" => {
+                    let signature = delta_obj
+                        .get("signature")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some(AnthropicSseEvent::ContentBlockDelta {
+                        delta: AnthropicDelta::Signature { signature },
                     })
                 }
                 "input_json_delta" => {
@@ -629,7 +764,7 @@ fn extract_anthropic_sse_event(buffer: &mut String) -> Option<AnthropicSseEvent>
                         .unwrap_or("")
                         .to_string();
                     Some(AnthropicSseEvent::ContentBlockDelta {
-                        delta: AnthropicDelta::InputJsonDelta {
+                        delta: AnthropicDelta::InputJson {
                             partial_json: partial,
                         },
                     })
@@ -711,6 +846,12 @@ enum AnthropicContent {
 enum AnthropicContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        #[serde(default)]
+        signature: Option<String>,
+    },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -745,6 +886,10 @@ struct AnthropicResponse {
 struct AnthropicUsage {
     input_tokens: u32,
     output_tokens: u32,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u32>,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u32>,
 }
 
 #[cfg(test)]
@@ -942,7 +1087,7 @@ mod tests {
         let event = extract_anthropic_sse_event(&mut buf);
         assert!(event.is_some());
         if let Some(AnthropicSseEvent::ContentBlockDelta {
-            delta: AnthropicDelta::TextDelta { text },
+            delta: AnthropicDelta::Text { text },
         }) = event
         {
             assert_eq!(text, "Hello");
@@ -981,5 +1126,142 @@ mod tests {
         let json = serde_json::to_value(&tool).unwrap();
         assert_eq!(json["name"], "get_weather");
         assert_eq!(json["input_schema"]["type"], "object");
+    }
+
+    #[test]
+    fn test_anthropic_response_with_thinking() {
+        let json = serde_json::json!({
+            "id": "msg_03",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "Let me think about this...",
+                    "signature": "sig_abc123"
+                },
+                {"type": "text", "text": "Here is my answer."}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 50,
+                "output_tokens": 100,
+                "cache_read_input_tokens": 20,
+                "cache_creation_input_tokens": 10
+            }
+        });
+
+        let response: AnthropicResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.content.len(), 2);
+
+        // Verify thinking block is parsed correctly.
+        if let AnthropicContentBlock::Thinking {
+            thinking,
+            signature,
+        } = &response.content[0]
+        {
+            assert_eq!(thinking, "Let me think about this...");
+            assert_eq!(signature.as_deref(), Some("sig_abc123"));
+        } else {
+            panic!("Expected Thinking block");
+        }
+
+        // Verify text block.
+        if let AnthropicContentBlock::Text { text } = &response.content[1] {
+            assert_eq!(text, "Here is my answer.");
+        } else {
+            panic!("Expected Text block");
+        }
+    }
+
+    #[test]
+    fn test_anthropic_usage_with_cache_tokens() {
+        let json = serde_json::json!({
+            "id": "msg_04",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-3-5-sonnet-20241022",
+            "content": [{"type": "text", "text": "cached response"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 80,
+                "cache_creation_input_tokens": 15
+            }
+        });
+
+        let response: AnthropicResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.usage.input_tokens, 100);
+        assert_eq!(response.usage.output_tokens, 50);
+        assert_eq!(response.usage.cache_read_input_tokens, Some(80));
+        assert_eq!(response.usage.cache_creation_input_tokens, Some(15));
+    }
+
+    #[test]
+    fn test_anthropic_usage_without_cache_tokens() {
+        let json = serde_json::json!({
+            "id": "msg_05",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-3-5-sonnet-20241022",
+            "content": [{"type": "text", "text": "response"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5
+            }
+        });
+
+        let response: AnthropicResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.usage.cache_read_input_tokens, None);
+        assert_eq!(response.usage.cache_creation_input_tokens, None);
+    }
+
+    #[test]
+    fn test_extract_anthropic_sse_thinking_delta() {
+        let mut buf = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me reason...\"}}\n\n".to_string();
+        let event = extract_anthropic_sse_event(&mut buf);
+        assert!(event.is_some());
+        if let Some(AnthropicSseEvent::ContentBlockDelta {
+            delta: AnthropicDelta::Thinking { thinking },
+        }) = event
+        {
+            assert_eq!(thinking, "Let me reason...");
+        } else {
+            panic!("Expected ContentBlockDelta with ThinkingDelta");
+        }
+    }
+
+    #[test]
+    fn test_extract_anthropic_sse_signature_delta() {
+        let mut buf = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_xyz\"}}\n\n".to_string();
+        let event = extract_anthropic_sse_event(&mut buf);
+        assert!(event.is_some());
+        if let Some(AnthropicSseEvent::ContentBlockDelta {
+            delta: AnthropicDelta::Signature { signature },
+        }) = event
+        {
+            assert_eq!(signature, "sig_xyz");
+        } else {
+            panic!("Expected ContentBlockDelta with SignatureDelta");
+        }
+    }
+
+    #[test]
+    fn test_extract_anthropic_sse_message_start_usage() {
+        let mut buf = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_01\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":500,\"output_tokens\":0,\"cache_read_input_tokens\":300,\"cache_creation_input_tokens\":50}}}\n\n".to_string();
+        let event = extract_anthropic_sse_event(&mut buf);
+        assert!(event.is_some());
+        if let Some(AnthropicSseEvent::MessageStart { usage, .. }) = event {
+            let u = usage.expect("usage should be present");
+            assert_eq!(u.input_tokens, Some(500));
+            assert_eq!(u.output_tokens, Some(0));
+            assert_eq!(u.cache_read_input_tokens, Some(300));
+            assert_eq!(u.cache_creation_input_tokens, Some(50));
+        } else {
+            panic!("Expected MessageStart event");
+        }
     }
 }

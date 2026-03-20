@@ -42,7 +42,7 @@ pub use freeze::FreezeManager;
 pub use health::HealthChecker;
 pub use hook_llm_runner::ProviderPoolHookLlmRunner;
 pub use lease::{LeaseGuard, LeaseId, LeaseManager};
-pub use metrics::{MetricsSnapshot, ProviderMetrics};
+pub use metrics::{MetricsEvent, MetricsSnapshot, ProviderMetrics};
 pub use metrics_export::render_prometheus;
 pub use pool::ProviderPoolImpl;
 pub use providers::anthropic::AnthropicProvider;

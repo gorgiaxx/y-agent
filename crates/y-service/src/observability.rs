@@ -221,6 +221,88 @@ impl ObservabilityService {
             instances,
         }
     }
+
+    /// Capture a snapshot with historical metrics from the persistent store.
+    ///
+    /// When `since` and/or `until` are provided, provider metrics come from
+    /// aggregated database records instead of the live in-memory counters.
+    /// Live data (concurrency, freeze status, agent pool) is always real-time.
+    pub async fn snapshot_with_history(
+        container: &ServiceContainer,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> SystemSnapshot {
+        let agents = Self::build_agent_pool_snapshot(container).await;
+
+        // Query aggregated metrics from the persistent store.
+        let aggregated = container
+            .provider_metrics_store
+            .query_aggregated(since, until)
+            .await
+            .unwrap_or_default();
+
+        // Build a lookup map: provider_id -> aggregated metrics.
+        let agg_map: HashMap<String, _> = aggregated
+            .into_iter()
+            .map(|a| (a.provider_id.clone(), a))
+            .collect();
+
+        // Build providers by merging live metadata with historical metrics.
+        let pool = container.provider_pool().await;
+        let metadata_list = pool.list_metadata();
+        let statuses = pool.provider_statuses().await;
+        let status_map: HashMap<String, _> = statuses
+            .into_iter()
+            .map(|s| (s.id.to_string(), s))
+            .collect();
+
+        let providers: Vec<ProviderSnapshot> = metadata_list
+            .iter()
+            .map(|meta| {
+                let id_str = meta.id.to_string();
+                let status = status_map.get(&id_str);
+                let agg = agg_map.get(&id_str);
+
+                let total_requests = agg.map_or(0, |a| a.total_requests);
+                let total_errors = agg.map_or(0, |a| a.total_errors);
+
+                ProviderSnapshot {
+                    id: id_str,
+                    model: meta.model.clone(),
+                    provider_type: format!("{:?}", meta.provider_type),
+                    tags: meta.tags.clone(),
+                    is_frozen: status.is_some_and(|s| s.is_frozen),
+                    freeze_reason: status.and_then(|s| s.freeze_reason.clone()),
+                    max_concurrency: meta.max_concurrency,
+                    active_requests: status.map_or(0, |s| s.active_requests),
+                    total_requests,
+                    total_errors,
+                    total_input_tokens: agg.map_or(0, |a| a.total_input_tokens),
+                    total_output_tokens: agg.map_or(0, |a| a.total_output_tokens),
+                    estimated_cost_usd: agg.map_or(0.0, |a| {
+                        let dollars =
+                            u32::try_from(a.total_cost_micros / 1_000_000).unwrap_or(u32::MAX);
+                        let micros = u32::try_from(a.total_cost_micros % 1_000_000).unwrap_or(0);
+                        f64::from(dollars) + f64::from(micros) / 1_000_000.0
+                    }),
+                    error_rate: if total_requests == 0 {
+                        0.0
+                    } else {
+                        let e = u32::try_from(total_errors).unwrap_or(u32::MAX);
+                        let r = u32::try_from(total_requests).unwrap_or(u32::MAX);
+                        f64::from(e) / f64::from(r)
+                    },
+                }
+            })
+            .collect();
+
+        SystemSnapshot {
+            timestamp: chrono::Utc::now(),
+            providers,
+            agents,
+            scheduler: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

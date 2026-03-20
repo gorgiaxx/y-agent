@@ -12,6 +12,16 @@ use y_service::{
     RuntimeConfig, SessionConfig, StorageConfig, ToolRegistryConfig,
 };
 
+/// Combined struct for deserializing `session.toml` which contains both
+/// session configuration and a nested `[pruning]` section.
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+struct SessionFileConfig {
+    #[serde(flatten)]
+    session: SessionConfig,
+    #[serde(default)]
+    pruning: PruningConfig,
+}
+
 /// Environment variable prefix for y-agent configuration overrides.
 const ENV_PREFIX: &str = "Y_AGENT_";
 
@@ -119,7 +129,6 @@ const CONFIG_FILE_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
-    "pruning",
 ];
 
 impl ConfigLoader {
@@ -268,8 +277,10 @@ impl ConfigLoader {
                         .with_context(|| format!("parsing {}", path.display()))?;
                 }
                 "session" => {
-                    config.session = toml::from_str(&content)
+                    let combined: SessionFileConfig = toml::from_str(&content)
                         .with_context(|| format!("parsing {}", path.display()))?;
+                    config.session = combined.session;
+                    config.pruning = combined.pruning;
                 }
                 "runtime" => {
                     config.runtime = toml::from_str(&content)
@@ -293,10 +304,6 @@ impl ConfigLoader {
                 }
                 "knowledge" => {
                     config.knowledge = toml::from_str(&content)
-                        .with_context(|| format!("parsing {}", path.display()))?;
-                }
-                "pruning" => {
-                    config.pruning = toml::from_str(&content)
                         .with_context(|| format!("parsing {}", path.display()))?;
                 }
                 _ => {}

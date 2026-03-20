@@ -34,7 +34,8 @@ use y_runtime::{RuntimeManager, VenvManager};
 use y_session::{ChatCheckpointManager, SessionManager};
 use y_skills::SkillRegistryImpl;
 use y_storage::{
-    SqliteChatCheckpointStore, SqliteChatMessageStore, SqliteSessionStore, SqliteWorkflowStore,
+    SqliteChatCheckpointStore, SqliteChatMessageStore, SqliteProviderMetricsStore,
+    SqliteSessionStore, SqliteWorkflowStore,
 };
 use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
@@ -139,6 +140,9 @@ pub struct ServiceContainer {
     /// Tracks the total token count at the time pruning last ran.
     /// Pruning only triggers when `current_tokens - watermark >= token_threshold`.
     pub pruning_watermarks: RwLock<HashMap<SessionId, u32>>,
+
+    /// Provider metrics event log store for persistence across restarts.
+    pub provider_metrics_store: SqliteProviderMetricsStore,
 }
 
 impl ServiceContainer {
@@ -220,10 +224,27 @@ impl ServiceContainer {
         // 7. Guardrails.
         let guardrail_manager = GuardrailManager::new(config.guardrails.clone());
 
+        // 7b. Knowledge service + embedding provider (initialised early so the
+        //     knowledge_search tool can be registered as part of step 8).
+        let (knowledge_service, embedding_provider) = Self::init_knowledge_service(config);
+
         // 8. Tool registry.
         let tool_registry = ToolRegistryImpl::new(config.tools.clone());
-        y_tools::builtin::register_builtin_tools(&tool_registry, config.browser.clone(), None)
-            .await;
+
+        // Knowledge handle for the knowledge_search tool.
+        // Built here so the tool is registered in the service layer (not each
+        // presentation layer). The same handle is shared with
+        // KnowledgeContextProvider below.
+        let kb_handle = {
+            let ks = knowledge_service.lock().await;
+            ks.knowledge_handle()
+        };
+        y_tools::builtin::register_builtin_tools(
+            &tool_registry,
+            config.browser.clone(),
+            Some(kb_handle),
+        )
+        .await;
 
         // 8b. Tool taxonomy (loaded from embedded TOML).
         let tool_taxonomy = Arc::new(
@@ -316,10 +337,8 @@ tools = ["tool_search"]
             )));
         }
 
-        // 10d. Knowledge service + embedding provider.
-        let (knowledge_service, embedding_provider) = Self::init_knowledge_service(config);
-
-        // 10e. Register KnowledgeContextProvider in context pipeline.
+        // 10d. Register KnowledgeContextProvider in context pipeline.
+        //      (knowledge_service was initialised in step 7b above.)
         {
             let ks = knowledge_service.lock().await;
             let knowledge_handle = ks.knowledge_handle();
@@ -356,6 +375,18 @@ tools = ["tool_search"]
         // Default compaction threshold from session config (percentage of context window).
         let compaction_threshold_pct = config.session.compaction_threshold_pct;
 
+        // 16. Provider metrics store (observability persistence).
+        let provider_metrics_store = SqliteProviderMetricsStore::new(pool.clone());
+
+        // Wire metrics event senders so each request is logged to SQLite.
+        {
+            let receivers = provider_pool.attach_event_senders();
+            let pms = provider_metrics_store.clone();
+            tokio::spawn(async move {
+                Self::run_metrics_event_consumers(receivers, pms).await;
+            });
+        }
+
         Ok(Self {
             provider_pool: RwLock::new(provider_pool),
             session_manager,
@@ -381,6 +412,7 @@ tools = ["tool_search"]
             compaction_engine,
             compaction_threshold_pct,
             pruning_watermarks: RwLock::new(HashMap::new()),
+            provider_metrics_store,
         })
     }
 
@@ -572,6 +604,49 @@ tools = ["tool_search"]
         // during startup, before any async work begins.
         self.agent_pool.blocking_lock().set_runner(runner);
         tracing::info!("ServiceAgentRunner initialised for sub-agent delegation");
+    }
+
+    /// Spawn per-provider tasks that drain metrics events and persist them.
+    ///
+    /// Each provider gets its own channel; we spawn one task per provider
+    /// that loops until the sender is dropped.
+    async fn run_metrics_event_consumers(
+        receivers: Vec<(
+            String,
+            String,
+            tokio::sync::mpsc::UnboundedReceiver<y_provider::MetricsEvent>,
+        )>,
+        store: y_storage::SqliteProviderMetricsStore,
+    ) {
+        let mut handles = Vec::with_capacity(receivers.len());
+        for (provider_id, model, mut rx) in receivers {
+            let store = store.clone();
+            let pid = provider_id;
+            let mdl = model;
+            handles.push(tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let db_event = y_storage::ProviderMetricsEvent {
+                        provider_id: pid.clone(),
+                        model: mdl.clone(),
+                        is_error: event.is_error,
+                        input_tokens: u64::from(event.input_tokens),
+                        output_tokens: u64::from(event.output_tokens),
+                        cost_micros: event.cost_micros,
+                    };
+                    if let Err(e) = store.record_event(&db_event).await {
+                        tracing::warn!(
+                            provider_id = %pid,
+                            error = %e,
+                            "failed to persist metrics event"
+                        );
+                    }
+                }
+            }));
+        }
+        // Wait for all consumers to exit (happens when provider pool is dropped).
+        for h in handles {
+            let _ = h.await;
+        }
     }
 }
 

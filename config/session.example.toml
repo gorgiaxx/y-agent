@@ -14,3 +14,25 @@ compaction_threshold_pct = 85
 
 # Auto-archive sessions when they are merged.
 auto_archive_merged = true
+
+# ==============================================================================
+# Context Pruning Configuration
+# ==============================================================================
+
+[pruning]
+
+# Master switch for the pruning engine.
+enabled = true
+
+# Minimum token growth since last pruning to trigger a new pruning pass.
+# Pruning only runs when (current_tokens - last_pruned_tokens) >= this value.
+token_threshold = 2000
+
+# Strategy selection: "auto" (both), "retry_only", or "progressive_only".
+strategy = "auto"
+
+# Progressive pruning settings (subagent-based summarization).
+[pruning.progressive]
+model = "gpt-4o-mini"
+max_retries = 2
+preserve_identifiers = true

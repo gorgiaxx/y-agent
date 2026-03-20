@@ -130,6 +130,8 @@ pub struct TurnResult {
     pub input_tokens: u64,
     /// Cumulative output tokens across all LLM iterations.
     pub output_tokens: u64,
+    /// Input tokens from the **last** LLM iteration (actual context occupancy).
+    pub last_input_tokens: u64,
     /// Context window size of the serving provider.
     pub context_window: usize,
     /// Total cost in USD.
@@ -623,16 +625,40 @@ impl ChatService {
         };
 
         // 3. Delegate to AgentService.
-        let result = AgentService::execute(container, &exec_config, progress, cancel)
-            .await
-            .map_err(|e| match e {
-                AgentExecutionError::LlmError(msg) => TurnError::LlmError(msg),
-                AgentExecutionError::ContextError(msg) => TurnError::ContextError(msg),
-                AgentExecutionError::ToolLoopLimitExceeded { max_iterations } => {
-                    TurnError::ToolLoopLimitExceeded { max_iterations }
+        let result = match AgentService::execute(container, &exec_config, progress, cancel).await {
+            Ok(r) => r,
+            Err(AgentExecutionError::LlmError {
+                message,
+                partial_messages,
+            }) => {
+                // Persist intermediate messages (assistant + tool results from
+                // earlier successful iterations) so the conversation history
+                // survives the error and the user can continue / retry.
+                for msg in &partial_messages {
+                    let _ = container
+                        .session_manager
+                        .append_message(&input.session_id, msg)
+                        .await;
                 }
-                AgentExecutionError::Cancelled => TurnError::Cancelled,
-            })?;
+                if !partial_messages.is_empty() {
+                    tracing::info!(
+                        count = partial_messages.len(),
+                        session = %input.session_id.0,
+                        "persisted partial messages before LLM error"
+                    );
+                }
+                return Err(TurnError::LlmError(message));
+            }
+            Err(AgentExecutionError::ContextError(msg)) => {
+                return Err(TurnError::ContextError(msg));
+            }
+            Err(AgentExecutionError::ToolLoopLimitExceeded { max_iterations }) => {
+                return Err(TurnError::ToolLoopLimitExceeded { max_iterations });
+            }
+            Err(AgentExecutionError::Cancelled) => {
+                return Err(TurnError::Cancelled);
+            }
+        };
 
         // 4. Session-specific post-processing: persist final assistant message,
         //    create checkpoint. AgentService doesn't handle session storage —
@@ -647,7 +673,7 @@ impl ChatService {
                     "name": tc.name,
                     "success": tc.success,
                     "duration_ms": tc.duration_ms,
-                    "result_preview": &tc.result_content[..tc.result_content.len().min(2000)],
+                    "result_preview": &tc.result_content[..tc.result_content.floor_char_boundary(2000)],
                 })
             })
             .collect();
@@ -724,6 +750,7 @@ impl ChatService {
             provider_id: result.provider_id,
             input_tokens: result.input_tokens,
             output_tokens: result.output_tokens,
+            last_input_tokens: result.last_input_tokens,
             context_window: result.context_window,
             cost_usd: result.cost_usd,
             tool_calls_executed: result.tool_calls_executed,
@@ -782,6 +809,20 @@ impl ChatService {
                 })
             })
             .collect()
+    }
+
+    /// Determine whether title generation should be triggered for this turn.
+    ///
+    /// Business rule: generate a title when the session has at least one user
+    /// message and (`user_msg_count == 1` OR `user_msg_count` is a multiple of
+    /// `title_summarize_interval`). Disabled when `title_summarize_interval` is 0.
+    pub fn should_generate_title(container: &ServiceContainer, history: &[Message]) -> bool {
+        let title_interval = container.session_manager.config().title_summarize_interval;
+        if title_interval == 0 {
+            return false;
+        }
+        let user_msg_count = history.iter().filter(|m| m.role == Role::User).count();
+        user_msg_count > 0 && (user_msg_count == 1 || user_msg_count % title_interval as usize == 0)
     }
 }
 
