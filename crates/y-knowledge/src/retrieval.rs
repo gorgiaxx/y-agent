@@ -195,7 +195,7 @@ impl<T: Tokenizer> HybridRetriever<T> {
 
     /// Index multiple chunks with quality scores in a single call.
     ///
-    /// More efficient than calling [`index_with_quality`] in a loop:
+    /// More efficient than calling [`Self::index_with_quality`] in a loop:
     /// pre-reserves capacity and uses bulk BM25 indexing to reduce
     /// allocator pressure and per-chunk overhead.
     pub fn index_batch_with_quality(&mut self, chunks: Vec<Chunk>, quality_score: f32) {

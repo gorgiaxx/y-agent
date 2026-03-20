@@ -85,7 +85,7 @@ impl<T: Tokenizer> Bm25Index<T> {
 
     /// Index multiple chunks in one call.
     ///
-    /// Functionally equivalent to calling [`add`] for each item, but
+    /// Functionally equivalent to calling [`Self::add`] for each item, but
     /// pre-reserves capacity in the document-lengths map to reduce
     /// allocator pressure when indexing thousands of chunks at once.
     pub fn add_bulk(&mut self, documents: &[(&str, &str)]) {

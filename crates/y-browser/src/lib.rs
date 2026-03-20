@@ -8,7 +8,7 @@
 //! # Architecture
 //!
 //! - [`CdpClient`] — WebSocket JSON-RPC client for CDP
-//! - [`BrowserActions`] — high-level operations (navigate, screenshot, click, etc.)
+//! - `BrowserActions` -- high-level operations (navigate, screenshot, click, etc.)
 //! - [`BrowserTool`] — implements `y-core::tool::Tool` for agent integration
 //! - [`SecurityPolicy`] — domain allowlist + SSRF protection
 //! - [`ChromeLauncher`] — local Chrome process lifecycle manager

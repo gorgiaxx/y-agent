@@ -1,7 +1,7 @@
 //! Global observability service -- live system state snapshots.
 //!
-//! Composes data from [`ProviderPoolImpl`], [`AgentPool`], and
-//! [`PriorityScheduler`] into a single [`SystemSnapshot`] that
+//! Composes data from `ProviderPoolImpl`, `AgentPool`, and
+//! `PriorityScheduler` into a single [`SystemSnapshot`] that
 //! presentation layers (GUI, CLI, TUI) can poll.
 
 use std::collections::HashMap;

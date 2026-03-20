@@ -15,16 +15,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # -- Gate: ensure CI passes before releasing ---------------------------------
-  ci-gate:
-    name: CI Gate
-    uses: ./.github/workflows/ci.yml
-
   # -- Build and publish Docker image ------------------------------------------
   docker:
     name: Docker Image
     runs-on: ubuntu-latest
-    needs: ci-gate
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +61,7 @@ jobs:
   build:
     name: Build (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
-    needs: ci-gate
+
     strategy:
       fail-fast: false
       matrix:

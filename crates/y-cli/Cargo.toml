@@ -8,6 +8,7 @@ description = "CLI interface for y-agent"
 [[bin]]
 name = "y-agent"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 y-core = { workspace = true }

@@ -559,7 +559,7 @@ tools = ["tool_search"]
     }
 
     /// Two-phase initialisation: swap the agent runner from `SingleTurnRunner`
-    /// to [`ServiceAgentRunner`] so that sub-agents use the unified
+    /// to `ServiceAgentRunner` so that sub-agents use the unified
     /// `AgentService::execute()` loop.
     ///
     /// Must be called **after** the container has been wrapped in `Arc`.

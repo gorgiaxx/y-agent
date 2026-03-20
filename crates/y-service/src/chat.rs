@@ -457,7 +457,7 @@ impl ChatService {
     /// assistant reply + tool messages, invalidate newer checkpoints, and
     /// return a [`PreparedTurn`] ready for execution.
     ///
-    /// This mirrors [`prepare_turn`] but for the resend case where no new
+    /// This mirrors [`Self::prepare_turn`] but for the resend case where no new
     /// user message is appended — the existing one is reused.
     pub async fn prepare_resend_turn(
         container: &ServiceContainer,

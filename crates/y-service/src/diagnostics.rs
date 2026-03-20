@@ -238,7 +238,7 @@ impl DiagnosticsService {
 // DiagnosticsAgentDelegator — decorator for tracing subagent LLM calls
 // ---------------------------------------------------------------------------
 
-/// A decorator around [`AgentDelegator`] that records diagnostics (trace +
+/// A decorator around `AgentDelegator` that records diagnostics (trace +
 /// generation observation) for each delegation call.
 ///
 /// Without this wrapper, subagent calls (title-generator, skill-ingestion,

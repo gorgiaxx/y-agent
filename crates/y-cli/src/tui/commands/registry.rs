@@ -14,7 +14,7 @@ pub struct CommandInfo {
     pub alias: Option<&'static str>,
     /// One-line description.
     pub description: &'static str,
-    /// Argument synopsis (e.g. "[label]").
+    /// Argument synopsis (e.g. "\[label\]").
     pub args: &'static str,
     /// Category for grouping.
     pub category: CommandCategory,

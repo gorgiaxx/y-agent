@@ -276,7 +276,7 @@ impl AgentRegistry {
 
     /// Register or override an existing agent definition.
     ///
-    /// Unlike [`register`], this replaces any existing definition with the
+    /// Unlike [`Self::register`], this replaces any existing definition with the
     /// same ID. This is the primary mechanism for user-defined overrides
     /// of built-in agents.
     pub fn register_or_override(
@@ -291,7 +291,7 @@ impl AgentRegistry {
     /// Load user-defined agent definitions from a directory.
     ///
     /// Scans `dir` for `*.toml` files, parses each as an `AgentDefinition`,
-    /// and calls [`register_or_override`] to register (or override built-ins).
+    /// and calls [`Self::register_or_override`] to register (or override built-ins).
     ///
     /// Returns `Ok(())` on success, or a list of `(filename, error)` pairs
     /// for any files that failed to parse. Successfully parsed files are
