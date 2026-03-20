@@ -113,7 +113,7 @@ pub fn submit_message(
     let title_interval = services.session_manager.config().title_summarize_interval;
     let should_generate_title = title_interval > 0
         && user_msg_count > 0
-        && (user_msg_count == 1 || user_msg_count % title_interval == 0);
+        && (user_msg_count == 1 || user_msg_count.is_multiple_of(title_interval));
 
     // Mark state as streaming — add placeholder assistant message.
     state.is_streaming = true;

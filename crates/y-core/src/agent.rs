@@ -185,12 +185,12 @@ pub struct AgentRunOutput {
 ///
 /// # Implementations
 ///
-/// - `SingleTurnRunner` (in `y-provider`): system_prompt + input → single
+/// - `SingleTurnRunner` (in `y-provider`): `system_prompt` + input → single
 ///   `ProviderPool::chat_completion()` call. Suitable for system agents
 ///   (title-generator, compaction-summarizer, etc.).
 #[async_trait]
 pub trait AgentRunner: Send + Sync {
-    /// Run a single-turn agent: system_prompt + input → text output.
+    /// Run a single-turn agent: `system_prompt` + input → text output.
     ///
     /// The runner builds the appropriate `ChatRequest` from the config,
     /// routes it to an available provider, and returns the result.

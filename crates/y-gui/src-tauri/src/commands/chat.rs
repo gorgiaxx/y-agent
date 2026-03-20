@@ -433,9 +433,7 @@ pub async fn session_last_turn_meta(
     }
 
     // --- Tier 2: diagnostics database via service layer ---
-    let summary = ChatService::get_last_turn_meta(&state.container, &session_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let summary = ChatService::get_last_turn_meta(&state.container, &session_id).await?;
 
     let meta = match summary {
         Some(s) => TurnMeta {
@@ -619,7 +617,7 @@ pub async fn chat_checkpoint_list(
 /// matches that message's index in the transcript.
 ///
 /// This consolidates the multi-step checkpoint lookup that the frontend
-/// previously did (session_get_messages + chat_checkpoint_list + index
+/// previously did (`session_get_messages` + `chat_checkpoint_list` + index
 /// matching) into a single atomic backend call.
 #[tauri::command]
 pub async fn chat_find_checkpoint_for_resend(

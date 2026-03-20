@@ -8,19 +8,14 @@ use serde::{Deserialize, Serialize};
 pub type TaskId = String;
 
 /// Task priority level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum TaskPriority {
     Critical = 0,
     High = 1,
+    #[default]
     Normal = 2,
     Low = 3,
     Background = 4,
-}
-
-impl Default for TaskPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// A task node in the DAG.

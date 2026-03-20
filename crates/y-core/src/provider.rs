@@ -230,7 +230,7 @@ impl ProviderError {
 /// A single LLM provider backend.
 ///
 /// Implementations handle HTTP communication with a specific provider API
-/// (OpenAI, Anthropic, Ollama, etc.). They do not handle routing or failover;
+/// (`OpenAI`, Anthropic, Ollama, etc.). They do not handle routing or failover;
 /// that is the responsibility of [`ProviderPool`].
 #[async_trait]
 pub trait LlmProvider: Send + Sync {

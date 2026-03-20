@@ -82,7 +82,7 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
         );
         obs.parent_id = params.parent_id;
         obs.session_id = params.session_id;
-        obs.model = Some(params.model.to_string());
+        obs.model = Some(params.model.clone());
         obs.input_tokens = params.input_tokens;
         obs.output_tokens = params.output_tokens;
         obs.cost_usd = params.cost_usd;

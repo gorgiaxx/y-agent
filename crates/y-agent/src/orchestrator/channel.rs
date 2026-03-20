@@ -3,21 +3,16 @@
 use serde::{Deserialize, Serialize};
 
 /// Channel reducer type.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChannelType {
     /// Last write wins (default, backward-compatible).
+    #[default]
     LastValue,
     /// Accumulates values into an array.
     Append,
     /// Deep-merges JSON objects.
     Merge,
-}
-
-impl Default for ChannelType {
-    fn default() -> Self {
-        Self::LastValue
-    }
 }
 
 /// A typed channel holding state.

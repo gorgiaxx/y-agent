@@ -136,4 +136,13 @@ missing_errors_doc = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_precision_loss = "allow"
+# Fields sharing a common suffix (e.g. `_store`) is a natural naming convention
+# for dependency-injection structs. The lint adds no value here.
+struct_field_names = "allow"
 undocumented_unsafe_blocks = "deny"
+
+[workspace.lints.rust]
+# False positive in `futures::stream::unfold` patterns: `state.done = true`
+# before returning `None` appears unused to the linter, but the assignment IS
+# read by the next iteration via the `state` parameter.
+unused_assignments = "allow"

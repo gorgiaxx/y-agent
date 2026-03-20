@@ -335,7 +335,7 @@ impl KnowledgeService {
                     extension: if extension.is_empty() {
                         "(no extension)".to_string()
                     } else {
-                        extension.to_string()
+                        extension.clone()
                     },
                 });
             }

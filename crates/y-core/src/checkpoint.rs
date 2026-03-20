@@ -72,7 +72,7 @@ pub enum CheckpointError {
 
 /// Persistent storage for workflow checkpoints.
 ///
-/// Uses SQLite WAL mode for crash safety. The committed/pending
+/// Uses `SQLite` WAL mode for crash safety. The committed/pending
 /// separation ensures that a crash during a step leaves the system
 /// in the last committed state (not a partial step).
 #[async_trait]

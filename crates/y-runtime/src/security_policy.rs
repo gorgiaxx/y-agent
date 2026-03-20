@@ -17,22 +17,17 @@ use crate::config::RuntimeConfig;
 // ---------------------------------------------------------------------------
 
 /// Predefined security profiles with different levels of restriction.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityProfile {
     /// Strict: no network, no filesystem, no capabilities.
     Strict,
     /// Standard: limited network (whitelisted domains), limited filesystem
     /// (whitelisted paths), minimal capabilities.
+    #[default]
     Standard,
     /// Permissive: mostly unrestricted; for trusted tools in development.
     Permissive,
-}
-
-impl Default for SecurityProfile {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 // ---------------------------------------------------------------------------

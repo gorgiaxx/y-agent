@@ -133,7 +133,7 @@ pub trait SessionStore: Send + Sync {
     /// Update session state (e.g., Active -> Paused).
     async fn set_state(&self, id: &SessionId, state: SessionState) -> Result<(), SessionError>;
 
-    /// Update session metadata (title, token_count, message_count).
+    /// Update session metadata (title, `token_count`, `message_count`).
     async fn update_metadata(
         &self,
         id: &SessionId,
@@ -247,7 +247,7 @@ pub trait ChatCheckpointStore: Send + Sync {
     /// Load a checkpoint by ID.
     async fn load(&self, checkpoint_id: &str) -> Result<ChatCheckpoint, SessionError>;
 
-    /// List checkpoints for a session, ordered by turn_number descending.
+    /// List checkpoints for a session, ordered by `turn_number` descending.
     async fn list_by_session(
         &self,
         session_id: &SessionId,
@@ -307,13 +307,13 @@ pub trait ChatMessageStore: Send + Sync {
     /// Insert a new message.
     async fn insert(&self, record: &ChatMessageRecord) -> Result<(), SessionError>;
 
-    /// List all messages for a session (both active and tombstoned), ordered by created_at.
+    /// List all messages for a session (both active and tombstoned), ordered by `created_at`.
     async fn list_by_session(
         &self,
         session_id: &SessionId,
     ) -> Result<Vec<ChatMessageRecord>, SessionError>;
 
-    /// List only active messages for a session, ordered by created_at.
+    /// List only active messages for a session, ordered by `created_at`.
     async fn list_active(
         &self,
         session_id: &SessionId,
@@ -336,7 +336,7 @@ pub trait ChatMessageStore: Send + Sync {
     ) -> Result<u32, SessionError>;
 
     /// Swap branches: tombstone currently active messages after the checkpoint,
-    /// and restore the tombstoned ones. Returns (tombstoned_count, restored_count).
+    /// and restore the tombstoned ones. Returns (`tombstoned_count`, `restored_count`).
     async fn swap_branches(
         &self,
         session_id: &SessionId,

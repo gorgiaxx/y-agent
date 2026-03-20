@@ -12,19 +12,14 @@ use y_core::runtime::RuntimeBackend;
 // ---------------------------------------------------------------------------
 
 /// SSH authentication method.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SshAuthMethod {
     /// Password-based authentication.
     Password,
     /// Public-key authentication.
+    #[default]
     PublicKey,
-}
-
-impl Default for SshAuthMethod {
-    fn default() -> Self {
-        Self::PublicKey
-    }
 }
 
 /// SSH connection and authentication configuration.
@@ -419,9 +414,9 @@ mod humantime_serde_compat {
     {
         // Emit human-readable string for config roundtrip.
         let secs = duration.as_secs();
-        if secs % 3600 == 0 && secs > 0 {
+        if secs.is_multiple_of(3600) && secs > 0 {
             serializer.serialize_str(&format!("{}h", secs / 3600))
-        } else if secs % 60 == 0 && secs > 0 {
+        } else if secs.is_multiple_of(60) && secs > 0 {
             serializer.serialize_str(&format!("{}m", secs / 60))
         } else {
             serializer.serialize_str(&format!("{secs}s"))

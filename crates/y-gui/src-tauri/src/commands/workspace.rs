@@ -177,7 +177,7 @@ pub async fn workspace_delete(state: State<'_, AppState>, id: String) -> Result<
 // Session-workspace assignment commands
 // ---------------------------------------------------------------------------
 
-/// Return the full session_id -> workspace_id map.
+/// Return the full `session_id` -> `workspace_id` map.
 #[tauri::command]
 pub async fn workspace_session_map(
     state: State<'_, AppState>,

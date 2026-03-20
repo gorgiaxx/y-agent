@@ -635,12 +635,14 @@ struct OpenAiMessage {
     tool_calls: Option<Vec<OpenAiToolCall>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenAiTool {
     r#type: String,
     function: OpenAiFunction,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenAiFunction {
     name: String,

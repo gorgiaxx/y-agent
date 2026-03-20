@@ -54,6 +54,7 @@ y-agent/
 | 2.8  | **English**                  | All docs, comments, commits in English. `VISION.md` is the sole exception.                                                                                                                                |
 | 2.9  | **No Emoji**                 | No emoji in any artifact: code, docs, comments, commits, diagrams, or agent output. Use plain text only.                                                                                                  |
 | 2.10 | **Service-Layer Ownership**  | All business logic lives in `y-service`; `y-cli`, `y-web`, `y-gui` (Tauri) are thin presentation layers -- they handle I/O, rendering, and user interaction only. No domain logic in presentation crates. |
+| 2.11 | **No Inline Lint Suppression** | Never add `#[allow(clippy::...)]` or `#[allow(rustc_lint)]` to source code. Fix the lint or add the allow to `[workspace.lints]` in `Cargo.toml` with a comment explaining why. The sole exception is `#[allow(dead_code)]` on struct fields/variants kept for API completeness (e.g. deserialized-but-not-read fields). |
 
 ## 3) Risk Tiers
 

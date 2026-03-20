@@ -118,7 +118,7 @@ fn build_context_spans(state: &AppState) -> Vec<Span<'static>> {
 /// Format a token count for compact display: e.g. 128000 → "128k", 1500 → "1.5k".
 fn format_token_count(count: u64) -> String {
     if count >= 1_000_000 {
-        if count % 1_000_000 == 0 {
+        if count.is_multiple_of(1_000_000) {
             let val = count / 1_000_000;
             format!("{val}M")
         } else {
@@ -126,7 +126,7 @@ fn format_token_count(count: u64) -> String {
             format!("{m:.1}M")
         }
     } else if count >= 1_000 {
-        if count % 1_000 == 0 {
+        if count.is_multiple_of(1_000) {
             let val = count / 1_000;
             format!("{val}k")
         } else {

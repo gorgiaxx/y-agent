@@ -296,8 +296,7 @@ impl CompactionEngine {
         let summary_of_rest = if to_summarize.is_empty() {
             String::new()
         } else {
-            let summarize_strs: Vec<String> =
-                to_summarize.iter().map(|s| (*s).to_string()).collect();
+            let summarize_strs: Vec<String> = to_summarize.iter().map(|s| (*s).clone()).collect();
             let prompt = build_summarize_prompt(&summarize_strs);
             self.call_with_retry(llm, &prompt)
                 .await

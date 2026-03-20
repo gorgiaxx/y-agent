@@ -71,7 +71,7 @@ pub async fn provider_list(state: State<'_, AppState>) -> Result<Vec<ProviderInf
 // DevTools
 // ---------------------------------------------------------------------------
 
-/// Toggle the WebView developer tools (Ctrl+Shift+I shortcut handler).
+/// Toggle the `WebView` developer tools (Ctrl+Shift+I shortcut handler).
 #[tauri::command]
 pub async fn toggle_devtools(window: tauri::WebviewWindow) {
     if window.is_devtools_open() {

@@ -47,7 +47,7 @@ pub enum EmbeddingError {
 
 /// Trait for generating text embeddings.
 ///
-/// Implementations handle API calls to embedding providers (OpenAI, Ollama,
+/// Implementations handle API calls to embedding providers (`OpenAI`, Ollama,
 /// local models, etc.). The trait is intentionally minimal — one method.
 #[async_trait]
 pub trait EmbeddingProvider: Send + Sync {
