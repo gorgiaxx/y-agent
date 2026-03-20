@@ -70,7 +70,7 @@ impl ProgressivePruning {
                         }
                         sequence_ids.push(msg.id.clone());
                         sequence_tokens += estimate_tokens(&msg.content);
-                    } else if sequence_start.is_some() && sequence_ids.len() >= 2 {
+                    } else if sequence_start.is_some() && sequence_ids.len() >= 4 {
                         // This assistant message is the conclusion.
                         // The preceding sequence is a completed multi-step workflow.
                         candidates.push(PruningCandidate {
