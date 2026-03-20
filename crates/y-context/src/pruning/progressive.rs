@@ -128,7 +128,11 @@ impl ProgressivePruning {
     }
 
     /// Call the pruning-summarizer subagent with retry logic.
-    async fn call_with_retry(&self, input: serde_json::Value) -> Option<String> {
+    async fn call_with_retry(
+        &self,
+        input: serde_json::Value,
+        session_id: Option<uuid::Uuid>,
+    ) -> Option<String> {
         let Some(delegator) = &self.delegator else {
             return None;
         };
@@ -139,6 +143,7 @@ impl ProgressivePruning {
                     "pruning-summarizer",
                     input.clone(),
                     ContextStrategyHint::None,
+                    session_id,
                 )
                 .await
             {
@@ -202,7 +207,8 @@ impl PruningStrategy for ProgressivePruning {
 
             let input = Self::build_delegation_input(&all_messages, candidate);
 
-            if let Some(summary) = self.call_with_retry(input).await {
+            let session_uuid = uuid::Uuid::parse_str(&session_id.0).ok();
+            if let Some(summary) = self.call_with_retry(input, session_uuid).await {
                 let summary_tokens = estimate_tokens(&summary);
                 total_tokens_after += summary_tokens;
 

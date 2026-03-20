@@ -420,6 +420,7 @@ impl AgentDelegator for AgentPool {
         agent_name: &str,
         input: serde_json::Value,
         _context_strategy: ContextStrategyHint,
+        _session_id: Option<uuid::Uuid>,
     ) -> Result<DelegationOutput, DelegationError> {
         // Step 1: Resolve agent definition from registry (scoped to drop guard before await)
         let definition = {
@@ -669,6 +670,7 @@ mod tests {
                 "tool-engineer",
                 serde_json::json!({"task": "test"}),
                 ContextStrategyHint::None,
+                None,
             )
             .await;
 
@@ -687,6 +689,7 @@ mod tests {
                 "nonexistent-agent",
                 serde_json::json!({}),
                 ContextStrategyHint::None,
+                None,
             )
             .await;
 
@@ -730,7 +733,7 @@ mod tests {
         });
 
         let result = pool
-            .delegate("agent-architect", input, ContextStrategyHint::Summary)
+            .delegate("agent-architect", input, ContextStrategyHint::Summary, None)
             .await;
 
         assert!(result.is_ok());
@@ -746,6 +749,7 @@ mod tests {
                 "tool-engineer",
                 serde_json::json!({}),
                 ContextStrategyHint::None,
+                None,
             )
             .await;
 

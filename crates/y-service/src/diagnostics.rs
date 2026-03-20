@@ -245,9 +245,9 @@ impl DiagnosticsService {
 /// etc.) are invisible in the DIAGNOSTICS panel because `AgentPool::delegate()`
 /// calls `SingleTurnRunner::run()` which bypasses the diagnostics subscriber.
 ///
-/// Uses `Uuid::nil()` as the session UUID since subagent calls are not
-/// associated with any specific user session. The frontend's Global view
-/// merges all sessions' entries, so these will appear there.
+/// When a `session_id` is provided by the caller, the subagent trace is
+/// associated with that session so it appears in session-level diagnostics.
+/// When `None`, uses `Uuid::nil()` (global-only visibility).
 pub struct DiagnosticsAgentDelegator {
     inner: Arc<dyn y_core::agent::AgentDelegator>,
     diagnostics: Arc<y_diagnostics::DiagnosticsSubscriber<dyn y_diagnostics::TraceStore>>,
@@ -278,9 +278,12 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
         agent_name: &str,
         input: serde_json::Value,
         context_strategy: y_core::agent::ContextStrategyHint,
+        session_id: Option<uuid::Uuid>,
     ) -> Result<y_core::agent::DelegationOutput, y_core::agent::DelegationError> {
         // Start a trace for this subagent execution.
-        let session_id = uuid::Uuid::nil();
+        // Use the caller-supplied session so the trace appears in
+        // session-level diagnostics; fall back to nil (global-only).
+        let trace_session_id = session_id.unwrap_or(uuid::Uuid::nil());
         let trace_name = format!("subagent:{agent_name}");
         let input_preview = match &input {
             serde_json::Value::String(s) => s.chars().take(200).collect::<String>(),
@@ -291,14 +294,14 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
         };
         let trace_id = self
             .diagnostics
-            .on_trace_start(session_id, &trace_name, &input_preview)
+            .on_trace_start(trace_session_id, &trace_name, &input_preview)
             .await
             .ok();
 
         // Delegate to the inner delegator.
         let result = self
             .inner
-            .delegate(agent_name, input, context_strategy)
+            .delegate(agent_name, input, context_strategy, session_id)
             .await;
 
         match &result {

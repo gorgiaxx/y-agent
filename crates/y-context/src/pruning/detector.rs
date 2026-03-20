@@ -9,12 +9,11 @@
 
 use y_core::session::ChatMessageRecord;
 
+use super::patterns::{
+    content_similarity, estimate_tokens, matches_empty_patterns, matches_error_patterns,
+    MAX_ADJACENT_DISTANCE, SIMILARITY_THRESHOLD,
+};
 use super::strategy::{PruningCandidate, PruningReason};
-
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
 
 /// Detects failed message branches for pruning.
 pub struct PruningDetector {
@@ -62,32 +61,12 @@ impl PruningDetector {
         messages: &[ChatMessageRecord],
         candidates: &mut Vec<PruningCandidate>,
     ) {
-        let error_patterns = [
-            "\"error\":",
-            "\"error_type\":",
-            "error:",
-            "Error:",
-            "FAILED",
-            "failed to",
-            "parameter validation failed",
-            "not found",
-            "permission denied",
-        ];
-
         for (i, msg) in messages.iter().enumerate() {
             if msg.role != "tool" {
                 continue;
             }
 
-            let is_error = error_patterns.iter().any(|p| msg.content.contains(p));
-
-            // Check extra user-defined patterns.
-            let matches_extra = self
-                .extra_patterns
-                .iter()
-                .any(|p| msg.content.contains(p.as_str()));
-
-            if is_error || matches_extra {
+            if matches_error_patterns(&msg.content, &self.extra_patterns) {
                 // Also include the preceding assistant message (the tool call request)
                 // if it immediately precedes this tool result.
                 let mut ids = vec![msg.id.clone()];
@@ -131,14 +110,13 @@ impl PruningDetector {
             let (idx_b, msg_b) = assistant_msgs[i + 1];
 
             // Skip if they are not close together in the original sequence.
-            if idx_b - idx_a > 3 {
+            if idx_b - idx_a > MAX_ADJACENT_DISTANCE {
                 i += 1;
                 continue;
             }
 
-            // Simple similarity: check if content starts with the same prefix.
             let similarity = content_similarity(&msg_a.content, &msg_b.content);
-            if similarity > 0.8 {
+            if similarity > SIMILARITY_THRESHOLD {
                 // Mark the earlier one (and its tool result) as a candidate.
                 let mut ids = vec![msg_a.id.clone()];
                 let mut tokens = estimate_tokens(&msg_a.content);
@@ -165,29 +143,12 @@ impl PruningDetector {
         messages: &[ChatMessageRecord],
         candidates: &mut Vec<PruningCandidate>,
     ) {
-        let empty_patterns = [
-            "\"results\": []",
-            "\"results\":[]",
-            "\"count\": 0",
-            "\"count\":0",
-            "no results found",
-            "No results found",
-            "no matches",
-            "No matches",
-            "[]",
-        ];
-
         for (i, msg) in messages.iter().enumerate() {
             if msg.role != "tool" {
                 continue;
             }
 
-            // Only match if the content is short AND matches an empty pattern.
-            // Long tool results with "no results" embedded are likely informative.
-            let is_empty =
-                msg.content.len() < 200 && empty_patterns.iter().any(|p| msg.content.contains(p));
-
-            if is_empty {
+            if matches_empty_patterns(&msg.content) {
                 let mut ids = vec![msg.id.clone()];
                 let mut tokens = estimate_tokens(&msg.content);
 
@@ -210,31 +171,6 @@ impl Default for PruningDetector {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Simple content similarity ratio (0.0 to 1.0).
-///
-/// Uses the shorter content as the reference length. Compares
-/// character-by-character up to the shorter length.
-fn content_similarity(a: &str, b: &str) -> f64 {
-    if a.is_empty() && b.is_empty() {
-        return 1.0;
-    }
-    if a.is_empty() || b.is_empty() {
-        return 0.0;
-    }
-
-    let min_len = a.len().min(b.len());
-    let max_len = a.len().max(b.len());
-
-    let matching: usize = a
-        .chars()
-        .zip(b.chars())
-        .take(min_len)
-        .filter(|(ca, cb)| ca == cb)
-        .count();
-
-    matching as f64 / max_len as f64
 }
 
 #[cfg(test)]
@@ -333,14 +269,6 @@ mod tests {
         let detector = PruningDetector::new();
         let candidates = detector.detect_failures(&messages);
         assert!(candidates.is_empty());
-    }
-
-    #[test]
-    fn test_content_similarity() {
-        assert!((content_similarity("abc", "abc") - 1.0).abs() < f64::EPSILON);
-        assert!(content_similarity("abc", "xyz") < 0.5);
-        assert!(content_similarity("", "") > 0.99);
-        assert!(content_similarity("abc", "") < 0.01);
     }
 
     #[test]

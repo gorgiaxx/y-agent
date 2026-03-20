@@ -304,8 +304,15 @@ impl SessionManager {
 
         let input = serde_json::json!({ "messages": context });
 
+        let session_uuid = uuid::Uuid::parse_str(&session_id.0).ok();
+
         let output = delegator
-            .delegate("title-generator", input, ContextStrategyHint::None)
+            .delegate(
+                "title-generator",
+                input,
+                ContextStrategyHint::None,
+                session_uuid,
+            )
             .await
             .map_err(|e| SessionManagerError::Other {
                 message: format!("title generation delegation failed: {e}"),

@@ -337,12 +337,6 @@ fn spawn_llm_worker(
                                         );
                                     }
                                 }
-                                let _ = app.emit(
-                                    "diagnostics:subagent_completed",
-                                    SubagentCompletedPayload {
-                                        agent_name: "title-generator".to_string(),
-                                    },
-                                );
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -352,6 +346,17 @@ fn spawn_llm_worker(
                             }
                         }
                     }
+
+                    // Notify the frontend to refresh subagent history.
+                    // This covers all subagent calls that may have occurred
+                    // during the turn: title generation, post-turn pruning
+                    // (progressive summarizer), and any future subagent paths.
+                    let _ = app.emit(
+                        "diagnostics:subagent_completed",
+                        SubagentCompletedPayload {
+                            agent_name: "turn-complete".to_string(),
+                        },
+                    );
                 }
                 Err(e) => {
                     let _ = app.emit(
@@ -873,6 +878,7 @@ pub struct CompactResult {
 /// compaction threshold.
 #[tauri::command]
 pub async fn context_compact(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<CompactResult, String> {
@@ -883,6 +889,15 @@ pub async fn context_compact(
     )
     .await
     .map_err(|e| format!("{e}"))?;
+
+    // Notify the frontend to refresh subagent history in case progressive
+    // pruning used the pruning-summarizer subagent.
+    let _ = app.emit(
+        "diagnostics:subagent_completed",
+        SubagentCompletedPayload {
+            agent_name: "context-compact".to_string(),
+        },
+    );
 
     Ok(CompactResult {
         messages_pruned: report.messages_pruned,

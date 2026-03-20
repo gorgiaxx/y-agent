@@ -32,7 +32,16 @@ token_threshold = 2000
 strategy = "auto"
 
 # Progressive pruning settings (subagent-based summarization).
+# Model selection is handled by the pruning-summarizer agent definition
+# (preferred_models + provider_tags).
 [pruning.progressive]
-model = "gpt-4o-mini"
 max_retries = 2
 preserve_identifiers = true
+
+# Intra-turn pruning: removes failed tool call branches from the
+# in-memory working history between tool call iterations, before
+# each LLM call. Only RetryPruning heuristics run (zero LLM cost).
+[pruning.intra_turn]
+enabled = true
+min_iteration = 3
+token_threshold = 1000

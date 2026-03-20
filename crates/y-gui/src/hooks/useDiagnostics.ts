@@ -163,8 +163,8 @@ async function loadSubagentHistory() {
         [NIL_UUID]: histEntries,
       },
     }));
-  } catch {
-    // Ignore -- no subagent history available.
+  } catch (e) {
+    console.warn('loadSubagentHistory failed:', e);
   }
 }
 

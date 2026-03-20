@@ -96,9 +96,10 @@ pub enum DelegationError {
 /// async fn compact_context(
 ///     delegator: &dyn AgentDelegator,
 ///     messages: serde_json::Value,
+///     session_id: Option<uuid::Uuid>,
 /// ) -> Result<String, DelegationError> {
 ///     let result = delegator
-///         .delegate("compaction-summarizer", messages, ContextStrategyHint::None)
+///         .delegate("compaction-summarizer", messages, ContextStrategyHint::None, session_id)
 ///         .await?;
 ///     Ok(result.text)
 /// }
@@ -111,6 +112,10 @@ pub trait AgentDelegator: Send + Sync + fmt::Debug {
     /// summarize, experience records to analyze). The agent's own prompt template
     /// determines how this data is presented to the LLM.
     ///
+    /// `session_id` optionally associates the delegation trace with a specific
+    /// user session so that the subagent call appears in session-level
+    /// diagnostics. Pass `None` for session-independent operations.
+    ///
     /// # Errors
     ///
     /// Returns `DelegationError` if the agent is not found, the delegation fails,
@@ -120,6 +125,7 @@ pub trait AgentDelegator: Send + Sync + fmt::Debug {
         agent_name: &str,
         input: serde_json::Value,
         context_strategy: ContextStrategyHint,
+        session_id: Option<uuid::Uuid>,
     ) -> Result<DelegationOutput, DelegationError>;
 }
 

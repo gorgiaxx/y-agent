@@ -731,6 +731,20 @@
   color: var(--text-muted);
 }
 
+.pf-section-divider {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+}
+
+.pf-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .pf-key-group {
   display: flex;
   gap: 4px;

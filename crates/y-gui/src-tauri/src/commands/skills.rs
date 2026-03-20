@@ -283,6 +283,7 @@ pub async fn skill_import(
                 "skill-security-check",
                 security_input,
                 ContextStrategyHint::None,
+                None,
             )
             .await;
 

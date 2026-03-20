@@ -10,6 +10,8 @@
 pub mod config;
 pub mod detector;
 pub mod engine;
+pub mod intra_turn;
+pub mod patterns;
 pub mod progressive;
 pub mod report;
 pub mod retry;
@@ -18,6 +20,7 @@ pub mod strategy;
 pub use config::{PruningConfig, PruningStrategyMode};
 pub use detector::PruningDetector;
 pub use engine::PruningEngine;
+pub use intra_turn::{IntraTurnPruner, IntraTurnPruningReport};
 pub use progressive::ProgressivePruning;
 pub use report::PruningReport;
 pub use retry::RetryPruning;

@@ -41,6 +41,12 @@ interface SessionFormData {
   max_active_per_root: number;
   compaction_threshold_pct: number;
   auto_archive_merged: boolean;
+  // Pruning fields (nested [pruning] section in session.toml)
+  pruning_enabled: boolean;
+  pruning_token_threshold: number;
+  pruning_strategy: string;
+  pruning_progressive_max_retries: number;
+  pruning_progressive_preserve_identifiers: boolean;
 }
 
 interface VolumeMappingData {
@@ -484,6 +490,15 @@ function sessionToToml(s: SessionFormData): string {
     `max_active_per_root = ${s.max_active_per_root}`,
     `compaction_threshold_pct = ${s.compaction_threshold_pct}`,
     `auto_archive_merged = ${s.auto_archive_merged}`,
+    '',
+    '[pruning]',
+    `enabled = ${s.pruning_enabled}`,
+    `token_threshold = ${s.pruning_token_threshold}`,
+    `strategy = "${s.pruning_strategy}"`,
+    '',
+    '[pruning.progressive]',
+    `max_retries = ${s.pruning_progressive_max_retries}`,
+    `preserve_identifiers = ${s.pruning_progressive_preserve_identifiers}`,
   ].join('\n') + '\n';
 }
 
@@ -604,11 +619,18 @@ function jsonToProviders(json: any): ProviderFormData[] {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function jsonToSession(json: any): SessionFormData {
+  const pruning = json?.pruning ?? {};
+  const progressive = pruning?.progressive ?? {};
   return {
     max_depth: json?.max_depth ?? 16,
     max_active_per_root: json?.max_active_per_root ?? 8,
     compaction_threshold_pct: json?.compaction_threshold_pct ?? 85,
     auto_archive_merged: json?.auto_archive_merged ?? true,
+    pruning_enabled: pruning?.enabled ?? true,
+    pruning_token_threshold: pruning?.token_threshold ?? 2000,
+    pruning_strategy: pruning?.strategy ?? 'auto',
+    pruning_progressive_max_retries: progressive?.max_retries ?? 2,
+    pruning_progressive_preserve_identifiers: progressive?.preserve_identifiers ?? true,
   };
 }
 
@@ -739,6 +761,11 @@ export function SettingsOverlay({
     max_active_per_root: 8,
     compaction_threshold_pct: 85,
     auto_archive_merged: true,
+    pruning_enabled: true,
+    pruning_token_threshold: 2000,
+    pruning_strategy: 'auto',
+    pruning_progressive_max_retries: 2,
+    pruning_progressive_preserve_identifiers: true,
   });
   const [sessionFormLoading, setSessionFormLoading] = useState(false);
 
@@ -933,32 +960,21 @@ export function SettingsOverlay({
     }
   }, [loadSection]);
 
-  // Load session config as structured JSON.
+  // Load session config as structured JSON (uses config_get which parses
+  // full TOML including nested [pruning] section).
   const loadSessionForm = useCallback(async () => {
     setSessionFormLoading(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const content = await loadSection('session');
-      // Parse TOML-like key=value pairs into an object for the form.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const parsed: any = {};
-      for (const line of content.split('\n')) {
-        const m = line.match(/^\s*(\w+)\s*=\s*(.+)$/);
-        if (m) {
-          const val = m[2].trim();
-          if (val === 'true') parsed[m[1]] = true;
-          else if (val === 'false') parsed[m[1]] = false;
-          else if (/^\d+$/.test(val)) parsed[m[1]] = parseInt(val, 10);
-          else parsed[m[1]] = val.replace(/^"|"$/g, '');
-        }
-      }
-      setSessionForm(jsonToSession(parsed));
+      const allConfig = await invoke<any>('config_get');
+      const sessionJson = allConfig?.session ?? {};
+      setSessionForm(jsonToSession(sessionJson));
     } catch {
       // Use defaults if section not found.
     } finally {
       setSessionFormLoading(false);
     }
-  }, [loadSection]);
+  }, []);
 
   // Load runtime config as structured JSON via config_get.
   const loadRuntimeForm = useCallback(async () => {
@@ -1372,6 +1388,75 @@ export function SettingsOverlay({
                               onChange={(e) => { setSessionForm({ ...sessionForm, auto_archive_merged: e.target.checked }); setDirtySession(true); }}
                             />
                             {' '}Auto-archive merged sessions
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Pruning configuration */}
+                      <div className="pf-section-divider">
+                        <span className="pf-section-title">Context Pruning</span>
+                      </div>
+                      <div className="pf-row">
+                        <div className="pf-field">
+                          <label className="pf-label">
+                            <input
+                              type="checkbox"
+                              className="form-checkbox"
+                              checked={sessionForm.pruning_enabled}
+                              onChange={(e) => { setSessionForm({ ...sessionForm, pruning_enabled: e.target.checked }); setDirtySession(true); }}
+                            />
+                            {' '}Enable Pruning
+                          </label>
+                        </div>
+                        <div className="pf-field">
+                          <label className="pf-label">Strategy</label>
+                          <select
+                            className="form-select"
+                            style={{ maxWidth: 'none' }}
+                            value={sessionForm.pruning_strategy}
+                            onChange={(e) => { setSessionForm({ ...sessionForm, pruning_strategy: e.target.value }); setDirtySession(true); }}
+                          >
+                            <option value="auto">Auto (retry + progressive)</option>
+                            <option value="retry_only">Retry Only (zero LLM cost)</option>
+                            <option value="progressive_only">Progressive Only (LLM summarization)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="pf-row pf-row-quad">
+                        <div className="pf-field">
+                          <label className="pf-label">Token Threshold</label>
+                          <input
+                            className="pf-input pf-input-num"
+                            type="number"
+                            min={500}
+                            step={500}
+                            value={sessionForm.pruning_token_threshold}
+                            onChange={(e) => { setSessionForm({ ...sessionForm, pruning_token_threshold: Number(e.target.value) || 2000 }); setDirtySession(true); }}
+                          />
+                          <span className="pf-hint">Min token growth before pruning triggers</span>
+                        </div>
+                        <div className="pf-field">
+                          <label className="pf-label">Max Retries</label>
+                          <input
+                            className="pf-input pf-input-num"
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={sessionForm.pruning_progressive_max_retries}
+                            onChange={(e) => { setSessionForm({ ...sessionForm, pruning_progressive_max_retries: Number(e.target.value) || 2 }); setDirtySession(true); }}
+                          />
+                        </div>
+                      </div>
+                      <div className="pf-row">
+                        <div className="pf-field pf-field-full">
+                          <label className="pf-label">
+                            <input
+                              type="checkbox"
+                              className="form-checkbox"
+                              checked={sessionForm.pruning_progressive_preserve_identifiers}
+                              onChange={(e) => { setSessionForm({ ...sessionForm, pruning_progressive_preserve_identifiers: e.target.checked }); setDirtySession(true); }}
+                            />
+                            {' '}Preserve identifiers in progressive summaries
                           </label>
                         </div>
                       </div>

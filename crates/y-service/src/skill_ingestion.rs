@@ -245,7 +245,7 @@ impl SkillIngestionService {
 
         let delegation_output = self
             .delegator
-            .delegate("skill-ingestion", input, ContextStrategyHint::None)
+            .delegate("skill-ingestion", input, ContextStrategyHint::None, None)
             .await
             .map_err(|e| ImportError::DelegationFailed(e.to_string()))?;
 
@@ -556,6 +556,7 @@ mod tests {
             _agent_name: &str,
             _input: serde_json::Value,
             _context_strategy: ContextStrategyHint,
+            _session_id: Option<uuid::Uuid>,
         ) -> Result<DelegationOutput, DelegationError> {
             Ok(DelegationOutput {
                 text: self.response.clone(),

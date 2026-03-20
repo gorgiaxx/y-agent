@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
+use y_context::pruning::IntraTurnPruner;
 use y_context::{AssembledContext, ContextCategory, ContextRequest};
 use y_core::agent::{AgentRunConfig, AgentRunOutput, AgentRunner, DelegationError};
 use y_core::provider::{ChatRequest, ProviderPool, RouteRequest, ToolCallingMode};
@@ -266,10 +267,38 @@ impl AgentService {
 
         let max_iterations = config.max_iterations;
 
+        // Intra-turn pruner: removes failed tool call branches from
+        // working_history between iterations to reduce LLM noise.
+        let intra_turn_pruner = IntraTurnPruner::from_config_with_patterns(
+            &container.pruning_engine.config().intra_turn,
+            container
+                .pruning_engine
+                .config()
+                .retry
+                .heuristic_patterns
+                .clone(),
+        );
+
         loop {
             if let Some(ref tok) = cancel {
                 if tok.is_cancelled() {
                     return Err(AgentExecutionError::Cancelled);
+                }
+            }
+
+            // Intra-turn pruning: remove failed tool call branches from
+            // working_history before building the next LLM request.
+            if ctx.iteration > 0 {
+                let prune_report = intra_turn_pruner
+                    .prune_working_history(&mut ctx.working_history, ctx.iteration);
+                if !prune_report.skipped && prune_report.messages_removed > 0 {
+                    tracing::debug!(
+                        agent = %config.agent_name,
+                        iteration = ctx.iteration,
+                        messages_removed = prune_report.messages_removed,
+                        tokens_saved = prune_report.tokens_saved,
+                        "intra-turn pruning applied to working history"
+                    );
                 }
             }
 

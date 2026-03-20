@@ -2,9 +2,9 @@
 
 > Message-level branch pruning for attention quality optimization in the LLM context window
 
-**Version**: v0.1
+**Version**: v0.2
 **Created**: 2026-03-19
-**Updated**: 2026-03-19
+**Updated**: 2026-03-20
 **Status**: Draft
 **Depends on**: [context-session-design.md](context-session-design.md), [memory-short-term-design.md](memory-short-term-design.md), [chat-checkpoint-design.md](chat-checkpoint-design.md)
 
@@ -75,7 +75,10 @@ Existing mechanisms do not address this:
 - `PruningEngine` coordinating strategy selection and execution
 - `PruningDetector` for hybrid failure detection (error status + heuristic patterns)
 - Token threshold configuration (`pruning.token_threshold`)
-- Integration with `LoadHistory` pipeline stage
+- `IntraTurnPruner` for in-memory `working_history` pruning between tool call iterations
+- `IntraTurnPruningConfig` with `min_iteration` and `token_threshold` settings
+- Shared detection patterns module (`patterns.rs`) reused by both pruning paths
+- Integration with `LoadHistory` pipeline stage (post-turn) and `AgentService::execute()` loop (intra-turn)
 - SQLite migration for new columns
 - `PruningReport` for observability
 
@@ -165,6 +168,53 @@ flowchart LR
 **Legend**:
 - Green node: New pruning step inserted into existing pipeline.
 - All other nodes are existing steps in `LoadHistory.provide()`.
+
+### Intra-Turn Pruning
+
+Post-turn pruning (`ContextOptimizationService::optimize_post_turn`) addresses attention quality after a turn completes. However, during a single turn the agent may execute 10+ tool call iterations, accumulating failed retries and verbose intermediate outputs in the in-memory `working_history: Vec<Message>`. This noise degrades LLM reasoning quality mid-turn, before post-turn pruning ever runs.
+
+**Intra-Turn RetryPruning** operates on the in-memory `working_history` between tool call iterations -- inside the `AgentService::execute()` loop, after the cancellation check and before `build_chat_request`. It uses the same error/empty/repeated-call detection heuristics as post-turn RetryPruning but works directly on `Vec<Message>` without persistence. Progressive pruning (LLM-based) remains post-turn only due to latency cost.
+
+```mermaid
+sequenceDiagram
+    participant Loop as Agent Loop
+    participant ITP as IntraTurnPruner
+    participant LLM as LLM Call
+
+    Loop->>Loop: iteration += 1
+    Loop->>Loop: cancellation check
+
+    alt iteration >= min_iteration
+        Loop->>ITP: prune_working_history(working_history, iteration)
+        Note over ITP: 1. Detect error tool results
+        Note over ITP: 2. Detect repeated similar calls
+        Note over ITP: 3. Detect empty results
+        Note over ITP: 4. Threshold gate (token count)
+        Note over ITP: 5. Preserve last assistant+tool pair
+        ITP-->>Loop: IntraTurnPruningReport
+    end
+
+    Loop->>LLM: build_chat_request(pruned working_history)
+    LLM-->>Loop: response (tool calls or final)
+    Loop->>Loop: execute tools, append to working_history
+```
+
+**Diagram type rationale**: Sequence diagram chosen to show the temporal position of intra-turn pruning within the agent execution loop.
+
+**Legend**:
+- **IntraTurnPruner** runs only when `iteration >= min_iteration` (default 3).
+- Pruning removes messages from `working_history` in-place; `new_messages` is not touched.
+- The most recent assistant+tool pair is always preserved for LLM continuity.
+
+**Key differences from post-turn pruning**:
+
+| Aspect | Post-Turn Pruning | Intra-Turn Pruning |
+|--------|------------------|--------------------|
+| Operates on | `ChatMessageRecord` (SQLite) | `Vec<Message>` (in-memory) |
+| Strategies | Retry + Progressive | Retry only |
+| LLM cost | Progressive incurs LLM cost | Zero LLM cost |
+| Persistence | Tombstones in store | Removes from `working_history`; `new_messages` unchanged |
+| Trigger | Post-turn, delta-based watermark | Per-iteration, gated by `min_iteration` + token threshold |
 
 ### Message Tree Model
 
@@ -340,6 +390,39 @@ flowchart LR
 - **Read path**: `LoadHistory` reads only active messages from `ChatMessageStore`; pruned messages are excluded.
 - **UI path** (gray): `DisplayTranscriptStore` is read directly by the GUI -- always full, never pruned.
 
+### Flow 4: Intra-Turn RetryPruning (Scenario 3 -- Mid-Loop Cleanup)
+
+```mermaid
+sequenceDiagram
+    participant Loop as Agent Execute Loop
+    participant ITP as IntraTurnPruner
+    participant WH as working_history
+
+    Note over Loop: iteration 1: tool_search fails
+    Loop->>WH: push assistant_1 + tool_result_1(error)
+
+    Note over Loop: iteration 2: tool_search empty
+    Loop->>WH: push assistant_2 + tool_result_2(empty)
+
+    Note over Loop: iteration 3 begins (>= min_iteration)
+    Loop->>ITP: prune_working_history(working_history, 3)
+    ITP->>WH: detect candidates(assistant_1+tool_1, assistant_2+tool_2)
+    ITP->>ITP: threshold check (candidate tokens >= 1000?)
+    ITP->>WH: retain only: system + user + assistant_2 + tool_2 (preserve last pair)
+    ITP-->>Loop: report(removed=2, tokens_saved=X)
+
+    Note over Loop: LLM call with cleaned working_history
+    Loop->>Loop: build_chat_request(working_history)
+```
+
+**Diagram type rationale**: Sequence diagram chosen to show concrete message flow during intra-turn pruning across multiple iterations.
+
+**Legend**:
+- Iteration 3 triggers intra-turn pruning because `iteration >= min_iteration (3)`.
+- Failed/empty tool results from earlier iterations are removed from `working_history`.
+- The most recent assistant+tool pair (iteration 2) is always preserved.
+- `new_messages` is not shown because it is never modified by intra-turn pruning.
+
 ---
 
 ## Data and State Model
@@ -374,6 +457,9 @@ A new status value distinguishes pruning from user-initiated rollback:
 | `progressive.max_retries` | `2` | Maximum retry attempts for progressive LLM calls |
 | `progressive.preserve_identifiers` | `true` | Apply identifier preservation policy to summaries |
 | `retry.heuristic_patterns` | (built-in) | Additional regex patterns for failure detection |
+| `intra_turn.enabled` | `true` | Enable intra-turn pruning of in-memory working history |
+| `intra_turn.min_iteration` | `3` | Minimum loop iteration before intra-turn pruning activates |
+| `intra_turn.token_threshold` | `1000` | Minimum candidate tokens before intra-turn pruning activates |
 
 ### PruningReport
 
@@ -470,6 +556,7 @@ erDiagram
 | Threshold evaluation | < 1ms (sum of pre-computed token estimates) |
 | PruningDetector (hybrid analysis) | < 10ms for 50 messages |
 | Message tree traversal (find active path) | < 5ms for trees with depth < 20 |
+| IntraTurnPruner (detection + removal) | < 2ms for working histories with < 100 messages |
 
 ### Optimization Strategies
 
