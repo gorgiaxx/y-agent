@@ -330,15 +330,6 @@ impl SessionManager {
         Ok(title)
     }
 
-    /// Check if a session should trigger compaction.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the session configuration lock is poisoned.
-    pub fn should_compact(&self, session: &SessionNode) -> bool {
-        session.token_count >= self.config.read().unwrap().compaction_threshold
-    }
-
     /// Get a reference to the underlying context transcript store.
     pub fn transcript_store(&self) -> &dyn TranscriptStore {
         &*self.transcript_store
@@ -597,25 +588,5 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_manager_compaction_threshold() {
-        let mgr = setup().await;
-        let mut session = mgr
-            .create_session(CreateSessionOptions {
-                parent_id: None,
-                session_type: SessionType::Main,
-                agent_id: None,
-                title: None,
-            })
-            .await
-            .unwrap();
-
-        assert!(!mgr.should_compact(&session));
-
-        // Simulate high token count.
-        session.token_count = 150_000;
-        assert!(mgr.should_compact(&session));
     }
 }

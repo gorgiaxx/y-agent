@@ -418,6 +418,13 @@ function App() {
         case 'clear':
           clearMessages();
           return true;
+        case 'compact':
+          if (activeSessionId) {
+            invoke('context_compact', { sessionId: activeSessionId })
+              .then(() => console.log('Compaction completed'))
+              .catch((e) => console.error('Compaction failed:', e));
+          }
+          return true;
         case 'settings':
           setSettingsOpen(true);
           return true;
@@ -448,7 +455,7 @@ function App() {
           return false;
       }
     },
-    [handleNewChat, clearMessages],
+    [handleNewChat, clearMessages, activeSessionId],
   );
 
   // Determine if input should be disabled: streaming OR a compound operation is in progress.

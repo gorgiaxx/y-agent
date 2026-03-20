@@ -1,5 +1,5 @@
 # ==============================================================================
-# y-agent — Session Configuration
+# y-agent -- Session Configuration
 # ==============================================================================
 
 # Maximum tree depth for branching sessions.
@@ -8,8 +8,9 @@ max_depth = 16
 # Maximum active sessions per root session.
 max_active_per_root = 8
 
-# Token count threshold that triggers a compaction hint.
-compaction_threshold = 80000
+# Compaction trigger threshold as a percentage of the serving provider's
+# context window (e.g. 85 = compact when usage exceeds 85%).
+compaction_threshold_pct = 85
 
 # Auto-archive sessions when they are merged.
 auto_archive_merged = true

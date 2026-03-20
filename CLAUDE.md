@@ -122,7 +122,7 @@ The GitHub Actions CI (`.github/workflows/ci.yml`) enforces two jobs:
 
 The **Build & Test** job runs clippy, check, test, and doc sequentially in one runner to avoid redundant system-dependency installs and to reuse compilation artifacts across steps.
 
-All jobs must pass before merge. The `RUSTFLAGS="-D warnings"` env var is set globally, so any Rust warning is a build failure.
+All jobs must pass before merge. Lint policy is defined in `[workspace.lints.clippy]` in `Cargo.toml`; clippy runs with `-- -D warnings` to treat warnings as errors.
 
 ## 5) Key References
 

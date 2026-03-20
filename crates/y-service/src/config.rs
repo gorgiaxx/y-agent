@@ -10,6 +10,7 @@ use serde::Deserialize;
 use tracing::warn;
 
 use y_browser::BrowserConfig;
+use y_context::PruningConfig;
 use y_guardrails::GuardrailConfig;
 use y_hooks::HookConfig;
 use y_knowledge::config::KnowledgeConfig;
@@ -55,6 +56,9 @@ pub struct ServiceConfig {
     /// Knowledge base configuration (chunking, embedding, retrieval).
     pub knowledge: KnowledgeConfig,
 
+    /// Context pruning configuration (strategies, thresholds).
+    pub pruning: PruningConfig,
+
     /// Path to the user prompts override directory (`~/.config/y-agent/prompts/`).
     /// When set, prompt files here take priority over compiled-in defaults.
     #[serde(skip)]
@@ -77,6 +81,7 @@ const CONFIG_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
+    "pruning",
 ];
 
 impl ServiceConfig {
@@ -161,6 +166,10 @@ impl ServiceConfig {
                 "knowledge" => match toml::from_str(&content) {
                     Ok(v) => config.knowledge = v,
                     Err(e) => warn!(file = "knowledge.toml", error = %e, "Parse error"),
+                },
+                "pruning" => match toml::from_str(&content) {
+                    Ok(v) => config.pruning = v,
+                    Err(e) => warn!(file = "pruning.toml", error = %e, "Parse error"),
                 },
                 _ => {}
             }

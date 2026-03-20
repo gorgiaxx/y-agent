@@ -54,6 +54,40 @@ function extractTag(block: string, tagName: string): string {
   return block.slice(contentStart, end).trim();
 }
 
+/**
+ * Try to parse the inner content of a tool_call block as JSON.
+ *
+ * Handles the case where the LLM emits JSON format instead of XML-nested:
+ *   <tool_call>{"name": "tool", "arguments": {"key": "val"}}</tool_call>
+ *
+ * This mirrors the dual-format parsing in the Rust backend (parser.rs).
+ */
+function tryParseToolCallJson(block: string): { name: string; arguments: string } | null {
+  // Extract inner content between <tool_call> and </tool_call>.
+  const closeTag = '</tool_call>';
+  const openEnd = block.indexOf('>');
+  if (openEnd < 0) return null;
+  const closeStart = block.indexOf(closeTag);
+  if (closeStart < 0) return null;
+  const inner = block.slice(openEnd + 1, closeStart).trim();
+  if (!inner) return null;
+
+  try {
+    const parsed = JSON.parse(inner);
+    if (typeof parsed === 'object' && parsed !== null && typeof parsed.name === 'string') {
+      const args = parsed.arguments
+        ? (typeof parsed.arguments === 'string'
+            ? parsed.arguments
+            : JSON.stringify(parsed.arguments, null, 2))
+        : '';
+      return { name: parsed.name, arguments: args };
+    }
+  } catch {
+    // Not valid JSON -- fall through.
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Main processor
 // ---------------------------------------------------------------------------
@@ -102,12 +136,32 @@ export function processStreamContent(raw: string): StreamContentResult {
         const blockEnd = closeIdx + TOOL_CALL_CLOSE.length;
         const block = raw.slice(openIdx, blockEnd);
 
-        const name = extractTag(block, 'name');
-        const args = extractTag(block, 'arguments');
+        // Try XML-nested format first (primary), then JSON fallback.
+        const xmlName = extractTag(block, 'name');
+        const xmlArgs = extractTag(block, 'arguments');
+
+        let tcName: string;
+        let tcArgs: string;
+
+        if (xmlName) {
+          // XML-nested format: <name>tool</name><arguments>...</arguments>
+          tcName = xmlName;
+          tcArgs = xmlArgs;
+        } else {
+          // JSON fallback: {"name": "tool", "arguments": {...}}
+          const jsonResult = tryParseToolCallJson(block);
+          if (jsonResult) {
+            tcName = jsonResult.name;
+            tcArgs = jsonResult.arguments;
+          } else {
+            tcName = 'unknown';
+            tcArgs = xmlArgs;
+          }
+        }
 
         const tc: ParsedToolCall = {
-          name: name || 'unknown',
-          arguments: args,
+          name: tcName,
+          arguments: tcArgs,
           startIndex: openIdx,
         };
         toolCalls.push(tc);

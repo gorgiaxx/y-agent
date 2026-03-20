@@ -39,7 +39,7 @@ interface ProviderFormData {
 interface SessionFormData {
   max_depth: number;
   max_active_per_root: number;
-  compaction_threshold: number;
+  compaction_threshold_pct: number;
   auto_archive_merged: boolean;
 }
 
@@ -482,7 +482,7 @@ function sessionToToml(s: SessionFormData): string {
   return [
     `max_depth = ${s.max_depth}`,
     `max_active_per_root = ${s.max_active_per_root}`,
-    `compaction_threshold = ${s.compaction_threshold}`,
+    `compaction_threshold_pct = ${s.compaction_threshold_pct}`,
     `auto_archive_merged = ${s.auto_archive_merged}`,
   ].join('\n') + '\n';
 }
@@ -607,7 +607,7 @@ function jsonToSession(json: any): SessionFormData {
   return {
     max_depth: json?.max_depth ?? 16,
     max_active_per_root: json?.max_active_per_root ?? 8,
-    compaction_threshold: json?.compaction_threshold ?? 80000,
+    compaction_threshold_pct: json?.compaction_threshold_pct ?? 85,
     auto_archive_merged: json?.auto_archive_merged ?? true,
   };
 }
@@ -737,7 +737,7 @@ export function SettingsOverlay({
   const [sessionForm, setSessionForm] = useState<SessionFormData>({
     max_depth: 16,
     max_active_per_root: 8,
-    compaction_threshold: 80000,
+    compaction_threshold_pct: 85,
     auto_archive_merged: true,
   });
   const [sessionFormLoading, setSessionFormLoading] = useState(false);
@@ -1350,14 +1350,15 @@ export function SettingsOverlay({
                           />
                         </div>
                         <div className="pf-field">
-                          <label className="pf-label">Compaction Threshold (tokens)</label>
+                          <label className="pf-label">Compaction Threshold (%)</label>
                           <input
                             className="pf-input pf-input-num"
                             type="number"
-                            min={1000}
-                            step={1000}
-                            value={sessionForm.compaction_threshold}
-                            onChange={(e) => { setSessionForm({ ...sessionForm, compaction_threshold: Number(e.target.value) || 80000 }); setDirtySession(true); }}
+                            min={50}
+                            max={95}
+                            step={5}
+                            value={sessionForm.compaction_threshold_pct}
+                            onChange={(e) => { setSessionForm({ ...sessionForm, compaction_threshold_pct: Math.min(95, Math.max(50, Number(e.target.value) || 85)) }); setDirtySession(true); }}
                           />
                         </div>
                       </div>

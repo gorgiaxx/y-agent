@@ -20,6 +20,7 @@ pub mod bot;
 pub mod chat;
 pub mod config;
 pub mod container;
+pub mod context_optimization;
 pub mod cost;
 pub mod diagnostics;
 pub mod init;

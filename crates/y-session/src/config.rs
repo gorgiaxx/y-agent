@@ -14,9 +14,14 @@ pub struct SessionConfig {
     #[serde(default = "default_max_active_per_root")]
     pub max_active_per_root: usize,
 
-    /// Token count threshold to trigger compaction hint.
-    #[serde(default = "default_compaction_threshold")]
-    pub compaction_threshold: u32,
+    /// Compaction trigger threshold as a percentage of the serving provider's
+    /// context window (e.g. 85 = compact when usage exceeds 85%).
+    ///
+    /// Replaces the former fixed-token `compaction_threshold` field.
+    /// The actual token threshold is computed at runtime as:
+    ///   `context_window * compaction_threshold_pct / 100`
+    #[serde(default = "default_compaction_threshold_pct")]
+    pub compaction_threshold_pct: u32,
 
     /// Whether to auto-archive sessions when merged.
     #[serde(default = "default_auto_archive_merged")]
@@ -35,8 +40,8 @@ fn default_max_active_per_root() -> usize {
     50
 }
 
-fn default_compaction_threshold() -> u32 {
-    100_000
+fn default_compaction_threshold_pct() -> u32 {
+    85
 }
 
 fn default_auto_archive_merged() -> bool {
@@ -52,7 +57,7 @@ impl Default for SessionConfig {
         Self {
             max_depth: default_max_depth(),
             max_active_per_root: default_max_active_per_root(),
-            compaction_threshold: default_compaction_threshold(),
+            compaction_threshold_pct: default_compaction_threshold_pct(),
             auto_archive_merged: default_auto_archive_merged(),
             title_summarize_interval: default_title_summarize_interval(),
         }
@@ -68,7 +73,7 @@ mod tests {
         let config = SessionConfig::default();
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_active_per_root, 50);
-        assert_eq!(config.compaction_threshold, 100_000);
+        assert_eq!(config.compaction_threshold_pct, 85);
         assert!(config.auto_archive_merged);
         assert_eq!(config.title_summarize_interval, 3);
     }

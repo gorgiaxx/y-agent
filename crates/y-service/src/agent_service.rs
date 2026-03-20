@@ -98,6 +98,10 @@ pub struct AgentExecutionResult {
     pub iterations: usize,
     /// Messages generated during this agent run (assistant + tool messages).
     pub new_messages: Vec<Message>,
+    /// Reasoning/thinking content from the final LLM response (if the model
+    /// supports chain-of-thought). `None` when the model did not produce
+    /// reasoning output.
+    pub reasoning_content: Option<String>,
 }
 
 /// Error returned by [`AgentService::execute`].
@@ -797,6 +801,7 @@ impl AgentService {
             tool_calls_executed: ctx.tool_calls_executed,
             iterations: ctx.iteration,
             new_messages: ctx.new_messages,
+            reasoning_content: response.reasoning_content.clone(),
         })
     }
 

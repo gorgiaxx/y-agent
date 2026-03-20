@@ -661,8 +661,12 @@ impl ChatService {
             "context_window": result.context_window,
         });
 
-        // Preserve reasoning_content from new_messages if present.
-        if let Some(last_assistant) = result
+        // Preserve reasoning_content: prefer the direct field (always available),
+        // then fall back to scanning new_messages (for multi-iteration cases where
+        // reasoning was produced in an earlier iteration).
+        if let Some(ref rc) = result.reasoning_content {
+            meta["reasoning_content"] = serde_json::Value::String(rc.clone());
+        } else if let Some(last_assistant) = result
             .new_messages
             .iter()
             .rev()
@@ -701,6 +705,17 @@ impl ChatService {
             .await
         {
             tracing::warn!(error = %e, "failed to create chat checkpoint");
+        }
+
+        // Post-turn context optimization (pruning + conditional compaction).
+        if let Err(e) = crate::context_optimization::ContextOptimizationService::optimize_post_turn(
+            container,
+            &input.session_id,
+            result.context_window,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "post-turn context optimization failed");
         }
 
         Ok(TurnResult {

@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use y_browser::BrowserConfig;
+use y_context::PruningConfig;
 use y_guardrails::GuardrailConfig;
 use y_hooks::HookConfig;
 use y_knowledge::config::KnowledgeConfig;
@@ -51,6 +52,9 @@ pub struct YAgentConfig {
     /// Knowledge base configuration (chunking, embedding, retrieval).
     pub knowledge: KnowledgeConfig,
 
+    /// Context pruning configuration (strategies, thresholds).
+    pub pruning: PruningConfig,
+
     /// Log level (trace, debug, info, warn, error).
     pub log_level: String,
 
@@ -76,6 +80,7 @@ impl Default for YAgentConfig {
             guardrails: GuardrailConfig::default(),
             browser: BrowserConfig::default(),
             knowledge: KnowledgeConfig::default(),
+            pruning: PruningConfig::default(),
             log_level: "info".to_string(),
             output_format: "plain".to_string(),
             log_dir: None,
@@ -120,6 +125,7 @@ const CONFIG_FILE_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
+    "pruning",
 ];
 
 impl ConfigLoader {
@@ -293,6 +299,10 @@ impl ConfigLoader {
                 }
                 "knowledge" => {
                     config.knowledge = toml::from_str(&content)
+                        .with_context(|| format!("parsing {}", path.display()))?;
+                }
+                "pruning" => {
+                    config.pruning = toml::from_str(&content)
                         .with_context(|| format!("parsing {}", path.display()))?;
                 }
                 _ => {}

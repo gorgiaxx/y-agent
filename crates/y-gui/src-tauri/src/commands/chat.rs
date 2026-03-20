@@ -801,3 +801,40 @@ pub async fn chat_restore_branch(
         restored_count,
     })
 }
+
+// ---------------------------------------------------------------------------
+// Context compaction command (/compact slash command)
+// ---------------------------------------------------------------------------
+
+/// Compact report returned to the frontend.
+#[derive(Debug, Serialize, Clone)]
+pub struct CompactResult {
+    pub messages_pruned: usize,
+    pub messages_compacted: usize,
+    pub tokens_saved: u32,
+}
+
+/// Manually trigger context compaction for a session.
+///
+/// Runs pruning first (unconditionally), then compaction (unconditionally).
+/// Bypasses both the delta-based pruning threshold and the percentage-based
+/// compaction threshold.
+#[tauri::command]
+pub async fn context_compact(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<CompactResult, String> {
+    let sid = SessionId(session_id);
+    let report = y_service::context_optimization::ContextOptimizationService::compact_now(
+        &state.container,
+        &sid,
+    )
+    .await
+    .map_err(|e| format!("{e}"))?;
+
+    Ok(CompactResult {
+        messages_pruned: report.messages_pruned,
+        messages_compacted: report.messages_compacted,
+        tokens_saved: report.pruning_tokens_saved + report.compaction_tokens_saved,
+    })
+}

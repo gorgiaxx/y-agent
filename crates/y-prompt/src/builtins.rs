@@ -36,7 +36,7 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         "core.identity",
         PROMPT_IDENTITY,
         "core_identity.txt",
-        200,
+        300,
         100,
         SectionCategoryTag::Identity,
         ConditionTag::Always,

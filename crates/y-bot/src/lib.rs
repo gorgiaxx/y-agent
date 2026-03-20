@@ -116,6 +116,8 @@ pub trait BotPlatform: Send + Sync {
     ///
     /// `headers` contains the HTTP headers (lowercased keys).
     /// `body` is the raw request body bytes.
+    ///
+    /// # Errors
     fn verify_signature(
         &self,
         headers: &HashMap<String, String>,

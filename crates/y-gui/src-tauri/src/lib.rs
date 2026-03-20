@@ -133,6 +133,7 @@ pub fn run() {
             commands::chat::chat_restore_branch,
             commands::chat::chat_resend,
             commands::chat::chat_find_checkpoint_for_resend,
+            commands::chat::context_compact,
             // Sessions
             commands::session::session_list,
             commands::session::session_create,

@@ -357,6 +357,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       setPendingEdit(null);
       setOp('idle');
     }
+    // Clear error from the previous session so it does not leak
+    // into the newly selected session's chat panel.
+    setError(null);
     // Restore context reset points for the new session.
     setContextResetPoints(
       activeSessionId ? contextResetMapRef.current.get(activeSessionId) ?? [] : [],
@@ -491,14 +494,40 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               // carries extra text from prior tool-call iterations.
               if (accumulatedContent && mergedMsgs.length > 0) {
                 const lastMsg = mergedMsgs[mergedMsgs.length - 1];
-                if (lastMsg.role === 'assistant' && accumulatedContent.length > lastMsg.content.length) {
-                  // The streaming content has more text (from earlier
-                  // iterations). Use it as the display content but keep
-                  // the backend message's metadata.
-                  mergedMsgs[mergedMsgs.length - 1] = {
-                    ...lastMsg,
-                    content: accumulatedContent,
-                  };
+                if (lastMsg.role === 'assistant') {
+                  // Merge streaming reasoning metadata (timing info is
+                  // client-only and not persisted by the backend).
+                  const streamMeta = streamingMsg?.metadata;
+                  let mergedMeta = { ...(lastMsg.metadata || {}) };
+                  if (streamMeta) {
+                    if (streamMeta._reasoningDurationMs) {
+                      mergedMeta._reasoningDurationMs = streamMeta._reasoningDurationMs;
+                    }
+                    if (streamMeta._reasoningDoneTs) {
+                      mergedMeta._reasoningDoneTs = streamMeta._reasoningDoneTs;
+                    }
+                    // Fallback: if backend lacks reasoning_content but streaming had it
+                    if (!mergedMeta.reasoning_content && streamMeta.reasoning_content) {
+                      mergedMeta.reasoning_content = streamMeta.reasoning_content;
+                    }
+                  }
+
+                  if (accumulatedContent.length > lastMsg.content.length) {
+                    // The streaming content has more text (from earlier
+                    // iterations). Use it as the display content but keep
+                    // the backend message's metadata (enriched with timing).
+                    mergedMsgs[mergedMsgs.length - 1] = {
+                      ...lastMsg,
+                      content: accumulatedContent,
+                      metadata: mergedMeta,
+                    };
+                  } else if (Object.keys(mergedMeta).length > Object.keys(lastMsg.metadata || {}).length) {
+                    // Content is same but we have extra metadata to merge.
+                    mergedMsgs[mergedMsgs.length - 1] = {
+                      ...lastMsg,
+                      metadata: mergedMeta,
+                    };
+                  }
                 }
               }
 
@@ -621,13 +650,30 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               }
             })();
           } else {
-            // Non-cancel error: remove the streaming message entirely.
+            // Non-cancel error: remove the streaming message, then reload
+            // from the backend so cached messages stay consistent (the
+            // optimistic user message has a different ID than the real one
+            // persisted by prepare_turn).
             setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
               const streamingId = `streaming-${sessionId}`;
               return prev.filter((m) => m.id !== streamingId);
             });
+            syncVisible(sessionId);
+
+            // Async reload: reconcile cache with the backend transcript.
+            (async () => {
+              try {
+                const backendMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+                const merged = mergeSkillsFromCache(backendMsgs, sessionMessagesRef.current, sessionId);
+                setCachedMessages(sessionMessagesRef.current, sessionId, merged);
+                if (activeSessionIdRef.current === sessionId) {
+                  startTransition(() => setVisibleMessages(merged));
+                }
+              } catch (reloadErr) {
+                console.error('[chat] error handler: failed to reload messages:', reloadErr);
+              }
+            })();
           }
-          syncVisible(sessionId);
         }
 
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
@@ -676,9 +722,17 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const loadMessages = useCallback(async (sessionId: string) => {
     activeSessionIdRef.current = sessionId;
 
+    const cachedMsgs = getCachedMessages(sessionMessagesRef.current, sessionId);
+    // Show the loading skeleton only when the cache is empty -- if we already
+    // have cached (optimistic) messages we want them to stay visible rather
+    // than being replaced by a skeleton flash.
+    const showSkeleton = cachedMsgs.length === 0;
+
     startTransition(() => {
-      setVisibleMessages(getCachedMessages(sessionMessagesRef.current, sessionId));
-      setIsLoadingMessages(true);
+      setVisibleMessages(cachedMsgs);
+      if (showSkeleton) {
+        setIsLoadingMessages(true);
+      }
     });
 
     try {
@@ -688,12 +742,25 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       console.log(`[chat] loadMessages: got ${mergedMsgs.length} messages for session=${sessionId}, active=${activeSessionIdRef.current}`);
       if (activeSessionIdRef.current === sessionId) {
         const streamingId = `streaming-${sessionId}`;
-        const existingStreaming = getCachedMessages(
-          sessionMessagesRef.current,
-          sessionId,
-        ).find((m) => m.id === streamingId);
+        // Re-read from cache (may have been updated by sendMessage in the meantime).
+        const currentCached = getCachedMessages(sessionMessagesRef.current, sessionId);
+        const existingStreaming = currentCached.find((m) => m.id === streamingId);
 
-        const merged = existingStreaming ? [...mergedMsgs, existingStreaming] : mergedMsgs;
+        // Preserve optimistic user messages (id starts with "user-") that
+        // exist in the cache but are not yet in the backend response.
+        // This happens when sendMessage adds an optimistic message and
+        // loadMessages races with the backend persistence (common for new
+        // sessions where the first message hasn't been saved yet).
+        const backendIds = new Set(mergedMsgs.map((m) => m.id));
+        const optimisticUserMsgs = currentCached.filter(
+          (m) => m.id.startsWith('user-') && !backendIds.has(m.id),
+        );
+
+        let merged = [...mergedMsgs, ...optimisticUserMsgs];
+        if (existingStreaming) {
+          merged = [...merged, existingStreaming];
+        }
+
         setCachedMessages(sessionMessagesRef.current, sessionId, merged);
         startTransition(() => {
           setVisibleMessages(merged);

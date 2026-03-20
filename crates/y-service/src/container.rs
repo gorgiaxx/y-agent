@@ -3,6 +3,7 @@
 //! Mirrors the former `AppServices` from `y-cli/wire.rs`, but lives in the
 //! service layer so CLI, TUI, and future Web API can all construct one.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -11,13 +12,13 @@ use tracing::{info, warn};
 
 use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
 use y_context::{
-    BuildSystemPromptProvider, BunVenvPromptInfo, ContextPipeline, InjectContextStatus,
-    InjectSkills, InjectTools, KnowledgeContextProvider, PythonVenvPromptInfo, SystemPromptConfig,
-    VenvPromptInfo,
+    BuildSystemPromptProvider, BunVenvPromptInfo, CompactionEngine, ContextPipeline,
+    InjectContextStatus, InjectSkills, InjectTools, KnowledgeContextProvider, PruningEngine,
+    PythonVenvPromptInfo, SystemPromptConfig, VenvPromptInfo,
 };
 use y_core::agent::AgentDelegator;
 use y_core::provider::LlmProvider;
-use y_core::types::ToolName;
+use y_core::types::{SessionId, ToolName};
 use y_diagnostics::{DiagnosticsSubscriber, TraceStore};
 use y_guardrails::GuardrailManager;
 use y_hooks::HookSystem;
@@ -121,6 +122,23 @@ pub struct ServiceContainer {
     /// Uses `tokio::sync::Mutex` so the GUI layer can share this `Arc` and
     /// hold the lock across `.await` points (e.g. `ingest().await`).
     pub knowledge_service: Arc<Mutex<KnowledgeService>>,
+
+    /// Pruning engine — removes failed tool call branches and summarizes
+    /// completed multi-step sequences. Wired with the `agent_delegator`
+    /// so progressive pruning can delegate to the `pruning-summarizer` agent.
+    pub pruning_engine: PruningEngine,
+
+    /// Compaction engine — summarizes older history to reclaim context space.
+    pub compaction_engine: CompactionEngine,
+
+    /// Compaction trigger threshold as a percentage of `context_window`
+    /// (e.g. 85 = compact when usage exceeds 85% of model context window).
+    pub compaction_threshold_pct: u32,
+
+    /// Per-session token watermarks for delta-based pruning.
+    /// Tracks the total token count at the time pruning last ran.
+    /// Pruning only triggers when `current_tokens - watermark >= token_threshold`.
+    pub pruning_watermarks: RwLock<HashMap<SessionId, u32>>,
 }
 
 impl ServiceContainer {
@@ -328,6 +346,16 @@ tools = ["tool_search"]
         let (agent_registry, agent_pool_for_services, agent_delegator, delegation_tracker) =
             Self::init_agent_and_diagnostics(&provider_pool, &diagnostics);
 
+        // 14. Pruning engine -- wired with agent_delegator for progressive pruning.
+        let pruning_engine =
+            PruningEngine::with_delegator(config.pruning.clone(), Arc::clone(&agent_delegator));
+
+        // 15. Compaction engine (default config, no LLM backend yet).
+        let compaction_engine = CompactionEngine::new();
+
+        // Default compaction threshold from session config (percentage of context window).
+        let compaction_threshold_pct = config.session.compaction_threshold_pct;
+
         Ok(Self {
             provider_pool: RwLock::new(provider_pool),
             session_manager,
@@ -349,6 +377,10 @@ tools = ["tool_search"]
             dynamic_tool_schemas,
             chat_message_store,
             knowledge_service,
+            pruning_engine,
+            compaction_engine,
+            compaction_threshold_pct,
+            pruning_watermarks: RwLock::new(HashMap::new()),
         })
     }
 

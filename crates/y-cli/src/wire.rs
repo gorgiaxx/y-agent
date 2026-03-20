@@ -35,6 +35,7 @@ pub async fn wire(config: &YAgentConfig) -> Result<AppServices> {
         guardrails: config.guardrails.clone(),
         browser: config.browser.clone(),
         knowledge: config.knowledge.clone(),
+        pruning: config.pruning.clone(),
         prompts_dir,
         skills_dir,
     };
