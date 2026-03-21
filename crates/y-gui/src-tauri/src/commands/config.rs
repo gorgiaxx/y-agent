@@ -224,6 +224,10 @@ pub async fn config_reload(state: State<'_, AppState>) -> Result<String, String>
         results.push("tools".to_string());
     }
 
+    // 7. Prompts — always reload from disk (no TOML config, just .txt files).
+    y_service::SystemService::reload_prompts(&state.container).await;
+    results.push("prompts".to_string());
+
     if results.is_empty() {
         return Ok("Config reloaded (no config files to update)".into());
     }

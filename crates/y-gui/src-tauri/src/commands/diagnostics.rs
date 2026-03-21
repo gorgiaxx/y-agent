@@ -27,3 +27,17 @@ pub async fn diagnostics_get_by_session(
     let store = state.container.diagnostics.store();
     DiagnosticsService::get_session_history(store, &session_id, limit.unwrap_or(50)).await
 }
+
+/// Fetch all subagent traces regardless of session, ordered by time.
+///
+/// Returns entries for traces whose name starts with `subagent:`, covering
+/// both session-scoped subagents (title-generator, pruning-summarizer) and
+/// session-independent ones (skill-ingestion, security-check).
+#[tauri::command]
+pub async fn diagnostics_get_subagent_history(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<HistoricalEntry>, String> {
+    let store = state.container.diagnostics.store();
+    DiagnosticsService::get_subagent_history(store, limit.unwrap_or(50)).await
+}

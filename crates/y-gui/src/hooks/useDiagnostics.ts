@@ -112,13 +112,13 @@ let unlistenFns: UnlistenFn[] = [];
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
-/** Fetch subagent diagnostics (stored under nil UUID) from the database and
+/** Fetch all subagent diagnostics (across all sessions) from the database and
  *  replace the nil-UUID entries in `sharedState`. Called on init and again
  *  whenever a `diagnostics:subagent_completed` event arrives.              */
 async function loadSubagentHistory() {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await invoke<any[]>('diagnostics_get_by_session', { sessionId: NIL_UUID, limit: 50 });
+    const raw = await invoke<any[]>('diagnostics_get_subagent_history', { limit: 50 });
     if (!raw || raw.length === 0) return;
 
     const histEntries: DiagnosticsEntry[] = raw.map((item, idx) => {
@@ -165,6 +165,104 @@ async function loadSubagentHistory() {
     }));
   } catch (e) {
     console.warn('loadSubagentHistory failed:', e);
+  }
+}
+
+/** Reload diagnostics for a specific session from the backend, merging
+ *  any new subagent entries with existing live entries. This is called
+ *  when a subagent completes so its diagnostic entries become visible
+ *  in the session-level view. */
+async function reloadSessionHistory(sessionId: string) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await invoke<any[]>('diagnostics_get_by_session', { sessionId, limit: 50 });
+    if (!raw || raw.length === 0) return;
+
+    const histEntries: DiagnosticsEntry[] = raw.map((item, idx) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let event: any;
+      const timestamp = item.timestamp as string;
+      switch (item.type) {
+        case 'user_message':
+          event = { type: 'user_message' as const, content: item.content as string };
+          break;
+        case 'llm_response':
+          event = {
+            type: 'llm_response' as const,
+            iteration: item.iteration as number,
+            model: item.model as string,
+            input_tokens: item.input_tokens as number,
+            output_tokens: item.output_tokens as number,
+            duration_ms: item.duration_ms as number,
+            cost_usd: item.cost_usd as number,
+            tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
+            prompt_preview: item.prompt_preview as string,
+            response_text: item.response_text as string,
+          };
+          break;
+        case 'tool_result':
+          event = {
+            type: 'tool_result' as const,
+            name: item.name as string,
+            success: item.success as boolean,
+            duration_ms: item.duration_ms as number,
+            input_preview: (item.input_preview as string) ?? undefined,
+            result_preview: item.result_preview as string,
+          };
+          break;
+        default:
+          event = { type: 'user_message' as const, content: '' };
+      }
+      return { id: `hist-${sessionId}-${idx}`, timestamp, event };
+    });
+
+    broadcastUpdate((prev) => {
+      const existing = prev.sessionEntries[sessionId] ?? [];
+      const existingIds = new Set(existing.map((e) => e.id));
+
+      // Build content-level fingerprints from existing live entries so we
+      // can detect when a history entry duplicates a live entry (same
+      // observation, different ID prefix like 'diag-' vs 'hist-').
+      const existingFingerprints = new Set<string>();
+      for (const e of existing) {
+        const ev = e.event;
+        if (ev.type === 'llm_response') {
+          existingFingerprints.add(`llm:${ev.iteration}:${ev.model}:${ev.input_tokens}:${ev.output_tokens}`);
+        } else if (ev.type === 'tool_result') {
+          existingFingerprints.add(`tool:${ev.name}:${ev.success}:${ev.duration_ms}`);
+        } else if (ev.type === 'user_message') {
+          existingFingerprints.add(`user:${ev.content}`);
+        }
+      }
+
+      const newEntries = histEntries.filter((e) => {
+        // Skip if same ID already exists.
+        if (existingIds.has(e.id)) return false;
+        // Skip if a live entry with matching content already exists.
+        const ev = e.event;
+        let fp = '';
+        if (ev.type === 'llm_response') {
+          fp = `llm:${ev.iteration}:${ev.model}:${ev.input_tokens}:${ev.output_tokens}`;
+        } else if (ev.type === 'tool_result') {
+          fp = `tool:${ev.name}:${ev.success}:${ev.duration_ms}`;
+        } else if (ev.type === 'user_message') {
+          fp = `user:${ev.content}`;
+        }
+        if (fp && existingFingerprints.has(fp)) return false;
+        return true;
+      });
+      if (newEntries.length === 0) return prev;
+
+      const merged = [...existing, ...newEntries].sort((a, b) =>
+        a.timestamp.localeCompare(b.timestamp),
+      );
+      return {
+        ...prev,
+        sessionEntries: { ...prev.sessionEntries, [sessionId]: merged },
+      };
+    });
+  } catch (e) {
+    console.warn('reloadSessionHistory failed:', e);
   }
 }
 
@@ -231,8 +329,15 @@ async function initialiseBus() {
   // When a subagent (title-generator, skill-ingestion, etc.) completes,
   // the backend emits this event.  Re-fetch subagent history so the
   // Global diagnostics view picks up the new entries.
-  const u4 = await listen('diagnostics:subagent_completed', () => {
+  // If the event includes a session_id, also reload that session's
+  // history so subagent entries appear in the session-level view.
+  const u4 = await listen<{ session_id?: string }>('diagnostics:subagent_completed', (event) => {
     loadSubagentHistory();
+
+    const sid = event.payload?.session_id;
+    if (sid) {
+      reloadSessionHistory(sid);
+    }
   });
   unlistenFns.push(u4);
 

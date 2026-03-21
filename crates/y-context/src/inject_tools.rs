@@ -5,17 +5,16 @@
 //! Implements Tool Lazy Loading with dual-mode support:
 //!
 //! - **`PromptBased`** (default): Injects a compact taxonomy root summary
-//!   (~100 tokens) plus any currently-activated tool schemas. The agent
-//!   uses `tool_search` to load specific tools on demand.
+//!   (~100 tokens). The agent uses `tool_search` to load specific tool
+//!   schemas on demand; full schemas appear in conversation history from
+//!   the `tool_search` result and are NOT re-injected into the context.
 //!
 //! - **Native**: Injects a flat list of tool names plus a `tool_search`
 //!   meta-tool definition (backward compatibility).
 
 use std::fmt::Write;
-use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::RwLock;
 
 use y_core::provider::ToolCallingMode;
 
@@ -40,12 +39,8 @@ pub struct InjectTools {
     mode: ToolCallingMode,
     /// Taxonomy root summary (used in `PromptBased` mode).
     taxonomy_summary: Option<String>,
-    /// Currently activated tool schemas (used in `PromptBased` mode).
-    /// Static schemas set at construction time.
-    activated_tool_schemas: Vec<String>,
-    /// Shared dynamic schemas — updated by the service layer when
-    /// tools are activated via `tool_search`. Read at `provide()` time.
-    dynamic_schemas: Option<Arc<RwLock<Vec<String>>>>,
+    /// Compact core-tools summary (always-active tools, dynamically generated).
+    core_tools_summary: Option<String>,
 }
 
 impl InjectTools {
@@ -56,8 +51,7 @@ impl InjectTools {
             include_tool_search: true,
             mode: ToolCallingMode::Native,
             taxonomy_summary: None,
-            activated_tool_schemas: Vec::new(),
-            dynamic_schemas: None,
+            core_tools_summary: None,
         }
     }
 
@@ -68,8 +62,7 @@ impl InjectTools {
             include_tool_search: false,
             mode: ToolCallingMode::Native,
             taxonomy_summary: None,
-            activated_tool_schemas: Vec::new(),
-            dynamic_schemas: None,
+            core_tools_summary: None,
         }
     }
 
@@ -80,38 +73,30 @@ impl InjectTools {
             include_tool_search: true,
             mode: ToolCallingMode::PromptBased,
             taxonomy_summary: Some(taxonomy_summary),
-            activated_tool_schemas: Vec::new(),
-            dynamic_schemas: None,
+            core_tools_summary: None,
         }
     }
 
-    /// Create in `PromptBased` mode with taxonomy summary and dynamic schemas.
+    /// Create in `PromptBased` mode with taxonomy summary and core-tools summary.
     ///
-    /// The `dynamic_schemas` arc is read at `provide()` time to inject
-    /// currently activated tool schemas. The service layer updates this
-    /// when tools are activated via `tool_search`.
-    pub fn with_taxonomy_and_dynamic_schemas(
+    /// The `core_tools_summary` is a compact description of always-active tools
+    /// generated at startup from the `ToolActivationSet`.
+    pub fn with_taxonomy_and_core_tools(
         taxonomy_summary: String,
-        dynamic_schemas: Arc<RwLock<Vec<String>>>,
+        core_tools_summary: String,
     ) -> Self {
         Self {
             tool_names: Vec::new(),
             include_tool_search: true,
             mode: ToolCallingMode::PromptBased,
             taxonomy_summary: Some(taxonomy_summary),
-            activated_tool_schemas: Vec::new(),
-            dynamic_schemas: Some(dynamic_schemas),
+            core_tools_summary: Some(core_tools_summary),
         }
     }
 
     /// Set the tool calling mode.
     pub fn set_mode(&mut self, mode: ToolCallingMode) {
         self.mode = mode;
-    }
-
-    /// Set activated tool schemas (`PromptBased` mode).
-    pub fn set_activated_schemas(&mut self, schemas: Vec<String>) {
-        self.activated_tool_schemas = schemas;
     }
 }
 
@@ -135,35 +120,22 @@ impl ContextProvider for InjectTools {
 }
 
 impl InjectTools {
-    /// `PromptBased` mode: inject taxonomy summary + activated tool schemas.
+    /// `PromptBased` mode: inject taxonomy summary only.
+    ///
+    /// Full tool schemas are loaded lazily via `tool_search` and appear
+    /// in the conversation history; they are NOT re-injected here.
     fn provide_prompt_based(&self, ctx: &mut AssembledContext) {
-        let mut content = String::new();
+        let mut content = match self.taxonomy_summary {
+            Some(ref summary) if !summary.is_empty() => summary.clone(),
+            _ => return,
+        };
 
-        // Inject taxonomy root summary.
-        if let Some(ref summary) = self.taxonomy_summary {
-            content.push_str(summary);
-        }
-
-        // Collect schemas: static first, then dynamic.
-        let mut all_schemas = self.activated_tool_schemas.clone();
-        if let Some(ref dynamic) = self.dynamic_schemas {
-            // Try to read dynamic schemas; skip if lock is held.
-            if let Ok(guard) = dynamic.try_read() {
-                all_schemas.extend(guard.iter().cloned());
+        // Append core-tools summary (always-active tools).
+        if let Some(ref core) = self.core_tools_summary {
+            if !core.is_empty() {
+                content.push_str("\n\n");
+                content.push_str(core);
             }
-        }
-
-        // Inject any activated tool schemas.
-        if !all_schemas.is_empty() {
-            content.push_str("\n\n## Activated Tools\n\n");
-            for schema in &all_schemas {
-                content.push_str(schema);
-                content.push('\n');
-            }
-        }
-
-        if content.is_empty() {
-            return;
         }
 
         let tokens = estimate_tokens(&content);
@@ -177,7 +149,7 @@ impl InjectTools {
         tracing::debug!(
             mode = "prompt_based",
             has_taxonomy = self.taxonomy_summary.is_some(),
-            activated_tools = self.activated_tool_schemas.len(),
+            has_core_tools = self.core_tools_summary.is_some(),
             tokens,
             "tool context injected (PromptBased mode)"
         );
@@ -304,20 +276,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_prompt_based_with_activated_schemas() {
-        let mut provider = InjectTools::with_taxonomy("## Categories".to_string());
-        provider.set_activated_schemas(vec![
-            "file_read: Read a file by path".to_string(),
-            "shell_exec: Execute a shell command".to_string(),
-        ]);
+    async fn test_prompt_based_taxonomy_only_no_schemas() {
+        let provider = InjectTools::with_taxonomy("## Categories\n- file: File ops".to_string());
 
         let mut ctx = AssembledContext::default();
         provider.provide(&mut ctx).await.unwrap();
 
         let content = &ctx.items[0].content;
-        assert!(content.contains("Activated Tools"));
-        assert!(content.contains("file_read"));
-        assert!(content.contains("shell_exec"));
+        assert!(content.contains("Categories"));
+        // No "Activated Tools" section -- schemas are lazily loaded.
+        assert!(!content.contains("Activated Tools"));
     }
 
     #[tokio::test]
@@ -327,13 +295,30 @@ mod tests {
             include_tool_search: true,
             mode: ToolCallingMode::PromptBased,
             taxonomy_summary: None,
-            activated_tool_schemas: Vec::new(),
-            dynamic_schemas: None,
+            core_tools_summary: None,
         };
 
         let mut ctx = AssembledContext::default();
         provider.provide(&mut ctx).await.unwrap();
         assert!(ctx.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_prompt_based_with_core_tools() {
+        let provider = InjectTools::with_taxonomy_and_core_tools(
+            "## Tool Categories\n| file | File ops |".to_string(),
+            "## Core Tools\n- file_read: Read a file\n- shell_exec: Run a command".to_string(),
+        );
+
+        let mut ctx = AssembledContext::default();
+        provider.provide(&mut ctx).await.unwrap();
+
+        assert_eq!(ctx.items.len(), 1);
+        let content = &ctx.items[0].content;
+        assert!(content.contains("Tool Categories"));
+        assert!(content.contains("Core Tools"));
+        assert!(content.contains("file_read"));
+        assert!(content.contains("shell_exec"));
     }
 
     #[tokio::test]

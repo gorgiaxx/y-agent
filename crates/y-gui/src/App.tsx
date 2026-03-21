@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, startTransition } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Settings, Activity, Eye } from 'lucide-react';
+import { Activity, Eye } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import type { ViewType } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
@@ -98,7 +98,7 @@ function App() {
   const [obsExpanded, setObsExpanded] = useState(false);
   const [diagExpanded, setDiagExpanded] = useState(false);
   const [obsTimeRange, setObsTimeRange] = useState<TimeRange>('all');
-  const { snapshot: obsSnapshot, loading: obsLoading } = useObservability({
+  const { snapshot: obsSnapshot, loading: obsLoading, error: obsError } = useObservability({
     active: obsOpen,
     timeRange: obsTimeRange,
   });
@@ -541,6 +541,7 @@ function App() {
         agents={agents}
         activeAgentId={activeAgentId}
         onSelectAgent={(id) => { setActiveView('agents'); setActiveAgentId(id); }}
+        onSettingsOpen={() => setSettingsOpen(true)}
       />
 
       <main className="main-panel">
@@ -572,14 +573,6 @@ function App() {
               id="btn-observability"
             >
               <Eye size={16} />
-            </button>
-            <button
-              className="btn-header"
-              onClick={() => setSettingsOpen(true)}
-              title="Settings"
-              id="btn-settings"
-            >
-              <Settings size={16} />
             </button>
           </div>
         </header>
@@ -693,6 +686,7 @@ function App() {
         <ObservabilityPanel
           snapshot={obsSnapshot}
           loading={obsLoading}
+          error={obsError}
           expanded={obsExpanded}
           onToggleExpand={() => setObsExpanded(!obsExpanded)}
           onClose={() => {

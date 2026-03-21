@@ -76,6 +76,11 @@ pub struct BrowserConfig {
     /// Maximum screenshot dimension (width or height) in pixels.
     #[serde(default = "default_max_screenshot_dim")]
     pub max_screenshot_dim: u32,
+
+    /// Default search engine for the `search` action.
+    /// Supported values: "google", "bing", "duckduckgo", "baidu".
+    #[serde(default = "default_search_engine")]
+    pub default_search_engine: String,
 }
 
 impl Default for BrowserConfig {
@@ -90,6 +95,7 @@ impl Default for BrowserConfig {
             allowed_domains: vec!["*".into()],
             block_private_networks: true,
             max_screenshot_dim: default_max_screenshot_dim(),
+            default_search_engine: default_search_engine(),
         }
     }
 }
@@ -112,4 +118,8 @@ fn default_max_screenshot_dim() -> u32 {
 
 fn default_local_cdp_port() -> u16 {
     9222
+}
+
+fn default_search_engine() -> String {
+    "google".into()
 }

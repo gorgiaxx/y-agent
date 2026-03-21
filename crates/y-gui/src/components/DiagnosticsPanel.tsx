@@ -507,16 +507,33 @@ function LoopLimitEntry({ event }: { event: LoopLimitEvent }) {
 
 export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGlobal, expanded, onToggleExpand, onClear, onClose }: DiagnosticsPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>('1h');
+  const userScrolledAway = useRef(false);
 
   const filteredEntries = useMemo(() => filterByTimeRange(entries, timeRange), [entries, timeRange]);
   const summary = useMemo(() => computeSummary(filteredEntries), [filteredEntries]);
 
-  // Auto-scroll to bottom.
+  // Track whether the user has scrolled away from the bottom.
+  // When they are near the bottom (within 60px), re-enable auto-scroll.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = timelineRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      userScrolledAway.current = distanceFromBottom > 60;
+    };
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, [expanded]); // re-attach when expanded state changes (different DOM)
+
+  // Auto-scroll to bottom only when the user has not scrolled away.
+  useEffect(() => {
+    if (!userScrolledAway.current) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [filteredEntries]);
 
   // Close filter popover on outside click.
@@ -605,7 +622,7 @@ export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGloba
       )}
 
       {/* Timeline */}
-      <div className="diag-timeline">
+      <div className="diag-timeline" ref={timelineRef}>
         {filteredEntries.length === 0 && entries.length === 0 && (
           <div className="diag-empty">
             <Activity size={24} className="diag-empty-icon" />

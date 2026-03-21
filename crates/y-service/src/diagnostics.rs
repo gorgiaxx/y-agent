@@ -205,6 +205,135 @@ impl DiagnosticsService {
         Ok(entries.into_iter().map(|(_, e)| e).collect())
     }
 
+    /// Fetch all subagent traces regardless of session, ordered by time.
+    ///
+    /// Returns diagnostics for traces whose name starts with `subagent:`.
+    /// This is used by the global diagnostics view to display all subagent
+    /// calls, whether they are associated with a specific session or with
+    /// `Uuid::nil()` (session-independent operations).
+    pub async fn get_subagent_history(
+        store: Arc<dyn TraceStore>,
+        limit: usize,
+    ) -> Result<Vec<HistoricalEntry>, String> {
+        // Fetch recent traces across all sessions and filter for subagent prefix.
+        let all_traces = store
+            .list_traces(None, None, limit * 10)
+            .await
+            .map_err(|e| format!("Failed to list traces: {e}"))?;
+
+        let subagent_traces: Vec<_> = all_traces
+            .into_iter()
+            .filter(|t| t.name.starts_with("subagent:"))
+            .take(limit)
+            .collect();
+
+        if subagent_traces.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let trace_ids: Vec<uuid::Uuid> = subagent_traces.iter().map(|t| t.id).collect();
+        let all_observations = store
+            .get_observations_by_trace_ids(&trace_ids)
+            .await
+            .unwrap_or_default();
+
+        let mut obs_by_trace: HashMap<uuid::Uuid, Vec<_>> = HashMap::new();
+        for obs in all_observations {
+            obs_by_trace.entry(obs.trace_id).or_default().push(obs);
+        }
+
+        let mut entries: Vec<(chrono::DateTime<chrono::Utc>, HistoricalEntry)> = Vec::new();
+
+        for trace in &subagent_traces {
+            let mut obs_sorted = obs_by_trace.remove(&trace.id).unwrap_or_default();
+            obs_sorted.sort_by(|a, b| {
+                a.sequence
+                    .cmp(&b.sequence)
+                    .then(a.started_at.cmp(&b.started_at))
+            });
+
+            let mut llm_iter = 0usize;
+
+            for obs in &obs_sorted {
+                let ts = obs.completed_at.unwrap_or(obs.started_at);
+                let duration_ms = obs
+                    .metadata
+                    .get("duration_ms")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+
+                match obs.obs_type {
+                    y_diagnostics::ObservationType::Generation => {
+                        llm_iter += 1;
+                        let model = obs.model.clone().unwrap_or_default();
+
+                        let prompt_preview = if obs.input.is_null() {
+                            trace
+                                .user_input
+                                .as_deref()
+                                .unwrap_or("(input not captured)")
+                                .to_string()
+                        } else {
+                            obs.input.to_string()
+                        };
+
+                        let response_text = if obs.output.is_null() {
+                            trace
+                                .metadata
+                                .get("output")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("(output not captured)")
+                                .to_string()
+                        } else {
+                            obs.output.to_string()
+                        };
+
+                        entries.push((
+                            ts,
+                            HistoricalEntry::LlmResponse {
+                                iteration: llm_iter,
+                                model,
+                                input_tokens: obs.input_tokens,
+                                output_tokens: obs.output_tokens,
+                                duration_ms,
+                                cost_usd: obs.cost_usd,
+                                tool_calls_requested: vec![],
+                                prompt_preview,
+                                response_text,
+                                timestamp: ts.to_rfc3339(),
+                            },
+                        ));
+                    }
+                    y_diagnostics::ObservationType::ToolCall => {
+                        let success = obs.status != y_diagnostics::ObservationStatus::Failed;
+                        let result_preview = obs.output.to_string();
+                        let input_preview = if obs.input.is_null() {
+                            String::new()
+                        } else {
+                            obs.input.to_string()
+                        };
+
+                        entries.push((
+                            ts,
+                            HistoricalEntry::ToolResult {
+                                name: obs.name.clone(),
+                                success,
+                                duration_ms,
+                                input_preview,
+                                result_preview,
+                                timestamp: ts.to_rfc3339(),
+                            },
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(entries.into_iter().map(|(_, e)| e).collect())
+    }
+
     /// System health check.
     pub async fn health_check(container: &ServiceContainer) -> HealthCheckResult {
         let store = container.diagnostics.store();

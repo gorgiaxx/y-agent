@@ -150,7 +150,7 @@ mod tests {
                     enabled: true,
                 },
                 SectionRef {
-                    section_id: "core.tool_behavior".into(),
+                    section_id: "core.tool_protocol".into(),
                     priority_override: None,
                     condition_override: None,
                     enabled: true,
@@ -161,7 +161,7 @@ mod tests {
                 m.insert(
                     "plan".into(),
                     ModeOverlay {
-                        exclude: vec!["core.tool_behavior".into()],
+                        exclude: vec!["core.tool_protocol".into()],
                         include: vec!["core.planning".into()],
                         ..Default::default()
                     },
@@ -193,7 +193,7 @@ mod tests {
         let t = base_template();
         let eff = t.effective_sections("plan");
         let ids: Vec<&str> = eff.iter().map(|s| s.section_id.as_str()).collect();
-        assert!(!ids.contains(&"core.tool_behavior"));
+        assert!(!ids.contains(&"core.tool_protocol"));
         assert!(ids.contains(&"core.planning"));
     }
 

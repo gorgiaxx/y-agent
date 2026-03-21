@@ -125,6 +125,7 @@ pub fn run() {
             commands::session::session_truncate_messages,
             // Diagnostics
             commands::diagnostics::diagnostics_get_by_session,
+            commands::diagnostics::diagnostics_get_subagent_history,
             // Observability
             commands::observability::observability_snapshot,
             commands::observability::observability_history,

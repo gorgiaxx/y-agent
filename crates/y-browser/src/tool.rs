@@ -33,6 +33,7 @@ const MAX_OUTPUT_CHARS: usize = 50_000;
 #[serde(rename_all = "snake_case")]
 pub enum BrowserAction {
     Navigate,
+    Search,
     Screenshot,
     Snapshot,
     Click,
@@ -56,6 +57,8 @@ impl BrowserAction {
             "navigate" | "open" | "goto" | "go" | "load" | "visit" | "open_url" | "go_to" => {
                 Some(Self::Navigate)
             }
+            // Search via search engine
+            "search" | "web_search" | "google" | "find" | "lookup" | "query" => Some(Self::Search),
             // Screenshot
             "screenshot" | "capture" | "screen" | "take_screenshot" | "capture_screenshot" => {
                 Some(Self::Screenshot)
@@ -101,7 +104,7 @@ impl BrowserAction {
 
     /// All valid action names, for error messages.
     fn all_names() -> &'static str {
-        "navigate, screenshot, snapshot, click, type, get_text, get_title, get_url, evaluate, wait, press_key, scroll, get_page_text, get_console_logs, close"
+        "navigate, search, screenshot, snapshot, click, type, get_text, get_title, get_url, evaluate, wait, press_key, scroll, get_page_text, get_console_logs, close"
     }
 }
 
@@ -175,9 +178,10 @@ impl BrowserTool {
             name: ToolName::from_string("browser"),
             description: concat!(
                 "Control a web browser. ",
-                "WORKFLOW: (1) navigate to URL, (2) snapshot to get @refs, (3) click/type using @refs.\n\n",
+                "WORKFLOW: (1) navigate/search, (2) snapshot to get @refs, (3) click/type using @refs.\n\n",
                 "Actions:\n",
                 "- navigate: Open a URL. Args: url (required)\n",
+                "- search: Search via search engine. Args: query (required), search_engine ('google'|'bing'|'duckduckgo'|'baidu', default 'google')\n",
                 "- snapshot: Get page elements with @eN refs. Use these refs for click/type. Args: format ('aria'|'dom'), interactive_only (bool, default true)\n",
                 "- click: Click an element. Args: selector ('@e1' ref from snapshot, or CSS selector)\n",
                 "- type: Type text into an input. Args: selector ('@e1' ref or CSS), text (required)\n",
@@ -192,7 +196,7 @@ impl BrowserTool {
                 "- get_page_text: Get all visible page text\n",
                 "- get_console_logs: Get browser console output (errors, warnings, logs)\n",
                 "- close: Close browser\n\n",
-                "IMPORTANT: After 'snapshot', use the @eN refs (e.g. @e3) for click/type — do NOT guess CSS selectors.",
+                "IMPORTANT: After 'snapshot', use the @eN refs (e.g. @e3) for click/type -- do NOT guess CSS selectors.",
             ).into(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -200,7 +204,7 @@ impl BrowserTool {
                     "action": {
                         "type": "string",
                         "enum": [
-                            "navigate", "screenshot", "snapshot",
+                            "navigate", "search", "screenshot", "snapshot",
                             "click", "type", "get_text", "get_title", "get_url",
                             "evaluate", "wait", "press_key", "scroll",
                             "get_page_text", "get_console_logs", "close"
@@ -210,6 +214,15 @@ impl BrowserTool {
                     "url": {
                         "type": "string",
                         "description": "URL to navigate to (for 'navigate')"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query text (for 'search')"
+                    },
+                    "search_engine": {
+                        "type": "string",
+                        "enum": ["google", "bing", "duckduckgo", "baidu"],
+                        "description": "Search engine to use (default: 'google')"
                     },
                     "selector": {
                         "type": "string",
@@ -338,6 +351,45 @@ impl BrowserTool {
         }
         *self.console_started.lock().await = false;
     }
+    /// Handle the `search` action: build a search engine URL and navigate.
+    async fn dispatch_search(&self, input: &ToolInput) -> Result<serde_json::Value, ToolError> {
+        let query =
+            require_str(&input.arguments, "query").map_err(|_| ToolError::ValidationError {
+                message: "Missing 'query' parameter for search. Example: \
+                    {\"action\": \"search\", \"query\": \"rust async tutorial\"}"
+                    .into(),
+            })?;
+
+        let engine = input.arguments["search_engine"].as_str().map_or_else(
+            || self.config.read().unwrap().default_search_engine.clone(),
+            String::from,
+        );
+
+        let search_url = build_search_url(&engine, query)?;
+
+        // Security check on the generated URL.
+        self.security
+            .read()
+            .unwrap()
+            .validate_url(&search_url)
+            .map_err(|e| ToolError::PermissionDenied {
+                name: "browser".into(),
+                reason: e.to_string(),
+            })?;
+
+        let nav = self
+            .actions
+            .navigate(&search_url)
+            .await
+            .map_err(cdp_to_tool_error)?;
+        Ok(serde_json::json!({
+            "action": "search",
+            "query": query,
+            "search_engine": engine,
+            "url": search_url,
+            "navigation": serde_json::to_value(&nav).unwrap_or_default(),
+        }))
+    }
 
     /// Dispatch a browser action and return its JSON result.
     async fn dispatch_action(
@@ -370,6 +422,8 @@ impl BrowserTool {
                     .map_err(cdp_to_tool_error)?;
                 Ok(serde_json::to_value(nav).unwrap_or_default())
             }
+
+            BrowserAction::Search => self.dispatch_search(input).await,
 
             BrowserAction::Screenshot => {
                 let full_page = input.arguments["full_page"].as_bool().unwrap_or(false);
@@ -553,6 +607,26 @@ impl BrowserTool {
             .map(|l| format!("[console.{}] {}", l.level, l.text))
             .collect()
     }
+}
+
+/// Build a search engine URL from engine name and query text.
+fn build_search_url(engine: &str, query: &str) -> Result<String, ToolError> {
+    let encoded_query = urlencoding::encode(query);
+    let url = match engine {
+        "google" => format!("https://www.google.com/search?q={encoded_query}"),
+        "bing" => format!("https://www.bing.com/search?q={encoded_query}"),
+        "duckduckgo" | "ddg" => format!("https://duckduckgo.com/?q={encoded_query}"),
+        "baidu" => format!("https://www.baidu.com/s?wd={encoded_query}"),
+        other => {
+            return Err(ToolError::ValidationError {
+                message: format!(
+                    "Unknown search engine: '{other}'. \
+                     Supported: google, bing, duckduckgo, baidu"
+                ),
+            });
+        }
+    };
+    Ok(url)
 }
 
 impl Default for BrowserTool {

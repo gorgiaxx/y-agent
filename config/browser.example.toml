@@ -44,3 +44,7 @@
 
 # Maximum screenshot width/height in pixels.
 # max_screenshot_dim = 4096
+
+# Default search engine for the 'search' action.
+# Supported: "google", "bing", "duckduckgo", "baidu".
+# default_search_engine = "google"

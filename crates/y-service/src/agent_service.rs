@@ -320,6 +320,19 @@ impl AgentService {
 
             match llm_result {
                 Ok(response) => {
+                    // When streaming was used, the pool recorded the request
+                    // count at stream start with zero tokens. Now that the
+                    // stream is fully consumed, record the actual token usage.
+                    if progress.is_some() {
+                        if let Some(ref pid) = response.provider_id {
+                            pool.record_stream_completion(
+                                pid,
+                                response.usage.input_tokens,
+                                response.usage.output_tokens,
+                            );
+                        }
+                    }
+
                     let iter_data = Self::build_iteration_data(&response, &fallback, llm_start);
 
                     ctx.cumulative_input_tokens += iter_data.resp_input_tokens;
@@ -701,6 +714,9 @@ impl AgentService {
 
         Self::emit_llm_response(progress, response, data, ctx.iteration, tc_names);
 
+        // Track new messages added in this iteration for mid-loop persistence.
+        let msgs_before = ctx.new_messages.len();
+
         let assistant_msg = Self::build_assistant_msg(
             response,
             response.content.clone().unwrap_or_default(),
@@ -727,6 +743,12 @@ impl AgentService {
             ctx.working_history.push(tool_msg.clone());
             ctx.new_messages.push(tool_msg);
         }
+
+        // Mid-loop pruning: truncate large tool results from previous
+        // iterations so context is managed at tool-call granularity.
+        if config.use_context_pipeline {
+            Self::prune_working_history_mid_loop(container, ctx, msgs_before);
+        }
     }
 
     /// Handle prompt-based tool calls parsed from LLM response text.
@@ -747,6 +769,9 @@ impl AgentService {
             .collect();
 
         Self::emit_llm_response(progress, response, data, ctx.iteration, tc_names);
+
+        // Track new messages added in this iteration for mid-loop persistence.
+        let msgs_before = ctx.new_messages.len();
 
         let assistant_msg = Self::build_assistant_msg(response, text.to_string(), vec![]);
         ctx.accumulated_content.push_str(text);
@@ -782,6 +807,12 @@ impl AgentService {
         };
         ctx.working_history.push(user_msg.clone());
         ctx.new_messages.push(user_msg);
+
+        // Mid-loop pruning: truncate large tool results from previous
+        // iterations so context is managed at tool-call granularity.
+        if config.use_context_pipeline {
+            Self::prune_working_history_mid_loop(container, ctx, msgs_before);
+        }
     }
 
     /// Build the final result when no tool calls are requested.
@@ -850,6 +881,153 @@ impl AgentService {
             new_messages: ctx.new_messages,
             reasoning_content: response.reasoning_content.clone(),
         })
+    }
+
+    /// Mid-loop context pruning: truncates large tool result messages from
+    /// previous iterations when total `working_history` tokens exceed the
+    /// configured pruning threshold.
+    ///
+    /// Operates entirely in-memory on `working_history` -- no
+    /// `ChatMessageStore` dependency. This is correct because the agentic
+    /// loop builds LLM requests from `working_history`, not from persistent
+    /// storage.
+    ///
+    /// Only called for the root chat agent (`use_context_pipeline == true`).
+    ///
+    /// Strategy:
+    /// 1. Estimate total tokens in `working_history`
+    /// 2. If total exceeds threshold, find tool/user result messages from
+    ///    *previous* iterations (protect current iteration's messages)
+    /// 3. Sort candidates by token size descending
+    /// 4. Truncate the largest messages until total is under the threshold
+    fn prune_working_history_mid_loop(
+        container: &ServiceContainer,
+        ctx: &mut ToolExecContext,
+        msgs_before: usize,
+    ) {
+        let config = container.pruning_engine.config();
+        if !config.enabled {
+            return;
+        }
+
+        // Per-message token limit: individual tool results larger than this
+        // are truncated immediately. Uses the pruning token_threshold as the
+        // per-message cap (default 2000 tokens = ~8K chars).
+        let per_message_limit = config.token_threshold;
+
+        // Overall context budget: when total working_history exceeds this,
+        // the largest old tool results are truncated greedily.
+        // Default: 10x the per-message limit = 20K tokens.
+        let context_budget = per_message_limit.saturating_mul(10);
+
+        // Estimate total tokens in working_history.
+        let total_tokens: u32 = ctx
+            .working_history
+            .iter()
+            .map(Self::estimate_msg_tokens)
+            .sum();
+
+        if total_tokens < context_budget {
+            // Total is under budget; skip the overall truncation pass but still
+            // check individual large messages below.
+        }
+
+        // Collect IDs of messages added in the current iteration -- protected.
+        let current_iteration_ids: std::collections::HashSet<String> = ctx.new_messages
+            [msgs_before..]
+            .iter()
+            .map(|m| m.message_id.clone())
+            .collect();
+
+        // Build candidate list: any non-system, non-assistant message from
+        // previous iterations. This captures:
+        // - Role::Tool messages (native tool calling)
+        // - Role::User messages with <tool_result> content (prompt-based mode)
+        // - Role::User messages from prior turns loaded from transcript
+        //   (these lack metadata.type=="tool_result" so a content-only check
+        //    would miss them; using role-based filtering is simpler and correct)
+        let mut candidates: Vec<(usize, u32)> = ctx
+            .working_history
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                !current_iteration_ids.contains(&m.message_id)
+                    && m.role != Role::System
+                    && m.role != Role::Assistant
+            })
+            .map(|(idx, m)| (idx, Self::estimate_msg_tokens(m)))
+            .filter(|(_, tokens)| *tokens > 200) // Only truncate messages worth truncating
+            .collect();
+
+        // Sort by token count descending so we truncate the largest first.
+        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let mut truncated_count = 0u32;
+        let mut tokens_saved = 0u32;
+        let over_budget = total_tokens > context_budget;
+
+        for (idx, original_tokens) in &candidates {
+            // Two conditions to truncate:
+            // 1. Per-message: message exceeds per_message_limit (always truncate)
+            // 2. Budget: total working_history exceeds context_budget
+            if *original_tokens <= per_message_limit && !over_budget {
+                continue;
+            }
+            // If we're in budget mode only (not per-message), stop once we've
+            // reclaimed enough.
+            if *original_tokens <= per_message_limit
+                && tokens_saved >= total_tokens.saturating_sub(context_budget)
+            {
+                break;
+            }
+
+            let msg = &ctx.working_history[*idx];
+            let content = &msg.content;
+
+            // Keep first 200 and last 100 chars, replace the rest with a marker.
+            let keep_head = 200.min(content.len());
+            let keep_tail = 100.min(content.len().saturating_sub(keep_head));
+
+            if content.len() <= keep_head + keep_tail + 50 {
+                continue;
+            }
+
+            let head = &content[..content.floor_char_boundary(keep_head)];
+            let tail_start = content.ceil_char_boundary(content.len() - keep_tail);
+            let tail = &content[tail_start..];
+            let truncated = format!(
+                "{head}\n\n[... content truncated ({original_tokens} tokens -> ~100 tokens) ...]\n\n{tail}"
+            );
+
+            let new_tokens = Self::estimate_msg_tokens_from_str(&truncated);
+            let saved = original_tokens.saturating_sub(new_tokens);
+
+            ctx.working_history[*idx].content = truncated;
+            tokens_saved += saved;
+            truncated_count += 1;
+        }
+
+        if truncated_count > 0 {
+            tracing::info!(
+                session_id = %ctx.session_id,
+                total_tokens_before = total_tokens,
+                per_message_limit,
+                context_budget,
+                messages_truncated = truncated_count,
+                tokens_saved,
+                "mid-loop pruning: truncated large tool results in working_history"
+            );
+        }
+    }
+
+    /// Estimate token count for a message (content + role overhead).
+    fn estimate_msg_tokens(msg: &Message) -> u32 {
+        Self::estimate_msg_tokens_from_str(&msg.content) + 4 // role/separator overhead
+    }
+
+    /// Estimate token count from text (4 chars per token heuristic).
+    fn estimate_msg_tokens_from_str(text: &str) -> u32 {
+        u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
     }
 
     // -----------------------------------------------------------------------
@@ -946,26 +1124,6 @@ impl AgentService {
                 &container.tool_activation_set,
             )
             .await;
-
-            // Sync activated tool schemas into dynamic_tool_schemas.
-            if result.is_ok() {
-                let activation_set = container.tool_activation_set.read().await;
-                let schemas: Vec<String> = activation_set
-                    .active_definitions()
-                    .iter()
-                    .map(|def| {
-                        format!(
-                            "### {}\n{}\nParameters: {}",
-                            def.name.as_str(),
-                            def.description,
-                            serde_json::to_string_pretty(&def.parameters)
-                                .unwrap_or_else(|_| "{}".to_string()),
-                        )
-                    })
-                    .collect();
-                let mut dynamic = container.dynamic_tool_schemas.write().await;
-                *dynamic = schemas;
-            }
 
             return result;
         }

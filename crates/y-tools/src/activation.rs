@@ -87,6 +87,14 @@ impl ToolActivationSet {
         self.active.values().collect()
     }
 
+    /// Get definitions of tools marked as always-active.
+    pub fn always_active_definitions(&self) -> Vec<&ToolDefinition> {
+        self.always_active
+            .iter()
+            .filter_map(|name| self.active.get(name))
+            .collect()
+    }
+
     /// Number of active tools.
     pub fn len(&self) -> usize {
         self.active.len()

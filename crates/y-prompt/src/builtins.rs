@@ -1,6 +1,6 @@
 //! Built-in prompt sections and default template.
 //!
-//! Provides factory functions for the 10 built-in prompt sections defined in
+//! Provides factory functions for the 9 built-in prompt sections defined in
 //! `prompt-design.md` and a default `PromptTemplate` referencing them.
 //!
 //! Prompt content is loaded from `config/prompts/*.txt` at compile time via
@@ -25,12 +25,13 @@ const PROMPT_ENVIRONMENT: &str = include_str!("../../../config/prompts/core_envi
 const PROMPT_GUIDELINES: &str = include_str!("../../../config/prompts/core_guidelines.txt");
 const PROMPT_SECURITY: &str = include_str!("../../../config/prompts/core_security.txt");
 const PROMPT_TOOL_PROTOCOL: &str = include_str!("../../../config/prompts/core_tool_protocol.txt");
-const PROMPT_TOOL_BEHAVIOR: &str = include_str!("../../../config/prompts/core_tool_behavior.txt");
+
 const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.txt");
 const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_planning.txt");
 const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
 
-/// Mapping from section ID to (compiled default content, override filename, `token_budget`, priority, condition, category).
+/// Mapping from section ID to (compiled default content, override filename,
+/// `token_budget`, priority, condition, category).
 const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, ConditionTag)] = &[
     (
         "core.identity",
@@ -81,19 +82,10 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         "core.tool_protocol",
         PROMPT_TOOL_PROTOCOL,
         "core_tool_protocol.txt",
-        600,
+        800,
         450,
         SectionCategoryTag::Behavioral,
         ConditionTag::Always,
-    ),
-    (
-        "core.tool_behavior",
-        PROMPT_TOOL_BEHAVIOR,
-        "core_tool_behavior.txt",
-        300,
-        500,
-        SectionCategoryTag::Behavioral,
-        ConditionTag::HasToolWildcard,
     ),
     (
         "core.persona",
@@ -148,7 +140,6 @@ impl SectionCategoryTag {
 #[derive(Clone, Copy)]
 enum ConditionTag {
     Always,
-    HasToolWildcard,
     PersonaEnabled,
     ModePlan,
     ModeExplore,
@@ -158,7 +149,6 @@ impl ConditionTag {
     fn into_condition(self) -> SectionCondition {
         match self {
             Self::Always => SectionCondition::Always,
-            Self::HasToolWildcard => SectionCondition::HasTool("*".into()),
             Self::PersonaEnabled => SectionCondition::ConfigFlag("persona.enabled".into()),
             Self::ModePlan => SectionCondition::ModeIs("plan".into()),
             Self::ModeExplore => SectionCondition::ModeIs("explore".into()),
@@ -166,7 +156,7 @@ impl ConditionTag {
     }
 }
 
-/// Create a `SectionStore` populated with the 10 built-in prompt sections.
+/// Create a `SectionStore` populated with the 9 built-in prompt sections.
 ///
 /// Uses compiled-in default content. For override support, use
 /// [`builtin_section_store_with_overrides`].
@@ -214,7 +204,6 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
     ("core_guidelines.txt", PROMPT_GUIDELINES),
     ("core_security.txt", PROMPT_SECURITY),
     ("core_tool_protocol.txt", PROMPT_TOOL_PROTOCOL),
-    ("core_tool_behavior.txt", PROMPT_TOOL_BEHAVIOR),
     ("core_persona.txt", PROMPT_PERSONA),
     ("core_planning.txt", PROMPT_PLANNING),
     ("core_exploration.txt", PROMPT_EXPLORATION),
@@ -233,7 +222,6 @@ pub fn default_template() -> PromptTemplate {
         section_ref("core.guidelines"),
         section_ref("core.security"),
         section_ref("core.tool_protocol"),
-        section_ref("core.tool_behavior"),
         section_ref("core.planning"),
         section_ref("core.exploration"),
     ];
@@ -243,7 +231,7 @@ pub fn default_template() -> PromptTemplate {
     mode_overlays.insert(
         "plan".into(),
         ModeOverlay {
-            exclude: vec!["core.tool_behavior".into()],
+            exclude: vec![],
             include: vec!["core.planning".into()],
             ..Default::default()
         },
@@ -282,9 +270,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_store_has_10_sections() {
+    fn test_builtin_store_has_9_sections() {
         let store = builtin_section_store();
-        assert_eq!(store.len(), 10);
+        assert_eq!(store.len(), 9);
     }
 
     #[test]
@@ -297,7 +285,6 @@ mod tests {
             "core.guidelines",
             "core.security",
             "core.tool_protocol",
-            "core.tool_behavior",
             "core.persona",
             "core.planning",
             "core.exploration",
@@ -339,9 +326,9 @@ mod tests {
     fn test_default_template_general_mode() {
         let template = default_template();
         let sections = template.effective_sections("general");
-        // general mode: all 10 sections in template, no overlay excludes any
+        // general mode: all 9 sections in template, no overlay excludes any
         // (conditions are evaluated later by the provider, not by effective_sections)
-        assert_eq!(sections.len(), 10);
+        assert_eq!(sections.len(), 9);
     }
 
     #[test]
@@ -349,8 +336,6 @@ mod tests {
         let template = default_template();
         let sections = template.effective_sections("plan");
         let ids: Vec<&str> = sections.iter().map(|s| s.section_id.as_str()).collect();
-        // plan mode excludes core.tool_behavior
-        assert!(!ids.contains(&"core.tool_behavior"));
         // plan mode includes core.planning (already in template, not excluded)
         assert!(ids.contains(&"core.planning"));
     }

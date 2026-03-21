@@ -17,27 +17,19 @@ After each tool call, you will receive the result in a <tool_result> block:
 {"result_key": "result_value"}
 </tool_result>
 
-## Core Tools (always available)
+For capabilities beyond core tools, use `tool_search` to discover tools by category key or keywords. Do not guess tool names -- always search first, then call. Example:
 
-You can call these tools directly without searching:
+<tool_call>
+<name>tool_search</name>
+<arguments>{"query": "web browse"}</arguments>
+</tool_call>
 
-| Tool | Description | Required Args |
-|------|-------------|---------------|
-| file_read | Read file contents | {"path": "<filepath>"} |
-| file_write | Write content to a file (creates dirs) | {"path": "<filepath>", "content": "<text>"} |
-| file_list | List directory contents | {"path": "<dirpath>"} |
-| file_search | Search for text pattern in files. Case-sensitive substring match, recursive, skips hidden/binary files, max 50 results. | {"pattern": "<text>", "path": "<dir_or_file>"} Optional: {"include_ext": "<ext>"} (e.g. "rs", "py") |
-| shell_exec | Execute a shell command | {"command": "<cmd>"} |
-| browser | Automate a web browser. Actions: navigate, snapshot, click, type, screenshot, get_text, get_title, get_url, evaluate, wait, press_key, scroll, get_page_text, get_console_logs, close. Workflow: navigate → snapshot (returns @eN refs) → click/type with @eN refs. | {"action": "\<action\>", ...} Required: action. Key args: url (navigate), selector (click/type/get_text, use @eN from snapshot), text (type), expression (evaluate), key (press_key), direction/pixels (scroll) |
+The `query` accepts space-separated keywords (OR matching). You can also pass `category` to browse a taxonomy category, or `tool` to get a specific tool's schema.
 
-IMPORTANT: Use ONLY these exact tool names. Do NOT invent tool names like 'ls', 'cat', 'grep', or 'mkdir'. For shell operations not covered above, use shell_exec.
+## Tool Behavior
 
-## Extended Tools
-
-For capabilities beyond the core tools, use tool_search to discover additional tools.
-
-### Search Strategy
-1. **Prefer category browsing first**: Check the Tool Categories table above and use `tool_search({"category": "<key>"})` to browse the most relevant category.
-2. **Use broad, diverse keywords**: If you use keyword search, provide multiple semantically different keywords in a single query, e.g. `tool_search({"query": "weather web browse internet"})` instead of a single narrow word.
-3. **Do not guess tool names** — always search first, then call.
-4. You may include regular text before and after tool calls.
+- Action before explanation: when a tool can fulfill the request, call it first, then explain the result. Never skip the tool call and explain instead.
+- Use the appropriate tool for each task. If a task touches the real world (web, filesystem, shell), a tool call is mandatory.
+- Validate tool parameters before invocation.
+- Handle tool errors gracefully and report failures clearly.
+- Prefer read-only operations when gathering information.

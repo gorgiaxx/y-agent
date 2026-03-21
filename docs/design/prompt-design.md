@@ -339,7 +339,7 @@ erDiagram
 | `core.environment` | Context | 200 | 300 | Always | OS, shell, working directory, runtime type |
 | `core.guidelines` | Behavioral | 300 | 500 | Always | General agent behavioral guidelines |
 | `core.safety` | Behavioral | 400 | 300 | Always | Safety rules, prohibited actions |
-| `core.tool_behavior` | Behavioral | 500 | 300 | HasTool(*) | Tool call conventions, error handling guidance |
+| `core.tool_protocol` | Behavioral | 450 | 800 | Always | Tool call format, conventions, error handling guidance |
 | `core.persona` | Domain | 250 | 500 | ConfigFlag("persona.enabled") | User-defined persona and expertise |
 | `core.planning` | Behavioral | 350 | 300 | ModeIs(Plan) | Planning-specific instructions |
 | `core.exploration` | Behavioral | 350 | 200 | ModeIs(Explore) | Exploration-specific instructions |
@@ -364,10 +364,9 @@ section_id = "core.guidelines"
 section_id = "core.safety"
 
 [[prompt.template.sections]]
-section_id = "core.tool_behavior"
+section_id = "core.tool_protocol"
 
 [prompt.template.mode_overlays.plan]
-exclude = ["core.tool_behavior"]
 include = ["core.planning"]
 
 [prompt.template.mode_overlays.explore]

@@ -191,6 +191,15 @@ impl SystemService {
         Ok(())
     }
 
+    /// Hot-reload prompt section files from disk.
+    ///
+    /// Re-reads all prompt `.txt` files from the prompts directory and
+    /// rebuilds the in-memory section store. Changes take effect on the
+    /// next LLM turn.
+    pub async fn reload_prompts(container: &ServiceContainer) {
+        container.reload_prompts().await;
+    }
+
     /// Test an LLM provider by sending a minimal probe request.
     ///
     /// Providers using OpenAI-compatible REST are actively tested via a

@@ -270,11 +270,24 @@ impl BrowserActions {
             .cloned()
             .unwrap_or(serde_json::Value::Null);
 
-        let exception = result
-            .get("exceptionDetails")
-            .and_then(|e| e.get("text"))
-            .and_then(|t| t.as_str())
-            .map(String::from);
+        let exception = result.get("exceptionDetails").and_then(|e| {
+            // Try exception.exception.description first (most informative),
+            // then exception.exception.value, then the top-level text (often just "Uncaught").
+            let from_exception_obj = e.get("exception").and_then(|exc| {
+                exc.get("description")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| {
+                        exc.get("value").map(|v| match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        })
+                    })
+            });
+            let from_text = e.get("text").and_then(|t| t.as_str()).map(String::from);
+            // Prefer the detailed exception; fall back to text.
+            from_exception_obj.or(from_text)
+        });
 
         Ok(EvalResult { value, exception })
     }
@@ -356,22 +369,35 @@ impl BrowserActions {
             }
             Ok(())
         } else {
+            // Use a structured return instead of throwing so we always get a clear
+            // error message even if CDP exception extraction is lossy.
             let js = format!(
                 r"(() => {{
-                    const el = document.querySelector({});
-                    if (!el) throw new Error('Element not found: ' + {});
+                    const el = document.querySelector({sel});
+                    if (!el) return {{ ok: false, error: 'Element not found: ' + {sel} }};
                     el.scrollIntoView({{ block: 'center' }});
                     el.click();
-                    return true;
+                    return {{ ok: true }};
                 }})()",
-                serde_json::to_string(selector).unwrap_or_default(),
-                serde_json::to_string(selector).unwrap_or_default(),
+                sel = serde_json::to_string(selector).unwrap_or_default(),
             );
             let result = self.evaluate(&js).await?;
             if let Some(err) = result.exception {
                 return Err(CdpError::ProtocolError {
                     code: -1,
                     message: err,
+                });
+            }
+            // Check structured result for element-not-found.
+            if let Some(false) = result.value.get("ok").and_then(serde_json::Value::as_bool) {
+                let msg = result
+                    .value
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("click failed: element not found");
+                return Err(CdpError::ProtocolError {
+                    code: -1,
+                    message: msg.to_string(),
                 });
             }
             Ok(())

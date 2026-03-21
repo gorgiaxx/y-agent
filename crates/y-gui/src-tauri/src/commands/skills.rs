@@ -343,6 +343,7 @@ pub async fn skill_import(
             "diagnostics:subagent_completed",
             super::chat::SubagentCompletedPayload {
                 agent_name: "skill-security-check".to_string(),
+                session_id: None,
             },
         );
     }
@@ -393,6 +394,7 @@ pub async fn skill_import(
         "diagnostics:subagent_completed",
         super::chat::SubagentCompletedPayload {
             agent_name: "skill-ingestion".to_string(),
+            session_id: None,
         },
     );
 

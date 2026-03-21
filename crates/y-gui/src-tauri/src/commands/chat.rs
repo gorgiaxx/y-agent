@@ -88,6 +88,7 @@ pub struct TitleUpdatedPayload {
 #[derive(Debug, Serialize, Clone)]
 pub struct SubagentCompletedPayload {
     pub agent_name: String,
+    pub session_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +356,7 @@ fn spawn_llm_worker(
                         "diagnostics:subagent_completed",
                         SubagentCompletedPayload {
                             agent_name: "turn-complete".to_string(),
+                            session_id: Some(sid_clone.0.clone()),
                         },
                     );
                 }
@@ -896,6 +898,7 @@ pub async fn context_compact(
         "diagnostics:subagent_completed",
         SubagentCompletedPayload {
             agent_name: "context-compact".to_string(),
+            session_id: Some(sid.0.clone()),
         },
     );
 

@@ -73,6 +73,10 @@ impl ProviderMetrics {
     }
 
     /// Record a successful request with token usage.
+    ///
+    /// Fires a persistence event unless `input_tokens` and `output_tokens` are
+    /// both zero (the stream-start placeholder case, where the real event is
+    /// fired later by `record_stream_completion`).
     pub fn record_success(&self, input_tokens: u32, output_tokens: u32) {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
         self.total_input_tokens
@@ -80,18 +84,27 @@ impl ProviderMetrics {
         self.total_output_tokens
             .fetch_add(u64::from(output_tokens), Ordering::Relaxed);
 
-        self.fire_event(MetricsEvent {
-            input_tokens,
-            output_tokens,
-            cost_micros: 0,
-            is_error: false,
-        });
+        // Skip event for the zero-token stream-start placeholder; the actual
+        // event will be fired by `record_stream_completion` when the stream
+        // finishes and real token counts are available.
+        if input_tokens > 0 || output_tokens > 0 {
+            self.fire_event(MetricsEvent {
+                input_tokens,
+                output_tokens,
+                cost_micros: 0,
+                is_error: false,
+            });
+        }
     }
 
     /// Record a successful request with token usage and cost calculation.
     ///
     /// Cost is computed as:
     /// `(input_tokens / 1000 * cost_per_1k_input) + (output_tokens / 1000 * cost_per_1k_output)`
+    ///
+    /// Fires a single persistence event with both tokens and cost (unlike
+    /// calling `record_success` + a separate cost event, which would create
+    /// two DB rows per request).
     pub fn record_success_with_cost(
         &self,
         input_tokens: u32,
@@ -99,7 +112,13 @@ impl ProviderMetrics {
         cost_per_1k_input: f64,
         cost_per_1k_output: f64,
     ) {
-        self.record_success(input_tokens, output_tokens);
+        // Update counters directly (do NOT call record_success, which would
+        // fire its own event and create a duplicate DB row).
+        self.total_requests.fetch_add(1, Ordering::Relaxed);
+        self.total_input_tokens
+            .fetch_add(u64::from(input_tokens), Ordering::Relaxed);
+        self.total_output_tokens
+            .fetch_add(u64::from(output_tokens), Ordering::Relaxed);
 
         // Calculate cost in micro-dollars.
         let input_cost = f64::from(input_tokens) / 1000.0 * cost_per_1k_input;
@@ -107,6 +126,42 @@ impl ProviderMetrics {
         let total_micros_f = (input_cost + output_cost) * 1_000_000.0;
 
         // Safe f64 -> u64: clamp negative to 0, cap at u64::MAX.
+        let total_micros = safe_f64_to_u64(total_micros_f);
+
+        self.estimated_cost_micros
+            .fetch_add(total_micros, Ordering::Relaxed);
+
+        // Fire a single event with both tokens and cost.
+        self.fire_event(MetricsEvent {
+            input_tokens,
+            output_tokens,
+            cost_micros: total_micros,
+            is_error: false,
+        });
+    }
+
+    /// Record token usage and cost for a completed streaming request.
+    ///
+    /// Unlike `record_success`, this does **not** increment `total_requests`
+    /// because the request was already counted when the stream was initiated
+    /// (via `record_success(0, 0)`). It only adds the actual token counts
+    /// and cost that become available after the stream is fully consumed.
+    pub fn record_stream_completion(
+        &self,
+        input_tokens: u32,
+        output_tokens: u32,
+        cost_per_1k_input: f64,
+        cost_per_1k_output: f64,
+    ) {
+        self.total_input_tokens
+            .fetch_add(u64::from(input_tokens), Ordering::Relaxed);
+        self.total_output_tokens
+            .fetch_add(u64::from(output_tokens), Ordering::Relaxed);
+
+        // Calculate cost in micro-dollars.
+        let input_cost = f64::from(input_tokens) / 1000.0 * cost_per_1k_input;
+        let output_cost = f64::from(output_tokens) / 1000.0 * cost_per_1k_output;
+        let total_micros_f = (input_cost + output_cost) * 1_000_000.0;
         let total_micros = safe_f64_to_u64(total_micros_f);
 
         self.estimated_cost_micros
@@ -325,5 +380,28 @@ mod tests {
             estimated_cost_micros: 1_500_000, // $1.50
         };
         assert!((snap.estimated_cost_usd() - 1.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_stream_completion_adds_tokens_without_incrementing_requests() {
+        let metrics = ProviderMetrics::new();
+        // Simulate stream start: request counted with zero tokens.
+        metrics.record_success(0, 0);
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.total_requests, 1);
+        assert_eq!(snap.total_input_tokens, 0);
+        assert_eq!(snap.total_output_tokens, 0);
+        assert_eq!(snap.estimated_cost_micros, 0);
+
+        // Simulate stream completion: tokens + cost recorded, no request increment.
+        metrics.record_stream_completion(1000, 500, 0.01, 0.03);
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.total_requests, 1, "request count must not increase");
+        assert_eq!(snap.total_input_tokens, 1000);
+        assert_eq!(snap.total_output_tokens, 500);
+        // Cost: 1000/1000 * 0.01 + 500/1000 * 0.03 = 0.01 + 0.015 = 0.025 = 25000 micros
+        assert_eq!(snap.estimated_cost_micros, 25_000);
     }
 }

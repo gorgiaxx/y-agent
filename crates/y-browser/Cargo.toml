@@ -29,6 +29,9 @@ tracing = { workspace = true }
 # URL parsing
 url = "2"
 
+# URL-encoding for search queries
+urlencoding = "2"
+
 # Base64 for screenshot data
 base64 = "0.22"
 

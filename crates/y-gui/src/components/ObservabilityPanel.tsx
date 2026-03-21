@@ -135,6 +135,7 @@ function AgentCard({ agent }: { agent: AgentInstanceSnapshot }) {
 interface ObservabilityPanelProps {
   snapshot: SystemSnapshot | null;
   loading: boolean;
+  error: string | null;
   expanded: boolean;
   onToggleExpand: () => void;
   onClose: () => void;
@@ -151,7 +152,7 @@ const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
   { value: 'all', label: 'All time' },
 ];
 
-export function ObservabilityPanel({ snapshot, loading, expanded, onToggleExpand, onClose, timeRange, onTimeRangeChange }: ObservabilityPanelProps) {
+export function ObservabilityPanel({ snapshot, loading, error, expanded, onToggleExpand, onClose, timeRange, onTimeRangeChange }: ObservabilityPanelProps) {
   const [providersOpen, setProvidersOpen] = useState(true);
   const [agentsOpen, setAgentsOpen] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -241,8 +242,17 @@ export function ObservabilityPanel({ snapshot, loading, expanded, onToggleExpand
         {!snapshot ? (
           <div className="obs-empty">
             <Eye size={24} className="obs-empty-icon" />
-            <p className="obs-empty-text">Loading system state...</p>
-            <p className="obs-empty-hint">Fetching provider and agent information.</p>
+            {error ? (
+              <>
+                <p className="obs-empty-text">Failed to load system state</p>
+                <p className="obs-empty-hint">{error}</p>
+              </>
+            ) : (
+              <>
+                <p className="obs-empty-text">Loading system state...</p>
+                <p className="obs-empty-hint">Fetching provider and agent information.</p>
+              </>
+            )}
           </div>
         ) : (
           <>

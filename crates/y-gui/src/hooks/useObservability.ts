@@ -38,6 +38,7 @@ export interface UseObservabilityOptions {
 export interface UseObservabilityResult {
   snapshot: SystemSnapshot | null;
   loading: boolean;
+  error: string | null;
 }
 
 /**
@@ -54,39 +55,53 @@ export function useObservability({
 }: UseObservabilityOptions): UseObservabilityResult {
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
+      setError(null);
       // Always fetch the live snapshot for concurrency + agent pool.
       const liveSnap = await invoke<SystemSnapshot>('observability_snapshot');
 
-      // Fetch historical metrics from the persistent store.
-      const since = computeSince(timeRange);
-      const histSnap = await invoke<SystemSnapshot>('observability_history', {
-        since,
-        until: null,
-      });
+      // Try to fetch historical metrics from the persistent store.
+      // If this fails (e.g. DB issue), fall back to the live snapshot alone.
+      let histSnap: SystemSnapshot | null = null;
+      try {
+        const since = computeSince(timeRange);
+        histSnap = await invoke<SystemSnapshot>('observability_history', {
+          since,
+          until: null,
+        });
+      } catch (histErr) {
+        console.warn('observability history fetch failed, using live data:', histErr);
+      }
 
-      // Merge: use historical metrics for providers, but keep live
-      // concurrency (active_requests) and agent pool from the live snapshot.
-      const mergedProviders = histSnap.providers.map((histP) => {
-        const liveP = liveSnap.providers.find((p) => p.id === histP.id);
-        return {
-          ...histP,
-          // Override with live concurrency data.
-          active_requests: liveP?.active_requests ?? histP.active_requests,
-          is_frozen: liveP?.is_frozen ?? histP.is_frozen,
-          freeze_reason: liveP?.freeze_reason ?? histP.freeze_reason,
-        };
-      });
+      if (histSnap) {
+        // Merge: use historical metrics for providers, but keep live
+        // concurrency (active_requests) and agent pool from the live snapshot.
+        const mergedProviders = histSnap.providers.map((histP) => {
+          const liveP = liveSnap.providers.find((p) => p.id === histP.id);
+          return {
+            ...histP,
+            // Override with live concurrency data.
+            active_requests: liveP?.active_requests ?? histP.active_requests,
+            is_frozen: liveP?.is_frozen ?? histP.is_frozen,
+            freeze_reason: liveP?.freeze_reason ?? histP.freeze_reason,
+          };
+        });
 
-      setSnapshot({
-        ...liveSnap,
-        providers: mergedProviders,
-      });
+        setSnapshot({
+          ...liveSnap,
+          providers: mergedProviders,
+        });
+      } else {
+        // No historical data available -- show live snapshot as-is.
+        setSnapshot(liveSnap);
+      }
     } catch (err) {
-      console.error('observability fetch failed:', err);
+      console.error('observability snapshot failed:', err);
+      setError(String(err));
     } finally {
       setLoading(false);
     }
@@ -113,5 +128,5 @@ export function useObservability({
     };
   }, [active, intervalMs, fetchData]);
 
-  return { snapshot, loading };
+  return { snapshot, loading, error };
 }

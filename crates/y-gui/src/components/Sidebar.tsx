@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, BookOpen, Database, Bot, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, BookOpen, Database, Bot, Loader2, CheckCircle2, AlertCircle, Settings } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo, SkillInfo, KnowledgeCollectionInfo } from '../types';
 import type { ImportStatus } from '../hooks/useSkills';
 import type { KbIngestStatus, KbBatchProgress } from '../hooks/useKnowledge';
@@ -47,6 +47,7 @@ interface SidebarProps {
   agents: { id: string; name: string; description: string; mode: string; trust_tier: string; is_overridden: boolean }[];
   activeAgentId: string | null;
   onSelectAgent: (id: string) => void;
+  onSettingsOpen: () => void;
 }
 
 /** Return relative time string for a session item. */
@@ -98,6 +99,7 @@ export function Sidebar({
   agents,
   activeAgentId,
   onSelectAgent,
+  onSettingsOpen,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
@@ -110,6 +112,7 @@ export function Sidebar({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
   const [importStatusExpanded, setImportStatusExpanded] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Sorted workspaces by name (alphabetically).
@@ -145,6 +148,19 @@ export function Sidebar({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Handle icon bar clicks: toggle panel collapse when clicking the active view,
+  // switch view and expand panel when clicking a different view.
+  const handleIconClick = (view: ViewType) => {
+    if (view === activeView && !panelCollapsed) {
+      // Same view is active and panel is open -- collapse
+      setPanelCollapsed(true);
+    } else {
+      // Different view or panel is collapsed -- switch and expand
+      onSelectView(view);
+      setPanelCollapsed(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     if (!searchQuery) return sessions;
@@ -263,44 +279,53 @@ export function Sidebar({
       {/* VS Code-style vertical icon bar */}
       <div className="sidebar-icon-bar">
         <button
-          className={`sidebar-nav-btn ${activeView === 'chat' ? 'active' : ''}`}
-          onClick={() => onSelectView('chat')}
+          className={`sidebar-nav-btn ${activeView === 'chat' && !panelCollapsed ? 'active' : ''}`}
+          onClick={() => handleIconClick('chat')}
           title="Sessions"
         >
           <MessageSquare size={20} />
         </button>
         <button
-          className={`sidebar-nav-btn ${activeView === 'automation' ? 'active' : ''}`}
-          onClick={() => onSelectView('automation')}
+          className={`sidebar-nav-btn ${activeView === 'automation' && !panelCollapsed ? 'active' : ''}`}
+          onClick={() => handleIconClick('automation')}
           title="Automation"
         >
           <Zap size={20} />
         </button>
         <button
-          className={`sidebar-nav-btn ${activeView === 'skills' ? 'active' : ''}`}
-          onClick={() => onSelectView('skills')}
+          className={`sidebar-nav-btn ${activeView === 'skills' && !panelCollapsed ? 'active' : ''}`}
+          onClick={() => handleIconClick('skills')}
           title="Skills"
         >
           <Puzzle size={20} />
         </button>
         <button
-          className={`sidebar-nav-btn ${activeView === 'knowledge' ? 'active' : ''}`}
-          onClick={() => onSelectView('knowledge')}
+          className={`sidebar-nav-btn ${activeView === 'knowledge' && !panelCollapsed ? 'active' : ''}`}
+          onClick={() => handleIconClick('knowledge')}
           title="Knowledge"
         >
           <BookOpen size={20} />
         </button>
         <button
-          className={`sidebar-nav-btn ${activeView === 'agents' ? 'active' : ''}`}
-          onClick={() => onSelectView('agents')}
+          className={`sidebar-nav-btn ${activeView === 'agents' && !panelCollapsed ? 'active' : ''}`}
+          onClick={() => handleIconClick('agents')}
           title="Agents"
         >
           <Bot size={20} />
         </button>
+        <div className="sidebar-icon-spacer" />
+        <button
+          className="sidebar-nav-btn"
+          onClick={onSettingsOpen}
+          title="Settings"
+          id="btn-settings"
+        >
+          <Settings size={20} />
+        </button>
       </div>
 
       {/* Sidebar panel content */}
-      <div className="sidebar-panel">
+      <div className={`sidebar-panel ${panelCollapsed ? 'sidebar-panel--collapsed' : ''}`}>
 
       {/* Sessions content (only when chat view is active) */}
       {activeView === 'chat' && (

@@ -111,10 +111,6 @@ pub struct ServiceContainer {
     /// Hierarchical tool taxonomy for prompt-based discovery.
     pub tool_taxonomy: Arc<ToolTaxonomy>,
 
-    /// Shared dynamic tool schemas — updated when tools are activated
-    /// via `tool_search`, read by `InjectTools` at context assembly time.
-    pub dynamic_tool_schemas: Arc<RwLock<Vec<String>>>,
-
     /// Chat message store for session history tree (Phase 2).
     pub chat_message_store: Arc<SqliteChatMessageStore>,
 
@@ -265,17 +261,11 @@ tools = ["tool_search"]
         // 8c. Tool activation set.
         let tool_activation_set =
             Arc::new(RwLock::new(ToolActivationSet::new(ACTIVATION_SET_CEILING)));
-        // Pre-activate tool_search (always-active).
-        {
-            let tool_search_def = tool_registry
-                .get_definition(&ToolName::from_string("tool_search"))
-                .await;
-            let mut set = tool_activation_set.write().await;
-            if let Some(def) = tool_search_def {
-                set.activate(def);
-                set.set_always_active(&ToolName::from_string("tool_search"));
-            }
-        }
+
+        // Pre-activate all built-in tools as always-active.
+        // The core-tools summary is generated from these definitions so that
+        // the prompt is never out of sync with the actual tool registry.
+        pre_activate_core_tools(&tool_registry, &tool_activation_set).await;
 
         // 9. Runtime manager.
         let runtime_manager = Arc::new(RuntimeManager::new(config.runtime.clone(), None));
@@ -313,20 +303,29 @@ tools = ["tool_search"]
         // 10. Context pipeline.
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
         let mut context_pipeline = ContextPipeline::new();
-        context_pipeline.register(Box::new(BuildSystemPromptProvider::with_venv_info(
-            default_template(),
-            builtin_section_store_with_overrides(config.prompts_dir.as_deref()),
-            Arc::clone(&prompt_context),
-            SystemPromptConfig::default(),
-            venv_info,
-        )));
+        {
+            let mut sys_prompt_provider = BuildSystemPromptProvider::with_venv_info(
+                default_template(),
+                builtin_section_store_with_overrides(config.prompts_dir.as_deref()),
+                Arc::clone(&prompt_context),
+                SystemPromptConfig::default(),
+                venv_info,
+            );
+            sys_prompt_provider.set_prompts_dir(config.prompts_dir.clone());
+            context_pipeline.register(Box::new(sys_prompt_provider));
+        }
         context_pipeline.register(Box::new(InjectContextStatus::new(4096)));
 
-        // 10b. Register InjectTools (PromptBased mode) with taxonomy + dynamic schemas.
-        let dynamic_tool_schemas: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(Vec::new()));
-        context_pipeline.register(Box::new(InjectTools::with_taxonomy_and_dynamic_schemas(
+        // 10b. Register InjectTools (PromptBased mode) with taxonomy + core tools.
+        // Core-tools summary is generated from always-active definitions so the
+        // prompt is never out of sync with the actual tool registry.
+        let core_tools_summary = {
+            let set = tool_activation_set.read().await;
+            build_core_tools_summary(&set)
+        };
+        context_pipeline.register(Box::new(InjectTools::with_taxonomy_and_core_tools(
             tool_taxonomy.root_summary(),
-            Arc::clone(&dynamic_tool_schemas),
+            core_tools_summary,
         )));
 
         // 10c. Register InjectSkills (dynamic -- reads active_skills from PromptContext).
@@ -405,7 +404,6 @@ tools = ["tool_search"]
             chat_checkpoint_manager,
             tool_activation_set,
             tool_taxonomy,
-            dynamic_tool_schemas,
             chat_message_store,
             knowledge_service,
             pruning_engine,
@@ -578,6 +576,22 @@ tools = ["tool_search"]
         }
     }
 
+    /// Hot-reload prompt section files from disk.
+    ///
+    /// Looks up the `BuildSystemPromptProvider` in the context pipeline
+    /// and triggers a store reload so that saved prompt edits take effect
+    /// immediately (without restarting the application).
+    pub async fn reload_prompts(&self) {
+        if let Some(provider) = self
+            .context_pipeline
+            .get_provider::<BuildSystemPromptProvider>("build_system_prompt")
+        {
+            provider.reload_store().await;
+        } else {
+            warn!("BuildSystemPromptProvider not found in context pipeline; prompt reload skipped");
+        }
+    }
+
     /// Construct a [`SkillIngestionService`] wired to this container's
     /// agent delegator.
     ///
@@ -648,6 +662,107 @@ tools = ["tool_search"]
             let _ = h.await;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Core-tools pre-activation and summary generation
+// ---------------------------------------------------------------------------
+
+/// Built-in tools that are always active and don't need `tool_search` to use.
+const CORE_TOOL_NAMES: &[&str] = &[
+    "tool_search",
+    "file_read",
+    "file_write",
+    "file_list",
+    "file_search",
+    "shell_exec",
+    "browser",
+];
+
+/// Pre-activate all built-in tools as always-active in the activation set.
+async fn pre_activate_core_tools(
+    registry: &ToolRegistryImpl,
+    activation_set: &Arc<RwLock<ToolActivationSet>>,
+) {
+    let mut set = activation_set.write().await;
+    for &name in CORE_TOOL_NAMES {
+        if let Some(def) = registry.get_definition(&ToolName::from_string(name)).await {
+            set.activate(def);
+            set.set_always_active(&ToolName::from_string(name));
+        }
+    }
+}
+
+/// Generate a compact summary of always-active tools for prompt injection.
+///
+/// Produces a Markdown table with tool name, first-sentence description,
+/// and required args (extracted from JSON Schema), followed by a usage
+/// reminder. Called once at startup.
+fn build_core_tools_summary(set: &ToolActivationSet) -> String {
+    let mut defs = set.always_active_definitions();
+    defs.sort_by_key(|d| d.name.as_str().to_string());
+    let mut lines = vec![
+        "## Core Tools (always available)\n".to_string(),
+        "You can call these tools directly without searching:\n".to_string(),
+        "| Tool | Description | Required Args |".to_string(),
+        "|------|-------------|---------------|".to_string(),
+    ];
+    for def in &defs {
+        // First sentence of description only.
+        let desc = def
+            .description
+            .split('.')
+            .next()
+            .unwrap_or(&def.description)
+            .trim();
+        let args = extract_required_args(&def.parameters);
+        lines.push(format!("| {} | {} | {} |", def.name.as_str(), desc, args));
+    }
+    lines.push(String::new());
+    lines.push(
+        "IMPORTANT: Use ONLY these exact tool names. \
+         Do NOT invent tool names like 'ls', 'cat', 'grep', or 'mkdir'. \
+         For shell operations not covered above, use shell_exec."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+/// Extract a compact required-args hint from a JSON Schema `parameters` value.
+///
+/// Given a schema like `{"type":"object","properties":{"path":{"type":"string",
+/// "description":"..."}},"required":["path"]}`, produces `{"path": "<...>"}`.
+fn extract_required_args(params: &serde_json::Value) -> String {
+    let required = match params.get("required").and_then(|v| v.as_array()) {
+        Some(arr) => arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+        None => return "{}".to_string(),
+    };
+    if required.is_empty() {
+        return "{}".to_string();
+    }
+
+    let properties = params.get("properties");
+
+    let pairs: Vec<String> = required
+        .iter()
+        .map(|name| {
+            // Build a compact placeholder from the property description or type.
+            let placeholder = properties
+                .and_then(|p| p.get(*name))
+                .and_then(|prop| {
+                    prop.get("description").and_then(|d| d.as_str()).map(|d| {
+                        // Take the first few words as a terse hint.
+                        let hint: String =
+                            d.split_whitespace().take(3).collect::<Vec<_>>().join("_");
+                        format!("<{hint}>")
+                    })
+                })
+                .unwrap_or_else(|| "<value>".to_string());
+            format!("\"{name}\": \"{placeholder}\"")
+        })
+        .collect();
+
+    format!("{{{{{}}}}}", pairs.join(", "))
 }
 
 // ---------------------------------------------------------------------------

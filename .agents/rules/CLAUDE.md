@@ -103,17 +103,18 @@ When uncertain -> High.
 After completing any code change, run the following checks **in order** and fix all issues before considering the task done:
 
 ```bash
-cargo fmt --check
 cargo clippy --workspace -- -D warnings
 cargo check --workspace
+cargo doc --workspace --no-deps
+cargo fmt --all
 ```
 
-- **`cargo fmt --check`** — Verify formatting conforms to `rustfmt.toml` (max_width=100, edition=2021). If it fails, run `cargo fmt` to fix, then re-check.
 - **`cargo clippy --workspace -- -D warnings`** — All Clippy lints must pass with zero warnings. Treat every warning as an error. Lint policy is defined in `[workspace.lints.clippy]` in `Cargo.toml` and thresholds in `clippy.toml`.
 - **`cargo check --workspace`** — Full workspace compilation must succeed with no errors.
 - **`cargo doc --workspace --no-deps`** — Documentation must build without errors.
+- **`cargo fmt --all`** — Format all workspace crates according to `rustfmt.toml` (max_width=100, edition=2021). Run last so formatting is applied after all other checks pass.
 
-No task is complete until all three commands pass cleanly.
+No task is complete until all four commands pass cleanly.
 
 ### 4.7 CI Pipeline
 

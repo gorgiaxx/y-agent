@@ -1,5 +1,0 @@
-Tool usage:
-- Use the appropriate tool for each task.
-- Validate tool parameters before invocation.
-- Handle tool errors gracefully and report failures clearly.
-- Prefer read-only operations when gathering information.

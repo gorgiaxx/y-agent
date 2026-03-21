@@ -7,12 +7,16 @@
 //! whose condition evaluates to true against the current `PromptContext` are
 //! fetched and included. Token budgets are enforced per-section and in total.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use y_prompt::{estimate_tokens, truncate_to_budget, PromptContext, PromptTemplate, SectionStore};
+use y_prompt::{
+    builtin_section_store_with_overrides, estimate_tokens, truncate_to_budget, PromptContext,
+    PromptTemplate, SectionStore,
+};
 
 use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
@@ -89,11 +93,13 @@ impl Default for SystemPromptConfig {
 /// placeholder content replaced with live values at assembly time.
 pub struct BuildSystemPromptProvider {
     template: PromptTemplate,
-    store: SectionStore,
+    store: RwLock<SectionStore>,
     prompt_context: Arc<RwLock<PromptContext>>,
     config: SystemPromptConfig,
     /// Virtual environment info for prompt injection (optional).
     venv_info: VenvPromptInfo,
+    /// Path to the user prompts override directory (for hot-reload).
+    prompts_dir: Option<PathBuf>,
 }
 
 impl BuildSystemPromptProvider {
@@ -106,10 +112,11 @@ impl BuildSystemPromptProvider {
     ) -> Self {
         Self {
             template,
-            store,
+            store: RwLock::new(store),
             prompt_context,
             config,
             venv_info: VenvPromptInfo::default(),
+            prompts_dir: None,
         }
     }
 
@@ -123,11 +130,29 @@ impl BuildSystemPromptProvider {
     ) -> Self {
         Self {
             template,
-            store,
+            store: RwLock::new(store),
             prompt_context,
             config,
             venv_info,
+            prompts_dir: None,
         }
+    }
+
+    /// Set the prompts directory path (for hot-reload support).
+    pub fn set_prompts_dir(&mut self, dir: Option<PathBuf>) {
+        self.prompts_dir = dir;
+    }
+
+    /// Hot-reload the section store from disk.
+    ///
+    /// Re-reads all prompt files from `prompts_dir` and rebuilds the
+    /// `SectionStore`. This is called when the user saves prompts in the
+    /// GUI settings and is a no-op if `prompts_dir` was never set.
+    pub async fn reload_store(&self) {
+        let new_store = builtin_section_store_with_overrides(self.prompts_dir.as_deref());
+        let mut guard = self.store.write().await;
+        *guard = new_store;
+        tracing::info!("Prompt section store hot-reloaded");
     }
 
     /// Generate dynamic content for `core.datetime`.
@@ -192,6 +217,10 @@ impl ContextProvider for BuildSystemPromptProvider {
         100 // stage_priorities::BUILD_SYSTEM_PROMPT
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     async fn provide(&self, ctx: &mut AssembledContext) -> Result<(), ContextPipelineError> {
         // Feature flag: when templates are disabled, emit fallback only.
         if !self.config.prompt_templates_enabled {
@@ -216,10 +245,11 @@ impl ContextProvider for BuildSystemPromptProvider {
         // Resolve sections sorted by their effective priority.
         // PromptSection.priority is the canonical order; overlay priority_override
         // takes precedence when present.
+        let store = self.store.read().await;
         let mut section_entries: Vec<_> = effective_sections
             .iter()
             .filter_map(|eff| {
-                let section = self.store.get(&eff.section_id)?;
+                let section = store.get(&eff.section_id)?;
                 let priority = eff.priority_override.unwrap_or(section.priority);
                 Some((eff, section, priority))
             })
@@ -239,7 +269,7 @@ impl ContextProvider for BuildSystemPromptProvider {
             }
 
             // Load content (lazy).
-            let content = match self.store.load_content(&eff.section_id) {
+            let content = match store.load_content(&eff.section_id) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::warn!(
@@ -355,8 +385,8 @@ mod tests {
         assert!(item.content.contains("Guidelines"));
         // Should contain security.
         assert!(item.content.contains("Security rules"));
-        // Should contain tool_behavior (since we have tools).
-        assert!(item.content.contains("Tool usage"));
+        // Should contain tool protocol (which now includes behavior rules).
+        assert!(item.content.contains("Tool Behavior"));
         // Token estimate should be reasonable.
         assert!(item.token_estimate > 0);
     }
@@ -376,8 +406,7 @@ mod tests {
         provider.provide(&mut ctx).await.unwrap();
 
         let content = &ctx.items[0].content;
-        // Plan mode: tool_behavior excluded by overlay, planning included.
-        assert!(!content.contains("Tool usage"));
+        // Plan mode: no sections excluded; planning included.
         assert!(content.contains("planning mode"));
     }
 

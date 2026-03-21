@@ -90,7 +90,11 @@ impl ToolRegistryImpl {
         inner.definitions.get(name).cloned()
     }
 
-    /// Search for tools by keyword in name/description and optional category.
+    /// Search for tools by keywords in name/description and optional category.
+    ///
+    /// The query is split on whitespace, commas, or semicolons into individual
+    /// keywords. A tool matches if its name or description contains at least
+    /// one keyword (OR semantics).
     ///
     /// # Panics
     ///
@@ -101,16 +105,29 @@ impl ToolRegistryImpl {
         category: Option<&ToolCategory>,
     ) -> Vec<ToolDefinition> {
         let inner = self.inner.read().await;
-        let query_lower = query.to_lowercase();
+        let keywords: Vec<String> = query
+            .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
         let limit = self.config.read().unwrap().search_limit;
+
+        if keywords.is_empty() {
+            return Vec::new();
+        }
+
+        let text_matches = |text: &str| -> bool {
+            let lower = text.to_lowercase();
+            keywords.iter().any(|kw| lower.contains(kw.as_str()))
+        };
 
         inner
             .index
             .entries()
             .iter()
             .filter(|entry| {
-                let name_match = entry.name.as_str().to_lowercase().contains(&query_lower);
-                let desc_match = entry.description.to_lowercase().contains(&query_lower);
+                let name_match = text_matches(entry.name.as_str());
+                let desc_match = text_matches(&entry.description);
                 let cat_match = category.is_none_or(|c| &entry.category == c);
                 (name_match || desc_match) && cat_match
             })

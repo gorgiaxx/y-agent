@@ -1,5 +1,7 @@
 //! Context assembly pipeline: ordered sequence of context providers.
 
+use std::any::Any;
+
 use async_trait::async_trait;
 use y_core::types::SessionId;
 
@@ -92,6 +94,12 @@ pub trait ContextProvider: Send + Sync {
 
     /// Contribute context items.
     async fn provide(&self, ctx: &mut AssembledContext) -> Result<(), ContextPipelineError>;
+
+    /// Downcast support for concrete provider access (e.g. hot-reload).
+    fn as_any(&self) -> &dyn Any {
+        // Default: not available. Providers that need downcast override this.
+        &()
+    }
 }
 
 /// Error from a pipeline stage.
@@ -147,6 +155,14 @@ impl ContextPipeline {
     /// Number of registered providers.
     pub fn provider_count(&self) -> usize {
         self.providers.len()
+    }
+
+    /// Get a provider by name, downcast to concrete type.
+    pub fn get_provider<T: 'static>(&self, name: &str) -> Option<&T> {
+        self.providers
+            .iter()
+            .find(|p| p.name() == name)
+            .and_then(|p| p.as_any().downcast_ref::<T>())
     }
 }
 

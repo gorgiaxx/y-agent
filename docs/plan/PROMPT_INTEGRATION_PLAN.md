@@ -51,7 +51,7 @@ Add `y-prompt` as dependency to `y-context` and `y-cli`.
 
 ### Step 2: `HasTool("*")` Wildcard Support
 
-The design doc specifies `core.tool_behavior` has condition `HasTool(*)`. Current `SectionCondition::HasTool` only matches a specific tool name.
+The design doc specifies `core.tool_protocol` has condition `Always` (protocol and behavior rules are merged into one section). Current `SectionCondition::HasTool` only matches a specific tool name.
 
 **File:** `crates/y-prompt/src/section.rs`
 
@@ -83,22 +83,22 @@ pub fn default_template() -> PromptTemplate     // references the built-ins
 | `core.environment` | Context | 200 | 300 | Always |
 | `core.guidelines` | Behavioral | 300 | 500 | Always |
 | `core.safety` | Behavioral | 400 | 300 | Always |
-| `core.tool_behavior` | Behavioral | 500 | 300 | HasTool("*") |
+| `core.tool_protocol` | Behavioral | 450 | 800 | Always |
 | `core.persona` | Domain | 250 | 500 | ConfigFlag("persona.enabled") |
 | `core.planning` | Behavioral | 350 | 300 | ModeIs("plan") |
 | `core.exploration` | Behavioral | 350 | 200 | ModeIs("explore") |
 
 `core.datetime` and `core.environment` use **placeholder inline content** ("{{datetime}}", "{{environment}}") — the provider replaces them dynamically at assembly time.
 
-Default template: mode overlays for `plan` (exclude `core.tool_behavior`, include `core.planning`) and `explore` (exclude `core.safety`, include `core.exploration`, budget override 2000).
+Default template: mode overlays for `plan` (include `core.planning`) and `explore` (exclude `core.safety`, include `core.exploration`, budget override 2000).
 
 **Modify:** `crates/y-prompt/src/lib.rs` — add `pub mod builtins;` and re-exports.
 
 **Tests:**
 - `test_builtin_store_has_9_sections`
 - `test_builtin_sections_have_inline_content`
-- `test_default_template_general_mode` — 6 sections active (identity, datetime, environment, guidelines, safety, tool_behavior when tools exist)
-- `test_default_template_plan_mode` — excludes tool_behavior, includes planning
+- `test_default_template_general_mode` — 9 sections active (identity, datetime, environment, guidelines, safety, tool_protocol, persona, planning, exploration)
+- `test_default_template_plan_mode` — includes planning
 - `test_default_template_explore_mode` — excludes safety, includes exploration, budget=2000
 
 ---
@@ -143,7 +143,7 @@ pub struct BuildSystemPromptProvider {
 **Tests:**
 - `test_provider_name_and_priority` — name="build_system_prompt", priority=100
 - `test_provide_emits_system_prompt` — with built-in store, emits content containing identity/guidelines/safety
-- `test_conditions_exclude_sections` — plan mode excludes tool_behavior
+- `test_conditions_exclude_sections` — plan mode includes planning
 - `test_per_section_budget_truncates` — oversized section gets `[truncated]` marker
 - `test_total_budget_drops_low_priority` — sections beyond total budget are dropped
 - `test_all_excluded_uses_fallback` — empty PromptContext with all conditions false → fallback

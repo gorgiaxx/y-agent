@@ -151,7 +151,7 @@ impl ToolTaxonomy {
     pub fn root_summary(&self) -> String {
         let mut lines = vec![
             "## Tool Categories\n".to_string(),
-            "Use `tool_search` with a category or keyword to discover tools.\n".to_string(),
+            "Use `tool_search` with a category key or keywords to discover tools.\n".to_string(),
             "| Category | Description |".to_string(),
             "|----------|-------------|".to_string(),
         ];
@@ -201,23 +201,40 @@ impl ToolTaxonomy {
 
     /// Search for tools matching a keyword query.
     ///
+    /// Splits the query on whitespace, commas, or semicolons into individual
+    /// keywords and matches any keyword (OR semantics). A text field matches
+    /// if it contains at least one keyword.
+    ///
     /// Searches category labels, descriptions, subcategory labels/descriptions,
     /// and tool names. Returns matching tool names.
     pub fn search(&self, query: &str) -> Vec<ToolName> {
-        let query_lower = query.to_lowercase();
+        let keywords: Vec<String> = query
+            .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if keywords.is_empty() {
+            return Vec::new();
+        }
+
+        let text_matches = |text: &str| -> bool {
+            let lower = text.to_lowercase();
+            keywords.iter().any(|kw| lower.contains(kw.as_str()))
+        };
+
         let mut results = Vec::new();
 
         for cat in self.categories.values() {
             // Check direct tools.
             for tool in &cat.tools {
-                if tool.to_lowercase().contains(&query_lower) && !results.contains(tool) {
+                if text_matches(tool) && !results.contains(tool) {
                     results.push(tool.clone());
                 }
             }
 
-            // Check category-level match → return all tools in category.
-            let cat_match = cat.label.to_lowercase().contains(&query_lower)
-                || cat.description.to_lowercase().contains(&query_lower);
+            // Check category-level match -> return all tools in category.
+            let cat_match = text_matches(&cat.label) || text_matches(&cat.description);
 
             if cat_match {
                 for tool in &cat.tools {
@@ -236,13 +253,10 @@ impl ToolTaxonomy {
 
             // Check subcategory-level match.
             for sub in cat.subcategories.values() {
-                let sub_match = sub.label.to_lowercase().contains(&query_lower)
-                    || sub.description.to_lowercase().contains(&query_lower);
+                let sub_match = text_matches(&sub.label) || text_matches(&sub.description);
 
                 for tool in &sub.tools {
-                    if (sub_match || tool.to_lowercase().contains(&query_lower))
-                        && !results.contains(tool)
-                    {
+                    if (sub_match || text_matches(tool)) && !results.contains(tool) {
                         results.push(tool.clone());
                     }
                 }
@@ -392,6 +406,40 @@ tools = ["tool_search"]
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let results = taxonomy.search("shell commands");
         assert!(results.contains(&"shell_exec".to_string()));
+    }
+
+    #[test]
+    fn test_search_multi_keyword_space_separated() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        // "web search" should match "file_search" via the "search" keyword
+        let results = taxonomy.search("web search");
+        assert!(results.contains(&"file_search".to_string()));
+    }
+
+    #[test]
+    fn test_search_multi_keyword_comma_separated() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("shell,file");
+        assert!(results.contains(&"shell_exec".to_string()));
+        assert!(results.contains(&"file_read".to_string()));
+    }
+
+    #[test]
+    fn test_search_multi_keyword_semicolon_separated() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("shell; file");
+        assert!(results.contains(&"shell_exec".to_string()));
+        assert!(results.contains(&"file_read".to_string()));
+    }
+
+    #[test]
+    fn test_search_empty_query_returns_nothing() {
+        let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        let results = taxonomy.search("");
+        assert!(results.is_empty());
+        // Also test whitespace-only.
+        let results2 = taxonomy.search("   ");
+        assert!(results2.is_empty());
     }
 
     #[test]
