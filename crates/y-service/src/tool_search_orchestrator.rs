@@ -208,7 +208,7 @@ description = "Read, write, and manage files"
 [categories.file.subcategories.read]
 label = "File Reading"
 description = "Read file contents"
-tools = ["file_read", "file_list"]
+tools = ["file_read"]
 
 [categories.file.subcategories.write]
 label = "File Writing"
@@ -249,7 +249,6 @@ tools = ["tool_search"]
         // Register sample tools via the trait.
         for (name, desc) in &[
             ("file_read", "Read file contents"),
-            ("file_list", "List directory contents"),
             ("file_write", "Write file contents"),
             ("shell_exec", "Execute shell commands"),
             ("tool_search", "Search for tools"),

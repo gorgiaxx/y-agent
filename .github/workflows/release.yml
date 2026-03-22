@@ -146,7 +146,7 @@ jobs:
           mkdir -p "dist/${CLI_ARCHIVE}"
           cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${CLI_ARCHIVE}/"
           cp -r config "dist/${CLI_ARCHIVE}/config"
-          cp -r builtin-skills "dist/${CLI_ARCHIVE}/builtin-skills"
+          cp -r skills "dist/${CLI_ARCHIVE}/skills"
           cp -r data "dist/${CLI_ARCHIVE}/data" 2>/dev/null || true
           cp README.md "dist/${CLI_ARCHIVE}/"
           cd dist && tar czf "${CLI_ARCHIVE}.tar.gz" "${CLI_ARCHIVE}"
@@ -160,7 +160,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist/${CLI_ARCHIVE}"
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${CLI_ARCHIVE}/"
           Copy-Item -Recurse "config" "dist/${CLI_ARCHIVE}/config"
-          Copy-Item -Recurse "builtin-skills" "dist/${CLI_ARCHIVE}/builtin-skills"
+          Copy-Item -Recurse "skills" "dist/${CLI_ARCHIVE}/skills"
           if (Test-Path "data") { Copy-Item -Recurse "data" "dist/${CLI_ARCHIVE}/data" }
           Copy-Item "README.md" "dist/${CLI_ARCHIVE}/"
           Compress-Archive -Path "dist/${CLI_ARCHIVE}" -DestinationPath "dist/${CLI_ARCHIVE}.zip"

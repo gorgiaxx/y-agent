@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use y_context::{AssembledContext, ContextCategory};
+use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore};
 use y_core::types::{Message, Role, SessionId};
 
 use crate::container::ServiceContainer;
@@ -430,6 +431,21 @@ impl ChatService {
             .await
             .map_err(|e| PrepareTurnError::PersistFailed(e.to_string()))?;
 
+        // Mirror to SQLite chat_message_store so the pruning engine can
+        // detect candidates. Fire-and-forget: failure here must not block
+        // the turn.
+        Self::mirror_to_chat_message_store(
+            container,
+            &session_id,
+            &user_msg,
+            None, // no model for user messages
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
         // 3. Read full display transcript (includes the just-appended user message).
         //    The display transcript is used for GUI-facing history; it is never
         //    compacted, so users always see the complete conversation.
@@ -622,6 +638,7 @@ impl ChatService {
             knowledge_collections: input.knowledge_collections.clone(),
             use_context_pipeline: true,
             user_query: input.user_input.to_string(),
+            external_trace_id: None,
         };
 
         // 3. Delegate to AgentService.
@@ -717,6 +734,19 @@ impl ChatService {
             .session_manager
             .append_message(&input.session_id, &assistant_msg)
             .await;
+
+        // Mirror to SQLite chat_message_store for pruning engine visibility.
+        Self::mirror_to_chat_message_store(
+            container,
+            &input.session_id,
+            &assistant_msg,
+            Some(&result.model),
+            Some(result.input_tokens),
+            Some(result.output_tokens),
+            Some(result.cost_usd),
+            Some(result.context_window),
+        )
+        .await;
 
         let mut new_messages = result.new_messages.clone();
         new_messages.push(assistant_msg);
@@ -823,6 +853,55 @@ impl ChatService {
         }
         let user_msg_count = history.iter().filter(|m| m.role == Role::User).count();
         user_msg_count > 0 && (user_msg_count == 1 || user_msg_count % title_interval as usize == 0)
+    }
+
+    /// Mirror a `Message` to the `ChatMessageStore` (`SQLite`) so that the
+    /// pruning engine can detect candidates and invoke `pruning-summarizer`.
+    ///
+    /// This is fire-and-forget: a failure is logged but never propagated,
+    /// because the JSONL transcript is the primary persistence layer.
+    async fn mirror_to_chat_message_store(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        msg: &Message,
+        model: Option<&str>,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        cost_usd: Option<f64>,
+        context_window: Option<usize>,
+    ) {
+        let role_str = match msg.role {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        };
+
+        let record = ChatMessageRecord {
+            id: msg.message_id.clone(),
+            session_id: session_id.clone(),
+            role: role_str.to_string(),
+            content: msg.content.clone(),
+            status: ChatMessageStatus::Active,
+            checkpoint_id: None,
+            model: model.map(std::string::ToString::to_string),
+            input_tokens: input_tokens.map(|v| i64::try_from(v).unwrap_or(i64::MAX)),
+            output_tokens: output_tokens.map(|v| i64::try_from(v).unwrap_or(i64::MAX)),
+            cost_usd,
+            context_window: context_window.map(|v| i64::try_from(v).unwrap_or(i64::MAX)),
+            parent_message_id: None,
+            pruning_group_id: None,
+            created_at: msg.timestamp,
+        };
+
+        if let Err(e) = container.chat_message_store.insert(&record).await {
+            tracing::warn!(
+                error = %e,
+                session_id = %session_id,
+                message_id = %msg.message_id,
+                "failed to mirror message to chat_message_store"
+            );
+        }
     }
 }
 

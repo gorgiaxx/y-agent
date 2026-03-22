@@ -151,6 +151,7 @@ mod tests {
             allowed_tools: vec![],
             denied_tools: vec![],
             max_iterations: 1,
+            trace_id: None,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -183,6 +184,7 @@ mod tests {
             allowed_tools: vec![],
             denied_tools: vec![],
             max_iterations: 1,
+            trace_id: None,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -207,6 +209,7 @@ mod tests {
             allowed_tools: vec![],
             denied_tools: vec![],
             max_iterations: 1,
+            trace_id: None,
         };
 
         let route = SingleTurnRunner::build_route(&config);

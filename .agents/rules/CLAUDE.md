@@ -36,7 +36,7 @@ y-agent/
     research/          — just for research
     schema/            —
   config/              — TOML config templates (providers, runtime, guardrails, browser, etc.)
-  builtin-skills/      — built-in skill packages (code-review-rust, humanizer-zh)
+  builtin-skills/      — built-in skill packages
   migrations/sqlite/   — SQLite migrations
   scripts/             — build-release.sh, deploy.sh, health-check.sh, native-install.sh
   data/                — SQLite database (runtime data)

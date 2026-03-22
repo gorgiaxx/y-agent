@@ -140,6 +140,15 @@ pub async fn run(
                                 result.classification
                             ));
                         }
+                        y_service::ImportDecision::Optimized => {
+                            let notes = result.optimization_notes.as_deref().unwrap_or("(none)");
+                            output::print_success(&format!(
+                                "Skill optimized and imported\n  ID: {}\n  Classification: {}\n  Decision: optimized\n  Optimizations: {}",
+                                result.skill_id.unwrap_or_default(),
+                                result.classification,
+                                notes
+                            ));
+                        }
                         y_service::ImportDecision::PartialAccept => {
                             output::print_info(&format!(
                                 "Skill partially accepted\n  ID: {}\n  Classification: {}\n  Security issues: {:?}",

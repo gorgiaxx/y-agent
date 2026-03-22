@@ -200,6 +200,20 @@ impl SystemService {
         container.reload_prompts().await;
     }
 
+    /// Hot-reload the knowledge config from a TOML config string.
+    ///
+    /// Parses the TOML into `KnowledgeConfig` and delegates to
+    /// `container.reload_knowledge()`.
+    pub async fn reload_knowledge_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<(), String> {
+        let config: y_knowledge::config::KnowledgeConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse knowledge config: {e}"))?;
+        container.reload_knowledge(config).await;
+        Ok(())
+    }
+
     /// Test an LLM provider by sending a minimal probe request.
     ///
     /// Providers using OpenAI-compatible REST are actively tested via a

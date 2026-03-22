@@ -224,7 +224,13 @@ pub async fn config_reload(state: State<'_, AppState>) -> Result<String, String>
         results.push("tools".to_string());
     }
 
-    // 7. Prompts — always reload from disk (no TOML config, just .txt files).
+    // 7. Knowledge.
+    if let Some(content) = read_toml("knowledge")? {
+        y_service::SystemService::reload_knowledge_from_toml(&state.container, &content).await?;
+        results.push("knowledge".to_string());
+    }
+
+    // 8. Prompts — always reload from disk (no TOML config, just .txt files).
     y_service::SystemService::reload_prompts(&state.container).await;
     results.push("prompts".to_string());
 

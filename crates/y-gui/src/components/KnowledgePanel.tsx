@@ -265,6 +265,7 @@ export function KnowledgePanel({
           </button>
         </div>
 
+        <div className="knowledge-entry-body">
         <div className="knowledge-entry-meta">
           {selectedEntry.source_uri && (
             <span className="kb-meta-item"><FolderOpen size={13} /> {selectedEntry.source_uri}</span>
@@ -352,6 +353,7 @@ export function KnowledgePanel({
             )}
           </div>
         )}
+        </div>
 
         {/* Confirm Delete Dialog */}
         <ConfirmDialog

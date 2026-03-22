@@ -2,13 +2,12 @@
 //!
 //! These are core tools implemented in Rust, registered at startup.
 
-pub mod file_list;
 pub mod file_read;
-pub mod file_search;
 pub mod file_write;
 pub mod knowledge_search;
 pub mod shell_exec;
 pub mod tool_search;
+pub mod web_fetch;
 
 use std::sync::{Arc, Mutex};
 use y_knowledge::middleware::InjectKnowledge;
@@ -30,6 +29,10 @@ pub async fn register_builtin_tools(
     browser_config: y_browser::BrowserConfig,
     knowledge: KnowledgeHandle,
 ) {
+    // Browser tool is shared between `browser` and `web_fetch` via Arc
+    // so both use the same Chrome session.
+    let browser_tool = Arc::new(y_browser::BrowserTool::new(browser_config));
+
     let mut tools: Vec<(Arc<dyn y_core::tool::Tool>, y_core::tool::ToolDefinition)> = vec![
         (
             Arc::new(file_read::FileReadTool::new()),
@@ -40,24 +43,20 @@ pub async fn register_builtin_tools(
             file_write::FileWriteTool::tool_definition(),
         ),
         (
-            Arc::new(file_list::FileListTool::new()),
-            file_list::FileListTool::tool_definition(),
-        ),
-        (
             Arc::new(shell_exec::ShellExecTool::new()),
             shell_exec::ShellExecTool::tool_definition(),
-        ),
-        (
-            Arc::new(file_search::FileSearchTool::new()),
-            file_search::FileSearchTool::tool_definition(),
         ),
         (
             Arc::new(tool_search::ToolSearchTool::new()),
             tool_search::ToolSearchTool::tool_definition(),
         ),
         (
-            Arc::new(y_browser::BrowserTool::new(browser_config)),
+            Arc::clone(&browser_tool) as Arc<dyn y_core::tool::Tool>,
             y_browser::BrowserTool::tool_definition(),
+        ),
+        (
+            Arc::new(web_fetch::WebFetchTool::new(Arc::clone(&browser_tool))),
+            web_fetch::WebFetchTool::tool_definition(),
         ),
     ];
 
@@ -86,8 +85,8 @@ mod tests {
     async fn test_register_builtin_tools_populates_registry() {
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None).await;
-        // 5 core tools + tool_search + browser = 7
-        assert_eq!(registry.len().await, 7);
+        // 3 core tools + tool_search + browser + web_fetch = 6
+        assert_eq!(registry.len().await, 6);
     }
 
     #[tokio::test]
@@ -104,8 +103,8 @@ mod tests {
             Some(knowledge),
         )
         .await;
-        // 7 + knowledge_search = 8
-        assert_eq!(registry.len().await, 8);
+        // 6 + knowledge_search = 7
+        assert_eq!(registry.len().await, 7);
     }
 
     #[tokio::test]
@@ -116,9 +115,8 @@ mod tests {
         let names: Vec<&str> = index.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"file_read"));
         assert!(names.contains(&"file_write"));
-        assert!(names.contains(&"file_list"));
         assert!(names.contains(&"shell_exec"));
-        assert!(names.contains(&"file_search"));
         assert!(names.contains(&"tool_search"));
+        assert!(names.contains(&"web_fetch"));
     }
 }

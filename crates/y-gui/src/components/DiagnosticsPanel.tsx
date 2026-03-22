@@ -75,6 +75,7 @@ interface DiagnosticsPanelProps {
   summary: DiagnosticsSummary;
   isActive: boolean;
   isGlobal: boolean;
+  sessionId: string | null;
   expanded: boolean;
   onToggleExpand: () => void;
   onClear: () => void;
@@ -229,8 +230,8 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
             <div className="diag-detail-tools">
               <span className="diag-detail-label">Requested tools</span>
               <div className="diag-tool-tags">
-                {event.tool_calls_requested.map((name, i) => (
-                  <span key={i} className="diag-tool-tag">{name}</span>
+                {[...new Set(event.tool_calls_requested)].map((name) => (
+                  <span key={name} className="diag-tool-tag">{name}</span>
                 ))}
               </div>
             </div>
@@ -505,7 +506,15 @@ function LoopLimitEntry({ event }: { event: LoopLimitEvent }) {
   );
 }
 
-export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGlobal, expanded, onToggleExpand, onClear, onClose }: DiagnosticsPanelProps) {
+export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGlobal, sessionId, expanded, onToggleExpand, onClear, onClose }: DiagnosticsPanelProps) {
+  const [sessionIdCopied, setSessionIdCopied] = useState(false);
+  const handleCopySessionId = () => {
+    if (!sessionId) return;
+    navigator.clipboard.writeText(sessionId).then(() => {
+      setSessionIdCopied(true);
+      setTimeout(() => setSessionIdCopied(false), 2000);
+    });
+  };
   const endRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -555,6 +564,18 @@ export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGloba
           <Activity size={16} className="diag-header-icon" />
           <h3 className="diag-title">Diagnostics{isGlobal && <span className="diag-global-label"> (Global)</span>}</h3>
           {isActive && <span className="diag-live-dot" />}
+          {sessionId && (
+            <button
+              className="diag-session-id-btn"
+              onClick={handleCopySessionId}
+              title={sessionIdCopied ? 'Copied!' : `Copy session ID: ${sessionId}`}
+            >
+              <span className="diag-session-id-text">
+                {sessionId.slice(0, 8)}
+              </span>
+              {sessionIdCopied ? <Check size={11} /> : <Copy size={11} />}
+            </button>
+          )}
         </div>
         <div className="diag-header-actions">
           <div className="diag-filter-wrapper" ref={filterRef}>

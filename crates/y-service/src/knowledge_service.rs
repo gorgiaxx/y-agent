@@ -186,6 +186,18 @@ impl KnowledgeService {
         service
     }
 
+    /// Hot-reload the knowledge configuration.
+    ///
+    /// Updates the stored config and recreates the ingestion pipeline so
+    /// that subsequent ingestion operations use the new parameters (e.g.
+    /// chunk sizes, max chunks per entry). In-flight operations are
+    /// unaffected because they already hold their own pipeline reference.
+    pub fn reload_config(&mut self, new_config: KnowledgeConfig) {
+        tracing::info!("Knowledge config hot-reloaded");
+        self.pipeline = IngestionPipeline::new(new_config.clone());
+        self.config = new_config;
+    }
+
     /// Set the embedding provider for vector-based semantic search.
     ///
     /// When set, document ingestion will generate embeddings for each chunk
@@ -367,25 +379,31 @@ impl KnowledgeService {
         // Generate embeddings if an embedding provider is configured.
         let chunk_embeddings = if let Some(ref provider) = self.embedding_provider {
             // Truncate chunk text to fit the embedding model's context window.
-            // The chunking heuristic uses ~4 chars/token but real BPE tokenizers
-            // often produce more tokens (short common words like "the" = 1 token
-            // but only 3 chars). Use ~2 chars/token as a safe worst-case estimate
-            // for English text to guarantee we stay within the model's limit.
+            //
+            // Different tokenizers (BPE vs WordPiece/BERT) produce vastly
+            // different token counts for the same text. WordPiece/BERT can
+            // average as low as ~1.1 chars per token, while BPE averages
+            // ~3-4 chars per token. Use 1 char = 1 token as the worst-case
+            // ceiling to guarantee no overflow regardless of tokenizer.
             let max_tokens = self.config.effective_chunk_max_tokens();
-            let max_chars = if max_tokens > 0 {
-                (max_tokens as usize) * 2
-            } else {
-                usize::MAX
-            };
+            let max_chars = max_tokens as usize;
             let texts: Vec<String> = entry
                 .chunks
                 .iter()
                 .map(|c| {
-                    if c.chars().count() > max_chars {
-                        c.chars().take(max_chars).collect()
-                    } else {
-                        c.clone()
+                    if max_tokens == 0 {
+                        return c.clone();
                     }
+                    if c.chars().count() <= max_chars {
+                        return c.clone();
+                    }
+                    tracing::debug!(
+                        original_chars = c.chars().count(),
+                        max_chars,
+                        max_tokens,
+                        "Truncating chunk to fit embedding model context window"
+                    );
+                    c.chars().take(max_chars).collect()
                 })
                 .collect();
             match provider.embed_batch(&texts).await {

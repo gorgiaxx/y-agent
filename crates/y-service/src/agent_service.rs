@@ -74,6 +74,12 @@ pub struct AgentExecutionConfig {
     pub use_context_pipeline: bool,
     /// User query text (for context pipeline + knowledge retrieval).
     pub user_query: String,
+    /// Pre-created trace ID from the diagnostics delegator.
+    ///
+    /// When `Some`, `execute()` reuses this trace for per-iteration
+    /// observations instead of creating its own trace. The caller is
+    /// responsible for calling `on_trace_start` / `on_trace_end`.
+    pub external_trace_id: Option<Uuid>,
 }
 
 /// Result of agent execution.
@@ -206,32 +212,9 @@ impl AgentService {
         progress: Option<TurnEventSender>,
         cancel: Option<CancellationToken>,
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
-        // 1. Context assembly (optional -- root agent uses pipeline, sub-agents don't).
-        let assembled = if config.use_context_pipeline {
-            let context_request = ContextRequest {
-                user_query: config.user_query.clone(),
-                session_id: config.session_id.clone(),
-                knowledge_collections: config.knowledge_collections.clone(),
-                ..Default::default()
-            };
-            container
-                .context_pipeline
-                .assemble_with_request(Some(context_request))
-                .await
-                .unwrap_or_else(|e| {
-                    warn!(error = %e, "context pipeline assembly failed; using empty context");
-                    AssembledContext::default()
-                })
-        } else {
-            AssembledContext::default()
-        };
-
-        // 2. Start diagnostics trace.
-        let trace_id = container
-            .diagnostics
-            .on_trace_start(config.session_uuid, &config.agent_name, &config.user_query)
-            .await
-            .ok();
+        // 1. Context assembly + diagnostics trace (extracted to keep execute() under 200 lines).
+        let (assembled, trace_id, owns_trace) =
+            Self::init_context_and_trace(container, config).await;
 
         // 3. Build initial working history.
         let working_history = if config.use_context_pipeline {
@@ -304,7 +287,14 @@ impl AgentService {
 
             ctx.iteration += 1;
             if ctx.iteration > max_iterations {
-                Self::emit_loop_limit(progress.as_ref(), &ctx, max_iterations, container).await;
+                Self::emit_loop_limit(
+                    progress.as_ref(),
+                    &ctx,
+                    max_iterations,
+                    container,
+                    owns_trace,
+                )
+                .await;
                 return Err(AgentExecutionError::ToolLoopLimitExceeded { max_iterations });
             }
 
@@ -369,23 +359,39 @@ impl AgentService {
                         continue;
                     }
 
-                    if config.tool_calling_mode == ToolCallingMode::PromptBased {
-                        if let Some(ref text) = response.content {
-                            let parse_result = parse_tool_calls(text);
-                            if !parse_result.tool_calls.is_empty() {
-                                Self::handle_prompt_based_tool_calls(
-                                    container,
-                                    config,
-                                    &response,
-                                    &parse_result,
-                                    text,
-                                    progress.as_ref(),
-                                    &iter_data,
-                                    &mut ctx,
-                                )
-                                .await;
-                                continue;
-                            }
+                    // Fallback: even when tool_calling_mode is Native, some
+                    // models/providers may embed tool calls in text output
+                    // instead of using the native API (e.g. model doesn't
+                    // support function calling, or the provider strips tool
+                    // definitions). Always attempt prompt-based parsing as
+                    // a safety net.
+                    if let Some(ref text) = response.content {
+                        tracing::debug!(
+                            agent = %config.agent_name,
+                            content_len = text.len(),
+                            has_tool_call_tag = text.contains("<tool_call>"),
+                            "fallback: attempting prompt-based tool call parsing"
+                        );
+                        let parse_result = parse_tool_calls(text);
+                        tracing::debug!(
+                            agent = %config.agent_name,
+                            parsed_tool_calls = parse_result.tool_calls.len(),
+                            warnings = ?parse_result.warnings,
+                            "fallback: parse_tool_calls result"
+                        );
+                        if !parse_result.tool_calls.is_empty() {
+                            Self::handle_prompt_based_tool_calls(
+                                container,
+                                config,
+                                &response,
+                                &parse_result,
+                                text,
+                                progress.as_ref(),
+                                &iter_data,
+                                &mut ctx,
+                            )
+                            .await;
+                            continue;
                         }
                     }
 
@@ -399,6 +405,7 @@ impl AgentService {
                         ctx,
                         final_model,
                         final_provider_id,
+                        owns_trace,
                     )
                     .await;
                 }
@@ -406,11 +413,13 @@ impl AgentService {
                     if matches!(e, y_core::provider::ProviderError::Cancelled) {
                         return Err(AgentExecutionError::Cancelled);
                     }
-                    if let Some(tid) = ctx.trace_id {
-                        let _ = container
-                            .diagnostics
-                            .on_trace_end(tid, false, Some(&e.to_string()))
-                            .await;
+                    if owns_trace {
+                        if let Some(tid) = ctx.trace_id {
+                            let _ = container
+                                .diagnostics
+                                .on_trace_end(tid, false, Some(&e.to_string()))
+                                .await;
+                        }
                     }
                     let partial = std::mem::take(&mut ctx.new_messages);
                     return Err(AgentExecutionError::LlmError {
@@ -425,6 +434,50 @@ impl AgentService {
     // -----------------------------------------------------------------------
     // Execute-loop helpers
     // -----------------------------------------------------------------------
+
+    /// Context assembly + diagnostics trace initialisation.
+    ///
+    /// Extracted from `execute()` to keep it under the clippy line limit.
+    /// Returns `(assembled_context, trace_id, owns_trace)`.
+    async fn init_context_and_trace(
+        container: &ServiceContainer,
+        config: &AgentExecutionConfig,
+    ) -> (AssembledContext, Option<Uuid>, bool) {
+        let assembled = if config.use_context_pipeline {
+            let context_request = ContextRequest {
+                user_query: config.user_query.clone(),
+                session_id: config.session_id.clone(),
+                knowledge_collections: config.knowledge_collections.clone(),
+                ..Default::default()
+            };
+            container
+                .context_pipeline
+                .assemble_with_request(Some(context_request))
+                .await
+                .unwrap_or_else(|e| {
+                    warn!(error = %e, "context pipeline assembly failed; using empty context");
+                    AssembledContext::default()
+                })
+        } else {
+            AssembledContext::default()
+        };
+
+        // When an external_trace_id is supplied (subagent delegation),
+        // reuse it so per-iteration observations land on the same trace
+        // that the DiagnosticsAgentDelegator created.
+        let trace_id = if let Some(ext_id) = config.external_trace_id {
+            Some(ext_id)
+        } else {
+            container
+                .diagnostics
+                .on_trace_start(config.session_uuid, &config.agent_name, &config.user_query)
+                .await
+                .ok()
+        };
+        let owns_trace = config.external_trace_id.is_none();
+
+        (assembled, trace_id, owns_trace)
+    }
 
     fn build_chat_request(config: &AgentExecutionConfig, ctx: &ToolExecContext) -> ChatRequest {
         ChatRequest {
@@ -519,6 +572,7 @@ impl AgentService {
         ctx: &ToolExecContext,
         max_iterations: usize,
         container: &ServiceContainer,
+        owns_trace: bool,
     ) {
         if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::LoopLimitHit {
@@ -526,11 +580,13 @@ impl AgentService {
                 max_iterations,
             });
         }
-        if let Some(tid) = ctx.trace_id {
-            let _ = container
-                .diagnostics
-                .on_trace_end(tid, false, Some("tool loop limit exceeded"))
-                .await;
+        if owns_trace {
+            if let Some(tid) = ctx.trace_id {
+                let _ = container
+                    .diagnostics
+                    .on_trace_end(tid, false, Some("tool loop limit exceeded"))
+                    .await;
+            }
         }
     }
 
@@ -825,6 +881,7 @@ impl AgentService {
         ctx: ToolExecContext,
         final_model: String,
         final_provider_id: Option<String>,
+        owns_trace: bool,
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
         let raw_content = response
             .content
@@ -844,11 +901,13 @@ impl AgentService {
             raw_content
         };
 
-        if let Some(tid) = ctx.trace_id {
-            let _ = container
-                .diagnostics
-                .on_trace_end(tid, true, Some(&content))
-                .await;
+        if owns_trace {
+            if let Some(tid) = ctx.trace_id {
+                let _ = container
+                    .diagnostics
+                    .on_trace_end(tid, true, Some(&content))
+                    .await;
+            }
         }
 
         let final_content = if ctx.accumulated_content.is_empty() {
@@ -1371,6 +1430,12 @@ impl AgentRunner for ServiceAgentRunner {
             ToolCallingMode::Native
         };
 
+        // Pick up a pre-created trace_id from the diagnostics delegator
+        // (set via SUBAGENT_TRACE_ID task-local).
+        let external_trace_id = crate::diagnostics::SUBAGENT_TRACE_ID
+            .try_with(|id| *id)
+            .ok();
+
         let exec_config = AgentExecutionConfig {
             agent_name: config.agent_name.clone(),
             system_prompt: config.system_prompt.clone(),
@@ -1388,9 +1453,17 @@ impl AgentRunner for ServiceAgentRunner {
             knowledge_collections: vec![],
             use_context_pipeline: false,
             user_query: user_content,
+            external_trace_id,
         };
 
-        let result = AgentService::execute(&self.container, &exec_config, None, None)
+        // Pick up a progress sender from the task-local (if the caller injected
+        // one via SUBAGENT_PROGRESS) so that real-time LLM/tool events are
+        // forwarded during subagent execution.
+        let progress = crate::diagnostics::SUBAGENT_PROGRESS
+            .try_with(std::clone::Clone::clone)
+            .ok();
+
+        let result = AgentService::execute(&self.container, &exec_config, progress, None)
             .await
             .map_err(|e| DelegationError::DelegationFailed {
                 message: format!(

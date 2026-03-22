@@ -1,0 +1,60 @@
+[skill]
+name = "humanizer-zh"
+version = "d880e1630c1729a5915293037e9957284797d9ba523ac16cf58e5ee01d23c836"
+description = "去除文本中的 AI 生成痕迹，使文字更自然、更像人类书写"
+author = "skill-ingestion-agent"
+source_format = "markdown"
+
+[skill.classification]
+type = "llm_reasoning"
+domain = [
+    "text-editing",
+    "style-transfer",
+    "content-analysis",
+]
+atomic = true
+
+[skill.constraints]
+max_input_tokens = 8000
+max_output_tokens = 8000
+requires_language = "zh"
+
+[skill.root]
+path = "root.md"
+token_count = 710
+
+[[skill.tree.sub_documents]]
+path = "patterns/content-patterns.md"
+title = "内容模式"
+token_count = 850
+load_condition = "on_demand"
+
+[[skill.tree.sub_documents]]
+path = "patterns/language-patterns.md"
+title = "语言模式"
+token_count = 700
+load_condition = "on_demand"
+
+[[skill.tree.sub_documents]]
+path = "patterns/style-patterns.md"
+title = "风格模式"
+token_count = 500
+load_condition = "on_demand"
+
+[[skill.tree.sub_documents]]
+path = "patterns/communication-patterns.md"
+title = "交流模式"
+token_count = 350
+load_condition = "on_demand"
+
+[[skill.tree.sub_documents]]
+path = "patterns/filler-patterns.md"
+title = "填充模式"
+token_count = 280
+load_condition = "on_demand"
+
+[[skill.tree.sub_documents]]
+path = "quality/scoring.md"
+title = "质量评分标准"
+token_count = 550
+load_condition = "on_demand"

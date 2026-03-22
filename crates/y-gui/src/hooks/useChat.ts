@@ -1185,6 +1185,20 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               const keptMsgs = freshMsgs.slice(0, userIdx);
               setCachedMessages(sessionMessagesRef.current, sessionId, keptMsgs);
               syncVisible(sessionId);
+
+              // Add optimistic user message so the bubble stays visible while
+              // the backend processes the re-send (chat_send persists a new
+              // user message but sync only happens on chat:complete).
+              const userMsg: Message = {
+                id: `user-${Date.now()}`,
+                role: 'user' as const,
+                content,
+                timestamp: new Date().toISOString(),
+                tool_calls: [],
+              };
+              setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => [...prev, userMsg]);
+              syncVisible(sessionId);
+
               // opStatus stays 'resending' -- the bus handler will set idle on complete/error.
               const result = await invoke<ChatStarted>('chat_send', {
                 message: content,

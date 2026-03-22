@@ -326,12 +326,38 @@ async function initialiseBus() {
   });
   unlistenFns.push(u3);
 
+  // Real-time progress events from subagent execution (e.g. skill import).
+  // Each event is appended immediately to the Global (nil-UUID) view so the
+  // user sees LLM calls and tool executions as they happen.
+  const u4 = await listen<ProgressPayload>('diagnostics:subagent_progress', (event) => {
+    const { event: turnEvent } = event.payload;
+    // Only process LLM response and tool result events for diagnostics.
+    if (turnEvent.type !== 'llm_response' && turnEvent.type !== 'tool_result') return;
+    broadcastUpdate((prev) => {
+      const counter = prev.counter + 1;
+      const entry: DiagnosticsEntry = {
+        id: `subagent-live-${counter}`,
+        timestamp: new Date().toISOString(),
+        event: turnEvent,
+      };
+      return {
+        ...prev,
+        counter,
+        sessionEntries: {
+          ...prev.sessionEntries,
+          [NIL_UUID]: [...(prev.sessionEntries[NIL_UUID] ?? []), entry],
+        },
+      };
+    });
+  });
+  unlistenFns.push(u4);
+
   // When a subagent (title-generator, skill-ingestion, etc.) completes,
   // the backend emits this event.  Re-fetch subagent history so the
   // Global diagnostics view picks up the new entries.
   // If the event includes a session_id, also reload that session's
   // history so subagent entries appear in the session-level view.
-  const u4 = await listen<{ session_id?: string }>('diagnostics:subagent_completed', (event) => {
+  const u5 = await listen<{ session_id?: string }>('diagnostics:subagent_completed', (event) => {
     loadSubagentHistory();
 
     const sid = event.payload?.session_id;
@@ -339,7 +365,7 @@ async function initialiseBus() {
       reloadSessionHistory(sid);
     }
   });
-  unlistenFns.push(u4);
+  unlistenFns.push(u5);
 
   // Seed subagent history on first load.
   loadSubagentHistory();

@@ -149,8 +149,11 @@ impl ChunkingStrategy {
     }
 
     /// L2: Split by paragraphs (algorithm depends on chunker type).
+    ///
+    /// Uses `effective_l2_max_tokens()` which caps the chunk size at the
+    /// embedding model's context window when embedding is enabled.
     fn chunk_l2(&self, document_id: &str, content: &str, metadata: &ChunkMetadata) -> Vec<Chunk> {
-        let max_chars = tokens_to_max_chars(self.config.l2_max_tokens, content);
+        let max_chars = tokens_to_max_chars(self.config.effective_l2_max_tokens(), content);
 
         let paragraphs = match self.chunker_type {
             ChunkerType::SentenceBoundary => {

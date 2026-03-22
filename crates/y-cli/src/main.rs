@@ -199,7 +199,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Serve(ref args)) => {
             let services = wire::wire(&config).await?;
-            commands::serve::run(std::sync::Arc::new(services), args).await?;
+            let services = std::sync::Arc::new(services);
+            services.init_agent_runner();
+            commands::serve::run(services, args).await?;
         }
         None => {
             println!("y-agent v{}", env!("CARGO_PKG_VERSION"));

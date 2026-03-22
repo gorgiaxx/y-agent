@@ -362,31 +362,58 @@ pub async fn skill_import(
 
     let ingestion_service = state.container.skill_ingestion_service(registry);
 
-    let import_result = match ingestion_service.import(source_path).await {
-        Ok(result) => {
-            let decision = match result.decision {
-                y_service::ImportDecision::Accepted => "accepted",
-                y_service::ImportDecision::PartialAccept => "partial_accept",
-                y_service::ImportDecision::Rejected => "rejected",
-            };
-            Ok(SkillImportResult {
-                decision: decision.to_string(),
-                classification: result.classification,
-                skill_id: result.skill_id,
-                error: result.rejection_reason,
-                security_issues: result.security_issues,
-                permissions_needed: None,
-            })
+    // Set up a progress channel so that LLM / tool-call events during
+    // agent-assisted ingestion are forwarded to the frontend in real-time
+    // (instead of batched at the end).
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<y_service::TurnEvent>();
+    let app_progress = app.clone();
+    let progress_task = tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let _ = app_progress.emit(
+                "diagnostics:subagent_progress",
+                super::chat::ProgressPayload {
+                    run_id: "skill-ingestion".to_string(),
+                    event,
+                },
+            );
         }
-        Err(e) => Ok(SkillImportResult {
-            decision: "rejected".to_string(),
-            classification: String::new(),
-            skill_id: None,
-            error: Some(e.to_string()),
-            security_issues: vec![],
-            permissions_needed: None,
-        }),
-    };
+    });
+
+    // Run the import with the progress sender injected via task-local.
+    let import_result = y_service::diagnostics::SUBAGENT_PROGRESS
+        .scope(tx, async {
+            match ingestion_service.import(source_path).await {
+                Ok(result) => {
+                    let decision = match result.decision {
+                        y_service::ImportDecision::Accepted => "accepted",
+                        y_service::ImportDecision::Optimized => "optimized",
+                        y_service::ImportDecision::PartialAccept => "partial_accept",
+                        y_service::ImportDecision::Rejected => "rejected",
+                    };
+                    Ok(SkillImportResult {
+                        decision: decision.to_string(),
+                        classification: result.classification,
+                        skill_id: result.skill_id,
+                        error: result.rejection_reason,
+                        security_issues: result.security_issues,
+                        permissions_needed: None,
+                    })
+                }
+                Err(e) => Ok(SkillImportResult {
+                    decision: "rejected".to_string(),
+                    classification: String::new(),
+                    skill_id: None,
+                    error: Some(e.to_string()),
+                    security_issues: vec![],
+                    permissions_needed: None,
+                }),
+            }
+        })
+        .await;
+
+    // Wait for the progress forwarder to flush all queued events before
+    // emitting the terminal event.
+    let _ = progress_task.await;
 
     // Notify frontend that the ingestion subagent finished so the
     // Global diagnostics view picks up the new trace entries.

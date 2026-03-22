@@ -83,7 +83,9 @@ pub struct ServiceContainer {
     pub agent_registry: Mutex<AgentRegistry>,
 
     /// Agent pool for runtime instance management.
-    pub agent_pool: Mutex<AgentPool>,
+    /// Shared via `Arc` with `MutexPoolDelegator` so that runner upgrades
+    /// (via `init_agent_runner`) affect both direct pool access and delegation.
+    pub agent_pool: Arc<Mutex<AgentPool>>,
 
     /// Agent delegator for delegating tasks to agents (wired through `AgentPool` + `SingleTurnRunner`).
     /// Once `init_agent_runner` is called post-construction, sub-agents use `ServiceAgentRunner`.
@@ -468,17 +470,57 @@ tools = ["tool_search"]
 
         (Arc::new(Mutex::new(knowledge_service)), embedding_provider)
     }
+}
 
+// ---------------------------------------------------------------------------
+// MutexPoolDelegator -- shared-pool delegation adapter
+// ---------------------------------------------------------------------------
+
+/// Thin wrapper: implements `AgentDelegator` by locking a shared
+/// `Arc<Mutex<AgentPool>>` so that runner swaps propagate to all
+/// delegation call sites.
+struct MutexPoolDelegator(Arc<Mutex<AgentPool>>);
+
+impl std::fmt::Debug for MutexPoolDelegator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MutexPoolDelegator").finish_non_exhaustive()
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentDelegator for MutexPoolDelegator {
+    async fn delegate(
+        &self,
+        agent_name: &str,
+        input: serde_json::Value,
+        context_strategy: y_core::agent::ContextStrategyHint,
+        session_id: Option<uuid::Uuid>,
+    ) -> Result<y_core::agent::DelegationOutput, y_core::agent::DelegationError> {
+        let pool = self.0.lock().await;
+        pool.delegate(agent_name, input, context_strategy, session_id)
+            .await
+    }
+}
+
+/// Result of agent sub-system initialisation.
+type AgentInitResult = (
+    Mutex<AgentRegistry>,
+    Arc<Mutex<AgentPool>>,
+    Arc<dyn AgentDelegator>,
+    Arc<DelegationTracker>,
+);
+
+impl ServiceContainer {
     /// Initialise agent registry, pool, delegator, and wrap the delegator with diagnostics.
+    ///
+    /// Uses a SINGLE shared `AgentPool` behind `tokio::sync::Mutex` so that
+    /// both `self.agent_pool` and `self.agent_delegator` share the same pool.
+    /// When `init_agent_runner()` swaps the runner to `ServiceAgentRunner`,
+    /// the change automatically affects the delegation path.
     fn init_agent_and_diagnostics(
         provider_pool: &Arc<ProviderPoolImpl>,
         diagnostics: &Arc<DiagnosticsSubscriber<dyn TraceStore>>,
-    ) -> (
-        Mutex<AgentRegistry>,
-        Mutex<AgentPool>,
-        Arc<dyn AgentDelegator>,
-        Arc<DelegationTracker>,
-    ) {
+    ) -> AgentInitResult {
         let agent_registry = Mutex::new(AgentRegistry::new());
         let mut agent_pool = AgentPool::new(MultiAgentConfig::default());
 
@@ -489,14 +531,12 @@ tools = ["tool_search"]
 
         let delegation_tracker = Arc::clone(agent_pool.delegation_tracker());
 
-        let agent_delegator: Arc<dyn AgentDelegator> = Arc::new(agent_pool);
-        let mut agent_pool_for_services = AgentPool::new(MultiAgentConfig::default());
-        let runner2 = Arc::new(SingleTurnRunner::new(
-            Arc::clone(provider_pool) as Arc<dyn y_core::provider::ProviderPool>
-        ));
-        agent_pool_for_services.set_runner(runner2);
-        let agent_pool_for_services = Mutex::new(agent_pool_for_services);
+        // Wrap the pool in Arc<Mutex<...>> so both self.agent_pool and the
+        // delegator share the same pool instance.
+        let shared_pool = Arc::new(Mutex::new(agent_pool));
 
+        let agent_delegator: Arc<dyn AgentDelegator> =
+            Arc::new(MutexPoolDelegator(Arc::clone(&shared_pool)));
         let agent_delegator: Arc<dyn AgentDelegator> =
             Arc::new(crate::diagnostics::DiagnosticsAgentDelegator::new(
                 agent_delegator,
@@ -505,7 +545,7 @@ tools = ["tool_search"]
 
         (
             agent_registry,
-            agent_pool_for_services,
+            shared_pool,
             agent_delegator,
             delegation_tracker,
         )
@@ -592,6 +632,15 @@ tools = ["tool_search"]
         }
     }
 
+    /// Hot-reload the knowledge service configuration.
+    ///
+    /// Acquires the `KnowledgeService` mutex and replaces its config so
+    /// that subsequent ingestion operations use the new parameters.
+    pub async fn reload_knowledge(&self, new_config: y_knowledge::config::KnowledgeConfig) {
+        let mut ks = self.knowledge_service.lock().await;
+        ks.reload_config(new_config);
+    }
+
     /// Construct a [`SkillIngestionService`] wired to this container's
     /// agent delegator.
     ///
@@ -606,7 +655,11 @@ tools = ["tool_search"]
 
     /// Two-phase initialisation: swap the agent runner from `SingleTurnRunner`
     /// to `ServiceAgentRunner` so that sub-agents use the unified
-    /// `AgentService::execute()` loop.
+    /// `AgentService::execute()` loop with multi-turn tool calling.
+    ///
+    /// Because `agent_pool` is shared (via `MutexPoolDelegator`) with
+    /// `agent_delegator`, this single swap upgrades both delegation and
+    /// direct pool access paths.
     ///
     /// Must be called **after** the container has been wrapped in `Arc`.
     pub fn init_agent_runner(self: &Arc<Self>) {
@@ -616,6 +669,8 @@ tools = ["tool_search"]
         // The agent_pool held by the container is behind a Mutex.
         // We acquire it synchronously (blocking_lock) since this runs once
         // during startup, before any async work begins.
+        // Since the delegator shares this same pool (via MutexPoolDelegator),
+        // the runner swap automatically takes effect for all delegation calls.
         self.agent_pool.blocking_lock().set_runner(runner);
         tracing::info!("ServiceAgentRunner initialised for sub-agent delegation");
     }
@@ -673,10 +728,9 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "tool_search",
     "file_read",
     "file_write",
-    "file_list",
-    "file_search",
     "shell_exec",
     "browser",
+    "web_fetch",
 ];
 
 /// Pre-activate all built-in tools as always-active in the activation set.
@@ -696,16 +750,16 @@ async fn pre_activate_core_tools(
 /// Generate a compact summary of always-active tools for prompt injection.
 ///
 /// Produces a Markdown table with tool name, first-sentence description,
-/// and required args (extracted from JSON Schema), followed by a usage
-/// reminder. Called once at startup.
+/// and a usage hint (required args or available params), followed by a
+/// usage reminder. Called once at startup.
 fn build_core_tools_summary(set: &ToolActivationSet) -> String {
     let mut defs = set.always_active_definitions();
     defs.sort_by_key(|d| d.name.as_str().to_string());
     let mut lines = vec![
         "## Core Tools (always available)\n".to_string(),
         "You can call these tools directly without searching:\n".to_string(),
-        "| Tool | Description | Required Args |".to_string(),
-        "|------|-------------|---------------|".to_string(),
+        "| Tool | Description | Usage |".to_string(),
+        "|------|-------------|-------|".to_string(),
     ];
     for def in &defs {
         // First sentence of description only.
@@ -715,8 +769,8 @@ fn build_core_tools_summary(set: &ToolActivationSet) -> String {
             .next()
             .unwrap_or(&def.description)
             .trim();
-        let args = extract_required_args(&def.parameters);
-        lines.push(format!("| {} | {} | {} |", def.name.as_str(), desc, args));
+        let usage = extract_usage_hint(&def.parameters);
+        lines.push(format!("| {} | {} | {} |", def.name.as_str(), desc, usage));
     }
     lines.push(String::new());
     lines.push(
@@ -728,41 +782,56 @@ fn build_core_tools_summary(set: &ToolActivationSet) -> String {
     lines.join("\n")
 }
 
-/// Extract a compact required-args hint from a JSON Schema `parameters` value.
+/// Extract a compact usage hint from a JSON Schema `parameters` value.
 ///
-/// Given a schema like `{"type":"object","properties":{"path":{"type":"string",
-/// "description":"..."}},"required":["path"]}`, produces `{"path": "<...>"}`.
-fn extract_required_args(params: &serde_json::Value) -> String {
-    let required = match params.get("required").and_then(|v| v.as_array()) {
-        Some(arr) => arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
-        None => return "{}".to_string(),
-    };
-    if required.is_empty() {
-        return "{}".to_string();
-    }
+/// When the schema has an explicit `"required"` array, the hint shows only
+/// those params with placeholders derived from descriptions, e.g.
+/// `{"path": "<File_path_to>"}`.
+///
+/// When no required params exist (common for multi-mode tools like
+/// `tool_search` and `web_fetch`), the hint falls back to listing all
+/// available properties so the LLM still knows what it can pass, e.g.
+/// `Pass one of: query, category, tool`.
+fn extract_usage_hint(params: &serde_json::Value) -> String {
+    let required: Vec<&str> = params
+        .get("required")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
 
     let properties = params.get("properties");
 
-    let pairs: Vec<String> = required
-        .iter()
-        .map(|name| {
-            // Build a compact placeholder from the property description or type.
-            let placeholder = properties
-                .and_then(|p| p.get(*name))
-                .and_then(|prop| {
-                    prop.get("description").and_then(|d| d.as_str()).map(|d| {
-                        // Take the first few words as a terse hint.
-                        let hint: String =
-                            d.split_whitespace().take(3).collect::<Vec<_>>().join("_");
-                        format!("<{hint}>")
+    // Case 1: explicit required args -- show compact placeholders.
+    if !required.is_empty() {
+        let pairs: Vec<String> = required
+            .iter()
+            .map(|name| {
+                let placeholder = properties
+                    .and_then(|p| p.get(*name))
+                    .and_then(|prop| {
+                        prop.get("description").and_then(|d| d.as_str()).map(|d| {
+                            let hint: String =
+                                d.split_whitespace().take(3).collect::<Vec<_>>().join("_");
+                            format!("<{hint}>")
+                        })
                     })
-                })
-                .unwrap_or_else(|| "<value>".to_string());
-            format!("\"{name}\": \"{placeholder}\"")
-        })
-        .collect();
+                    .unwrap_or_else(|| "<value>".to_string());
+                format!("\"{name}\": \"{placeholder}\"")
+            })
+            .collect();
+        return format!("{{{{{}}}}}", pairs.join(", "));
+    }
 
-    format!("{{{{{}}}}}", pairs.join(", "))
+    // Case 2: no required args -- list available properties as hints.
+    if let Some(props) = properties.and_then(|p| p.as_object()) {
+        if props.is_empty() {
+            return "{}".to_string();
+        }
+        let names: Vec<&str> = props.keys().map(String::as_str).collect();
+        return format!("Pass one of: {}", names.join(", "));
+    }
+
+    "{}".to_string()
 }
 
 // ---------------------------------------------------------------------------

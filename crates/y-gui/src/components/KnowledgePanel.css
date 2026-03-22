@@ -192,6 +192,13 @@
   color: var(--text-secondary);
 }
 
+/* Entry detail — scrollable body */
+.knowledge-entry-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 /* Entry detail — meta */
 .knowledge-entry-meta {
   display: flex;

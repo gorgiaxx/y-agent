@@ -330,7 +330,7 @@ export interface PermissionsNeeded {
 
 /** Result of a skill import operation (from `skill_import`). */
 export interface SkillImportResult {
-  decision: 'accepted' | 'rejected' | 'partial_accept';
+  decision: 'accepted' | 'optimized' | 'rejected' | 'partial_accept';
   classification: string;
   skill_id: string | null;
   error: string | null;

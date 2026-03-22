@@ -115,6 +115,19 @@ impl KnowledgeConfig {
             self.l2_max_tokens
         }
     }
+
+    /// Effective L2 chunk token limit, capped by the embedding model's
+    /// context window when embedding is enabled.
+    ///
+    /// This ensures chunks are never created larger than what the embedding
+    /// model can accept, avoiding lossy post-hoc truncation.
+    pub fn effective_l2_max_tokens(&self) -> u32 {
+        if self.embedding_enabled && self.embedding_max_tokens > 0 {
+            self.l2_max_tokens.min(self.embedding_max_tokens)
+        } else {
+            self.l2_max_tokens
+        }
+    }
 }
 
 const fn default_l0_max_tokens() -> u32 {

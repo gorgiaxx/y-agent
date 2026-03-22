@@ -8,22 +8,17 @@
 
 [categories.file]
 label = "File Management"
-description = "Read, write, list, search, and manage files"
+description = "Read, write, and manage files"
 
 [categories.file.subcategories.read]
 label = "File Reading"
 description = "Read file contents"
-tools = ["file_read", "file_list"]
+tools = ["file_read"]
 
 [categories.file.subcategories.write]
 label = "File Writing"
 description = "Create or modify files"
 tools = ["file_write"]
-
-[categories.file.subcategories.search]
-label = "File Search"
-description = "Search across file contents"
-tools = ["file_search"]
 
 [categories.shell]
 label = "Shell"

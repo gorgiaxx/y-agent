@@ -155,7 +155,7 @@ if [[ "$BUILD_CLI" == true ]]; then
 
   cp "$CLI_BIN" "$CLI_STAGING/y-agent"
   cp -r "$PROJECT_ROOT/config" "$CLI_STAGING/config"
-  cp -r "$PROJECT_ROOT/builtin-skills" "$CLI_STAGING/builtin-skills"
+  cp -r "$PROJECT_ROOT/skills" "$CLI_STAGING/skills"
   cp "$PROJECT_ROOT/README.md" "$CLI_STAGING/"
 
   (cd "$DIST_DIR" && zip -r "${CLI_ARCHIVE}.zip" "$CLI_ARCHIVE")

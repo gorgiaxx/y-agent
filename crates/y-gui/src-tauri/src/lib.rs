@@ -68,7 +68,7 @@ pub fn run() {
             // if they don't already exist. This makes the GUI work
             // out-of-the-box without requiring `y-agent init`.
             if let Some(ref dd) = data_dir {
-                if let Err(e) = y_service::init::ensure_initialized(&config_path, dd) {
+                if let Err(e) = y_service::init::ensure_initialized(&config_path, dd, None) {
                     tracing::warn!(error = %e, "Auto-init failed; continuing with defaults");
                 }
             }
@@ -99,7 +99,14 @@ pub fn run() {
             let rt = Box::leak(Box::new(rt));
             let _guard = rt.enter();
 
-            let app_state = AppState::new(Arc::new(container), config_path.clone());
+            let container = Arc::new(container);
+
+            // Upgrade sub-agent runner from SingleTurnRunner to
+            // ServiceAgentRunner so delegated agents (skill-ingestion, etc.)
+            // get the full execution loop with multi-turn tool calling.
+            container.init_agent_runner();
+
+            let app_state = AppState::new(Arc::clone(&container), config_path.clone());
             app.manage(app_state);
             app.manage(knowledge_state);
 

@@ -23,7 +23,7 @@ use y_skills::{FilesystemSkillStore, FormatDetector, IngestionFormat, SkillRegis
 /// Result of a skill import operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportResult {
-    /// Whether the import was accepted, rejected, or partially accepted.
+    /// Whether the import was accepted, rejected, optimized, or partially accepted.
     pub decision: ImportDecision,
     /// Classification assigned by the agent.
     pub classification: String,
@@ -35,6 +35,8 @@ pub struct ImportResult {
     pub redirect_suggestion: Option<String>,
     /// Security issues found.
     pub security_issues: Vec<String>,
+    /// Notes describing what optimizations were applied (for `optimized`/`partial_accept`).
+    pub optimization_notes: Option<String>,
 }
 
 /// Import decision outcome.
@@ -44,6 +46,7 @@ pub enum ImportDecision {
     Accepted,
     Rejected,
     PartialAccept,
+    Optimized,
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +62,8 @@ struct AgentIngestionOutput {
     rejection_reason: Option<String>,
     #[serde(default)]
     redirect_suggestion: Option<String>,
+    #[serde(default)]
+    optimization_notes: Option<String>,
     #[serde(default)]
     manifest: Option<AgentManifestOutput>,
     #[serde(default)]
@@ -227,7 +232,7 @@ impl SkillIngestionService {
         let existing_skills: Vec<String> = self.registry.read().await.list_names().await;
 
         // 4. Delegate to skill-ingestion agent
-        //    The agent now has file_read + file_list tools to explore the directory.
+        //    The agent now has file_read + shell_exec tools to explore the directory.
         let input = serde_json::json!({
             "source_content": source_content,
             "source_format": format_str,
@@ -250,17 +255,21 @@ impl SkillIngestionService {
             .map_err(|e| ImportError::DelegationFailed(e.to_string()))?;
 
         // 5. Parse agent output
-        let agent_output: AgentIngestionOutput = serde_json::from_str(&delegation_output.text)
-            .map_err(|e| {
-                ImportError::InvalidAgentOutput(format!(
-                    "failed to parse agent response: {e}\nraw: {}",
-                    &delegation_output.text[..delegation_output.text.floor_char_boundary(500)]
-                ))
-            })?;
+        //    Multi-turn execution accumulates intermediate assistant content
+        //    (from tool-calling iterations) before the final JSON. Extract
+        //    the JSON object from any surrounding text.
+        let json_str = extract_json_from_response(&delegation_output.text);
+        let agent_output: AgentIngestionOutput = serde_json::from_str(json_str).map_err(|e| {
+            ImportError::InvalidAgentOutput(format!(
+                "failed to parse agent response: {e}\nraw: {}",
+                &delegation_output.text[..delegation_output.text.floor_char_boundary(500)]
+            ))
+        })?;
 
         // 6. Handle rejection
         let decision = match agent_output.decision.as_str() {
             "accepted" => ImportDecision::Accepted,
+            "optimized" => ImportDecision::Optimized,
             "partial_accept" => ImportDecision::PartialAccept,
             _ => ImportDecision::Rejected,
         };
@@ -278,7 +287,16 @@ impl SkillIngestionService {
                 rejection_reason: agent_output.rejection_reason,
                 redirect_suggestion: agent_output.redirect_suggestion,
                 security_issues: vec![],
+                optimization_notes: None,
             });
+        }
+
+        if decision == ImportDecision::Optimized {
+            info!(
+                classification = %agent_output.classification,
+                notes = ?agent_output.optimization_notes,
+                "Skill optimized by agent"
+            );
         }
 
         // 7. Build manifest and register
@@ -339,6 +357,7 @@ impl SkillIngestionService {
             rejection_reason: None,
             redirect_suggestion: None,
             security_issues: vec![],
+            optimization_notes: agent_output.optimization_notes,
         })
     }
 
@@ -529,6 +548,24 @@ fn format_to_str(format: IngestionFormat) -> &'static str {
     }
 }
 
+/// Extract a JSON object from a response that may contain surrounding text.
+///
+/// Multi-turn agent execution accumulates intermediate assistant content
+/// (from tool-calling iterations like `shell_exec` / `file_read`) before the
+/// final JSON output. This finds the first `{` and last `}` to extract the
+/// JSON object, discarding any prefix or suffix.
+fn extract_json_from_response(text: &str) -> &str {
+    let trimmed = text.trim();
+    if let Some(start) = trimmed.find('{') {
+        if let Some(end) = trimmed.rfind('}') {
+            if end > start {
+                return &trimmed[start..=end];
+            }
+        }
+    }
+    trimmed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -706,5 +743,125 @@ mod tests {
         assert_eq!(results.len(), 2);
         // First should succeed; second registers same name (creates new version)
         assert!(results[0].is_ok());
+    }
+
+    // --- extract_json_from_response tests ---
+
+    #[test]
+    fn test_extract_json_clean() {
+        let input = r#"{"decision": "rejected"}"#;
+        assert_eq!(extract_json_from_response(input), input);
+    }
+
+    #[test]
+    fn test_extract_json_with_prefix() {
+        let input = "\n\nSome thinking...\n\n{\"decision\": \"rejected\"}";
+        assert_eq!(
+            extract_json_from_response(input),
+            "{\"decision\": \"rejected\"}"
+        );
+    }
+
+    #[test]
+    fn test_extract_json_with_markdown_fence() {
+        let input = "```json\n{\"decision\": \"rejected\"}\n```";
+        assert_eq!(
+            extract_json_from_response(input),
+            "{\"decision\": \"rejected\"}"
+        );
+    }
+
+    #[test]
+    fn test_extract_json_no_braces() {
+        let input = "no json here";
+        assert_eq!(extract_json_from_response(input), input);
+    }
+
+    /// T-SK-A2-06: Agent response with accumulated content prefix parses correctly.
+    #[tokio::test]
+    async fn test_import_with_accumulated_content_prefix() {
+        // Simulate multi-turn output: blank lines + thinking text before final JSON.
+        let prefix = "\n\nLet me analyze this skill...\n\n";
+        let json = rejected_response();
+        let response_with_prefix = format!("{prefix}{json}");
+
+        let delegator = Arc::new(MockDelegator::with_response(&response_with_prefix));
+        let registry = test_registry();
+        let service = SkillIngestionService::new(delegator, Arc::clone(&registry));
+
+        let dir = tempfile::tempdir().unwrap();
+        let skill_path = dir.path().join("api-wrapper.yaml");
+        tokio::fs::write(&skill_path, "openapi: 3.0.0\ninfo: {title: API}")
+            .await
+            .unwrap();
+
+        let result = service.import(&skill_path).await.unwrap();
+        assert_eq!(result.decision, ImportDecision::Rejected);
+        assert_eq!(result.classification, "api_call");
+    }
+
+    fn optimized_response() -> String {
+        serde_json::json!({
+            "decision": "optimized",
+            "classification": "api_call",
+            "optimization_notes": "Transformed URL templates into natural-language rule tables. Decomposed into root + 2 sub-documents for lazy loading. Extracted web_fetch as tool reference.",
+            "manifest": {
+                "name": "multi-search-engine",
+                "version": "1.0.0",
+                "description": "Guide LLM to construct search queries for multiple search engines",
+                "classification": {
+                    "type": "api_call",
+                    "domain": ["search", "web"],
+                    "tags": ["search", "multi-engine"],
+                    "atomic": false
+                },
+                "constraints": {
+                    "max_input_tokens": 4000,
+                    "max_output_tokens": 4000
+                }
+            },
+            "root_content": "# Multi-Search-Engine\n\nGuide for constructing search queries across multiple engines.\n\n## Core Rules\n\n1. Identify the user's search intent.\n2. Select the appropriate engine from the sub-document index.\n3. Construct the URL using the engine's pattern.\n4. Use the `web_fetch` tool to retrieve results.\n\n## Sub-Document Index\n\n| Document | Load Condition |\n|----------|----------------|\n| details/general-engines.md | When searching Google, Bing, or DuckDuckGo |\n| details/academic-engines.md | When searching academic sources |",
+            "sub_documents": [
+                {
+                    "path": "details/general-engines.md",
+                    "title": "General search engines",
+                    "content": "# General Search Engines\n\n| Engine | URL Pattern | Notes |\n|--------|------------|-------|\n| Google | `https://google.com/search?q={query}` | Default engine |\n| Bing | `https://bing.com/search?q={query}` | Alternative |",
+                    "token_count": 400,
+                    "load_condition": "when searching general web"
+                }
+            ],
+            "extracted_tools": [],
+            "companion_decisions": []
+        })
+        .to_string()
+    }
+
+    /// T-SK-A2-07: Optimized skill is registered successfully.
+    #[tokio::test]
+    async fn test_import_optimized_skill() {
+        let delegator = Arc::new(MockDelegator::with_response(&optimized_response()));
+        let registry = test_registry();
+        let service = SkillIngestionService::new(delegator, Arc::clone(&registry));
+
+        let dir = tempfile::tempdir().unwrap();
+        let skill_path = dir.path().join("multi-search.md");
+        tokio::fs::write(&skill_path, "# Multi Search Engine\nURL templates...")
+            .await
+            .unwrap();
+
+        let result = service.import(&skill_path).await.unwrap();
+        assert_eq!(result.decision, ImportDecision::Optimized);
+        assert_eq!(result.classification, "api_call");
+        assert!(result.skill_id.is_some());
+        assert!(result.optimization_notes.is_some());
+        assert!(result
+            .optimization_notes
+            .unwrap()
+            .contains("natural-language"));
+
+        // Verify registration
+        let reg = registry.read().await;
+        let names = reg.list_names().await;
+        assert!(names.contains(&"multi-search-engine".to_string()));
     }
 }

@@ -494,110 +494,40 @@ const CONFIG_TEMPLATES: &[(&str, &str)] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Built-in skills (embedded at compile time)
+// Skills seeding (copy from source directory at install time)
 // ---------------------------------------------------------------------------
 
-/// A file within a built-in skill directory.
-struct BuiltinSkillFile {
-    /// Relative path within the skill directory (e.g., "skill.toml", "details/tone-guidelines.md").
-    relative_path: &'static str,
-    /// File content.
-    content: &'static str,
-}
-
-/// A complete built-in skill with all its files.
-struct BuiltinSkill {
-    /// Skill directory name (kebab-case).
-    name: &'static str,
-    /// All files belonging to this skill.
-    files: &'static [BuiltinSkillFile],
-}
-
-const BUILTIN_SKILLS: &[BuiltinSkill] = &[
-    BuiltinSkill {
-        name: "humanizer-zh",
-        files: &[
-            BuiltinSkillFile {
-                relative_path: "skill.toml",
-                content: include_str!("../../../../builtin-skills/humanizer-zh/skill.toml"),
-            },
-            BuiltinSkillFile {
-                relative_path: "root.md",
-                content: include_str!("../../../../builtin-skills/humanizer-zh/root.md"),
-            },
-            BuiltinSkillFile {
-                relative_path: "details/tone-guidelines.md",
-                content: include_str!("../../../../builtin-skills/humanizer-zh/details/tone-guidelines.md"),
-            },
-        ],
-    },
-    BuiltinSkill {
-        name: "code-review-rust",
-        files: &[
-            BuiltinSkillFile {
-                relative_path: "skill.toml",
-                content: include_str!("../../../../builtin-skills/code-review-rust/skill.toml"),
-            },
-            BuiltinSkillFile {
-                relative_path: "root.md",
-                content: include_str!("../../../../builtin-skills/code-review-rust/root.md"),
-            },
-            BuiltinSkillFile {
-                relative_path: "details/error-handling-patterns.md",
-                content: include_str!("../../../../builtin-skills/code-review-rust/details/error-handling-patterns.md"),
-            },
-            BuiltinSkillFile {
-                relative_path: "details/unsafe-review-checklist.md",
-                content: include_str!("../../../../builtin-skills/code-review-rust/details/unsafe-review-checklist.md"),
-            },
-        ],
-    },
-];
-
-/// Seed built-in skills into the user's skills store.
+/// Detect the skills source directory shipped alongside the binary.
 ///
-/// Only installs skills that don't already exist (won't overwrite user modifications).
-/// Returns the list of skill names that were seeded.
-pub fn seed_builtin_skills(data_dir: &Path) -> Result<Vec<String>> {
-    let skills_dir = data_dir.join("skills");
-    std::fs::create_dir_all(&skills_dir)
-        .with_context(|| format!("creating skills directory: {}", skills_dir.display()))?;
+/// Looks for `<exe_dir>/../skills/` (release install layout) and
+/// `<exe_dir>/../../skills/` (development layout). Returns `None`
+/// if neither location exists.
+pub fn detect_skills_source() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
 
-    let mut seeded = Vec::new();
-
-    for skill in BUILTIN_SKILLS {
-        let dest_dir = skills_dir.join(skill.name);
-
-        // Skip if already exists (don't overwrite user modifications).
-        if dest_dir.exists() {
-            continue;
-        }
-
-        // Write all files for this skill.
-        for file in skill.files {
-            let file_path = dest_dir.join(file.relative_path);
-
-            // Ensure parent directories exist (e.g., details/).
-            if let Some(parent) = file_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("creating dir: {}", parent.display()))?;
-            }
-
-            std::fs::write(&file_path, file.content)
-                .with_context(|| format!("writing {}", file_path.display()))?;
-        }
-
-        // Create empty lineage.toml (required by standard).
-        std::fs::write(
-            dest_dir.join("lineage.toml"),
-            "# Transformation lineage (builtin skill)\n",
-        )
-        .with_context(|| format!("writing lineage.toml for {}", skill.name))?;
-
-        seeded.push(skill.name.to_string());
+    // Release layout: <prefix>/bin/y-agent -> <prefix>/skills/
+    let candidate = exe_dir.join("../skills");
+    if candidate.is_dir() {
+        return Some(candidate);
     }
 
-    Ok(seeded)
+    // Development / workspace layout: target/release/y-agent -> ../../skills/
+    let candidate = exe_dir.join("../../skills");
+    if candidate.is_dir() {
+        return Some(candidate);
+    }
+
+    None
+}
+
+/// Seed skills from a source directory into the user's skills store.
+///
+/// Thin wrapper around [`y_service::init::copy_skills_from_source`].
+/// Only installs skills that don't already exist (won't overwrite user modifications).
+/// Returns the list of skill names that were seeded.
+pub fn seed_skills_from_source(source_dir: &Path, data_dir: &Path) -> Result<Vec<String>> {
+    y_service::init::copy_skills_from_source(source_dir, data_dir)
 }
 
 /// Seed built-in prompt files into the user's config directory.
@@ -1030,23 +960,27 @@ pub async fn run(args: &InitArgs) -> Result<()> {
         output::print_info("Skipped database initialization (existing database preserved)");
     }
 
-    // --- Step 6c: Seed built-in skills ---
-    match seed_builtin_skills(&base) {
-        Ok(seeded) => {
-            if seeded.is_empty() {
-                output::print_info("Built-in skills already installed");
-            } else {
-                output::print_success(&format!(
-                    "Seeded {} built-in skill(s): {}",
-                    seeded.len(),
-                    seeded.join(", ")
-                ));
+    // --- Step 6c: Seed skills from source directory ---
+    if let Some(skills_source) = detect_skills_source() {
+        match seed_skills_from_source(&skills_source, &data_dir) {
+            Ok(seeded) => {
+                if seeded.is_empty() {
+                    output::print_info("Skills already installed");
+                } else {
+                    output::print_success(&format!(
+                        "Seeded {} skill(s): {}",
+                        seeded.len(),
+                        seeded.join(", ")
+                    ));
+                }
+            }
+            Err(e) => {
+                output::print_warning(&format!("Skills seeding failed: {e}"));
+                output::print_info("You can manually copy skills later");
             }
         }
-        Err(e) => {
-            output::print_warning(&format!("Built-in skills seeding failed: {e}"));
-            output::print_info("You can manually copy skills later");
-        }
+    } else {
+        output::print_info("No skills source directory found; skipping skill seeding");
     }
 
     // --- Step 6d: Seed built-in prompts ---

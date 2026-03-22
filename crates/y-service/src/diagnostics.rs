@@ -364,15 +364,33 @@ impl DiagnosticsService {
 }
 
 // ---------------------------------------------------------------------------
-// DiagnosticsAgentDelegator — decorator for tracing subagent LLM calls
+// DiagnosticsAgentDelegator -- decorator for tracing subagent LLM calls
 // ---------------------------------------------------------------------------
+
+// Task-local trace ID set by `DiagnosticsAgentDelegator` so that
+// `ServiceAgentRunner` can pick it up and forward it into
+// `AgentExecutionConfig.external_trace_id`. This avoids changing the
+// `AgentDelegator` trait signature.
+tokio::task_local! {
+    pub static SUBAGENT_TRACE_ID: uuid::Uuid;
+}
+
+// Task-local progress sender set by callers (e.g. `skill_import`) so that
+// `ServiceAgentRunner` can forward real-time `TurnEvent`s during subagent
+// execution. When present, `AgentService::execute()` emits per-iteration
+// LLM response and tool-call events through this channel.
+tokio::task_local! {
+    pub static SUBAGENT_PROGRESS: crate::chat::TurnEventSender;
+}
 
 /// A decorator around `AgentDelegator` that records diagnostics (trace +
 /// generation observation) for each delegation call.
 ///
-/// Without this wrapper, subagent calls (title-generator, skill-ingestion,
-/// etc.) are invisible in the DIAGNOSTICS panel because `AgentPool::delegate()`
-/// calls `SingleTurnRunner::run()` which bypasses the diagnostics subscriber.
+/// Creates a `subagent:<name>` trace and propagates its ID via the
+/// `SUBAGENT_TRACE_ID` task-local so that `ServiceAgentRunner` can
+/// forward it to `AgentService::execute()`. The execute loop then
+/// records per-iteration generation and tool-call observations under
+/// this trace, giving full visibility in the diagnostics panel.
 ///
 /// When a `session_id` is provided by the caller, the subagent trace is
 /// associated with that session so it appears in session-level diagnostics.
@@ -410,8 +428,6 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
         session_id: Option<uuid::Uuid>,
     ) -> Result<y_core::agent::DelegationOutput, y_core::agent::DelegationError> {
         // Start a trace for this subagent execution.
-        // Use the caller-supplied session so the trace appears in
-        // session-level diagnostics; fall back to nil (global-only).
         let trace_session_id = session_id.unwrap_or(uuid::Uuid::nil());
         let trace_name = format!("subagent:{agent_name}");
         let input_preview = match &input {
@@ -427,39 +443,28 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
             .await
             .ok();
 
-        // Delegate to the inner delegator.
-        let result = self
-            .inner
-            .delegate(agent_name, input, context_strategy, session_id)
-            .await;
+        // Delegate to the inner delegator, propagating the trace_id via
+        // task-local so ServiceAgentRunner can forward it.
+        let result = if let Some(tid) = trace_id {
+            SUBAGENT_TRACE_ID
+                .scope(tid, async {
+                    self.inner
+                        .delegate(agent_name, input, context_strategy, session_id)
+                        .await
+                })
+                .await
+        } else {
+            self.inner
+                .delegate(agent_name, input, context_strategy, session_id)
+                .await
+        };
 
+        // Close the trace.  Per-iteration generation and tool-call
+        // observations have already been recorded by AgentService::execute()
+        // under this same trace_id (via external_trace_id).
         match &result {
             Ok(output) => {
-                // Record the generation observation.
                 if let Some(tid) = trace_id {
-                    let _ = self
-                        .diagnostics
-                        .on_generation(y_diagnostics::GenerationParams {
-                            trace_id: tid,
-                            parent_id: None,
-                            session_id: None,
-                            model: output.model_used.clone(),
-                            input_tokens: output.input_tokens,
-                            output_tokens: output.output_tokens,
-                            cost_usd: crate::cost::CostService::compute_cost(
-                                output.input_tokens,
-                                output.output_tokens,
-                            ),
-                            input: serde_json::json!({
-                                "agent": agent_name,
-                                "type": "subagent_delegation",
-                            }),
-                            output: serde_json::from_str::<serde_json::Value>(&output.text)
-                                .unwrap_or_else(|_| serde_json::Value::String(output.text.clone())),
-                            duration_ms: output.duration_ms,
-                        })
-                        .await;
-
                     let _ = self
                         .diagnostics
                         .on_trace_end(tid, true, Some(&output.text))
@@ -467,7 +472,6 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
                 }
             }
             Err(_) => {
-                // Mark the trace as failed.
                 if let Some(tid) = trace_id {
                     let _ = self.diagnostics.on_trace_end(tid, false, None).await;
                 }

@@ -163,6 +163,24 @@ if [ -d "${PROJECT_DIR}/migrations" ]; then
     cp -r "${PROJECT_DIR}/migrations" "${DATA_DIR}/"
 fi
 
+# -- Copy Skills --------------------------------------------------------------
+
+SKILLS_SRC="${PROJECT_DIR}/skills"
+SKILLS_DST="${DATA_DIR}/skills"
+if [ -d "${SKILLS_SRC}" ]; then
+    log "Copying skills to ${SKILLS_DST}/..."
+    mkdir -p "${SKILLS_DST}"
+    for skill_dir in "${SKILLS_SRC}"/*/; do
+        skill_name="$(basename "${skill_dir}")"
+        if [ ! -d "${SKILLS_DST}/${skill_name}" ]; then
+            cp -r "${skill_dir}" "${SKILLS_DST}/${skill_name}"
+            info "  Installed skill: ${skill_name}"
+        else
+            info "  Skill already exists: ${skill_name} (skipped)"
+        fi
+    done
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 echo ""

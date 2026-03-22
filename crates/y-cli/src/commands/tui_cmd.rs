@@ -20,6 +20,7 @@ pub async fn run(
     toast_rx: Option<mpsc::UnboundedReceiver<Toast>>,
 ) -> Result<()> {
     let services = Arc::new(services);
+    services.init_agent_runner();
     let mut app = TuiApp::new(services, toast_rx)?;
     app.run().await
 }

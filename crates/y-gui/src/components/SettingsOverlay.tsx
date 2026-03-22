@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Settings, Plug, Info, X, Eye, EyeOff, RefreshCw, Plus, FileText, RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import type { GuiConfig } from '../types';
 import './SettingsOverlay.css';
 
@@ -738,6 +739,11 @@ export function SettingsOverlay({
 }: SettingsOverlayProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [localConfig, setLocalConfig] = useState<GuiConfig>({ ...config });
+  const [appVersion, setAppVersion] = useState('...');
+
+  useEffect(() => {
+    getVersion().then((v) => setAppVersion(v)).catch(() => setAppVersion('unknown'));
+  }, []);
 
   // Provider editor state (selectedSection derived from activeTab for TOML sections).
   const [sectionContent, setSectionContent] = useState('');
@@ -2227,7 +2233,7 @@ export function SettingsOverlay({
                   </div>
                   <div className="about-row">
                     <span className="about-label">Version</span>
-                    <span className="about-value">0.1.0</span>
+                    <span className="about-value">{appVersion}</span>
                   </div>
                   <div className="about-row">
                     <span className="about-label">Framework</span>

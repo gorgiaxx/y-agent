@@ -1,0 +1,48 @@
+[skill]
+name = "multi-search-engine"
+version = "f117d4082d8ca664c6b91fda37b228059e1b40cd963045dc7f361213f6a49a82"
+description = "Multi search engine integration with 17 engines (8 CN + 9 Global). Supports advanced search operators, time filters, site search, privacy engines, and WolframAlpha knowledge queries."
+author = "skill-ingestion-agent"
+source_format = "markdown"
+
+[skill.classification]
+type = "hybrid"
+domain = [
+    "web-search",
+    "information-retrieval",
+    "privacy",
+    "knowledge-computation",
+]
+atomic = false
+
+[skill.constraints]
+max_input_tokens = 4000
+max_output_tokens = 2000
+
+[skill.root]
+path = "root.md"
+token_count = 1241
+
+[[skill.tree.sub_documents]]
+path = "advanced-google.md"
+title = "Google Advanced Search Techniques"
+token_count = 450
+load_condition = "on_demand"
+
+[[skill.tree.sub_documents]]
+path = "privacy-engines.md"
+title = "Privacy-Focused Search Engines"
+token_count = 620
+load_condition = "on_demand"
+
+[[skill.tree.sub_documents]]
+path = "wolframalpha-queries.md"
+title = "WolframAlpha Knowledge Queries"
+token_count = 520
+load_condition = "on_demand"
+
+[[skill.tree.sub_documents]]
+path = "search-strategies.md"
+title = "Multi-Engine Search Strategies"
+token_count = 580
+load_condition = "on_demand"

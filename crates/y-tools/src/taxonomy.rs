@@ -299,22 +299,17 @@ mod tests {
     const TEST_TOML: &str = r#"
 [categories.file]
 label = "File Management"
-description = "Read, write, search, and manage files"
+description = "Read, write, and manage files"
 
 [categories.file.subcategories.read]
 label = "File Reading"
 description = "Read file contents"
-tools = ["file_read", "file_list"]
+tools = ["file_read"]
 
 [categories.file.subcategories.write]
 label = "File Writing"
 description = "Create or modify files"
 tools = ["file_write"]
-
-[categories.file.subcategories.search]
-label = "File Search"
-description = "Search across files"
-tools = ["file_search"]
 
 [categories.shell]
 label = "Shell"
@@ -411,9 +406,9 @@ tools = ["tool_search"]
     #[test]
     fn test_search_multi_keyword_space_separated() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
-        // "web search" should match "file_search" via the "search" keyword
-        let results = taxonomy.search("web search");
-        assert!(results.contains(&"file_search".to_string()));
+        // "tool search" should match "tool_search" via the "search" keyword
+        let results = taxonomy.search("tool search");
+        assert!(results.contains(&"tool_search".to_string()));
     }
 
     #[test]
@@ -447,7 +442,6 @@ tools = ["tool_search"]
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let results = taxonomy.search("Read file contents");
         assert!(results.contains(&"file_read".to_string()));
-        assert!(results.contains(&"file_list".to_string()));
     }
 
     #[test]
@@ -478,8 +472,6 @@ tools = ["tool_search"]
         let tools = taxonomy.tools_in_category("file");
         assert!(tools.contains(&"file_read".to_string()));
         assert!(tools.contains(&"file_write".to_string()));
-        assert!(tools.contains(&"file_list".to_string()));
-        assert!(tools.contains(&"file_search".to_string()));
     }
 
     #[test]

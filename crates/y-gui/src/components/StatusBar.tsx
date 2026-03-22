@@ -65,9 +65,9 @@ export function StatusBar({
         )}
       </div>
       <div className="status-right">
-        <span className="status-item">
+        {/* <span className="status-item">
           {providerCount} provider{providerCount !== 1 ? 's' : ''}
-        </span>
+        </span> */}
         <span className="status-item status-version">v{version}</span>
       </div>
     </div>

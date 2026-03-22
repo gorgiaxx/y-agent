@@ -65,7 +65,7 @@ impl BrowserAction {
             }
             // Snapshot (accessibility tree)
             "snapshot" | "inspect" | "get_elements" | "list_elements" | "dom" | "get_dom"
-            | "accessibility" | "a11y" => Some(Self::Snapshot),
+            | "get_html" | "html" | "accessibility" | "a11y" => Some(Self::Snapshot),
             // Click
             "click" | "tap" | "press_button" | "click_element" => Some(Self::Click),
             // Type / fill text
@@ -351,6 +351,129 @@ impl BrowserTool {
         }
         *self.console_started.lock().await = false;
     }
+
+    /// Fetch the text content of a web page.
+    ///
+    /// Connects to Chrome (auto-launching if configured), navigates to the
+    /// given URL, optionally waits for dynamic content, then extracts the
+    /// visible text of the page.
+    ///
+    /// This is the public API used by `WebFetchTool` to wrap the browser's
+    /// navigate + `get_page_text` workflow into a single call.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `config` or `security` locks are poisoned.
+    pub async fn fetch_page_text(
+        &self,
+        url: &str,
+        wait_ms: Option<u64>,
+    ) -> Result<String, ToolError> {
+        if !self.config.read().unwrap().enabled {
+            return Err(ToolError::PermissionDenied {
+                name: "web_fetch".into(),
+                reason: "browser tool is disabled in configuration".into(),
+            });
+        }
+
+        // Security check.
+        self.security
+            .read()
+            .unwrap()
+            .validate_url(url)
+            .map_err(|e| ToolError::PermissionDenied {
+                name: "web_fetch".into(),
+                reason: e.to_string(),
+            })?;
+
+        self.ensure_connected().await?;
+
+        self.actions
+            .navigate(url)
+            .await
+            .map_err(cdp_to_tool_error)?;
+
+        // Wait for dynamic content to load.
+        if let Some(ms) = wait_ms {
+            let ms = ms.min(10_000);
+            if ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            }
+        }
+
+        let text = self
+            .actions
+            .get_page_text()
+            .await
+            .map_err(cdp_to_tool_error)?;
+
+        Ok(truncate_output(&text, MAX_OUTPUT_CHARS))
+    }
+
+    /// Search via a search engine and return the results page text.
+    ///
+    /// Connects to Chrome, builds a search URL, navigates to it, optionally
+    /// waits for JS rendering, then extracts the visible text.
+    ///
+    /// This is the public API used by `WebFetchTool` for its search action.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `config` or `security` locks are poisoned.
+    pub async fn search_page_text(
+        &self,
+        query: &str,
+        search_engine: Option<&str>,
+        wait_ms: Option<u64>,
+    ) -> Result<String, ToolError> {
+        if !self.config.read().unwrap().enabled {
+            return Err(ToolError::PermissionDenied {
+                name: "web_fetch".into(),
+                reason: "browser tool is disabled in configuration".into(),
+            });
+        }
+
+        let engine = search_engine.map_or_else(
+            || self.config.read().unwrap().default_search_engine.clone(),
+            String::from,
+        );
+
+        let search_url = build_search_url(&engine, query)?;
+
+        // Security check.
+        self.security
+            .read()
+            .unwrap()
+            .validate_url(&search_url)
+            .map_err(|e| ToolError::PermissionDenied {
+                name: "web_fetch".into(),
+                reason: e.to_string(),
+            })?;
+
+        self.ensure_connected().await?;
+
+        self.actions
+            .navigate(&search_url)
+            .await
+            .map_err(cdp_to_tool_error)?;
+
+        // Wait for search results to render.
+        if let Some(ms) = wait_ms {
+            let ms = ms.min(10_000);
+            if ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            }
+        }
+
+        let text = self
+            .actions
+            .get_page_text()
+            .await
+            .map_err(cdp_to_tool_error)?;
+
+        Ok(truncate_output(&text, MAX_OUTPUT_CHARS))
+    }
+
     /// Handle the `search` action: build a search engine URL and navigate.
     async fn dispatch_search(&self, input: &ToolInput) -> Result<serde_json::Value, ToolError> {
         let query =

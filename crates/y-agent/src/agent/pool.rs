@@ -463,6 +463,7 @@ impl AgentDelegator for AgentPool {
             allowed_tools: definition.allowed_tools.clone(),
             denied_tools: definition.denied_tools.clone(),
             max_iterations: definition.max_iterations,
+            trace_id: None,
         };
 
         // Register for observability before execution.

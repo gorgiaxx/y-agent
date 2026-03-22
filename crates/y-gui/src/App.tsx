@@ -611,7 +611,7 @@ function App() {
             <StatusBar
               providerCount={systemStatus?.provider_count ?? 0}
               sessionCount={systemStatus?.session_count ?? null}
-              version={systemStatus?.version ?? '0.1.0'}
+              version={systemStatus?.version ?? '0.1.1'}
               activeModel={statusBarMeta.provider}
               lastTokens={statusBarMeta.tokens}
               lastCost={statusBarMeta.cost}
@@ -672,6 +672,7 @@ function App() {
           summary={summary}
           isActive={isActive}
           isGlobal={!diagnosticSessionId}
+          sessionId={diagnosticSessionId}
           expanded={diagExpanded}
           onToggleExpand={() => setDiagExpanded(!diagExpanded)}
           onClear={clearDiagnostics}

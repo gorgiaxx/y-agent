@@ -248,7 +248,7 @@ mod tests {
             &registry,
             &mut pool,
             "tool-engineer",
-            "Create a new file_search tool",
+            "Create a new web_fetch tool",
             &[], // no conversation history
             None,
             ContextStrategy::None,
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(prepared.context_messages.len(), 1); // None strategy: just the prompt
         assert_eq!(
             prepared.context_messages[0].content,
-            "Create a new file_search tool"
+            "Create a new web_fetch tool"
         );
 
         // Execute

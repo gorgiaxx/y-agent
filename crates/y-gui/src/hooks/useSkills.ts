@@ -68,7 +68,7 @@ export function useSkills() {
 
     invoke<SkillImportResult>('skill_import', { path, sanitize })
       .then(async (result) => {
-        if (result.decision === 'accepted') {
+        if (result.decision === 'accepted' || result.decision === 'optimized') {
           setImportStatus('success');
           await refresh();
         } else if (result.decision === 'rejected') {

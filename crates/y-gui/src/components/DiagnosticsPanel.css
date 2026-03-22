@@ -89,6 +89,34 @@
   opacity: 0.85;
 }
 
+/* Session ID copy button */
+.diag-session-id-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-tertiary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.diag-session-id-btn:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.diag-session-id-text {
+  letter-spacing: 0.03em;
+}
+
 .diag-live-dot {
   width: 6px;
   height: 6px;
