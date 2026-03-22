@@ -335,6 +335,20 @@ impl AgentService {
                         .as_ref()
                         .map(std::string::ToString::to_string);
 
+                    // Resolve context_window from the provider pool so
+                    // real-time progress events carry it (status bar).
+                    let iter_ctx_window = {
+                        let metadata_list = pool.list_metadata();
+                        if let Some(ref pid) = final_provider_id {
+                            metadata_list
+                                .iter()
+                                .find(|m| m.id.to_string() == *pid)
+                                .map_or(0, |m| m.context_window)
+                        } else {
+                            metadata_list.first().map_or(0, |m| m.context_window)
+                        }
+                    };
+
                     Self::record_generation_diagnostics(
                         container,
                         config,
@@ -354,6 +368,7 @@ impl AgentService {
                             progress.as_ref(),
                             &iter_data,
                             &mut ctx,
+                            iter_ctx_window,
                         )
                         .await;
                         continue;
@@ -389,6 +404,7 @@ impl AgentService {
                                 progress.as_ref(),
                                 &iter_data,
                                 &mut ctx,
+                                iter_ctx_window,
                             )
                             .await;
                             continue;
@@ -406,6 +422,7 @@ impl AgentService {
                         final_model,
                         final_provider_id,
                         owns_trace,
+                        iter_ctx_window,
                     )
                     .await;
                 }
@@ -716,6 +733,7 @@ impl AgentService {
         data: &LlmIterationData,
         iteration: usize,
         tool_call_names: Vec<String>,
+        context_window: usize,
     ) {
         if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::LlmResponse {
@@ -728,6 +746,7 @@ impl AgentService {
                 tool_calls_requested: tool_call_names,
                 prompt_preview: data.prompt_preview.clone(),
                 response_text: data.response_text_raw.clone(),
+                context_window,
             });
         }
     }
@@ -761,6 +780,7 @@ impl AgentService {
         progress: Option<&TurnEventSender>,
         data: &LlmIterationData,
         ctx: &mut ToolExecContext,
+        context_window: usize,
     ) {
         let tc_names: Vec<String> = response
             .tool_calls
@@ -768,7 +788,14 @@ impl AgentService {
             .map(|tc| tc.name.clone())
             .collect();
 
-        Self::emit_llm_response(progress, response, data, ctx.iteration, tc_names);
+        Self::emit_llm_response(
+            progress,
+            response,
+            data,
+            ctx.iteration,
+            tc_names,
+            context_window,
+        );
 
         // Track new messages added in this iteration for mid-loop persistence.
         let msgs_before = ctx.new_messages.len();
@@ -817,6 +844,7 @@ impl AgentService {
         progress: Option<&TurnEventSender>,
         data: &LlmIterationData,
         ctx: &mut ToolExecContext,
+        context_window: usize,
     ) {
         let tc_names: Vec<String> = parse_result
             .tool_calls
@@ -824,7 +852,14 @@ impl AgentService {
             .map(|ptc| ptc.name.clone())
             .collect();
 
-        Self::emit_llm_response(progress, response, data, ctx.iteration, tc_names);
+        Self::emit_llm_response(
+            progress,
+            response,
+            data,
+            ctx.iteration,
+            tc_names,
+            context_window,
+        );
 
         // Track new messages added in this iteration for mid-loop persistence.
         let msgs_before = ctx.new_messages.len();
@@ -882,13 +917,14 @@ impl AgentService {
         final_model: String,
         final_provider_id: Option<String>,
         owns_trace: bool,
+        ctx_window: usize,
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
         let raw_content = response
             .content
             .clone()
             .unwrap_or_else(|| "(no content)".to_string());
 
-        Self::emit_llm_response(progress, response, data, ctx.iteration, vec![]);
+        Self::emit_llm_response(progress, response, data, ctx.iteration, vec![], ctx_window);
 
         let content = if config.tool_calling_mode == ToolCallingMode::PromptBased {
             let stripped = strip_tool_call_blocks(&raw_content);
@@ -914,16 +950,6 @@ impl AgentService {
             content.clone()
         } else {
             format!("{}{content}", ctx.accumulated_content)
-        };
-
-        let metadata_list = container.provider_pool().await.list_metadata();
-        let ctx_window = if let Some(ref pid) = final_provider_id {
-            metadata_list
-                .iter()
-                .find(|m| m.id.to_string() == *pid)
-                .map_or(0, |m| m.context_window)
-        } else {
-            metadata_list.first().map_or(0, |m| m.context_window)
         };
 
         Ok(AgentExecutionResult {

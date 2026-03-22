@@ -205,13 +205,75 @@
 /* ---- Settings panel action bar ---- */
 .settings-action-bar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-lg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface-secondary);
+  height: 52px;
+}
+
+.settings-action-bar-title {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 17px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--text-primary);
+  margin: 0;
+  letter-spacing: 0.01em;
+  opacity: 0.9;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-action-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+/* ---- Path field (read-only input with inline copy button) ---- */
+.path-field-wrap {
+  display: flex;
+  position: relative;
+  align-items: center;
+}
+
+.path-field-input {
+  width: 100%;
+  padding-right: 36px !important;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  color: var(--text-secondary);
+  cursor: default;
+  user-select: all;
+}
+
+.path-field-copy {
+  position: absolute;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+  flex-shrink: 0;
+}
+
+.path-field-copy:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
 }
 
 .btn-settings-save {

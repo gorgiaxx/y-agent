@@ -4,26 +4,31 @@
 # Enable/disable the browser tool entirely.
 # enabled = true
 
-# ---------- Chrome Mode ----------
-# Choose one: auto-launch a local Chrome, or connect to a remote CDP endpoint.
-
-# Launch a local headless Chrome automatically.
-# When true, y-agent spawns Chrome and manages its lifecycle.
-# auto_launch = false
-
-# Run Chrome in headless mode (no visible window).
-# Set to false for debugging or visual verification.
-# headless = true
+# ---------- Launch Mode ----------
+# Controls how Chrome is started and connected.
+#
+# Options:
+#   "remote"               - Connect to an already-running Chrome via CDP URL (default)
+#   "auto_launch_headless" - Auto-launch Chrome in headless mode (no visible window)
+#   "auto_launch_visible"  - Auto-launch Chrome with a visible window (for debugging)
+#
+# When using "remote", you must start Chrome manually with:
+#   chrome --remote-debugging-port=9222
+#
+# When using "auto_launch_headless" or "auto_launch_visible", y-agent will
+# automatically find and launch Chrome/Chromium/Edge.
+launch_mode = "auto_launch_headless"
 
 # Path to Chrome/Chromium executable.
-# Leave empty for auto-detection (tries Google Chrome, Chromium, etc.)
+# Leave empty for auto-detection (tries Google Chrome, Chromium, Edge, etc.)
+# Windows example: chrome_path = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 # chrome_path = ""
 
 # Remote debugging port for the auto-launched Chrome.
 # local_cdp_port = 9222
 
 # ---------- Remote CDP Mode ----------
-# Used when auto_launch = false.
+# Used when launch_mode = "remote".
 
 # CDP endpoint URL.
 # Supports http://, https://, ws://, wss://

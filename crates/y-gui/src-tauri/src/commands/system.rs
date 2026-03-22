@@ -1,5 +1,7 @@
 //! System status and health command handlers.
 
+use std::path::PathBuf;
+
 use serde::Serialize;
 use tauri::State;
 
@@ -49,6 +51,46 @@ pub async fn system_status(state: State<'_, AppState>) -> Result<SystemStatus, S
         provider_count,
         session_count,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Application paths
+// ---------------------------------------------------------------------------
+
+/// Paths returned to the frontend for display in Settings > General.
+#[derive(Debug, Serialize, Clone)]
+pub struct AppPaths {
+    /// Config directory path (e.g. `~/.config/y-agent/`).
+    pub config_dir: String,
+    /// Data directory path (e.g. `~/.local/state/y-agent/`).
+    pub data_dir: String,
+}
+
+/// Return the config and data directory paths for display.
+#[tauri::command]
+pub async fn app_paths(state: State<'_, AppState>) -> Result<AppPaths, String> {
+    let config = state.config_dir.display().to_string();
+    let data = data_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    Ok(AppPaths {
+        config_dir: config,
+        data_dir: data,
+    })
+}
+
+/// Get the XDG state base directory for y-agent (`~/.local/state/y-agent/`).
+///
+/// Mirrors the `state_dir()` helper in `lib.rs`.
+fn data_dir() -> Option<PathBuf> {
+    let state_home = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|h| PathBuf::from(h).join(".local").join("state"))
+        });
+    state_home.map(|s| s.join("y-agent"))
 }
 
 /// Quick health check.

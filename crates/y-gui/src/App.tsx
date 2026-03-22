@@ -275,6 +275,7 @@ function App() {
             tokens: { input: ev.input_tokens, output: ev.output_tokens },
             cost: (prev.cost ?? 0) > ev.cost_usd ? prev.cost : ev.cost_usd,
             contextTokensUsed: ev.input_tokens,
+            contextWindow: ev.context_window || prev.contextWindow,
           }));
         });
         break;
@@ -547,6 +548,7 @@ function App() {
       />
 
       <main className="main-panel">
+        {activeView !== 'settings' && (
         <header className="main-header">
           <h1 className="app-title">
             {activeView === 'skills'
@@ -555,8 +557,6 @@ function App() {
                 ? 'Knowledge'
               : activeView === 'agents'
               ? 'Agents'
-              : activeView === 'settings'
-              ? 'Settings'
               : activeSessionId
                 ? sessions.find((s) => s.id === activeSessionId)?.title || 'Untitled'
                 : 'y-agent'}
@@ -580,6 +580,7 @@ function App() {
             </button>
           </div>
         </header>
+        )}
 
         {activeView === 'chat' && (
           <>

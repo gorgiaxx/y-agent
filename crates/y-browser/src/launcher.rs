@@ -1,7 +1,8 @@
 //! Chrome process launcher and lifecycle manager.
 //!
 //! Spawns a headless Chrome/Chromium instance with `--remote-debugging-port`
-//! and manages its lifecycle. Used when `auto_launch = true` in `BrowserConfig`.
+//! and manages its lifecycle. Used when `launch_mode` is `AutoLaunchHeadless`
+//! or `AutoLaunchVisible` in `BrowserConfig`.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -215,45 +216,74 @@ impl Drop for ChromeLauncher {
 /// `--user-data-dir` while Brave is already open can cause the new instance
 /// to merge into the existing one, leading to unexpected behavior.
 fn detect_chrome() -> Option<PathBuf> {
-    let candidates: &[&str] = if cfg!(target_os = "macos") {
-        &[
+    let mut paths_to_check: Vec<PathBuf> = Vec::new();
+
+    if cfg!(target_os = "macos") {
+        let candidates = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
             "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
             "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
             // Brave last — launching while already open can cause tab-in-existing-window issues
             "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-        ]
+        ];
+        paths_to_check.extend(candidates.into_iter().map(PathBuf::from));
     } else if cfg!(target_os = "windows") {
-        &[
+        let candidates = [
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        ]
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+            r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+        ];
+        paths_to_check.extend(candidates.into_iter().map(PathBuf::from));
+
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            paths_to_check.push(PathBuf::from(&appdata).join(r"360se6\Application\360se.exe"));
+        }
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            paths_to_check
+                .push(PathBuf::from(&localappdata).join(r"Google\Chrome\Application\chrome.exe"));
+            paths_to_check
+                .push(PathBuf::from(&localappdata).join(r"Microsoft\Edge\Application\msedge.exe"));
+            paths_to_check.push(
+                PathBuf::from(&localappdata)
+                    .join(r"BraveSoftware\Brave-Browser\Application\brave.exe"),
+            );
+        }
     } else {
         // Linux / other Unix
-        &[
+        let candidates = [
             "google-chrome",
             "google-chrome-stable",
             "chromium",
             "chromium-browser",
-        ]
-    };
+        ];
+        paths_to_check.extend(candidates.into_iter().map(PathBuf::from));
+    }
 
-    for candidate in candidates {
-        let path = PathBuf::from(candidate);
+    for path in paths_to_check {
         if path.exists() {
             debug!(path = %path.display(), "detected Chrome executable");
             return Some(path);
         }
         // For Linux, also check $PATH via `which`.
         if cfg!(not(target_os = "macos")) && cfg!(not(target_os = "windows")) {
-            if let Ok(output) = std::process::Command::new("which").arg(candidate).output() {
-                if output.status.success() {
-                    let found = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !found.is_empty() {
-                        debug!(path = %found, "detected Chrome via which");
-                        return Some(PathBuf::from(found));
+            // Only check `which` for candidates that are just executable names, not full paths.
+            // This avoids trying to `which` something like "/usr/bin/google-chrome".
+            // We assume that if `path` contains a path separator, it's a full path.
+            if path
+                .file_name()
+                .is_some_and(|name| name == path.as_os_str())
+            {
+                if let Ok(output) = std::process::Command::new("which").arg(&path).output() {
+                    if output.status.success() {
+                        let found = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if !found.is_empty() {
+                            debug!(path = %found, "detected Chrome via which");
+                            return Some(PathBuf::from(found));
+                        }
                     }
                 }
             }

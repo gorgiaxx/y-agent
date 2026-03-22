@@ -301,9 +301,11 @@ impl CommandRunner for RuntimeManager {
             }
         };
 
+        let (shell, shell_flag) = crate::platform::shell_command();
+
         let request = ExecutionRequest {
-            command: "sh".into(),
-            args: vec!["-c".into(), command.into()],
+            command: shell.into(),
+            args: vec![shell_flag.into(), command.into()],
             working_dir: working_dir.map(String::from),
             env: HashMap::new(),
             stdin: None,

@@ -104,6 +104,8 @@ export interface LlmResponseEvent {
   prompt_preview?: string;
   /** Assistant text returned by the LLM. */
   response_text?: string;
+  /** Context window size of the serving provider (tokens). */
+  context_window: number;
 }
 
 export interface ToolResultEvent {

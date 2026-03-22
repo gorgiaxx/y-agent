@@ -19,7 +19,6 @@ function formatTokens(n: number): string {
 }
 
 export function StatusBar({
-  providerCount,
   version,
   activeModel,
   lastCost,

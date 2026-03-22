@@ -68,7 +68,17 @@ pub fn run() {
             // if they don't already exist. This makes the GUI work
             // out-of-the-box without requiring `y-agent init`.
             if let Some(ref dd) = data_dir {
-                if let Err(e) = y_service::init::ensure_initialized(&config_path, dd, None) {
+                // Determine bundled skills path from Tauri resources.
+                let skills_source = app
+                    .path()
+                    .resource_dir()
+                    .ok()
+                    .map(|p| p.join("skills"))
+                    .filter(|p| p.is_dir());
+
+                if let Err(e) =
+                    y_service::init::ensure_initialized(&config_path, dd, skills_source.as_deref())
+                {
                     tracing::warn!(error = %e, "Auto-init failed; continuing with defaults");
                 }
             }
@@ -154,6 +164,7 @@ pub fn run() {
             commands::system::health_check,
             commands::system::provider_list,
             commands::system::toggle_devtools,
+            commands::system::app_paths,
             // Workspaces
             commands::workspace::workspace_list,
             commands::workspace::workspace_create,

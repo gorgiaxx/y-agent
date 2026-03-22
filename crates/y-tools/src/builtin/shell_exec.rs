@@ -130,8 +130,13 @@ impl Tool for ShellExecTool {
         }
 
         // Fallback: direct local execution (no runtime manager).
-        let mut cmd = tokio::process::Command::new("sh");
-        cmd.arg("-c").arg(command);
+        let (shell, shell_flag): (&str, &str) = if cfg!(windows) {
+            ("cmd.exe", "/C")
+        } else {
+            ("sh", "-c")
+        };
+        let mut cmd = tokio::process::Command::new(shell);
+        cmd.arg(shell_flag).arg(command);
 
         if let Some(wd) = working_dir {
             cmd.current_dir(wd);

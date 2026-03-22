@@ -8,6 +8,11 @@ const TOOL_CALL_TAG = 'tool_call';
 const TOOL_CALL_OPEN = `<${TOOL_CALL_TAG}`;
 const TOOL_CALL_CLOSE = `</${TOOL_CALL_TAG}>`;
 
+// tool_result tags emitted by the backend (or hallucinated by the LLM)
+// must be stripped from display content.
+const TOOL_RESULT_OPEN = '<tool_result';
+const TOOL_RESULT_CLOSE = '</tool_result>';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -151,12 +156,65 @@ function tryParseToolCallJson(block: string): { name: string; arguments: string 
 }
 
 // ---------------------------------------------------------------------------
+// tool_result stripping
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip all `<tool_result ...>...</tool_result>` blocks from the input.
+ *
+ * These blocks are injected by the backend as context for subsequent LLM
+ * iterations and may also be hallucinated by the model.  They must never
+ * appear in the rendered chat content.
+ *
+ * Also strips any trailing incomplete `<tool_result` prefix so partial
+ * XML is not shown while streaming.
+ */
+function stripToolResultBlocks(input: string): string {
+  let result = '';
+  let i = 0;
+
+  while (i < input.length) {
+    const openIdx = input.indexOf(TOOL_RESULT_OPEN, i);
+    if (openIdx < 0) {
+      result += input.slice(i);
+      break;
+    }
+
+    // Add text before the tag.
+    result += input.slice(i, openIdx);
+
+    // Find matching close tag.
+    const closeIdx = input.indexOf(TOOL_RESULT_CLOSE, openIdx);
+    if (closeIdx >= 0) {
+      // Complete block -- skip it entirely.
+      i = closeIdx + TOOL_RESULT_CLOSE.length;
+    } else {
+      // Incomplete block -- strip everything from here to end (buffering).
+      break;
+    }
+  }
+
+  // Also strip a trailing partial `<tool_result` prefix that might be
+  // streaming in character by character.
+  const trailingIdx = result.lastIndexOf('<');
+  if (trailingIdx >= 0) {
+    const trailing = result.slice(trailingIdx);
+    if (TOOL_RESULT_OPEN.startsWith(trailing) && trailing.length < TOOL_RESULT_OPEN.length) {
+      result = result.slice(0, trailingIdx);
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Main processor
 // ---------------------------------------------------------------------------
 
 /**
  * Process raw LLM content to produce display-safe segments.
  *
+ * - Strips `<tool_result>` blocks (backend-injected or hallucinated).
  * - Parses complete `<tool_call>...</tool_call>` blocks into structured data.
  * - Buffers any trailing partial `<tool_call>` tag so it is not shown.
  * - Returns ordered segments (text + tool_call) for rendering.
@@ -164,6 +222,9 @@ function tryParseToolCallJson(block: string): { name: string; arguments: string 
  * Pure function applied to the full accumulated content.
  */
 export function processStreamContent(raw: string): StreamContentResult {
+  // Pre-process: strip tool_result blocks before parsing tool_call segments.
+  const cleaned = stripToolResultBlocks(raw);
+
   const segments: ContentSegment[] = [];
   const toolCalls: ParsedToolCall[] = [];
   let hasPendingToolCall = false;
@@ -177,26 +238,26 @@ export function processStreamContent(raw: string): StreamContentResult {
     }
   };
 
-  while (i < raw.length) {
-    const openIdx = raw.indexOf('<', i);
+  while (i < cleaned.length) {
+    const openIdx = cleaned.indexOf('<', i);
 
     if (openIdx < 0) {
-      textBuffer += raw.slice(i);
+      textBuffer += cleaned.slice(i);
       break;
     }
 
     // Add text before the `<`.
-    textBuffer += raw.slice(i, openIdx);
+    textBuffer += cleaned.slice(i, openIdx);
 
-    const remaining = raw.slice(openIdx);
+    const remaining = cleaned.slice(openIdx);
 
     if (remaining.startsWith(TOOL_CALL_OPEN)) {
       // Look for the matching closing tag.
-      const closeIdx = raw.indexOf(TOOL_CALL_CLOSE, openIdx);
+      const closeIdx = cleaned.indexOf(TOOL_CALL_CLOSE, openIdx);
       if (closeIdx >= 0) {
         // Complete tool_call block — parse it.
         const blockEnd = closeIdx + TOOL_CALL_CLOSE.length;
-        const block = raw.slice(openIdx, blockEnd);
+        const block = cleaned.slice(openIdx, blockEnd);
 
         // Try XML-nested format first (primary), then JSON fallback.
         const xmlName = extractTag(block, 'name');
@@ -255,7 +316,7 @@ export function processStreamContent(raw: string): StreamContentResult {
     }
 
     // Check for partial prefix match at end of buffer.
-    if (isPartialToolCallPrefix(remaining) && openIdx + remaining.length === raw.length) {
+    if (isPartialToolCallPrefix(remaining) && openIdx + remaining.length === cleaned.length) {
       hasPendingToolCall = true;
       break;
     }

@@ -32,6 +32,7 @@ pub mod image_whitelist;
 pub mod integration;
 pub mod manager;
 pub mod native;
+pub mod platform;
 pub mod resource_monitor;
 pub mod security_policy;
 pub mod ssh;

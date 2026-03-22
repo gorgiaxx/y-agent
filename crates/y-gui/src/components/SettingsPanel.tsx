@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Eye, EyeOff, RefreshCw, Plus, RotateCcw, X } from 'lucide-react';
+import { Eye, EyeOff, RefreshCw, Plus, RotateCcw, X, Copy } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import type { GuiConfig } from '../types';
@@ -98,8 +98,7 @@ interface RuntimeFormData {
 
 interface BrowserFormData {
   enabled: boolean;
-  auto_launch: boolean;
-  headless: boolean;
+  launch_mode: 'remote' | 'auto_launch_headless' | 'auto_launch_visible';
   chrome_path: string;
   local_cdp_port: number;
   cdp_url: string;
@@ -451,6 +450,13 @@ function ProviderTabPanel({
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Escape a string value for embedding in a TOML double-quoted string.
+ *  Backslashes and double-quotes must be escaped so that Windows paths
+ *  like `C:\Program Files\...` do not produce invalid TOML. */
+function escapeTomlString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 /** Mask sensitive values in TOML content. */
 function maskSensitive(content: string): string {
   return content.replace(
@@ -464,22 +470,22 @@ function providersToToml(providers: ProviderFormData[]): string {
   const lines: string[] = [];
   for (const p of providers) {
     lines.push('[[providers]]');
-    lines.push(`id = "${p.id}"`);
-    lines.push(`provider_type = "${p.provider_type}"`);
-    lines.push(`model = "${p.model}"`);
+    lines.push(`id = "${escapeTomlString(p.id)}"`);
+    lines.push(`provider_type = "${escapeTomlString(p.provider_type)}"`);
+    lines.push(`model = "${escapeTomlString(p.model)}"`);
     if (p.tags.length > 0) {
-      lines.push(`tags = [${p.tags.map((t) => `"${t}"`).join(', ')}]`);
+      lines.push(`tags = [${p.tags.map((t) => `"${escapeTomlString(t)}"`).join(', ')}]`);
     }
     lines.push(`max_concurrency = ${p.max_concurrency}`);
     lines.push(`context_window = ${p.context_window}`);
     if (p.cost_per_1k_input > 0) lines.push(`cost_per_1k_input = ${p.cost_per_1k_input}`);
     if (p.cost_per_1k_output > 0) lines.push(`cost_per_1k_output = ${p.cost_per_1k_output}`);
-    if (p.api_key) lines.push(`api_key = "${p.api_key}"`);
-    if (p.api_key_env) lines.push(`api_key_env = "${p.api_key_env}"`);
-    if (p.base_url) lines.push(`base_url = "${p.base_url}"`);
+    if (p.api_key) lines.push(`api_key = "${escapeTomlString(p.api_key)}"`);
+    if (p.api_key_env) lines.push(`api_key_env = "${escapeTomlString(p.api_key_env)}"`);
+    if (p.base_url) lines.push(`base_url = "${escapeTomlString(p.base_url)}"`);
     if (p.temperature !== null) lines.push(`temperature = ${p.temperature}`);
     if (p.top_p !== null) lines.push(`top_p = ${p.top_p}`);
-    if (p.tool_calling_mode) lines.push(`tool_calling_mode = "${p.tool_calling_mode}"`);
+    if (p.tool_calling_mode) lines.push(`tool_calling_mode = "${escapeTomlString(p.tool_calling_mode)}"`);
     lines.push('');
   }
   return lines.join('\n');
@@ -495,7 +501,7 @@ function sessionToToml(s: SessionFormData): string {
     '[pruning]',
     `enabled = ${s.pruning_enabled}`,
     `token_threshold = ${s.pruning_token_threshold}`,
-    `strategy = "${s.pruning_strategy}"`,
+    `strategy = "${escapeTomlString(s.pruning_strategy)}"`,
     '',
     '[pruning.progressive]',
     `max_retries = ${s.pruning_progressive_max_retries}`,
@@ -505,45 +511,45 @@ function sessionToToml(s: SessionFormData): string {
 
 function runtimeToToml(r: RuntimeFormData): string {
   const lines: string[] = [
-    `default_backend = "${r.default_backend}"`,
+    `default_backend = "${escapeTomlString(r.default_backend)}"`,
     `allow_shell = ${r.allow_shell}`,
     `allow_host_access = ${r.allow_host_access}`,
-    `default_timeout = "${r.default_timeout}"`,
+    `default_timeout = "${escapeTomlString(r.default_timeout)}"`,
     `default_memory_bytes = ${r.default_memory_bytes}`,
     '',
     '[ssh]',
-    `host = "${r.ssh_host}"`,
+    `host = "${escapeTomlString(r.ssh_host)}"`,
     `port = ${r.ssh_port}`,
-    `user = "${r.ssh_user}"`,
-    `auth_method = "${r.ssh_auth_method}"`,
+    `user = "${escapeTomlString(r.ssh_user)}"`,
+    `auth_method = "${escapeTomlString(r.ssh_auth_method)}"`,
   ];
   if (r.ssh_auth_method === 'password' && r.ssh_password) {
-    lines.push(`password = "${r.ssh_password}"`);
+    lines.push(`password = "${escapeTomlString(r.ssh_password)}"`);
   }
   if (r.ssh_auth_method === 'public_key' && r.ssh_private_key_path) {
-    lines.push(`private_key_path = "${r.ssh_private_key_path}"`);
+    lines.push(`private_key_path = "${escapeTomlString(r.ssh_private_key_path)}"`);
   }
-  if (r.ssh_passphrase) lines.push(`passphrase = "${r.ssh_passphrase}"`);
-  if (r.ssh_known_hosts_path) lines.push(`known_hosts_path = "${r.ssh_known_hosts_path}"`);
+  if (r.ssh_passphrase) lines.push(`passphrase = "${escapeTomlString(r.ssh_passphrase)}"`);
+  if (r.ssh_known_hosts_path) lines.push(`known_hosts_path = "${escapeTomlString(r.ssh_known_hosts_path)}"`);
 
   lines.push('');
   lines.push('[docker]');
-  if (r.docker_default_image) lines.push(`default_image = "${r.docker_default_image}"`);
-  lines.push(`network_mode = "${r.docker_network_mode}"`);
+  if (r.docker_default_image) lines.push(`default_image = "${escapeTomlString(r.docker_default_image)}"`);
+  lines.push(`network_mode = "${escapeTomlString(r.docker_network_mode)}"`);
   lines.push(`privileged = ${r.docker_privileged}`);
   lines.push(`readonly_rootfs = ${r.docker_readonly_rootfs}`);
-  if (r.docker_user) lines.push(`user = "${r.docker_user}"`);  
+  if (r.docker_user) lines.push(`user = "${escapeTomlString(r.docker_user)}"`);
   if (r.docker_cap_drop.length > 0) {
-    lines.push(`cap_drop = [${r.docker_cap_drop.map(c => `"${c}"`).join(', ')}]`);
+    lines.push(`cap_drop = [${r.docker_cap_drop.map(c => `"${escapeTomlString(c)}"`).join(', ')}]`);
   }
   if (r.docker_cap_add.length > 0) {
-    lines.push(`cap_add = [${r.docker_cap_add.map(c => `"${c}"`).join(', ')}]`);
+    lines.push(`cap_add = [${r.docker_cap_add.map(c => `"${escapeTomlString(c)}"`).join(', ')}]`);
   }
   if (r.docker_dns.length > 0) {
-    lines.push(`dns = [${r.docker_dns.map(d => `"${d}"`).join(', ')}]`);
+    lines.push(`dns = [${r.docker_dns.map(d => `"${escapeTomlString(d)}"`).join(', ')}]`);
   }
   if (r.docker_extra_hosts.length > 0) {
-    lines.push(`extra_hosts = [${r.docker_extra_hosts.map(h => `"${h}"`).join(', ')}]`);
+    lines.push(`extra_hosts = [${r.docker_extra_hosts.map(h => `"${escapeTomlString(h)}"`).join(', ')}]`);
   }
 
   // Docker default_env as inline table section.
@@ -551,7 +557,7 @@ function runtimeToToml(r: RuntimeFormData): string {
     lines.push('');
     lines.push('[docker.default_env]');
     for (const [k, v] of Object.entries(r.docker_default_env)) {
-      lines.push(`${k} = "${v}"`);
+      lines.push(`${k} = "${escapeTomlString(v)}"`);
     }
   }
 
@@ -559,27 +565,27 @@ function runtimeToToml(r: RuntimeFormData): string {
   for (const vol of r.docker_default_volumes) {
     lines.push('');
     lines.push('[[docker.default_volumes]]');
-    lines.push(`host_path = "${vol.host_path}"`);
-    lines.push(`container_path = "${vol.container_path}"`);
-    lines.push(`mode = "${vol.mode}"`);
+    lines.push(`host_path = "${escapeTomlString(vol.host_path)}"`);
+    lines.push(`container_path = "${escapeTomlString(vol.container_path)}"`);
+    lines.push(`mode = "${escapeTomlString(vol.mode)}"`);
   }
 
   // Python venv section.
   lines.push('');
   lines.push('[python_venv]');
   lines.push(`enabled = ${r.python_venv_enabled}`);
-  lines.push(`uv_path = "${r.python_uv_path}"`);
-  lines.push(`python_version = "${r.python_version}"`);
-  lines.push(`venv_dir = "${r.python_venv_dir}"`);
-  if (r.python_working_dir) lines.push(`working_dir = "${r.python_working_dir}"`);
+  lines.push(`uv_path = "${escapeTomlString(r.python_uv_path)}"`);
+  lines.push(`python_version = "${escapeTomlString(r.python_version)}"`);
+  lines.push(`venv_dir = "${escapeTomlString(r.python_venv_dir)}"`);
+  if (r.python_working_dir) lines.push(`working_dir = "${escapeTomlString(r.python_working_dir)}"`);
 
   // Bun venv section.
   lines.push('');
   lines.push('[bun_venv]');
   lines.push(`enabled = ${r.bun_venv_enabled}`);
-  lines.push(`bun_path = "${r.bun_path}"`);
-  lines.push(`bun_version = "${r.bun_version}"`);
-  if (r.bun_working_dir) lines.push(`working_dir = "${r.bun_working_dir}"`);
+  lines.push(`bun_path = "${escapeTomlString(r.bun_path)}"`);
+  lines.push(`bun_version = "${escapeTomlString(r.bun_version)}"`);
+  if (r.bun_working_dir) lines.push(`working_dir = "${escapeTomlString(r.bun_working_dir)}"`);
 
   lines.push('');
   return lines.join('\n');
@@ -688,14 +694,13 @@ function jsonToRuntime(json: any): RuntimeFormData {
 function browserToToml(b: BrowserFormData): string {
   const lines: string[] = [
     `enabled = ${b.enabled}`,
-    `auto_launch = ${b.auto_launch}`,
-    `headless = ${b.headless}`,
+    `launch_mode = "${b.launch_mode}"`,
   ];
-  if (b.chrome_path) lines.push(`chrome_path = "${b.chrome_path}"`);
+  if (b.chrome_path) lines.push(`chrome_path = "${escapeTomlString(b.chrome_path)}"`);
   lines.push(`local_cdp_port = ${b.local_cdp_port}`);
-  lines.push(`cdp_url = "${b.cdp_url}"`);
+  lines.push(`cdp_url = "${escapeTomlString(b.cdp_url)}"`);
   lines.push(`timeout_ms = ${b.timeout_ms}`);
-  lines.push(`allowed_domains = [${b.allowed_domains.map(d => `"${d}"`).join(', ')}]`);
+  lines.push(`allowed_domains = [${b.allowed_domains.map(d => `"${escapeTomlString(d)}"`).join(', ')}]`);
   lines.push(`block_private_networks = ${b.block_private_networks}`);
   lines.push(`max_screenshot_dim = ${b.max_screenshot_dim}`);
   return lines.join('\n') + '\n';
@@ -703,10 +708,17 @@ function browserToToml(b: BrowserFormData): string {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function jsonToBrowser(json: any): BrowserFormData {
+  // Backward-compatible: translate old auto_launch/headless booleans to launch_mode.
+  let launchMode: BrowserFormData['launch_mode'] = 'remote';
+  if (json?.launch_mode) {
+    launchMode = json.launch_mode;
+  } else if (json?.auto_launch) {
+    // Legacy config: auto_launch + headless booleans
+    launchMode = json?.headless === false ? 'auto_launch_visible' : 'auto_launch_headless';
+  }
   return {
     enabled: json?.enabled ?? true,
-    auto_launch: json?.auto_launch ?? false,
-    headless: json?.headless ?? true,
+    launch_mode: launchMode,
     chrome_path: json?.chrome_path ?? '',
     local_cdp_port: json?.local_cdp_port ?? 9222,
     cdp_url: json?.cdp_url ?? 'http://127.0.0.1:9222',
@@ -729,6 +741,21 @@ const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [
   { key: 'knowledge', label: 'Knowledge' },
 ];
 
+const TAB_LABELS: Record<SettingsTab, string> = {
+  general: 'General',
+  providers: 'Providers',
+  session: 'Session',
+  runtime: 'Runtime',
+  browser: 'Browser',
+  storage: 'Storage',
+  hooks: 'Hooks',
+  tools: 'Tools',
+  guardrails: 'Guardrails',
+  knowledge: 'Knowledge',
+  prompts: 'Builtin Prompts',
+  about: 'About',
+};
+
 export function SettingsPanel({
   config,
   activeTab,
@@ -739,9 +766,19 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   const [localConfig, setLocalConfig] = useState<GuiConfig>({ ...config });
   const [appVersion, setAppVersion] = useState('...');
+  const [configPath, setConfigPath] = useState('');
+  const [dataPath, setDataPath] = useState('');
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   useEffect(() => {
     getVersion().then((v) => setAppVersion(v)).catch(() => setAppVersion('unknown'));
+    // Fetch config and data directory paths for General page.
+    invoke<{ config_dir: string; data_dir: string }>('app_paths')
+      .then((paths) => {
+        setConfigPath(paths.config_dir);
+        setDataPath(paths.data_dir);
+      })
+      .catch(() => { /* ignore */ });
   }, []);
 
   // Provider editor state (selectedSection derived from activeTab for TOML sections).
@@ -815,8 +852,7 @@ export function SettingsPanel({
   // Structured browser form state.
   const [browserForm, setBrowserForm] = useState<BrowserFormData>({
     enabled: true,
-    auto_launch: false,
-    headless: true,
+    launch_mode: 'auto_launch_headless',
     chrome_path: '',
     local_cdp_port: 9222,
     cdp_url: 'http://127.0.0.1:9222',
@@ -1161,25 +1197,77 @@ export function SettingsPanel({
   const promptLabel = (filename: string) =>
     filename.replace(/^core_/, '').replace(/\.txt$/, '');
 
+  const handleCopyPath = useCallback(async (value: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 1500);
+      setToast({ message: 'Copied to clipboard', type: 'success' });
+    } catch { /* ignore */ }
+  }, []);
+
   return (
     <div className="settings-panel">
       <div className="settings-action-bar">
-        <button
-          className="btn-provider-action btn-reload"
-          onClick={handleReload}
-          title="Hot-reload configuration"
-        >
-          <RefreshCw size={14} />
-          <span>Reload</span>
-        </button>
-        <button className="btn-settings-save" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Changes'}
-        </button>
+        <h2 className="settings-action-bar-title">{TAB_LABELS[activeTab] ?? activeTab}</h2>
+        <div className="settings-action-bar-actions">
+          <button
+            className="btn-provider-action btn-reload"
+            onClick={handleReload}
+            title="Hot-reload configuration"
+          >
+            <RefreshCw size={14} />
+            <span>Reload</span>
+          </button>
+          <button className="btn-settings-save" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
       </div>
 
       <div className="settings-content">
         {activeTab === 'general' && (
               <div className="settings-section">
+                <h3 className="section-title">Paths</h3>
+                <div className="form-group">
+                  <label className="form-label">Config Directory</label>
+                  <div className="path-field-wrap">
+                    <input
+                      className="pf-input path-field-input"
+                      value={configPath}
+                      readOnly
+                      title={configPath}
+                    />
+                    <button
+                      className="path-field-copy"
+                      onClick={() => handleCopyPath(configPath, 'config')}
+                      title={copiedField === 'config' ? 'Copied!' : 'Copy path'}
+                      type="button"
+                    >
+                      <Copy size={13} />
+                    </button>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Data Directory</label>
+                  <div className="path-field-wrap">
+                    <input
+                      className="pf-input path-field-input"
+                      value={dataPath}
+                      readOnly
+                      title={dataPath}
+                    />
+                    <button
+                      className="path-field-copy"
+                      onClick={() => handleCopyPath(dataPath, 'data')}
+                      title={copiedField === 'data' ? 'Copied!' : 'Copy path'}
+                      type="button"
+                    >
+                      <Copy size={13} />
+                    </button>
+                  </div>
+                </div>
+
                 <h3 className="section-title">Appearance</h3>
 
                 <div className="form-group">
@@ -1982,37 +2070,28 @@ export function SettingsPanel({
 
                       <div className="pf-row">
                         <div className="pf-field pf-field-full">
-                          <label className="pf-label">
-                            <input
-                              type="checkbox"
-                              className="form-checkbox"
-                              checked={browserForm.auto_launch}
-                              onChange={(e) => { setBrowserForm({ ...browserForm, auto_launch: e.target.checked }); setDirtyBrowser(true); }}
-                            />
-                            {' '}Launch local Chrome automatically
-                          </label>
-                          <span className="pf-hint">When enabled, y-agent spawns a headless Chrome instance. When disabled, connects to a remote CDP endpoint.</span>
+                          <label className="pf-label">Launch Mode</label>
+                          <select
+                            className="form-select"
+                            style={{ maxWidth: 'none' }}
+                            value={browserForm.launch_mode}
+                            onChange={(e) => { setBrowserForm({ ...browserForm, launch_mode: e.target.value as BrowserFormData['launch_mode'] }); setDirtyBrowser(true); }}
+                          >
+                            <option value="auto_launch_headless">Auto Launch (Headless)</option>
+                            <option value="auto_launch_visible">Auto Launch (Visible Window)</option>
+                            <option value="remote">Remote CDP Endpoint</option>
+                          </select>
+                          <span className="pf-hint">
+                            {browserForm.launch_mode === 'remote'
+                              ? 'Connect to an already-running Chrome instance via CDP URL. You must start Chrome manually with --remote-debugging-port.'
+                              : browserForm.launch_mode === 'auto_launch_headless'
+                                ? 'Automatically launch Chrome in headless mode (no visible window). Recommended for most use cases.'
+                                : 'Automatically launch Chrome with a visible window. Useful for debugging and visual verification.'}
+                          </span>
                         </div>
                       </div>
 
-                      {browserForm.auto_launch && (
-                        <div className="pf-row">
-                          <div className="pf-field pf-field-full">
-                            <label className="pf-label">
-                              <input
-                                type="checkbox"
-                                className="form-checkbox"
-                                checked={browserForm.headless}
-                                onChange={(e) => { setBrowserForm({ ...browserForm, headless: e.target.checked }); setDirtyBrowser(true); }}
-                              />
-                              {' '}Headless mode
-                            </label>
-                            <span className="pf-hint">Run Chrome without a visible window. Disable for debugging or visual verification.</span>
-                          </div>
-                        </div>
-                      )}
-
-                      {browserForm.auto_launch ? (
+                      {browserForm.launch_mode !== 'remote' ? (
                         /* Local Chrome mode */
                         <div className="pf-row">
                           <div className="pf-field" style={{ flex: 2 }}>

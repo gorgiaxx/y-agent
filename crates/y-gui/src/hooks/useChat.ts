@@ -866,13 +866,29 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   // sendMessage -- raw send with optimistic UI
   // ------------------------------------------------------------------
 
+  // Synchronous guard for sendMessage -- prevents concurrent sends even when
+  // React state (opStatusRef) has not yet flushed.
+  const sendingRef = useRef(false);
+
   const sendMessage = useCallback(
     async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[]): Promise<ChatStarted | null> => {
-      // Guard: block if a compound operation is in progress.
-      if (opStatusRef.current !== 'idle' && opStatusRef.current !== 'sending') {
+      // Guard: block if any operation is already in progress, including a
+      // prior send.  The previous guard also allowed 'sending' through,
+      // which could cause duplicate LLM calls when rapid double-fires
+      // occurred (e.g. IME Enter key events).
+      if (opStatusRef.current !== 'idle') {
         console.warn(`[chat] sendMessage blocked: opStatus=${opStatusRef.current}`);
         return null;
       }
+      // Synchronous flag: opStatusRef is updated via React setState which
+      // is asynchronous.  Two sendMessage calls in the same microtask
+      // would both see opStatusRef.current === 'idle'.  This ref provides
+      // an immediate guard.
+      if (sendingRef.current) {
+        console.warn('[chat] sendMessage blocked: already sending (ref guard)');
+        return null;
+      }
+      sendingRef.current = true;
 
       setError(null);
       setOp('sending');
@@ -916,6 +932,8 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         );
         syncVisible(sessionId);
         return null;
+      } finally {
+        sendingRef.current = false;
       }
     },
     [syncVisible, setOp],

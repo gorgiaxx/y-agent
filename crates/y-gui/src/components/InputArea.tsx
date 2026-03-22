@@ -334,6 +334,15 @@ export function InputArea({
   }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Ignore key events during IME composition (e.g. Chinese pinyin input).
+    // The Enter key used to confirm an IME composition should NOT trigger a
+    // message send.  On some platforms a single Enter press during composition
+    // can fire two keydown events (isComposing=true then isComposing=false),
+    // which would cause a double-send without this guard.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) {
+      return;
+    }
+
     // In command mode, let the CommandMenu handle most keyboard events.
     if (commandMode) {
       if (e.key === 'Escape') {

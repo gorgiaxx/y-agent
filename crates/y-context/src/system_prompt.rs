@@ -159,7 +159,7 @@ impl BuildSystemPromptProvider {
     fn generate_datetime() -> String {
         let now = chrono::Utc::now();
         format!(
-            "Current date and time: {} UTC",
+            "\nCurrent date and time: {} UTC\n",
             now.format("%Y-%m-%d %H:%M:%S")
         )
     }

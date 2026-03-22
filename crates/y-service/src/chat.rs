@@ -74,6 +74,8 @@ pub enum TurnEvent {
         prompt_preview: String,
         /// Assistant text returned by the LLM (or tool-call placeholder).
         response_text: String,
+        /// Context window size of the serving provider (tokens).
+        context_window: usize,
     },
     /// Emitted after each tool execution.
     ToolResult {

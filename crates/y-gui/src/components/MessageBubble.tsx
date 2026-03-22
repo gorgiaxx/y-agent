@@ -331,8 +331,9 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
   // accumulated multi-iteration content with tool_call XML renders properly.
   const streamResult = useMemo(() => {
     if (isUser) return null;
-    // Only process if content might contain tool_call XML.
-    if (!effectiveContent.includes('<tool_call') && !effectiveContent.includes('<tool_cal')) {
+    // Only process if content might contain tool_call or tool_result XML.
+    if (!effectiveContent.includes('<tool_call') && !effectiveContent.includes('<tool_cal')
+        && !effectiveContent.includes('<tool_result')) {
       return null;
     }
     return processStreamContent(effectiveContent);
@@ -361,14 +362,19 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
     if (!results || results.length === 0) return new Map<number, ToolResultRecord>();
 
     const map = new Map<number, ToolResultRecord>();
-    let resultIdx = 0;
+    // Track which result indices have been consumed.
+    const consumed = new Set<number>();
     streamResult.segments.forEach((seg, segIdx) => {
-      if (seg.type === 'tool_call' && resultIdx < results!.length) {
-        // Match by name for safety.
-        if (results![resultIdx].name === seg.toolCall.name) {
-          map.set(segIdx, results![resultIdx]);
+      if (seg.type !== 'tool_call') return;
+
+      // Find the first unconsumed result matching this tool name.
+      for (let ri = 0; ri < results!.length; ri++) {
+        if (consumed.has(ri)) continue;
+        if (results![ri].name === seg.toolCall.name) {
+          map.set(segIdx, results![ri]);
+          consumed.add(ri);
+          break;
         }
-        resultIdx++;
       }
     });
     return map;

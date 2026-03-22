@@ -160,6 +160,55 @@ if [[ -n "$BUILD_TARGET" ]]; then
     exit 1
   fi
 
+  # Check that the Rust target is installed via rustup
+  if ! rustup target list --installed | grep -q "^${BUILD_TARGET}$"; then
+    echo "error: Rust target '$BUILD_TARGET' is not installed." >&2
+    echo "" >&2
+    echo "  Install it with:" >&2
+    echo "    rustup target add $BUILD_TARGET" >&2
+    echo "" >&2
+    exit 1
+  fi
+
+  # Windows GNU targets from macOS/Linux need the mingw-w64 cross-linker
+  if [[ "$TARGET_OS" == "windows-gnu" && "$HOST_OS" != "windows" ]]; then
+    MINGW_CC=""
+    case "$BUILD_TARGET" in
+      x86_64-*)  MINGW_CC="x86_64-w64-mingw32-gcc" ;;
+      i686-*)    MINGW_CC="i686-w64-mingw32-gcc" ;;
+      aarch64-*) MINGW_CC="aarch64-w64-mingw32-gcc" ;;
+    esac
+    if [[ -n "$MINGW_CC" ]] && ! command -v "$MINGW_CC" &>/dev/null; then
+      echo "error: MinGW-w64 cross-compiler '$MINGW_CC' not found." >&2
+      echo "" >&2
+      if [[ "$HOST_OS" == "darwin" ]]; then
+        echo "  Install it with:" >&2
+        echo "    brew install mingw-w64" >&2
+      else
+        echo "  Install it with:" >&2
+        echo "    sudo apt-get install mingw-w64      # Debian/Ubuntu" >&2
+        echo "    sudo dnf install mingw64-gcc         # Fedora" >&2
+      fi
+      echo "" >&2
+      exit 1
+    fi
+
+    # Tauri Windows build needs NSIS to bundle the installer
+    if [[ "$BUILD_GUI" == true ]] && ! command -v makensis &>/dev/null; then
+      echo "error: Tauri GUI bundle for Windows requires NSIS, but 'makensis' not found." >&2
+      echo "" >&2
+      if [[ "$HOST_OS" == "darwin" ]]; then
+        echo "  Install it with:" >&2
+        echo "    brew install nsis" >&2
+      else
+        echo "  Install it with:" >&2
+        echo "    sudo apt-get install nsis" >&2
+      fi
+      echo "" >&2
+      exit 1
+    fi
+  fi
+
   # Linux targets from macOS require a cross-linker (give a hint)
   if [[ "$TARGET_OS" == "linux" && "$HOST_OS" == "darwin" ]]; then
     echo "warning: cross-compiling to Linux from macOS requires a cross-linker" >&2

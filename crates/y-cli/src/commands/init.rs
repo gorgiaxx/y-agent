@@ -506,7 +506,13 @@ pub fn detect_skills_source() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
 
-    // Release layout: <prefix>/bin/y-agent -> <prefix>/skills/
+    // Zip archive layout (standalone): <unzipped_dir>/y-agent -> <unzipped_dir>/skills/
+    let candidate = exe_dir.join("skills");
+    if candidate.is_dir() {
+        return Some(candidate);
+    }
+
+    // Release layout (Unix-style): <prefix>/bin/y-agent -> <prefix>/skills/
     let candidate = exe_dir.join("../skills");
     if candidate.is_dir() {
         return Some(candidate);

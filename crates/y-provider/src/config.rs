@@ -54,7 +54,7 @@ pub struct ProviderConfig {
     pub model: String,
 
     /// Tags for routing (e.g., `["reasoning", "fast", "code"]`).
-    #[serde(default)]
+    #[serde(default = "default_tags", deserialize_with = "deserialize_tags")]
     pub tags: Vec<String>,
 
     /// Maximum concurrent requests to this provider.
@@ -153,6 +153,22 @@ pub struct ProxySpec {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_tags() -> Vec<String> {
+    vec!["general".to_string()]
+}
+
+fn deserialize_tags<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let tags: Vec<String> = serde::Deserialize::deserialize(deserializer)?;
+    if tags.is_empty() {
+        Ok(default_tags())
+    } else {
+        Ok(tags)
+    }
 }
 
 fn default_proxy_scheme() -> String {
