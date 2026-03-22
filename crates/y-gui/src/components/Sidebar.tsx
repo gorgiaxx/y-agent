@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, BookOpen, Database, Bot, Loader2, CheckCircle2, AlertCircle, Settings } from 'lucide-react';
+import type { ReactElement } from 'react';
+import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, BookOpen, Database, Bot, Loader2, CheckCircle2, AlertCircle, Settings, Server, Terminal, Globe, HardDrive, Webhook, Wrench, Shield, FileText, Info } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo, SkillInfo, KnowledgeCollectionInfo } from '../types';
 import type { ImportStatus } from '../hooks/useSkills';
 import type { KbIngestStatus, KbBatchProgress } from '../hooks/useKnowledge';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import './Sidebar.css';
 
-export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents';
+export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents' | 'settings';
 
 interface SidebarProps {
   sessions: SessionInfo[];
@@ -47,7 +48,8 @@ interface SidebarProps {
   agents: { id: string; name: string; description: string; mode: string; trust_tier: string; is_overridden: boolean }[];
   activeAgentId: string | null;
   onSelectAgent: (id: string) => void;
-  onSettingsOpen: () => void;
+  activeSettingsTab: string | null;
+  onSelectSettingsTab: (tab: string) => void;
 }
 
 /** Return relative time string for a session item. */
@@ -99,7 +101,8 @@ export function Sidebar({
   agents,
   activeAgentId,
   onSelectAgent,
-  onSettingsOpen,
+  activeSettingsTab,
+  onSelectSettingsTab,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
@@ -315,8 +318,8 @@ export function Sidebar({
         </button>
         <div className="sidebar-icon-spacer" />
         <button
-          className="sidebar-nav-btn"
-          onClick={onSettingsOpen}
+          className={`sidebar-nav-btn ${activeView === 'settings' && !panelCollapsed ? 'active' : ''}`}
+          onClick={() => handleIconClick('settings')}
           title="Settings"
           id="btn-settings"
         >
@@ -512,6 +515,54 @@ export function Sidebar({
           })()}
         </div>
       )}
+
+      {/* Settings view -- category list */}
+      {activeView === 'settings' && (() => {
+        const settingsIconMap: Record<string, ReactElement> = {
+          general:    <Settings size={14} className="skill-sidebar-item-icon" />,
+          providers:  <Server size={14} className="skill-sidebar-item-icon" />,
+          session:    <MessageSquare size={14} className="skill-sidebar-item-icon" />,
+          runtime:    <Terminal size={14} className="skill-sidebar-item-icon" />,
+          browser:    <Globe size={14} className="skill-sidebar-item-icon" />,
+          storage:    <HardDrive size={14} className="skill-sidebar-item-icon" />,
+          hooks:      <Webhook size={14} className="skill-sidebar-item-icon" />,
+          tools:      <Wrench size={14} className="skill-sidebar-item-icon" />,
+          guardrails: <Shield size={14} className="skill-sidebar-item-icon" />,
+          knowledge:  <BookOpen size={14} className="skill-sidebar-item-icon" />,
+          prompts:    <FileText size={14} className="skill-sidebar-item-icon" />,
+          about:      <Info size={14} className="skill-sidebar-item-icon" />,
+        };
+        const categories: { key: string; label: string }[] = [
+          { key: 'general', label: 'General' },
+          { key: 'providers', label: 'Providers' },
+          { key: 'session', label: 'Session' },
+          { key: 'runtime', label: 'Runtime' },
+          { key: 'browser', label: 'Browser' },
+          { key: 'storage', label: 'Storage' },
+          { key: 'hooks', label: 'Hooks' },
+          { key: 'tools', label: 'Tools' },
+          { key: 'guardrails', label: 'Guardrails' },
+          { key: 'knowledge', label: 'Knowledge' },
+          { key: 'prompts', label: 'Builtin Prompts' },
+          { key: 'about', label: 'About' },
+        ];
+        return (
+          <div className="skill-sidebar-list">
+            {categories.map((cat) => (
+              <div
+                key={cat.key}
+                className={`skill-sidebar-item ${activeSettingsTab === cat.key ? 'active' : ''}`}
+                onClick={() => onSelectSettingsTab(cat.key)}
+              >
+                <div className="skill-sidebar-item-header">
+                  {settingsIconMap[cat.key] ?? <Settings size={14} className="skill-sidebar-item-icon" />}
+                  <span className="skill-sidebar-item-name">{cat.label}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Skills view — skill list */}
       {activeView === 'skills' && (

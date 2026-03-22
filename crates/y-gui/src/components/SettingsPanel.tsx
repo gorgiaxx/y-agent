@@ -1,20 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, Plug, Info, X, Eye, EyeOff, RefreshCw, Plus, FileText, RotateCcw } from 'lucide-react';
+import { Eye, EyeOff, RefreshCw, Plus, RotateCcw, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import type { GuiConfig } from '../types';
-import './SettingsOverlay.css';
+import './SettingsPanel.css';
 
-interface SettingsOverlayProps {
+interface SettingsPanelProps {
   config: GuiConfig;
+  activeTab: SettingsTab;
   onSave: (updates: Partial<GuiConfig>) => void;
-  onClose: () => void;
   loadSection: (section: string) => Promise<string>;
   saveSection: (section: string, content: string) => Promise<void>;
   reloadConfig: () => Promise<string>;
 }
 
-type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'prompts' | 'about';
+export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'prompts' | 'about';
 
 // ---------------------------------------------------------------------------
 // Provider form types (mirrors Rust ProviderConfig)
@@ -729,15 +729,14 @@ const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [
   { key: 'knowledge', label: 'Knowledge' },
 ];
 
-export function SettingsOverlay({
+export function SettingsPanel({
   config,
+  activeTab,
   onSave,
-  onClose,
   loadSection,
   saveSection,
   reloadConfig,
-}: SettingsOverlayProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+}: SettingsPanelProps) {
   const [localConfig, setLocalConfig] = useState<GuiConfig>({ ...config });
   const [appVersion, setAppVersion] = useState('...');
 
@@ -914,12 +913,12 @@ export function SettingsOverlay({
     }
 
     onSave(localConfig);
-    onClose();
+    setToast({ message: 'Settings saved', type: 'success' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser,
     providersList, providersMeta, sessionForm, runtimeForm, browserForm,
-    tomlDraftsBySection, dirtyPrompts, saveSection, reloadConfig, localConfig, onSave, onClose,
+    tomlDraftsBySection, dirtyPrompts, saveSection, reloadConfig, localConfig, onSave,
   ]);
 
   // Derive the active config section key from the active tab.
@@ -1163,53 +1162,23 @@ export function SettingsOverlay({
     filename.replace(/^core_/, '').replace(/\.txt$/, '');
 
   return (
-    <div className="settings-backdrop" onClick={onClose}>
-      <div className="settings-overlay" onClick={(e) => e.stopPropagation()}>
-        <div className="settings-header">
-          <h2 className="settings-title">Settings</h2>
-          <button className="btn-close" onClick={onClose}><X size={16} /></button>
-        </div>
+    <div className="settings-panel">
+      <div className="settings-action-bar">
+        <button
+          className="btn-provider-action btn-reload"
+          onClick={handleReload}
+          title="Hot-reload configuration"
+        >
+          <RefreshCw size={14} />
+          <span>Reload</span>
+        </button>
+        <button className="btn-settings-save" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : 'Save Changes'}
+        </button>
+      </div>
 
-        <div className="settings-body">
-          <nav className="settings-tabs">
-            <button
-              className={`settings-tab ${activeTab === 'general' ? 'active' : ''}`}
-              onClick={() => setActiveTab('general')}
-            >
-              <span className="tab-icon"><Settings size={14} /></span>
-              <span className="tab-label">General</span>
-            </button>
-            <div className="settings-tab-group-label">Config</div>
-            {CONFIG_SECTIONS.map((s) => (
-              <button
-                key={s.key}
-                className={`settings-tab ${activeTab === s.key ? 'active' : ''}`}
-                onClick={() => setActiveTab(s.key)}
-              >
-                <span className="tab-icon"><Plug size={14} /></span>
-                <span className="tab-label">{s.label}</span>
-              </button>
-            ))}
-            <div className="settings-tab-group-label">Prompts</div>
-            <button
-              className={`settings-tab ${activeTab === 'prompts' ? 'active' : ''}`}
-              onClick={() => setActiveTab('prompts')}
-            >
-              <span className="tab-icon"><FileText size={14} /></span>
-              <span className="tab-label">Builtin Prompts</span>
-            </button>
-            <div className="settings-tab-separator" />
-            <button
-              className={`settings-tab ${activeTab === 'about' ? 'active' : ''}`}
-              onClick={() => setActiveTab('about')}
-            >
-              <span className="tab-icon"><Info size={14} /></span>
-              <span className="tab-label">About</span>
-            </button>
-          </nav>
-
-          <div className="settings-content">
-            {activeTab === 'general' && (
+      <div className="settings-content">
+        {activeTab === 'general' && (
               <div className="settings-section">
                 <h3 className="section-title">Appearance</h3>
 
@@ -1294,54 +1263,59 @@ export function SettingsOverlay({
                 </div>
 
                 {isProviderSection ? (
-                  /* Tabbed provider form: one tab per provider */
+                  /* Left-list provider form: sidebar list + right detail */
                   providersLoading ? (
                     <div className="section-loading">Loading...</div>
                   ) : (
-                    <div className="provider-form-wrap">
-                      {/* Sub-tab bar */}
-                      <div className="provider-subtabs">
-                        {providersList.map((p, i) => (
-                          <button
-                            key={i}
-                            className={`provider-subtab ${activeProviderTab === i ? 'active' : ''}`}
-                            onClick={() => setActiveProviderTab(i)}
-                          >
-                            <span className="provider-subtab-label">{p.id || `Provider ${i + 1}`}</span>
-                            <span
-                              className="provider-subtab-close"
-                              role="button"
-                              tabIndex={0}
-                              title="Remove provider"
-                              onClick={(e) => { e.stopPropagation(); handleProviderRemove(i); }}
-                              onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleProviderRemove(i); } }}
+                    <div className="sub-list-layout">
+                      {/* Left sidebar list */}
+                      <div className="sub-list-sidebar">
+                        <div className="sub-list-items">
+                          {providersList.map((p, i) => (
+                            <button
+                              key={i}
+                              className={`sub-list-item ${activeProviderTab === i ? 'active' : ''}`}
+                              onClick={() => setActiveProviderTab(i)}
                             >
-                              <X size={11} />
-                            </span>
-                          </button>
-                        ))}
+                              <span className="sub-list-item-label">{p.id || `Provider ${i + 1}`}</span>
+                              <span
+                                className="sub-list-item-close"
+                                role="button"
+                                tabIndex={0}
+                                title="Remove provider"
+                                onClick={(e) => { e.stopPropagation(); handleProviderRemove(i); }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleProviderRemove(i); } }}
+                              >
+                                <X size={11} />
+                              </span>
+                            </button>
+                          ))}
+                        </div>
                         <button
-                          className="provider-subtab provider-subtab-add"
+                          className="sub-list-item sub-list-item-add"
                           onClick={handleProviderAdd}
                           title="Add provider"
                         >
                           <Plus size={13} />
+                          <span>Add</span>
                         </button>
                       </div>
 
-                      {/* Active provider form */}
-                      {providersList.length === 0 ? (
-                        <div className="provider-empty">
-                          No providers configured. Click + to add one.
-                        </div>
-                      ) : (
-                        <ProviderTabPanel
-                          key={activeProviderTab}
-                          provider={providersList[activeProviderTab] ?? providersList[0]}
-                          index={activeProviderTab < providersList.length ? activeProviderTab : 0}
-                          onChange={handleProviderChange}
-                        />
-                      )}
+                      {/* Right detail panel */}
+                      <div className="sub-list-detail">
+                        {providersList.length === 0 ? (
+                          <div className="provider-empty">
+                            No providers configured. Click + to add one.
+                          </div>
+                        ) : (
+                          <ProviderTabPanel
+                            key={activeProviderTab}
+                            provider={providersList[activeProviderTab] ?? providersList[0]}
+                            index={activeProviderTab < providersList.length ? activeProviderTab : 0}
+                            onChange={handleProviderChange}
+                          />
+                        )}
+                      </div>
                     </div>
                   )
                 ) : isSessionSection ? (
@@ -2172,52 +2146,56 @@ export function SettingsOverlay({
                     No prompt files found. Run&nbsp;<code>y-agent init</code>&nbsp;to seed defaults.
                   </div>
                 ) : (
-                  <div className="provider-form-wrap">
-                    {/* Sub-tab bar — one tab per prompt file, no add/close */}
-                    <div className="provider-subtabs">
-                      {promptFiles.map((f, i) => (
-                        <button
-                          key={f}
-                          className={`provider-subtab ${activePromptTab === i ? 'active' : ''}`}
-                          onClick={() => handlePromptTabSwitch(i)}
-                        >
-                          <span className="provider-subtab-label">{promptLabel(f)}</span>
-                        </button>
-                      ))}
+                  <div className="sub-list-layout">
+                    {/* Left sidebar list -- one item per prompt file */}
+                    <div className="sub-list-sidebar">
+                      <div className="sub-list-items">
+                        {promptFiles.map((f, i) => (
+                          <button
+                            key={f}
+                            className={`sub-list-item ${activePromptTab === i ? 'active' : ''}`}
+                            onClick={() => handlePromptTabSwitch(i)}
+                          >
+                            <span className="sub-list-item-label">{promptLabel(f)}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
-                    {/* Prompt content textarea */}
-                    {promptLoading ? (
-                      <div className="section-loading">Loading...</div>
-                    ) : (
-                      <div className="toml-editor-wrap">
-                        <textarea
-                          className="toml-editor prompt-editor"
-                          value={promptContent}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setPromptContent(val);
-                            const filename = promptFiles[activePromptTab];
-                            if (filename) {
-                              setDirtyPrompts((prev) => ({ ...prev, [filename]: val }));
-                            }
-                          }}
-                          spellCheck={false}
-                          placeholder="Empty prompt. Type content here."
-                        />
-                        <div className="prompt-editor-actions">
-                          <button
-                            type="button"
-                            className="btn-prompt-restore"
-                            onClick={handlePromptRestore}
-                            title="Restore to default"
-                          >
-                            <RotateCcw size={13} />
-                            <span>Restore Default</span>
-                          </button>
+                    {/* Right detail panel -- prompt editor */}
+                    <div className="sub-list-detail">
+                      {promptLoading ? (
+                        <div className="section-loading">Loading...</div>
+                      ) : (
+                        <div className="toml-editor-wrap">
+                          <textarea
+                            className="toml-editor prompt-editor"
+                            value={promptContent}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setPromptContent(val);
+                              const filename = promptFiles[activePromptTab];
+                              if (filename) {
+                                setDirtyPrompts((prev) => ({ ...prev, [filename]: val }));
+                              }
+                            }}
+                            spellCheck={false}
+                            placeholder="Empty prompt. Type content here."
+                          />
+                          <div className="prompt-editor-actions">
+                            <button
+                              type="button"
+                              className="btn-prompt-restore"
+                              onClick={handlePromptRestore}
+                              title="Restore to default"
+                            >
+                              <RotateCcw size={13} />
+                              <span>Restore Default</span>
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -2251,7 +2229,6 @@ export function SettingsOverlay({
               </div>
             )}
           </div>
-        </div>
 
         {/* Toast notification */}
         {toast && (
@@ -2259,14 +2236,6 @@ export function SettingsOverlay({
             {toast.message}
           </div>
         )}
-
-        <div className="settings-footer">
-          <button className="btn-cancel" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="btn-save" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Changes'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

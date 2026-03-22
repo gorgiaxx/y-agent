@@ -75,6 +75,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 # -- Detect platform -----------------------------------------------------------
+detect_host_os() {
+  local os
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$os" in
+    linux*)  echo "linux" ;;
+    darwin*) echo "darwin" ;;
+    msys*|mingw*|cygwin*) echo "windows" ;;
+    *)       echo "unknown" ;;
+  esac
+}
+
 detect_platform() {
   local os arch
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -96,7 +107,72 @@ detect_platform() {
   echo "${os}-${arch}"
 }
 
-PLATFORM="$(detect_platform)"
+# Derive platform string from a Rust target triple
+platform_from_target() {
+  local target="$1" os arch
+  case "$target" in
+    *-linux-*)   os="linux" ;;
+    *-apple-*)   os="darwin" ;;
+    *-windows-*) os="windows" ;;
+    *)           os="unknown" ;;
+  esac
+  case "$target" in
+    x86_64-*)  arch="amd64" ;;
+    aarch64-*) arch="arm64" ;;
+    i686-*)    arch="x86" ;;
+    *)         arch="unknown" ;;
+  esac
+  echo "${os}-${arch}"
+}
+
+HOST_OS="$(detect_host_os)"
+
+# When --target is used, derive PLATFORM from the target triple;
+# otherwise detect from the current host.
+if [[ -n "$BUILD_TARGET" ]]; then
+  PLATFORM="$(platform_from_target "$BUILD_TARGET")"
+else
+  PLATFORM="$(detect_platform)"
+fi
+
+# -- Validate cross-compilation feasibility ------------------------------------
+if [[ -n "$BUILD_TARGET" ]]; then
+  TARGET_OS=""
+  case "$BUILD_TARGET" in
+    *-windows-msvc*) TARGET_OS="windows-msvc" ;;
+    *-windows-gnu*)  TARGET_OS="windows-gnu" ;;
+    *-linux-*)       TARGET_OS="linux" ;;
+    *-apple-*)       TARGET_OS="darwin" ;;
+  esac
+
+  # MSVC targets require the Windows SDK + MSVC linker -- only available on Windows
+  if [[ "$TARGET_OS" == "windows-msvc" && "$HOST_OS" != "windows" ]]; then
+    echo "error: cannot cross-compile to '$BUILD_TARGET' from $HOST_OS." >&2
+    echo "" >&2
+    echo "  The -msvc target requires the Microsoft Visual C++ linker and" >&2
+    echo "  Windows SDK, which are only available on Windows." >&2
+    echo "" >&2
+    echo "  Alternatives:" >&2
+    echo "    1. Build on a Windows machine or Windows CI runner." >&2
+    echo "    2. Use the GNU target (requires mingw-w64 toolchain):" >&2
+    echo "       ./scripts/build-release.sh --target x86_64-pc-windows-gnu" >&2
+    echo "" >&2
+    exit 1
+  fi
+
+  # Linux targets from macOS require a cross-linker (give a hint)
+  if [[ "$TARGET_OS" == "linux" && "$HOST_OS" == "darwin" ]]; then
+    echo "warning: cross-compiling to Linux from macOS requires a cross-linker" >&2
+    echo "         (e.g. install via: brew install filosottile/musl-cross/musl-cross)" >&2
+    echo "" >&2
+  fi
+fi
+
+# Binary extension for the target
+BIN_EXT=""
+case "${BUILD_TARGET:-}" in
+  *-windows-*) BIN_EXT=".exe" ;;
+esac
 
 # -- Version -------------------------------------------------------------------
 if [[ -n "$VERSION_OVERRIDE" ]]; then
@@ -137,13 +213,14 @@ if [[ "$BUILD_CLI" == true ]]; then
 
   # Locate binary
   if [[ -n "$BUILD_TARGET" ]]; then
-    CLI_BIN="$PROJECT_ROOT/target/$BUILD_TARGET/release/y-agent"
+    CLI_BIN="$PROJECT_ROOT/target/$BUILD_TARGET/release/y-agent${BIN_EXT}"
   else
-    CLI_BIN="$PROJECT_ROOT/target/release/y-agent"
+    CLI_BIN="$PROJECT_ROOT/target/release/y-agent${BIN_EXT}"
   fi
 
-  # Strip binary
-  if [[ "${SKIP_STRIP:-0}" != "1" && -f "$CLI_BIN" ]]; then
+  # Strip binary (skip for cross-compiled Windows binaries -- strip does not
+  # understand PE format on macOS/Linux)
+  if [[ "${SKIP_STRIP:-0}" != "1" && -f "$CLI_BIN" && -z "$BIN_EXT" ]]; then
     echo "  Stripping binary..."
     strip "$CLI_BIN" 2>/dev/null || true
   fi
@@ -153,7 +230,7 @@ if [[ "$BUILD_CLI" == true ]]; then
   CLI_STAGING="$DIST_DIR/$CLI_ARCHIVE"
   mkdir -p "$CLI_STAGING"
 
-  cp "$CLI_BIN" "$CLI_STAGING/y-agent"
+  cp "$CLI_BIN" "$CLI_STAGING/y-agent${BIN_EXT}"
   cp -r "$PROJECT_ROOT/config" "$CLI_STAGING/config"
   cp -r "$PROJECT_ROOT/skills" "$CLI_STAGING/skills"
   cp "$PROJECT_ROOT/README.md" "$CLI_STAGING/"

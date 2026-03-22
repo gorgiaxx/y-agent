@@ -8,7 +8,8 @@ import { ChatPanel } from './components/ChatPanel';
 import { WelcomePage } from './components/WelcomePage';
 import { InputArea } from './components/InputArea';
 import { StatusBar } from './components/StatusBar';
-import { SettingsOverlay } from './components/SettingsOverlay';
+import { SettingsPanel } from './components/SettingsPanel';
+import type { SettingsTab } from './components/SettingsPanel';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { ObservabilityPanel } from './components/ObservabilityPanel';
 import { SkillsPanel } from './components/SkillsPanel';
@@ -92,7 +93,7 @@ function App() {
   const diagnosticSessionId = activeView === 'chat' ? activeSessionId : null;
   const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
     useDiagnostics(diagnosticSessionId);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('general');
   const [diagOpen, setDiagOpen] = useState(false);
   const [obsOpen, setObsOpen] = useState(false);
   const [obsExpanded, setObsExpanded] = useState(false);
@@ -467,7 +468,7 @@ function App() {
           }
           return true;
         case 'settings':
-          setSettingsOpen(true);
+          setActiveView('settings');
           return true;
         case 'diagnostics':
           setDiagOpen((prev) => !prev);
@@ -482,7 +483,7 @@ function App() {
           return true;
         case 'help':
           // Phase 1 placeholder: open settings as a stand-in.
-          setSettingsOpen(true);
+          setActiveView('settings');
           return true;
         case 'export':
           // Phase 1 placeholder: log to console until export UI is built.
@@ -490,7 +491,7 @@ function App() {
           return true;
         case 'model':
           // Phase 1 placeholder: open settings on the providers tab.
-          setSettingsOpen(true);
+          setActiveView('settings');
           return true;
         default:
           return false;
@@ -541,7 +542,8 @@ function App() {
         agents={agents}
         activeAgentId={activeAgentId}
         onSelectAgent={(id) => { setActiveView('agents'); setActiveAgentId(id); }}
-        onSettingsOpen={() => setSettingsOpen(true)}
+        activeSettingsTab={activeSettingsTab}
+        onSelectSettingsTab={(tab) => { setActiveView('settings'); setActiveSettingsTab(tab as SettingsTab); }}
       />
 
       <main className="main-panel">
@@ -553,6 +555,8 @@ function App() {
                 ? 'Knowledge'
               : activeView === 'agents'
               ? 'Agents'
+              : activeView === 'settings'
+              ? 'Settings'
               : activeSessionId
                 ? sessions.find((s) => s.id === activeSessionId)?.title || 'Untitled'
                 : 'y-agent'}
@@ -664,6 +668,24 @@ function App() {
             onReload={reloadAgents}
           />
         )}
+
+        {activeView === 'settings' && (
+          <SettingsPanel
+            config={config}
+            activeTab={activeSettingsTab}
+            onSave={(updates) => {
+              updateConfig(updates);
+              refreshProviders();
+            }}
+            loadSection={loadSection}
+            saveSection={saveSection}
+            reloadConfig={async () => {
+              const msg = await rawReloadConfig();
+              refreshProviders();
+              return msg;
+            }}
+          />
+        )}
       </main>
 
       {diagOpen && (
@@ -699,25 +721,7 @@ function App() {
         />
       )}
 
-      {settingsOpen && (
-        <SettingsOverlay
-          config={config}
-          onSave={(updates) => {
-            updateConfig(updates);
-            // Refresh the provider dropdown after settings are saved.
-            refreshProviders();
-          }}
-          onClose={() => setSettingsOpen(false)}
-          loadSection={loadSection}
-          saveSection={saveSection}
-          reloadConfig={async () => {
-            const msg = await rawReloadConfig();
-            // After hot-reloading config, refresh provider list too.
-            refreshProviders();
-            return msg;
-          }}
-        />
-      )}
+
 
       {importDialogOpen && (
         <SkillImportDialog
