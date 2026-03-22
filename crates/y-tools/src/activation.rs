@@ -142,6 +142,7 @@ mod tests {
         ToolDefinition {
             name: ToolName::from_string(name),
             description: format!("{name} tool"),
+            help: None,
             parameters: serde_json::json!({}),
             result_schema: None,
             category: ToolCategory::FileSystem,

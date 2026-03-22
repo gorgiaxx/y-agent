@@ -301,6 +301,7 @@ impl DslWorkflow {
                     name: name.clone(),
                     priority: TaskPriority::Normal,
                     dependencies: deps.to_vec(),
+                    ..TaskNode::default()
                 })?;
                 Ok(vec![id])
             }

@@ -1,13 +1,13 @@
-//! `tool_search` meta-tool: allows the LLM to search for and activate tools.
+//! `tool_search` meta-tool: unified capability discovery.
 //!
-//! This is the primary mechanism for lazy tool loading. The LLM sees
-//! a compact taxonomy root and calls `tool_search` to retrieve full
-//! definitions for the tools it needs.
+//! This is the primary mechanism for lazy tool loading and capability
+//! discovery. The LLM sees a compact taxonomy root and calls `tool_search`
+//! to retrieve definitions for the capabilities it needs.
 //!
 //! Supports three discovery modes:
-//! - `category` — browse the taxonomy tree by category path
-//! - `tool` — get the full schema of a specific tool by name
-//! - `query` — keyword search across all tools
+//! - `category` -- browse the taxonomy tree by category path
+//! - `tool` -- get the full schema of a specific tool by name
+//! - `query` -- keyword search across all tools, skills, and agents
 
 use async_trait::async_trait;
 
@@ -37,15 +37,16 @@ impl ToolSearchTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("tool_search"),
-            description: "Search for available tools by category, keyword, or specific tool name. \
-                Returns tool definitions that can be used in subsequent calls."
+            description: "Discover capabilities (tools, skills, agents) by keyword, \
+                category, or name."
                 .into(),
+            help: None,
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Keyword search query to match tool names and descriptions"
+                        "description": "Keyword search across tools, skills, and agents"
                     },
                     "category": {
                         "type": "string",

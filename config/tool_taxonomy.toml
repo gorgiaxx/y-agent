@@ -4,6 +4,9 @@
 # meta-tool. Only category names and descriptions are injected into the
 # system prompt (~100 tokens). Full tool schemas are loaded on demand.
 #
+# Keyword search (`query`) also returns matching skills and agents
+# from their respective registries for unified capability discovery.
+#
 # Reference: docs/standards/TOOL_CALL_PROTOCOL.md
 
 [categories.file]
@@ -40,9 +43,10 @@ description = "Search and retrieve information from knowledge base and documents
 
 [categories.agent]
 label = "Agent & Workflow"
-description = "Delegate to sub-agents, manage workflows"
+description = "Delegate to sub-agents, manage workflows. Agents are also discoverable via keyword search."
 
 [categories.meta]
 label = "Meta Tools"
-description = "Tool management tools"
+description = "Tool management and unified capability discovery (tools, skills, agents)"
 tools = ["tool_search"]
+

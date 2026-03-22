@@ -32,7 +32,7 @@ use y_provider::ProviderPoolImpl;
 use y_provider::SingleTurnRunner;
 use y_runtime::{RuntimeManager, VenvManager};
 use y_session::{ChatCheckpointManager, SessionManager};
-use y_skills::SkillRegistryImpl;
+use y_skills::{SkillRegistryImpl, SkillSearch};
 use y_storage::{
     SqliteChatCheckpointStore, SqliteChatMessageStore, SqliteProviderMetricsStore,
     SqliteSessionStore, SqliteWorkflowStore,
@@ -141,6 +141,12 @@ pub struct ServiceContainer {
 
     /// Provider metrics event log store for persistence across restarts.
     pub provider_metrics_store: SqliteProviderMetricsStore,
+
+    /// Skill search index for unified `tool_search` capability discovery.
+    ///
+    /// Pre-loaded from the skills directory at startup. Wrapped in `RwLock`
+    /// so it can be refreshed when skills are added/removed.
+    pub skill_search: RwLock<SkillSearch>,
 }
 
 impl ServiceContainer {
@@ -331,6 +337,8 @@ tools = ["tool_search"]
         )));
 
         // 10c. Register InjectSkills (dynamic -- reads active_skills from PromptContext).
+        //      Also build the SkillSearch index for tool_search.
+        let skill_search = Self::build_skill_search_index(config.skills_dir.as_deref());
         if let Some(ref skills_dir) = config.skills_dir {
             context_pipeline.register(Box::new(InjectSkills::new(
                 Arc::clone(&prompt_context),
@@ -413,6 +421,7 @@ tools = ["tool_search"]
             compaction_threshold_pct,
             pruning_watermarks: RwLock::new(HashMap::new()),
             provider_metrics_store,
+            skill_search: RwLock::new(skill_search),
         })
     }
 
@@ -469,6 +478,48 @@ tools = ["tool_search"]
         }
 
         (Arc::new(Mutex::new(knowledge_service)), embedding_provider)
+    }
+
+    /// Build a [`SkillSearch`] index from the filesystem skill store.
+    ///
+    /// Loads all skill manifests from `skills_dir` and indexes them for
+    /// keyword search. Returns an empty index if the directory is missing
+    /// or unreadable.
+    fn build_skill_search_index(skills_dir: Option<&std::path::Path>) -> SkillSearch {
+        let mut index = SkillSearch::new();
+
+        let Some(dir) = skills_dir else {
+            return index;
+        };
+
+        if !dir.exists() {
+            return index;
+        }
+
+        let store = match y_skills::FilesystemSkillStore::new(dir) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "failed to open skill store for search index");
+                return index;
+            }
+        };
+
+        match store.load_all() {
+            Ok(manifests) => {
+                let count = manifests.len();
+                for manifest in manifests {
+                    index.index(manifest);
+                }
+                if count > 0 {
+                    info!(skills = count, "skill search index built");
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "failed to load skills for search index");
+            }
+        }
+
+        index
     }
 }
 

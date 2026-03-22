@@ -30,9 +30,8 @@ impl ShellExecTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("shell_exec"),
-            description: "Execute a shell command and return its stdout and stderr output. \
-                          Use this for running build commands, git operations, or any CLI tool."
-                .into(),
+            description: "Execute a shell command and return stdout/stderr.".into(),
+            help: None,
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

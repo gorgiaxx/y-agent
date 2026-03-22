@@ -95,6 +95,7 @@ impl DynamicToolDef {
         ToolDefinition {
             name: self.name.clone(),
             description: self.description.clone(),
+            help: None,
             parameters: self.parameters.clone(),
             result_schema: None,
             category: ToolCategory::Custom,

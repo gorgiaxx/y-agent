@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
+use crate::orchestrator::failure::{FailureStrategy, RetryConfig};
+
 /// Unique task identifier.
 pub type TaskId = String;
 
@@ -18,8 +20,54 @@ pub enum TaskPriority {
     Background = 4,
 }
 
+/// The kind of work a task performs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TaskType {
+    /// Call an LLM provider.
+    LlmCall {
+        /// Optional provider tag for routing.
+        #[serde(default)]
+        provider_tag: Option<String>,
+        /// Optional system prompt override.
+        #[serde(default)]
+        system_prompt: Option<String>,
+    },
+    /// Execute a tool from the tool registry.
+    ToolExecution {
+        /// Tool name to invoke.
+        tool_name: String,
+        /// Static parameters (merged with resolved inputs at runtime).
+        #[serde(default)]
+        parameters: serde_json::Value,
+    },
+    /// Delegate to a sub-agent.
+    SubAgent {
+        /// Agent definition ID.
+        agent_id: String,
+    },
+    /// Execute a sub-workflow by template ID.
+    SubWorkflow {
+        /// Workflow template ID.
+        workflow_id: String,
+    },
+    /// Run an external script or command.
+    Script {
+        /// Command to execute.
+        command: String,
+        /// Command-line arguments.
+        #[serde(default)]
+        args: Vec<String>,
+    },
+    /// Pause the workflow for human approval.
+    HumanApproval,
+    /// No-op task for testing and placeholder use.
+    #[default]
+    Noop,
+}
+
 /// A task node in the DAG.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskNode {
     /// Unique identifier.
     pub id: TaskId,
@@ -30,6 +78,18 @@ pub struct TaskNode {
     pub priority: TaskPriority,
     /// Dependencies (task IDs that must complete before this task).
     pub dependencies: Vec<TaskId>,
+    /// The kind of work this task performs.
+    #[serde(default)]
+    pub task_type: TaskType,
+    /// Timeout in milliseconds (None = no timeout).
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    /// Retry configuration (None = no retries).
+    #[serde(default)]
+    pub retry: Option<RetryConfig>,
+    /// Strategy when this task fails after exhausting retries.
+    #[serde(default)]
+    pub failure_strategy: FailureStrategy,
 }
 
 /// Task DAG for scheduling.
@@ -174,6 +234,7 @@ mod tests {
             name: id.into(),
             priority: TaskPriority::Normal,
             dependencies: deps.iter().map(|d| (*d).to_string()).collect(),
+            ..TaskNode::default()
         }
     }
 
@@ -249,6 +310,7 @@ mod tests {
             name: "low".into(),
             priority: TaskPriority::Low,
             dependencies: vec![],
+            ..TaskNode::default()
         })
         .unwrap();
         dag.add_task(TaskNode {
@@ -256,6 +318,7 @@ mod tests {
             name: "critical".into(),
             priority: TaskPriority::Critical,
             dependencies: vec![],
+            ..TaskNode::default()
         })
         .unwrap();
 
@@ -270,5 +333,85 @@ mod tests {
         dag.add_task(task("a", &[])).unwrap();
         let result = dag.add_task(task("a", &[]));
         assert!(matches!(result, Err(DagError::DuplicateTask { .. })));
+    }
+
+    /// T-P1-01: TaskNode with TaskType::LlmCall serializes/deserializes correctly.
+    #[test]
+    fn test_task_type_llm_call_serialization() {
+        let node = TaskNode {
+            id: "llm-1".into(),
+            name: "Chat".into(),
+            task_type: TaskType::LlmCall {
+                provider_tag: Some("fast".into()),
+                system_prompt: Some("You are helpful.".into()),
+            },
+            ..TaskNode::default()
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let deserialized: TaskNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, "llm-1");
+        assert!(matches!(
+            deserialized.task_type,
+            TaskType::LlmCall { provider_tag: Some(ref tag), .. } if tag == "fast"
+        ));
+    }
+
+    /// T-P1-02: TaskNode with TaskType::ToolExecution stores parameters.
+    #[test]
+    fn test_task_type_tool_execution_serialization() {
+        let node = TaskNode {
+            id: "tool-1".into(),
+            name: "Search".into(),
+            task_type: TaskType::ToolExecution {
+                tool_name: "web_search".into(),
+                parameters: serde_json::json!({"query": "rust async"}),
+            },
+            ..TaskNode::default()
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let deserialized: TaskNode = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            deserialized.task_type,
+            TaskType::ToolExecution { ref tool_name, .. } if tool_name == "web_search"
+        ));
+    }
+
+    /// T-P1-03: TaskDag with typed nodes validates as before (regression).
+    #[test]
+    fn test_dag_with_typed_nodes_validates() {
+        let mut dag = TaskDag::new();
+        dag.add_task(TaskNode {
+            id: "search".into(),
+            name: "Search".into(),
+            task_type: TaskType::ToolExecution {
+                tool_name: "web_search".into(),
+                parameters: serde_json::Value::Null,
+            },
+            ..TaskNode::default()
+        })
+        .unwrap();
+        dag.add_task(TaskNode {
+            id: "analyze".into(),
+            name: "Analyze".into(),
+            dependencies: vec!["search".into()],
+            task_type: TaskType::LlmCall {
+                provider_tag: None,
+                system_prompt: None,
+            },
+            ..TaskNode::default()
+        })
+        .unwrap();
+        assert!(dag.validate().is_ok());
+
+        let completed = HashSet::new();
+        let ready = dag.ready_tasks(&completed);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, "search");
+    }
+
+    /// TaskType default is Noop.
+    #[test]
+    fn test_task_type_default_is_noop() {
+        assert!(matches!(TaskType::default(), TaskType::Noop));
     }
 }

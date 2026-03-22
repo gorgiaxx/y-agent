@@ -17,14 +17,13 @@ After each tool call, you will receive the result in a <tool_result> block:
 {"result_key": "result_value"}
 </tool_result>
 
-For capabilities beyond core tools, use `tool_search` to discover tools by category key or keywords. Do not guess tool names -- always search first, then call. Example:
+For capabilities beyond core tools, use `tool_search` to discover tools by category key or keywords. Do not guess tool names -- always search first, then load the full schema before calling.
 
-<tool_call>
-<name>tool_search</name>
-<arguments>{"query": "web browse"}</arguments>
-</tool_call>
+Two-step discovery:
+  1. Search: tool_search(query: "web browse") -> returns name + description summaries
+  2. Load:   tool_search(tool: "browser")     -> returns full schema + usage help, activates tool
 
-The `query` accepts space-separated keywords (OR matching). You can also pass `category` to browse a taxonomy category, or `tool` to get a specific tool's schema.
+The `query` accepts space-separated keywords (OR matching). You can also pass `category` to browse a taxonomy category, or `tool` to get a specific tool's full schema and help.
 
 ## Tool Behavior
 

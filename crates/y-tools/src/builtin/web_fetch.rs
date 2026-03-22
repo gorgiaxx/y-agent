@@ -38,18 +38,20 @@ impl WebFetchTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("web_fetch"),
-            description: concat!(
-                "Fetch web page content or search the web. ",
-                "Uses a real browser engine to render JavaScript-heavy pages.\n\n",
-                "Actions:\n",
-                "- fetch (default): Navigate to a URL and return visible text. ",
-                "Args: url (required), wait_ms (optional, default 1000)\n",
-                "- search: Search the web via a search engine. ",
-                "Args: query (required), search_engine ('google'|'bing'|'duckduckgo'|'baidu', ",
-                "default 'google'), wait_ms (optional, default 2000)\n\n",
-                "Aliases: web_search, search, read_url, fetch_url, scrape",
-            )
-            .into(),
+            description: "Fetch web page content or search the web via a real browser engine."
+                .into(),
+            help: Some(
+                concat!(
+                    "Actions:\n",
+                    "- fetch (default): Navigate to a URL and return visible text. ",
+                    "Args: url (required), wait_ms (optional, default 1000)\n",
+                    "- search: Search the web via a search engine. ",
+                    "Args: query (required), search_engine ('google'|'bing'|'duckduckgo'|'baidu', ",
+                    "default 'google'), wait_ms (optional, default 2000)\n\n",
+                    "Aliases: web_search, search, read_url, fetch_url, scrape",
+                )
+                .into(),
+            ),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

@@ -179,6 +179,7 @@ mod tests {
         let def = ToolDefinition {
             name: ToolName::from_string("echo"),
             description: "echo tool".into(),
+            help: None,
             parameters: schema,
             result_schema: None,
             category: ToolCategory::Custom,

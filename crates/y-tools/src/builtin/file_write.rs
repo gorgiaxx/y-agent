@@ -24,9 +24,8 @@ impl FileWriteTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("file_write"),
-            description: "Write content to a file at the given path. Creates parent directories \
-                          if they don't exist. Overwrites existing content by default."
-                .into(),
+            description: "Write content to a file, creating parent directories as needed.".into(),
+            help: None,
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

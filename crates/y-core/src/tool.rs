@@ -25,6 +25,10 @@ pub struct ToolDefinition {
     pub name: ToolName,
     /// Human-readable description (injected into LLM context).
     pub description: String,
+    /// Detailed usage instructions for the LLM. Returned only on direct
+    /// tool lookup (`tool_search(tool: "name")`), not in search/browse results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
     /// JSON Schema (Draft 7) for input parameters.
     pub parameters: serde_json::Value,
     /// JSON Schema for output (optional, for documentation).

@@ -1174,15 +1174,21 @@ impl AgentService {
         tc: &ToolCallRequest,
         session_id: &SessionId,
     ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
-        // Intercept tool_search calls.
+        // Intercept tool_search calls — unified search across tools, skills, and agents.
         if tc.name == "tool_search" {
-            let result = crate::tool_search_orchestrator::ToolSearchOrchestrator::handle(
-                &tc.arguments,
-                &container.tool_registry,
-                &container.tool_taxonomy,
-                &container.tool_activation_set,
-            )
-            .await;
+            let sources = crate::tool_search_orchestrator::CapabilitySearchSources {
+                skill_search: Some(&container.skill_search),
+                agent_registry: Some(&container.agent_registry),
+            };
+            let result =
+                crate::tool_search_orchestrator::ToolSearchOrchestrator::handle_with_sources(
+                    &tc.arguments,
+                    &container.tool_registry,
+                    &container.tool_taxonomy,
+                    &container.tool_activation_set,
+                    &sources,
+                )
+                .await;
 
             return result;
         }

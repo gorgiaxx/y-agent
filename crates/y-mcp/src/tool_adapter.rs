@@ -32,6 +32,7 @@ impl McpToolAdapter {
         let def = ToolDefinition {
             name: ToolName::from_string(name),
             description: description.to_string(),
+            help: None,
             parameters: schema,
             result_schema: None,
             category: ToolCategory::Custom,

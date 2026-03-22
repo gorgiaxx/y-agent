@@ -172,6 +172,7 @@ impl MicroAgentPipeline {
                 name: step.name.clone(),
                 priority: TaskPriority::Normal,
                 dependencies: deps,
+                ..TaskNode::default()
             };
             dag.add_task(node)
                 .expect("MicroAgentPipeline steps should have unique IDs (validate first)");

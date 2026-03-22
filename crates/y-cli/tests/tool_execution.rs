@@ -23,6 +23,7 @@ impl EchoTool {
             definition: ToolDefinition {
                 name: ToolName::from_string("echo"),
                 description: "Echoes the input text".into(),
+                help: None,
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {

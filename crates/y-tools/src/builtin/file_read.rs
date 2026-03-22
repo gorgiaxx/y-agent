@@ -24,10 +24,8 @@ impl FileReadTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("file_read"),
-            description: "Read the contents of a file at the given path. Returns the file \
-                          content as a string. Use this to examine source code, configuration \
-                          files, or any text file."
-                .into(),
+            description: "Read file contents at a given path.".into(),
+            help: None,
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

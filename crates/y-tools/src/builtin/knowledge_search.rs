@@ -31,11 +31,8 @@ impl KnowledgeSearchTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("knowledge_search"),
-            description: "Search the knowledge base for relevant information. Use this tool \
-                          when you need specific knowledge from imported documents, technical \
-                          references, or domain-specific content. Returns the most relevant \
-                          knowledge chunks with their source and relevance score."
-                .into(),
+            description: "Search the knowledge base for relevant information.".into(),
+            help: None,
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {

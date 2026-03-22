@@ -41,6 +41,7 @@ fn bench_tool_dispatch(c: &mut Criterion) {
             ToolDefinition {
                 name: ToolName::from_string(&name),
                 description: format!("Tool {i} description"),
+                help: None,
                 parameters: serde_json::json!({"type": "object"}),
                 result_schema: None,
                 category: ToolCategory::Custom,
