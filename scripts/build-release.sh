@@ -249,9 +249,20 @@ echo ""
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
+# -- Determine target release directory ----------------------------------------
+if [[ -n "$BUILD_TARGET" ]]; then
+  TARGET_RELEASE_DIR="$PROJECT_ROOT/target/$BUILD_TARGET/release"
+else
+  TARGET_RELEASE_DIR="$PROJECT_ROOT/target/release"
+fi
+
 # -- Build CLI -----------------------------------------------------------------
 if [[ "$BUILD_CLI" == true ]]; then
   echo "[1/2] Building CLI binary..."
+
+  # Clean old CLI binary to prevent stale artifacts
+  echo "  Cleaning old CLI binary..."
+  rm -f "$TARGET_RELEASE_DIR/y-agent${BIN_EXT}"
 
   CLI_CARGO_ARGS=(build --release --bin y-agent)
   if [[ -n "$BUILD_TARGET" ]]; then
@@ -261,11 +272,7 @@ if [[ "$BUILD_CLI" == true ]]; then
   (cd "$PROJECT_ROOT" && cargo "${CLI_CARGO_ARGS[@]}")
 
   # Locate binary
-  if [[ -n "$BUILD_TARGET" ]]; then
-    CLI_BIN="$PROJECT_ROOT/target/$BUILD_TARGET/release/y-agent${BIN_EXT}"
-  else
-    CLI_BIN="$PROJECT_ROOT/target/release/y-agent${BIN_EXT}"
-  fi
+  CLI_BIN="$TARGET_RELEASE_DIR/y-agent${BIN_EXT}"
 
   # Strip binary (skip for cross-compiled Windows binaries -- strip does not
   # understand PE format on macOS/Linux)
@@ -301,6 +308,13 @@ if [[ "$BUILD_GUI" == true ]]; then
 
   GUI_DIR="$PROJECT_ROOT/crates/y-gui"
 
+  # Clean old bundle artifacts to prevent stale installers from being packaged
+  BUNDLE_DIR="$TARGET_RELEASE_DIR/bundle"
+  if [[ -d "$BUNDLE_DIR" ]]; then
+    echo "  Cleaning old bundle directory..."
+    rm -rf "$BUNDLE_DIR"
+  fi
+
   echo "  Installing npm dependencies..."
   (cd "$GUI_DIR" && npm install)
 
@@ -311,12 +325,7 @@ if [[ "$BUILD_GUI" == true ]]; then
     (cd "$GUI_DIR" && npx @tauri-apps/cli build)
   fi
 
-  # Tauri outputs to the workspace root target/ directory
-  BUNDLE_DIR="$PROJECT_ROOT/target"
-  if [[ -n "$BUILD_TARGET" ]]; then
-    BUNDLE_DIR="$BUNDLE_DIR/$BUILD_TARGET"
-  fi
-  BUNDLE_DIR="$BUNDLE_DIR/release/bundle"
+  # BUNDLE_DIR is already set above from TARGET_RELEASE_DIR
 
   # Unmount any DMGs that Tauri's create-dmg may have left mounted
   if [[ "$PLATFORM" == darwin-* ]]; then

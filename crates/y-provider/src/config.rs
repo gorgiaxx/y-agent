@@ -489,6 +489,7 @@ mod tests {
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
+            icon: None,
         };
 
         // Without env var set, should return None.
@@ -517,6 +518,7 @@ mod tests {
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
+            icon: None,
         };
 
         // Direct key takes priority over env var.
