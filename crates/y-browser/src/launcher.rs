@@ -36,9 +36,16 @@ impl ChromeLauncher {
     /// - `chrome_path`: explicit path, or empty to auto-detect.
     /// - `port`: preferred remote debugging port (if in use, a free port is chosen).
     /// - `headless`: when true, launches in headless mode (no visible window).
+    /// - `use_user_profile`: when true, uses the system user's default Chrome
+    ///   profile instead of a clean temporary profile.
     ///
     /// Blocks until CDP is ready (polls `/json/version`).
-    pub async fn launch(chrome_path: &str, port: u16, headless: bool) -> Result<Self, LaunchError> {
+    pub async fn launch(
+        chrome_path: &str,
+        port: u16,
+        headless: bool,
+        use_user_profile: bool,
+    ) -> Result<Self, LaunchError> {
         let exe = if chrome_path.is_empty() {
             detect_chrome().ok_or(LaunchError::ChromeNotFound)?
         } else {
@@ -66,31 +73,48 @@ impl ChromeLauncher {
             port
         };
 
-        info!(path = %exe.display(), port = actual_port, "launching Chrome");
+        // Determine user-data-dir: real profile or isolated temp.
+        let user_data_dir = if use_user_profile {
+            let profile_dir = detect_user_profile();
+            info!(
+                path = %profile_dir.display(),
+                "using system user Chrome profile"
+            );
+            profile_dir
+        } else {
+            let tmp_dir = std::env::temp_dir().join(format!("y-agent-chrome-{actual_port}"));
+            std::fs::create_dir_all(&tmp_dir).ok();
+            tmp_dir
+        };
 
-        // Create a temporary user-data-dir so multiple instances don't clash.
-        let user_data_dir = std::env::temp_dir().join(format!("y-agent-chrome-{actual_port}"));
-        std::fs::create_dir_all(&user_data_dir).ok();
+        info!(path = %exe.display(), port = actual_port, "launching Chrome");
 
         let mut cmd = Command::new(&exe);
         if headless {
             cmd.arg("--headless=new");
         }
-        let child = cmd
-            .arg(format!("--remote-debugging-port={actual_port}"))
+        cmd.arg(format!("--remote-debugging-port={actual_port}"))
             .arg(format!("--user-data-dir={}", user_data_dir.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-gpu")
-            .arg("--disable-extensions")
             .arg("--disable-background-networking")
             .arg("--disable-sync")
             .arg("--disable-translate")
             .arg("--disable-session-crashed-bubble")
             .arg("--hide-crash-restore-bubble")
-            .arg("--mute-audio")
-            // Open a single about:blank tab — ensures exactly one page target
-            // exists for resolve_ws_url to find, preventing duplicate windows.
+            .arg("--mute-audio");
+
+        // When NOT using the user profile, disable extensions for a clean env.
+        // When using the user profile, keep extensions so the user's installed
+        // extensions are available.
+        if !use_user_profile {
+            cmd.arg("--disable-extensions");
+        }
+
+        // Open a single about:blank tab -- ensures exactly one page target
+        // exists for resolve_ws_url to find, preventing duplicate windows.
+        let child = cmd
             .arg("about:blank")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -149,6 +173,14 @@ impl ChromeLauncher {
     /// May differ from the requested port if it was already in use.
     pub fn cdp_port(&self) -> u16 {
         self.port
+    }
+
+    /// Check whether the Chrome child process has exited.
+    ///
+    /// Returns `true` if the process has already exited (crash, user closed,
+    /// etc.). This is non-blocking.
+    pub fn child_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
     }
 
     /// Gracefully shutdown the Chrome process.
@@ -304,4 +336,46 @@ fn find_free_port() -> Option<u16> {
     let port = listener.local_addr().ok()?.port();
     drop(listener);
     Some(port)
+}
+
+/// Detect the default Chrome user-data directory for the current platform.
+///
+/// Falls back to a temp directory if the platform-specific path cannot be
+/// determined (e.g. missing HOME env var).
+fn detect_user_profile() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = PathBuf::from(&home).join("Library/Application Support/Google/Chrome");
+            if path.exists() {
+                return path;
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let path = PathBuf::from(&local).join(r"Google\Chrome\User Data");
+            if path.exists() {
+                return path;
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = PathBuf::from(&home).join(".config/google-chrome");
+            if path.exists() {
+                return path;
+            }
+        }
+    }
+
+    // Fallback: create an isolated profile in temp.
+    warn!("could not detect Chrome user profile directory, using temp dir");
+    let fallback = std::env::temp_dir().join("y-agent-chrome-user-profile");
+    std::fs::create_dir_all(&fallback).ok();
+    fallback
 }

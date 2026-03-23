@@ -4,7 +4,7 @@
 //! Inspired by openclaw's direct CDP approach.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -113,13 +113,17 @@ pub struct CdpClient {
     /// Auto-incrementing message ID.
     next_id: AtomicU64,
     /// WebSocket writer half (protected by mutex).
-    writer: Mutex<Option<WriterHalf>>,
-    /// Pending request map: id → response sender.
+    writer: Arc<Mutex<Option<WriterHalf>>>,
+    /// Pending request map: id -> response sender.
     pending: Arc<Mutex<PendingMap>>,
     /// Handle to the reader task.
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Broadcast sender for CDP events.
     event_tx: broadcast::Sender<CdpEvent>,
+    /// Whether the connection is alive. Set to false by the reader loop when
+    /// the WebSocket closes (e.g. browser crash). This ensures `is_connected`
+    /// returns false immediately without waiting to try a write.
+    alive: Arc<AtomicBool>,
 }
 
 type WriterHalf = futures_util::stream::SplitSink<
@@ -135,10 +139,11 @@ impl CdpClient {
             cdp_url: RwLock::new(cdp_url),
             default_timeout,
             next_id: AtomicU64::new(1),
-            writer: Mutex::new(None),
+            writer: Arc::new(Mutex::new(None)),
             pending: Arc::new(Mutex::new(HashMap::new())),
             reader_handle: Mutex::new(None),
             event_tx,
+            alive: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -167,12 +172,17 @@ impl CdpClient {
 
         // Store writer.
         *self.writer.lock().await = Some(writer);
+        self.alive.store(true, Ordering::SeqCst);
 
         // Spawn reader task to dispatch responses to pending senders.
+        // Share the writer handle and alive flag so the reader can clear
+        // them when the WebSocket closes unexpectedly.
         let pending = Arc::clone(&self.pending);
         let event_tx = self.event_tx.clone();
+        let writer_handle = Arc::clone(&self.writer);
+        let alive_flag = Arc::clone(&self.alive);
         let handle = tokio::spawn(async move {
-            Self::reader_loop(reader, pending, event_tx).await;
+            Self::reader_loop(reader, pending, event_tx, writer_handle, alive_flag).await;
         });
 
         *self.reader_handle.lock().await = Some(handle);
@@ -183,6 +193,7 @@ impl CdpClient {
 
     /// Disconnect from the CDP endpoint.
     pub async fn disconnect(&self) {
+        self.alive.store(false, Ordering::SeqCst);
         // Close the writer (sends close frame).
         if let Some(mut writer) = self.writer.lock().await.take() {
             let _ = writer.close().await;
@@ -199,8 +210,11 @@ impl CdpClient {
     }
 
     /// Check if the client is connected.
+    ///
+    /// Returns true only if the WebSocket writer exists **and** the reader
+    /// loop has not detected a connection loss.
     pub async fn is_connected(&self) -> bool {
-        self.writer.lock().await.is_some()
+        self.alive.load(Ordering::SeqCst) && self.writer.lock().await.is_some()
     }
 
     /// Subscribe to CDP events.
@@ -491,6 +505,11 @@ impl CdpClient {
     }
 
     /// Reader loop: receives WebSocket messages and dispatches responses.
+    ///
+    /// When the loop exits (connection lost, browser closed, etc.), it:
+    /// 1. Marks the connection as dead via the `alive` flag.
+    /// 2. Clears the writer so `is_connected()` returns false.
+    /// 3. Drains all pending requests with `NotConnected` errors.
     async fn reader_loop(
         mut reader: futures_util::stream::SplitStream<
             tokio_tungstenite::WebSocketStream<
@@ -499,6 +518,8 @@ impl CdpClient {
         >,
         pending: Arc<Mutex<PendingMap>>,
         event_tx: broadcast::Sender<CdpEvent>,
+        writer: Arc<Mutex<Option<WriterHalf>>>,
+        alive: Arc<AtomicBool>,
     ) {
         while let Some(msg) = reader.next().await {
             let text = match msg {
@@ -519,7 +540,7 @@ impl CdpClient {
                 }
             };
 
-            // Events (no id) — dispatch to subscribers.
+            // Events (no id) -- dispatch to subscribers.
             if resp.id.is_none() {
                 if let Some(method) = resp.method {
                     let params = resp.params.unwrap_or(serde_json::Value::Null);
@@ -545,7 +566,10 @@ impl CdpClient {
             }
         }
 
-        // Connection lost: close all pending.
+        // Connection lost: mark dead, clear writer, and drain pending.
+        warn!("CDP WebSocket connection lost, marking as disconnected");
+        alive.store(false, Ordering::SeqCst);
+        writer.lock().await.take();
         let mut pending = pending.lock().await;
         for (_, sender) in pending.drain() {
             let _ = sender.send(Err(CdpError::NotConnected));

@@ -101,6 +101,7 @@ interface BrowserFormData {
   launch_mode: 'remote' | 'auto_launch_headless' | 'auto_launch_visible';
   chrome_path: string;
   local_cdp_port: number;
+  use_user_profile: boolean;
   cdp_url: string;
   timeout_ms: number;
   allowed_domains: string[];
@@ -698,6 +699,7 @@ function browserToToml(b: BrowserFormData): string {
   ];
   if (b.chrome_path) lines.push(`chrome_path = "${escapeTomlString(b.chrome_path)}"`);
   lines.push(`local_cdp_port = ${b.local_cdp_port}`);
+  lines.push(`use_user_profile = ${b.use_user_profile}`);
   lines.push(`cdp_url = "${escapeTomlString(b.cdp_url)}"`);
   lines.push(`timeout_ms = ${b.timeout_ms}`);
   lines.push(`allowed_domains = [${b.allowed_domains.map(d => `"${escapeTomlString(d)}"`).join(', ')}]`);
@@ -721,6 +723,7 @@ function jsonToBrowser(json: any): BrowserFormData {
     launch_mode: launchMode,
     chrome_path: json?.chrome_path ?? '',
     local_cdp_port: json?.local_cdp_port ?? 9222,
+    use_user_profile: json?.use_user_profile ?? false,
     cdp_url: json?.cdp_url ?? 'http://127.0.0.1:9222',
     timeout_ms: json?.timeout_ms ?? 30000,
     allowed_domains: Array.isArray(json?.allowed_domains) ? json.allowed_domains : ['*'],
@@ -855,6 +858,7 @@ export function SettingsPanel({
     launch_mode: 'auto_launch_headless',
     chrome_path: '',
     local_cdp_port: 9222,
+    use_user_profile: false,
     cdp_url: 'http://127.0.0.1:9222',
     timeout_ms: 30000,
     allowed_domains: ['*'],
@@ -2093,6 +2097,7 @@ export function SettingsPanel({
 
                       {browserForm.launch_mode !== 'remote' ? (
                         /* Local Chrome mode */
+                        <>
                         <div className="pf-row">
                           <div className="pf-field" style={{ flex: 2 }}>
                             <label className="pf-label">Chrome Path</label>
@@ -2116,6 +2121,24 @@ export function SettingsPanel({
                             />
                           </div>
                         </div>
+                        <div className="pf-row">
+                          <div className="pf-field pf-field-full">
+                            <label className="pf-label">
+                              <input
+                                type="checkbox"
+                                className="form-checkbox"
+                                checked={browserForm.use_user_profile}
+                                onChange={(e) => { setBrowserForm({ ...browserForm, use_user_profile: e.target.checked }); setDirtyBrowser(true); }}
+                              />
+                              {' '}Use system user profile
+                            </label>
+                            <span className="pf-hint">
+                              Use your Chrome profile (bookmarks, cookies, extensions, login sessions) instead of a clean temporary profile.
+                              Note: Chrome locks its profile directory -- close other Chrome instances before enabling this.
+                            </span>
+                          </div>
+                        </div>
+                        </>
                       ) : (
                         /* Remote CDP mode */
                         <div className="pf-row">

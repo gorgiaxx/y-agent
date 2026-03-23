@@ -805,8 +805,7 @@ impl AgentService {
             response.content.clone().unwrap_or_default(),
             response.tool_calls.clone(),
         );
-        ctx.accumulated_content.push_str(&assistant_msg.content);
-        ctx.accumulated_content.push('\n');
+
         ctx.working_history.push(assistant_msg.clone());
         ctx.new_messages.push(assistant_msg);
 
@@ -865,8 +864,7 @@ impl AgentService {
         let msgs_before = ctx.new_messages.len();
 
         let assistant_msg = Self::build_assistant_msg(response, text.to_string(), vec![]);
-        ctx.accumulated_content.push_str(text);
-        ctx.accumulated_content.push('\n');
+
         ctx.working_history.push(assistant_msg.clone());
         ctx.new_messages.push(assistant_msg);
 

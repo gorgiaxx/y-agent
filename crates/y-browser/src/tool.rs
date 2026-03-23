@@ -1,7 +1,7 @@
 //! Browser tool implementing `y-core::tool::Tool`.
 //!
 //! Exposes browser automation as a single unified tool for the agent.
-//! Key workflow: snapshot → get refs → click/type with refs.
+//! Key workflow: snapshot -> get refs -> click/type with refs.
 
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -10,7 +10,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use y_core::runtime::RuntimeCapability;
 use y_core::tool::{
@@ -291,9 +291,33 @@ impl BrowserTool {
 
     /// Ensure CDP connection is established, connecting if needed.
     /// If `auto_launch` is enabled and no local Chrome is running, spawns one.
+    ///
+    /// Also detects stale connections (browser crashed / closed) and
+    /// automatically reconnects.
     async fn ensure_connected(&self) -> Result<(), ToolError> {
+        // Quick check: if the existing connection is still alive, nothing to do.
         if self.client.is_connected().await {
-            return Ok(());
+            // For auto-launched Chrome, verify the process is still running.
+            let launcher_dead = {
+                let mut guard = self.launcher.lock().await;
+                if let Some(ref mut chrome) = *guard {
+                    // try_wait returns Some(status) if the process has exited.
+                    chrome.child_exited()
+                } else {
+                    false
+                }
+            };
+
+            if launcher_dead {
+                warn!("auto-launched Chrome process has exited, resetting connection");
+                self.reset_connection().await;
+            } else {
+                return Ok(());
+            }
+        } else if self.launcher.lock().await.is_some() {
+            // Connection is dead but launcher exists -- Chrome likely crashed.
+            warn!("CDP connection lost while launcher exists, resetting");
+            self.reset_connection().await;
         }
 
         let config = self.config.read().unwrap().clone();
@@ -307,6 +331,7 @@ impl BrowserTool {
                     &config.chrome_path,
                     config.local_cdp_port,
                     config.launch_mode.is_headless(),
+                    config.use_user_profile,
                 )
                 .await
                 .map_err(|e| ToolError::ExternalServiceError {
@@ -356,6 +381,21 @@ impl BrowserTool {
 
     /// Shutdown the launcher and disconnect.
     async fn shutdown(&self) {
+        self.client.disconnect().await;
+        let mut launcher_guard = self.launcher.lock().await;
+        if let Some(mut chrome) = launcher_guard.take() {
+            chrome.shutdown().await;
+        }
+        *self.console_started.lock().await = false;
+    }
+
+    /// Reset a stale connection: disconnect, tear down the launcher
+    /// (if any), and clear console monitoring state.
+    ///
+    /// After this call, the next `ensure_connected` will establish a
+    /// completely fresh connection.
+    async fn reset_connection(&self) {
+        debug!("resetting browser connection (stale/dead)");
         self.client.disconnect().await;
         let mut launcher_guard = self.launcher.lock().await;
         if let Some(mut chrome) = launcher_guard.take() {
@@ -742,6 +782,22 @@ impl BrowserTool {
             .map(|l| format!("[console.{}] {}", l.level, l.text))
             .collect()
     }
+
+    /// Check whether the error indicates a broken connection that can be
+    /// recovered by reconnecting to the browser.
+    fn is_connection_error(err: &ToolError) -> bool {
+        match err {
+            ToolError::ExternalServiceError { message, .. } => {
+                let m = message.to_lowercase();
+                m.contains("websocket")
+                    || m.contains("closed connection")
+                    || m.contains("connection lost")
+                    || m.contains("not connected")
+                    || m.contains("cdp connection")
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Build a search engine URL from engine name and query text.
@@ -812,7 +868,18 @@ impl Tool for BrowserTool {
 
         self.ensure_connected().await?;
 
-        let result = self.dispatch_action(action, &input).await?;
+        // Dispatch the action, with one automatic retry on connection errors.
+        // If the browser crashed mid-operation, we reconnect and try once more.
+        let result = match self.dispatch_action(action.clone(), &input).await {
+            Ok(v) => v,
+            Err(ref e) if Self::is_connection_error(e) => {
+                warn!("browser action failed with connection error, attempting reconnect");
+                self.reset_connection().await;
+                self.ensure_connected().await?;
+                self.dispatch_action(action, &input).await?
+            }
+            Err(e) => return Err(e),
+        };
 
         // Attach any console errors/warnings that occurred during the action.
         let console_warnings = self.collect_console_warnings().await;

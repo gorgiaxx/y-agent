@@ -50,6 +50,24 @@ pub struct BrowserConfig {
     #[serde(default = "default_local_cdp_port")]
     pub local_cdp_port: u16,
 
+    /// Use the current system user's Chrome profile (bookmarks, cookies,
+    /// extensions, login sessions, etc.) instead of a clean temporary profile.
+    ///
+    /// When `false` (default), Chrome launches with an isolated temporary
+    /// profile in the system temp directory.
+    ///
+    /// When `true`, Chrome uses the default user data directory:
+    /// - macOS: `~/Library/Application Support/Google/Chrome`
+    /// - Windows: `%LOCALAPPDATA%\Google\Chrome\User Data`
+    /// - Linux: `~/.config/google-chrome`
+    ///
+    /// NOTE: Chrome locks its profile directory while running. If Chrome is
+    /// already open with the same profile, the auto-launched instance may
+    /// fail or merge into the existing window. Close other Chrome instances
+    /// before enabling this option with auto-launch mode.
+    #[serde(default)]
+    pub use_user_profile: bool,
+
     /// CDP endpoint URL (used when `launch_mode` is Remote).
     /// Supports `http://`, `https://`, `ws://`, `wss://` schemes.
     ///
@@ -90,6 +108,7 @@ impl Default for BrowserConfig {
             launch_mode: LaunchMode::default(),
             chrome_path: String::new(),
             local_cdp_port: default_local_cdp_port(),
+            use_user_profile: false,
             cdp_url: default_cdp_url(),
             timeout_ms: default_timeout_ms(),
             allowed_domains: vec!["*".into()],

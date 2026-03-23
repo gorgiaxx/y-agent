@@ -27,6 +27,18 @@ launch_mode = "auto_launch_headless"
 # Remote debugging port for the auto-launched Chrome.
 # local_cdp_port = 9222
 
+# Use the system user's Chrome profile (bookmarks, cookies, extensions, etc.)
+# instead of a clean temporary profile.
+# When true, Chrome uses the default user data directory:
+#   macOS:   ~/Library/Application Support/Google/Chrome
+#   Windows: %LOCALAPPDATA%\Google\Chrome\User Data
+#   Linux:   ~/.config/google-chrome
+#
+# NOTE: Chrome locks its profile directory. If Chrome is already running
+# with the same profile, the auto-launched instance may fail. Close other
+# Chrome instances before enabling this.
+# use_user_profile = false
+
 # ---------- Remote CDP Mode ----------
 # Used when launch_mode = "remote".
 
