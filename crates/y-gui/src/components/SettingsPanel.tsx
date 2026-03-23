@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Eye, EyeOff, RefreshCw, Plus, RotateCcw, X, Copy, Bot } from 'lucide-react';
+import { Eye, EyeOff, Plus, RotateCcw, X, Copy, Bot } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -341,7 +341,17 @@ function ProviderTabPanel({
             className="pf-input"
             value={provider.base_url ?? ''}
             onChange={(e) => update({ base_url: e.target.value || null })}
-            placeholder="Default"
+            placeholder={
+              {
+                openai: 'https://api.openai.com/v1',
+                'openai-compat': 'e.g. https://api.newapi.ai/v1',
+                anthropic: 'https://api.anthropic.com/v1',
+                gemini: 'https://generativelanguage.googleapis.com/v1beta',
+                deepseek: 'https://api.deepseek.com/v1',
+                ollama: 'http://localhost:11434/v1',
+                azure: 'https://RESOURCE.openai.azure.com/openai/deployments/DEPLOY',
+              }[provider.provider_type] ?? 'Default'
+            }
           />
         </div>
       </div>
@@ -1303,19 +1313,7 @@ export function SettingsPanel({
     }
   }, [showSensitive, rawContent]);
 
-  // (All section saves now go through the unified handleSave.
-  //  The reload handler is kept for the Reload button in the config header.)
 
-
-  // Hot-reload config.
-  const handleReload = useCallback(async () => {
-    try {
-      const msg = await reloadConfig();
-      setToast({ message: msg, type: 'success' });
-    } catch (e) {
-      setToast({ message: `Reload failed: ${e}`, type: 'error' });
-    }
-  }, [reloadConfig]);
 
   // Provider form handlers.
   const handleProviderChange = useCallback((index: number, updated: ProviderFormData) => {
@@ -1423,14 +1421,7 @@ export function SettingsPanel({
       <div className="settings-action-bar">
         <h2 className="settings-action-bar-title">{TAB_LABELS[activeTab] ?? activeTab}</h2>
         <div className="settings-action-bar-actions">
-          <button
-            className="btn-provider-action btn-reload"
-            onClick={handleReload}
-            title="Hot-reload configuration"
-          >
-            <RefreshCw size={14} />
-            <span>Reload</span>
-          </button>
+
           <button className="btn-settings-save" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save Changes'}
           </button>
@@ -1551,14 +1542,7 @@ export function SettingsPanel({
                         {showSensitive ? <EyeOff size={14} /> : <Eye size={14} />}
                       </button>
                     )}
-                    <button
-                      className="btn-provider-action btn-reload"
-                      onClick={handleReload}
-                      title="Hot-reload configuration"
-                    >
-                      <RefreshCw size={14} />
-                      <span>Reload</span>
-                    </button>
+
                   </div>
                 </div>
 
