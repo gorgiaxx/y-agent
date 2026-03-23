@@ -1,6 +1,7 @@
 {
   lib,
   stdenv,
+  rust,
   rustPlatform,
   pkg-config,
   glib,
@@ -24,7 +25,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   cargoLock.lockFile = ./Cargo.lock;
 
   nativeBuildInputs = [
-    # cargo-tauri.hook
+    cargo-tauri.hook
     nodejs
     npmHooks.npmConfigHook
     pkg-config
@@ -39,18 +40,22 @@ rustPlatform.buildRustPackage (finalAttrs: {
     libsoup_3
   ];
 
-  preBuild = ''
-    # Run vite build for the y-gui crate
-    pushd "${finalAttrs.npmRoot}"
-    npm run build
-    popd
+  postBuild = ''
+    # cargo-tauri builds y-gui only, so we need to build y-agent separately
+    ${rust.envVars.setEnv} cargo build "''${cargoFlagsArray[@]}" --bin y-agent
+  '';
+
+  postInstall = ''
+    # Copy the y-agent binary to the output bin directory
+    releaseDir=target/${stdenv.targetPlatform.rust.cargoShortTarget}/${finalAttrs.cargoBuildType}
+    mkdir -p $out/bin
+    cp $releaseDir/y-agent $out/bin/
   '';
 
   # Skip flaky test that times out in nix sandbox
   checkFlags = [
     "--skip=hook_handler::tests::handler_tests::test_command_hook_timeout_killed"
   ];
-
 
   npmRoot = "./crates/y-gui";
   npmDeps = fetchNpmDeps {
