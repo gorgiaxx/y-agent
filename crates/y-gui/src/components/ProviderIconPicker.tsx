@@ -1,53 +1,35 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import type { ComponentType } from 'react';
-import { X, Server } from 'lucide-react';
+import { X } from 'lucide-react';
 import { toc } from '@lobehub/icons';
 import type { IconToc } from '@lobehub/icons';
+import * as AllIcons from '@lobehub/icons';
 import './ProviderIconPicker.css';
 
 // ---------------------------------------------------------------------------
-// Dynamic icon loader -- imports the React component from @lobehub/icons/es/<Id>
+// Static icon lookup map -- all icons are bundled at build time
 // ---------------------------------------------------------------------------
 
-// Cache for loaded icon components to avoid re-importing.
-const iconCache = new Map<string, ComponentType<{ size?: number | string }> | null>();
+// Build a map from PascalCase icon ID -> React component.
+// Each icon default export is a Compound component (Mono SVG + Avatar/Text/Combine).
+// We iterate toc entries and look them up in AllIcons to avoid filtering issues
+// (memo() components are objects, not functions).
+const allIconsRecord = AllIcons as Record<string, unknown>;
+const iconMap: Record<string, ComponentType<{ size?: number | string }>> = {};
 
-/** Dynamically import an icon component by its toc ID (PascalCase). */
-async function loadIconComponent(tocId: string): Promise<ComponentType<{ size?: number | string }> | null> {
-  if (iconCache.has(tocId)) return iconCache.get(tocId)!;
-  try {
-    // Each icon folder exports default = Mono (SVG) component.
-    const mod = await import(/* @vite-ignore */ `@lobehub/icons/es/${tocId}`);
-    const component = mod.default as ComponentType<{ size?: number | string }>;
-    iconCache.set(tocId, component);
-    return component;
-  } catch {
-    iconCache.set(tocId, null);
-    return null;
+for (const entry of toc) {
+  const comp = allIconsRecord[entry.id];
+  if (comp) {
+    iconMap[entry.id] = comp as ComponentType<{ size?: number | string }>;
   }
 }
 
 // ---------------------------------------------------------------------------
-// DynamicIcon -- renders a single icon by its toc ID
+// DynamicIcon -- renders a single icon by its toc ID (synchronous)
 // ---------------------------------------------------------------------------
 
 function DynamicIcon({ tocId, size = 16 }: { tocId: string; size?: number }) {
-  const [Icon, setIcon] = useState<ComponentType<{ size?: number | string }> | null>(
-    iconCache.get(tocId) ?? null,
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    if (iconCache.has(tocId)) {
-      setIcon(iconCache.get(tocId)!);
-      return;
-    }
-    loadIconComponent(tocId).then((c) => {
-      if (!cancelled) setIcon(() => c);
-    });
-    return () => { cancelled = true; };
-  }, [tocId]);
-
+  const Icon = iconMap[tocId];
   if (!Icon) return null;
   return <Icon size={size} />;
 }

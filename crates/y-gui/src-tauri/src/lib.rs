@@ -160,6 +160,9 @@ pub fn run() {
             commands::config::prompt_get,
             commands::config::prompt_get_default,
             commands::config::prompt_save,
+            // MCP
+            commands::config::mcp_config_get,
+            commands::config::mcp_config_save,
             // System
             commands::system::system_status,
             commands::system::health_check,

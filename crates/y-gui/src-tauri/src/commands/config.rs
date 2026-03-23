@@ -261,6 +261,45 @@ pub async fn provider_test(
 }
 
 // ---------------------------------------------------------------------------
+// MCP server config commands (JSON-based, stored in <config_dir>/mcp.json)
+// ---------------------------------------------------------------------------
+
+/// Get the MCP server configuration as JSON.
+///
+/// Returns the parsed contents of `mcp.json`. If the file does not exist,
+/// returns `{"mcpServers": {}}`.
+#[tauri::command]
+pub async fn mcp_config_get(state: State<'_, AppState>) -> Result<Value, String> {
+    let path = state.config_dir.join("mcp.json");
+    if !path.exists() {
+        return Ok(serde_json::json!({"mcpServers": {}}));
+    }
+
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read mcp.json: {e}"))?;
+    let value: Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse mcp.json: {e}"))?;
+    Ok(value)
+}
+
+/// Save the MCP server configuration from JSON.
+///
+/// Validates the JSON and writes it to `mcp.json` with pretty formatting.
+#[tauri::command]
+pub async fn mcp_config_save(state: State<'_, AppState>, content: Value) -> Result<(), String> {
+    let json_str = serde_json::to_string_pretty(&content)
+        .map_err(|e| format!("Failed to serialize MCP config: {e}"))?;
+
+    std::fs::create_dir_all(&state.config_dir)
+        .map_err(|e| format!("Failed to create config dir: {e}"))?;
+
+    let path = state.config_dir.join("mcp.json");
+    std::fs::write(&path, &json_str).map_err(|e| format!("Failed to write mcp.json: {e}"))?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Prompt file commands (plain-text files in <config_dir>/prompts/)
 // ---------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import type { ReactElement } from 'react';
-import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, BookOpen, Database, Bot, Loader2, CheckCircle2, AlertCircle, Settings, Server, Terminal, Globe, HardDrive, Webhook, Wrench, Shield, FileText, Info } from 'lucide-react';
+import { X, Plus, FolderOpen, MoreHorizontal, Pencil, Trash2, ChevronRight, ChevronDown, MessageSquare, Zap, Puzzle, BookOpen, Database, Bot, Loader2, CheckCircle2, AlertCircle, Settings, Server, Terminal, Globe, HardDrive, Webhook, Wrench, Shield, FileText, Info, Cable } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo, SkillInfo, KnowledgeCollectionInfo } from '../types';
 import type { ImportStatus } from '../hooks/useSkills';
 import type { KbIngestStatus, KbBatchProgress } from '../hooks/useKnowledge';
@@ -524,6 +524,7 @@ export function Sidebar({
           session:    <MessageSquare size={14} className="skill-sidebar-item-icon" />,
           runtime:    <Terminal size={14} className="skill-sidebar-item-icon" />,
           browser:    <Globe size={14} className="skill-sidebar-item-icon" />,
+          mcp:        <Cable size={14} className="skill-sidebar-item-icon" />,
           storage:    <HardDrive size={14} className="skill-sidebar-item-icon" />,
           hooks:      <Webhook size={14} className="skill-sidebar-item-icon" />,
           tools:      <Wrench size={14} className="skill-sidebar-item-icon" />,
@@ -538,6 +539,7 @@ export function Sidebar({
           { key: 'session', label: 'Session' },
           { key: 'runtime', label: 'Runtime' },
           { key: 'browser', label: 'Browser' },
+          { key: 'mcp', label: 'MCP Servers' },
           { key: 'storage', label: 'Storage' },
           { key: 'hooks', label: 'Hooks' },
           { key: 'tools', label: 'Tools' },

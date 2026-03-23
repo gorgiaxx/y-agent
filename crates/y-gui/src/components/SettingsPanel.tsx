@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Eye, EyeOff, RefreshCw, Plus, RotateCcw, X, Copy, Bot } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { ProviderIconPicker, ProviderIconImg } from './ProviderIconPicker';
 import type { GuiConfig } from '../types';
 import './SettingsPanel.css';
@@ -15,7 +16,7 @@ interface SettingsPanelProps {
   reloadConfig: () => Promise<string>;
 }
 
-export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'prompts' | 'about';
+export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'prompts' | 'about';
 
 // ---------------------------------------------------------------------------
 // Provider form types (mirrors Rust ProviderConfig)
@@ -111,6 +112,18 @@ interface BrowserFormData {
   max_screenshot_dim: number;
 }
 
+interface McpServerFormData {
+  name: string;
+  transport: 'stdio' | 'sse';
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  url: string;
+  headers: Record<string, string>;
+  alwaysAllow: string[];
+  disabled: boolean;
+}
+
 function emptyProvider(): ProviderFormData {
   return {
     id: '',
@@ -128,6 +141,20 @@ function emptyProvider(): ProviderFormData {
     top_p: null,
     tool_calling_mode: null,
     icon: null,
+  };
+}
+
+function emptyMcpServer(): McpServerFormData {
+  return {
+    name: '',
+    transport: 'stdio',
+    command: '',
+    args: [],
+    env: {},
+    url: '',
+    headers: {},
+    alwaysAllow: [],
+    disabled: false,
   };
 }
 
@@ -462,6 +489,227 @@ function ProviderTabPanel({
 }
 
 // ---------------------------------------------------------------------------
+// McpServerTabPanel -- form for a single MCP server (shown in tab view)
+// ---------------------------------------------------------------------------
+
+function McpServerTabPanel({
+  server,
+  index,
+  onChange,
+}: {
+  server: McpServerFormData;
+  index: number;
+  onChange: (index: number, updated: McpServerFormData) => void;
+}) {
+  const update = (patch: Partial<McpServerFormData>) => {
+    onChange(index, { ...server, ...patch });
+  };
+
+  return (
+    <div className="provider-tab-form">
+      {/* Row 0: Name + Transport */}
+      <div className="pf-row">
+        <div className="pf-field">
+          <label className="pf-label">Server Name</label>
+          <input
+            className="pf-input"
+            value={server.name}
+            onChange={(e) => update({ name: e.target.value })}
+            placeholder="e.g. my-local-server"
+          />
+        </div>
+        <div className="pf-field">
+          <label className="pf-label">Transport</label>
+          <select
+            className="form-select"
+            style={{ maxWidth: 'none' }}
+            value={server.transport}
+            onChange={(e) => update({ transport: e.target.value as 'stdio' | 'sse' })}
+          >
+            <option value="stdio">STDIO (Local)</option>
+            <option value="sse">SSE (Remote)</option>
+          </select>
+        </div>
+      </div>
+
+      {server.transport === 'stdio' ? (
+        /* STDIO fields */
+        <>
+          <div className="pf-row">
+            <div className="pf-field pf-field-full">
+              <label className="pf-label">Command</label>
+              <input
+                className="pf-input"
+                value={server.command}
+                onChange={(e) => update({ command: e.target.value })}
+                placeholder="e.g. node, python, npx"
+              />
+              <span className="pf-hint">Executable command to launch the MCP server process</span>
+            </div>
+          </div>
+          <div className="pf-row">
+            <div className="pf-field pf-field-full">
+              <label className="pf-label">Arguments</label>
+              <TagChipInput
+                tags={server.args}
+                onChange={(next) => update({ args: next })}
+              />
+              <span className="pf-hint">Command-line arguments passed to the server process</span>
+            </div>
+          </div>
+          <div className="pf-row">
+            <div className="pf-field pf-field-full">
+              <label className="pf-label">Environment Variables</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {Object.entries(server.env).map(([k, v], i) => (
+                  <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <input
+                      className="pf-input"
+                      style={{ flex: 1 }}
+                      value={k}
+                      onChange={(e) => {
+                        const entries = Object.entries(server.env);
+                        entries[i] = [e.target.value, v];
+                        update({ env: Object.fromEntries(entries) });
+                      }}
+                      placeholder="KEY"
+                    />
+                    <span style={{ color: 'var(--text-secondary)' }}>=</span>
+                    <input
+                      className="pf-input"
+                      style={{ flex: 2 }}
+                      value={v}
+                      onChange={(e) => {
+                        const newEnv = { ...server.env };
+                        newEnv[k] = e.target.value;
+                        update({ env: newEnv });
+                      }}
+                      placeholder="value"
+                    />
+                    <button
+                      type="button"
+                      className="pf-tag-chip-remove"
+                      style={{ padding: '2px 6px', cursor: 'pointer' }}
+                      title="Remove"
+                      onClick={() => {
+                        const newEnv = { ...server.env };
+                        delete newEnv[k];
+                        update({ env: newEnv });
+                      }}
+                    >x</button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn-test"
+                  style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '2px 8px' }}
+                  onClick={() => update({ env: { ...server.env, '': '' } })}
+                >+ Add Variable</button>
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        /* SSE fields */
+        <>
+          <div className="pf-row">
+            <div className="pf-field pf-field-full">
+              <label className="pf-label">Server URL</label>
+              <input
+                className="pf-input"
+                value={server.url}
+                onChange={(e) => update({ url: e.target.value })}
+                placeholder="https://your-server-url.com/mcp"
+              />
+              <span className="pf-hint">HTTP/SSE endpoint URL for the remote MCP server</span>
+            </div>
+          </div>
+          <div className="pf-row">
+            <div className="pf-field pf-field-full">
+              <label className="pf-label">Headers</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {Object.entries(server.headers).map(([k, v], i) => (
+                  <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <input
+                      className="pf-input"
+                      style={{ flex: 1 }}
+                      value={k}
+                      onChange={(e) => {
+                        const entries = Object.entries(server.headers);
+                        entries[i] = [e.target.value, v];
+                        update({ headers: Object.fromEntries(entries) });
+                      }}
+                      placeholder="Header-Name"
+                    />
+                    <span style={{ color: 'var(--text-secondary)' }}>:</span>
+                    <input
+                      className="pf-input"
+                      style={{ flex: 2 }}
+                      value={v}
+                      onChange={(e) => {
+                        const newHeaders = { ...server.headers };
+                        newHeaders[k] = e.target.value;
+                        update({ headers: newHeaders });
+                      }}
+                      placeholder="value"
+                    />
+                    <button
+                      type="button"
+                      className="pf-tag-chip-remove"
+                      style={{ padding: '2px 6px', cursor: 'pointer' }}
+                      title="Remove"
+                      onClick={() => {
+                        const newHeaders = { ...server.headers };
+                        delete newHeaders[k];
+                        update({ headers: newHeaders });
+                      }}
+                    >x</button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn-test"
+                  style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '2px 8px' }}
+                  onClick={() => update({ headers: { ...server.headers, '': '' } })}
+                >+ Add Header</button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Always Allow */}
+      <div className="pf-row">
+        <div className="pf-field pf-field-full">
+          <label className="pf-label">Always Allow</label>
+          <TagChipInput
+            tags={server.alwaysAllow}
+            onChange={(next) => update({ alwaysAllow: next })}
+          />
+          <span className="pf-hint">Tool names that are auto-approved without user confirmation</span>
+        </div>
+      </div>
+
+      {/* Disabled toggle */}
+      <div className="pf-row">
+        <div className="pf-field pf-field-full">
+          <label className="pf-label">
+            <input
+              type="checkbox"
+              className="form-checkbox"
+              checked={server.disabled}
+              onChange={(e) => update({ disabled: e.target.checked })}
+            />
+            {' '}Disabled
+          </label>
+          <span className="pf-hint">When checked, this server will not be started or connected to</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -748,11 +996,60 @@ function jsonToBrowser(json: any): BrowserFormData {
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function jsonToMcpServers(json: any): McpServerFormData[] {
+  const servers = json?.mcpServers ?? {};
+  return Object.entries(servers).map(([name, cfg]: [string, any]) => {
+    // Detect transport type: if 'url' field exists, it's SSE; otherwise STDIO.
+    const isSSE = !!cfg?.url;
+    return {
+      name,
+      transport: isSSE ? 'sse' as const : 'stdio' as const,
+      command: cfg?.command ?? '',
+      args: Array.isArray(cfg?.args) ? cfg.args : [],
+      env: cfg?.env ?? {},
+      url: cfg?.url ?? '',
+      headers: cfg?.headers ?? {},
+      alwaysAllow: Array.isArray(cfg?.alwaysAllow) ? cfg.alwaysAllow : [],
+      disabled: cfg?.disabled ?? false,
+    };
+  });
+}
+
+function mcpServersToJson(servers: McpServerFormData[]): Record<string, unknown> {
+  const mcpServers: Record<string, unknown> = {};
+  for (const s of servers) {
+    const name = s.name || `server-${Object.keys(mcpServers).length + 1}`;
+    if (s.transport === 'stdio') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entry: Record<string, any> = {
+        command: s.command,
+        args: s.args,
+      };
+      if (Object.keys(s.env).length > 0) entry.env = s.env;
+      if (s.alwaysAllow.length > 0) entry.alwaysAllow = s.alwaysAllow;
+      entry.disabled = s.disabled;
+      mcpServers[name] = entry;
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entry: Record<string, any> = {
+        url: s.url,
+      };
+      if (Object.keys(s.headers).length > 0) entry.headers = s.headers;
+      if (s.alwaysAllow.length > 0) entry.alwaysAllow = s.alwaysAllow;
+      entry.disabled = s.disabled;
+      mcpServers[name] = entry;
+    }
+  }
+  return { mcpServers };
+}
+
 const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [
   { key: 'providers', label: 'Providers' },
   { key: 'session', label: 'Session' },
   { key: 'runtime', label: 'Runtime' },
   { key: 'browser', label: 'Browser' },
+  { key: 'mcp', label: 'MCP Servers' },
   { key: 'storage', label: 'Storage' },
   { key: 'hooks', label: 'Hooks' },
   { key: 'tools', label: 'Tools' },
@@ -766,6 +1063,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   session: 'Session',
   runtime: 'Runtime',
   browser: 'Browser',
+  mcp: 'MCP Servers',
   storage: 'Storage',
   hooks: 'Hooks',
   tools: 'Tools',
@@ -888,6 +1186,13 @@ export function SettingsPanel({
   const [dirtySession, setDirtySession] = useState(false);
   const [dirtyRuntime, setDirtyRuntime] = useState(false);
   const [dirtyBrowser, setDirtyBrowser] = useState(false);
+
+  // MCP servers state.
+  const [mcpServersList, setMcpServersList] = useState<McpServerFormData[]>([]);
+  const [mcpServersLoading, setMcpServersLoading] = useState(false);
+  const [activeMcpTab, setActiveMcpTab] = useState(0);
+  const [dirtyMcp, setDirtyMcp] = useState(false);
+
   // Per-section raw TOML drafts for the raw-editor sections (hooks, tools, etc.).
   const [tomlDraftsBySection, setTomlDraftsBySection] = useState<Record<string, string>>({});
   // Whether the unified Save Changes is currently writing.
@@ -935,6 +1240,14 @@ export function SettingsPanel({
       } catch (e) { errors.push(`browser: ${e}`); }
     }
 
+    if (dirtyMcp) {
+      try {
+        const json = mcpServersToJson(mcpServersList);
+        await invoke('mcp_config_save', { content: json });
+        setDirtyMcp(false);
+      } catch (e) { errors.push(`mcp: ${e}`); }
+    }
+
     for (const [section, content] of Object.entries(tomlDraftsBySection)) {
       try {
         await saveSection(section, content);
@@ -972,8 +1285,8 @@ export function SettingsPanel({
     setToast({ message: 'Settings saved', type: 'success' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser,
-    providersList, providersMeta, sessionForm, runtimeForm, browserForm,
+    dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser, dirtyMcp,
+    providersList, providersMeta, sessionForm, runtimeForm, browserForm, mcpServersList,
     tomlDraftsBySection, dirtyPrompts, saveSection, reloadConfig, localConfig, onSave,
   ]);
 
@@ -1009,7 +1322,8 @@ export function SettingsPanel({
       // first [[providers]] table, e.g. default_freeze_duration_secs).
       try {
         const raw: string = await loadSection('providers');
-        const firstTable = raw.indexOf('[[providers]]');
+        const tableMatch = raw.match(/^\s*\[\[providers\]\]/m);
+        const firstTable = tableMatch?.index ?? -1;
         setProvidersMeta(firstTable > 0 ? raw.slice(0, firstTable) : '');
       } catch {
         setProvidersMeta('');
@@ -1053,6 +1367,20 @@ export function SettingsPanel({
   }, []);
 
   // Load browser config as structured JSON via config_get.
+  // Load MCP servers from mcp.json via dedicated command.
+  const loadMcpServers = useCallback(async () => {
+    setMcpServersLoading(true);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const json = await invoke<any>('mcp_config_get');
+      setMcpServersList(jsonToMcpServers(json));
+    } catch {
+      // Use empty list if file not found.
+    } finally {
+      setMcpServersLoading(false);
+    }
+  }, []);
+
   const loadBrowserForm = useCallback(async () => {
     setBrowserFormLoading(true);
     try {
@@ -1115,12 +1443,14 @@ export function SettingsPanel({
       loadRuntimeForm();
     } else if (activeTab === 'browser') {
       loadBrowserForm();
+    } else if (activeTab === 'mcp') {
+      loadMcpServers();
     } else if (activeTab === 'prompts') {
       loadPromptFiles();
     } else if (selectedSection) {
       doLoadSection(activeTab);
     }
-  }, [activeTab, selectedSection, doLoadSection, loadProviders, loadSessionForm, loadRuntimeForm, loadBrowserForm, loadPromptFiles]);
+  }, [activeTab, selectedSection, doLoadSection, loadProviders, loadSessionForm, loadRuntimeForm, loadBrowserForm, loadMcpServers, loadPromptFiles]);
 
   // Toggle sensitive field visibility.
   const handleToggleSensitive = useCallback(() => {
@@ -1179,11 +1509,35 @@ export function SettingsPanel({
     return () => clearTimeout(timer);
   }, [toast]);
 
+  // MCP server form handlers.
+  const handleMcpServerChange = useCallback((index: number, updated: McpServerFormData) => {
+    setMcpServersList((prev) => prev.map((s, i) => (i === index ? updated : s)));
+    setDirtyMcp(true);
+  }, []);
+
+  const handleMcpServerRemove = useCallback((index: number) => {
+    setMcpServersList((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next;
+    });
+    setActiveMcpTab((prev) => Math.max(0, prev > index ? prev - 1 : Math.min(prev, mcpServersList.length - 2)));
+    setDirtyMcp(true);
+  }, [mcpServersList.length]);
+
+  const handleMcpServerAdd = useCallback(() => {
+    setMcpServersList((prev) => {
+      setActiveMcpTab(prev.length);
+      return [...prev, emptyMcpServer()];
+    });
+    setDirtyMcp(true);
+  }, []);
+
   // Is the section one with a structured form?
   const isProviderSection = activeTab === 'providers';
   const isSessionSection = activeTab === 'session';
   const isRuntimeSection = activeTab === 'runtime';
   const isBrowserSection = activeTab === 'browser';
+  const isMcpSection = activeTab === 'mcp';
   const isPromptsSection = activeTab === 'prompts';
 
   // Handler: switch prompt sub-tab.
@@ -1350,7 +1704,7 @@ export function SettingsPanel({
                     {CONFIG_SECTIONS.find((s) => s.key === activeTab)?.label ?? activeTab}
                   </h3>
                   <div className="provider-actions">
-                    {!isProviderSection && !isSessionSection && !isRuntimeSection && !isBrowserSection && (
+                    {!isProviderSection && !isSessionSection && !isRuntimeSection && !isBrowserSection && !isMcpSection && (
                       <button
                         className="btn-provider-action"
                         onClick={handleToggleSensitive}
@@ -2072,6 +2426,63 @@ export function SettingsPanel({
                       </div>
                     </div>
                   )
+                ) : isMcpSection ? (
+                  /* MCP servers sub-list layout */
+                  mcpServersLoading ? (
+                    <div className="section-loading">Loading...</div>
+                  ) : (
+                    <div className="sub-list-layout">
+                      {/* Left sidebar list */}
+                      <div className="sub-list-sidebar">
+                        <div className="sub-list-items">
+                          {mcpServersList.map((s, i) => (
+                            <button
+                              key={i}
+                              className={`sub-list-item ${activeMcpTab === i ? 'active' : ''}`}
+                              onClick={() => setActiveMcpTab(i)}
+                            >
+                              <span className="sub-list-item-label">{s.name || `Server ${i + 1}`}</span>
+                              {s.disabled && <span style={{ fontSize: '9px', color: 'var(--text-muted)', marginLeft: '2px' }}>OFF</span>}
+                              <span
+                                className="sub-list-item-close"
+                                role="button"
+                                tabIndex={0}
+                                title="Remove server"
+                                onClick={(e) => { e.stopPropagation(); handleMcpServerRemove(i); }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleMcpServerRemove(i); } }}
+                              >
+                                <X size={11} />
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          className="sub-list-item sub-list-item-add"
+                          onClick={handleMcpServerAdd}
+                          title="Add MCP server"
+                        >
+                          <Plus size={13} />
+                          <span>Add</span>
+                        </button>
+                      </div>
+
+                      {/* Right detail panel */}
+                      <div className="sub-list-detail">
+                        {mcpServersList.length === 0 ? (
+                          <div className="provider-empty">
+                            No MCP servers configured. Click + to add one.
+                          </div>
+                        ) : (
+                          <McpServerTabPanel
+                            key={activeMcpTab}
+                            server={mcpServersList[activeMcpTab] ?? mcpServersList[0]}
+                            index={activeMcpTab < mcpServersList.length ? activeMcpTab : 0}
+                            onChange={handleMcpServerChange}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )
                 ) : isBrowserSection ? (
                   /* Structured browser (CDP) form */
                   browserFormLoading ? (
@@ -2330,7 +2741,7 @@ export function SettingsPanel({
                 <div className="about-info">
                   <div className="about-row">
                     <span className="about-label">Author</span>
-                    <span className="about-value"><a href="https://gorgias.me">Gorgias</a></span>
+                    <span className="about-value"><a href="#" onClick={(e) => { e.preventDefault(); openUrl('https://gorgias.me'); }}>Gorgias</a></span>
                   </div>
                   <div className="about-row">
                     <span className="about-label">Version</span>
