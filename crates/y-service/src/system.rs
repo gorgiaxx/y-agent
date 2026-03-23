@@ -219,14 +219,24 @@ impl SystemService {
     /// Providers using OpenAI-compatible REST are actively tested via a
     /// single-token chat completion. Other types return Ok immediately.
     pub async fn test_provider(request: ProviderTestRequest) -> Result<String, String> {
+        // Ollama runs locally without authentication; allow empty key.
+        let key_optional = request.provider_type == "ollama";
+
         let effective_key = if !request.api_key.is_empty() {
             request.api_key.clone()
         } else if !request.api_key_env.is_empty() {
             std::env::var(&request.api_key_env)
                 .map_err(|_| format!("Environment variable '{}' is not set", request.api_key_env))?
+        } else if key_optional {
+            String::new()
         } else {
             return Err("No API key configured (set 'API Key' or 'API Key Env Var')".into());
         };
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
         match request.provider_type.as_str() {
             "openai" | "openai-compat" | "azure" | "ollama" | "deepseek" => {
@@ -241,81 +251,34 @@ impl SystemService {
                     "deepseek" => "https://api.deepseek.com/v1",
                     _ => "https://api.openai.com/v1",
                 });
-
                 let url = format!("{}/chat/completions", resolved_base.trim_end_matches('/'));
-
                 let body = serde_json::json!({
                     "model": request.model,
                     "max_tokens": 1,
                     "messages": [{ "role": "user", "content": "ping" }]
                 });
-
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(15))
-                    .build()
-                    .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
-                let response = client
-                    .post(&url)
-                    .header("Authorization", format!("Bearer {effective_key}"))
-                    .header("Content-Type", "application/json")
+                let mut req = client.post(&url).header("Content-Type", "application/json");
+                if !effective_key.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {effective_key}"));
+                }
+                let response = req
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|e| format!("Network error: {e}"))?;
-
-                let status = response.status();
-
-                if status.is_success() {
-                    return Ok("Connection successful -- provider responded normally".into());
-                }
-
-                let body_text = response.text().await.unwrap_or_default();
-                let detail: String = serde_json::from_str::<serde_json::Value>(&body_text)
-                    .ok()
-                    .and_then(|v| {
-                        v.pointer("/error/message")
-                            .and_then(|m| m.as_str())
-                            .map(std::borrow::ToOwned::to_owned)
-                    })
-                    .unwrap_or_else(|| {
-                        if body_text.is_empty() {
-                            format!("(no response body, HTTP {status})")
-                        } else {
-                            body_text.chars().take(200).collect()
-                        }
-                    });
-
-                if status == reqwest::StatusCode::UNAUTHORIZED
-                    || status == reqwest::StatusCode::FORBIDDEN
-                {
-                    return Err(format!("Authentication failed (HTTP {status}): {detail}"));
-                }
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    return Err(format!("Rate limited by provider: {detail}"));
-                }
-
-                Err(format!("Provider returned HTTP {status}: {detail}"))
+                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                Self::interpret_response(response, &["model"]).await
             }
             "anthropic" => {
                 let resolved_base = request
                     .base_url
                     .as_deref()
                     .unwrap_or("https://api.anthropic.com/v1");
-
                 let url = format!("{}/messages", resolved_base.trim_end_matches('/'));
-
                 let body = serde_json::json!({
                     "model": request.model,
                     "max_tokens": 1,
                     "messages": [{ "role": "user", "content": "ping" }]
                 });
-
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(15))
-                    .build()
-                    .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
                 let response = client
                     .post(&url)
                     .header("x-api-key", &effective_key)
@@ -324,105 +287,32 @@ impl SystemService {
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|e| format!("Network error: {e}"))?;
-
-                let status = response.status();
-
-                if status.is_success() {
-                    return Ok("Connection successful -- provider responded normally".into());
-                }
-
-                let body_text = response.text().await.unwrap_or_default();
-                // Anthropic error shape: {"type":"error","error":{"type":"...","message":"..."}}
-                let detail: String = serde_json::from_str::<serde_json::Value>(&body_text)
-                    .ok()
-                    .and_then(|v| {
-                        v.pointer("/error/message")
-                            .and_then(|m| m.as_str())
-                            .map(std::borrow::ToOwned::to_owned)
-                    })
-                    .unwrap_or_else(|| {
-                        if body_text.is_empty() {
-                            format!("(no response body, HTTP {status})")
-                        } else {
-                            body_text.chars().take(200).collect()
-                        }
-                    });
-
-                if status == reqwest::StatusCode::UNAUTHORIZED
-                    || status == reqwest::StatusCode::FORBIDDEN
-                {
-                    return Err(format!("Authentication failed (HTTP {status}): {detail}"));
-                }
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    return Err(format!("Rate limited by provider: {detail}"));
-                }
-
-                Err(format!("Provider returned HTTP {status}: {detail}"))
+                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                Self::interpret_response(response, &["model"]).await
             }
             "gemini" => {
                 let resolved_base = request
                     .base_url
                     .as_deref()
                     .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
-
                 let url = format!(
                     "{}/models/{}:generateContent?key={}",
                     resolved_base.trim_end_matches('/'),
                     request.model,
                     effective_key
                 );
-
                 let body = serde_json::json!({
                     "contents": [{"parts": [{"text": "ping"}]}],
                     "generationConfig": {"maxOutputTokens": 1}
                 });
-
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(15))
-                    .build()
-                    .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
                 let response = client
                     .post(&url)
                     .header("Content-Type", "application/json")
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|e| format!("Network error: {e}"))?;
-
-                let status = response.status();
-
-                if status.is_success() {
-                    return Ok("Connection successful -- provider responded normally".into());
-                }
-
-                let body_text = response.text().await.unwrap_or_default();
-                let detail: String = serde_json::from_str::<serde_json::Value>(&body_text)
-                    .ok()
-                    .and_then(|v| {
-                        v.pointer("/error/message")
-                            .and_then(|m| m.as_str())
-                            .map(std::borrow::ToOwned::to_owned)
-                    })
-                    .unwrap_or_else(|| {
-                        if body_text.is_empty() {
-                            format!("(no response body, HTTP {status})")
-                        } else {
-                            body_text.chars().take(200).collect()
-                        }
-                    });
-
-                if status == reqwest::StatusCode::UNAUTHORIZED
-                    || status == reqwest::StatusCode::FORBIDDEN
-                {
-                    return Err(format!("Authentication failed (HTTP {status}): {detail}"));
-                }
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    return Err(format!("Rate limited by provider: {detail}"));
-                }
-
-                Err(format!("Provider returned HTTP {status}: {detail}"))
+                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                Self::interpret_response(response, &["modelVersion", "model"]).await
             }
             _ => Ok(format!(
                 "Configuration accepted (active connection test is not yet implemented \
@@ -430,5 +320,58 @@ impl SystemService {
                 request.provider_type
             )),
         }
+    }
+
+    /// Interpret the HTTP response from a provider test probe.
+    ///
+    /// On success, tries to extract the model name from the response body using
+    /// the given `model_keys` (checked in order). On failure, parses the error
+    /// body for a human-readable detail message.
+    async fn interpret_response(
+        response: reqwest::Response,
+        model_keys: &[&str],
+    ) -> Result<String, String> {
+        let status = response.status();
+        let body_text = response.text().await.unwrap_or_default();
+
+        if status.is_success() {
+            let model_name = serde_json::from_str::<serde_json::Value>(&body_text)
+                .ok()
+                .and_then(|v| {
+                    model_keys
+                        .iter()
+                        .find_map(|k| v.get(*k).and_then(|m| m.as_str()).map(String::from))
+                });
+            return match model_name {
+                Some(m) => Ok(format!(
+                    "Connection successful -- model '{m}' responded normally"
+                )),
+                None => Ok("Connection successful -- provider responded normally".into()),
+            };
+        }
+
+        let detail: String = serde_json::from_str::<serde_json::Value>(&body_text)
+            .ok()
+            .and_then(|v| {
+                v.pointer("/error/message")
+                    .and_then(|m| m.as_str())
+                    .map(std::borrow::ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| {
+                if body_text.is_empty() {
+                    format!("(no response body, HTTP {status})")
+                } else {
+                    body_text.chars().take(200).collect()
+                }
+            });
+
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(format!("Authentication failed (HTTP {status}): {detail}"));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(format!("Rate limited by provider: {detail}"));
+        }
+
+        Err(format!("Provider returned HTTP {status}: {detail}"))
     }
 }
