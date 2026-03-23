@@ -64,6 +64,7 @@ pub fn make_chat_response(content: &str) -> ChatResponse {
             output_tokens: 20,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            ..Default::default()
         },
         finish_reason: FinishReason::Stop,
         raw_request: None,

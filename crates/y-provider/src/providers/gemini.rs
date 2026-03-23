@@ -265,12 +265,14 @@ impl GeminiProvider {
                 output_tokens: 0,
                 cache_read_tokens: None,
                 cache_write_tokens: None,
+                ..Default::default()
             },
             |u| TokenUsage {
                 input_tokens: u.prompt.unwrap_or(0),
                 output_tokens: u.candidates.unwrap_or(0),
                 cache_read_tokens: u.cached_content,
                 cache_write_tokens: None,
+                ..Default::default()
             },
         );
 
@@ -580,6 +582,7 @@ fn map_gemini_stream_chunk(resp: &GeminiResponse, _model: &str) -> ChatStreamChu
         output_tokens: u.candidates.unwrap_or(0),
         cache_read_tokens: u.cached_content,
         cache_write_tokens: None,
+        ..Default::default()
     });
 
     ChatStreamChunk {

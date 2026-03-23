@@ -310,6 +310,7 @@ impl LlmProvider for AnthropicProvider {
                 output_tokens: anthropic_response.usage.output_tokens,
                 cache_read_tokens: anthropic_response.usage.cache_read_input_tokens,
                 cache_write_tokens: anthropic_response.usage.cache_creation_input_tokens,
+                ..Default::default()
             },
             finish_reason,
             raw_request,
@@ -477,6 +478,7 @@ impl LlmProvider for AnthropicProvider {
                                         output_tokens: u.output_tokens.unwrap_or(0),
                                         cache_read_tokens: u.cache_read_input_tokens,
                                         cache_write_tokens: u.cache_creation_input_tokens,
+                                        ..Default::default()
                                     });
                                 }
                                 continue;
@@ -498,6 +500,7 @@ impl LlmProvider for AnthropicProvider {
                                             output_tokens: 0,
                                             cache_read_tokens: None,
                                             cache_write_tokens: None,
+                                            ..Default::default()
                                         });
                                     // output_tokens is typically in message_delta.
                                     if let Some(out) = u.output_tokens {

@@ -101,7 +101,7 @@ fn build_context_spans(state: &AppState) -> Vec<Span<'static>> {
     let filled_str: String = "█".repeat(filled);
     let empty_str: String = "░".repeat(empty);
 
-    let used_k = format_token_count(state.cumulative_input_tokens);
+    let used_k = format_token_count(state.last_input_tokens);
     let total_k = format_token_count(state.context_window as u64);
     let label = format!(" {pct:.0}% ({used_k}/{total_k})");
 
@@ -179,7 +179,7 @@ mod tests {
     fn test_build_context_spans_with_usage() {
         let mut state = AppState::default();
         state.context_window = 128_000;
-        state.cumulative_input_tokens = 64_000;
+        state.last_input_tokens = 64_000;
         let spans = build_context_spans(&state);
         // Should have 3 spans: filled bar, empty bar, label.
         assert_eq!(spans.len(), 3);
@@ -198,18 +198,18 @@ mod tests {
         let mut state = AppState::default();
         state.context_window = 100;
 
-        // < 50% → green
-        state.cumulative_input_tokens = 30;
+        // < 50% -> green
+        state.last_input_tokens = 30;
         let spans = build_context_spans(&state);
         assert_eq!(spans[0].style.fg, Some(Color::Green));
 
-        // 50-80% → yellow
-        state.cumulative_input_tokens = 60;
+        // 50-80% -> yellow
+        state.last_input_tokens = 60;
         let spans = build_context_spans(&state);
         assert_eq!(spans[0].style.fg, Some(Color::Yellow));
 
-        // > 80% → red
-        state.cumulative_input_tokens = 90;
+        // > 80% -> red
+        state.last_input_tokens = 90;
         let spans = build_context_spans(&state);
         assert_eq!(spans[0].style.fg, Some(Color::Red));
     }

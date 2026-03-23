@@ -189,6 +189,8 @@ pub struct AppState {
     pub cumulative_input_tokens: u64,
     /// Cumulative output tokens consumed in the current session.
     pub cumulative_output_tokens: u64,
+    /// Input tokens from the last LLM iteration (actual context occupancy).
+    pub last_input_tokens: u64,
 }
 
 impl Default for AppState {
@@ -216,6 +218,7 @@ impl Default for AppState {
             context_window: 0,
             cumulative_input_tokens: 0,
             cumulative_output_tokens: 0,
+            last_input_tokens: 0,
         }
     }
 }
@@ -357,15 +360,19 @@ impl AppState {
         self.user_message_count
     }
 
-    /// Compute context window usage percentage based on the last request's
+    /// Compute context window usage percentage based on the last LLM call's
     /// input tokens versus the provider's context window limit.
+    ///
+    /// Uses `last_input_tokens` (the single latest iteration) rather than
+    /// the cumulative total so the status bar reflects actual context
+    /// occupancy for the current prompt window.
     ///
     /// Returns 0.0 if `context_window` is 0 (unknown).
     pub fn context_usage_percent(&self) -> f32 {
         if self.context_window == 0 {
             return 0.0;
         }
-        (self.cumulative_input_tokens as f32 / self.context_window as f32) * 100.0
+        (self.last_input_tokens as f32 / self.context_window as f32) * 100.0
     }
 
     /// Cycle focus forward: Input → Chat → Sidebar (if visible) → Input.
@@ -733,12 +740,14 @@ mod tests {
         assert_eq!(state.context_usage_percent(), 0.0);
     }
 
-    // T-CTX-02: context_usage_percent computes correctly.
+    // T-CTX-02: context_usage_percent uses last_input_tokens (not cumulative).
     #[test]
     fn test_context_usage_percent_calculation() {
         let mut state = AppState::new();
         state.context_window = 100_000;
-        state.cumulative_input_tokens = 50_000;
+        state.last_input_tokens = 50_000;
+        // Cumulative should NOT affect the percentage.
+        state.cumulative_input_tokens = 200_000;
         let pct = state.context_usage_percent();
         assert!((pct - 50.0).abs() < 0.1, "expected ~50%, got {pct}");
     }
@@ -748,7 +757,7 @@ mod tests {
     fn test_context_usage_percent_over_100() {
         let mut state = AppState::new();
         state.context_window = 1000;
-        state.cumulative_input_tokens = 1500;
+        state.last_input_tokens = 1500;
         let pct = state.context_usage_percent();
         assert!(pct > 100.0, "expected >100%, got {pct}");
     }

@@ -1,0 +1,100 @@
+/* ==========================================================================
+   MermaidBlock -- rendered mermaid diagrams inside chat messages
+   ========================================================================== */
+
+.mermaid-block-wrapper {
+  margin: 0.75em 0;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.mermaid-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px var(--space-md);
+  background: var(--surface-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.mermaid-block-label {
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+/* ---- SVG container ---- */
+
+.mermaid-block-body {
+  padding: var(--space-md);
+  background: var(--surface-secondary);
+  overflow-x: auto;
+}
+
+.mermaid-block-svg {
+  display: flex;
+  justify-content: center;
+}
+
+.mermaid-block-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ---- Error fallback ---- */
+
+.mermaid-block-error {
+  padding: var(--space-sm);
+}
+
+.mermaid-block-error-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e06c75;
+  margin-bottom: var(--space-xs);
+}
+
+.mermaid-block-error-code {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- Loading skeleton ---- */
+
+.mermaid-block-loading {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-lg) 0;
+}
+
+.mermaid-block-skeleton {
+  width: 60%;
+  height: 80px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-tertiary) 25%,
+    var(--surface-hover) 50%,
+    var(--surface-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: mermaid-skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes mermaid-skeleton-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

@@ -142,6 +142,20 @@ pub struct ToolCallRequest {
 // Token usage
 // ---------------------------------------------------------------------------
 
+/// Source of token usage data.
+///
+/// Providers report token counts through different mechanisms. This enum
+/// tracks the origin so downstream consumers can assess accuracy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenUsageSource {
+    /// Usage reported by the provider's API response (authoritative).
+    #[default]
+    ProviderReported,
+    /// Usage estimated via heuristic (e.g., chars/4 approximation).
+    Estimated,
+}
+
 /// Token usage reported by an LLM provider.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
@@ -151,6 +165,9 @@ pub struct TokenUsage {
     pub cache_read_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write_tokens: Option<u32>,
+    /// How the token counts were obtained.
+    #[serde(default)]
+    pub source: TokenUsageSource,
 }
 
 impl TokenUsage {

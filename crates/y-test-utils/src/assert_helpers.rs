@@ -86,6 +86,7 @@ mod tests {
             output_tokens: 50,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            ..Default::default()
         };
         assert_tokens_within!(usage, 200u32);
     }

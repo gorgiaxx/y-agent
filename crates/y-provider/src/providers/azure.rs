@@ -256,6 +256,7 @@ impl LlmProvider for AzureOpenAiProvider {
                 output_tokens: usage.completion_tokens,
                 cache_read_tokens: None,
                 cache_write_tokens: None,
+                ..Default::default()
             },
             finish_reason,
             raw_request,
@@ -537,6 +538,7 @@ fn map_stream_chunk(
         output_tokens: u.completion_tokens,
         cache_read_tokens: None,
         cache_write_tokens: None,
+        ..Default::default()
     });
 
     ChatStreamChunk {

@@ -1270,6 +1270,7 @@ impl AgentService {
             output_tokens: 0,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            ..Default::default()
         };
         let mut finish_reason = FinishReason::Stop;
 

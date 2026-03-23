@@ -20,6 +20,8 @@ pub enum ChatEvent {
         model: String,
         input_tokens: u64,
         output_tokens: u64,
+        /// Input tokens from the last LLM iteration (actual context occupancy).
+        last_input_tokens: u64,
         /// Context window size of the provider that served this request.
         context_window: usize,
     },
@@ -222,6 +224,7 @@ pub fn submit_message(
                         model: result.model,
                         input_tokens: result.input_tokens,
                         output_tokens: result.output_tokens,
+                        last_input_tokens: result.last_input_tokens,
                         context_window: result.context_window,
                     })
                     .await;
@@ -275,6 +278,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             model,
             input_tokens,
             output_tokens,
+            last_input_tokens,
             context_window,
         } => {
             // Update the last (streaming) assistant message.
@@ -293,6 +297,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             // Track cumulative tokens and context window for usage display.
             state.cumulative_input_tokens += input_tokens;
             state.cumulative_output_tokens += output_tokens;
+            state.last_input_tokens = last_input_tokens;
             if context_window > 0 {
                 state.context_window = context_window;
             }
@@ -404,6 +409,7 @@ mod tests {
                 model: "gpt-4".into(),
                 input_tokens: 10,
                 output_tokens: 5,
+                last_input_tokens: 10,
                 context_window: 128_000,
             },
             &mut state,

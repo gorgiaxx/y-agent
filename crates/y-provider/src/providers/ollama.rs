@@ -249,6 +249,7 @@ impl LlmProvider for OllamaProvider {
             output_tokens: ollama_response.eval_count.unwrap_or(0),
             cache_read_tokens: None,
             cache_write_tokens: None,
+            ..Default::default()
         };
 
         Ok(ChatResponse {
@@ -325,6 +326,7 @@ impl LlmProvider for OllamaProvider {
                                         output_tokens: chunk.eval_count.unwrap_or(0),
                                         cache_read_tokens: None,
                                         cache_write_tokens: None,
+                                        ..Default::default()
                                     });
                                     return Some((
                                         Ok(ChatStreamChunk {

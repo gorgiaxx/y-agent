@@ -708,6 +708,7 @@ impl ChatService {
             "cost_usd": result.cost_usd,
             "tool_results": tool_results_meta,
             "context_window": result.context_window,
+            "context_tokens_used": result.last_input_tokens,
         });
 
         // Preserve reasoning_content: prefer the direct field (always available),

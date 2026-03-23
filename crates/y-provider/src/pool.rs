@@ -581,6 +581,7 @@ mod tests {
                     output_tokens: 5,
                     cache_read_tokens: None,
                     cache_write_tokens: None,
+                    ..Default::default()
                 },
                 finish_reason: FinishReason::Stop,
                 raw_request: None,

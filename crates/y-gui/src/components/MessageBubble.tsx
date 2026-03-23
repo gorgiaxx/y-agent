@@ -19,6 +19,7 @@ import type { Message } from '../types';
 import type { ToolResultRecord } from '../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
 import { ThinkingBlock } from './ThinkingBlock';
+import { MermaidBlock } from './MermaidBlock';
 import { processStreamContent, type ContentSegment } from '../hooks/useStreamContent';
 import { useResolvedTheme } from '../hooks/useTheme';
 import './MessageBubble.css';
@@ -50,6 +51,10 @@ function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSProperti
     code({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: unknown }) {
       const match = /language-(\w+)/.exec(className || '');
       const codeText = String(children).replace(/\n$/, '');
+
+      if (match && match[1] === 'mermaid') {
+        return <MermaidBlock code={codeText} />;
+      }
 
       if (match) {
         return (

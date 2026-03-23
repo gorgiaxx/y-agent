@@ -120,6 +120,7 @@ impl LlmProvider for MockProvider {
                 output_tokens,
                 cache_read_tokens: None,
                 cache_write_tokens: None,
+                ..Default::default()
             },
             finish_reason: FinishReason::Stop,
             raw_request: None,
