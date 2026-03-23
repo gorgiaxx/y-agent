@@ -1,17 +1,60 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { X } from 'lucide-react';
-import { toc, type IconToc } from '@lobehub/icons';
+import type { ComponentType } from 'react';
+import { X, Server } from 'lucide-react';
+import { toc } from '@lobehub/icons';
+import type { IconToc } from '@lobehub/icons';
 import './ProviderIconPicker.css';
 
-// CDN URL for icon images -- uses the static PNG CDN for light mode, color variant.
-function iconCdnUrl(id: string): string {
-  return `https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/light/${id}-color.png`;
+// ---------------------------------------------------------------------------
+// Dynamic icon loader -- imports the React component from @lobehub/icons/es/<Id>
+// ---------------------------------------------------------------------------
+
+// Cache for loaded icon components to avoid re-importing.
+const iconCache = new Map<string, ComponentType<{ size?: number | string }> | null>();
+
+/** Dynamically import an icon component by its toc ID (PascalCase). */
+async function loadIconComponent(tocId: string): Promise<ComponentType<{ size?: number | string }> | null> {
+  if (iconCache.has(tocId)) return iconCache.get(tocId)!;
+  try {
+    // Each icon folder exports default = Mono (SVG) component.
+    const mod = await import(/* @vite-ignore */ `@lobehub/icons/es/${tocId}`);
+    const component = mod.default as ComponentType<{ size?: number | string }>;
+    iconCache.set(tocId, component);
+    return component;
+  } catch {
+    iconCache.set(tocId, null);
+    return null;
+  }
 }
 
-// Fallback: mono variant (no -color suffix).
-function iconCdnUrlMono(id: string): string {
-  return `https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/light/${id}.png`;
+// ---------------------------------------------------------------------------
+// DynamicIcon -- renders a single icon by its toc ID
+// ---------------------------------------------------------------------------
+
+function DynamicIcon({ tocId, size = 16 }: { tocId: string; size?: number }) {
+  const [Icon, setIcon] = useState<ComponentType<{ size?: number | string }> | null>(
+    iconCache.get(tocId) ?? null,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (iconCache.has(tocId)) {
+      setIcon(iconCache.get(tocId)!);
+      return;
+    }
+    loadIconComponent(tocId).then((c) => {
+      if (!cancelled) setIcon(() => c);
+    });
+    return () => { cancelled = true; };
+  }, [tocId]);
+
+  if (!Icon) return null;
+  return <Icon size={size} />;
 }
+
+// ---------------------------------------------------------------------------
+// ProviderIconPicker -- searchable dropdown
+// ---------------------------------------------------------------------------
 
 interface ProviderIconPickerProps {
   value: string | null;
@@ -74,7 +117,9 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
     [onChange],
   );
 
-  const selectedIcon = value ? toc.find((item) => item.id.toLowerCase() === value.toLowerCase()) : null;
+  const selectedIcon = value
+    ? toc.find((item) => item.id.toLowerCase() === value.toLowerCase())
+    : null;
 
   return (
     <div className="icon-picker" ref={containerRef}>
@@ -85,15 +130,10 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
       >
         {selectedIcon ? (
           <>
-            <img
-              className="icon-picker-preview"
-              src={iconCdnUrl(selectedIcon.id.toLowerCase())}
-              alt={selectedIcon.title}
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = iconCdnUrlMono(selectedIcon.id.toLowerCase());
-              }}
-            />
-            <span className="icon-picker-trigger-label">{selectedIcon.title}</span>
+            <span className="icon-picker-preview">
+              <DynamicIcon tocId={selectedIcon.id} size={18} />
+            </span>
+            <span className="icon-picker-trigger-label">{selectedIcon.fullTitle}</span>
             <span
               className="icon-picker-clear"
               role="button"
@@ -129,19 +169,13 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
                 <button
                   key={item.id}
                   type="button"
-                  className={`icon-picker-item ${value === item.id.toLowerCase() ? 'selected' : ''}`}
-                  onClick={() => handleSelect(item.id.toLowerCase())}
+                  className={`icon-picker-item ${value?.toLowerCase() === item.id.toLowerCase() ? 'selected' : ''}`}
+                  onClick={() => handleSelect(item.id)}
                 >
-                  <img
-                    className="icon-picker-item-img"
-                    src={iconCdnUrl(item.id.toLowerCase())}
-                    alt={item.title}
-                    loading="lazy"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = iconCdnUrlMono(item.id.toLowerCase());
-                    }}
-                  />
-                  <span className="icon-picker-item-label">{item.title}</span>
+                  <span className="icon-picker-item-icon">
+                    <DynamicIcon tocId={item.id} size={18} />
+                  </span>
+                  <span className="icon-picker-item-label">{item.fullTitle}</span>
                 </button>
               ))
             )}
@@ -152,7 +186,11 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
   );
 }
 
-/** Small inline icon for a provider, using CDN images. Falls back to null if no iconId. */
+// ---------------------------------------------------------------------------
+// ProviderIconImg -- inline icon for sidebar, status bar, dropdowns
+// ---------------------------------------------------------------------------
+
+/** Inline icon rendered from @lobehub/icons React components. Falls back to null. */
 export function ProviderIconImg({
   iconId,
   size = 16,
@@ -163,16 +201,21 @@ export function ProviderIconImg({
   className?: string;
 }) {
   if (!iconId) return null;
+
+  // Resolve toc ID (PascalCase) from stored value (may be lowercase).
+  const tocEntry = toc.find((item) => item.id.toLowerCase() === iconId.toLowerCase());
+  if (!tocEntry) {
+    // If not found in toc, try using the raw value as PascalCase id.
+    return (
+      <span className={`provider-icon-img ${className}`} style={{ display: 'inline-flex', width: size, height: size }}>
+        <DynamicIcon tocId={iconId} size={size} />
+      </span>
+    );
+  }
+
   return (
-    <img
-      className={`provider-icon-img ${className}`}
-      src={iconCdnUrl(iconId)}
-      alt=""
-      width={size}
-      height={size}
-      onError={(e) => {
-        (e.target as HTMLImageElement).src = iconCdnUrlMono(iconId);
-      }}
-    />
+    <span className={`provider-icon-img ${className}`} style={{ display: 'inline-flex', width: size, height: size }}>
+      <DynamicIcon tocId={tocEntry.id} size={size} />
+    </span>
   );
 }

@@ -2,7 +2,7 @@
 # Place this file at ~/.config/y-agent/browser.toml or config/browser.toml
 
 # Enable/disable the browser tool entirely.
-# enabled = true
+enabled = true
 
 # ---------- Launch Mode ----------
 # Controls how Chrome is started and connected.
@@ -25,7 +25,7 @@ launch_mode = "auto_launch_headless"
 # chrome_path = ""
 
 # Remote debugging port for the auto-launched Chrome.
-# local_cdp_port = 9222
+local_cdp_port = 9222
 
 # Use the system user's Chrome profile (bookmarks, cookies, extensions, etc.)
 # instead of a clean temporary profile.
@@ -37,30 +37,30 @@ launch_mode = "auto_launch_headless"
 # NOTE: Chrome locks its profile directory. If Chrome is already running
 # with the same profile, the auto-launched instance may fail. Close other
 # Chrome instances before enabling this.
-# use_user_profile = false
+use_user_profile = true
 
 # ---------- Remote CDP Mode ----------
 # Used when launch_mode = "remote".
 
 # CDP endpoint URL.
 # Supports http://, https://, ws://, wss://
-# cdp_url = "http://127.0.0.1:9222"
+cdp_url = "http://127.0.0.1:9222"
 
 # ---------- Shared Settings ----------
 
 # Default timeout for CDP operations (milliseconds).
-# timeout_ms = 30000
+timeout_ms = 30000
 
 # Allowed domains for navigation. Use ["*"] to allow all public domains.
 # Empty list = block all navigation.
-# allowed_domains = ["*"]
+allowed_domains = ["*"]
 
 # Block navigation to private/local network addresses (10.x, 192.168.x, etc.)
 # Recommended to stay enabled for security (SSRF protection).
-# block_private_networks = true
+block_private_networks = true
 
 # Maximum screenshot width/height in pixels.
-# max_screenshot_dim = 4096
+max_screenshot_dim = 4096
 
 # Default search engine for the 'search' action.
 # Supported: "google", "bing", "duckduckgo", "baidu".

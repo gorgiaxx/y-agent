@@ -26,11 +26,12 @@
 }
 
 .icon-picker-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   height: 18px;
-  object-fit: contain;
   flex-shrink: 0;
-  border-radius: 3px;
 }
 
 .icon-picker-trigger-label {
@@ -150,12 +151,13 @@
   background: var(--accent-subtle);
 }
 
-.icon-picker-item-img {
+.icon-picker-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 20px;
   height: 20px;
-  object-fit: contain;
   flex-shrink: 0;
-  border-radius: 3px;
 }
 
 .icon-picker-item-label {
@@ -167,7 +169,15 @@
 /* Inline provider icon used in sidebar, status bar, etc. */
 
 .provider-icon-img {
-  object-fit: contain;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   vertical-align: middle;
+  line-height: 0;
+}
+
+.provider-icon-img svg {
+  width: 100%;
+  height: 100%;
 }

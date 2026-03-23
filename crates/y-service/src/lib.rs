@@ -26,11 +26,13 @@ pub mod diagnostics;
 pub mod init;
 pub mod knowledge_service;
 pub mod observability;
+pub mod scheduler_service;
 pub mod skill_evolution;
 pub mod skill_ingestion;
 pub mod skill_service;
 pub mod system;
 pub mod tool_search_orchestrator;
+pub mod workflow_service;
 pub mod workspace;
 
 // Re-export primary types for convenience.
@@ -59,6 +61,14 @@ pub use skill_evolution::{
 pub use skill_ingestion::{ImportDecision, ImportError, ImportResult, SkillIngestionService};
 pub use skill_service::{SkillDetail, SkillInfo, SkillService};
 pub use system::{HealthReport, ProviderInfo, ProviderTestRequest, StatusReport, SystemService};
+pub use workflow_service::{
+    CreateWorkflowRequest, DagEdge, DagNode, DagVisualization, UpdateWorkflowRequest,
+    ValidationResult, WorkflowService, WorkflowServiceError,
+};
+pub use scheduler_service::{
+    CreateScheduleRequest, ScheduleSummary, SchedulerService, SchedulerServiceError,
+    UpdateScheduleRequest,
+};
 pub use workspace::{WorkspaceRecord, WorkspaceService};
 
 // ---------------------------------------------------------------------------
@@ -114,5 +124,8 @@ pub mod migration {
     pub use y_storage::migration::run_embedded_migrations;
 }
 
-// Re-export workflow store types (used by CLI `workflow` command).
+// Re-export workflow store types (used by CLI `workflow` command and workflow service).
 pub use y_storage::workflow_store::WorkflowRow;
+
+// Re-export scheduler types (used by scheduler service and REST routes).
+pub use y_scheduler::{Schedule, SchedulerConfig, SchedulerManager, TriggerConfig};

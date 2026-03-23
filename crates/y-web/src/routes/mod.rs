@@ -5,8 +5,10 @@ pub mod bots;
 pub mod chat;
 pub mod diagnostics;
 pub mod health;
+pub mod schedules;
 pub mod sessions;
 pub mod tools;
+pub mod workflows;
 
 use axum::Router;
 use tower_http::cors::CorsLayer;
@@ -24,7 +26,10 @@ pub fn create_router(state: AppState) -> Router {
         .merge(tools::router())
         .merge(diagnostics::router())
         .merge(bots::router())
+        .merge(workflows::router())
+        .merge(schedules::router())
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
+

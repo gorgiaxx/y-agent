@@ -31,15 +31,17 @@ health_check_interval_secs = 30
 # ==============================================================================
 
 [[providers]]
-id = "openai-main"
-provider_type = "openai"
-model = "gpt-4o"
-tags = ["reasoning", "general"]
+id = "default1"
+provider_type = "openai-compat"
+model = "DeepSeek-V3"
+tags = ["general"]
 max_concurrency = 3
 context_window = 128000
-cost_per_1k_input = 0.005
-cost_per_1k_output = 0.015
-api_key = "sk-your-openai-key-here"
+api_key = "123456"
+base_url = "https://example.com/v1"
+temperature = 0.4
+top_p = 0.95
+icon = "deepseek"
 # api_key_env = "OPENAI_API_KEY"   # alternative: read from env var
 # base_url = "https://api.openai.com/v1"
 # temperature = 0.4     # per-provider default (0.0-2.0), optional

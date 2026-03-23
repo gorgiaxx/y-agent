@@ -98,6 +98,9 @@ pub struct ServiceContainer {
     /// Workflow store for persistent workflow templates.
     pub workflow_store: SqliteWorkflowStore,
 
+    /// Scheduler manager for scheduled task management.
+    pub scheduler_manager: y_scheduler::SchedulerManager,
+
     /// Shared prompt context, updated per-turn by the chat loop.
     pub prompt_context: Arc<RwLock<PromptContext>>,
 
@@ -365,6 +368,9 @@ tools = ["tool_search"]
         // 11. Workflow store.
         let workflow_store = SqliteWorkflowStore::new(pool.clone());
 
+        // 11b. Scheduler manager.
+        let scheduler_manager = crate::scheduler_service::SchedulerService::create_manager();
+
         // 12. Diagnostics -- SQLite-backed for persistence.
         let sqlite_trace_store = y_diagnostics::SqliteTraceStore::new(pool.clone());
         let trace_store_dyn: Arc<dyn TraceStore> = Arc::new(sqlite_trace_store);
@@ -409,6 +415,7 @@ tools = ["tool_search"]
             agent_delegator,
             delegation_tracker,
             workflow_store,
+            scheduler_manager,
             prompt_context,
             diagnostics,
             chat_checkpoint_manager,

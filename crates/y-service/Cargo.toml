@@ -19,6 +19,7 @@ y-runtime = { workspace = true }
 y-guardrails = { workspace = true }
 y-knowledge = { workspace = true }
 y-browser = { workspace = true }
+y-scheduler = { workspace = true }
 
 y-prompt = { workspace = true }
 y-diagnostics = { workspace = true }

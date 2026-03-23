@@ -114,6 +114,7 @@ y-tools = { path = "crates/y-tools" }
 y-storage = { path = "crates/y-storage" }
 y-runtime = { path = "crates/y-runtime" }
 y-knowledge = { path = "crates/y-knowledge" }
+y-scheduler = { path = "crates/y-scheduler" }
 
 y-agent = { path = "crates/y-agent" }
 y-guardrails = { path = "crates/y-guardrails" }
