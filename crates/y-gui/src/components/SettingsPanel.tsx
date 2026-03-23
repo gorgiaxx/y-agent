@@ -5,6 +5,8 @@ import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ProviderIconPicker, ProviderIconImg } from './ProviderIconPicker';
 import type { GuiConfig } from '../types';
+import { escapeTomlString, deserializeFromJson, mergeIntoRawToml } from '../utils/tomlUtils';
+import { SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA, browserPostProcess } from '../utils/settingsSchemas';
 import './SettingsPanel.css';
 
 interface SettingsPanelProps {
@@ -713,12 +715,7 @@ function McpServerTabPanel({
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Escape a string value for embedding in a TOML double-quoted string.
- *  Backslashes and double-quotes must be escaped so that Windows paths
- *  like `C:\Program Files\...` do not produce invalid TOML. */
-function escapeTomlString(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
+// escapeTomlString is imported from ../utils/tomlUtils
 
 /** Mask sensitive values in TOML content. */
 function maskSensitive(content: string): string {
@@ -752,106 +749,6 @@ function providersToToml(providers: ProviderFormData[]): string {
     if (p.icon) lines.push(`icon = "${escapeTomlString(p.icon)}"`);
     lines.push('');
   }
-  return lines.join('\n');
-}
-
-function sessionToToml(s: SessionFormData): string {
-  return [
-    `max_depth = ${s.max_depth}`,
-    `max_active_per_root = ${s.max_active_per_root}`,
-    `compaction_threshold_pct = ${s.compaction_threshold_pct}`,
-    `auto_archive_merged = ${s.auto_archive_merged}`,
-    '',
-    '[pruning]',
-    `enabled = ${s.pruning_enabled}`,
-    `token_threshold = ${s.pruning_token_threshold}`,
-    `strategy = "${escapeTomlString(s.pruning_strategy)}"`,
-    '',
-    '[pruning.progressive]',
-    `max_retries = ${s.pruning_progressive_max_retries}`,
-    `preserve_identifiers = ${s.pruning_progressive_preserve_identifiers}`,
-  ].join('\n') + '\n';
-}
-
-function runtimeToToml(r: RuntimeFormData): string {
-  const lines: string[] = [
-    `default_backend = "${escapeTomlString(r.default_backend)}"`,
-    `allow_shell = ${r.allow_shell}`,
-    `allow_host_access = ${r.allow_host_access}`,
-    `default_timeout = "${escapeTomlString(r.default_timeout)}"`,
-    `default_memory_bytes = ${r.default_memory_bytes}`,
-    '',
-    '[ssh]',
-    `host = "${escapeTomlString(r.ssh_host)}"`,
-    `port = ${r.ssh_port}`,
-    `user = "${escapeTomlString(r.ssh_user)}"`,
-    `auth_method = "${escapeTomlString(r.ssh_auth_method)}"`,
-  ];
-  if (r.ssh_auth_method === 'password' && r.ssh_password) {
-    lines.push(`password = "${escapeTomlString(r.ssh_password)}"`);
-  }
-  if (r.ssh_auth_method === 'public_key' && r.ssh_private_key_path) {
-    lines.push(`private_key_path = "${escapeTomlString(r.ssh_private_key_path)}"`);
-  }
-  if (r.ssh_passphrase) lines.push(`passphrase = "${escapeTomlString(r.ssh_passphrase)}"`);
-  if (r.ssh_known_hosts_path) lines.push(`known_hosts_path = "${escapeTomlString(r.ssh_known_hosts_path)}"`);
-
-  lines.push('');
-  lines.push('[docker]');
-  if (r.docker_default_image) lines.push(`default_image = "${escapeTomlString(r.docker_default_image)}"`);
-  lines.push(`network_mode = "${escapeTomlString(r.docker_network_mode)}"`);
-  lines.push(`privileged = ${r.docker_privileged}`);
-  lines.push(`readonly_rootfs = ${r.docker_readonly_rootfs}`);
-  if (r.docker_user) lines.push(`user = "${escapeTomlString(r.docker_user)}"`);
-  if (r.docker_cap_drop.length > 0) {
-    lines.push(`cap_drop = [${r.docker_cap_drop.map(c => `"${escapeTomlString(c)}"`).join(', ')}]`);
-  }
-  if (r.docker_cap_add.length > 0) {
-    lines.push(`cap_add = [${r.docker_cap_add.map(c => `"${escapeTomlString(c)}"`).join(', ')}]`);
-  }
-  if (r.docker_dns.length > 0) {
-    lines.push(`dns = [${r.docker_dns.map(d => `"${escapeTomlString(d)}"`).join(', ')}]`);
-  }
-  if (r.docker_extra_hosts.length > 0) {
-    lines.push(`extra_hosts = [${r.docker_extra_hosts.map(h => `"${escapeTomlString(h)}"`).join(', ')}]`);
-  }
-
-  // Docker default_env as inline table section.
-  if (Object.keys(r.docker_default_env).length > 0) {
-    lines.push('');
-    lines.push('[docker.default_env]');
-    for (const [k, v] of Object.entries(r.docker_default_env)) {
-      lines.push(`${k} = "${escapeTomlString(v)}"`);
-    }
-  }
-
-  // Docker default_volumes as array of tables.
-  for (const vol of r.docker_default_volumes) {
-    lines.push('');
-    lines.push('[[docker.default_volumes]]');
-    lines.push(`host_path = "${escapeTomlString(vol.host_path)}"`);
-    lines.push(`container_path = "${escapeTomlString(vol.container_path)}"`);
-    lines.push(`mode = "${escapeTomlString(vol.mode)}"`);
-  }
-
-  // Python venv section.
-  lines.push('');
-  lines.push('[python_venv]');
-  lines.push(`enabled = ${r.python_venv_enabled}`);
-  lines.push(`uv_path = "${escapeTomlString(r.python_uv_path)}"`);
-  lines.push(`python_version = "${escapeTomlString(r.python_version)}"`);
-  lines.push(`venv_dir = "${escapeTomlString(r.python_venv_dir)}"`);
-  if (r.python_working_dir) lines.push(`working_dir = "${escapeTomlString(r.python_working_dir)}"`);
-
-  // Bun venv section.
-  lines.push('');
-  lines.push('[bun_venv]');
-  lines.push(`enabled = ${r.bun_venv_enabled}`);
-  lines.push(`bun_path = "${escapeTomlString(r.bun_path)}"`);
-  lines.push(`bun_version = "${escapeTomlString(r.bun_version)}"`);
-  if (r.bun_working_dir) lines.push(`working_dir = "${escapeTomlString(r.bun_working_dir)}"`);
-
-  lines.push('');
   return lines.join('\n');
 }
 
@@ -891,109 +788,18 @@ function jsonToProviders(json: any): ProviderFormData[] {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function jsonToSession(json: any): SessionFormData {
-  const pruning = json?.pruning ?? {};
-  const progressive = pruning?.progressive ?? {};
-  return {
-    max_depth: json?.max_depth ?? 16,
-    max_active_per_root: json?.max_active_per_root ?? 8,
-    compaction_threshold_pct: json?.compaction_threshold_pct ?? 85,
-    auto_archive_merged: json?.auto_archive_merged ?? true,
-    pruning_enabled: pruning?.enabled ?? true,
-    pruning_token_threshold: pruning?.token_threshold ?? 2000,
-    pruning_strategy: pruning?.strategy ?? 'auto',
-    pruning_progressive_max_retries: progressive?.max_retries ?? 2,
-    pruning_progressive_preserve_identifiers: progressive?.preserve_identifiers ?? true,
-  };
+  return deserializeFromJson(json, SESSION_SCHEMA) as unknown as SessionFormData;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function jsonToRuntime(json: any): RuntimeFormData {
-  const ssh = json?.ssh ?? {};
-  const docker = json?.docker ?? {};
-  const pythonVenv = json?.python_venv ?? {};
-  const bunVenv = json?.bun_venv ?? {};
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const volumes: VolumeMappingData[] = (docker.default_volumes ?? []).map((v: any) => ({
-    host_path: v.host_path ?? '',
-    container_path: v.container_path ?? '',
-    mode: v.mode ?? 'ro',
-  }));
-  return {
-    default_backend: json?.default_backend ?? 'native',
-    allow_shell: json?.allow_shell ?? false,
-    allow_host_access: json?.allow_host_access ?? false,
-    default_timeout: json?.default_timeout ?? '30s',
-    default_memory_bytes: json?.default_memory_bytes ?? 536870912,
-    ssh_host: ssh.host ?? 'localhost',
-    ssh_port: ssh.port ?? 22,
-    ssh_user: ssh.user ?? 'root',
-    ssh_auth_method: ssh.auth_method ?? 'public_key',
-    ssh_password: ssh.password ?? '',
-    ssh_private_key_path: ssh.private_key_path ?? '',
-    ssh_passphrase: ssh.passphrase ?? '',
-    ssh_known_hosts_path: ssh.known_hosts_path ?? '',
-    docker_default_image: docker.default_image ?? '',
-    docker_network_mode: docker.network_mode ?? 'none',
-    docker_privileged: docker.privileged ?? false,
-    docker_user: docker.user ?? '',
-    docker_readonly_rootfs: docker.readonly_rootfs ?? true,
-    docker_default_env: docker.default_env ?? {},
-    docker_default_volumes: volumes,
-    docker_extra_hosts: docker.extra_hosts ?? [],
-    docker_dns: docker.dns ?? [],
-    docker_cap_add: docker.cap_add ?? [],
-    docker_cap_drop: docker.cap_drop ?? ['ALL'],
-    python_venv_enabled: pythonVenv.enabled ?? false,
-    python_uv_path: pythonVenv.uv_path ?? 'uv',
-    python_version: pythonVenv.python_version ?? '3.12',
-    python_venv_dir: pythonVenv.venv_dir ?? '.venv',
-    python_working_dir: pythonVenv.working_dir ?? '',
-    bun_venv_enabled: bunVenv.enabled ?? false,
-    bun_path: bunVenv.bun_path ?? 'bun',
-    bun_version: bunVenv.bun_version ?? 'latest',
-    bun_working_dir: bunVenv.working_dir ?? '',
-  };
+  return deserializeFromJson(json, RUNTIME_SCHEMA) as unknown as RuntimeFormData;
 }
 
-
-function browserToToml(b: BrowserFormData): string {
-  const lines: string[] = [
-    `enabled = ${b.enabled}`,
-    `launch_mode = "${b.launch_mode}"`,
-  ];
-  if (b.chrome_path) lines.push(`chrome_path = "${escapeTomlString(b.chrome_path)}"`);
-  lines.push(`local_cdp_port = ${b.local_cdp_port}`);
-  lines.push(`use_user_profile = ${b.use_user_profile}`);
-  lines.push(`cdp_url = "${escapeTomlString(b.cdp_url)}"`);
-  lines.push(`timeout_ms = ${b.timeout_ms}`);
-  lines.push(`allowed_domains = [${b.allowed_domains.map(d => `"${escapeTomlString(d)}"`).join(', ')}]`);
-  lines.push(`block_private_networks = ${b.block_private_networks}`);
-  lines.push(`max_screenshot_dim = ${b.max_screenshot_dim}`);
-  return lines.join('\n') + '\n';
-}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function jsonToBrowser(json: any): BrowserFormData {
-  // Backward-compatible: translate old auto_launch/headless booleans to launch_mode.
-  let launchMode: BrowserFormData['launch_mode'] = 'remote';
-  if (json?.launch_mode) {
-    launchMode = json.launch_mode;
-  } else if (json?.auto_launch) {
-    // Legacy config: auto_launch + headless booleans
-    launchMode = json?.headless === false ? 'auto_launch_visible' : 'auto_launch_headless';
-  }
-  return {
-    enabled: json?.enabled ?? true,
-    launch_mode: launchMode,
-    chrome_path: json?.chrome_path ?? '',
-    local_cdp_port: json?.local_cdp_port ?? 9222,
-    use_user_profile: json?.use_user_profile ?? false,
-    cdp_url: json?.cdp_url ?? 'http://127.0.0.1:9222',
-    timeout_ms: json?.timeout_ms ?? 30000,
-    allowed_domains: Array.isArray(json?.allowed_domains) ? json.allowed_domains : ['*'],
-    block_private_networks: json?.block_private_networks ?? true,
-    max_screenshot_dim: json?.max_screenshot_dim ?? 4096,
-  };
+  return deserializeFromJson(json, BROWSER_SCHEMA, browserPostProcess) as unknown as BrowserFormData;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1127,6 +933,8 @@ export function SettingsPanel({
     pruning_progressive_preserve_identifiers: true,
   });
   const [sessionFormLoading, setSessionFormLoading] = useState(false);
+  // Cached raw TOML for comment preservation on save.
+  const [rawSessionToml, setRawSessionToml] = useState<string | undefined>(undefined);
 
   // Structured runtime form state.
   const [runtimeForm, setRuntimeForm] = useState<RuntimeFormData>({
@@ -1165,6 +973,7 @@ export function SettingsPanel({
     bun_working_dir: '',
   });
   const [runtimeFormLoading, setRuntimeFormLoading] = useState(false);
+  const [rawRuntimeToml, setRawRuntimeToml] = useState<string | undefined>(undefined);
 
   // Structured browser form state.
   const [browserForm, setBrowserForm] = useState<BrowserFormData>({
@@ -1180,6 +989,7 @@ export function SettingsPanel({
     max_screenshot_dim: 4096,
   });
   const [browserFormLoading, setBrowserFormLoading] = useState(false);
+  const [rawBrowserToml, setRawBrowserToml] = useState<string | undefined>(undefined);
 
   // Dirty flags -- track which sections have unsaved changes.
   const [dirtyProviders, setDirtyProviders] = useState(false);
@@ -1221,21 +1031,27 @@ export function SettingsPanel({
 
     if (dirtySession) {
       try {
-        await saveSection('session', sessionToToml(sessionForm));
+        const toml = mergeIntoRawToml(rawSessionToml, sessionForm as unknown as Record<string, unknown>, SESSION_SCHEMA);
+        await saveSection('session', toml);
+        setRawSessionToml(toml);
         setDirtySession(false);
       } catch (e) { errors.push(`session: ${e}`); }
     }
 
     if (dirtyRuntime) {
       try {
-        await saveSection('runtime', runtimeToToml(runtimeForm));
+        const toml = mergeIntoRawToml(rawRuntimeToml, runtimeForm as unknown as Record<string, unknown>, RUNTIME_SCHEMA);
+        await saveSection('runtime', toml);
+        setRawRuntimeToml(toml);
         setDirtyRuntime(false);
       } catch (e) { errors.push(`runtime: ${e}`); }
     }
 
     if (dirtyBrowser) {
       try {
-        await saveSection('browser', browserToToml(browserForm));
+        const toml = mergeIntoRawToml(rawBrowserToml, browserForm as unknown as Record<string, unknown>, BROWSER_SCHEMA);
+        await saveSection('browser', toml);
+        setRawBrowserToml(toml);
         setDirtyBrowser(false);
       } catch (e) { errors.push(`browser: ${e}`); }
     }
@@ -1287,6 +1103,7 @@ export function SettingsPanel({
   }, [
     dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser, dirtyMcp,
     providersList, providersMeta, sessionForm, runtimeForm, browserForm, mcpServersList,
+    rawSessionToml, rawRuntimeToml, rawBrowserToml,
     tomlDraftsBySection, dirtyPrompts, saveSection, reloadConfig, localConfig, onSave,
   ]);
 
@@ -1344,12 +1161,19 @@ export function SettingsPanel({
       const allConfig = await invoke<any>('config_get');
       const sessionJson = allConfig?.session ?? {};
       setSessionForm(jsonToSession(sessionJson));
+      // Cache raw TOML for comment preservation.
+      try {
+        const raw = await loadSection('session');
+        setRawSessionToml(raw);
+      } catch {
+        setRawSessionToml(undefined);
+      }
     } catch {
       // Use defaults if section not found.
     } finally {
       setSessionFormLoading(false);
     }
-  }, []);
+  }, [loadSection]);
 
   // Load runtime config as structured JSON via config_get.
   const loadRuntimeForm = useCallback(async () => {
@@ -1359,12 +1183,19 @@ export function SettingsPanel({
       const allConfig = await invoke<any>('config_get');
       const runtimeJson = allConfig?.runtime ?? {};
       setRuntimeForm(jsonToRuntime(runtimeJson));
+      // Cache raw TOML for comment preservation.
+      try {
+        const raw = await loadSection('runtime');
+        setRawRuntimeToml(raw);
+      } catch {
+        setRawRuntimeToml(undefined);
+      }
     } catch {
       // Use defaults if section not found.
     } finally {
       setRuntimeFormLoading(false);
     }
-  }, []);
+  }, [loadSection]);
 
   // Load browser config as structured JSON via config_get.
   // Load MCP servers from mcp.json via dedicated command.
@@ -1388,12 +1219,19 @@ export function SettingsPanel({
       const allConfig = await invoke<any>('config_get');
       const browserJson = allConfig?.browser ?? {};
       setBrowserForm(jsonToBrowser(browserJson));
+      // Cache raw TOML for comment preservation.
+      try {
+        const raw = await loadSection('browser');
+        setRawBrowserToml(raw);
+      } catch {
+        setRawBrowserToml(undefined);
+      }
     } catch {
       // Use defaults if section not found.
     } finally {
       setBrowserFormLoading(false);
     }
-  }, []);
+  }, [loadSection]);
 
   // Load prompt file list and first file content when switching to prompts tab.
   const loadPromptFile = useCallback(async (filename: string) => {
