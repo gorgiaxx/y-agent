@@ -51,9 +51,11 @@ coverage/
 
 ### Tooling / Misc
 .cache/
+.direnv/
 .tox/
 .DS_Store?
 .cursor/
+.claude/
 .turbo/
 .parcel-cache/
 .eslintcache
