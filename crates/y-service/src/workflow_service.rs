@@ -252,7 +252,10 @@ impl WorkflowService {
         store: &SqliteWorkflowStore,
         id: &str,
     ) -> Result<bool, WorkflowServiceError> {
-        store.delete(id).await.map_err(WorkflowServiceError::Storage)
+        store
+            .delete(id)
+            .await
+            .map_err(WorkflowServiceError::Storage)
     }
 
     /// Validate a workflow definition without persisting.
@@ -278,9 +281,11 @@ impl WorkflowService {
     ) -> Result<DagVisualization, WorkflowServiceError> {
         let row = Self::get(store, id).await?;
         let validation = Self::validate_definition(&row.definition, &row.format);
-        validation.dag.ok_or_else(|| WorkflowServiceError::Validation {
-            message: validation.errors.join("; "),
-        })
+        validation
+            .dag
+            .ok_or_else(|| WorkflowServiceError::Validation {
+                message: validation.errors.join("; "),
+            })
     }
 
     // -----------------------------------------------------------------------
@@ -356,10 +361,7 @@ impl WorkflowService {
         }
     }
 
-    fn compile_dag_json(
-        definition: &str,
-        format: &str,
-    ) -> Result<String, WorkflowServiceError> {
+    fn compile_dag_json(definition: &str, format: &str) -> Result<String, WorkflowServiceError> {
         let def = match format {
             "expression_dsl" => WorkflowDefinition::Expression(definition.to_string()),
             "toml" => WorkflowDefinition::Toml(definition.to_string()),
@@ -370,18 +372,17 @@ impl WorkflowService {
             }
         };
 
-        let parsed = def
-            .parse()
-            .map_err(|e| WorkflowServiceError::Validation {
-                message: e.to_string(),
-            })?;
+        let parsed = def.parse().map_err(|e| WorkflowServiceError::Validation {
+            message: e.to_string(),
+        })?;
 
-        let topo = parsed
-            .dag
-            .topological_order()
-            .map_err(|e| WorkflowServiceError::Validation {
-                message: e.to_string(),
-            })?;
+        let topo =
+            parsed
+                .dag
+                .topological_order()
+                .map_err(|e| WorkflowServiceError::Validation {
+                    message: e.to_string(),
+                })?;
 
         serde_json::to_string(&topo).map_err(|e| WorkflowServiceError::Validation {
             message: format!("JSON serialization error: {e}"),
@@ -456,7 +457,11 @@ fn parse_tags_to_json(tags: Option<&str>) -> String {
             }
         }
         Some(t) => {
-            let tag_list: Vec<&str> = t.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+            let tag_list: Vec<&str> = t
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
             serde_json::to_string(&tag_list).unwrap_or_else(|_| "[]".to_string())
         }
         None => "[]".to_string(),
@@ -547,10 +552,7 @@ depends_on = ["step1"]
     #[test]
     fn test_dag_visualization_edges() {
         // a >> (b | c) >> d has edges: a->b, a->c, b->d, c->d
-        let result = WorkflowService::validate_definition(
-            "a >> (b | c) >> d",
-            "expression_dsl",
-        );
+        let result = WorkflowService::validate_definition("a >> (b | c) >> d", "expression_dsl");
         let dag = result.dag.unwrap();
         assert_eq!(dag.edges.len(), 4);
 
@@ -568,14 +570,8 @@ depends_on = ["step1"]
     #[test]
     fn test_parse_tags_json() {
         assert_eq!(parse_tags_to_json(None), "[]");
-        assert_eq!(
-            parse_tags_to_json(Some("a, b, c")),
-            r#"["a","b","c"]"#
-        );
-        assert_eq!(
-            parse_tags_to_json(Some(r#"["x","y"]"#)),
-            r#"["x","y"]"#
-        );
+        assert_eq!(parse_tags_to_json(Some("a, b, c")), r#"["a","b","c"]"#);
+        assert_eq!(parse_tags_to_json(Some(r#"["x","y"]"#)), r#"["x","y"]"#);
         assert_eq!(parse_tags_to_json(Some("")), "[]");
     }
 

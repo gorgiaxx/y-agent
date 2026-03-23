@@ -54,6 +54,10 @@ pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,
 };
+pub use scheduler_service::{
+    CreateScheduleRequest, ScheduleSummary, SchedulerService, SchedulerServiceError,
+    UpdateScheduleRequest,
+};
 pub use skill_evolution::{
     CapturedExperience, ExperienceCaptureSubscriber, SkillInjectionTracker,
     SkillUsageAuditSubscriber, UsageMetrics,
@@ -64,10 +68,6 @@ pub use system::{HealthReport, ProviderInfo, ProviderTestRequest, StatusReport, 
 pub use workflow_service::{
     CreateWorkflowRequest, DagEdge, DagNode, DagVisualization, UpdateWorkflowRequest,
     ValidationResult, WorkflowService, WorkflowServiceError,
-};
-pub use scheduler_service::{
-    CreateScheduleRequest, ScheduleSummary, SchedulerService, SchedulerServiceError,
-    UpdateScheduleRequest,
 };
 pub use workspace::{WorkspaceRecord, WorkspaceService};
 

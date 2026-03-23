@@ -21,9 +21,7 @@ impl From<SchedulerServiceError> for ApiError {
     fn from(err: SchedulerServiceError) -> Self {
         match err {
             SchedulerServiceError::NotFound { id } => ApiError::NotFound(id),
-            SchedulerServiceError::Validation { message } => {
-                ApiError::BadRequest(message)
-            }
+            SchedulerServiceError::Validation { message } => ApiError::BadRequest(message),
             SchedulerServiceError::Internal(e) => ApiError::Internal(e),
         }
     }
@@ -34,9 +32,7 @@ impl From<SchedulerServiceError> for ApiError {
 // ---------------------------------------------------------------------------
 
 /// `GET /api/v1/schedules`
-async fn list_schedules(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, ApiError> {
+async fn list_schedules(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let list = SchedulerService::list(&state.container.scheduler_manager).await;
     Ok(Json(serde_json::to_value(list).unwrap_or_default()))
 }
@@ -55,8 +51,7 @@ async fn create_schedule(
     State(state): State<AppState>,
     Json(body): Json<CreateScheduleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let schedule =
-        SchedulerService::create(&state.container.scheduler_manager, &body).await?;
+    let schedule = SchedulerService::create(&state.container.scheduler_manager, &body).await?;
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(schedule).unwrap_or_default()),
@@ -69,8 +64,7 @@ async fn update_schedule(
     Path(id): Path<String>,
     Json(body): Json<UpdateScheduleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let schedule =
-        SchedulerService::update(&state.container.scheduler_manager, &id, &body).await?;
+    let schedule = SchedulerService::update(&state.container.scheduler_manager, &id, &body).await?;
     Ok(Json(serde_json::to_value(schedule).unwrap_or_default()))
 }
 

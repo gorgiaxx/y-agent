@@ -40,9 +40,7 @@ impl From<WorkflowServiceError> for ApiError {
     fn from(err: WorkflowServiceError) -> Self {
         match err {
             WorkflowServiceError::NotFound { id } => ApiError::NotFound(id),
-            WorkflowServiceError::Validation { message } => {
-                ApiError::BadRequest(message)
-            }
+            WorkflowServiceError::Validation { message } => ApiError::BadRequest(message),
             WorkflowServiceError::Storage(e) => ApiError::Internal(e.to_string()),
         }
     }
@@ -53,9 +51,7 @@ impl From<WorkflowServiceError> for ApiError {
 // ---------------------------------------------------------------------------
 
 /// `GET /api/v1/workflows`
-async fn list_workflows(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, ApiError> {
+async fn list_workflows(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let rows = WorkflowService::list(&state.container.workflow_store).await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
@@ -117,8 +113,7 @@ async fn get_dag(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let dag =
-        WorkflowService::get_dag_visualization(&state.container.workflow_store, &id).await?;
+    let dag = WorkflowService::get_dag_visualization(&state.container.workflow_store, &id).await?;
     Ok(Json(serde_json::to_value(dag).unwrap_or_default()))
 }
 
@@ -129,7 +124,10 @@ async fn get_dag(
 /// Workflow route group.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/workflows", get(list_workflows).post(create_workflow))
+        .route(
+            "/api/v1/workflows",
+            get(list_workflows).post(create_workflow),
+        )
         .route(
             "/api/v1/workflows/{workflow_id}",
             get(get_workflow)

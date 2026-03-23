@@ -5,9 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use y_scheduler::{
-    Schedule, SchedulePolicies, SchedulerConfig, SchedulerManager, TriggerConfig,
-};
+use y_scheduler::{Schedule, SchedulePolicies, SchedulerConfig, SchedulerManager, TriggerConfig};
 
 // ---------------------------------------------------------------------------
 // Error
@@ -207,10 +205,7 @@ impl SchedulerService {
     }
 
     /// Pause a schedule (disable without removing).
-    pub async fn pause(
-        manager: &SchedulerManager,
-        id: &str,
-    ) -> Result<(), SchedulerServiceError> {
+    pub async fn pause(manager: &SchedulerManager, id: &str) -> Result<(), SchedulerServiceError> {
         if manager.pause(id).await {
             Ok(())
         } else {
@@ -219,10 +214,7 @@ impl SchedulerService {
     }
 
     /// Resume a paused schedule.
-    pub async fn resume(
-        manager: &SchedulerManager,
-        id: &str,
-    ) -> Result<(), SchedulerServiceError> {
+    pub async fn resume(manager: &SchedulerManager, id: &str) -> Result<(), SchedulerServiceError> {
         if manager.resume(id).await {
             Ok(())
         } else {
@@ -310,7 +302,9 @@ mod tests {
         let manager = SchedulerService::create_manager();
         let req = make_create_req();
         let created = SchedulerService::create(&manager, &req).await.unwrap();
-        let deleted = SchedulerService::delete(&manager, &created.id).await.unwrap();
+        let deleted = SchedulerService::delete(&manager, &created.id)
+            .await
+            .unwrap();
         assert!(deleted);
         assert!(SchedulerService::list(&manager).await.is_empty());
     }
@@ -321,11 +315,15 @@ mod tests {
         let req = make_create_req();
         let created = SchedulerService::create(&manager, &req).await.unwrap();
 
-        SchedulerService::pause(&manager, &created.id).await.unwrap();
+        SchedulerService::pause(&manager, &created.id)
+            .await
+            .unwrap();
         let paused = SchedulerService::get(&manager, &created.id).await.unwrap();
         assert!(!paused.enabled);
 
-        SchedulerService::resume(&manager, &created.id).await.unwrap();
+        SchedulerService::resume(&manager, &created.id)
+            .await
+            .unwrap();
         let resumed = SchedulerService::get(&manager, &created.id).await.unwrap();
         assert!(resumed.enabled);
     }
@@ -354,8 +352,9 @@ mod tests {
             description: Some("updated desc".to_string()),
             tags: None,
         };
-        let updated =
-            SchedulerService::update(&manager, &created.id, &update).await.unwrap();
+        let updated = SchedulerService::update(&manager, &created.id, &update)
+            .await
+            .unwrap();
         assert_eq!(updated.name, "updated-name");
         assert_eq!(updated.description, "updated desc");
     }
