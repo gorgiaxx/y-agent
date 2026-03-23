@@ -41,7 +41,7 @@ pub struct CreateWorkflowRequest {
     pub name: String,
     /// Workflow definition body (DSL expression or TOML content).
     pub definition: String,
-    /// Format of the definition: "expression_dsl" or "toml".
+    /// Format of the definition: "`expression_dsl`" or "toml".
     #[serde(default = "default_format")]
     pub format: String,
     /// Optional human-readable description.
@@ -98,7 +98,7 @@ pub struct DagNode {
     pub id: String,
     /// Human-readable task name.
     pub name: String,
-    /// Task type label (e.g., "llm_call", "tool_execution", "noop").
+    /// Task type label (e.g., "`llm_call`", "`tool_execution`", "noop").
     pub task_type: String,
     /// Priority level.
     pub priority: String,
@@ -203,7 +203,7 @@ impl WorkflowService {
             .get(&id)
             .await
             .map_err(WorkflowServiceError::Storage)?
-            .ok_or_else(|| WorkflowServiceError::NotFound { id })
+            .ok_or(WorkflowServiceError::NotFound { id })
     }
 
     /// Update an existing workflow template.

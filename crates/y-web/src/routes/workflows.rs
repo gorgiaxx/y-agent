@@ -23,7 +23,7 @@ use crate::state::AppState;
 pub struct ValidateRequest {
     /// Workflow definition body.
     pub definition: String,
-    /// Format: "expression_dsl" or "toml".
+    /// Format: "`expression_dsl`" or "toml".
     #[serde(default = "default_format")]
     pub format: String,
 }
