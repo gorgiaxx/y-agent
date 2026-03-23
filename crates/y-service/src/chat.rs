@@ -328,14 +328,16 @@ pub struct TurnMetaSummary {
     pub provider_id: Option<String>,
     /// Model name.
     pub model: String,
-    /// Input tokens consumed.
+    /// Cumulative input tokens across all LLM iterations.
     pub input_tokens: u64,
-    /// Output tokens generated.
+    /// Cumulative output tokens across all LLM iterations.
     pub output_tokens: u64,
     /// Total cost in USD.
     pub cost_usd: f64,
     /// Context window size of the serving provider.
     pub context_window: usize,
+    /// Input tokens from the last LLM iteration (actual context occupancy).
+    pub context_tokens_used: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -583,6 +585,7 @@ impl ChatService {
             .find(|o| o.obs_type == y_diagnostics::ObservationType::Generation);
 
         let model = last_gen.and_then(|o| o.model.clone()).unwrap_or_default();
+        let last_gen_input_tokens = last_gen.map_or(0, |o| o.input_tokens);
 
         let pool = container.provider_pool().await;
         let metadata_list = pool.list_metadata();
@@ -597,6 +600,7 @@ impl ChatService {
             output_tokens: trace.total_output_tokens,
             cost_usd: trace.total_cost_usd,
             context_window,
+            context_tokens_used: last_gen_input_tokens,
         }))
     }
 

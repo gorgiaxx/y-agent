@@ -500,9 +500,7 @@ pub async fn session_last_turn_meta(
             output_tokens: s.output_tokens,
             cost_usd: s.cost_usd,
             context_window: s.context_window,
-            // Diagnostics DB does not store per-iteration tokens;
-            // use cumulative input_tokens as a reasonable fallback.
-            context_tokens_used: s.input_tokens,
+            context_tokens_used: s.context_tokens_used,
         },
         None => return Ok(None),
     };
