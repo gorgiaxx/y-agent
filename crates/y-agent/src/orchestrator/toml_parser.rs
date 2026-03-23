@@ -115,9 +115,9 @@ pub enum TomlTaskType {
 pub struct ParsedWorkflow {
     /// The compiled task DAG.
     pub dag: TaskDag,
-    /// Input mappings per task: `task_id` -> [(`field_name`, mapping)].
+    /// Input mappings per task: `task_id` -> \[`(field_name, mapping)`\].
     pub input_mappings: HashMap<TaskId, Vec<(String, InputMapping)>>,
-    /// Output mappings per task: `task_id` -> [mapping].
+    /// Output mappings per task: `task_id` -> \[`mapping`\].
     pub output_mappings: HashMap<TaskId, Vec<OutputMapping>>,
     /// Workflow name.
     pub name: String,

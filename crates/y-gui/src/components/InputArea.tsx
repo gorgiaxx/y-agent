@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot } from 'lucide-react';
+import { ProviderIconImg } from './ProviderIconPicker';
 import { ConfirmDialog } from './ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
 import type { GuiCommandDef } from '../commands';
@@ -24,6 +25,8 @@ interface InputAreaProps {
   onExpandChange?: (expanded: boolean) => void;
   onClearSession?: () => void;
   onAddContextReset?: () => void;
+  /** Map from provider ID to icon identifier. */
+  providerIcons?: Record<string, string>;
 }
 
 /** Data attribute used to identify skill mention tokens in the contenteditable. */
@@ -147,6 +150,7 @@ export function InputArea({
   onExpandChange,
   onClearSession,
   onAddContextReset,
+  providerIcons,
 }: InputAreaProps) {
   const [commandMode, setCommandMode] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
@@ -469,6 +473,11 @@ export function InputArea({
                     className={`toolbar-provider-item ${selectedProviderId === p.id ? 'selected' : ''}`}
                     onClick={() => { onSelectProvider(p.id); setProviderDropdownOpen(false); }}
                   >
+                    {providerIcons?.[p.id] ? (
+                      <ProviderIconImg iconId={providerIcons[p.id]} size={14} className="toolbar-provider-icon" />
+                    ) : (
+                      <Bot size={14} className="toolbar-provider-icon toolbar-provider-icon--default" />
+                    )}
                     {p.id} ({p.model})
                   </button>
                 ))}

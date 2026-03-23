@@ -788,6 +788,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    icon: None,
                 },
                 ProviderConfig {
                     id: "anthropic-1".into(),
@@ -804,6 +805,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    icon: None,
                 },
                 ProviderConfig {
                     id: "gemini-1".into(),
@@ -820,6 +822,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    icon: None,
                 },
                 ProviderConfig {
                     id: "ollama-local".into(),
@@ -836,6 +839,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    icon: None,
                 },
                 ProviderConfig {
                     id: "azure-1".into(),
@@ -852,6 +856,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    icon: None,
                 },
             ],
             proxy: crate::config::ProxyConfig {
@@ -919,6 +924,7 @@ mod tests {
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,
+                icon: None,
             }],
             ..Default::default()
         };

@@ -99,6 +99,7 @@ mod tests {
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,
+                icon: None,
             }],
             ..Default::default()
         };
@@ -127,6 +128,7 @@ mod tests {
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,
+                icon: None,
             }],
             ..Default::default()
         };

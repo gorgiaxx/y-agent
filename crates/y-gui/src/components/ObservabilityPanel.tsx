@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Eye, X, Maximize2, Minimize2, Server, Bot, ChevronDown, ChevronRight, Filter } from 'lucide-react';
+import { ProviderIconImg } from './ProviderIconPicker';
 
 import type { SystemSnapshot, ProviderSnapshot as ProviderSnap, AgentInstanceSnapshot } from '../types';
 import type { TimeRange } from '../hooks/useObservability';
@@ -11,7 +12,7 @@ import './ObservabilityPanel.css';
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function ProviderCard({ provider }: { provider: ProviderSnap }) {
+function ProviderCard({ provider, iconId }: { provider: ProviderSnap; iconId?: string | null }) {
   const pct = provider.max_concurrency > 0
     ? (provider.active_requests / provider.max_concurrency) * 100
     : 0;
@@ -21,7 +22,11 @@ function ProviderCard({ provider }: { provider: ProviderSnap }) {
     <div className="obs-provider-card">
       <div className="obs-provider-identity">
         <div className="obs-provider-icon">
-          <Server size={12} />
+          {iconId ? (
+            <ProviderIconImg iconId={iconId} size={12} />
+          ) : (
+            <Server size={12} />
+          )}
         </div>
         <span className="obs-provider-name">{provider.id}</span>
         <span className="obs-provider-model">{provider.model}</span>
@@ -141,6 +146,8 @@ interface ObservabilityPanelProps {
   onClose: () => void;
   timeRange: TimeRange;
   onTimeRangeChange: (range: TimeRange) => void;
+  /** Map from provider ID to icon identifier. */
+  providerIcons?: Record<string, string>;
 }
 
 const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
@@ -152,7 +159,7 @@ const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
   { value: 'all', label: 'All time' },
 ];
 
-export function ObservabilityPanel({ snapshot, loading, error, expanded, onToggleExpand, onClose, timeRange, onTimeRangeChange }: ObservabilityPanelProps) {
+export function ObservabilityPanel({ snapshot, loading, error, expanded, onToggleExpand, onClose, timeRange, onTimeRangeChange, providerIcons }: ObservabilityPanelProps) {
   const [providersOpen, setProvidersOpen] = useState(true);
   const [agentsOpen, setAgentsOpen] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -270,7 +277,7 @@ export function ObservabilityPanel({ snapshot, loading, error, expanded, onToggl
                   <div className="obs-no-items">No providers configured</div>
                 ) : (
                   snapshot.providers.map((p) => (
-                    <ProviderCard key={p.id} provider={p} />
+                    <ProviderCard key={p.id} provider={p} iconId={providerIcons?.[p.id]} />
                   ))
                 )
               )}

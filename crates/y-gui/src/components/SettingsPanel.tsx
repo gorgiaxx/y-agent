@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Eye, EyeOff, RefreshCw, Plus, RotateCcw, X, Copy } from 'lucide-react';
+import { Eye, EyeOff, RefreshCw, Plus, RotateCcw, X, Copy, Bot } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
+import { ProviderIconPicker, ProviderIconImg } from './ProviderIconPicker';
 import type { GuiConfig } from '../types';
 import './SettingsPanel.css';
 
@@ -35,6 +36,7 @@ interface ProviderFormData {
   temperature: number | null;
   top_p: number | null;
   tool_calling_mode: string | null;
+  icon: string | null;
 }
 
 interface SessionFormData {
@@ -125,6 +127,7 @@ function emptyProvider(): ProviderFormData {
     temperature: null,
     top_p: null,
     tool_calling_mode: null,
+    icon: null,
   };
 }
 
@@ -251,6 +254,17 @@ function ProviderTabPanel({
 
   return (
     <div className="provider-tab-form">
+      {/* Row 0: Icon picker */}
+      <div className="pf-row">
+        <div className="pf-field" style={{ maxWidth: 260 }}>
+          <label className="pf-label">Icon</label>
+          <ProviderIconPicker
+            value={provider.icon}
+            onChange={(icon) => update({ icon })}
+          />
+        </div>
+      </div>
+
       {/* Row 1: ID + Type */}
       <div className="pf-row">
         <div className="pf-field">
@@ -487,6 +501,7 @@ function providersToToml(providers: ProviderFormData[]): string {
     if (p.temperature !== null) lines.push(`temperature = ${p.temperature}`);
     if (p.top_p !== null) lines.push(`top_p = ${p.top_p}`);
     if (p.tool_calling_mode) lines.push(`tool_calling_mode = "${escapeTomlString(p.tool_calling_mode)}"`);
+    if (p.icon) lines.push(`icon = "${escapeTomlString(p.icon)}"`);
     lines.push('');
   }
   return lines.join('\n');
@@ -622,6 +637,7 @@ function jsonToProviders(json: any): ProviderFormData[] {
     temperature: p.temperature ?? null,
     top_p: p.top_p ?? null,
     tool_calling_mode: p.tool_calling_mode ?? null,
+    icon: p.icon ?? null,
   }));
 }
 
@@ -1369,6 +1385,11 @@ export function SettingsPanel({
                               className={`sub-list-item ${activeProviderTab === i ? 'active' : ''}`}
                               onClick={() => setActiveProviderTab(i)}
                             >
+                              {p.icon ? (
+                                <ProviderIconImg iconId={p.icon} size={16} className="sub-list-item-icon" />
+                              ) : (
+                                <Bot size={14} className="sub-list-item-icon sub-list-item-icon--default" />
+                              )}
                               <span className="sub-list-item-label">{p.id || `Provider ${i + 1}`}</span>
                               <span
                                 className="sub-list-item-close"

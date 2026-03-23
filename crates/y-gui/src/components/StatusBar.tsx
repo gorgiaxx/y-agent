@@ -1,3 +1,5 @@
+import { Bot } from 'lucide-react';
+import { ProviderIconImg } from './ProviderIconPicker';
 import './StatusBar.css';
 
 interface StatusBarProps {
@@ -5,6 +7,7 @@ interface StatusBarProps {
   sessionCount: number | null;
   version: string;
   activeModel?: string;
+  activeProviderIcon?: string | null;
   lastCost?: number;
   lastTokens?: { input: number; output: number };
   contextWindow?: number;
@@ -21,6 +24,7 @@ function formatTokens(n: number): string {
 export function StatusBar({
   version,
   activeModel,
+  activeProviderIcon,
   lastCost,
   lastTokens,
   contextWindow,
@@ -37,7 +41,11 @@ export function StatusBar({
       <div className="status-left">
         {activeModel && (
           <span className="status-item status-model">
-            <span className="status-dot success" />
+            {activeProviderIcon ? (
+              <ProviderIconImg iconId={activeProviderIcon} size={14} className="status-model-icon" />
+            ) : (
+              <Bot size={14} className="status-model-icon status-model-icon--default" />
+            )}
             {activeModel}
           </span>
         )}

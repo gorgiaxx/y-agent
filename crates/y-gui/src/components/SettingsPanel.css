@@ -845,6 +845,15 @@
   border-left: 2px solid var(--accent);
 }
 
+.sub-list-item-icon {
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.sub-list-item-icon--default {
+  opacity: 0.4;
+}
+
 .sub-list-item-label {
   overflow: hidden;
   text-overflow: ellipsis;

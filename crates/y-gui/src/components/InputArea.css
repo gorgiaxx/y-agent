@@ -268,7 +268,9 @@
 }
 
 .toolbar-provider-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   text-align: left;
   padding: 6px 8px;
@@ -280,6 +282,15 @@
   cursor: pointer;
   font-family: inherit;
   transition: background 0.1s ease, color 0.1s ease;
+}
+
+.toolbar-provider-icon {
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.toolbar-provider-icon--default {
+  opacity: 0.5;
 }
 
 .toolbar-provider-item:hover {

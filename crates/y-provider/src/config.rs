@@ -100,6 +100,11 @@ pub struct ProviderConfig {
     /// `None` means use the global default (Native).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calling_mode: Option<ToolCallingMode>,
+
+    /// Optional icon identifier for GUI display (e.g. "openai", "anthropic").
+    /// Matches icon IDs from the @lobehub/icons library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Multi-level proxy configuration.
@@ -429,6 +434,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    icon: None,
                 },
                 ProviderConfig {
                     id: "dup".into(),
@@ -445,6 +451,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    icon: None,
                 },
             ],
             ..Default::default()

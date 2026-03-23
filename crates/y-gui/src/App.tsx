@@ -155,8 +155,11 @@ function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState('auto');
+  /** Map from provider ID to icon identifier (loaded from providers TOML). */
+  const [providerIconMap, setProviderIconMap] = useState<Record<string, string>>({});
   const [statusBarMeta, setStatusBarMeta] = useState<{
     provider?: string;
+    providerId?: string;
     tokens?: { input: number; output: number };
     cost?: number;
     contextWindow?: number;
@@ -170,13 +173,45 @@ function App() {
       .catch(console.error);
   }, []);
 
+  // Build provider icon map from the providers TOML config.
+  const refreshProviderIcons = useCallback(() => {
+    loadSection('providers')
+      .then((toml) => {
+        try {
+          // Simple TOML parsing: extract icon = "..." lines within [[providers]] blocks.
+          const map: Record<string, string> = {};
+          let currentId: string | null = null;
+          for (const line of toml.split('\n')) {
+            const trimmed = line.trim();
+            const idMatch = trimmed.match(/^id\s*=\s*"([^"]+)"/);
+            if (idMatch) {
+              currentId = idMatch[1];
+            }
+            const iconMatch = trimmed.match(/^icon\s*=\s*"([^"]+)"/);
+            if (iconMatch && currentId) {
+              map[currentId] = iconMatch[1];
+            }
+            // Reset on new provider block.
+            if (trimmed === '[[providers]]') {
+              currentId = null;
+            }
+          }
+          setProviderIconMap(map);
+        } catch {
+          // Ignore parse errors for icon map.
+        }
+      })
+      .catch(() => {});
+  }, [loadSection]);
+
   // Load system status and provider list on mount.
   useEffect(() => {
     invoke<SystemStatus>('system_status')
       .then(setSystemStatus)
       .catch(console.error);
     refreshProviders();
-  }, [refreshProviders]);
+    refreshProviderIcons();
+  }, [refreshProviders, refreshProviderIcons]);
 
   // Developer mode: Ctrl+Shift+I (or Cmd+Shift+I on macOS) toggles DevTools.
   useEffect(() => {
@@ -205,6 +240,7 @@ function App() {
       if (meta) {
         setStatusBarMeta({
           provider: meta.model || meta.provider_id || undefined,
+          providerId: meta.provider_id || undefined,
           tokens: {
             input: meta.context_tokens_used || meta.input_tokens,
             output: meta.output_tokens,
@@ -246,6 +282,7 @@ function App() {
       startTransition(() => {
         setStatusBarMeta({
           provider: payload.model || payload.provider_id || undefined,
+          providerId: payload.provider_id || undefined,
           tokens: {
             input: payload.context_tokens_used || payload.input_tokens,
             output: payload.output_tokens,
@@ -294,9 +331,10 @@ function App() {
 
     const meta = lastAssistant.metadata as Record<string, unknown> | undefined;
     const usage = meta?.usage as Record<string, unknown> | undefined;
+    const providerId = (meta?.provider_id as string | undefined);
     const model = lastAssistant.model
       || (meta?.model as string | undefined)
-      || (meta?.provider_id as string | undefined);
+      || providerId;
     const tokens = lastAssistant.tokens
       || (meta?.input_tokens != null && meta?.output_tokens != null
         ? { input: meta.input_tokens as number, output: meta.output_tokens as number }
@@ -309,15 +347,16 @@ function App() {
     const contextTokensUsed = (meta?.context_tokens_used as number | undefined);
 
     if (model || tokens || cost != null || contextWindow != null) {
-      setStatusBarMeta({
+      setStatusBarMeta((prev) => ({
         provider: model || undefined,
+        providerId: providerId || prev.providerId,
         tokens: tokens && contextTokensUsed
           ? { input: contextTokensUsed, output: tokens.output }
           : tokens,
         cost,
         contextWindow: contextWindow ?? undefined,
         contextTokensUsed: contextTokensUsed ?? undefined,
-      });
+      }));
     }
   }, [messages]);
 
@@ -612,12 +651,19 @@ function App() {
               onExpandChange={setInputExpanded}
               onClearSession={handleClearSession}
               onAddContextReset={addContextReset}
+              providerIcons={providerIconMap}
             />
             <StatusBar
               providerCount={systemStatus?.provider_count ?? 0}
               sessionCount={systemStatus?.session_count ?? null}
-              version={systemStatus?.version ?? '0.1.1'}
+              version={systemStatus?.version ?? 'debug'}
               activeModel={statusBarMeta.provider}
+              activeProviderIcon={
+                // Look up by provider ID first, then fall back to selected provider ID.
+                (statusBarMeta.providerId ? providerIconMap[statusBarMeta.providerId] : undefined)
+                ?? (selectedProviderId !== 'auto' ? providerIconMap[selectedProviderId] : undefined)
+                ?? null
+              }
               lastTokens={statusBarMeta.tokens}
               lastCost={statusBarMeta.cost}
               contextWindow={statusBarMeta.contextWindow}
@@ -677,12 +723,14 @@ function App() {
             onSave={(updates) => {
               updateConfig(updates);
               refreshProviders();
+              refreshProviderIcons();
             }}
             loadSection={loadSection}
             saveSection={saveSection}
             reloadConfig={async () => {
               const msg = await rawReloadConfig();
               refreshProviders();
+              refreshProviderIcons();
               return msg;
             }}
           />
@@ -719,6 +767,7 @@ function App() {
           }}
           timeRange={obsTimeRange}
           onTimeRangeChange={setObsTimeRange}
+          providerIcons={providerIconMap}
         />
       )}
 

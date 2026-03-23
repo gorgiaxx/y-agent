@@ -41,6 +41,15 @@
   letter-spacing: 0.02em;
 }
 
+.status-model-icon {
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.status-model-icon--default {
+  opacity: 0.5;
+}
+
 .status-version {
   opacity: 0.5;
   font-size: 10px;
