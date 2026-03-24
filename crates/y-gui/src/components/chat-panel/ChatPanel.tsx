@@ -130,6 +130,7 @@ export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessa
                     onEdit={(content) => onEditMessage?.(content, msg.id)}
                     onUndo={onUndoMessage}
                     onResend={(content) => onResendMessage?.(content, msg.id)}
+                    disabled={isStreaming}
                   />
                 );
               } else {

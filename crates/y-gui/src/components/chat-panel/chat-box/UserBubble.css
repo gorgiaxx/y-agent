@@ -49,6 +49,11 @@
   justify-content: flex-end;
 }
 
+.user-action-bar.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 /* ---- Skill tags ---- */
 
 .message-skill-tags {

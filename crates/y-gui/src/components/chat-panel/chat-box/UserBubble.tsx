@@ -28,6 +28,8 @@ export interface UserBubbleProps {
   onEdit?: (content: string) => void;
   onUndo?: (messageId: string) => void;
   onResend?: (content: string) => void;
+  /** When true, action bar buttons are disabled (e.g. task is running). */
+  disabled?: boolean;
 }
 
 
@@ -38,12 +40,14 @@ function UserActionBar({
   onEdit,
   onUndo,
   onResend,
+  disabled = false,
 }: {
   content: string;
   messageId: string;
   onEdit?: (content: string) => void;
   onUndo?: (messageId: string) => void;
   onResend?: (content: string) => void;
+  disabled?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -79,23 +83,23 @@ function UserActionBar({
   }, [content, onResend]);
 
   return (
-    <div className="message-actions user-action-bar">
-      <button className="action-btn" onClick={handleCopy} title="Copy message" aria-label="Copy message">
+    <div className={`message-actions user-action-bar${disabled ? ' disabled' : ''}`}>
+      <button className="action-btn" onClick={handleCopy} title="Copy message" aria-label="Copy message" disabled={disabled}>
         {copied ? <Check size={14} /> : <Copy size={14} />}
         <span className="action-label">{copied ? 'Copied' : 'Copy'}</span>
       </button>
 
-      <button className="action-btn" onClick={handleEdit} title="Edit message" aria-label="Edit message">
+      <button className="action-btn" onClick={handleEdit} title="Edit message" aria-label="Edit message" disabled={disabled}>
         <Pencil size={14} />
         <span className="action-label">Edit</span>
       </button>
 
-      <button className="action-btn" onClick={handleResend} title="Resend message" aria-label="Resend message">
+      <button className="action-btn" onClick={handleResend} title="Resend message" aria-label="Resend message" disabled={disabled}>
         <RefreshCw size={14} />
         <span className="action-label">Resend</span>
       </button>
 
-      <button className="action-btn" onClick={handleUndo} title="Undo to this point" aria-label="Undo to this point">
+      <button className="action-btn" onClick={handleUndo} title="Undo to this point" aria-label="Undo to this point" disabled={disabled}>
         <Undo2 size={14} />
         <span className="action-label">Undo</span>
       </button>
@@ -104,9 +108,10 @@ function UserActionBar({
 }
 
 
-export function UserBubble({ message, onEdit, onUndo, onResend }: UserBubbleProps) {
+export function UserBubble({ message, onEdit, onUndo, onResend, disabled }: UserBubbleProps) {
   const handleBubbleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (disabled) return;
       if (e.altKey && e.key === 'e') {
         e.preventDefault();
         if (onEdit) onEdit(message.content);
@@ -115,7 +120,7 @@ export function UserBubble({ message, onEdit, onUndo, onResend }: UserBubbleProp
         if (onUndo) onUndo(message.id);
       }
     },
-    [message.content, message.id, onEdit, onUndo],
+    [message.content, message.id, onEdit, onUndo, disabled],
   );
 
   return (
@@ -154,6 +159,7 @@ export function UserBubble({ message, onEdit, onUndo, onResend }: UserBubbleProp
           onEdit={onEdit}
           onUndo={onUndo}
           onResend={onResend}
+          disabled={disabled}
         />
 
         <div className="message-footer">
