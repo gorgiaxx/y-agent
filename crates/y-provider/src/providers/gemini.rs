@@ -326,8 +326,10 @@ impl LlmProvider for GeminiProvider {
         }
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            let error_body = response.text().await.unwrap_or_default();
             return Err(ProviderError::AuthenticationFailed {
                 provider: self.metadata.id.to_string(),
+                message: error_body,
             });
         }
 
@@ -389,6 +391,7 @@ impl LlmProvider for GeminiProvider {
             {
                 return Err(ProviderError::AuthenticationFailed {
                     provider: self.metadata.id.to_string(),
+                    message: error_body,
                 });
             }
             return Err(ProviderError::ServerError {

@@ -424,11 +424,13 @@ impl AgentService {
                         progress.as_ref(),
                         &iter_data,
                         ctx,
-                        final_model,
-                        final_provider_id,
-                        owns_trace,
-                        iter_ctx_window,
-                        iter_reasoning_duration_ms,
+                        (
+                            final_model,
+                            final_provider_id,
+                            owns_trace,
+                            iter_ctx_window,
+                            iter_reasoning_duration_ms,
+                        ),
                     )
                     .await;
                 }
@@ -978,12 +980,10 @@ impl AgentService {
         progress: Option<&TurnEventSender>,
         data: &LlmIterationData,
         ctx: ToolExecContext,
-        final_model: String,
-        final_provider_id: Option<String>,
-        owns_trace: bool,
-        ctx_window: usize,
-        reasoning_duration_ms: Option<u64>,
+        params: (String, Option<String>, bool, usize, Option<u64>),
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
+        let (final_model, final_provider_id, owns_trace, ctx_window, reasoning_duration_ms) =
+            params;
         let raw_content = response
             .content
             .clone()

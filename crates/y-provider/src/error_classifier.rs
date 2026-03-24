@@ -336,6 +336,7 @@ mod tests {
         use y_core::provider::ProviderError;
         let err = ProviderError::KeyInvalid {
             provider: "test".into(),
+            message: String::new(),
         };
         assert_eq!(classify_provider_error(&err), StandardError::KeyInvalid);
     }

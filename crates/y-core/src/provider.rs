@@ -181,14 +181,14 @@ pub enum ProviderError {
         retry_after_secs: u64,
     },
 
-    #[error("quota exhausted for {provider}")]
-    QuotaExhausted { provider: String },
+    #[error("quota exhausted for {provider}: {message}")]
+    QuotaExhausted { provider: String, message: String },
 
-    #[error("authentication failed for {provider}")]
-    AuthenticationFailed { provider: String },
+    #[error("authentication failed for {provider}: {message}")]
+    AuthenticationFailed { provider: String, message: String },
 
-    #[error("invalid API key for {provider}")]
-    KeyInvalid { provider: String },
+    #[error("invalid API key for {provider}: {message}")]
+    KeyInvalid { provider: String, message: String },
 
     #[error("server error from {provider}: {message}")]
     ServerError { provider: String, message: String },

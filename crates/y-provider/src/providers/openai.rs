@@ -128,29 +128,6 @@ impl OpenAiProvider {
             },
         }
     }
-
-    /// Handle error responses from the `OpenAI` API.
-    fn handle_error_status(
-        &self,
-        status: reqwest::StatusCode,
-        retry_after: Option<u64>,
-    ) -> ProviderError {
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return ProviderError::RateLimited {
-                provider: self.metadata.id.to_string(),
-                retry_after_secs: retry_after.unwrap_or(60),
-            };
-        }
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return ProviderError::AuthenticationFailed {
-                provider: self.metadata.id.to_string(),
-            };
-        }
-        ProviderError::ServerError {
-            provider: self.metadata.id.to_string(),
-            message: format!("HTTP {status}"),
-        }
-    }
 }
 
 #[async_trait]
@@ -189,8 +166,10 @@ impl LlmProvider for OpenAiProvider {
         }
 
         if status == reqwest::StatusCode::UNAUTHORIZED {
+            let error_body = response.text().await.unwrap_or_default();
             return Err(ProviderError::AuthenticationFailed {
                 provider: self.metadata.id.to_string(),
+                message: error_body,
             });
         }
 
@@ -299,18 +278,22 @@ impl LlmProvider for OpenAiProvider {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse().ok());
             let error_body = response.text().await.unwrap_or_default();
-            return Err(
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                    || status == reqwest::StatusCode::UNAUTHORIZED
-                {
-                    self.handle_error_status(status, retry_after)
-                } else {
-                    ProviderError::ServerError {
-                        provider: self.metadata.id.to_string(),
-                        message: format!("HTTP {status}: {error_body}"),
-                    }
-                },
-            );
+            return Err(if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                ProviderError::RateLimited {
+                    provider: self.metadata.id.to_string(),
+                    retry_after_secs: retry_after.unwrap_or(60),
+                }
+            } else if status == reqwest::StatusCode::UNAUTHORIZED {
+                ProviderError::AuthenticationFailed {
+                    provider: self.metadata.id.to_string(),
+                    message: error_body,
+                }
+            } else {
+                ProviderError::ServerError {
+                    provider: self.metadata.id.to_string(),
+                    message: format!("HTTP {status}: {error_body}"),
+                }
+            });
         }
 
         // Parse SSE stream from the response bytes_stream.

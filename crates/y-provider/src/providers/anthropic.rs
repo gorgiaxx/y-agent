@@ -214,15 +214,19 @@ impl LlmProvider for AnthropicProvider {
         }
 
         if status == reqwest::StatusCode::UNAUTHORIZED {
+            let error_body = response.text().await.unwrap_or_default();
             return Err(ProviderError::AuthenticationFailed {
                 provider: self.metadata.id.to_string(),
+                message: error_body,
             });
         }
 
         // 402 Payment Required / billing error.
         if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+            let error_body = response.text().await.unwrap_or_default();
             return Err(ProviderError::QuotaExhausted {
                 provider: self.metadata.id.to_string(),
+                message: error_body,
             });
         }
 
@@ -352,11 +356,13 @@ impl LlmProvider for AnthropicProvider {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(ProviderError::AuthenticationFailed {
                     provider: self.metadata.id.to_string(),
+                    message: error_body,
                 });
             }
             if status == reqwest::StatusCode::PAYMENT_REQUIRED {
                 return Err(ProviderError::QuotaExhausted {
                     provider: self.metadata.id.to_string(),
+                    message: error_body,
                 });
             }
             if status.as_u16() == 529 {
