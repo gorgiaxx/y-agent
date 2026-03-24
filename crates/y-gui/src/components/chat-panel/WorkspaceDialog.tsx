@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { FolderOpen, X } from 'lucide-react';
-import './WorkspaceDialog.css';
+import { FolderOpen } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Button,
+  Input,
+} from '../ui';
 
 interface WorkspaceDialogProps {
   onConfirm: (name: string, path: string) => void;
@@ -27,7 +33,6 @@ export function WorkspaceDialog({
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === 'string') {
         setPath(selected);
-        // Auto-fill name from folder base name if name is still empty.
         if (!name.trim()) {
           const parts = selected.replace(/\\/g, '/').split('/');
           setName(parts[parts.length - 1] || '');
@@ -45,54 +50,71 @@ export function WorkspaceDialog({
   };
 
   return (
-    <div className="ws-dialog-backdrop" onClick={onClose}>
-      <div className="ws-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="ws-dialog-header">
-          <span className="ws-dialog-title">{initialName ? 'Edit Workspace' : 'New Workspace'}</span>
-          <button className="ws-dialog-close" onClick={onClose} aria-label="Close">
-            <X size={14} />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent width="400px" className="text-left items-stretch">
+        <DialogTitle className="text-left">
+          {initialName ? 'Edit Workspace' : 'New Workspace'}
+        </DialogTitle>
 
-        <form className="ws-dialog-body" onSubmit={handleSubmit}>
-          <label className="ws-field-label">Name</label>
-          <input
-            className="ws-field-input"
-            type="text"
-            placeholder="My Project"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
-
-          <label className="ws-field-label" style={{ marginTop: '14px' }}>Folder</label>
-          <div className="ws-path-row">
-            <div className="ws-path-display" title={path}>
-              {path || <span className="ws-path-placeholder">No folder selected</span>}
-            </div>
-            <button
-              type="button"
-              className="ws-pick-btn"
-              onClick={handlePickFolder}
-              disabled={picking}
-            >
-              <FolderOpen size={13} />
-              {picking ? 'Opening...' : 'Choose'}
-            </button>
+        <form className="flex flex-col gap-3 mt-2" onSubmit={handleSubmit}>
+          <div className="flex flex-col gap-1">
+            <label className="text-10px font-500 text-[var(--text-muted)] uppercase tracking-[0.06em]">
+              Name
+            </label>
+            <Input
+              type="text"
+              placeholder="My Project"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
           </div>
 
-          <div className="ws-dialog-actions">
-            <button type="button" className="ws-btn-cancel" onClick={onClose}>Cancel</button>
-            <button
+          <div className="flex flex-col gap-1">
+            <label className="text-10px font-500 text-[var(--text-muted)] uppercase tracking-[0.06em]">
+              Folder
+            </label>
+            <div className="flex gap-2 items-center">
+              <div
+                className={[
+                  'flex-1 min-w-0 px-2 py-1.5',
+                  'text-12px',
+                  'border border-solid border-[var(--border)]',
+                  'rounded-[var(--radius-sm)]',
+                  'bg-[var(--surface-secondary)]',
+                  'overflow-hidden text-ellipsis whitespace-nowrap',
+                  path ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]',
+                ].join(' ')}
+                title={path}
+              >
+                {path || 'No folder selected'}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handlePickFolder}
+                disabled={picking}
+              >
+                <FolderOpen size={13} />
+                {picking ? 'Opening...' : 'Choose'}
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex gap-2 justify-end mt-1">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
               type="submit"
-              className="ws-btn-confirm"
+              variant="primary"
               disabled={!name.trim() || !path.trim()}
             >
               {initialName ? 'Save' : 'Create'}
-            </button>
+            </Button>
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -2,8 +2,20 @@ import { useState, useCallback } from 'react';
 import { Upload, X, FolderOpen, FilePlus, Plus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import type { KnowledgeCollectionInfo } from '../types';
-import './KnowledgeIngestDialog.css';
+import type { KnowledgeCollectionInfo } from '../../types';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Button,
+  Input,
+  Badge,
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from '../ui';
 
 interface KnowledgeIngestDialogProps {
   collections: KnowledgeCollectionInfo[];
@@ -66,7 +78,6 @@ export function KnowledgeIngestDialog({
       if (selected) {
         setExpanding(true);
         try {
-          // Expand folder into individual supported files via backend
           const expandedFiles = await invoke<string[]>('kb_expand_folder', { path: selected as string });
           if (expandedFiles.length > 0) {
             addFiles(expandedFiles);
@@ -75,8 +86,6 @@ export function KnowledgeIngestDialog({
           }
         } catch (err) {
           console.error('Failed to expand folder:', err);
-          // Fallback: add the folder path directly (will likely fail on ingest
-          // but at least the user sees what was selected)
           addFiles([selected as string]);
         } finally {
           setExpanding(false);
@@ -97,80 +106,80 @@ export function KnowledgeIngestDialog({
   const handleSubmit = () => {
     if (files.length === 0) return;
     onIngestBatch(files, domain.trim() || undefined, collection);
-    onClose(); // Close immediately after triggering import
+    onClose();
   };
 
   return (
-    <div className="kb-dialog-overlay" onClick={onClose}>
-      <div className="kb-dialog" onClick={e => e.stopPropagation()}>
-        <div className="kb-dialog-header">
-          <h3>
-            <Upload size={16} />
-            Import Knowledge
-          </h3>
-          <button className="kb-dialog-close" onClick={onClose}>
-            <X size={16} />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent width="480px" className="text-left items-stretch">
+        <DialogTitle className="text-left flex items-center gap-2">
+          <Upload size={16} />
+          Import Knowledge
+        </DialogTitle>
 
-        <div className="kb-dialog-body">
+        <div className="flex flex-col gap-3 mt-2">
           {/* Add buttons row */}
-          <div className="kb-add-buttons">
-            <button className="kb-btn kb-btn--outline" onClick={handleAddFiles}>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleAddFiles}>
               <FilePlus size={14} />
               Add Files
-            </button>
-            <button className="kb-btn kb-btn--outline" onClick={handleAddFolder} disabled={expanding}>
+            </Button>
+            <Button variant="outline" onClick={handleAddFolder} disabled={expanding}>
               <FolderOpen size={14} />
               {expanding ? 'Scanning...' : 'Add Folder'}
-            </button>
+            </Button>
           </div>
 
           {/* Manual path input */}
-          <div className="kb-manual-input">
-            <input
-              className="kb-input"
+          <div className="flex gap-2">
+            <Input
+              className="flex-1"
               placeholder="Or type a path and press Enter..."
               value={manualPath}
               onChange={e => setManualPath(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleManualAdd(); }}
             />
-            <button
-              className="kb-btn kb-btn--icon"
+            <Button
+              variant="icon"
               onClick={handleManualAdd}
               disabled={!manualPath.trim()}
               title="Add path"
             >
               <Plus size={14} />
-            </button>
+            </Button>
           </div>
 
           {/* File list */}
           {files.length > 0 && (
-            <div className="kb-file-list">
-              <div className="kb-file-list-header">
-                <span>{files.length} file{files.length > 1 ? 's' : ''} selected</span>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-11px text-[var(--text-secondary)]">
+                  {files.length} file{files.length > 1 ? 's' : ''} selected
+                </span>
                 <button
-                  className="kb-file-clear-btn"
+                  className={[
+                    'border-none bg-none',
+                    'text-11px font-500 text-[var(--error)]',
+                    'cursor-pointer font-sans',
+                    'hover:underline',
+                  ].join(' ')}
                   onClick={() => setFiles([])}
                 >
                   Clear all
                 </button>
               </div>
-              <div className="kb-file-tags">
+              <div className="flex flex-wrap gap-1 max-h-30 overflow-y-auto">
                 {files.map((file, i) => {
                   const basename = file.split('/').pop() || file;
                   return (
-                    <div key={`${file}-${i}`} className="kb-file-tag" title={file}>
-                      <span className="kb-file-tag-name">{basename}</span>
-                      <button
-                        className="kb-file-tag-remove"
-                        onClick={() => removeFile(i)}
-                        title="Remove"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
+                    <Badge
+                      key={`${file}-${i}`}
+                      variant="outline"
+                      title={file}
+                      onDismiss={() => removeFile(i)}
+                    >
+                      {basename}
+                    </Badge>
                   );
                 })}
               </div>
@@ -178,44 +187,48 @@ export function KnowledgeIngestDialog({
           )}
 
           {/* Options */}
-          <label className="kb-dialog-label">
-            Domain (optional)
-            <input
-              className="kb-input"
+          <div className="flex flex-col gap-1">
+            <label className="text-10px font-500 text-[var(--text-muted)] uppercase tracking-[0.06em]">
+              Domain (optional)
+            </label>
+            <Input
               placeholder="e.g. rust, python, architecture"
               value={domain}
               onChange={e => setDomain(e.target.value)}
             />
-          </label>
+          </div>
 
-          <label className="kb-dialog-label">
-            Collection
-            <select
-              className="kb-input kb-select"
-              value={collection}
-              onChange={e => setCollection(e.target.value)}
-            >
-              {collections.map(c => (
-                <option key={c.name} value={c.name}>{c.name}</option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-col gap-1">
+            <label className="text-10px font-500 text-[var(--text-muted)] uppercase tracking-[0.06em]">
+              Collection
+            </label>
+            <Select value={collection} onValueChange={setCollection}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {collections.map(c => (
+                  <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
-        <div className="kb-dialog-footer">
-          <button className="kb-btn kb-btn--ghost" onClick={onClose}>
+        <div className="flex gap-2 justify-end mt-3">
+          <Button variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            className="kb-btn kb-btn--primary"
+          </Button>
+          <Button
+            variant="primary"
             onClick={handleSubmit}
             disabled={files.length === 0}
           >
             <Upload size={14} />
             Import {files.length > 0 ? `(${files.length})` : ''}
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

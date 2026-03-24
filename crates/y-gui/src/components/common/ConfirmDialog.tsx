@@ -1,6 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
-import './ConfirmDialog.css';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+  Button,
+} from '../ui';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -14,6 +20,16 @@ interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
+const iconBgMap = {
+  danger: 'bg-[var(--error-subtle,rgba(239,68,68,0.12))] text-[var(--error,#f87171)]',
+  warning: 'bg-[rgba(251,191,36,0.12)] text-[#fbbf24]',
+};
+
+const confirmBtnMap = {
+  danger: 'danger' as const,
+  warning: 'primary' as const,
+};
+
 export function ConfirmDialog({
   open,
   title,
@@ -25,66 +41,65 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const dialogRef = useRef<HTMLDivElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
 
-  // Focus cancel button when dialog opens & handle Escape key
+  // Focus cancel button when dialog opens
   useEffect(() => {
     if (!open) return;
-
-    cancelBtnRef.current?.focus();
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onCancel();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [open, onCancel]);
-
-  // Close on backdrop click (not while loading)
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget && !loading) {
-      onCancel();
-    }
-  };
-
-  if (!open) return null;
+    // Slight delay so Radix finishes mounting
+    const raf = requestAnimationFrame(() => cancelBtnRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
 
   return (
-    <div className="confirm-dialog-backdrop" onClick={handleBackdropClick}>
-      <div className={`confirm-dialog confirm-dialog--${variant}`} ref={dialogRef}>
-        <div className="confirm-dialog-icon">
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen && !loading) onCancel(); }}>
+      <DialogContent width="360px">
+        {/* Icon */}
+        <div
+          className={[
+            'w-11 h-11 rounded-full',
+            'flex items-center justify-center',
+            'mb-1',
+            iconBgMap[variant],
+          ].join(' ')}
+        >
           <AlertTriangle size={22} />
         </div>
-        <h3 className="confirm-dialog-title">{title}</h3>
-        <p className="confirm-dialog-message">{message}</p>
-        <div className="confirm-dialog-actions">
-          <button
+
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription>{message}</DialogDescription>
+
+        {/* Actions */}
+        <div className="flex gap-2 w-full mt-2">
+          <Button
             ref={cancelBtnRef}
-            className="confirm-dialog-btn confirm-dialog-btn--cancel"
+            variant="ghost"
+            className="flex-1"
             onClick={onCancel}
             disabled={loading}
           >
             {cancelLabel}
-          </button>
-          <button
-            className={`confirm-dialog-btn confirm-dialog-btn--confirm confirm-dialog-btn--${variant}`}
+          </Button>
+          <Button
+            variant={confirmBtnMap[variant]}
+            className={[
+              'flex-1',
+              variant === 'warning' ? 'bg-[#f59e0b] hover:bg-[#d97706] text-white border-transparent' : '',
+            ].join(' ')}
             onClick={onConfirm}
             disabled={loading}
           >
             {loading ? (
-              <span className="confirm-dialog-btn-loading">
-                <Loader2 size={14} className="confirm-dialog-spinner" />
-                Deleting…
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 size={14} className="animate-spin" />
+                Deleting...
               </span>
             ) : (
               confirmLabel
             )}
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

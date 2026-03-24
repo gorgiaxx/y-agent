@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useRef } from 'react';
+import { Badge, Input } from '../ui';
 
 export function TagChipInput({
   tags,
@@ -42,23 +43,36 @@ export function TagChipInput({
   };
 
   return (
-    <div className="pf-tag-input-wrap" onClick={() => inputRef.current?.focus()}>
+    <div
+      className={[
+        'flex flex-wrap items-center gap-1',
+        'min-h-8 px-2 py-1',
+        'border border-solid border-[var(--border)]',
+        'rounded-[var(--radius-sm)]',
+        'bg-[var(--surface-secondary)]',
+        'cursor-text',
+        'transition-colors duration-150',
+        'focus-within:border-[rgba(255,255,255,0.15)]',
+      ].join(' ')}
+      onClick={() => inputRef.current?.focus()}
+    >
       {tags.map((tag, i) => (
-        <span key={i} className="pf-tag-chip">
-          <span className="pf-tag-chip-text">{tag}</span>
-          <button
-            type="button"
-            className="pf-tag-chip-remove"
-            onClick={(e) => { e.stopPropagation(); removeTag(i); }}
-            title={`Remove tag "${tag}"`}
-          >
-            x
-          </button>
-        </span>
+        <Badge key={i} variant="outline" onDismiss={() => removeTag(i)}>
+          {tag}
+        </Badge>
       ))}
       <input
         ref={inputRef}
-        className="pf-tag-text-input"
+        className={[
+          'flex-1 min-w-20',
+          'border-none bg-transparent',
+          'text-[var(--text-primary)]',
+          'text-12px font-sans',
+          'outline-none',
+          'py-0.5 px-0',
+          'leading-[1.4]',
+          'placeholder:text-[var(--text-muted)]',
+        ].join(' ')}
         value={inputValue}
         onChange={(e) => setInputValue(e.target.value)}
         onKeyDown={handleKeyDown}

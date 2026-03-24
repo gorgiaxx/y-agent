@@ -2,7 +2,8 @@ import { useRef, useEffect, useCallback } from 'react';
 import { Sparkles, AlertTriangle } from 'lucide-react';
 import type { Message } from '../../types';
 import type { ToolResultRecord } from '../../hooks/useChat';
-import { MessageBubble } from './chat-box/MessageBubble';
+import { UserBubble } from './chat-box/UserBubble';
+import { AssistantBubble } from './chat-box/AssistantBubble';
 import { RestoreDivider } from './chat-box/RestoreDivider';
 import { ContextResetDivider } from './chat-box/ContextResetDivider';
 import './ChatPanel.css';
@@ -121,20 +122,29 @@ export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessa
                   }
                 }
               }
-              elements.push(
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  onEdit={(content) => onEditMessage?.(content, msg.id)}
-                  onUndo={onUndoMessage}
-                  onResend={(content) => onResendMessage?.(content, msg.id)}
-                  toolResults={
-                    (msg.id.startsWith('streaming-') || msg.id.startsWith('cancelled-') || msg.id.startsWith('error-'))
-                      ? toolResults
-                      : undefined
-                  }
-                />
-              );
+              if (msg.role === 'user') {
+                elements.push(
+                  <UserBubble
+                    key={msg.id}
+                    message={msg}
+                    onEdit={(content) => onEditMessage?.(content, msg.id)}
+                    onUndo={onUndoMessage}
+                    onResend={(content) => onResendMessage?.(content, msg.id)}
+                  />
+                );
+              } else {
+                elements.push(
+                  <AssistantBubble
+                    key={msg.id}
+                    message={msg}
+                    toolResults={
+                      (msg.id.startsWith('streaming-') || msg.id.startsWith('cancelled-') || msg.id.startsWith('error-'))
+                        ? toolResults
+                        : undefined
+                    }
+                  />
+                );
+              }
             });
             // Check for a trailing divider (after all messages).
             const trailingSeg = segmentMap.get(messages.length);

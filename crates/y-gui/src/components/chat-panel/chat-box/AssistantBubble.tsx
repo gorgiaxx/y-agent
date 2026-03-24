@@ -1,124 +1,95 @@
+/**
+ * AssistantBubble -- self-contained component for rendering assistant/system messages.
+ *
+ * Renders:
+ *  - left-aligned avatar
+ *  - ThinkingBlock (from metadata.reasoning_content or <think> tags)
+ *  - markdown content with optional inline tool-call segments
+ *  - tool_calls array (legacy structured tool calls)
+ *  - ActionBar (Copy / Share / Thumbs up-down) on hover
+ *  - footer (timestamp, tokens, cost)
+ */
+
 import { useState, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
   Copy,
   Check,
   Share2,
   ThumbsUp,
   ThumbsDown,
-  Pencil,
-  Undo2,
-  RefreshCw,
-  Puzzle,
 } from 'lucide-react';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
 import { ThinkingBlock } from './ThinkingBlock';
-import { MermaidBlock } from './MermaidBlock';
+import { Avatar, makeMarkdownComponents, MarkdownSegment } from './MessageShared';
 import { processStreamContent, type ContentSegment } from '../../../hooks/useStreamContent';
 import { useResolvedTheme } from '../../../hooks/useTheme';
-import './MessageBubble.css';
+import './AssistantBubble.css';
 
 
-interface MessageBubbleProps {
+export interface AssistantBubbleProps {
   message: Message;
-  onEdit?: (content: string) => void;
-  onUndo?: (messageId: string) => void;
-  onResend?: (content: string) => void;
   /** Tool results from progress events (only provided for streaming messages). */
   toolResults?: ToolResultRecord[];
 }
 
-/** CSS-styled letter avatar instead of emoji. */
-function Avatar({ role }: { role: string }) {
-  const letter = role === 'user' ? 'U' : role === 'system' ? 'S' : 'A';
-  return (
-    <div className={`message-avatar avatar-${role}`}>
-      {letter}
-    </div>
-  );
-}
 
-/** Shared markdown renderer config -- needs theme to pick syntax style. */
-function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSProperties>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const components: any = {
-    code({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: unknown }) {
-      const match = /language-(\w+)/.exec(className || '');
-      const codeText = String(children).replace(/\n$/, '');
+/**
+ * Extract `<think>...</think>` tags from message content.
+ *
+ * Some models (e.g. DeepSeek, QwQ) embed chain-of-thought inside `<think>` tags
+ * in the main content rather than sending a separate `reasoning` field.
+ *
+ * Returns the extracted thinking text and the remaining content with tags stripped.
+ * If the closing `</think>` tag is missing, the content after `<think>` is treated
+ * as still-streaming thinking content.
+ */
+function extractThinkTags(content: string): {
+  thinkContent: string | null;
+  strippedContent: string;
+  isThinkingIncomplete: boolean;
+} {
+  const openTag = '<think>';
+  const closeTag = '</think>';
 
-      if (match && match[1] === 'mermaid') {
-        return <MermaidBlock code={codeText} />;
-      }
+  const openIdx = content.indexOf(openTag);
+  if (openIdx < 0) {
+    return { thinkContent: null, strippedContent: content, isThinkingIncomplete: false };
+  }
 
-      if (match) {
-        return (
-          <CodeBlock language={match[1]} themeStyle={codeThemeStyle}>{codeText}</CodeBlock>
-        );
-      }
+  const afterOpen = openIdx + openTag.length;
+  const closeIdx = content.indexOf(closeTag, afterOpen);
 
-      // Inline code
-      return (
-        <code className="inline-code" {...props}>
-          {children}
-        </code>
-      );
-    },
+  if (closeIdx < 0) {
+    // The <think> tag is not closed -- still streaming thinking content.
+    const thinkContent = content.slice(afterOpen).trim();
+    const strippedContent = content.slice(0, openIdx).trim();
+    return {
+      thinkContent: thinkContent || null,
+      strippedContent,
+      isThinkingIncomplete: true,
+    };
+  }
+
+  // Complete <think>...</think> block found.
+  const thinkContent = content.slice(afterOpen, closeIdx).trim();
+  // Strip the entire <think>...</think> block from the content.
+  const strippedContent = (
+    content.slice(0, openIdx) + content.slice(closeIdx + closeTag.length)
+  ).trim();
+
+  return {
+    thinkContent: thinkContent || null,
+    strippedContent,
+    isThinkingIncomplete: false,
   };
-  return components;
 }
 
-/** Fenced code block with language label and copy button. */
-function CodeBlock({
-  language,
-  children,
-  themeStyle,
-}: {
-  language: string;
-  children: string;
-  themeStyle: Record<string, React.CSSProperties>;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(children).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [children]);
-
-  return (
-    <div className="code-block-wrapper">
-      <div className="code-block-header">
-        <span className="code-block-lang">{language || 'text'}</span>
-        <button
-          className="code-block-copy"
-          onClick={handleCopy}
-          title="Copy code"
-        >
-          {copied ? <Check size={14} /> : <Copy size={14} />}
-        </button>
-      </div>
-      <SyntaxHighlighter
-        style={themeStyle}
-        language={language || 'text'}
-        PreTag="div"
-        customStyle={{
-          margin: 0,
-          borderRadius: 0,
-          fontSize: '13px',
-        }}
-      >
-        {children}
-      </SyntaxHighlighter>
-    </div>
-  );
-}
 
 /** Action bar shown on hover for assistant / system messages. */
 function ActionBar({ content }: { content: string }) {
@@ -174,142 +145,8 @@ function ActionBar({ content }: { content: string }) {
   );
 }
 
-/** Action bar shown on hover for user messages: Copy, Edit, Resend, Undo. */
-function UserActionBar({
-  content,
-  messageId,
-  onEdit,
-  onUndo,
-  onResend,
-}: {
-  content: string;
-  messageId: string;
-  onEdit?: (content: string) => void;
-  onUndo?: (messageId: string) => void;
-  onResend?: (content: string) => void;
-}) {
-  const [copied, setCopied] = useState(false);
 
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(content).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [content]);
-
-  const handleEdit = useCallback(() => {
-    if (onEdit) {
-      onEdit(content);
-    } else {
-      console.warn('[MessageBubble] Edit handler not yet connected');
-    }
-  }, [content, onEdit]);
-
-  const handleUndo = useCallback(() => {
-    if (onUndo) {
-      onUndo(messageId);
-    } else {
-      console.warn('[MessageBubble] Undo handler not yet connected');
-    }
-  }, [messageId, onUndo]);
-
-  const handleResend = useCallback(() => {
-    if (onResend) {
-      onResend(content);
-    } else {
-      console.warn('[MessageBubble] Resend handler not yet connected');
-    }
-  }, [content, onResend]);
-
-  return (
-    <div className="message-actions user-action-bar">
-      <button className="action-btn" onClick={handleCopy} title="Copy message" aria-label="Copy message">
-        {copied ? <Check size={14} /> : <Copy size={14} />}
-        <span className="action-label">{copied ? 'Copied' : 'Copy'}</span>
-      </button>
-
-      <button className="action-btn" onClick={handleEdit} title="Edit message" aria-label="Edit message">
-        <Pencil size={14} />
-        <span className="action-label">Edit</span>
-      </button>
-
-      <button className="action-btn" onClick={handleResend} title="Resend message" aria-label="Resend message">
-        <RefreshCw size={14} />
-        <span className="action-label">Resend</span>
-      </button>
-
-      <button className="action-btn" onClick={handleUndo} title="Undo to this point" aria-label="Undo to this point">
-        <Undo2 size={14} />
-        <span className="action-label">Undo</span>
-      </button>
-    </div>
-  );
-}
-
-/** Render a markdown text segment. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function MarkdownSegment({ text, components }: { text: string; components: any }) {
-  if (!text.trim()) return null;
-  return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-      {text}
-    </ReactMarkdown>
-  );
-}
-
-/**
- * Extract `<think>...</think>` tags from message content.
- *
- * Some models (e.g. DeepSeek, QwQ) embed chain-of-thought inside `<think>` tags
- * in the main content rather than sending a separate `reasoning` field.
- *
- * Returns the extracted thinking text and the remaining content with tags stripped.
- * If the closing `</think>` tag is missing, the content after `<think>` is treated
- * as still-streaming thinking content.
- */
-function extractThinkTags(content: string): {
-  thinkContent: string | null;
-  strippedContent: string;
-  isThinkingIncomplete: boolean;
-} {
-  const openTag = '<think>';
-  const closeTag = '</think>';
-
-  const openIdx = content.indexOf(openTag);
-  if (openIdx < 0) {
-    return { thinkContent: null, strippedContent: content, isThinkingIncomplete: false };
-  }
-
-  const afterOpen = openIdx + openTag.length;
-  const closeIdx = content.indexOf(closeTag, afterOpen);
-
-  if (closeIdx < 0) {
-    // The <think> tag is not closed — still streaming thinking content.
-    const thinkContent = content.slice(afterOpen).trim();
-    const strippedContent = content.slice(0, openIdx).trim();
-    return {
-      thinkContent: thinkContent || null,
-      strippedContent,
-      isThinkingIncomplete: true,
-    };
-  }
-
-  // Complete <think>...</think> block found.
-  const thinkContent = content.slice(afterOpen, closeIdx).trim();
-  // Strip the entire <think>...</think> block from the content.
-  const strippedContent = (
-    content.slice(0, openIdx) + content.slice(closeIdx + closeTag.length)
-  ).trim();
-
-  return {
-    thinkContent: thinkContent || null,
-    strippedContent,
-    isThinkingIncomplete: false,
-  };
-}
-
-export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }: MessageBubbleProps) {
-  const isUser = message.role === 'user';
+export function AssistantBubble({ message, toolResults }: AssistantBubbleProps) {
   const isSystem = message.role === 'system';
   const isStreamingMsg = message.id.startsWith('streaming-');
 
@@ -322,11 +159,10 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
   // Priority: metadata.reasoning_content (from stream_reasoning_delta) takes
   // precedence over <think> tag extraction.
   const thinkTagResult = useMemo(() => {
-    if (isUser) return null;
     // Skip if metadata already has reasoning_content from the backend.
     if (typeof message.metadata?.reasoning_content === 'string') return null;
     return extractThinkTags(message.content);
-  }, [isUser, message.content, message.metadata?.reasoning_content]);
+  }, [message.content, message.metadata?.reasoning_content]);
 
   // The effective content to render (with <think> tags stripped if present).
   const effectiveContent = thinkTagResult?.strippedContent ?? message.content;
@@ -335,14 +171,13 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
   // Applied to ALL assistant messages (streaming AND completed) so that
   // accumulated multi-iteration content with tool_call XML renders properly.
   const streamResult = useMemo(() => {
-    if (isUser) return null;
     // Only process if content might contain tool_call or tool_result XML.
     if (!effectiveContent.includes('<tool_call') && !effectiveContent.includes('<tool_cal')
         && !effectiveContent.includes('<tool_result')) {
       return null;
     }
     return processStreamContent(effectiveContent);
-  }, [isUser, effectiveContent]);
+  }, [effectiveContent]);
 
   // Build the tool results lookup by matching order.
   // Sources: (1) live progress events via toolResults prop, (2) metadata from backend.
@@ -385,21 +220,6 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
     return map;
   }, [toolResults, streamResult, message.metadata]);
 
-  // Phase 3: Keyboard shortcut handler for user messages.
-  const handleBubbleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (!isUser) return;
-      if (e.altKey && e.key === 'e') {
-        e.preventDefault();
-        if (onEdit) onEdit(message.content);
-      } else if (e.altKey && e.key === 'z') {
-        e.preventDefault();
-        if (onUndo) onUndo(message.id);
-      }
-    },
-    [isUser, message.content, message.id, onEdit, onUndo],
-  );
-
   /** Render inline content segments (text + tool calls). */
   const renderSegments = (segments: ContentSegment[], hasPending: boolean) => {
     const elements: React.ReactNode[] = [];
@@ -437,7 +257,7 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
           <div className="tool-call-pending-dots">
             <span /><span /><span />
           </div>
-          <span className="tool-call-pending-text">Calling tool…</span>
+          <span className="tool-call-pending-text">Calling tool...</span>
         </div>
       );
     }
@@ -446,17 +266,12 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
   };
 
   return (
-    <div
-      className={`message-bubble ${message.role}`}
-      tabIndex={isUser ? 0 : undefined}
-      onKeyDown={isUser ? handleBubbleKeyDown : undefined}
-      aria-label={isUser ? `Your message: ${message.content.slice(0, 60)}` : undefined}
-    >
+    <div className={`message-bubble ${message.role}`}>
       <Avatar role={message.role} />
       <div className="message-body">
         <div className="message-header">
           <span className="message-role">
-            {isUser ? 'You' : isSystem ? 'System' : 'Assistant'}
+            {isSystem ? 'System' : 'Assistant'}
           </span>
           {message.model && (
             <span className="message-model">{message.model}</span>
@@ -465,7 +280,7 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
 
         {/* Reasoning/thinking block at the top of assistant messages */}
         {/* Source 1: metadata.reasoning_content (from stream_reasoning_delta events) */}
-        {!isUser && typeof message.metadata?.reasoning_content === 'string' && (
+        {typeof message.metadata?.reasoning_content === 'string' && (
           <ThinkingBlock
             content={message.metadata.reasoning_content}
             isStreaming={isStreamingMsg && !message.metadata?._reasoningDoneTs}
@@ -473,29 +288,14 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
           />
         )}
         {/* Source 2: <think> tags embedded in message content */}
-        {!isUser && thinkTagResult?.thinkContent && (
+        {thinkTagResult?.thinkContent && (
           <ThinkingBlock
             content={thinkTagResult.thinkContent}
             isStreaming={isStreamingMsg && thinkTagResult.isThinkingIncomplete}
           />
         )}
 
-        {/* User messages render as plain styled text */}
-        {isUser ? (
-          <div className="message-content user-plain">
-            {message.skills && message.skills.length > 0 && (
-              <div className="message-skill-tags">
-                {message.skills.map((s) => (
-                  <span key={s} className="message-skill-tag">
-                    <Puzzle size={11} className="message-skill-tag-icon" />
-                    {s}
-                  </span>
-                ))}
-              </div>
-            )}
-            {message.content}
-          </div>
-        ) : streamResult ? (
+        {streamResult ? (
           /* Assistant message with tool_call segments: render inline. */
           <div className="message-content markdown-body">
             {renderSegments(streamResult.segments, streamResult.hasPendingToolCall)}
@@ -520,11 +320,7 @@ export function MessageBubble({ message, onEdit, onUndo, onResend, toolResults }
           </div>
         )}
 
-        {/* Action bar */}
-        {isUser
-          ? <UserActionBar content={message.content} messageId={message.id} onEdit={onEdit} onUndo={onUndo} onResend={onResend} />
-          : <ActionBar content={message.content} />
-        }
+        <ActionBar content={message.content} />
 
         <div className="message-footer">
           <span className="message-time">

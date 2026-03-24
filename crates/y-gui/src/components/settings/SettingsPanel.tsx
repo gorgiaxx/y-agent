@@ -34,6 +34,7 @@ import { McpTab } from './McpTab';
 import { PromptsTab } from './PromptsTab';
 import { AboutTab } from './AboutTab';
 import { TomlEditorTab } from './TomlEditorTab';
+import { Button } from '../ui';
 
 import './SettingsPanel.css';
 
@@ -214,9 +215,9 @@ export function SettingsPanel({
       <div className="settings-action-bar">
         <h2 className="settings-action-bar-title">{TAB_LABELS[activeTab] ?? activeTab}</h2>
         <div className="settings-action-bar-actions">
-          <button className="btn-settings-save" onClick={handleSave} disabled={saving}>
+          <Button variant="primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save Changes'}
-          </button>
+          </Button>
         </div>
       </div>
 

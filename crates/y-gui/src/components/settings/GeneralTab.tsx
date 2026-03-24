@@ -6,6 +6,16 @@ import { useState, useEffect, useCallback } from 'react';
 import { Copy } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GuiConfig } from '../../types';
+import {
+  Input,
+  Button,
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+  Switch,
+} from '../ui';
 
 interface GeneralTabProps {
   localConfig: GuiConfig;
@@ -41,40 +51,44 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast }: GeneralTab
       <h3 className="section-title">Paths</h3>
       <div className="form-group">
         <label className="form-label">Config Directory</label>
-        <div className="path-field-wrap">
-          <input
-            className="pf-input path-field-input"
+        <div className="flex relative items-center">
+          <Input
+            variant="mono"
             value={configPath}
             readOnly
             title={configPath}
+            className="pr-9 text-[var(--text-secondary)] cursor-default select-all"
           />
-          <button
-            className="path-field-copy"
+          <Button
+            variant="icon"
+            size="sm"
+            className="absolute right-1"
             onClick={() => handleCopyPath(configPath, 'config')}
             title={copiedField === 'config' ? 'Copied!' : 'Copy path'}
-            type="button"
           >
             <Copy size={13} />
-          </button>
+          </Button>
         </div>
       </div>
       <div className="form-group">
         <label className="form-label">Data Directory</label>
-        <div className="path-field-wrap">
-          <input
-            className="pf-input path-field-input"
+        <div className="flex relative items-center">
+          <Input
+            variant="mono"
             value={dataPath}
             readOnly
             title={dataPath}
+            className="pr-9 text-[var(--text-secondary)] cursor-default select-all"
           />
-          <button
-            className="path-field-copy"
+          <Button
+            variant="icon"
+            size="sm"
+            className="absolute right-1"
             onClick={() => handleCopyPath(dataPath, 'data')}
             title={copiedField === 'data' ? 'Copied!' : 'Copy path'}
-            type="button"
           >
             <Copy size={13} />
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -82,17 +96,21 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast }: GeneralTab
 
       <div className="form-group">
         <label className="form-label">Theme</label>
-        <select
-          className="form-select"
+        <Select
           value={localConfig.theme}
-          onChange={(e) =>
-            setLocalConfig({ ...localConfig, theme: e.target.value as GuiConfig['theme'] })
+          onValueChange={(v) =>
+            setLocalConfig({ ...localConfig, theme: v as GuiConfig['theme'] })
           }
         >
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-          <option value="system">System</option>
-        </select>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="dark">Dark</SelectItem>
+            <SelectItem value="light">Light</SelectItem>
+            <SelectItem value="system">System</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="form-group">
@@ -115,17 +133,13 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast }: GeneralTab
       <h3 className="section-title">Behavior</h3>
 
       <div className="form-group">
-        <label className="form-label">
-          <input
-            type="checkbox"
-            className="form-checkbox"
-            checked={localConfig.send_on_enter}
-            onChange={(e) =>
-              setLocalConfig({ ...localConfig, send_on_enter: e.target.checked })
-            }
-          />
-          Send message on Enter
-        </label>
+        <Switch
+          label="Send message on Enter"
+          checked={localConfig.send_on_enter}
+          onCheckedChange={(checked) =>
+            setLocalConfig({ ...localConfig, send_on_enter: checked })
+          }
+        />
         <p className="form-hint">
           When enabled, press Enter to send and Shift+Enter for newline.
         </p>

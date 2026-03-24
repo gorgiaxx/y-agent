@@ -4,16 +4,12 @@ import { X } from 'lucide-react';
 import { toc } from '@lobehub/icons';
 import type { IconToc } from '@lobehub/icons';
 import * as AllIcons from '@lobehub/icons';
-import './ProviderIconPicker.css';
+import { Input } from '../ui';
 
 // ---------------------------------------------------------------------------
 // Static icon lookup map -- all icons are bundled at build time
 // ---------------------------------------------------------------------------
 
-// Build a map from PascalCase icon ID -> React component.
-// Each icon default export is a Compound component (Mono SVG + Avatar/Text/Combine).
-// We iterate toc entries and look them up in AllIcons to avoid filtering issues
-// (memo() components are objects, not functions).
 const allIconsRecord = AllIcons as Record<string, unknown>;
 const iconMap: Record<string, ComponentType<{ size?: number | string }>> = {};
 
@@ -50,7 +46,6 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
   const containerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // Filter the icon table of contents by search query.
   const filteredIcons: IconToc[] = useMemo(() => {
     const q = search.toLowerCase().trim();
     if (!q) return toc;
@@ -62,7 +57,7 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
     );
   }, [search]);
 
-  // Close dropdown on outside click.
+  // Close dropdown on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -74,11 +69,9 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  // Focus search input when dropdown opens.
+  // Focus search input when dropdown opens
   useEffect(() => {
-    if (open) {
-      searchRef.current?.focus();
-    }
+    if (open) searchRef.current?.focus();
   }, [open]);
 
   const handleSelect = useCallback(
@@ -104,20 +97,38 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
     : null;
 
   return (
-    <div className="icon-picker" ref={containerRef}>
+    <div className="relative" ref={containerRef}>
       <button
         type="button"
-        className="icon-picker-trigger"
+        className={[
+          'flex items-center gap-1.5 w-full',
+          'px-2 py-1.5 min-h-[30px]',
+          'bg-[var(--surface-secondary)]',
+          'border border-solid border-[var(--border)]',
+          'rounded-[var(--radius-sm)]',
+          'text-[var(--text-primary)]',
+          'cursor-pointer text-12px font-sans',
+          'transition-colors duration-150',
+          'hover:border-[rgba(255,255,255,0.15)]',
+        ].join(' ')}
         onClick={() => setOpen(!open)}
       >
         {selectedIcon ? (
           <>
-            <span className="icon-picker-preview">
+            <span className="inline-flex items-center justify-center w-[18px] h-[18px] shrink-0">
               <DynamicIcon tocId={selectedIcon.id} size={18} />
             </span>
-            <span className="icon-picker-trigger-label">{selectedIcon.fullTitle}</span>
+            <span className="flex-1 text-left overflow-hidden text-ellipsis whitespace-nowrap">
+              {selectedIcon.fullTitle}
+            </span>
             <span
-              className="icon-picker-clear"
+              className={[
+                'flex items-center justify-center w-[18px] h-[18px]',
+                'rounded-full cursor-pointer',
+                'text-[var(--text-muted)]',
+                'transition-colors duration-150',
+                'hover:text-[var(--text-primary)]',
+              ].join(' ')}
               role="button"
               tabIndex={0}
               onClick={handleClear}
@@ -127,37 +138,61 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
             </span>
           </>
         ) : (
-          <span className="icon-picker-trigger-placeholder">Select icon...</span>
+          <span className="flex-1 text-left text-[var(--text-muted)]">Select icon...</span>
         )}
       </button>
 
       {open && (
-        <div className="icon-picker-dropdown">
-          <div className="icon-picker-search-wrap">
-            <input
+        <div
+          className={[
+            'absolute top-[calc(100%+4px)] left-0 right-0 z-100',
+            'bg-[var(--surface-primary)]',
+            'border border-solid border-[var(--border)]',
+            'rounded-[var(--radius-md)]',
+            'shadow-md overflow-hidden',
+            'animate-[selectIn_0.1s_ease-out]',
+          ].join(' ')}
+        >
+          <div className="p-1.5 border-b border-solid border-[var(--border)]">
+            <Input
               ref={searchRef}
-              className="icon-picker-search"
               type="text"
               placeholder="Search icons..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <div className="icon-picker-list">
+          <div className="max-h-60 overflow-y-auto p-1">
             {filteredIcons.length === 0 ? (
-              <div className="icon-picker-empty">No icons found</div>
+              <div className="p-4 text-center text-[var(--text-muted)] text-12px">
+                No icons found
+              </div>
             ) : (
               filteredIcons.map((item) => (
                 <button
                   key={item.id}
                   type="button"
-                  className={`icon-picker-item ${value?.toLowerCase() === item.id.toLowerCase() ? 'selected' : ''}`}
+                  className={[
+                    'flex items-center gap-2 w-full',
+                    'px-2 py-1.5',
+                    'bg-none border-none',
+                    'rounded-[var(--radius-sm)]',
+                    'text-[var(--text-secondary)]',
+                    'cursor-pointer text-12px font-sans text-left',
+                    'transition-colors duration-100',
+                    'hover:(bg-[var(--surface-hover)] text-[var(--text-primary)])',
+                    value?.toLowerCase() === item.id.toLowerCase()
+                      ? 'text-[var(--accent)] bg-[var(--accent-subtle)]'
+                      : '',
+                  ].join(' ')}
                   onClick={() => handleSelect(item.id)}
                 >
-                  <span className="icon-picker-item-icon">
+                  <span className="inline-flex items-center justify-center w-5 h-5 shrink-0">
                     <DynamicIcon tocId={item.id} size={18} />
                   </span>
-                  <span className="icon-picker-item-label">{item.fullTitle}</span>
+                  <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                    {item.fullTitle}
+                  </span>
                 </button>
               ))
             )}
@@ -184,20 +219,18 @@ export function ProviderIconImg({
 }) {
   if (!iconId) return null;
 
-  // Resolve toc ID (PascalCase) from stored value (may be lowercase).
   const tocEntry = toc.find((item) => item.id.toLowerCase() === iconId.toLowerCase());
-  if (!tocEntry) {
-    // If not found in toc, try using the raw value as PascalCase id.
-    return (
-      <span className={`provider-icon-img ${className}`} style={{ display: 'inline-flex', width: size, height: size }}>
-        <DynamicIcon tocId={iconId} size={size} />
-      </span>
-    );
-  }
+  const resolvedId = tocEntry ? tocEntry.id : iconId;
 
   return (
-    <span className={`provider-icon-img ${className}`} style={{ display: 'inline-flex', width: size, height: size }}>
-      <DynamicIcon tocId={tocEntry.id} size={size} />
+    <span
+      className={[
+        'inline-flex items-center justify-center shrink-0 align-middle leading-none',
+        className,
+      ].join(' ')}
+      style={{ width: size, height: size }}
+    >
+      <DynamicIcon tocId={resolvedId} size={size} />
     </span>
   );
 }

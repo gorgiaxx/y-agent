@@ -1,3 +1,5 @@
+import 'virtual:uno.css'
+import './components/ui/animations.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles/index.css'

@@ -1,7 +1,14 @@
 import { useState } from 'react';
-import { X, Upload, Shield, FileText } from 'lucide-react';
+import { Upload, Shield, FileText } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import './SkillImportDialog.css';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Button,
+  Input,
+  Switch,
+} from '../ui';
 
 interface SkillImportDialogProps {
   onImport: (path: string, sanitize: boolean) => void;
@@ -34,53 +41,49 @@ export function SkillImportDialog({ onImport, onClose }: SkillImportDialogProps)
   };
 
   return (
-    <div className="import-dialog-overlay" onClick={onClose}>
-      <div className="import-dialog" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="import-dialog-header">
-          <h2 className="import-dialog-title">Import Skill</h2>
-          <button className="import-dialog-close" onClick={onClose} title="Close">
-            <X size={16} />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent width="420px" className="text-left items-stretch">
+        <DialogTitle className="text-left">Import Skill</DialogTitle>
 
         {/* Path selection */}
-        <div className="import-dialog-field">
-          <label className="import-dialog-label">Source Path</label>
-          <div className="import-dialog-path-row">
-            <input
-              type="text"
-              className="import-dialog-path-input"
+        <div className="flex flex-col gap-1 mt-2">
+          <label className="text-10px font-500 text-[var(--text-muted)] uppercase tracking-[0.06em]">
+            Source Path
+          </label>
+          <div className="flex gap-2">
+            <Input
               value={path}
               onChange={(e) => setPath(e.target.value)}
               placeholder="Select Skill main file..."
               readOnly
+              variant="mono"
+              className="flex-1"
             />
-            <button className="import-dialog-browse" onClick={handleBrowse} title="Browse">
+            <Button variant="outline" onClick={handleBrowse}>
               <FileText size={14} />
               Browse
-            </button>
+            </Button>
           </div>
-          <p className="import-dialog-hint">Please select the Skill main file</p>
+          <p className="text-10px text-[var(--text-muted)] mt-0.5">
+            Please select the Skill main file
+          </p>
         </div>
 
         {/* Sanitize toggle */}
-        <div className="import-dialog-field">
-          <label className="import-dialog-toggle-row">
-            <div className="import-dialog-toggle-info">
-              <Shield size={14} className="import-dialog-toggle-icon" />
-              <span className="import-dialog-toggle-label">Security Check (Agent-assisted)</span>
+        <div className="flex flex-col gap-1 mt-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Shield size={14} className="text-[var(--accent)]" />
+              <span className="text-12px font-500 text-[var(--text-primary)]">
+                Security Check (Agent-assisted)
+              </span>
             </div>
-            <button
-              className={`import-dialog-switch ${sanitize ? 'import-dialog-switch--on' : ''}`}
-              onClick={() => setSanitize(!sanitize)}
-              role="switch"
-              aria-checked={sanitize}
-            >
-              <span className="import-dialog-switch-thumb" />
-            </button>
-          </label>
-          <p className="import-dialog-hint">
+            <Switch
+              checked={sanitize}
+              onCheckedChange={setSanitize}
+            />
+          </div>
+          <p className="text-10px text-[var(--text-muted)]">
             {sanitize
               ? 'Uses an AI agent to analyze and transform the skill for security before import.'
               : 'Direct import without security screening. Only use for trusted y-agent format skills.'}
@@ -88,20 +91,20 @@ export function SkillImportDialog({ onImport, onClose }: SkillImportDialogProps)
         </div>
 
         {/* Actions */}
-        <div className="import-dialog-actions">
-          <button className="import-dialog-btn import-dialog-btn--cancel" onClick={onClose}>
+        <div className="flex gap-2 mt-3 justify-end">
+          <Button variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            className="import-dialog-btn import-dialog-btn--import"
+          </Button>
+          <Button
+            variant="primary"
             onClick={handleImport}
             disabled={!path}
           >
             <Upload size={14} />
             Import
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
