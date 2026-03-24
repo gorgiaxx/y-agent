@@ -112,6 +112,11 @@ pub struct AgentExecutionResult {
     /// supports chain-of-thought). `None` when the model did not produce
     /// reasoning output.
     pub reasoning_content: Option<String>,
+    /// Wall-clock duration of reasoning/thinking in milliseconds.
+    /// Measured from the first `StreamReasoningDelta` to the first
+    /// `StreamDelta` (content) or end-of-stream, whichever comes first.
+    /// `None` when no reasoning was produced or when using non-streaming.
+    pub reasoning_duration_ms: Option<u64>,
 }
 
 /// Error returned by [`AgentService::execute`].
@@ -309,7 +314,7 @@ impl AgentService {
                 Self::call_llm(&*pool, &request, &route, progress.as_ref(), cancel.as_ref()).await;
 
             match llm_result {
-                Ok(response) => {
+                Ok((response, iter_reasoning_duration_ms)) => {
                     // When streaming was used, the pool recorded the request
                     // count at stream start with zero tokens. Now that the
                     // stream is fully consumed, record the actual token usage.
@@ -423,6 +428,7 @@ impl AgentService {
                         final_provider_id,
                         owns_trace,
                         iter_ctx_window,
+                        iter_reasoning_duration_ms,
                     )
                     .await;
                 }
@@ -559,27 +565,34 @@ impl AgentService {
     }
 
     /// Dispatch to streaming or non-streaming LLM call.
+    ///
+    /// Returns `(ChatResponse, Option<reasoning_duration_ms>)`. The duration
+    /// is only available when streaming is active and the model produced
+    /// reasoning content.
     async fn call_llm(
         pool: &dyn ProviderPool,
         request: &ChatRequest,
         route: &RouteRequest,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
-    ) -> Result<y_core::provider::ChatResponse, y_core::provider::ProviderError> {
+    ) -> Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError>
+    {
         if progress.is_some() {
             Self::call_llm_streaming(pool, request, route, progress, cancel).await
         } else {
             let llm_future = pool.chat_completion(request, route);
-            if let Some(tok) = cancel {
+            let response = if let Some(tok) = cancel {
                 tokio::select! {
-                    res = llm_future => res,
+                    res = llm_future => res?,
                     () = tok.cancelled() => {
-                        Err(y_core::provider::ProviderError::Cancelled)
+                        return Err(y_core::provider::ProviderError::Cancelled);
                     }
                 }
             } else {
-                llm_future.await
-            }
+                llm_future.await?
+            };
+            // Non-streaming: no reasoning duration tracking.
+            Ok((response, None))
         }
     }
 
@@ -628,17 +641,12 @@ impl AgentService {
         // Emit LlmError progress event so the diagnostics panel
         // records the failed call before the progress channel closes.
         if let Some(tx) = progress {
-            let preview = if prompt_preview.len() > 1000 {
-                prompt_preview[..1000].to_string()
-            } else {
-                prompt_preview.to_string()
-            };
             let _ = tx.send(TurnEvent::LlmError {
                 iteration: ctx.iteration,
                 error: format!("{error}"),
                 duration_ms: elapsed_ms,
                 model: model.to_string(),
-                prompt_preview: preview,
+                prompt_preview: prompt_preview.to_string(),
                 context_window,
                 agent_name: agent_name.to_string(),
             });
@@ -742,6 +750,7 @@ impl AgentService {
 
         ctx.tool_calls_executed.push(ToolCallRecord {
             name: tc.name.clone(),
+            arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
             success: tool_success,
             duration_ms: tool_elapsed_ms,
             result_content: result_content.clone(),
@@ -973,6 +982,7 @@ impl AgentService {
         final_provider_id: Option<String>,
         owns_trace: bool,
         ctx_window: usize,
+        reasoning_duration_ms: Option<u64>,
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
         let raw_content = response
             .content
@@ -1028,6 +1038,7 @@ impl AgentService {
             iterations: ctx.iteration,
             new_messages: ctx.new_messages,
             reasoning_content: response.reasoning_content.clone(),
+            reasoning_duration_ms,
         })
     }
 
@@ -1309,15 +1320,17 @@ impl AgentService {
 
     /// Call the LLM via streaming and emit `TurnEvent::StreamDelta` events.
     ///
-    /// Returns a fully assembled `ChatResponse` equivalent to the non-streaming
-    /// path. Supports mid-stream cancellation via `CancellationToken`.
+    /// Returns `(ChatResponse, Option<reasoning_duration_ms>)` -- the assembled
+    /// response plus the wall-clock reasoning duration if thinking content was
+    /// produced. Supports mid-stream cancellation via `CancellationToken`.
     async fn call_llm_streaming(
         pool: &dyn ProviderPool,
         request: &ChatRequest,
         route: &RouteRequest,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
-    ) -> Result<y_core::provider::ChatResponse, y_core::provider::ProviderError> {
+    ) -> Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError>
+    {
         use y_core::provider::{ChatResponse, FinishReason, ProviderError};
         use y_core::types::TokenUsage;
 
@@ -1338,6 +1351,10 @@ impl AgentService {
             ..Default::default()
         };
         let mut finish_reason = FinishReason::Stop;
+
+        // Track reasoning timing: first reasoning delta -> first content delta.
+        let mut reasoning_start: Option<std::time::Instant> = None;
+        let mut reasoning_duration_ms: Option<u64> = None;
 
         loop {
             // Check cancellation between chunks.
@@ -1363,6 +1380,11 @@ impl AgentService {
                     // Emit text delta to presentation layers.
                     if let Some(ref delta) = chunk.delta_content {
                         if !delta.is_empty() {
+                            // Mark end of reasoning on first content delta.
+                            if let Some(start) = reasoning_start.take() {
+                                reasoning_duration_ms =
+                                    Some(u64::try_from(start.elapsed().as_millis()).unwrap_or(0));
+                            }
                             content.push_str(delta);
                             if let Some(tx) = progress {
                                 let _ = tx.send(TurnEvent::StreamDelta {
@@ -1375,6 +1397,10 @@ impl AgentService {
                     // Emit reasoning/thinking delta.
                     if let Some(ref reasoning) = chunk.delta_reasoning_content {
                         if !reasoning.is_empty() {
+                            // Mark start of reasoning on first delta.
+                            if reasoning_start.is_none() {
+                                reasoning_start = Some(std::time::Instant::now());
+                            }
                             reasoning_content.push_str(reasoning);
                             if let Some(tx) = progress {
                                 let _ = tx.send(TurnEvent::StreamReasoningDelta {
@@ -1428,7 +1454,13 @@ impl AgentService {
             }
         });
 
-        Ok(ChatResponse {
+        // If reasoning ended without any content delta (e.g. model produced
+        // only reasoning), finalize the duration now.
+        if let Some(start) = reasoning_start.take() {
+            reasoning_duration_ms = Some(u64::try_from(start.elapsed().as_millis()).unwrap_or(0));
+        }
+
+        let response = ChatResponse {
             id: String::new(),
             content: if content.is_empty() {
                 None
@@ -1447,7 +1479,8 @@ impl AgentService {
             raw_request,
             raw_response: Some(raw_response),
             provider_id,
-        })
+        };
+        Ok((response, reasoning_duration_ms))
     }
 }
 

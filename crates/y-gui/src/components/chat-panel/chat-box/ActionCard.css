@@ -1,0 +1,22 @@
+/* ActionCard -- styles specific to the action card. */
+
+.action-card-duration {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Inner content: slightly tighter spacing for tool cards */
+.action-card .collapsible-card-body .tool-call-card {
+  margin-bottom: var(--space-xs);
+}
+
+.action-card .collapsible-card-body {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.action-card .collapsible-card-body .markdown-body {
+  font-size: 13px;
+  color: var(--text-secondary);
+}

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
-import { Wrench, ChevronRight, CheckCircle, XCircle, Loader } from 'lucide-react';
+import { Wrench, CheckCircle, XCircle, Loader } from 'lucide-react';
 import type { ToolCallBrief } from '../../../types';
+import { CollapsibleCard } from './CollapsibleCard';
 import './ToolCallCard.css';
 
 interface ToolCallCardProps {
@@ -65,17 +66,24 @@ function formatResult(name: string, raw: string): FormattedResult | null {
   return { parts: [{ text: raw, isStderr: false }] };
 }
 
+/** Format ms as human-readable duration. */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
+}
+
 export function ToolCallCard({ toolCall, status = 'success', result, durationMs }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const statusIcon = {
-    running: <Loader size={13} className="tool-status-spinner" />,
+    running: <Loader size={13} className="collapsible-card-spinner" />,
     success: <CheckCircle size={13} />,
     error: <XCircle size={13} />,
   }[status];
 
   const statusLabel = {
-    running: 'Running…',
+    running: 'Running...',
     success: 'Done',
     error: 'Failed',
   }[status];
@@ -94,45 +102,44 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs 
 
   const hasExpandable = displayArgs || displayResult;
 
+  const headerRight = (
+    <>
+      <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
+      <span className={`tool-call-status ${statusClass}`}>{statusLabel}</span>
+      {durationMs !== undefined && (
+        <span className="tool-call-duration">{formatDuration(durationMs)}</span>
+      )}
+    </>
+  );
+
   return (
-    <div className={`tool-call-card ${statusClass}`}>
-      <div className="tool-call-header" onClick={() => hasExpandable && setExpanded(!expanded)}>
-        <span className="tool-call-icon"><Wrench size={12} /></span>
-        <span className="tool-call-name">{toolCall.name}</span>
-        <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
-        <span className={`tool-call-status ${statusClass}`}>{statusLabel}</span>
-        {durationMs !== undefined && (
-          <span className="tool-call-duration">{durationMs}ms</span>
-        )}
-        {hasExpandable && (
-          <span className={`tool-call-expand ${expanded ? 'expanded' : ''}`}>
-            <ChevronRight size={12} />
-          </span>
-        )}
-      </div>
-      {expanded && (
-        <div className="tool-call-body">
-          {displayArgs && (
-            <div className="tool-call-section">
-              <div className="tool-call-label">Arguments</div>
-              <pre className="tool-call-code">{displayArgs}</pre>
-            </div>
-          )}
-          {displayResult && (
-            <div className="tool-call-section">
-              <div className="tool-call-label">Result</div>
-              <pre className="tool-call-code">
-                {displayResult.parts.map((part, i) => (
-                  <span key={i} className={part.isStderr ? 'tool-result-stderr' : ''}>
-                    {part.text}
-                    {i < displayResult.parts.length - 1 ? '\n' : ''}
-                  </span>
-                ))}
-              </pre>
-            </div>
-          )}
+    <CollapsibleCard
+      icon={<Wrench size={12} />}
+      label={<span className="tool-call-name">{toolCall.name}</span>}
+      expanded={expanded}
+      onToggle={() => hasExpandable && setExpanded(!expanded)}
+      headerRight={headerRight}
+      className="tool-call-card"
+    >
+      {displayArgs && (
+        <div className="tool-call-section">
+          <div className="tool-call-label">Arguments</div>
+          <pre className="tool-call-code">{displayArgs}</pre>
         </div>
       )}
-    </div>
+      {displayResult && (
+        <div className="tool-call-section">
+          <div className="tool-call-label">Result</div>
+          <pre className="tool-call-code">
+            {displayResult.parts.map((part, i) => (
+              <span key={i} className={part.isStderr ? 'tool-result-stderr' : ''}>
+                {part.text}
+                {i < displayResult.parts.length - 1 ? '\n' : ''}
+              </span>
+            ))}
+          </pre>
+        </div>
+      )}
+    </CollapsibleCard>
   );
 }

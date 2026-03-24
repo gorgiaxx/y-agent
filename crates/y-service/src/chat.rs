@@ -34,6 +34,8 @@ use crate::container::ServiceContainer;
 pub struct ToolCallRecord {
     /// Tool name.
     pub name: String,
+    /// Serialised tool arguments (JSON string).
+    pub arguments: String,
     /// Whether the tool executed successfully.
     pub success: bool,
     /// Wall-clock duration in milliseconds.
@@ -70,7 +72,7 @@ pub enum TurnEvent {
         cost_usd: f64,
         /// Names of tool calls requested by the LLM (empty if pure text).
         tool_calls_requested: Vec<String>,
-        /// First 1 000 chars of the serialised messages sent to the LLM.
+        /// Serialised messages sent to the LLM (full JSON payload).
         prompt_preview: String,
         /// Assistant text returned by the LLM (or tool-call placeholder).
         response_text: String,
@@ -134,7 +136,7 @@ pub enum TurnEvent {
         duration_ms: u64,
         /// Model that was being called when the error occurred.
         model: String,
-        /// First 1 000 chars of the serialised messages sent to the LLM.
+        /// Serialised messages sent to the LLM (full JSON payload).
         prompt_preview: String,
         /// Context window size of the serving provider (tokens).
         context_window: usize,
@@ -720,6 +722,7 @@ impl ChatService {
             .map(|tc| {
                 serde_json::json!({
                     "name": tc.name,
+                    "arguments": tc.arguments,
                     "success": tc.success,
                     "duration_ms": tc.duration_ms,
                     "result_preview": &tc.result_content[..tc.result_content.floor_char_boundary(2000)],
@@ -751,6 +754,12 @@ impl ChatService {
             if let Some(rc) = last_assistant.metadata.get("reasoning_content") {
                 meta["reasoning_content"] = rc.clone();
             }
+        }
+
+        // Persist reasoning/thinking duration so the frontend can show it
+        // after page reload (without relying on client-side timestamps).
+        if let Some(rd) = result.reasoning_duration_ms {
+            meta["reasoning_duration_ms"] = serde_json::json!(rd);
         }
 
         let assistant_msg = Message {

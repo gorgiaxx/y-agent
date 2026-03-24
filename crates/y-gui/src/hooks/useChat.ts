@@ -44,6 +44,8 @@ export type ChatOpStatus =
 /** Tracked tool result from a progress event. */
 export interface ToolResultRecord {
   name: string;
+  /** Serialised tool arguments (JSON string). Available from persisted metadata. */
+  arguments?: string;
   success: boolean;
   durationMs: number;
   resultPreview: string;

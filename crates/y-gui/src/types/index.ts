@@ -100,7 +100,7 @@ export interface LlmResponseEvent {
   duration_ms: number;
   cost_usd: number;
   tool_calls_requested: string[];
-  /** Serialised messages sent to the LLM (first 1 000 chars). */
+  /** Serialised messages sent to the LLM (full JSON payload). */
   prompt_preview?: string;
   /** Assistant text returned by the LLM. */
   response_text?: string;
@@ -154,7 +154,7 @@ export interface LlmErrorEvent {
   duration_ms: number;
   /** Model that was being called. */
   model: string;
-  /** First 1000 chars of the serialised messages sent to the LLM. */
+  /** Serialised messages sent to the LLM (full JSON payload). */
   prompt_preview: string;
   /** Context window size of the serving provider (tokens). */
   context_window: number;
