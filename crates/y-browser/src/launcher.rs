@@ -94,7 +94,7 @@ impl ChromeLauncher {
             cmd.arg("--headless=new");
         }
         cmd.arg(format!("--remote-debugging-port={actual_port}"))
-            // .arg(format!("--user-data-dir={}", user_data_dir.display()))
+            .arg(format!("--user-data-dir={}", user_data_dir.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-gpu")
