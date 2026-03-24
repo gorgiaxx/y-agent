@@ -230,9 +230,20 @@ pub async fn config_reload(state: State<'_, AppState>) -> Result<String, String>
         results.push("knowledge".to_string());
     }
 
-    // 8. Prompts — always reload from disk (no TOML config, just .txt files).
+    // 8. Hooks.
+    if let Some(content) = read_toml("hooks")? {
+        y_service::SystemService::reload_hooks_from_toml(&state.container, &content)?;
+        results.push("hooks".to_string());
+    }
+
+    // 9. Prompts — always reload from disk (no TOML config, just .txt files).
     y_service::SystemService::reload_prompts(&state.container).await;
     results.push("prompts".to_string());
+
+    // NOTE: Storage (connection pool, WAL mode) is not hot-reloadable;
+    // changes to storage.toml require an application restart.
+    // NOTE: MCP server configuration (mcp.json) is saved to disk but not
+    // hot-reloaded into the runtime; MCP servers are discovered on demand.
 
     if results.is_empty() {
         return Ok("Config reloaded (no config files to update)".into());

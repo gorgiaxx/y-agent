@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Search, Puzzle, BookOpen } from 'lucide-react';
-import { filterCommands, CATEGORY_ORDER } from '../commands';
-import type { GuiCommandDef, CommandCategory } from '../commands';
-import type { SkillInfo, KnowledgeCollectionInfo } from '../types';
+import { filterCommands, CATEGORY_ORDER } from '../../../commands';
+import type { GuiCommandDef, CommandCategory } from '../../../commands';
+import type { SkillInfo, KnowledgeCollectionInfo } from '../../../types';
 import './CommandMenu.css';
 
 /** Union item type for the flat navigation list. */

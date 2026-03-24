@@ -113,6 +113,17 @@ pub async fn provider_list(state: State<'_, AppState>) -> Result<Vec<ProviderInf
 // DevTools
 // ---------------------------------------------------------------------------
 
+/// Show the main window.
+///
+/// Called by the frontend after the initial render completes to avoid the
+/// white-flash that occurs when the webview loads with a blank background.
+/// The window starts hidden (`visible: false` in `tauri.conf.json`) and is
+/// shown only once the React tree is mounted and CSS has been applied.
+#[tauri::command]
+pub async fn show_window(window: tauri::WebviewWindow) {
+    let _ = window.show();
+}
+
 /// Toggle the `WebView` developer tools (Ctrl+Shift+I shortcut handler).
 #[tauri::command]
 pub async fn toggle_devtools(window: tauri::WebviewWindow) {

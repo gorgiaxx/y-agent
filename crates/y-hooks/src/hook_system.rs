@@ -247,6 +247,38 @@ impl HookSystem {
         self.handler_executor.as_ref()
     }
 
+    /// Hot-reload the hook system configuration.
+    ///
+    /// Rebuilds the handler executor from the new config (re-validating hook
+    /// handlers, recompiling matchers) and updates the chain runner timeout.
+    /// Existing middleware registrations and event subscriptions are preserved.
+    pub fn reload_config(&mut self, new_config: &HookConfig) {
+        // Update chain runner timeout.
+        self.runner = ChainRunner::new(new_config.middleware_timeout());
+
+        // Rebuild event bus with new capacity.
+        self.events = EventBus::new(new_config.event_channel_capacity);
+
+        // Rebuild handler executor.
+        #[cfg(feature = "hook_handlers")]
+        {
+            self.handler_executor =
+                if new_config.handlers_enabled && !new_config.hook_handlers.is_empty() {
+                    match crate::hook_handler::HookHandlerExecutor::from_config(new_config) {
+                        Ok(executor) => Some(executor),
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to reinitialize hook handlers");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+        }
+
+        tracing::info!("Hook system config hot-reloaded");
+    }
+
     /// Inject an LLM runner into the hook handler executor.
     ///
     /// Called during application startup after `ProviderPool` is initialized.

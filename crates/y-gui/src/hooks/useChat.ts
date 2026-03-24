@@ -614,14 +614,28 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             // Stop/cancel: preserve any streamed content by finalizing the
             // streaming message instead of deleting it. This keeps the
             // partially-streamed text visible and treats the run as complete.
+            // Snapshot tool results so they survive in the finalized message
+            // metadata even after visibleToolResults is cleared by a new run.
+            const snapToolResults = toolResultsRef.current.get(sessionId);
+
             setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
               const streamingId = `streaming-${sessionId}`;
               // reasoning content is merged into the streaming message's metadata.
               return prev.map((m) => {
                 if (m.id === streamingId && m.content) {
+                  const meta = { ...(m.metadata ?? {}) };
+                  if (snapToolResults && snapToolResults.length > 0 && !meta.tool_results) {
+                    meta.tool_results = snapToolResults.map((tr) => ({
+                      name: tr.name,
+                      success: tr.success,
+                      duration_ms: tr.durationMs,
+                      result_preview: tr.resultPreview,
+                    }));
+                  }
                   return {
                     ...m,
                     id: `cancelled-${payload.run_id}`,
+                    metadata: meta,
                     _streaming: undefined,
                   } as Message;
                 }
@@ -654,13 +668,25 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             // finalizing the streaming message instead of deleting it.
             // This keeps reasoning, tool call cards, and partial text
             // visible so the user can see what happened before the error.
+            const snapToolResultsErr = toolResultsRef.current.get(sessionId);
+
             setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
               const streamingId = `streaming-${sessionId}`;
               return prev.map((m) => {
                 if (m.id === streamingId && m.content) {
+                  const meta = { ...(m.metadata ?? {}) };
+                  if (snapToolResultsErr && snapToolResultsErr.length > 0 && !meta.tool_results) {
+                    meta.tool_results = snapToolResultsErr.map((tr) => ({
+                      name: tr.name,
+                      success: tr.success,
+                      duration_ms: tr.durationMs,
+                      result_preview: tr.resultPreview,
+                    }));
+                  }
                   return {
                     ...m,
                     id: `error-${payload.run_id || Date.now()}`,
+                    metadata: meta,
                     _streaming: undefined,
                   } as Message;
                 }
@@ -798,8 +824,16 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         // loadMessages races with the backend persistence (common for new
         // sessions where the first message hasn't been saved yet).
         const backendIds = new Set(mergedMsgs.map((m) => m.id));
+        // Content-based dedup: if the backend already persisted a user
+        // message with the same content, drop the optimistic copy.
+        const backendUserContents = new Set(
+          mergedMsgs.filter((m) => m.role === 'user').map((m) => m.content),
+        );
         const optimisticUserMsgs = currentCached.filter(
-          (m) => m.id.startsWith('user-') && !backendIds.has(m.id),
+          (m) =>
+            m.id.startsWith('user-') &&
+            !backendIds.has(m.id) &&
+            !backendUserContents.has(m.content),
         );
 
         let merged = [...mergedMsgs, ...optimisticUserMsgs];

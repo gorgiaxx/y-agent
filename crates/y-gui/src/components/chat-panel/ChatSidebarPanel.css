@@ -1,0 +1,252 @@
+/* ================================================
+   ChatSidebarPanel: session list, workspace
+   sections, context menus.
+   ================================================ */
+
+/* ---- Session list ---- */
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+/* ---- Workspace sections ---- */
+.workspace-section {
+  margin-top: 6px;
+}
+
+.workspace-section:first-child {
+  margin-top: 0;
+}
+
+.btn-workspace-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  transition: color 0.12s;
+}
+
+.btn-workspace-collapse:hover {
+  color: var(--text-primary);
+}
+
+.workspace-chevron {
+  transition: transform 0.18s ease;
+}
+
+.workspace-chevron--open {
+  transform: rotate(90deg);
+}
+
+.workspace-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.btn-workspace-menu {
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: opacity 0.12s, color 0.12s;
+  padding: 0;
+}
+
+.workspace-label:hover .btn-workspace-menu {
+  opacity: 1;
+}
+
+.btn-workspace-menu:hover {
+  color: var(--text-primary);
+}
+
+/* ---- Context menus ---- */
+.workspace-context-menu,
+.session-context-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 2px);
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 100;
+  min-width: 160px;
+  padding: 4px;
+  animation: ws-fade-in 0.1s ease;
+}
+
+@keyframes ws-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.context-menu-section {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 10px 2px;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.1s;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.context-menu-item--danger {
+  color: var(--error, #f87171);
+}
+
+.context-menu-check {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.context-menu-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+/* ---- Session item ---- */
+.session-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px var(--space-sm);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+  margin-bottom: 1px;
+}
+
+.session-item:hover {
+  background: var(--surface-hover);
+}
+
+.session-item.active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* ---- Spinner ---- */
+@keyframes session-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.session-spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: session-spin 0.7s linear infinite;
+}
+
+.session-spinner-placeholder {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+/* ---- Title ---- */
+.session-item-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.session-item.active .session-item-title {
+  color: var(--text-primary);
+}
+
+/* ---- Right side: time + action button ---- */
+.session-item-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.session-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.session-time--now {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.btn-session-action {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.session-item:hover .btn-session-action,
+.session-item.active .btn-session-action {
+  opacity: 1;
+}
+
+.btn-session-action:hover {
+  color: var(--text-primary);
+}

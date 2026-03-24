@@ -69,6 +69,9 @@ export function computeSummary(entries: DiagnosticsEntry[]): DiagnosticsSummary 
       else s.toolFailCount += 1;
     } else if (ev.type === 'loop_limit_hit') {
       s.totalIterations = ev.iterations;
+    } else if (ev.type === 'llm_error') {
+      s.totalIterations = Math.max(s.totalIterations, ev.iteration);
+      s.totalDurationMs += ev.duration_ms;
     }
   }
   return s;
@@ -138,6 +141,7 @@ async function loadSubagentHistory() {
             tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
             prompt_preview: item.prompt_preview as string,
             response_text: item.response_text as string,
+            agent_name: item.agent_name as string | undefined,
           };
           break;
         case 'tool_result':
@@ -148,6 +152,7 @@ async function loadSubagentHistory() {
             duration_ms: item.duration_ms as number,
             input_preview: (item.input_preview as string) ?? undefined,
             result_preview: item.result_preview as string,
+            agent_name: item.agent_name as string | undefined,
           };
           break;
         default:
@@ -198,6 +203,7 @@ async function reloadSessionHistory(sessionId: string) {
             tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
             prompt_preview: item.prompt_preview as string,
             response_text: item.response_text as string,
+            agent_name: item.agent_name as string | undefined,
           };
           break;
         case 'tool_result':
@@ -208,6 +214,7 @@ async function reloadSessionHistory(sessionId: string) {
             duration_ms: item.duration_ms as number,
             input_preview: (item.input_preview as string) ?? undefined,
             result_preview: item.result_preview as string,
+            agent_name: item.agent_name as string | undefined,
           };
           break;
         default:
@@ -437,6 +444,7 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
                 tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
                 prompt_preview: item.prompt_preview as string,
                 response_text: item.response_text as string,
+                agent_name: item.agent_name as string | undefined,
               };
               break;
             case 'tool_result':
@@ -447,6 +455,7 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
                 duration_ms: item.duration_ms as number,
                 input_preview: (item.input_preview as string) ?? undefined,
                 result_preview: item.result_preview as string,
+                agent_name: item.agent_name as string | undefined,
               };
               break;
             default:

@@ -6,10 +6,10 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-import type { DiagnosticsEntry, LlmResponseEvent, ToolResultEvent, LoopLimitEvent, UserMessageEvent } from '../types';
-import { computeSummary } from '../hooks/useDiagnostics';
-import type { DiagnosticsSummary } from '../hooks/useDiagnostics';
-import { useResolvedTheme } from '../hooks/useTheme';
+import type { DiagnosticsEntry, LlmResponseEvent, LlmErrorEvent, ToolResultEvent, LoopLimitEvent, UserMessageEvent } from '../../types';
+import { computeSummary } from '../../hooks/useDiagnostics';
+import type { DiagnosticsSummary } from '../../hooks/useDiagnostics';
+import { useResolvedTheme } from '../../hooks/useTheme';
 import './DiagnosticsPanel.css';
 
 // Strip hardcoded background from every token rule so the highlighter
@@ -506,6 +506,126 @@ function LoopLimitEntry({ event }: { event: LoopLimitEvent }) {
   );
 }
 
+function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [promptBeautified, setPromptBeautified] = useState(true);
+  const [promptWrapped, setPromptWrapped] = useState(true);
+  const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const resolvedTheme = useResolvedTheme();
+  const highlighterStyle = resolvedTheme === 'light' ? oneLightNoBackground : oneDarkNoBackground;
+
+  const tryBeautify = (raw: string): string | null => {
+    try {
+      return JSON.stringify(JSON.parse(raw), null, 2);
+    } catch {
+      return null;
+    }
+  };
+
+  const promptJsonOk = event.prompt_preview ? tryBeautify(event.prompt_preview) !== null : false;
+  const displayPrompt = (() => {
+    if (!event.prompt_preview) return null;
+    if (promptBeautified && promptJsonOk) return tryBeautify(event.prompt_preview);
+    return event.prompt_preview;
+  })();
+
+  return (
+    <div className="diag-entry diag-llm-error">
+      <div className="diag-entry-header" onClick={() => setExpanded(!expanded)}>
+        <div className="diag-entry-icon">
+          <AlertTriangle size={14} />
+        </div>
+        <div className="diag-entry-main">
+          <span className="diag-entry-title">
+            LLM Call #{event.iteration}
+          </span>
+          {event.model && <span className="diag-entry-model">{event.model}</span>}
+        </div>
+        <div className="diag-entry-badges">
+          <span className="diag-badge diag-badge-err">FAIL</span>
+          <span className="diag-badge diag-badge-time">{event.duration_ms}ms</span>
+        </div>
+        <span className="diag-expand-icon">
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </span>
+      </div>
+      {expanded && (
+        <div className="diag-entry-detail">
+          <div className="diag-detail-grid">
+            <div className="diag-detail-item">
+              <span className="diag-detail-label">Status</span>
+              <span className="diag-detail-value" style={{ color: 'var(--error)' }}>Failed</span>
+            </div>
+            <div className="diag-detail-item">
+              <span className="diag-detail-label">Duration</span>
+              <span className="diag-detail-value">{event.duration_ms}ms</span>
+            </div>
+            <div className="diag-detail-item">
+              <span className="diag-detail-label">Time</span>
+              <span className="diag-detail-value">{time}</span>
+            </div>
+            {event.context_window > 0 && (
+              <div className="diag-detail-item">
+                <span className="diag-detail-label">Context window</span>
+                <span className="diag-detail-value">{event.context_window.toLocaleString()} tok</span>
+              </div>
+            )}
+          </div>
+          {displayPrompt !== null && (
+            <div className="diag-result-preview">
+              <div className="diag-result-header">
+                <span className="diag-detail-label">Input (sent)</span>
+                <CopyButton getText={() => displayPrompt ?? ''} />
+                {promptBeautified && promptJsonOk && (
+                  <WrapToggle wrapped={promptWrapped} onToggle={() => setPromptWrapped((v) => !v)} />
+                )}
+                <button
+                  className={`diag-beautify-btn ${!promptJsonOk ? 'disabled' : ''}`}
+                  onClick={() => setPromptBeautified(!promptBeautified)}
+                  disabled={!promptJsonOk}
+                  title={promptJsonOk ? (promptBeautified ? 'Show raw' : 'Beautify JSON') : 'Not valid JSON'}
+                >
+                  {promptBeautified ? 'Raw' : 'Beautify'}
+                </button>
+              </div>
+              {promptBeautified && promptJsonOk ? (
+                <div className="diag-highlighted-block">
+                  <SyntaxHighlighter
+                    style={highlighterStyle}
+                    language="json"
+                    PreTag="div"
+                    wrapLongLines={promptWrapped}
+                    codeTagProps={{ style: { whiteSpace: promptWrapped ? 'pre-wrap' : 'pre' } }}
+                    customStyle={{
+                      margin: 0,
+                      padding: '8px',
+                      fontSize: '11px',
+                      lineHeight: '1.5',
+                      overflow: 'auto',
+                      maxHeight: '320px',
+                    }}
+                  >
+                    {displayPrompt ?? ''}
+                  </SyntaxHighlighter>
+                </div>
+              ) : (
+                <pre className="diag-result-code">{displayPrompt}</pre>
+              )}
+            </div>
+          )}
+          <div className="diag-result-preview">
+            <div className="diag-result-header">
+              <span className="diag-detail-label">Error (response)</span>
+              <CopyButton getText={() => event.error} />
+            </div>
+            <pre className="diag-result-code" style={{ color: 'var(--error)' }}>{event.error}</pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGlobal, sessionId, expanded, onToggleExpand, onClear, onClose }: DiagnosticsPanelProps) {
   const [sessionIdCopied, setSessionIdCopied] = useState(false);
   const handleCopySessionId = () => {
@@ -668,6 +788,8 @@ export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGloba
               return <LoopLimitEntry key={entry.id} event={entry.event} />;
             case 'user_message':
               return <UserMessageEntry key={entry.id} event={entry.event} timestamp={entry.timestamp} />;
+            case 'llm_error':
+              return <LlmErrorEntry key={entry.id} event={entry.event} timestamp={entry.timestamp} />;
             default:
               return null;
           }

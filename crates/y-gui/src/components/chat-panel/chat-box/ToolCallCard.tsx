@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Wrench, ChevronRight, CheckCircle, XCircle, Loader } from 'lucide-react';
-import type { ToolCallBrief } from '../types';
+import type { ToolCallBrief } from '../../../types';
 import './ToolCallCard.css';
 
 interface ToolCallCardProps {

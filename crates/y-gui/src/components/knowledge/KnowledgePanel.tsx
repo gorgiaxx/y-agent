@@ -1,8 +1,8 @@
 import { useState, useCallback } from 'react';
 import { ArrowLeft, BookOpen, Trash2, Search, Upload, ChevronDown, ChevronRight, FileText, Database, BarChart3, File, Clock, HardDrive, Globe, Plug, FolderOpen, Pencil, Check, X } from 'lucide-react';
-import type { KnowledgeCollectionInfo, KnowledgeEntryInfo, KnowledgeEntryDetail, KnowledgeSearchResult } from '../types';
+import type { KnowledgeCollectionInfo, KnowledgeEntryInfo, KnowledgeEntryDetail, KnowledgeSearchResult } from '../../types';
 import { KnowledgeIngestDialog } from './KnowledgeIngestDialog';
-import { ConfirmDialog } from './ConfirmDialog';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import './KnowledgePanel.css';
 
 /** Format bytes to human-readable string. */

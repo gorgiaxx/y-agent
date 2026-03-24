@@ -15,13 +15,13 @@ import {
   RefreshCw,
   Puzzle,
 } from 'lucide-react';
-import type { Message } from '../types';
-import type { ToolResultRecord } from '../hooks/useChat';
+import type { Message } from '../../../types';
+import type { ToolResultRecord } from '../../../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
 import { ThinkingBlock } from './ThinkingBlock';
 import { MermaidBlock } from './MermaidBlock';
-import { processStreamContent, type ContentSegment } from '../hooks/useStreamContent';
-import { useResolvedTheme } from '../hooks/useTheme';
+import { processStreamContent, type ContentSegment } from '../../../hooks/useStreamContent';
+import { useResolvedTheme } from '../../../hooks/useTheme';
 import './MessageBubble.css';
 
 

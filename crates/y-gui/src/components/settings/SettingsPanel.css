@@ -167,7 +167,7 @@
 }
 
 .settings-info code,
-.provider-empty code {
+.settings-empty code {
   background: var(--surface-code);
   border: 1px solid var(--border);
   padding: 2px 6px;
@@ -298,48 +298,11 @@
   cursor: not-allowed;
 }
 
-/* ---- Provider config editor ---- */
-.provider-header {
+.settings-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: var(--space-md);
-}
-
-.provider-actions {
-  display: flex;
-  gap: var(--space-sm);
-  align-items: center;
-}
-
-.btn-provider-action {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 5px var(--space-sm);
-  font-size: 12px;
-  font-weight: 500;
-  font-family: inherit;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-
-.btn-provider-action:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.btn-reload {
-  color: var(--accent);
-}
-
-.btn-reload:hover {
-  background: var(--accent-subtle);
-  border-color: transparent;
 }
 
 /* TOML editor */
@@ -424,14 +387,13 @@
   }
 }
 
-/* ---- Structured provider form ---- */
-.provider-form-wrap {
+.settings-form-wrap {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
 }
 
-.provider-empty {
+.settings-empty {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -542,97 +504,8 @@
   color: var(--text-primary);
 }
 
-.provider-form-actions {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding-top: var(--space-sm);
-  border-top: 1px solid var(--border);
-  margin-top: var(--space-sm);
-}
-
-/* ---- Provider sub-tabs (horizontal tab bar inside the Providers section) ---- */
-.provider-subtabs {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: var(--space-md);
-  padding-bottom: 0;
-  overflow-x: auto;
-  flex-shrink: 0;
-}
-
-.provider-subtab {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px var(--space-sm);
-  font-size: 12px;
-  font-family: inherit;
-  font-weight: 400;
-  border: 1px solid transparent;
-  border-bottom: 2px solid transparent;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-  position: relative;
-  bottom: -1px;
-}
-
-.provider-subtab:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-.provider-subtab.active {
-  color: var(--text-primary);
-  font-weight: 500;
-  border-color: var(--border) var(--border) var(--surface-secondary) var(--border);
-  background: var(--surface-secondary);
-}
-
-.provider-subtab-label {
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.provider-subtab-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
-  flex-shrink: 0;
-}
-
-.provider-subtab-close:hover {
-  color: var(--error);
-  background: var(--error-subtle);
-}
-
-.provider-subtab-add {
-  color: var(--text-muted);
-  padding: 6px 8px;
-  margin-left: 2px;
-}
-
-.provider-subtab-add:hover {
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
 /* Flat form displayed below the sub-tab bar */
-.provider-tab-form {
+.sidetab-tab-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);

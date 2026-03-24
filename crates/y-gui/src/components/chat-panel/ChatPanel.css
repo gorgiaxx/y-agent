@@ -88,24 +88,31 @@
 /* ---- Error ---- */
 .chat-error {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-sm);
   padding: 10px var(--space-md);
   margin: var(--space-sm) var(--space-lg);
   background: var(--error-subtle);
   border: 1px solid rgba(229, 115, 115, 0.15);
   border-radius: var(--radius-md);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .error-icon {
   color: var(--error);
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .error-text {
   font-size: 13px;
   color: var(--error);
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 /* ---- Streaming cursor (blinking caret during generation) ---- */

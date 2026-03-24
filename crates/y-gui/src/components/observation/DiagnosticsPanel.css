@@ -641,6 +641,20 @@
   cursor: default;
 }
 
+/* ---- LLM Error ---- */
+.diag-llm-error {
+  border-color: rgba(229, 115, 115, 0.20);
+}
+
+.diag-llm-error .diag-entry-icon {
+  background: var(--error-subtle);
+  color: var(--error);
+}
+
+.diag-llm-error .diag-entry-title {
+  color: var(--error);
+}
+
 /* Expanded mode: wider detail grids */
 .diag-expanded .diag-detail-grid {
   grid-template-columns: 1fr 1fr 1fr;

@@ -167,6 +167,7 @@ pub fn run() {
             commands::system::system_status,
             commands::system::health_check,
             commands::system::provider_list,
+            commands::system::show_window,
             commands::system::toggle_devtools,
             commands::system::app_paths,
             // Workspaces

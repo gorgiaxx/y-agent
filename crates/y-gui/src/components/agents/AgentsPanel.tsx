@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Bot, Save, RotateCcw, RefreshCw, Pencil, X } from 'lucide-react';
-import type { AgentDetail } from '../hooks/useAgents';
+import type { AgentDetail } from '../../hooks/useAgents';
 import './AgentsPanel.css';
 
 interface AgentsPanelProps {

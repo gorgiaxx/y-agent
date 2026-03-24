@@ -4,19 +4,19 @@ import { listen } from '@tauri-apps/api/event';
 import { Activity, Eye } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import type { ViewType } from './components/Sidebar';
-import { ChatPanel } from './components/ChatPanel';
+import { ChatPanel } from './components/chat-panel/ChatPanel';
 import { WelcomePage } from './components/WelcomePage';
-import { InputArea } from './components/InputArea';
-import { StatusBar } from './components/StatusBar';
-import { SettingsPanel } from './components/SettingsPanel';
-import type { SettingsTab } from './components/SettingsPanel';
-import { DiagnosticsPanel } from './components/DiagnosticsPanel';
-import { ObservabilityPanel } from './components/ObservabilityPanel';
-import { SkillsPanel } from './components/SkillsPanel';
-import { KnowledgePanel } from './components/KnowledgePanel';
-import { AgentsPanel } from './components/AgentsPanel';
-import { SkillImportDialog } from './components/SkillImportDialog';
-import { WorkspaceDialog } from './components/WorkspaceDialog';
+import { InputArea } from './components/chat-panel/input-area/InputArea';
+import { StatusBar } from './components/chat-panel/StatusBar';
+import { SettingsPanel } from './components/settings/SettingsPanel';
+import type { SettingsTab } from './components/settings/SettingsPanel';
+import { DiagnosticsPanel } from './components/observation/DiagnosticsPanel';
+import { ObservabilityPanel } from './components/observation/ObservabilityPanel';
+import { SkillsPanel } from './components/skills/SkillsPanel';
+import { KnowledgePanel } from './components/knowledge/KnowledgePanel';
+import { AgentsPanel } from './components/agents/AgentsPanel';
+import { SkillImportDialog } from './components/skills/SkillImportDialog';
+import { WorkspaceDialog } from './components/chat-panel/WorkspaceDialog';
 import { useChat } from './hooks/useChat';
 import { useSessions } from './hooks/useSessions';
 import { useConfig } from './hooks/useConfig';
@@ -89,6 +89,12 @@ function App() {
       setWelcomeWorkspaceId(sorted[0].id);
     }
   }, [workspaces, welcomeWorkspaceId]);
+  // Show the window once the React tree is mounted to avoid the white-flash
+  // that occurs when the native window renders before CSS is applied.
+  useEffect(() => {
+    invoke('show_window').catch(() => {});
+  }, []);
+
   // When not in chat view, treat diagnostics as global (no active session).
   const diagnosticSessionId = activeView === 'chat' ? activeSessionId : null;
   const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
@@ -301,10 +307,12 @@ function App() {
   // token occupancy reflects each iteration in real time.
   useEffect(() => {
     if (!isActive) return;
-    // Find the last llm_response entry.
+    // Find the last llm_response entry from the root agent only.
+    // Subagent entries (title-generator, pruning-summarizer, etc.) carry
+    // a different agent_name and must not overwrite the status bar.
     for (let i = entries.length - 1; i >= 0; i--) {
       const ev = entries[i].event;
-      if (ev.type === 'llm_response') {
+      if (ev.type === 'llm_response' && (!ev.agent_name || ev.agent_name === 'chat-turn')) {
         startTransition(() => {
           setStatusBarMeta((prev) => ({
             ...prev,

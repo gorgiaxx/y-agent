@@ -1,5 +1,5 @@
 import { Bot } from 'lucide-react';
-import { ProviderIconImg } from './ProviderIconPicker';
+import { ProviderIconImg } from '../common/ProviderIconPicker';
 import './StatusBar.css';
 
 interface StatusBarProps {

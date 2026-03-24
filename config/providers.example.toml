@@ -186,3 +186,27 @@ icon = "deepseek"
 
 # [proxy.providers.azure-eastus]
 # url = "socks5://azure-proxy.company.com:1080"
+
+# For testing, unlimited tokens.
+
+[[providers]]
+id = "qwen3.5"
+provider_type = "openai"
+model = "Qwen/Qwen3.5-397B-A17B"
+tags = ["general", "vision", "tool_use", "reasoning"]
+max_concurrency = 1
+context_window = 200000
+api_key = "5yYwT48fYe4g8g5eYpSxFyR-"
+base_url = "https://api-ai.gitcode.com/v1"
+icon = "qwen"
+
+[[providers]]
+id = "fast"
+provider_type = "openai"
+model = "LongCat-Flash-Lite"
+tags = ["title", "general"]
+max_concurrency = 3
+context_window = 256000
+api_key = "ak_2fm1gi51I9FJ0tP9mw1yy43J3K323"
+base_url = "https://api.longcat.chat/openai"
+icon = "longcat"

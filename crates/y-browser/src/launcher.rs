@@ -94,7 +94,7 @@ impl ChromeLauncher {
             cmd.arg("--headless=new");
         }
         cmd.arg(format!("--remote-debugging-port={actual_port}"))
-            .arg(format!("--user-data-dir={}", user_data_dir.display()))
+            // .arg(format!("--user-data-dir={}", user_data_dir.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-gpu")
@@ -297,8 +297,34 @@ fn detect_chrome() -> Option<PathBuf> {
 
     for path in paths_to_check {
         if path.exists() {
-            debug!(path = %path.display(), "detected Chrome executable");
-            return Some(path);
+            // Verify the executable is functional by running --version.
+            // This catches residual installations where the binary exists
+            // on disk but is broken (e.g. uninstalled Chrome leaving files behind).
+            match std::process::Command::new(&path)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+            {
+                Ok(status) if status.success() => {
+                    debug!(path = %path.display(), "detected Chrome executable");
+                    return Some(path);
+                }
+                Ok(status) => {
+                    warn!(
+                        path = %path.display(),
+                        exit_code = ?status.code(),
+                        "Chrome candidate exists but --version failed, skipping"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "Chrome candidate exists but failed to execute, skipping"
+                    );
+                }
+            }
         }
         // For Linux, also check $PATH via `which`.
         if cfg!(not(target_os = "macos")) && cfg!(not(target_os = "windows")) {

@@ -76,6 +76,10 @@ pub enum TurnEvent {
         response_text: String,
         /// Context window size of the serving provider (tokens).
         context_window: usize,
+        /// Name of the agent that produced this event (e.g. `"chat-turn"`,
+        /// `"title-generator"`). Allows presentation layers to distinguish
+        /// root agent calls from subagent calls.
+        agent_name: String,
     },
     /// Emitted after each tool execution.
     ToolResult {
@@ -89,6 +93,8 @@ pub enum TurnEvent {
         input_preview: String,
         /// First 500 chars of the result content.
         result_preview: String,
+        /// Name of the agent that executed this tool call.
+        agent_name: String,
     },
     /// Emitted when the tool-call loop limit is hit.
     LoopLimitHit {
@@ -114,6 +120,26 @@ pub enum TurnEvent {
     StreamReasoningDelta {
         /// Incremental reasoning text from the LLM.
         content: String,
+    },
+    /// Emitted when an LLM call fails (API error, network error, etc.).
+    ///
+    /// Allows presentation layers to show the failed call in the diagnostics
+    /// timeline even when no successful `LlmResponse` was produced.
+    LlmError {
+        /// 1-based iteration counter where the error occurred.
+        iteration: usize,
+        /// Human-readable error description.
+        error: String,
+        /// LLM call wall-clock duration (ms) before the error was returned.
+        duration_ms: u64,
+        /// Model that was being called when the error occurred.
+        model: String,
+        /// First 1 000 chars of the serialised messages sent to the LLM.
+        prompt_preview: String,
+        /// Context window size of the serving provider (tokens).
+        context_window: usize,
+        /// Name of the agent where the error occurred.
+        agent_name: String,
     },
 }
 

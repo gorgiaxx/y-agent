@@ -191,6 +191,20 @@ impl SystemService {
         Ok(())
     }
 
+    /// Hot-reload the hook system config from a TOML config string.
+    ///
+    /// Parses the TOML into `HookConfig` and delegates to
+    /// `container.reload_hooks()`.
+    pub fn reload_hooks_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<(), String> {
+        let config: y_hooks::HookConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse hooks config: {e}"))?;
+        container.reload_hooks(&config);
+        Ok(())
+    }
+
     /// Hot-reload prompt section files from disk.
     ///
     /// Re-reads all prompt `.txt` files from the prompts directory and

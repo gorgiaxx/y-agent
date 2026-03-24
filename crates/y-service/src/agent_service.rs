@@ -427,22 +427,21 @@ impl AgentService {
                     .await;
                 }
                 Err(e) => {
-                    if matches!(e, y_core::provider::ProviderError::Cancelled) {
-                        return Err(AgentExecutionError::Cancelled);
-                    }
-                    if owns_trace {
-                        if let Some(tid) = ctx.trace_id {
-                            let _ = container
-                                .diagnostics
-                                .on_trace_end(tid, false, Some(&e.to_string()))
-                                .await;
-                        }
-                    }
-                    let partial = std::mem::take(&mut ctx.new_messages);
-                    return Err(AgentExecutionError::LlmError {
-                        message: format!("{e}"),
-                        partial_messages: partial,
-                    });
+                    let elapsed_ms = u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(0);
+                    let model_name = config.preferred_models.first().cloned().unwrap_or_default();
+                    return Self::handle_llm_error(
+                        e,
+                        elapsed_ms,
+                        &model_name,
+                        &fallback,
+                        0, // context_window unknown -- LLM call failed
+                        progress.as_ref(),
+                        container,
+                        owns_trace,
+                        &mut ctx,
+                        &config.agent_name,
+                    )
+                    .await;
                 }
             }
         }
@@ -607,6 +606,59 @@ impl AgentService {
         }
     }
 
+    /// Handle an LLM call error: emit progress event, close trace, return error.
+    ///
+    /// Extracted from `execute()` to keep that function within the clippy line limit.
+    async fn handle_llm_error(
+        error: y_core::provider::ProviderError,
+        elapsed_ms: u64,
+        model: &str,
+        prompt_preview: &str,
+        context_window: usize,
+        progress: Option<&TurnEventSender>,
+        container: &ServiceContainer,
+        owns_trace: bool,
+        ctx: &mut ToolExecContext,
+        agent_name: &str,
+    ) -> Result<AgentExecutionResult, AgentExecutionError> {
+        if matches!(error, y_core::provider::ProviderError::Cancelled) {
+            return Err(AgentExecutionError::Cancelled);
+        }
+
+        // Emit LlmError progress event so the diagnostics panel
+        // records the failed call before the progress channel closes.
+        if let Some(tx) = progress {
+            let preview = if prompt_preview.len() > 1000 {
+                prompt_preview[..1000].to_string()
+            } else {
+                prompt_preview.to_string()
+            };
+            let _ = tx.send(TurnEvent::LlmError {
+                iteration: ctx.iteration,
+                error: format!("{error}"),
+                duration_ms: elapsed_ms,
+                model: model.to_string(),
+                prompt_preview: preview,
+                context_window,
+                agent_name: agent_name.to_string(),
+            });
+        }
+
+        if owns_trace {
+            if let Some(tid) = ctx.trace_id {
+                let _ = container
+                    .diagnostics
+                    .on_trace_end(tid, false, Some(&error.to_string()))
+                    .await;
+            }
+        }
+        let partial = std::mem::take(&mut ctx.new_messages);
+        Err(AgentExecutionError::LlmError {
+            message: format!("{error}"),
+            partial_messages: partial,
+        })
+    }
+
     /// Record a generation observation in the diagnostics subsystem.
     async fn record_generation_diagnostics(
         container: &ServiceContainer,
@@ -702,6 +754,7 @@ impl AgentService {
                 duration_ms: tool_elapsed_ms,
                 input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
                 result_preview: result_content.clone(),
+                agent_name: config.agent_name.clone(),
             });
         }
 
@@ -734,6 +787,7 @@ impl AgentService {
         iteration: usize,
         tool_call_names: Vec<String>,
         context_window: usize,
+        agent_name: &str,
     ) {
         if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::LlmResponse {
@@ -747,6 +801,7 @@ impl AgentService {
                 prompt_preview: data.prompt_preview.clone(),
                 response_text: data.response_text_raw.clone(),
                 context_window,
+                agent_name: agent_name.to_string(),
             });
         }
     }
@@ -795,6 +850,7 @@ impl AgentService {
             ctx.iteration,
             tc_names,
             context_window,
+            &config.agent_name,
         );
 
         // Track new messages added in this iteration for mid-loop persistence.
@@ -858,6 +914,7 @@ impl AgentService {
             ctx.iteration,
             tc_names,
             context_window,
+            &config.agent_name,
         );
 
         // Track new messages added in this iteration for mid-loop persistence.
@@ -922,7 +979,15 @@ impl AgentService {
             .clone()
             .unwrap_or_else(|| "(no content)".to_string());
 
-        Self::emit_llm_response(progress, response, data, ctx.iteration, vec![], ctx_window);
+        Self::emit_llm_response(
+            progress,
+            response,
+            data,
+            ctx.iteration,
+            vec![],
+            ctx_window,
+            &config.agent_name,
+        );
 
         let content = if config.tool_calling_mode == ToolCallingMode::PromptBased {
             let stripped = strip_tool_call_blocks(&raw_content);

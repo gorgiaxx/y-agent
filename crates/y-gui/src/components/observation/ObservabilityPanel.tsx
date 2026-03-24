@@ -2,10 +2,10 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Eye, X, Maximize2, Minimize2, Server, Bot, ChevronDown, ChevronRight, Filter } from 'lucide-react';
-import { ProviderIconImg } from './ProviderIconPicker';
+import { ProviderIconImg } from '../common/ProviderIconPicker';
 
-import type { SystemSnapshot, ProviderSnapshot as ProviderSnap, AgentInstanceSnapshot } from '../types';
-import type { TimeRange } from '../hooks/useObservability';
+import type { SystemSnapshot, ProviderSnapshot as ProviderSnap, AgentInstanceSnapshot } from '../../types';
+import type { TimeRange } from '../../hooks/useObservability';
 import './ObservabilityPanel.css';
 
 // ---------------------------------------------------------------------------

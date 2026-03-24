@@ -106,6 +106,8 @@ export interface LlmResponseEvent {
   response_text?: string;
   /** Context window size of the serving provider (tokens). */
   context_window: number;
+  /** Name of the agent that produced this event (e.g. 'chat-turn'). */
+  agent_name?: string;
 }
 
 export interface ToolResultEvent {
@@ -115,6 +117,8 @@ export interface ToolResultEvent {
   duration_ms: number;
   input_preview?: string;
   result_preview: string;
+  /** Name of the agent that executed this tool call. */
+  agent_name?: string;
 }
 
 export interface LoopLimitEvent {
@@ -140,7 +144,25 @@ export interface StreamReasoningDeltaEvent {
   content: string;
 }
 
-export type TurnEvent = LlmResponseEvent | ToolResultEvent | LoopLimitEvent | UserMessageEvent | StreamDeltaEvent | StreamReasoningDeltaEvent;
+export interface LlmErrorEvent {
+  type: 'llm_error';
+  /** 1-based iteration where the error occurred. */
+  iteration: number;
+  /** Human-readable error description. */
+  error: string;
+  /** LLM call wall-clock duration (ms) before the error. */
+  duration_ms: number;
+  /** Model that was being called. */
+  model: string;
+  /** First 1000 chars of the serialised messages sent to the LLM. */
+  prompt_preview: string;
+  /** Context window size of the serving provider (tokens). */
+  context_window: number;
+  /** Name of the agent where the error occurred. */
+  agent_name?: string;
+}
+
+export type TurnEvent = LlmResponseEvent | ToolResultEvent | LoopLimitEvent | UserMessageEvent | StreamDeltaEvent | StreamReasoningDeltaEvent | LlmErrorEvent;
 
 export interface ProgressPayload {
   run_id: string;

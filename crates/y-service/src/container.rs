@@ -65,7 +65,8 @@ pub struct ServiceContainer {
     pub session_manager: SessionManager,
 
     /// Unified hook system (registry, event bus, middleware chains, handler executor).
-    pub hook_system: HookSystem,
+    /// Wrapped in `std::sync::RwLock` to support hot-reload from `Arc<ServiceContainer>`.
+    pub hook_system: std::sync::RwLock<HookSystem>,
 
     /// Tool registry for tool management.
     pub tool_registry: ToolRegistryImpl,
@@ -405,7 +406,7 @@ tools = ["tool_search"]
         Ok(Self {
             provider_pool: RwLock::new(provider_pool),
             session_manager,
-            hook_system,
+            hook_system: std::sync::RwLock::new(hook_system),
             tool_registry,
             runtime_manager,
             context_pipeline,
@@ -672,6 +673,23 @@ impl ServiceContainer {
                 info!("browser tool found but downcast failed; skipping browser config reload");
             }
         }
+    }
+
+    /// Hot-reload the hook system configuration.
+    ///
+    /// Rebuilds the handler executor, updates timeouts and event bus capacity.
+    /// Existing middleware registrations are preserved.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `hook_system` `RwLock` is poisoned (a prior
+    /// holder panicked while holding the write lock).
+    pub fn reload_hooks(&self, new_config: &y_hooks::HookConfig) {
+        let mut hs = self
+            .hook_system
+            .write()
+            .expect("hook_system RwLock poisoned");
+        hs.reload_config(new_config);
     }
 
     /// Hot-reload prompt section files from disk.

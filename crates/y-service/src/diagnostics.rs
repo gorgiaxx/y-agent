@@ -43,6 +43,10 @@ pub enum HistoricalEntry {
         prompt_preview: String,
         response_text: String,
         timestamp: String,
+        /// Name of the agent/trace that produced this entry (e.g. `"chat-turn"`,
+        /// `"subagent:title-generator"`). Enables frontends to distinguish
+        /// root agent entries from subagent entries.
+        agent_name: String,
     },
     /// A tool execution event.
     ToolResult {
@@ -52,6 +56,8 @@ pub enum HistoricalEntry {
         input_preview: String,
         result_preview: String,
         timestamp: String,
+        /// Name of the agent/trace that produced this entry.
+        agent_name: String,
     },
 }
 
@@ -172,6 +178,7 @@ impl DiagnosticsService {
                                 prompt_preview,
                                 response_text,
                                 timestamp: ts.to_rfc3339(),
+                                agent_name: trace.name.clone(),
                             },
                         ));
                     }
@@ -193,6 +200,7 @@ impl DiagnosticsService {
                                 input_preview,
                                 result_preview,
                                 timestamp: ts.to_rfc3339(),
+                                agent_name: trace.name.clone(),
                             },
                         ));
                     }
@@ -301,6 +309,7 @@ impl DiagnosticsService {
                                 prompt_preview,
                                 response_text,
                                 timestamp: ts.to_rfc3339(),
+                                agent_name: trace.name.clone(),
                             },
                         ));
                     }
@@ -322,6 +331,7 @@ impl DiagnosticsService {
                                 input_preview,
                                 result_preview,
                                 timestamp: ts.to_rfc3339(),
+                                agent_name: trace.name.clone(),
                             },
                         ));
                     }

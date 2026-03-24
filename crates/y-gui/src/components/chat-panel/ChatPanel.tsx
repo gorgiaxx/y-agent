@@ -1,10 +1,10 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { Sparkles, AlertTriangle } from 'lucide-react';
-import type { Message } from '../types';
-import type { ToolResultRecord } from '../hooks/useChat';
-import { MessageBubble } from './MessageBubble';
-import { RestoreDivider } from './RestoreDivider';
-import { ContextResetDivider } from './ContextResetDivider';
+import type { Message } from '../../types';
+import type { ToolResultRecord } from '../../hooks/useChat';
+import { MessageBubble } from './chat-box/MessageBubble';
+import { RestoreDivider } from './chat-box/RestoreDivider';
+import { ContextResetDivider } from './chat-box/ContextResetDivider';
 import './ChatPanel.css';
 
 /** A tombstoned segment for rendering restore dividers. */
@@ -128,7 +128,11 @@ export function ChatPanel({ messages, isStreaming, isLoading, error, onEditMessa
                   onEdit={(content) => onEditMessage?.(content, msg.id)}
                   onUndo={onUndoMessage}
                   onResend={(content) => onResendMessage?.(content, msg.id)}
-                  toolResults={msg.id.startsWith('streaming-') ? toolResults : undefined}
+                  toolResults={
+                    (msg.id.startsWith('streaming-') || msg.id.startsWith('cancelled-') || msg.id.startsWith('error-'))
+                      ? toolResults
+                      : undefined
+                  }
                 />
               );
             });

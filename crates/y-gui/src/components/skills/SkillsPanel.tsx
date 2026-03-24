@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Puzzle, FolderOpen, Trash2, ToggleLeft, ToggleRight, ChevronRight, File, Folder, Save } from 'lucide-react';
-import type { SkillDetail, SkillFileEntry } from '../types';
-import { ConfirmDialog } from './ConfirmDialog';
+import type { SkillDetail, SkillFileEntry } from '../../types';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import './SkillsPanel.css';
 
 interface SkillsPanelProps {

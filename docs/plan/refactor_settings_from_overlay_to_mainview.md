@@ -12,7 +12,7 @@ Convert the settings UI from a modal dialog ([SettingsOverlay](file:///Users/gor
 - Change the bottom Settings gear icon from `onClick={onSettingsOpen}` to `onClick={() => handleIconClick('settings')}`, making it a regular view toggle just like chat/skills/knowledge/agents
 - When `activeView === 'settings'`, render the settings category list in the sidebar panel:
   - General, Providers, Session, Runtime, Browser, Storage, Hooks, Tools, Guardrails, Knowledge, Prompts, About
-- Each category item uses the same `skill-sidebar-item` styling pattern, clicking it calls `onSelectSettingsTab(tabKey)`
+- Each category item uses the same `sidebar-item` styling pattern, clicking it calls `onSelectSettingsTab(tabKey)`
 - Remove the `onSettingsOpen` prop since it is no longer needed
 - Add new props: `activeSettingsTab: string | null`, `onSelectSettingsTab: (tab: string) => void`
 
@@ -78,6 +78,7 @@ TypeScript build must pass with zero errors, confirming all prop changes and typ
 ### Manual Verification
 
 Please test in the running GUI app:
+
 1. Click the Settings gear icon in the sidebar -- it should open a "settings" view (no dialog)
 2. The sidebar panel should show the settings category list (General, Providers, Session, ...)
 3. Click each category -- the right main panel should show the corresponding settings form

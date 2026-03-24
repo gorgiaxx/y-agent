@@ -1,11 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot } from 'lucide-react';
-import { ProviderIconImg } from './ProviderIconPicker';
-import { ConfirmDialog } from './ConfirmDialog';
+import { ProviderIconImg } from '../../common/ProviderIconPicker';
+import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
-import type { GuiCommandDef } from '../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo } from '../types';
-import type { PendingEdit } from '../hooks/useChat';
+import type { GuiCommandDef } from '../../../commands';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo } from '../../../types';
+import type { PendingEdit } from '../../../hooks/useChat';
 import './InputArea.css';
 
 interface InputAreaProps {
@@ -160,6 +160,7 @@ export function InputArea({
   const editableRef = useRef<HTMLDivElement>(null);
   const providerDropdownRef = useRef<HTMLDivElement>(null);
   const kbPickerRef = useRef<HTMLDivElement>(null);
+  const sendingRef = useRef(false);
 
   // Close provider dropdown on outside click.
   useEffect(() => {
@@ -310,6 +311,8 @@ export function InputArea({
 
   const handleSend = useCallback(() => {
     if (!editableRef.current || disabled) return;
+    // Prevent double-send from rapid Enter key events (common on Windows).
+    if (sendingRef.current) return;
 
     const { text, skills: extractedSkills } = extractContent(editableRef.current);
     const trimmed = text.trim();
@@ -327,6 +330,7 @@ export function InputArea({
       }
     }
 
+    sendingRef.current = true;
     console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, selectedKbCollections });
     onSend(
       trimmed,
@@ -335,6 +339,8 @@ export function InputArea({
     );
     resetInput();
     exitCommandMode();
+    // Release on next microtask so any queued keydown events are still blocked.
+    queueMicrotask(() => { sendingRef.current = false; });
   }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

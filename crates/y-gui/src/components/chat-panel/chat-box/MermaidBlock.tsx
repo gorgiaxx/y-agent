@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import mermaid from 'mermaid';
 import { Copy, Check } from 'lucide-react';
-import { useResolvedTheme } from '../hooks/useTheme';
+import { useResolvedTheme } from '../../../hooks/useTheme';
 import './MermaidBlock.css';
 
 /** Monotonically increasing counter to generate unique render IDs. */
