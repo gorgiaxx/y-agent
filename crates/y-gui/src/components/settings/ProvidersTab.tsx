@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react';
-import { Eye, EyeOff, Plus, X, Bot } from 'lucide-react';
+import { Eye, EyeOff, Plus, X, Bot, Copy } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicker';
 import { TagChipInput } from './TagChipInput';
@@ -20,10 +20,12 @@ function ProviderTabPanel({
   provider,
   index,
   onChange,
+  onDuplicate,
 }: {
   provider: ProviderFormData;
   index: number;
   onChange: (index: number, updated: ProviderFormData) => void;
+  onDuplicate: (index: number) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -271,6 +273,15 @@ function ProviderTabPanel({
           <button
             type="button"
             className="btn-test"
+            onClick={() => onDuplicate(index)}
+            title="Duplicate this provider"
+          >
+            <Copy size={13} />
+            Duplicate
+          </button>
+          <button
+            type="button"
+            className="btn-test"
             onClick={handleTest}
             disabled={testing}
           >
@@ -370,6 +381,19 @@ export function ProvidersTab({
     setDirtyProviders(true);
   }, [setProvidersList, setDirtyProviders]);
 
+  const handleProviderDuplicate = useCallback((index: number) => {
+    setProvidersList((prev) => {
+      const source = prev[index];
+      if (!source) return prev;
+      const duplicated = { ...source, id: `${source.id}-copy` };
+      const next = [...prev];
+      next.splice(index + 1, 0, duplicated);
+      return next;
+    });
+    setActiveProviderTab(index + 1);
+    setDirtyProviders(true);
+  }, [setProvidersList, setDirtyProviders]);
+
   if (providersLoading) {
     return <div className="section-loading">Loading...</div>;
   }
@@ -462,6 +486,7 @@ export function ProvidersTab({
             provider={providersList[activeProviderTab] ?? providersList[0]}
             index={activeProviderTab < providersList.length ? activeProviderTab : 0}
             onChange={handleProviderChange}
+            onDuplicate={handleProviderDuplicate}
           />
         )}
       </div>

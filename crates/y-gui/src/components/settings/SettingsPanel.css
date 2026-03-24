@@ -476,26 +476,30 @@
 }
 
 .pf-key-group {
+  position: relative;
   display: flex;
-  gap: 4px;
+  align-items: center;
 }
 
 .pf-key-group .pf-input {
   flex: 1;
   min-width: 0;
+  padding-right: 30px;
 }
 
 .pf-key-toggle {
+  position: absolute;
+  right: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-secondary);
-  color: var(--text-secondary);
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
-  flex-shrink: 0;
+  border-radius: var(--radius-sm);
   transition: color 0.12s ease, background 0.12s ease;
 }
 

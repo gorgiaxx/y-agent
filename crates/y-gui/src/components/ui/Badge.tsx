@@ -1,4 +1,5 @@
 import { type HTMLAttributes, forwardRef } from 'react'
+import { X } from 'lucide-react'
 
 type BadgeVariant = 'default' | 'accent' | 'success' | 'error' | 'outline'
 
@@ -10,7 +11,7 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 
 const variantStyles: Record<BadgeVariant, string> = {
   default:
-    'bg-[rgba(255,255,255,0.06)] text-[var(--text-muted)] border-[var(--border)]',
+    'bg-[rgba(255,255,255,0.06)] text-[var(--text-primary)] border-[var(--border)]',
   accent:
     'bg-[var(--accent-subtle)] text-[var(--accent)] border-[rgba(200,181,96,0.25)]',
   success:
@@ -56,7 +57,7 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(
             'text-11px leading-none',
           ].join(' ')}
         >
-          x
+          <X className="w-2.5 h-2.5" />
         </button>
       )}
     </span>
