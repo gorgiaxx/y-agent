@@ -818,3 +818,72 @@
   color: var(--text-primary);
   border-color: rgba(255, 255, 255, 0.12);
 }
+
+/* ---- RAW / Form switch toggle ---- */
+.raw-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.raw-mode-switch-label {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+}
+
+.raw-mode-switch-label--active {
+  color: var(--accent);
+}
+
+.raw-mode-switch-track {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-tertiary);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.raw-mode-switch-track:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.raw-mode-switch-track--on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.raw-mode-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.raw-mode-switch-track--on .raw-mode-switch-thumb {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+.settings-header-with-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+

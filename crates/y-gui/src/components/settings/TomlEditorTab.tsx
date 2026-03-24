@@ -1,73 +1,58 @@
 // ---------------------------------------------------------------------------
-// TomlEditorTab -- Raw TOML editor for sections without structured forms
-// (storage, hooks, tools, guardrails, knowledge)
+// Raw TOML editor components for settings sections.
+//
+// Exports:
+//   - RawTomlEditor: reusable textarea for embedding in form tabs (RAW mode)
+//   - RawModeToggle: switch toggle between Form and Raw TOML editing
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
-import type { SettingsTab } from './SettingsPanel';
-import { maskSensitive } from './settingsTypes';
+// ---------------------------------------------------------------------------
+// RawTomlEditor -- plain textarea, no loading/title management
+// ---------------------------------------------------------------------------
 
-interface TomlEditorTabProps {
-  activeTab: SettingsTab;
-  loadSection: (section: string) => Promise<string>;
-  setToast: (toast: { message: string; type: 'success' | 'error' } | null) => void;
-  tomlDraftsBySection: Record<string, string>;
-  setTomlDraftsBySection: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+interface RawTomlEditorProps {
+  content: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
 }
 
-export function TomlEditorTab({
-  activeTab,
-  loadSection,
-  setToast,
-  tomlDraftsBySection,
-  setTomlDraftsBySection,
-}: TomlEditorTabProps) {
-  const [sectionContent, setSectionContent] = useState('');
-  const [rawContent, setRawContent] = useState('');
-  const [sectionLoading, setSectionLoading] = useState(false);
-
-  const doLoadSection = useCallback(
-    async (section: string) => {
-      setSectionLoading(true);
-      try {
-        const content = await loadSection(section);
-        setRawContent(content);
-        setSectionContent(content);
-      } catch (e) {
-        setToast({ message: `Failed to load: ${e}`, type: 'error' });
-      } finally {
-        setSectionLoading(false);
-      }
-    },
-    [loadSection, setToast],
-  );
-
-  useEffect(() => {
-    doLoadSection(activeTab);
-  }, [activeTab, doLoadSection]);
-
+export function RawTomlEditor({ content, onChange, placeholder }: RawTomlEditorProps) {
   return (
-    <>
-      {sectionLoading ? (
-        <div className="section-loading">Loading...</div>
-      ) : (
-        
-        <div className="toml-editor-wrap">
-          <textarea
-            className="toml-editor"
-            value={sectionContent}
-            onChange={(e) => {
-              const val = e.target.value;
-              setSectionContent(val);
-              setRawContent(val);
-              setTomlDraftsBySection((prev) => ({ ...prev, [activeTab]: val }));
-            }}
-            spellCheck={false}
-            placeholder={`No ${activeTab}.toml found. Content will be created on save.`}
-          />
-        </div>
-      )}
-    </>
+    <div className="toml-editor-wrap">
+      <textarea
+        className="toml-editor"
+        value={content}
+        onChange={(e) => onChange(e.target.value)}
+        spellCheck={false}
+        placeholder={placeholder ?? 'No content. Will be created on save.'}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RawModeToggle -- switch-style toggle between Form and Raw TOML editing
+// ---------------------------------------------------------------------------
+
+interface RawModeToggleProps {
+  rawMode: boolean;
+  onToggle: (next: boolean) => void;
+}
+
+export function RawModeToggle({ rawMode, onToggle }: RawModeToggleProps) {
+  return (
+    <label className="raw-mode-switch" title={rawMode ? 'Switch to Form view' : 'Switch to Raw TOML view'}>
+      <span className={`raw-mode-switch-label ${rawMode ? '' : 'raw-mode-switch-label--active'}`}>Form</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={rawMode}
+        className={`raw-mode-switch-track ${rawMode ? 'raw-mode-switch-track--on' : ''}`}
+        onClick={() => onToggle(!rawMode)}
+      >
+        <span className="raw-mode-switch-thumb" />
+      </button>
+      <span className={`raw-mode-switch-label ${rawMode ? 'raw-mode-switch-label--active' : ''}`}>RAW</span>
+    </label>
   );
 }

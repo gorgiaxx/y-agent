@@ -7,6 +7,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { TagChipInput } from './TagChipInput';
 import type { BrowserFormData } from './settingsTypes';
 import { jsonToBrowser } from './settingsTypes';
+import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
+import { serializeToml } from '../../utils/tomlUtils';
+import { BROWSER_SCHEMA } from '../../utils/settingsSchemas';
 
 interface BrowserTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -24,6 +27,8 @@ export function BrowserTab({
   setRawBrowserToml,
 }: BrowserTabProps) {
   const [loading, setLoading] = useState(false);
+  const [rawMode, setRawMode] = useState(false);
+  const [rawContent, setRawContent] = useState('');
 
   const loadBrowserForm = useCallback(async () => {
     setLoading(true);
@@ -50,11 +55,45 @@ export function BrowserTab({
     loadBrowserForm();
   }, [loadBrowserForm]);
 
+  const handleToggleRaw = useCallback((next: boolean) => {
+    if (next) {
+      setRawContent(serializeToml(browserForm as unknown as Record<string, unknown>, BROWSER_SCHEMA));
+    }
+    setRawMode(next);
+  }, [browserForm]);
+
   if (loading) {
     return <div className="section-loading">Loading...</div>;
   }
 
+  if (rawMode) {
+    return (
+      <>
+        <div className="settings-header">
+          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+            <span className="settings-header-with-toggle">Browser <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+          </h3>
+        </div>
+        <RawTomlEditor
+          content={rawContent}
+          onChange={(val) => {
+            setRawContent(val);
+            setRawBrowserToml(val);
+            setDirtyBrowser(true);
+          }}
+          placeholder="No browser.toml found. Content will be created on save."
+        />
+      </>
+    );
+  }
+
   return (
+    <>
+    <div className="settings-header">
+      <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+        <span className="settings-header-with-toggle">Browser <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+      </h3>
+    </div>
     <div className="settings-form-wrap">
       <div className="pf-row">
         <div className="pf-field pf-field-full">
@@ -202,5 +241,6 @@ export function BrowserTab({
         </div>
       </div>
     </div>
+    </>
   );
 }

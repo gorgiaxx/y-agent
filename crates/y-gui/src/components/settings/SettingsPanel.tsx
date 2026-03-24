@@ -6,7 +6,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GuiConfig } from '../../types';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
-import { SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA } from '../../utils/settingsSchemas';
+import {
+  SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA,
+  STORAGE_SCHEMA, HOOKS_SCHEMA, TOOLS_SCHEMA, GUARDRAILS_SCHEMA, KNOWLEDGE_SCHEMA,
+} from '../../utils/settingsSchemas';
 
 import type {
   ProviderFormData,
@@ -14,15 +17,24 @@ import type {
   RuntimeFormData,
   BrowserFormData,
   McpServerFormData,
+  StorageFormData,
+  HooksFormData,
+  ToolsFormData,
+  GuardrailsFormData,
+  KnowledgeFormData,
 } from './settingsTypes';
 import {
   DEFAULT_SESSION_FORM,
   DEFAULT_RUNTIME_FORM,
   DEFAULT_BROWSER_FORM,
+  DEFAULT_STORAGE_FORM,
+  DEFAULT_HOOKS_FORM,
+  DEFAULT_TOOLS_FORM,
+  DEFAULT_GUARDRAILS_FORM,
+  DEFAULT_KNOWLEDGE_FORM,
   providersToToml,
   mcpServersToJson,
   TAB_LABELS,
-  CONFIG_SECTIONS,
 } from './settingsTypes';
 
 import { GeneralTab } from './GeneralTab';
@@ -31,9 +43,13 @@ import { SessionTab } from './SessionTab';
 import { RuntimeTab } from './RuntimeTab';
 import { BrowserTab } from './BrowserTab';
 import { McpTab } from './McpTab';
+import { StorageTab } from './StorageTab';
+import { HooksTab } from './HooksTab';
+import { ToolsTab } from './ToolsTab';
+import { GuardrailsTab } from './GuardrailsTab';
+import { KnowledgeTab } from './KnowledgeTab';
 import { PromptsTab } from './PromptsTab';
 import { AboutTab } from './AboutTab';
-import { TomlEditorTab } from './TomlEditorTab';
 import { Button } from '../ui';
 
 import './SettingsPanel.css';
@@ -68,6 +84,7 @@ export function SettingsPanel({
   const [providersList, setProvidersList] = useState<ProviderFormData[]>([]);
   const [providersMeta, setProvidersMeta] = useState('');
   const [dirtyProviders, setDirtyProviders] = useState(false);
+  const [rawProvidersToml, setRawProvidersToml] = useState<string | undefined>(undefined);
 
   // Session
   const [sessionForm, setSessionForm] = useState<SessionFormData>({ ...DEFAULT_SESSION_FORM });
@@ -88,8 +105,30 @@ export function SettingsPanel({
   const [mcpServersList, setMcpServersList] = useState<McpServerFormData[]>([]);
   const [dirtyMcp, setDirtyMcp] = useState(false);
 
-  // Raw TOML drafts (hooks, tools, storage, guardrails, knowledge)
-  const [tomlDraftsBySection, setTomlDraftsBySection] = useState<Record<string, string>>({});
+  // Storage
+  const [storageForm, setStorageForm] = useState<StorageFormData>({ ...DEFAULT_STORAGE_FORM });
+  const [dirtyStorage, setDirtyStorage] = useState(false);
+  const [rawStorageToml, setRawStorageToml] = useState<string | undefined>(undefined);
+
+  // Hooks
+  const [hooksForm, setHooksForm] = useState<HooksFormData>({ ...DEFAULT_HOOKS_FORM });
+  const [dirtyHooks, setDirtyHooks] = useState(false);
+  const [rawHooksToml, setRawHooksToml] = useState<string | undefined>(undefined);
+
+  // Tools
+  const [toolsForm, setToolsForm] = useState<ToolsFormData>({ ...DEFAULT_TOOLS_FORM });
+  const [dirtyTools, setDirtyTools] = useState(false);
+  const [rawToolsToml, setRawToolsToml] = useState<string | undefined>(undefined);
+
+  // Guardrails
+  const [guardrailsForm, setGuardrailsForm] = useState<GuardrailsFormData>({ ...DEFAULT_GUARDRAILS_FORM });
+  const [dirtyGuardrails, setDirtyGuardrails] = useState(false);
+  const [rawGuardrailsToml, setRawGuardrailsToml] = useState<string | undefined>(undefined);
+
+  // Knowledge
+  const [knowledgeForm, setKnowledgeForm] = useState<KnowledgeFormData>({ ...DEFAULT_KNOWLEDGE_FORM });
+  const [dirtyKnowledge, setDirtyKnowledge] = useState(false);
+  const [rawKnowledgeToml, setRawKnowledgeToml] = useState<string | undefined>(undefined);
 
   // Prompts
   const [dirtyPrompts, setDirtyPrompts] = useState<Record<string, string>>({});
@@ -149,13 +188,49 @@ export function SettingsPanel({
       } catch (e) { errors.push(`mcp: ${e}`); }
     }
 
-    for (const [section, content] of Object.entries(tomlDraftsBySection)) {
+    if (dirtyStorage) {
       try {
-        await saveSection(section, content);
-      } catch (e) { errors.push(`${section}: ${e}`); }
+        const toml = mergeIntoRawToml(rawStorageToml, storageForm as unknown as Record<string, unknown>, STORAGE_SCHEMA);
+        await saveSection('storage', toml);
+        setRawStorageToml(toml);
+        setDirtyStorage(false);
+      } catch (e) { errors.push(`storage: ${e}`); }
     }
-    if (errors.length === 0) {
-      setTomlDraftsBySection({});
+
+    if (dirtyHooks) {
+      try {
+        const toml = mergeIntoRawToml(rawHooksToml, hooksForm as unknown as Record<string, unknown>, HOOKS_SCHEMA);
+        await saveSection('hooks', toml);
+        setRawHooksToml(toml);
+        setDirtyHooks(false);
+      } catch (e) { errors.push(`hooks: ${e}`); }
+    }
+
+    if (dirtyTools) {
+      try {
+        const toml = mergeIntoRawToml(rawToolsToml, toolsForm as unknown as Record<string, unknown>, TOOLS_SCHEMA);
+        await saveSection('tools', toml);
+        setRawToolsToml(toml);
+        setDirtyTools(false);
+      } catch (e) { errors.push(`tools: ${e}`); }
+    }
+
+    if (dirtyGuardrails) {
+      try {
+        const toml = mergeIntoRawToml(rawGuardrailsToml, guardrailsForm as unknown as Record<string, unknown>, GUARDRAILS_SCHEMA);
+        await saveSection('guardrails', toml);
+        setRawGuardrailsToml(toml);
+        setDirtyGuardrails(false);
+      } catch (e) { errors.push(`guardrails: ${e}`); }
+    }
+
+    if (dirtyKnowledge) {
+      try {
+        const toml = mergeIntoRawToml(rawKnowledgeToml, knowledgeForm as unknown as Record<string, unknown>, KNOWLEDGE_SCHEMA);
+        await saveSection('knowledge', toml);
+        setRawKnowledgeToml(toml);
+        setDirtyKnowledge(false);
+      } catch (e) { errors.push(`knowledge: ${e}`); }
     }
 
     // Save dirty prompt files.
@@ -187,9 +262,12 @@ export function SettingsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser, dirtyMcp,
+    dirtyStorage, dirtyHooks, dirtyTools, dirtyGuardrails, dirtyKnowledge,
     providersList, providersMeta, sessionForm, runtimeForm, browserForm, mcpServersList,
+    storageForm, hooksForm, toolsForm, guardrailsForm, knowledgeForm,
     rawSessionToml, rawRuntimeToml, rawBrowserToml,
-    tomlDraftsBySection, dirtyPrompts, saveSection, reloadConfig, localConfig, onSave,
+    rawStorageToml, rawHooksToml, rawToolsToml, rawGuardrailsToml, rawKnowledgeToml,
+    dirtyPrompts, saveSection, reloadConfig, localConfig, onSave,
   ]);
 
   // Auto-dismiss toast.
@@ -198,13 +276,6 @@ export function SettingsPanel({
     const timer = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(timer);
   }, [toast]);
-
-  // ---------------------------------------------------------------------------
-  // Determine which tab type we're rendering.
-  // ---------------------------------------------------------------------------
-
-  const isStructuredTab = ['general', 'providers', 'session', 'runtime', 'browser', 'mcp', 'prompts', 'about'].includes(activeTab);
-  const isTomlEditor = !isStructuredTab;
 
   // ---------------------------------------------------------------------------
   // Render
@@ -232,11 +303,6 @@ export function SettingsPanel({
 
         {activeTab === 'providers' && (
           <div className="settings-section">
-            <div className="settings-header">
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                {CONFIG_SECTIONS.find((s) => s.key === activeTab)?.label ?? activeTab}
-              </h3>
-            </div>
             <ProvidersTab
               loadSection={loadSection}
               setToast={setToast}
@@ -245,17 +311,14 @@ export function SettingsPanel({
               providersMeta={providersMeta}
               setProvidersMeta={setProvidersMeta}
               setDirtyProviders={setDirtyProviders}
+              rawProvidersToml={rawProvidersToml}
+              setRawProvidersToml={setRawProvidersToml}
             />
           </div>
         )}
 
         {activeTab === 'session' && (
           <div className="settings-section">
-            <div className="settings-header">
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                Session
-              </h3>
-            </div>
             <SessionTab
               loadSection={loadSection}
               sessionForm={sessionForm}
@@ -268,11 +331,6 @@ export function SettingsPanel({
 
         {activeTab === 'runtime' && (
           <div className="settings-section">
-            <div className="settings-header">
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                Runtime
-              </h3>
-            </div>
             <RuntimeTab
               loadSection={loadSection}
               runtimeForm={runtimeForm}
@@ -285,11 +343,6 @@ export function SettingsPanel({
 
         {activeTab === 'browser' && (
           <div className="settings-section">
-            <div className="settings-header">
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                Browser
-              </h3>
-            </div>
             <BrowserTab
               loadSection={loadSection}
               browserForm={browserForm}
@@ -302,15 +355,70 @@ export function SettingsPanel({
 
         {activeTab === 'mcp' && (
           <div className="settings-section">
-            <div className="settings-header">
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                MCP Servers
-              </h3>
-            </div>
             <McpTab
               mcpServersList={mcpServersList}
               setMcpServersList={setMcpServersList}
               setDirtyMcp={setDirtyMcp}
+            />
+          </div>
+        )}
+
+        {activeTab === 'storage' && (
+          <div className="settings-section">
+            <StorageTab
+              loadSection={loadSection}
+              storageForm={storageForm}
+              setStorageForm={setStorageForm}
+              setDirtyStorage={setDirtyStorage}
+              setRawStorageToml={setRawStorageToml}
+            />
+          </div>
+        )}
+
+        {activeTab === 'hooks' && (
+          <div className="settings-section">
+            <HooksTab
+              loadSection={loadSection}
+              hooksForm={hooksForm}
+              setHooksForm={setHooksForm}
+              setDirtyHooks={setDirtyHooks}
+              setRawHooksToml={setRawHooksToml}
+            />
+          </div>
+        )}
+
+        {activeTab === 'tools' && (
+          <div className="settings-section">
+            <ToolsTab
+              loadSection={loadSection}
+              toolsForm={toolsForm}
+              setToolsForm={setToolsForm}
+              setDirtyTools={setDirtyTools}
+              setRawToolsToml={setRawToolsToml}
+            />
+          </div>
+        )}
+
+        {activeTab === 'guardrails' && (
+          <div className="settings-section">
+            <GuardrailsTab
+              loadSection={loadSection}
+              guardrailsForm={guardrailsForm}
+              setGuardrailsForm={setGuardrailsForm}
+              setDirtyGuardrails={setDirtyGuardrails}
+              setRawGuardrailsToml={setRawGuardrailsToml}
+            />
+          </div>
+        )}
+
+        {activeTab === 'knowledge' && (
+          <div className="settings-section">
+            <KnowledgeTab
+              loadSection={loadSection}
+              knowledgeForm={knowledgeForm}
+              setKnowledgeForm={setKnowledgeForm}
+              setDirtyKnowledge={setDirtyKnowledge}
+              setRawKnowledgeToml={setRawKnowledgeToml}
             />
           </div>
         )}
@@ -324,23 +432,6 @@ export function SettingsPanel({
         )}
 
         {activeTab === 'about' && <AboutTab />}
-
-        {isTomlEditor && (
-          <div className="settings-section">
-            <div className="settings-header">
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                {CONFIG_SECTIONS.find((s) => s.key === activeTab)?.label ?? activeTab}
-              </h3>
-              <TomlEditorTab
-                activeTab={activeTab}
-                loadSection={loadSection}
-                setToast={setToast}
-                tomlDraftsBySection={tomlDraftsBySection}
-                setTomlDraftsBySection={setTomlDraftsBySection}
-              />
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Toast notification */}

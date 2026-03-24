@@ -7,7 +7,8 @@ import { Plus, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { TagChipInput } from './TagChipInput';
 import type { McpServerFormData } from './settingsTypes';
-import { emptyMcpServer, jsonToMcpServers } from './settingsTypes';
+import { emptyMcpServer, jsonToMcpServers, mcpServersToJson } from './settingsTypes';
+import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 
 // ---------------------------------------------------------------------------
 // McpServerTabPanel -- form for a single MCP server (shown in tab view)
@@ -247,6 +248,8 @@ export function McpTab({
 }: McpTabProps) {
   const [loading, setLoading] = useState(false);
   const [activeMcpTab, setActiveMcpTab] = useState(0);
+  const [rawMode, setRawMode] = useState(false);
+  const [rawContent, setRawContent] = useState('');
 
   const loadMcpServers = useCallback(async () => {
     setLoading(true);
@@ -291,7 +294,43 @@ export function McpTab({
     return <div className="section-loading">Loading...</div>;
   }
 
+  const handleToggleRaw = (next: boolean) => {
+    if (next) {
+      // Serialize current MCP list to formatted JSON
+      setRawContent(JSON.stringify(mcpServersToJson(mcpServersList), null, 2));
+    }
+    setRawMode(next);
+  };
+
+  if (rawMode) {
+    return (
+      <>
+        <div className="settings-header">
+          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+            <span className="settings-header-with-toggle">MCP Servers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+          </h3>
+        </div>
+        <RawTomlEditor
+          content={rawContent}
+          onChange={(val) => {
+            setRawContent(val);
+            // MCP uses JSON; mark dirty via setDirtyMcp and we'll handle
+            // the raw JSON save in unified save.
+            setDirtyMcp(true);
+          }}
+          placeholder="No MCP servers configured. Content will be created on save."
+        />
+      </>
+    );
+  }
+
   return (
+    <>
+    <div className="settings-header">
+      <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+        <span className="settings-header-with-toggle">MCP Servers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+      </h3>
+    </div>
     <div className="sub-list-layout">
       {/* Left sidebar list */}
       <div className="sub-list-sidebar">
@@ -343,5 +382,6 @@ export function McpTab({
         )}
       </div>
     </div>
+    </>
   );
 }

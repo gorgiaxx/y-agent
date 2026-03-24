@@ -9,6 +9,7 @@ import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicke
 import { TagChipInput } from './TagChipInput';
 import type { ProviderFormData } from './settingsTypes';
 import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
+import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 
 // ---------------------------------------------------------------------------
 // ProviderTabPanel -- flat form for a single provider (shown in tab view)
@@ -294,6 +295,8 @@ interface ProvidersTabProps {
   providersMeta: string;
   setProvidersMeta: React.Dispatch<React.SetStateAction<string>>;
   setDirtyProviders: React.Dispatch<React.SetStateAction<boolean>>;
+  rawProvidersToml: string | undefined;
+  setRawProvidersToml: React.Dispatch<React.SetStateAction<string | undefined>>;
 }
 
 export function ProvidersTab({
@@ -304,9 +307,13 @@ export function ProvidersTab({
   providersMeta,
   setProvidersMeta,
   setDirtyProviders,
+  rawProvidersToml: _rawProvidersToml,
+  setRawProvidersToml,
 }: ProvidersTabProps) {
   const [providersLoading, setProvidersLoading] = useState(false);
   const [activeProviderTab, setActiveProviderTab] = useState(0);
+  const [rawMode, setRawMode] = useState(false);
+  const [rawContent, setRawContent] = useState('');
 
   const loadProviders = useCallback(async () => {
     setProvidersLoading(true);
@@ -362,7 +369,43 @@ export function ProvidersTab({
     return <div className="section-loading">Loading...</div>;
   }
 
+  const handleToggleRaw = (next: boolean) => {
+    if (next) {
+      // Serialize current providers list to TOML for raw editing
+      const body = providersToToml(providersList);
+      setRawContent(providersMeta ? `${providersMeta}${body}` : body);
+    }
+    setRawMode(next);
+  };
+
+  if (rawMode) {
+    return (
+      <>
+        <div className="settings-header">
+          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+            <span className="settings-header-with-toggle">Providers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+          </h3>
+        </div>
+        <RawTomlEditor
+          content={rawContent}
+          onChange={(val) => {
+            setRawContent(val);
+            setRawProvidersToml(val);
+            setDirtyProviders(true);
+          }}
+          placeholder="No providers.toml found. Content will be created on save."
+        />
+      </>
+    );
+  }
+
   return (
+    <>
+    <div className="settings-header">
+      <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+        <span className="settings-header-with-toggle">Providers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+      </h3>
+    </div>
     <div className="sub-list-layout">
       {/* Left sidebar list */}
       <div className="sub-list-sidebar">
@@ -418,5 +461,6 @@ export function ProvidersTab({
         )}
       </div>
     </div>
+    </>
   );
 }

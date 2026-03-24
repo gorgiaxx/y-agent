@@ -4,7 +4,10 @@
 
 import type { SettingsTab } from './SettingsPanel';
 import { escapeTomlString, deserializeFromJson, mergeIntoRawToml } from '../../utils/tomlUtils';
-import { SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA, browserPostProcess } from '../../utils/settingsSchemas';
+import {
+  SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA, browserPostProcess,
+  STORAGE_SCHEMA, HOOKS_SCHEMA, TOOLS_SCHEMA, GUARDRAILS_SCHEMA, KNOWLEDGE_SCHEMA,
+} from '../../utils/settingsSchemas';
 
 // ---------------------------------------------------------------------------
 // Provider form types (mirrors Rust ProviderConfig)
@@ -98,6 +101,55 @@ export interface BrowserFormData {
   allowed_domains: string[];
   block_private_networks: boolean;
   max_screenshot_dim: number;
+}
+
+export interface StorageFormData {
+  db_path: string;
+  pool_size: number;
+  wal_enabled: boolean;
+  busy_timeout_ms: number;
+  transcript_dir: string;
+}
+
+export interface HooksFormData {
+  middleware_timeout_ms: number;
+  event_channel_capacity: number;
+  max_subscribers: number;
+}
+
+export interface ToolsFormData {
+  max_active: number;
+  search_limit: number;
+  allow_dynamic_tools: boolean;
+}
+
+export interface GuardrailsFormData {
+  default_permission: string;
+  dangerous_auto_ask: boolean;
+  max_tool_iterations: number;
+  loop_guard_max_iterations: number;
+  loop_guard_similarity_threshold: number;
+  risk_high_risk_threshold: number;
+  hitl_auto_approve_low_risk: boolean;
+}
+
+export interface KnowledgeFormData {
+  l0_max_tokens: number;
+  l1_max_tokens: number;
+  l2_max_tokens: number;
+  max_chunks_per_entry: number;
+  default_collection: string;
+  min_similarity_threshold: number;
+  embedding_enabled: boolean;
+  embedding_model: string;
+  embedding_dimensions: number;
+  embedding_base_url: string;
+  embedding_api_key_env: string;
+  embedding_api_key: string;
+  embedding_max_tokens: number;
+  retrieval_strategy: string;
+  bm25_weight: number;
+  vector_weight: number;
 }
 
 export interface McpServerFormData {
@@ -209,6 +261,55 @@ export const DEFAULT_BROWSER_FORM: BrowserFormData = {
   allowed_domains: ['*'],
   block_private_networks: true,
   max_screenshot_dim: 4096,
+};
+
+export const DEFAULT_STORAGE_FORM: StorageFormData = {
+  db_path: 'data/y-agent.db',
+  pool_size: 5,
+  wal_enabled: true,
+  busy_timeout_ms: 5000,
+  transcript_dir: 'data/transcripts',
+};
+
+export const DEFAULT_HOOKS_FORM: HooksFormData = {
+  middleware_timeout_ms: 30000,
+  event_channel_capacity: 1024,
+  max_subscribers: 64,
+};
+
+export const DEFAULT_TOOLS_FORM: ToolsFormData = {
+  max_active: 20,
+  search_limit: 10,
+  allow_dynamic_tools: false,
+};
+
+export const DEFAULT_GUARDRAILS_FORM: GuardrailsFormData = {
+  default_permission: 'notify',
+  dangerous_auto_ask: true,
+  max_tool_iterations: 50,
+  loop_guard_max_iterations: 50,
+  loop_guard_similarity_threshold: 0.95,
+  risk_high_risk_threshold: 0.8,
+  hitl_auto_approve_low_risk: true,
+};
+
+export const DEFAULT_KNOWLEDGE_FORM: KnowledgeFormData = {
+  l0_max_tokens: 200,
+  l1_max_tokens: 500,
+  l2_max_tokens: 500,
+  max_chunks_per_entry: 5000,
+  default_collection: 'default',
+  min_similarity_threshold: 0.65,
+  embedding_enabled: true,
+  embedding_model: '',
+  embedding_dimensions: 1536,
+  embedding_base_url: '',
+  embedding_api_key_env: '',
+  embedding_api_key: '',
+  embedding_max_tokens: 0,
+  retrieval_strategy: 'hybrid',
+  bm25_weight: 1.0,
+  vector_weight: 1.0,
 };
 
 // ---------------------------------------------------------------------------
@@ -358,6 +459,51 @@ export function runtimeToToml(form: RuntimeFormData, rawToml: string | undefined
 
 export function browserToToml(form: BrowserFormData, rawToml: string | undefined): string {
   return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, BROWSER_SCHEMA);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function jsonToStorage(json: any): StorageFormData {
+  return deserializeFromJson(json, STORAGE_SCHEMA) as unknown as StorageFormData;
+}
+
+export function storageToToml(form: StorageFormData, rawToml: string | undefined): string {
+  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, STORAGE_SCHEMA);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function jsonToHooks(json: any): HooksFormData {
+  return deserializeFromJson(json, HOOKS_SCHEMA) as unknown as HooksFormData;
+}
+
+export function hooksToToml(form: HooksFormData, rawToml: string | undefined): string {
+  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, HOOKS_SCHEMA);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function jsonToTools(json: any): ToolsFormData {
+  return deserializeFromJson(json, TOOLS_SCHEMA) as unknown as ToolsFormData;
+}
+
+export function toolsToToml(form: ToolsFormData, rawToml: string | undefined): string {
+  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, TOOLS_SCHEMA);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function jsonToGuardrails(json: any): GuardrailsFormData {
+  return deserializeFromJson(json, GUARDRAILS_SCHEMA) as unknown as GuardrailsFormData;
+}
+
+export function guardrailsToToml(form: GuardrailsFormData, rawToml: string | undefined): string {
+  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, GUARDRAILS_SCHEMA);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function jsonToKnowledge(json: any): KnowledgeFormData {
+  return deserializeFromJson(json, KNOWLEDGE_SCHEMA) as unknown as KnowledgeFormData;
+}
+
+export function knowledgeToToml(form: KnowledgeFormData, rawToml: string | undefined): string {
+  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, KNOWLEDGE_SCHEMA);
 }
 
 export const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [

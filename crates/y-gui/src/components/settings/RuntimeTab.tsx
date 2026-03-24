@@ -7,6 +7,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { TagChipInput } from './TagChipInput';
 import type { RuntimeFormData } from './settingsTypes';
 import { jsonToRuntime } from './settingsTypes';
+import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
+import { serializeToml } from '../../utils/tomlUtils';
+import { RUNTIME_SCHEMA } from '../../utils/settingsSchemas';
 
 interface RuntimeTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -24,6 +27,8 @@ export function RuntimeTab({
   setRawRuntimeToml,
 }: RuntimeTabProps) {
   const [loading, setLoading] = useState(false);
+  const [rawMode, setRawMode] = useState(false);
+  const [rawContent, setRawContent] = useState('');
 
   const loadRuntimeForm = useCallback(async () => {
     setLoading(true);
@@ -50,11 +55,45 @@ export function RuntimeTab({
     loadRuntimeForm();
   }, [loadRuntimeForm]);
 
+  const handleToggleRaw = useCallback((next: boolean) => {
+    if (next) {
+      setRawContent(serializeToml(runtimeForm as unknown as Record<string, unknown>, RUNTIME_SCHEMA));
+    }
+    setRawMode(next);
+  }, [runtimeForm]);
+
   if (loading) {
     return <div className="section-loading">Loading...</div>;
   }
 
+  if (rawMode) {
+    return (
+      <>
+        <div className="settings-header">
+          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+            <span className="settings-header-with-toggle">Runtime <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+          </h3>
+        </div>
+        <RawTomlEditor
+          content={rawContent}
+          onChange={(val) => {
+            setRawContent(val);
+            setRawRuntimeToml(val);
+            setDirtyRuntime(true);
+          }}
+          placeholder="No runtime.toml found. Content will be created on save."
+        />
+      </>
+    );
+  }
+
   return (
+    <>
+    <div className="settings-header">
+      <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+        <span className="settings-header-with-toggle">Runtime <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+      </h3>
+    </div>
     <div className="settings-form-wrap">
       <div className="pf-row">
         <div className="pf-field">
@@ -566,5 +605,6 @@ export function RuntimeTab({
         )}
       </div>
     </div>
+    </>
   );
 }

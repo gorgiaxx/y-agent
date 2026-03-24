@@ -6,6 +6,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { SessionFormData } from './settingsTypes';
 import { jsonToSession, DEFAULT_SESSION_FORM } from './settingsTypes';
+import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
+import { serializeToml } from '../../utils/tomlUtils';
+import { SESSION_SCHEMA } from '../../utils/settingsSchemas';
 
 interface SessionTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -23,6 +26,8 @@ export function SessionTab({
   setRawSessionToml,
 }: SessionTabProps) {
   const [loading, setLoading] = useState(false);
+  const [rawMode, setRawMode] = useState(false);
+  const [rawContent, setRawContent] = useState('');
 
   const loadSessionForm = useCallback(async () => {
     setLoading(true);
@@ -49,11 +54,45 @@ export function SessionTab({
     loadSessionForm();
   }, [loadSessionForm]);
 
+  const handleToggleRaw = useCallback((next: boolean) => {
+    if (next) {
+      setRawContent(serializeToml(sessionForm as unknown as Record<string, unknown>, SESSION_SCHEMA));
+    }
+    setRawMode(next);
+  }, [sessionForm]);
+
   if (loading) {
     return <div className="section-loading">Loading...</div>;
   }
 
+  if (rawMode) {
+    return (
+      <>
+        <div className="settings-header">
+          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+            <span className="settings-header-with-toggle">Session <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+          </h3>
+        </div>
+        <RawTomlEditor
+          content={rawContent}
+          onChange={(val) => {
+            setRawContent(val);
+            setRawSessionToml(val);
+            setDirtySession(true);
+          }}
+          placeholder="No session.toml found. Content will be created on save."
+        />
+      </>
+    );
+  }
+
   return (
+    <>
+    <div className="settings-header">
+      <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+        <span className="settings-header-with-toggle">Session <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+      </h3>
+    </div>
     <div className="settings-form-wrap">
       <div className="pf-row pf-row-quad">
         <div className="pf-field">
@@ -172,5 +211,6 @@ export function SessionTab({
         </div>
       </div>
     </div>
+    </>
   );
 }

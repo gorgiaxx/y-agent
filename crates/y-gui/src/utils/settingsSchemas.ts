@@ -130,3 +130,84 @@ export function runtimePostProcess(result: Record<string, any>): void {
   // Kept as a placeholder for future auth-method-dependent logic.
   void result;
 }
+
+// ---------------------------------------------------------------------------
+// Storage schema  (storage.toml)
+// ---------------------------------------------------------------------------
+
+export const STORAGE_SCHEMA: FieldDef[] = [
+  { formKey: 'db_path', tomlKey: 'db_path', type: 'string', defaultValue: 'data/y-agent.db' },
+  { formKey: 'pool_size', tomlKey: 'pool_size', type: 'number', defaultValue: 5 },
+  { formKey: 'wal_enabled', tomlKey: 'wal_enabled', type: 'boolean', defaultValue: true },
+  { formKey: 'busy_timeout_ms', tomlKey: 'busy_timeout_ms', type: 'number', defaultValue: 5000 },
+  { formKey: 'transcript_dir', tomlKey: 'transcript_dir', type: 'string', defaultValue: 'data/transcripts' },
+];
+
+// ---------------------------------------------------------------------------
+// Hooks schema  (hooks.toml)
+// ---------------------------------------------------------------------------
+
+export const HOOKS_SCHEMA: FieldDef[] = [
+  { formKey: 'middleware_timeout_ms', tomlKey: 'middleware_timeout_ms', type: 'number', defaultValue: 30000 },
+  { formKey: 'event_channel_capacity', tomlKey: 'event_channel_capacity', type: 'number', defaultValue: 1024 },
+  { formKey: 'max_subscribers', tomlKey: 'max_subscribers', type: 'number', defaultValue: 64 },
+];
+
+// ---------------------------------------------------------------------------
+// Tools schema  (tools.toml)
+// ---------------------------------------------------------------------------
+
+export const TOOLS_SCHEMA: FieldDef[] = [
+  { formKey: 'max_active', tomlKey: 'max_active', type: 'number', defaultValue: 20 },
+  { formKey: 'search_limit', tomlKey: 'search_limit', type: 'number', defaultValue: 10 },
+  { formKey: 'allow_dynamic_tools', tomlKey: 'allow_dynamic_tools', type: 'boolean', defaultValue: false },
+];
+
+// ---------------------------------------------------------------------------
+// Guardrails schema  (guardrails.toml)
+// ---------------------------------------------------------------------------
+
+export const GUARDRAILS_SCHEMA: FieldDef[] = [
+  // Root-level
+  { formKey: 'default_permission', tomlKey: 'default_permission', type: 'string', defaultValue: 'notify' },
+  { formKey: 'dangerous_auto_ask', tomlKey: 'dangerous_auto_ask', type: 'boolean', defaultValue: true },
+  { formKey: 'max_tool_iterations', tomlKey: 'max_tool_iterations', type: 'number', defaultValue: 50 },
+
+  // [loop_guard]
+  { formKey: 'loop_guard_max_iterations', tomlKey: 'max_iterations', section: 'loop_guard', type: 'number', defaultValue: 50, optional: true },
+  { formKey: 'loop_guard_similarity_threshold', tomlKey: 'similarity_threshold', section: 'loop_guard', type: 'number', defaultValue: 0.95, optional: true },
+
+  // [risk]
+  { formKey: 'risk_high_risk_threshold', tomlKey: 'high_risk_threshold', section: 'risk', type: 'number', defaultValue: 0.8, optional: true },
+
+  // [hitl]
+  { formKey: 'hitl_auto_approve_low_risk', tomlKey: 'auto_approve_low_risk', section: 'hitl', type: 'boolean', defaultValue: true, optional: true },
+];
+
+// ---------------------------------------------------------------------------
+// Knowledge schema  (knowledge.toml)
+// ---------------------------------------------------------------------------
+
+export const KNOWLEDGE_SCHEMA: FieldDef[] = [
+  // Chunking
+  { formKey: 'l0_max_tokens', tomlKey: 'l0_max_tokens', type: 'number', defaultValue: 200 },
+  { formKey: 'l1_max_tokens', tomlKey: 'l1_max_tokens', type: 'number', defaultValue: 500 },
+  { formKey: 'l2_max_tokens', tomlKey: 'l2_max_tokens', type: 'number', defaultValue: 500 },
+  { formKey: 'max_chunks_per_entry', tomlKey: 'max_chunks_per_entry', type: 'number', defaultValue: 5000 },
+  { formKey: 'default_collection', tomlKey: 'default_collection', type: 'string', defaultValue: 'default' },
+  { formKey: 'min_similarity_threshold', tomlKey: 'min_similarity_threshold', type: 'number', defaultValue: 0.65 },
+
+  // Embedding
+  { formKey: 'embedding_enabled', tomlKey: 'embedding_enabled', type: 'boolean', defaultValue: true },
+  { formKey: 'embedding_model', tomlKey: 'embedding_model', type: 'string', defaultValue: '' },
+  { formKey: 'embedding_dimensions', tomlKey: 'embedding_dimensions', type: 'number', defaultValue: 1536 },
+  { formKey: 'embedding_base_url', tomlKey: 'embedding_base_url', type: 'string', defaultValue: '', optional: true },
+  { formKey: 'embedding_api_key_env', tomlKey: 'embedding_api_key_env', type: 'string', defaultValue: '', optional: true },
+  { formKey: 'embedding_api_key', tomlKey: 'embedding_api_key', type: 'string', defaultValue: '', optional: true },
+  { formKey: 'embedding_max_tokens', tomlKey: 'embedding_max_tokens', type: 'number', defaultValue: 0 },
+
+  // Retrieval
+  { formKey: 'retrieval_strategy', tomlKey: 'retrieval_strategy', type: 'string', defaultValue: 'hybrid' },
+  { formKey: 'bm25_weight', tomlKey: 'bm25_weight', type: 'number', defaultValue: 1.0 },
+  { formKey: 'vector_weight', tomlKey: 'vector_weight', type: 'number', defaultValue: 1.0 },
+];
