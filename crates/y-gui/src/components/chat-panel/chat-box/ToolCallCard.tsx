@@ -73,6 +73,8 @@ function formatDuration(ms: number): string {
   return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
 }
 
+const ACCENT_COLOR = '#00a6ffff';
+
 export function ToolCallCard({ toolCall, status = 'success', result, durationMs }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -116,6 +118,7 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs 
     <CollapsibleCard
       icon={<Wrench size={12} />}
       label={<span className="tool-call-name">{toolCall.name}</span>}
+      accentColor={ACCENT_COLOR}
       expanded={expanded}
       onToggle={() => hasExpandable && setExpanded(!expanded)}
       headerRight={headerRight}

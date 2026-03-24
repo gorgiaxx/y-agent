@@ -1,10 +1,5 @@
 /* ToolCallCard -- styles specific to the tool call card body and status. */
 
-/* Tool-specific: no border-left accent (uses CollapsibleCard default) */
-.tool-call-card {
-  border-left-width: 1px;
-}
-
 .tool-call-name {
   font-size: 12px;
   font-weight: 500;

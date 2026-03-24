@@ -14,7 +14,8 @@ import type { ContentSegment } from '../../../hooks/useStreamContent';
 import type { ToolResultRecord } from '../../../hooks/useChat';
 import { CollapsibleCard } from './CollapsibleCard';
 import { ToolCallCard } from './ToolCallCard';
-import { MarkdownSegment } from './MessageShared';
+import { ThinkingCard } from './ThinkingCard';
+import { MarkdownSegment, extractThinkTags } from './MessageShared';
 import './ActionCard.css';
 
 interface ActionCardProps {
@@ -43,7 +44,7 @@ function formatDuration(ms: number): string {
   return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
 }
 
-const ACCENT_COLOR = '#f59e0b';
+const ACCENT_COLOR = '#72d077ff';
 
 export function ActionCard({
   segments,
@@ -105,12 +106,23 @@ export function ActionCard({
       {segments.map((seg, idx) => {
         const originalIdx = idx + segmentIndexOffset;
         if (seg.type === 'text') {
+          const { thinkContent, strippedContent, isThinkingIncomplete } =
+            extractThinkTags(seg.text);
           return (
-            <MarkdownSegment
-              key={`action-text-${idx}`}
-              text={seg.text}
-              components={markdownComponents}
-            />
+            <div key={`action-text-${idx}`}>
+              {thinkContent && (
+                <ThinkingCard
+                  content={thinkContent}
+                  isStreaming={isStreaming && isThinkingIncomplete}
+                />
+              )}
+              {strippedContent.trim() && (
+                <MarkdownSegment
+                  text={strippedContent}
+                  components={markdownComponents}
+                />
+              )}
+            </div>
           );
         }
         if (seg.type === 'tool_call') {
