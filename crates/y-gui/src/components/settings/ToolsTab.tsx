@@ -9,6 +9,7 @@ import { jsonToTools } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { serializeToml } from '../../utils/tomlUtils';
 import { TOOLS_SCHEMA } from '../../utils/settingsSchemas';
+import { Checkbox } from '../ui';
 
 interface ToolsTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -124,11 +125,9 @@ export function ToolsTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={toolsForm.allow_dynamic_tools}
-                onChange={(e) => { setToolsForm({ ...toolsForm, allow_dynamic_tools: e.target.checked }); setDirtyTools(true); }}
+                onCheckedChange={(c) => { setToolsForm({ ...toolsForm, allow_dynamic_tools: c === true }); setDirtyTools(true); }}
               />
               {' '}Allow Dynamic Tools
             </label>

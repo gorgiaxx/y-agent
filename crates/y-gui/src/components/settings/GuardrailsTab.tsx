@@ -9,6 +9,8 @@ import { jsonToGuardrails } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { serializeToml } from '../../utils/tomlUtils';
 import { GUARDRAILS_SCHEMA } from '../../utils/settingsSchemas';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
+import { Checkbox } from '../ui';
 
 interface GuardrailsTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -98,17 +100,20 @@ export function GuardrailsTab({
         <div className="pf-row">
           <div className="pf-field">
             <label className="pf-label">Default Permission</label>
-            <select
-              className="form-select"
-              style={{ maxWidth: 'none' }}
+            <Select
               value={guardrailsForm.default_permission}
-              onChange={(e) => { setGuardrailsForm({ ...guardrailsForm, default_permission: e.target.value }); setDirtyGuardrails(true); }}
+              onValueChange={(val) => { setGuardrailsForm({ ...guardrailsForm, default_permission: val }); setDirtyGuardrails(true); }}
             >
-              <option value="allow">Allow</option>
-              <option value="notify">Notify</option>
-              <option value="ask">Ask</option>
-              <option value="deny">Deny</option>
-            </select>
+              <SelectTrigger>
+                <SelectValue placeholder="Select default permission" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="allow">Allow</SelectItem>
+                <SelectItem value="notify">Notify</SelectItem>
+                <SelectItem value="ask">Ask</SelectItem>
+                <SelectItem value="deny">Deny</SelectItem>
+              </SelectContent>
+            </Select>
             <span className="pf-hint">Global default permission for tools.</span>
           </div>
           <div className="pf-field">
@@ -127,11 +132,9 @@ export function GuardrailsTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={guardrailsForm.dangerous_auto_ask}
-                onChange={(e) => { setGuardrailsForm({ ...guardrailsForm, dangerous_auto_ask: e.target.checked }); setDirtyGuardrails(true); }}
+                onCheckedChange={(c) => { setGuardrailsForm({ ...guardrailsForm, dangerous_auto_ask: c === true }); setDirtyGuardrails(true); }}
               />
               {' '}Dangerous tools auto-escalate to "ask"
             </label>
@@ -193,11 +196,9 @@ export function GuardrailsTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={guardrailsForm.hitl_auto_approve_low_risk}
-                onChange={(e) => { setGuardrailsForm({ ...guardrailsForm, hitl_auto_approve_low_risk: e.target.checked }); setDirtyGuardrails(true); }}
+                onCheckedChange={(c) => { setGuardrailsForm({ ...guardrailsForm, hitl_auto_approve_low_risk: c === true }); setDirtyGuardrails(true); }}
               />
               {' '}Auto-approve low-risk actions
             </label>

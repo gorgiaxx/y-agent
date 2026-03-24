@@ -5,10 +5,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { SessionFormData } from './settingsTypes';
-import { jsonToSession, DEFAULT_SESSION_FORM } from './settingsTypes';
+import { jsonToSession } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { serializeToml } from '../../utils/tomlUtils';
 import { SESSION_SCHEMA } from '../../utils/settingsSchemas';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
+import { Checkbox } from '../ui';
 
 interface SessionTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -131,11 +133,9 @@ export function SessionTab({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">
-            <input
-              type="checkbox"
-              className="form-checkbox"
+            <Checkbox
               checked={sessionForm.auto_archive_merged}
-              onChange={(e) => { setSessionForm({ ...sessionForm, auto_archive_merged: e.target.checked }); setDirtySession(true); }}
+              onCheckedChange={(c) => { setSessionForm({ ...sessionForm, auto_archive_merged: c === true }); setDirtySession(true); }}
             />
             {' '}Auto-archive merged sessions
           </label>
@@ -149,27 +149,28 @@ export function SessionTab({
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">
-            <input
-              type="checkbox"
-              className="form-checkbox"
+            <Checkbox
               checked={sessionForm.pruning_enabled}
-              onChange={(e) => { setSessionForm({ ...sessionForm, pruning_enabled: e.target.checked }); setDirtySession(true); }}
+              onCheckedChange={(c) => { setSessionForm({ ...sessionForm, pruning_enabled: c === true }); setDirtySession(true); }}
             />
             {' '}Enable Pruning
           </label>
         </div>
         <div className="pf-field">
           <label className="pf-label">Strategy</label>
-          <select
-            className="form-select"
-            style={{ maxWidth: 'none' }}
+          <Select
             value={sessionForm.pruning_strategy}
-            onChange={(e) => { setSessionForm({ ...sessionForm, pruning_strategy: e.target.value }); setDirtySession(true); }}
+            onValueChange={(val) => { setSessionForm({ ...sessionForm, pruning_strategy: val }); setDirtySession(true); }}
           >
-            <option value="auto">Auto (retry + progressive)</option>
-            <option value="retry_only">Retry Only (zero LLM cost)</option>
-            <option value="progressive_only">Progressive Only (LLM summarization)</option>
-          </select>
+            <SelectTrigger>
+              <SelectValue placeholder="Select strategy" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto (retry + progressive)</SelectItem>
+              <SelectItem value="retry_only">Retry Only (zero LLM cost)</SelectItem>
+              <SelectItem value="progressive_only">Progressive Only (LLM summarization)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <div className="pf-row pf-row-quad">
@@ -200,11 +201,9 @@ export function SessionTab({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">
-            <input
-              type="checkbox"
-              className="form-checkbox"
+            <Checkbox
               checked={sessionForm.pruning_progressive_preserve_identifiers}
-              onChange={(e) => { setSessionForm({ ...sessionForm, pruning_progressive_preserve_identifiers: e.target.checked }); setDirtySession(true); }}
+              onCheckedChange={(c) => { setSessionForm({ ...sessionForm, pruning_progressive_preserve_identifiers: c === true }); setDirtySession(true); }}
             />
             {' '}Preserve identifiers in progressive summaries
           </label>

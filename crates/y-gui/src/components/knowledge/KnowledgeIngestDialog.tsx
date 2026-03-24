@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Upload, X, FolderOpen, FilePlus, Plus } from 'lucide-react';
+import { Upload, FolderOpen, FilePlus, Plus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import type { KnowledgeCollectionInfo } from '../../types';

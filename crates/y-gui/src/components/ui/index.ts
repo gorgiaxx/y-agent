@@ -33,3 +33,4 @@ export {
 } from './Select'
 export { ScrollArea } from './ScrollArea'
 export { Separator } from './Separator'
+export { Checkbox } from './Checkbox'

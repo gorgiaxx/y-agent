@@ -9,6 +9,8 @@ import { TagChipInput } from './TagChipInput';
 import type { McpServerFormData } from './settingsTypes';
 import { emptyMcpServer, jsonToMcpServers, mcpServersToJson } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
+import { Checkbox } from '../ui';
 
 // ---------------------------------------------------------------------------
 // McpServerTabPanel -- form for a single MCP server (shown in tab view)
@@ -42,15 +44,18 @@ function McpServerTabPanel({
         </div>
         <div className="pf-field">
           <label className="pf-label">Transport</label>
-          <select
-            className="form-select"
-            style={{ maxWidth: 'none' }}
+          <Select
             value={server.transport}
-            onChange={(e) => update({ transport: e.target.value as 'stdio' | 'sse' })}
+            onValueChange={(val) => update({ transport: val as 'stdio' | 'sse' })}
           >
-            <option value="stdio">STDIO (Local)</option>
-            <option value="sse">SSE (Remote)</option>
-          </select>
+            <SelectTrigger>
+              <SelectValue placeholder="Select transport" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="stdio">STDIO (Local)</SelectItem>
+              <SelectItem value="sse">SSE (Remote)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -216,11 +221,9 @@ function McpServerTabPanel({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">
-            <input
-              type="checkbox"
-              className="form-checkbox"
+            <Checkbox
               checked={server.disabled}
-              onChange={(e) => update({ disabled: e.target.checked })}
+              onCheckedChange={(c) => update({ disabled: c === true })}
             />
             {' '}Disabled
           </label>

@@ -10,6 +10,7 @@ import { TagChipInput } from './TagChipInput';
 import type { ProviderFormData } from './settingsTypes';
 import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 
 // ---------------------------------------------------------------------------
 // ProviderTabPanel -- flat form for a single provider (shown in tab view)
@@ -89,20 +90,23 @@ function ProviderTabPanel({
         </div>
         <div className="pf-field">
           <label className="pf-label">Provider Type</label>
-          <select
-            className="form-select"
-            style={{ maxWidth: 'none' }}
+          <Select
             value={provider.provider_type}
-            onChange={(e) => update({ provider_type: e.target.value })}
+            onValueChange={(val) => update({ provider_type: val })}
           >
-            <option value="openai">OpenAI (native API)</option>
-            <option value="openai-compat">OpenAI-compatible (vLLM, LiteLLM...)</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="gemini">Gemini</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="ollama">Ollama</option>
-            <option value="azure">Azure OpenAI</option>
-          </select>
+            <SelectTrigger>
+              <SelectValue placeholder="Select type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai">OpenAI (native API)</SelectItem>
+              <SelectItem value="openai-compat">OpenAI-compatible (vLLM, LiteLLM...)</SelectItem>
+              <SelectItem value="anthropic">Anthropic</SelectItem>
+              <SelectItem value="gemini">Gemini</SelectItem>
+              <SelectItem value="deepseek">DeepSeek</SelectItem>
+              <SelectItem value="ollama">Ollama</SelectItem>
+              <SelectItem value="azure">Azure OpenAI</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -191,6 +195,7 @@ function ProviderTabPanel({
             className="pf-input pf-input-num"
             type="number"
             min={1}
+            max={2}
             value={provider.max_concurrency}
             onChange={(e) => update({ max_concurrency: Number(e.target.value) || 1 })}
           />
@@ -201,6 +206,7 @@ function ProviderTabPanel({
             className="pf-input pf-input-num"
             type="number"
             min={1}
+            max={2}
             value={provider.context_window}
             onChange={(e) => update({ context_window: Number(e.target.value) || 128000 })}
           />
@@ -307,7 +313,6 @@ export function ProvidersTab({
   providersMeta,
   setProvidersMeta,
   setDirtyProviders,
-  rawProvidersToml: _rawProvidersToml,
   setRawProvidersToml,
 }: ProvidersTabProps) {
   const [providersLoading, setProvidersLoading] = useState(false);

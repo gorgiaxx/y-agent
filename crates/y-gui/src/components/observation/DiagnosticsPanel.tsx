@@ -510,6 +510,8 @@ function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: 
   const [expanded, setExpanded] = useState(false);
   const [promptBeautified, setPromptBeautified] = useState(true);
   const [promptWrapped, setPromptWrapped] = useState(true);
+  const [errorBeautified, setErrorBeautified] = useState(true);
+  const [errorWrapped, setErrorWrapped] = useState(true);
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const resolvedTheme = useResolvedTheme();
   const highlighterStyle = resolvedTheme === 'light' ? oneLightNoBackground : oneDarkNoBackground;
@@ -528,6 +530,35 @@ function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: 
     if (promptBeautified && promptJsonOk) return tryBeautify(event.prompt_preview);
     return event.prompt_preview;
   })();
+
+  const errorJsonOk = useMemo(() => {
+    const raw = event.error;
+    const firstBrace = raw.indexOf('{');
+    if (firstBrace !== -1) {
+      try {
+        JSON.parse(raw.slice(firstBrace));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }, [event.error]);
+
+  const displayError = useMemo(() => {
+    if (errorBeautified && errorJsonOk) {
+      const raw = event.error;
+      const firstBrace = raw.indexOf('{');
+      try {
+        const parsed = JSON.parse(raw.slice(firstBrace));
+        return JSON.stringify(parsed, null, 2);
+      } catch {
+        return event.error;
+      }
+    }
+    return event.error;
+  }, [event.error, errorBeautified, errorJsonOk]);
+
 
   return (
     <div className="diag-entry diag-llm-error">
@@ -616,9 +647,44 @@ function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: 
           <div className="diag-result-preview">
             <div className="diag-result-header">
               <span className="diag-detail-label">Error (response)</span>
-              <CopyButton getText={() => event.error} />
+              <CopyButton getText={() => displayError} />
+              {errorBeautified && errorJsonOk && (
+                <WrapToggle wrapped={errorWrapped} onToggle={() => setErrorWrapped((v) => !v)} />
+              )}
+              <button
+                className={`diag-beautify-btn ${!errorJsonOk ? 'disabled' : ''}`}
+                onClick={() => setErrorBeautified(!errorBeautified)}
+                disabled={!errorJsonOk}
+                title={errorJsonOk ? (errorBeautified ? 'Show raw' : 'Beautify JSON') : 'Not valid JSON'}
+              >
+                {errorBeautified ? 'Raw' : 'Beautify'}
+              </button>
             </div>
-            <pre className="diag-result-code" style={{ color: 'var(--error)' }}>{event.error}</pre>
+            {errorBeautified && errorJsonOk ? (
+              <div className="diag-highlighted-block">
+                <SyntaxHighlighter
+                  style={highlighterStyle}
+                  language="json"
+                  PreTag="div"
+                  wrapLongLines={errorWrapped}
+                  codeTagProps={{ style: { whiteSpace: errorWrapped ? 'pre-wrap' : 'pre' } }}
+                  customStyle={{
+                    margin: 0,
+                    padding: '8px',
+                    fontSize: '11px',
+                    lineHeight: '1.5',
+                    overflow: 'auto',
+                    maxHeight: '320px',
+                  }}
+                >
+                  {displayError}
+                </SyntaxHighlighter>
+              </div>
+            ) : (
+              <pre className="diag-result-code" style={{ color: 'var(--error)' }}>
+                {displayError}
+              </pre>
+            )}
           </div>
         </div>
       )}

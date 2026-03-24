@@ -9,6 +9,7 @@ import { jsonToStorage } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { serializeToml } from '../../utils/tomlUtils';
 import { STORAGE_SCHEMA } from '../../utils/settingsSchemas';
+import { Checkbox } from '../ui';
 
 interface StorageTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -135,11 +136,9 @@ export function StorageTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={storageForm.wal_enabled}
-                onChange={(e) => { setStorageForm({ ...storageForm, wal_enabled: e.target.checked }); setDirtyStorage(true); }}
+                onCheckedChange={(c) => { setStorageForm({ ...storageForm, wal_enabled: c === true }); setDirtyStorage(true); }}
               />
               {' '}Enable WAL Mode
             </label>

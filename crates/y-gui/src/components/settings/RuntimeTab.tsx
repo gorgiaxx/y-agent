@@ -10,6 +10,8 @@ import { jsonToRuntime } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { serializeToml } from '../../utils/tomlUtils';
 import { RUNTIME_SCHEMA } from '../../utils/settingsSchemas';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
+import { Checkbox } from '../ui';
 
 interface RuntimeTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -98,16 +100,19 @@ export function RuntimeTab({
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">Default Backend</label>
-          <select
-            className="form-select"
-            style={{ maxWidth: 'none' }}
+          <Select
             value={runtimeForm.default_backend}
-            onChange={(e) => { setRuntimeForm({ ...runtimeForm, default_backend: e.target.value }); setDirtyRuntime(true); }}
+            onValueChange={(val) => { setRuntimeForm({ ...runtimeForm, default_backend: val }); setDirtyRuntime(true); }}
           >
-            <option value="native">Native</option>
-            <option value="docker">Docker</option>
-            <option value="ssh">SSH</option>
-          </select>
+            <SelectTrigger>
+              <SelectValue placeholder="Select backend" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="native">Native</SelectItem>
+              <SelectItem value="docker">Docker</SelectItem>
+              <SelectItem value="ssh">SSH</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div className="pf-field">
           <label className="pf-label">Default Timeout</label>
@@ -135,11 +140,9 @@ export function RuntimeTab({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">
-            <input
-              type="checkbox"
-              className="form-checkbox"
+            <Checkbox
               checked={runtimeForm.allow_shell}
-              onChange={(e) => { setRuntimeForm({ ...runtimeForm, allow_shell: e.target.checked }); setDirtyRuntime(true); }}
+              onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, allow_shell: c === true }); setDirtyRuntime(true); }}
             />
             {' '}Allow shell execution
           </label>
@@ -148,11 +151,9 @@ export function RuntimeTab({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">
-            <input
-              type="checkbox"
-              className="form-checkbox"
+            <Checkbox
               checked={runtimeForm.allow_host_access}
-              onChange={(e) => { setRuntimeForm({ ...runtimeForm, allow_host_access: e.target.checked }); setDirtyRuntime(true); }}
+              onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, allow_host_access: c === true }); setDirtyRuntime(true); }}
             />
             {' '}Allow host filesystem access
           </label>
@@ -196,15 +197,18 @@ export function RuntimeTab({
         <div className="pf-row">
           <div className="pf-field">
             <label className="pf-label">Auth Method</label>
-            <select
-              className="form-select"
-              style={{ maxWidth: 'none' }}
+            <Select
               value={runtimeForm.ssh_auth_method}
-              onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_auth_method: e.target.value }); setDirtyRuntime(true); }}
+              onValueChange={(val) => { setRuntimeForm({ ...runtimeForm, ssh_auth_method: val }); setDirtyRuntime(true); }}
             >
-              <option value="public_key">Public Key</option>
-              <option value="password">Password</option>
-            </select>
+              <SelectTrigger>
+                <SelectValue placeholder="Select auth method" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="public_key">Public Key</SelectItem>
+                <SelectItem value="password">Password</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           {runtimeForm.ssh_auth_method === 'password' ? (
             <div className="pf-field">
@@ -272,16 +276,19 @@ export function RuntimeTab({
         <div className="pf-row">
           <div className="pf-field">
             <label className="pf-label">Network Mode</label>
-            <select
-              className="form-select"
-              style={{ maxWidth: 'none' }}
+            <Select
               value={runtimeForm.docker_network_mode}
-              onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_network_mode: e.target.value }); setDirtyRuntime(true); }}
+              onValueChange={(val) => { setRuntimeForm({ ...runtimeForm, docker_network_mode: val }); setDirtyRuntime(true); }}
             >
-              <option value="none">none</option>
-              <option value="bridge">bridge</option>
-              <option value="host">host</option>
-            </select>
+              <SelectTrigger>
+                <SelectValue placeholder="Select network mode" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">none</SelectItem>
+                <SelectItem value="bridge">bridge</SelectItem>
+                <SelectItem value="host">host</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="pf-field">
             <label className="pf-label">Container User</label>
@@ -296,22 +303,18 @@ export function RuntimeTab({
         <div className="pf-row">
           <div className="pf-field">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={runtimeForm.docker_privileged}
-                onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_privileged: e.target.checked }); setDirtyRuntime(true); }}
+                onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, docker_privileged: c === true }); setDirtyRuntime(true); }}
               />
               {' '}Privileged mode
             </label>
           </div>
           <div className="pf-field">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={runtimeForm.docker_readonly_rootfs}
-                onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_readonly_rootfs: e.target.checked }); setDirtyRuntime(true); }}
+                onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, docker_readonly_rootfs: c === true }); setDirtyRuntime(true); }}
               />
               {' '}Read-only root filesystem
             </label>
@@ -446,20 +449,23 @@ export function RuntimeTab({
                     }}
                     placeholder="Container path"
                   />
-                  <select
-                    className="form-select"
-                    style={{ width: '70px', minWidth: '70px' }}
+                  <Select
                     value={vol.mode}
-                    onChange={(e) => {
+                    onValueChange={(val) => {
                       const vols = [...runtimeForm.docker_default_volumes];
-                      vols[i] = { ...vols[i], mode: e.target.value };
+                      vols[i] = { ...vols[i], mode: val };
                       setRuntimeForm({ ...runtimeForm, docker_default_volumes: vols });
                       setDirtyRuntime(true);
                     }}
                   >
-                    <option value="ro">ro</option>
-                    <option value="rw">rw</option>
-                  </select>
+                    <SelectTrigger className="w-[70px] min-w-[70px]">
+                      <SelectValue placeholder="Mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ro">ro</SelectItem>
+                      <SelectItem value="rw">rw</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <button
                     type="button"
                     className="pf-tag-chip-remove"
@@ -494,11 +500,9 @@ export function RuntimeTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={runtimeForm.python_venv_enabled}
-                onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_venv_enabled: e.target.checked }); setDirtyRuntime(true); }}
+                onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, python_venv_enabled: c === true }); setDirtyRuntime(true); }}
               />
               {' '}Enable Python environment
             </label>
@@ -557,11 +561,9 @@ export function RuntimeTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={runtimeForm.bun_venv_enabled}
-                onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_venv_enabled: e.target.checked }); setDirtyRuntime(true); }}
+                onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, bun_venv_enabled: c === true }); setDirtyRuntime(true); }}
               />
               {' '}Enable JavaScript environment
             </label>

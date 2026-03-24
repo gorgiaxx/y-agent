@@ -4,19 +4,39 @@ import { ChevronDown, Check } from 'lucide-react'
 
 /* ---- Root re-exports ---- */
 export const Select = SelectPrimitive.Root
-export const SelectValue = SelectPrimitive.Value
 export const SelectGroup = SelectPrimitive.Group
+
+export const SelectValue = forwardRef<
+  HTMLSpanElement,
+  SelectPrimitive.SelectValueProps
+>(({ className = '', style, ...props }, ref) => (
+  <SelectPrimitive.Value
+    ref={ref}
+    className={className}
+    style={{
+      overflow: 'hidden',
+      whiteSpace: 'nowrap',
+      textOverflow: 'ellipsis',
+      flex: '1 1 0%',
+      minWidth: 0,
+      textAlign: 'left',
+      ...style,
+    }}
+    {...props}
+  />
+))
+SelectValue.displayName = 'SelectValue'
 
 /* ---- Trigger ---- */
 export const SelectTrigger = forwardRef<
   HTMLButtonElement,
   SelectPrimitive.SelectTriggerProps
->(({ className = '', children, ...props }, ref) => (
+>(({ className = '', children, style, ...props }, ref) => (
   <SelectPrimitive.Trigger
     ref={ref}
     className={[
       'inline-flex items-center justify-between gap-2',
-      'w-full max-w-60',
+      'w-full min-w-0',
       'px-2 py-1.5',
       'text-12px font-sans',
       'border border-solid border-[var(--border)]',
@@ -25,13 +45,15 @@ export const SelectTrigger = forwardRef<
       'text-[var(--text-primary)]',
       'cursor-pointer outline-none',
       'transition-colors duration-150',
-      'focus:border-[rgba(255,255,255,0.15)]',
+      'focus:border-white/15',
+      'data-[state=open]:border-white/15',
       className,
     ].join(' ')}
+    style={{ overflow: 'hidden', whiteSpace: 'nowrap', ...style }}
     {...props}
   >
     {children}
-    <SelectPrimitive.Icon>
+    <SelectPrimitive.Icon className="flex-shrink-0">
       <ChevronDown size={12} className="text-[var(--text-muted)] op-70" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>

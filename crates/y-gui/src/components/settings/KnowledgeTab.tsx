@@ -10,6 +10,8 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { serializeToml } from '../../utils/tomlUtils';
 import { KNOWLEDGE_SCHEMA } from '../../utils/settingsSchemas';
 import { Eye, EyeOff } from 'lucide-react';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
+import { Checkbox } from '../ui';
 
 interface KnowledgeTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -179,11 +181,9 @@ export function KnowledgeTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={knowledgeForm.embedding_enabled}
-                onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_enabled: e.target.checked }); setDirtyKnowledge(true); }}
+                onCheckedChange={(c) => { setKnowledgeForm({ ...knowledgeForm, embedding_enabled: c === true }); setDirtyKnowledge(true); }}
               />
               {' '}Enable Embedding
             </label>
@@ -276,16 +276,19 @@ export function KnowledgeTab({
         <div className="pf-row pf-row-quad">
           <div className="pf-field">
             <label className="pf-label">Strategy</label>
-            <select
-              className="form-select"
-              style={{ maxWidth: 'none' }}
+            <Select
               value={knowledgeForm.retrieval_strategy}
-              onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, retrieval_strategy: e.target.value }); setDirtyKnowledge(true); }}
+              onValueChange={(val) => { setKnowledgeForm({ ...knowledgeForm, retrieval_strategy: val }); setDirtyKnowledge(true); }}
             >
-              <option value="hybrid">Hybrid (Vector + BM25)</option>
-              <option value="keyword">Keyword (BM25 only)</option>
-              <option value="semantic">Semantic (Vector only)</option>
-            </select>
+              <SelectTrigger>
+                <SelectValue placeholder="Select strategy" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hybrid">Hybrid (Vector + BM25)</SelectItem>
+                <SelectItem value="keyword">Keyword (BM25 only)</SelectItem>
+                <SelectItem value="semantic">Semantic (Vector only)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="pf-field">
             <label className="pf-label">BM25 Weight</label>

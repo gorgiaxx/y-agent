@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useRef } from 'react';
-import { Badge, Input } from '../ui';
+import { Badge } from '../ui';
 
 export function TagChipInput({
   tags,

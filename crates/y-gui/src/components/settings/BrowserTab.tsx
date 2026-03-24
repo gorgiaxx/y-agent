@@ -10,6 +10,8 @@ import { jsonToBrowser } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { serializeToml } from '../../utils/tomlUtils';
 import { BROWSER_SCHEMA } from '../../utils/settingsSchemas';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
+import { Checkbox } from '../ui';
 
 interface BrowserTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -98,11 +100,9 @@ export function BrowserTab({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">
-            <input
-              type="checkbox"
-              className="form-checkbox"
+            <Checkbox
               checked={browserForm.enabled}
-              onChange={(e) => { setBrowserForm({ ...browserForm, enabled: e.target.checked }); setDirtyBrowser(true); }}
+              onCheckedChange={(c) => { setBrowserForm({ ...browserForm, enabled: c === true }); setDirtyBrowser(true); }}
             />
             {' '}Enable browser tool
           </label>
@@ -113,16 +113,19 @@ export function BrowserTab({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">Launch Mode</label>
-          <select
-            className="form-select"
-            style={{ maxWidth: 'none' }}
+          <Select
             value={browserForm.launch_mode}
-            onChange={(e) => { setBrowserForm({ ...browserForm, launch_mode: e.target.value as BrowserFormData['launch_mode'] }); setDirtyBrowser(true); }}
+            onValueChange={(val) => { setBrowserForm({ ...browserForm, launch_mode: val as BrowserFormData['launch_mode'] }); setDirtyBrowser(true); }}
           >
-            <option value="auto_launch_headless">Auto Launch (Headless)</option>
-            <option value="auto_launch_visible">Auto Launch (Visible Window)</option>
-            <option value="remote">Remote CDP Endpoint</option>
-          </select>
+            <SelectTrigger>
+              <SelectValue placeholder="Select launch mode" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto_launch_headless">Auto Launch (Headless)</SelectItem>
+              <SelectItem value="auto_launch_visible">Auto Launch (Visible Window)</SelectItem>
+              <SelectItem value="remote">Remote CDP Endpoint</SelectItem>
+            </SelectContent>
+          </Select>
           <span className="pf-hint">
             {browserForm.launch_mode === 'remote'
               ? 'Connect to an already-running Chrome instance via CDP URL. You must start Chrome manually with --remote-debugging-port.'
@@ -162,11 +165,9 @@ export function BrowserTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">
-              <input
-                type="checkbox"
-                className="form-checkbox"
+              <Checkbox
                 checked={browserForm.use_user_profile}
-                onChange={(e) => { setBrowserForm({ ...browserForm, use_user_profile: e.target.checked }); setDirtyBrowser(true); }}
+                onCheckedChange={(c) => { setBrowserForm({ ...browserForm, use_user_profile: c === true }); setDirtyBrowser(true); }}
               />
               {' '}Use system user profile
             </label>
@@ -230,11 +231,9 @@ export function BrowserTab({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">
-            <input
-              type="checkbox"
-              className="form-checkbox"
+            <Checkbox
               checked={browserForm.block_private_networks}
-              onChange={(e) => { setBrowserForm({ ...browserForm, block_private_networks: e.target.checked }); setDirtyBrowser(true); }}
+              onCheckedChange={(c) => { setBrowserForm({ ...browserForm, block_private_networks: c === true }); setDirtyBrowser(true); }}
             />
             {' '}Block private networks (SSRF protection)
           </label>
