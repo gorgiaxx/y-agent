@@ -31,7 +31,7 @@
 .chat-empty-title {
   font-size: 17px;
   font-weight: 400;
-  font-family: 'Instrument Serif', Georgia, serif;
+  font-family: SF Pro Display, SF Pro Icons, Helvetica Neue, Helvetica, Arial, sans-serif;;
   font-style: italic;
   color: var(--text-secondary);
   margin: 0;
