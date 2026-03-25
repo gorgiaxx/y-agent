@@ -97,9 +97,24 @@ export function CodeBlock({
 export function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSProperties>) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const components: any = {
-    code({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: unknown }) {
+    code({ className, children, node, ...props }: { className?: string; children?: React.ReactNode; node?: any; [key: string]: unknown }) {
       const match = /language-(\w+)/.exec(className || '');
       const codeText = String(children).replace(/\n$/, '');
+
+      // Detect fenced code blocks: react-markdown wraps them in <pre><code>.
+      // When no language is specified, className is absent, but the parent
+      // <pre> element still exists. Check for it to avoid falling through
+      // to the inline-code path.
+      const isBlock = match != null
+        || node?.position?.start?.line !== node?.position?.end?.line
+        || (node?.properties?.className != null)
+        || (typeof node?.tagName === 'string'
+            && node?.parent?.tagName === 'pre');
+
+      // Fallback: if none of the node heuristics fired, check whether
+      // the raw text itself spans multiple lines -- this reliably signals
+      // a fenced block even for single-backtick edge cases.
+      const isFencedBlock = isBlock || codeText.includes('\n');
 
       if (match && match[1] === 'mermaid') {
         return <MermaidBlock code={codeText} />;
@@ -108,6 +123,13 @@ export function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSP
       if (match) {
         return (
           <CodeBlock language={match[1]} themeStyle={codeThemeStyle}>{codeText}</CodeBlock>
+        );
+      }
+
+      // Fenced code block without a language specifier
+      if (isFencedBlock) {
+        return (
+          <CodeBlock language="" themeStyle={codeThemeStyle}>{codeText}</CodeBlock>
         );
       }
 
