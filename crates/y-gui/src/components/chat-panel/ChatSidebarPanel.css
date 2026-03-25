@@ -8,6 +8,13 @@
   flex: 1;
   overflow-y: auto;
   padding: var(--space-xs) var(--space-sm);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.session-list * {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* ---- Workspace sections ---- */
