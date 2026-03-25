@@ -1,26 +1,35 @@
 // Custom hook for chat functionality -- per-session streaming state.
 //
 // Architecture (post-refactoring):
-// - Module-level ChatBus singleton handles Tauri event listeners.
-// - Per-session message cache survives session switches.
+// - Module-level ChatBus singleton handles Tauri event listeners (chatBus.ts).
+// - Per-session message cache and lock utilities (chatHelpers.ts).
 // - Operation state machine prevents illegal concurrent operations.
-// - Session lock serialises compound operations (edit, undo, resend).
 // - All compound operations are transactional: backend-first, then UI.
 
 import { useState, useCallback, useEffect, useRef, startTransition } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   Message,
   ChatStarted,
-  ChatCompletePayload,
-  ChatErrorPayload,
-  ChatStartedPayload,
-  ChatCheckpointInfo,
-  ProgressPayload,
   UndoResult,
   RestoreResult,
 } from '../types';
+import {
+  chatBusState,
+  chatBusSubscribers,
+  processedCancelledRuns,
+  type ChatBusSubscriber,
+} from './chatBus';
+import {
+  getCachedMessages,
+  setCachedMessages,
+  mergeSkillsFromCache,
+  withSessionLock,
+  findCheckpointForMessage,
+} from './chatHelpers';
+
+// Re-export ChatBusEvent for consumers that need the union type.
+export type { ChatBusEvent } from './chatBus';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -86,230 +95,6 @@ interface UseChatReturn {
   contextResetPoints: number[];
   /** Add a new context reset point at the current message position. */
   addContextReset: () => void;
-}
-
-// ---------------------------------------------------------------------------
-// Module-level singleton bus (unchanged from original)
-// ---------------------------------------------------------------------------
-
-interface ChatBusState {
-  runToSession: Record<string, string>;
-  streamingSessions: Set<string>;
-  pendingRuns: Set<string>;
-}
-
-type ChatBusSubscriber = (event: ChatBusEvent) => void;
-
-type ChatBusEvent =
-  | { type: 'started'; run_id: string; session_id: string }
-  | { type: 'complete'; payload: ChatCompletePayload }
-  | { type: 'error'; payload: ChatErrorPayload }
-  | { type: 'stream_delta'; run_id: string; session_id: string; content: string }
-  | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string }
-  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; result_preview: string };
-
-let chatBusInitialised = false;
-const chatBusState: ChatBusState = {
-  runToSession: {},
-  streamingSessions: new Set(),
-  pendingRuns: new Set(),
-};
-const chatBusSubscribers = new Set<ChatBusSubscriber>();
-const chatUnlistenFns: UnlistenFn[] = [];
-
-// Track run IDs whose cancel has already been processed to prevent the
-// duplicate `chat:error` event (emitted by both `chat_cancel` and the
-// spawned LLM task) from re-entering the handler.
-const processedCancelledRuns = new Set<string>();
-
-function notifyChatSubscribers(event: ChatBusEvent) {
-  for (const cb of chatBusSubscribers) {
-    cb(event);
-  }
-}
-
-async function initialiseChatBus() {
-  if (chatBusInitialised) return;
-  chatBusInitialised = true;
-
-  const u0 = await listen<ChatStartedPayload>('chat:started', (e) => {
-    const { run_id, session_id } = e.payload;
-    chatBusState.runToSession[run_id] = session_id;
-    chatBusState.pendingRuns.add(run_id);
-    chatBusState.streamingSessions.add(session_id);
-    notifyChatSubscribers({ type: 'started', run_id, session_id });
-  });
-  chatUnlistenFns.push(u0);
-
-  const u1 = await listen<ChatCompletePayload>('chat:complete', (e) => {
-    const { run_id } = e.payload;
-    // Prefer session_id from payload (always available), then fallback to mapping.
-    const session_id = e.payload.session_id || chatBusState.runToSession[run_id];
-    chatBusState.pendingRuns.delete(run_id);
-    if (session_id) chatBusState.streamingSessions.delete(session_id);
-    notifyChatSubscribers({ type: 'complete', payload: e.payload });
-  });
-  chatUnlistenFns.push(u1);
-
-  const u2 = await listen<ChatErrorPayload>('chat:error', (e) => {
-    const { run_id } = e.payload;
-    // Prefer session_id from payload (may be empty for cancels), then fallback to mapping.
-    const session_id = e.payload.session_id || chatBusState.runToSession[run_id];
-    chatBusState.pendingRuns.delete(run_id);
-    if (session_id) chatBusState.streamingSessions.delete(session_id);
-    notifyChatSubscribers({ type: 'error', payload: e.payload });
-  });
-  chatUnlistenFns.push(u2);
-
-  const u3 = await listen<ProgressPayload>('chat:progress', (e) => {
-    const { run_id, event } = e.payload;
-    if (event.type === 'stream_delta') {
-      const session_id = chatBusState.runToSession[run_id];
-      if (session_id) {
-        notifyChatSubscribers({
-          type: 'stream_delta',
-          run_id,
-          session_id,
-          content: event.content,
-        });
-      }
-    } else if (event.type === 'stream_reasoning_delta') {
-      const session_id = chatBusState.runToSession[run_id];
-      if (session_id) {
-        notifyChatSubscribers({
-          type: 'stream_reasoning_delta',
-          run_id,
-          session_id,
-          content: event.content,
-        });
-      }
-    } else if (event.type === 'tool_result') {
-      const session_id = chatBusState.runToSession[run_id];
-      if (session_id) {
-        notifyChatSubscribers({
-          type: 'tool_result',
-          session_id,
-          name: event.name,
-          success: event.success,
-          duration_ms: event.duration_ms,
-          result_preview: event.result_preview,
-        });
-      }
-    }
-  });
-  chatUnlistenFns.push(u3);
-}
-
-// Kick off immediately so events are never missed due to mount timing.
-initialiseChatBus().catch(console.error);
-
-// ---------------------------------------------------------------------------
-// Per-session message cache helpers
-// ---------------------------------------------------------------------------
-
-function getCachedMessages(
-  cache: Map<string, Message[]>,
-  sessionId: string,
-): Message[] {
-  return cache.get(sessionId) ?? [];
-}
-
-function setCachedMessages(
-  cache: Map<string, Message[]>,
-  sessionId: string,
-  updater: Message[] | ((prev: Message[]) => Message[]),
-): Message[] {
-  const prev = cache.get(sessionId) ?? [];
-  const next = typeof updater === 'function' ? updater(prev) : updater;
-  cache.set(sessionId, next);
-  return next;
-}
-
-/**
- * Merge skill tag metadata from cached (optimistic) user messages into
- * backend-loaded messages. The backend doesn't persist `skills`, so we
- * transfer them from the cache by matching on role + content.
- */
-function mergeSkillsFromCache(
-  backendMsgs: Message[],
-  cache: Map<string, Message[]>,
-  sessionId: string,
-): Message[] {
-  const cached = cache.get(sessionId);
-  if (!cached || cached.length === 0) return backendMsgs;
-
-  // Build a lookup: content → skills (only for user messages with skills).
-  const skillsByContent = new Map<string, string[]>();
-  for (const m of cached) {
-    if (m.role === 'user' && m.skills && m.skills.length > 0) {
-      skillsByContent.set(m.content, m.skills);
-    }
-  }
-  if (skillsByContent.size === 0) return backendMsgs;
-
-  return backendMsgs.map((m) => {
-    if (m.role === 'user' && !m.skills) {
-      const skills = skillsByContent.get(m.content);
-      if (skills) return { ...m, skills };
-    }
-    return m;
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Session lock -- serialises compound operations per session
-// ---------------------------------------------------------------------------
-
-const sessionLocks = new Map<string, Promise<void>>();
-
-async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-  const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
-  let resolve: () => void;
-  const next = new Promise<void>((r) => { resolve = r; });
-  sessionLocks.set(sessionId, next);
-
-  // Wait for previous operation to complete.
-  await prev;
-
-  try {
-    return await fn();
-  } finally {
-    resolve!();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Checkpoint resolution helpers
-// ---------------------------------------------------------------------------
-
-/** Find the checkpoint for a specific user message using the atomic backend
- *  command. Falls back to null if the message is not found or no checkpoint
- *  matches.
- */
-async function findCheckpointForMessage(
-  sessionId: string,
-  messageId: string,
-  cache?: Map<string, Message[]>,
-): Promise<ChatCheckpointInfo | null> {
-  // Resolve content from cache so the backend can do content-based fallback.
-  let content = '';
-  if (cache) {
-    const cachedMessages = cache.get(sessionId) ?? [];
-    const cachedMsg = cachedMessages.find((m) => m.id === messageId);
-    if (cachedMsg) {
-      content = cachedMsg.content;
-    }
-  }
-
-  try {
-    return await invoke<ChatCheckpointInfo | null>(
-      'chat_find_checkpoint_for_resend',
-      { sessionId, userMessageContent: content, messageId },
-    );
-  } catch (e) {
-    console.warn('[chat] findCheckpointForMessage: backend lookup failed:', e);
-    return null;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -550,7 +335,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                   role: 'assistant' as const,
                   content: payload.content,
                   timestamp: new Date().toISOString(),
-                  tool_calls: payload.tool_calls.map((tc) => ({
+                  tool_calls: payload.tool_calls.map((tc: { name: string }) => ({
                     id: tc.name,
                     name: tc.name,
                     arguments: '',

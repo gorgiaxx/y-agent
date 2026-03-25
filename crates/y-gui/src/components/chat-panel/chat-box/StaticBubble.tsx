@@ -14,25 +14,22 @@
  *     -> build action segments from metadata.tool_results
  *     Note: message.tool_calls is EMPTY for persisted assistant messages because
  *     the backend builds the final message with `tool_calls: vec![]`.
+ *
+ * Shared logic (theme, parsing, segmentation) is delegated to useAssistantBubble.
+ * The ThinkContentBlock component handles the repeated think-tag extraction pattern.
  */
 
 import { useMemo } from 'react';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
-import { ThinkingCard } from './ThinkingCard';
 import {
-  makeMarkdownComponents,
-  MarkdownSegment,
   AssistantMessageShell,
-  extractThinkTags,
 } from './MessageShared';
-import { processStreamContent, type ContentSegment } from '../../../hooks/useStreamContent';
-import { segmentActions } from '../../../hooks/useActionSegment';
+import { type ContentSegment } from '../../../hooks/useStreamContent';
 import { ActionCard } from './ActionCard';
-import { useResolvedTheme } from '../../../hooks/useTheme';
+import { useAssistantBubble } from './useAssistantBubble';
+import { ThinkContentBlock } from './ThinkContentBlock';
 
 
 export interface StaticBubbleProps {
@@ -41,29 +38,7 @@ export interface StaticBubbleProps {
 
 
 export function StaticBubble({ message }: StaticBubbleProps) {
-  // Resolve theme for syntax highlighting.
-  const resolvedTheme = useResolvedTheme();
-  const codeThemeStyle = resolvedTheme === 'light' ? oneLight : oneDark;
-  const markdownComponents = useMemo(() => makeMarkdownComponents(codeThemeStyle), [codeThemeStyle]);
-
-  // Derive effective content.
-  // When metadata.reasoning_content exists (API-level reasoning like Claude),
-  // the content field does not contain <think> tags.
-  // When it does not exist, content may start with <think>...</think> and
-  // each rendering path below handles extraction + ThinkingCard rendering
-  // in the correct visual position.
   const effectiveContent = message.content;
-
-  // Process content to extract text segments and tool call blocks.
-  // Applied to completed messages so that accumulated multi-iteration content
-  // with tool_call XML renders properly.
-  const streamResult = useMemo(() => {
-    if (!effectiveContent.includes('<tool_call') && !effectiveContent.includes('<tool_cal')
-        && !effectiveContent.includes('<tool_result')) {
-      return null;
-    }
-    return processStreamContent(effectiveContent);
-  }, [effectiveContent]);
 
   // Parse tool results from persisted metadata (reusable for both paths).
   const metaToolResults = useMemo((): ToolResultRecord[] => {
@@ -78,33 +53,15 @@ export function StaticBubble({ message }: StaticBubbleProps) {
     }));
   }, [message.metadata]);
 
-  // Build the tool results lookup from persisted metadata (XML-based path).
-  const toolResultsMap = useMemo(() => {
-    if (!streamResult) return new Map<number, ToolResultRecord>();
-    if (metaToolResults.length === 0) return new Map<number, ToolResultRecord>();
+  // Shared bubble logic: theme, parsing, segmentation, toolResultsMap.
+  const {
+    markdownComponents,
+    streamResult,
+    toolResultsMap,
+    actionResult,
+  } = useAssistantBubble(effectiveContent, metaToolResults);
 
-    const map = new Map<number, ToolResultRecord>();
-    const consumed = new Set<number>();
-    streamResult.segments.forEach((seg, segIdx) => {
-      if (seg.type !== 'tool_call') return;
-      for (let ri = 0; ri < metaToolResults.length; ri++) {
-        if (consumed.has(ri)) continue;
-        if (metaToolResults[ri].name === seg.toolCall.name) {
-          map.set(segIdx, metaToolResults[ri]);
-          consumed.add(ri);
-          break;
-        }
-      }
-    });
-    return map;
-  }, [streamResult, metaToolResults]);
-
-  // Segment into actions vs conclusion (XML-based path).
-  const actionResult = useMemo(() => {
-    if (!streamResult) return null;
-    return segmentActions(streamResult.segments, false);
-  }, [streamResult]);
-
+  // Build synthetic action segments from metadata.tool_results (history path).
   const historyActionSegments = useMemo((): ContentSegment[] | null => {
     // Only use this path when XML-based parsing yielded nothing.
     if (streamResult) return null;
@@ -112,8 +69,6 @@ export function StaticBubble({ message }: StaticBubbleProps) {
     if (metaToolResults.length === 0) return null;
 
     const segments: ContentSegment[] = [];
-
-    // Build synthetic tool_call segments from metadata.tool_results.
     metaToolResults.forEach((tr) => {
       segments.push({
         type: 'tool_call' as const,
@@ -124,14 +79,12 @@ export function StaticBubble({ message }: StaticBubbleProps) {
         },
       });
     });
-
     return segments;
   }, [streamResult, metaToolResults]);
 
   // Build tool results map for the history path (index by position).
   const historyToolResultsMap = useMemo(() => {
     if (!historyActionSegments) return new Map<number, ToolResultRecord>();
-
     const map = new Map<number, ToolResultRecord>();
     metaToolResults.forEach((tr, idx) => {
       map.set(idx, tr);
@@ -148,24 +101,15 @@ export function StaticBubble({ message }: StaticBubbleProps) {
       {hasXmlActions ? (
         /* Path 1: XML-based action segment (just-completed or accumulated content) */
         <>
-          {/* Preamble: text segments before the first tool call (e.g. initial reasoning) */}
+          {/* Preamble: text segments before the first tool call */}
           {actionResult!.preamble.map((seg, idx) => {
             if (seg.type !== 'text') return null;
-            const think = extractThinkTags(seg.text);
             return (
-              <div key={`preamble-${idx}`}>
-                {think.thinkContent && (
-                  <ThinkingCard
-                    content={think.thinkContent}
-                    isStreaming={false}
-                  />
-                )}
-                {think.strippedContent.trim() && (
-                  <div className="message-content markdown-body">
-                    <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
-                  </div>
-                )}
-              </div>
+              <ThinkContentBlock
+                key={`preamble-${idx}`}
+                content={seg.text}
+                markdownComponents={markdownComponents}
+              />
             );
           })}
           <ActionCard
@@ -178,27 +122,12 @@ export function StaticBubble({ message }: StaticBubbleProps) {
             segmentIndexOffset={actionResult!.preamble.length}
           />
           {/* Conclusion: trailing text from final LLM iteration */}
-          {actionResult!.conclusion && actionResult!.conclusion.type === 'text' && (() => {
-            const think = extractThinkTags(actionResult!.conclusion!.text);
-            return (
-              <>
-                {think.thinkContent && (
-                  <ThinkingCard
-                    content={think.thinkContent}
-                    isStreaming={false}
-                  />
-                )}
-                {think.strippedContent.trim() && (
-                  <div className="message-content markdown-body">
-                    <MarkdownSegment
-                      text={think.strippedContent}
-                      components={markdownComponents}
-                    />
-                  </div>
-                )}
-              </>
-            );
-          })()}
+          {actionResult!.conclusion && actionResult!.conclusion.type === 'text' && (
+            <ThinkContentBlock
+              content={actionResult!.conclusion.text}
+              markdownComponents={markdownComponents}
+            />
+          )}
         </>
       ) : hasHistoryActions ? (
         /* Path 2: Backend history -- action segment from metadata.tool_results */
@@ -212,45 +141,25 @@ export function StaticBubble({ message }: StaticBubbleProps) {
             markdownComponents={markdownComponents}
           />
           {/* Message content is the conclusion (final LLM response) */}
-          {effectiveContent.trim() && (() => {
-            const think = extractThinkTags(effectiveContent);
-            return (
-              <>
-                {think.thinkContent && (
-                  <ThinkingCard
-                    content={think.thinkContent}
-                    isStreaming={false}
-                  />
-                )}
-                {think.strippedContent.trim() && (
-                  <div className="message-content markdown-body">
-                    <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
-                  </div>
-                )}
-              </>
-            );
-          })()}
+          {effectiveContent.trim() && (
+            <ThinkContentBlock
+              content={effectiveContent}
+              markdownComponents={markdownComponents}
+            />
+          )}
         </>
       ) : streamResult ? (
         /* Fallback: XML segments exist but no action grouping needed */
         <div className="message-content">
           {streamResult.segments.map((seg, idx) => {
             if (seg.type === 'text') {
-              const think = extractThinkTags(seg.text);
               return (
-                <div key={`text-${idx}`}>
-                  {think.thinkContent && (
-                    <ThinkingCard
-                      content={think.thinkContent}
-                      isStreaming={false}
-                    />
-                  )}
-                  {think.strippedContent.trim() && (
-                    <div className="markdown-body">
-                      <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
-                    </div>
-                  )}
-                </div>
+                <ThinkContentBlock
+                  key={`text-${idx}`}
+                  content={seg.text}
+                  markdownComponents={markdownComponents}
+                  className="markdown-body"
+                />
               );
             }
             if (seg.type === 'tool_call') {
@@ -275,24 +184,12 @@ export function StaticBubble({ message }: StaticBubbleProps) {
             return null;
           })}
         </div>
-      ) : (() => {
-        const think = extractThinkTags(effectiveContent);
-        return (
-          <>
-            {think.thinkContent && (
-              <ThinkingCard
-                content={think.thinkContent}
-                isStreaming={false}
-              />
-            )}
-            {think.strippedContent.trim() && (
-              <div className="message-content markdown-body">
-                <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
-              </div>
-            )}
-          </>
-        );
-      })()}
+      ) : (
+        <ThinkContentBlock
+          content={effectiveContent}
+          markdownComponents={markdownComponents}
+        />
+      )}
     </AssistantMessageShell>
   );
 }
