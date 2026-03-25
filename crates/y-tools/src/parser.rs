@@ -57,7 +57,8 @@ pub fn parse_tool_calls(raw: &str) -> ParseResult {
                 text.push_str(&raw[cursor..tag_start]);
 
                 // Extract and parse the JSON content.
-                let inner = raw[content_start..content_end].trim();
+                let inner_raw = raw[content_start..content_end].trim();
+                let inner = &sanitize_json_newlines(inner_raw);
 
                 if inner.is_empty() {
                     warnings.push("empty <tool_call> block skipped".into());
@@ -75,7 +76,9 @@ pub fn parse_tool_calls(raw: &str) -> ParseResult {
                         tool_calls.push(tc);
                     } else if let Ok(tc) = try_parse_function_format(inner) {
                         tool_calls.push(tc);
-                    } else if let Ok(json) = serde_json::from_str::<serde_json::Value>(inner) {
+                    } else if let Ok(json) =
+                        serde_json::from_str::<serde_json::Value>(inner.as_str())
+                    {
                         match extract_tool_call(&json) {
                             Ok(tc) => tool_calls.push(tc),
                             Err(msg) => {
@@ -295,6 +298,45 @@ fn try_parse_function_format(inner: &str) -> Result<ParsedToolCall, String> {
         name: name.to_string(),
         arguments: serde_json::Value::Object(args),
     })
+}
+
+/// Sanitize raw newline characters inside JSON string literals.
+///
+/// LLMs sometimes produce JSON arguments with unescaped newlines inside string
+/// values (e.g. multi-line git commit messages). JSON requires newlines to be
+/// escaped as `\n` within strings, so `serde_json::from_str` rejects them.
+///
+/// This function walks through the input and, whenever it is inside a
+/// JSON string literal (between unescaped double quotes), replaces raw `\n`
+/// and `\r` with their JSON escape sequences `\\n` and `\\r`.
+fn sanitize_json_newlines(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut prev_backslash = false;
+
+    for ch in input.chars() {
+        if in_string {
+            match ch {
+                '"' if !prev_backslash => {
+                    in_string = false;
+                    result.push(ch);
+                }
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                _ => result.push(ch),
+            }
+            prev_backslash = ch == '\\' && !prev_backslash;
+        } else {
+            if ch == '"' {
+                in_string = true;
+            }
+            result.push(ch);
+            prev_backslash = false;
+        }
+    }
+
+    result
 }
 
 /// Extract the text content of a simple XML tag from a string.
@@ -779,5 +821,77 @@ not valid json or xml
         assert_eq!(result.tool_calls[1].name, "browser");
         assert_eq!(result.tool_calls[2].name, "shell_exec");
         assert!(result.warnings.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Multiline JSON / raw newline tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_xml_multiline_git_commit_message() {
+        // Reproduces: LLM returns a multiline git commit message inside
+        // <arguments> JSON, with raw newline characters inside the string.
+        let input = "<tool_call>\n<name>shell_exec</name>\n<arguments>{\"command\": \"git commit -m \\\"feat(gui): copy button\n\n- Add copyContent prop\n- Update ActionBar\\\"\"}</arguments>\n</tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(
+            result.tool_calls.len(),
+            1,
+            "warnings: {:?}",
+            result.warnings
+        );
+        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        let cmd = result.tool_calls[0].arguments["command"]
+            .as_str()
+            .expect("command should be a string");
+        assert!(cmd.contains("feat(gui): copy button"));
+        assert!(cmd.contains("Add copyContent prop"));
+    }
+
+    #[test]
+    fn test_parse_json_multiline_git_commit_message() {
+        // Same scenario but using JSON format inside <tool_call>.
+        let input = "<tool_call>\n{\"name\": \"shell_exec\", \"arguments\": {\"command\": \"git commit -m \\\"fix: improve handling\n\n- Track composition end time\n- Replace keyCode check\\\"\"}}\n</tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(
+            result.tool_calls.len(),
+            1,
+            "warnings: {:?}",
+            result.warnings
+        );
+        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        let cmd = result.tool_calls[0].arguments["command"]
+            .as_str()
+            .expect("command should be a string");
+        assert!(cmd.contains("fix: improve handling"));
+    }
+
+    #[test]
+    fn test_sanitize_json_newlines_basic() {
+        let input = r#"{"key": "line1
+line2"}"#;
+        let sanitized = sanitize_json_newlines(input);
+        assert!(serde_json::from_str::<serde_json::Value>(&sanitized).is_ok());
+        let val: serde_json::Value = serde_json::from_str(&sanitized).unwrap();
+        assert_eq!(val["key"].as_str().unwrap(), "line1\nline2");
+    }
+
+    #[test]
+    fn test_sanitize_json_newlines_preserves_escaped() {
+        // Already-escaped \n should remain as-is.
+        let input = r#"{"key": "line1\nline2"}"#;
+        let sanitized = sanitize_json_newlines(input);
+        assert_eq!(sanitized, input);
+        let val: serde_json::Value = serde_json::from_str(&sanitized).unwrap();
+        assert_eq!(val["key"].as_str().unwrap(), "line1\nline2");
+    }
+
+    #[test]
+    fn test_sanitize_json_newlines_outside_strings_preserved() {
+        // Newlines outside JSON strings (structural whitespace) should be kept.
+        let input = "{\n  \"key\": \"value\"\n}";
+        let sanitized = sanitize_json_newlines(input);
+        assert_eq!(sanitized, input);
     }
 }
