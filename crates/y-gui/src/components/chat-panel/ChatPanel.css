@@ -8,8 +8,7 @@
 /* ---- Messages list ---- */
 .chat-messages {
   flex: 1;
-  overflow-y: auto;
-  padding: var(--space-md) 0;
+  overflow: hidden;
 }
 
 /* ---- Empty state ---- */

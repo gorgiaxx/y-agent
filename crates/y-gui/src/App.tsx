@@ -560,43 +560,53 @@ function App() {
     <ThemeContext.Provider value={themeCtx}>
     <div className="app">
       <Sidebar
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        streamingSessionIds={streamingSessionIds}
-        workspaces={workspaces}
-        sessionWorkspaceMap={sessionWorkspaceMap}
-        activeView={activeView}
-        skills={skills}
-        activeSkillName={activeSkillName}
-        importStatus={importStatus}
-        importError={importError}
-        onSelectView={setActiveView}
-        onSelectSession={(id) => { setActiveView('chat'); selectSession(id); }}
-        onSelectSkill={(name) => { setActiveView('skills'); setActiveSkillName(name); }}
-        onImportClick={() => setImportDialogOpen(true)}
-        onClearImportStatus={clearImportStatus}
-        onNewChat={() => { setActiveView('chat'); handleNewChat(); }}
-        onNewChatInWorkspace={(wsId) => { setActiveView('chat'); handleNewChatInWorkspace(wsId); }}
-        onDeleteSession={handleDeleteSession}
-        onCreateWorkspace={handleCreateWorkspace}
-        onUpdateWorkspace={updateWorkspace}
-        onDeleteWorkspace={deleteWorkspace}
-        onAssignSession={assignSession}
-        onUnassignSession={unassignSession}
-        knowledgeCollections={kbCollections}
-        selectedKbCollection={selectedKbCollection}
-        onSelectKbCollection={(name) => { setActiveView('knowledge'); setSelectedKbCollection(name); }}
-        onCreateKbCollection={createKbCollection}
-        kbIngestStatus={kbIngestStatus}
-        kbBatchProgress={kbBatchProgress}
-        kbIngestError={kbIngestError}
-        onClearKbIngestStatus={clearKbIngestStatus}
-        onCancelKbIngest={cancelKbIngest}
-        agents={agents}
-        activeAgentId={activeAgentId}
-        onSelectAgent={(id) => { setActiveView('agents'); setActiveAgentId(id); }}
-        activeSettingsTab={activeSettingsTab}
-        onSelectSettingsTab={(tab) => { setActiveView('settings'); setActiveSettingsTab(tab as SettingsTab); }}
+        chat={{
+          sessions,
+          activeSessionId,
+          streamingSessionIds,
+          workspaces,
+          sessionWorkspaceMap,
+          onSelectSession: (id) => { setActiveView('chat'); selectSession(id); },
+          onNewChat: () => { setActiveView('chat'); handleNewChat(); },
+          onNewChatInWorkspace: (wsId) => { setActiveView('chat'); handleNewChatInWorkspace(wsId); },
+          onDeleteSession: handleDeleteSession,
+          onCreateWorkspace: handleCreateWorkspace,
+          onUpdateWorkspace: updateWorkspace,
+          onDeleteWorkspace: deleteWorkspace,
+          onAssignSession: assignSession,
+          onUnassignSession: unassignSession,
+        }}
+        skills={{
+          skills,
+          activeSkillName,
+          importStatus,
+          importError,
+          onSelectSkill: (name) => { setActiveView('skills'); setActiveSkillName(name); },
+          onImportClick: () => setImportDialogOpen(true),
+          onClearImportStatus: clearImportStatus,
+        }}
+        knowledge={{
+          collections: kbCollections,
+          selectedCollection: selectedKbCollection,
+          onSelectCollection: (name) => { setActiveView('knowledge'); setSelectedKbCollection(name); },
+          onCreateCollection: createKbCollection,
+          ingestStatus: kbIngestStatus,
+          batchProgress: kbBatchProgress,
+          ingestError: kbIngestError,
+          onClearIngestStatus: clearKbIngestStatus,
+          onCancelIngest: cancelKbIngest,
+        }}
+        agents={{
+          agents,
+          activeAgentId,
+          onSelectAgent: (id) => { setActiveView('agents'); setActiveAgentId(id); },
+        }}
+        nav={{
+          activeView,
+          onSelectView: setActiveView,
+          activeSettingsTab,
+          onSelectSettingsTab: (tab) => { setActiveView('settings'); setActiveSettingsTab(tab as SettingsTab); },
+        }}
       />
 
       <main className="main-panel">

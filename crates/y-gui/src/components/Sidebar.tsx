@@ -19,33 +19,18 @@ import './Sidebar.css';
 
 export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents' | 'settings';
 
-interface SidebarProps {
+// ---------------------------------------------------------------------------
+// Grouped prop interfaces -- reduces 38 flat props to 5 domain groups
+// ---------------------------------------------------------------------------
+
+/** Chat/Session domain props. */
+export interface ChatSidebarProps {
   sessions: SessionInfo[];
   activeSessionId: string | null;
   streamingSessionIds: Set<string>;
   workspaces: WorkspaceInfo[];
   sessionWorkspaceMap: Record<string, string>;
-  activeView: ViewType;
-  skills: SkillInfo[];
-  activeSkillName: string | null;
-  importStatus: ImportStatus;
-  importError: string | null;
-  // Knowledge props
-  knowledgeCollections: KnowledgeCollectionInfo[];
-  selectedKbCollection: string | null;
-  onSelectKbCollection: (name: string) => void;
-  onCreateKbCollection: (name: string, description: string) => void;
-  // Knowledge ingest status (shown below collection list)
-  kbIngestStatus: KbIngestStatus;
-  kbBatchProgress: KbBatchProgress | null;
-  kbIngestError: string | null;
-  onClearKbIngestStatus: () => void;
-  onCancelKbIngest: () => void;
-  onSelectView: (view: ViewType) => void;
   onSelectSession: (id: string) => void;
-  onSelectSkill: (name: string) => void;
-  onImportClick: () => void;
-  onClearImportStatus: () => void;
   onNewChat: () => void;
   onNewChatInWorkspace: (workspaceId: string) => void;
   onDeleteSession: (id: string) => void;
@@ -54,64 +39,71 @@ interface SidebarProps {
   onDeleteWorkspace: (id: string) => void;
   onAssignSession: (workspaceId: string, sessionId: string) => void;
   onUnassignSession: (sessionId: string) => void;
-  // Agent props
+}
+
+/** Skills domain props. */
+export interface SkillsSidebarPropsGroup {
+  skills: SkillInfo[];
+  activeSkillName: string | null;
+  importStatus: ImportStatus;
+  importError: string | null;
+  onSelectSkill: (name: string) => void;
+  onImportClick: () => void;
+  onClearImportStatus: () => void;
+}
+
+/** Knowledge domain props. */
+export interface KnowledgeSidebarPropsGroup {
+  collections: KnowledgeCollectionInfo[];
+  selectedCollection: string | null;
+  onSelectCollection: (name: string) => void;
+  onCreateCollection: (name: string, description: string) => void;
+  ingestStatus: KbIngestStatus;
+  batchProgress: KbBatchProgress | null;
+  ingestError: string | null;
+  onClearIngestStatus: () => void;
+  onCancelIngest: () => void;
+}
+
+/** Agents domain props. */
+export interface AgentsSidebarPropsGroup {
   agents: { id: string; name: string; description: string; mode: string; trust_tier: string; is_overridden: boolean }[];
   activeAgentId: string | null;
   onSelectAgent: (id: string) => void;
+}
+
+/** Navigation / settings props. */
+export interface NavSidebarPropsGroup {
+  activeView: ViewType;
+  onSelectView: (view: ViewType) => void;
   activeSettingsTab: string | null;
   onSelectSettingsTab: (tab: string) => void;
 }
 
-export function Sidebar({
-  sessions,
-  activeSessionId,
-  streamingSessionIds,
-  workspaces,
-  sessionWorkspaceMap,
-  activeView,
-  skills,
-  activeSkillName,
-  knowledgeCollections,
-  selectedKbCollection,
-  onSelectKbCollection,
-  onCreateKbCollection,
-  importStatus,
-  importError,
-  kbIngestStatus,
-  kbBatchProgress,
-  kbIngestError,
-  onClearKbIngestStatus,
-  onCancelKbIngest,
-  onSelectView,
-  onSelectSession,
-  onSelectSkill,
-  onImportClick,
-  onClearImportStatus,
-  onNewChat,
-  onNewChatInWorkspace,
-  onDeleteSession,
-  onCreateWorkspace,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
-  onAssignSession,
-  onUnassignSession,
-  agents,
-  activeAgentId,
-  onSelectAgent,
-  activeSettingsTab,
-  onSelectSettingsTab,
-}: SidebarProps) {
+// ---------------------------------------------------------------------------
+// Sidebar component
+// ---------------------------------------------------------------------------
+
+interface SidebarProps {
+  chat: ChatSidebarProps;
+  skills: SkillsSidebarPropsGroup;
+  knowledge: KnowledgeSidebarPropsGroup;
+  agents: AgentsSidebarPropsGroup;
+  nav: NavSidebarPropsGroup;
+}
+
+export function Sidebar({ chat, skills, knowledge, agents, nav }: SidebarProps) {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
   // Handle icon bar clicks: toggle panel collapse when clicking the active view,
   // switch view and expand panel when clicking a different view.
   const handleIconClick = (view: ViewType) => {
-    if (view === activeView && !panelCollapsed) {
+    if (view === nav.activeView && !panelCollapsed) {
       // Same view is active and panel is open -- collapse
       setPanelCollapsed(true);
     } else {
       // Different view or panel is collapsed -- switch and expand
-      onSelectView(view);
+      nav.onSelectView(view);
       setPanelCollapsed(false);
     }
   };
@@ -121,35 +113,35 @@ export function Sidebar({
       {/* VS Code-style vertical icon bar */}
       <div className="sidebar-icon-bar">
         <button
-          className={`sidebar-nav-btn ${activeView === 'chat' && !panelCollapsed ? 'active' : ''}`}
+          className={`sidebar-nav-btn ${nav.activeView === 'chat' && !panelCollapsed ? 'active' : ''}`}
           onClick={() => handleIconClick('chat')}
           title="Sessions"
         >
           <MessageSquare size={20} />
         </button>
         <button
-          className={`sidebar-nav-btn ${activeView === 'automation' && !panelCollapsed ? 'active' : ''}`}
+          className={`sidebar-nav-btn ${nav.activeView === 'automation' && !panelCollapsed ? 'active' : ''}`}
           onClick={() => handleIconClick('automation')}
           title="Automation"
         >
           <Zap size={20} />
         </button>
         <button
-          className={`sidebar-nav-btn ${activeView === 'skills' && !panelCollapsed ? 'active' : ''}`}
+          className={`sidebar-nav-btn ${nav.activeView === 'skills' && !panelCollapsed ? 'active' : ''}`}
           onClick={() => handleIconClick('skills')}
           title="Skills"
         >
           <Puzzle size={20} />
         </button>
         <button
-          className={`sidebar-nav-btn ${activeView === 'knowledge' && !panelCollapsed ? 'active' : ''}`}
+          className={`sidebar-nav-btn ${nav.activeView === 'knowledge' && !panelCollapsed ? 'active' : ''}`}
           onClick={() => handleIconClick('knowledge')}
           title="Knowledge"
         >
           <BookOpen size={20} />
         </button>
         <button
-          className={`sidebar-nav-btn ${activeView === 'agents' && !panelCollapsed ? 'active' : ''}`}
+          className={`sidebar-nav-btn ${nav.activeView === 'agents' && !panelCollapsed ? 'active' : ''}`}
           onClick={() => handleIconClick('agents')}
           title="Agents"
         >
@@ -157,7 +149,7 @@ export function Sidebar({
         </button>
         <div className="sidebar-icon-spacer" />
         <button
-          className={`sidebar-nav-btn ${activeView === 'settings' && !panelCollapsed ? 'active' : ''}`}
+          className={`sidebar-nav-btn ${nav.activeView === 'settings' && !panelCollapsed ? 'active' : ''}`}
           onClick={() => handleIconClick('settings')}
           title="Settings"
           id="btn-settings"
@@ -170,27 +162,27 @@ export function Sidebar({
       <div className={`sidebar-panel ${panelCollapsed ? 'sidebar-panel--collapsed' : ''}`}>
 
       {/* Sessions content (only when chat view is active) */}
-      {activeView === 'chat' && (
+      {nav.activeView === 'chat' && (
         <ChatSidebarPanel
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          streamingSessionIds={streamingSessionIds}
-          workspaces={workspaces}
-          sessionWorkspaceMap={sessionWorkspaceMap}
-          onSelectSession={onSelectSession}
-          onNewChat={onNewChat}
-          onNewChatInWorkspace={onNewChatInWorkspace}
-          onDeleteSession={onDeleteSession}
-          onCreateWorkspace={onCreateWorkspace}
-          onUpdateWorkspace={onUpdateWorkspace}
-          onDeleteWorkspace={onDeleteWorkspace}
-          onAssignSession={onAssignSession}
-          onUnassignSession={onUnassignSession}
+          sessions={chat.sessions}
+          activeSessionId={chat.activeSessionId}
+          streamingSessionIds={chat.streamingSessionIds}
+          workspaces={chat.workspaces}
+          sessionWorkspaceMap={chat.sessionWorkspaceMap}
+          onSelectSession={chat.onSelectSession}
+          onNewChat={chat.onNewChat}
+          onNewChatInWorkspace={chat.onNewChatInWorkspace}
+          onDeleteSession={chat.onDeleteSession}
+          onCreateWorkspace={chat.onCreateWorkspace}
+          onUpdateWorkspace={chat.onUpdateWorkspace}
+          onDeleteWorkspace={chat.onDeleteWorkspace}
+          onAssignSession={chat.onAssignSession}
+          onUnassignSession={chat.onUnassignSession}
         />
       )}
 
       {/* Automation placeholder */}
-      {activeView === 'automation' && (
+      {nav.activeView === 'automation' && (
         <div className="sidebar-placeholder">
           <Zap size={32} className="sidebar-placeholder-icon" />
           <p className="sidebar-placeholder-text">Coming soon</p>
@@ -198,47 +190,47 @@ export function Sidebar({
       )}
 
       {/* Agents view -- agent list */}
-      {activeView === 'agents' && (
+      {nav.activeView === 'agents' && (
         <AgentsSidebarPanel
-          agents={agents}
-          activeAgentId={activeAgentId}
-          onSelectAgent={onSelectAgent}
+          agents={agents.agents}
+          activeAgentId={agents.activeAgentId}
+          onSelectAgent={agents.onSelectAgent}
         />
       )}
 
       {/* Settings view -- category list */}
-      {activeView === 'settings' && (
+      {nav.activeView === 'settings' && (
         <SettingsSidebarNav
-          activeTab={activeSettingsTab}
-          onSelectTab={onSelectSettingsTab}
+          activeTab={nav.activeSettingsTab}
+          onSelectTab={nav.onSelectSettingsTab}
         />
       )}
 
       {/* Skills view -- skill list */}
-      {activeView === 'skills' && (
+      {nav.activeView === 'skills' && (
         <SkillsSidebarPanel
-          skills={skills}
-          activeSkillName={activeSkillName}
-          importStatus={importStatus}
-          importError={importError}
-          onSelectSkill={onSelectSkill}
-          onImportClick={onImportClick}
-          onClearImportStatus={onClearImportStatus}
+          skills={skills.skills}
+          activeSkillName={skills.activeSkillName}
+          importStatus={skills.importStatus}
+          importError={skills.importError}
+          onSelectSkill={skills.onSelectSkill}
+          onImportClick={skills.onImportClick}
+          onClearImportStatus={skills.onClearImportStatus}
         />
       )}
 
       {/* Knowledge view -- collection list */}
-      {activeView === 'knowledge' && (
+      {nav.activeView === 'knowledge' && (
         <KnowledgeSidebarPanel
-          collections={knowledgeCollections}
-          selectedCollection={selectedKbCollection}
-          onSelectCollection={onSelectKbCollection}
-          onCreateCollection={onCreateKbCollection}
-          kbIngestStatus={kbIngestStatus}
-          kbBatchProgress={kbBatchProgress}
-          kbIngestError={kbIngestError}
-          onClearKbIngestStatus={onClearKbIngestStatus}
-          onCancelKbIngest={onCancelKbIngest}
+          collections={knowledge.collections}
+          selectedCollection={knowledge.selectedCollection}
+          onSelectCollection={knowledge.onSelectCollection}
+          onCreateCollection={knowledge.onCreateCollection}
+          kbIngestStatus={knowledge.ingestStatus}
+          kbBatchProgress={knowledge.batchProgress}
+          kbIngestError={knowledge.ingestError}
+          onClearKbIngestStatus={knowledge.onClearIngestStatus}
+          onCancelKbIngest={knowledge.onCancelIngest}
         />
       )}
 
