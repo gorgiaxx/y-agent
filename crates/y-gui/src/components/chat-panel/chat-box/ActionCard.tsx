@@ -117,10 +117,12 @@ export function ActionCard({
                 />
               )}
               {strippedContent.trim() && (
-                <MarkdownSegment
-                  text={strippedContent}
-                  components={markdownComponents}
-                />
+                <div className="markdown-body">
+                  <MarkdownSegment
+                    text={strippedContent}
+                    components={markdownComponents}
+                  />
+                </div>
               )}
             </div>
           );
