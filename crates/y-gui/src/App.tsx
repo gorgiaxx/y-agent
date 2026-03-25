@@ -255,14 +255,21 @@ function App() {
           contextWindow: meta.context_window,
           contextTokensUsed: meta.context_tokens_used,
         });
+        if (meta.provider_id) {
+          setSelectedProviderId(meta.provider_id);
+        }
       } else {
         setStatusBarMeta({});
+        setSelectedProviderId('auto');
       }
     });
   }, []);
 
+  const fallbackSyncSessionIdRef = useRef<string | null>(null);
+
   // On session switch: restore from backend-cached metadata.
   useEffect(() => {
+    fallbackSyncSessionIdRef.current = null;
     if (!activeSessionId) {
       applyMeta(null);
       return;
@@ -370,8 +377,15 @@ function App() {
         contextWindow: contextWindow ?? undefined,
         contextTokensUsed: contextTokensUsed ?? undefined,
       }));
+
+      // Sync the input model if it's the first time processing this session
+      // via the fallback hook and we found a providerId.
+      if (providerId && activeSessionId && fallbackSyncSessionIdRef.current !== activeSessionId) {
+        setSelectedProviderId(providerId);
+        fallbackSyncSessionIdRef.current = activeSessionId;
+      }
     }
-  }, [messages, isStreaming, isLoadingMessages]);
+  }, [messages, isStreaming, isLoadingMessages, activeSessionId]);
 
   // ------------------------------------------------------------------
   // Handlers -- thin delegation to useChat
