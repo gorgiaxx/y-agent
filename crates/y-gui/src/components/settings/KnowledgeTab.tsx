@@ -2,12 +2,12 @@
 // KnowledgeTab -- Knowledge Base configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { KnowledgeFormData } from './settingsTypes';
 import { jsonToKnowledge } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
-import { serializeToml } from '../../utils/tomlUtils';
+import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { KNOWLEDGE_SCHEMA } from '../../utils/settingsSchemas';
 import { Eye, EyeOff } from 'lucide-react';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
@@ -31,6 +31,7 @@ export function KnowledgeTab({
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const cachedRawToml = useRef<string | undefined>(undefined);
   const [showApiKey, setShowApiKey] = useState(false);
 
   const loadForm = useCallback(async () => {
@@ -43,9 +44,11 @@ export function KnowledgeTab({
       try {
         const raw = await loadSection('knowledge');
         setRawKnowledgeToml(raw);
+        cachedRawToml.current = raw;
         setRawContent(raw);
       } catch {
         setRawKnowledgeToml(undefined);
+        cachedRawToml.current = undefined;
         setRawContent('');
       }
     } catch {
@@ -61,7 +64,7 @@ export function KnowledgeTab({
 
   const handleToggleRaw = useCallback((next: boolean) => {
     if (next) {
-      setRawContent(serializeToml(knowledgeForm as unknown as Record<string, unknown>, KNOWLEDGE_SCHEMA));
+      setRawContent(mergeIntoRawToml(cachedRawToml.current, knowledgeForm as unknown as Record<string, unknown>, KNOWLEDGE_SCHEMA));
     }
     setRawMode(next);
   }, [knowledgeForm]);

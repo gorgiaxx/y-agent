@@ -156,6 +156,7 @@ pub fn run() {
             commands::config::config_save_section,
             commands::config::config_reload,
             commands::config::provider_test,
+            commands::config::provider_list_models,
             commands::config::prompt_list,
             commands::config::prompt_get,
             commands::config::prompt_get_default,

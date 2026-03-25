@@ -2,8 +2,8 @@
 // ProvidersTab -- Provider list sidebar + ProviderTabPanel detail form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
-import { Eye, EyeOff, Plus, X, Bot, Copy } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicker';
 import { TagChipInput } from './TagChipInput';
@@ -11,6 +11,104 @@ import type { ProviderFormData } from './settingsTypes';
 import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
+
+// ---------------------------------------------------------------------------
+// Model item returned from /v1/models
+// ---------------------------------------------------------------------------
+
+interface ModelItem {
+  id: string;
+  display_name?: string;
+}
+
+// ---------------------------------------------------------------------------
+// ModelPickerDropdown -- filterable model list overlay
+// ---------------------------------------------------------------------------
+
+function ModelPickerDropdown({
+  models,
+  loading,
+  error,
+  onSelect,
+  onClose,
+}: {
+  models: ModelItem[];
+  loading: boolean;
+  error: string | null;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [filter, setFilter] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus the filter input when dropdown opens.
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Close on click outside.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  const filtered = models.filter((m) =>
+    m.id.toLowerCase().includes(filter.toLowerCase()) ||
+    (m.display_name ?? '').toLowerCase().includes(filter.toLowerCase()),
+  );
+
+  return (
+    <div className="model-picker-dropdown" ref={dropdownRef}>
+      <div className="model-picker-search">
+        <Search size={12} className="model-picker-search-icon" />
+        <input
+          ref={inputRef}
+          className="model-picker-filter"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter models..."
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') onClose();
+          }}
+        />
+      </div>
+      {loading && (
+        <div className="model-picker-status">
+          <span className="pf-spinner" /> Fetching models...
+        </div>
+      )}
+      {error && (
+        <div className="model-picker-status model-picker-error">{error}</div>
+      )}
+      {!loading && !error && filtered.length === 0 && (
+        <div className="model-picker-status">No models found</div>
+      )}
+      {!loading && !error && filtered.length > 0 && (
+        <div className="model-picker-list">
+          {filtered.map((m) => (
+            <button
+              key={m.id}
+              className="model-picker-item"
+              onClick={() => { onSelect(m.id); onClose(); }}
+              type="button"
+            >
+              <span className="model-picker-item-id">{m.id}</span>
+              {m.display_name && m.display_name !== m.id && (
+                <span className="model-picker-item-name">{m.display_name}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // ProviderTabPanel -- flat form for a single provider (shown in tab view)
@@ -31,6 +129,12 @@ function ProviderTabPanel({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
+  // Model discovery state
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelList, setModelList] = useState<ModelItem[]>([]);
+  const [modelLoading, setModelLoading] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
+
   const update = (patch: Partial<ProviderFormData>) => {
     onChange(index, { ...provider, ...patch });
   };
@@ -42,9 +146,10 @@ function ProviderTabPanel({
     return () => clearTimeout(t);
   }, [testResult]);
 
-  // Also clear test result when provider changes.
+  // Also clear test result and model picker when provider changes.
   useEffect(() => {
     setTestResult(null);
+    setModelPickerOpen(false);
   }, [provider.id]);
 
   const handleTest = async () => {
@@ -66,12 +171,44 @@ function ProviderTabPanel({
     }
   };
 
+  // Determine whether model discovery is available.
+  const canDiscoverModels =
+    provider.provider_type === 'openai-compat' && !!provider.base_url?.trim();
+
+  const handleModelSearch = async () => {
+    if (!provider.base_url) return;
+    setModelPickerOpen(true);
+    setModelLoading(true);
+    setModelError(null);
+    setModelList([]);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await invoke<any>('provider_list_models', {
+        baseUrl: provider.base_url,
+        apiKey: provider.api_key ?? '',
+        apiKeyEnv: provider.api_key_env ?? '',
+      });
+      // OpenAI format: { data: [{ id, display_name?, ... }] }
+      const items: ModelItem[] = (result?.data ?? []).map(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (m: any) => ({ id: m.id ?? '', display_name: m.display_name ?? m.id ?? '' }),
+      );
+      // Sort alphabetically by id.
+      items.sort((a, b) => a.id.localeCompare(b.id));
+      setModelList(items);
+    } catch (e) {
+      setModelError(String(e));
+    } finally {
+      setModelLoading(false);
+    }
+  };
+
   return (
     <div className="sidetab-tab-form">
       {/* Row 0: Icon picker */}
       <div className="pf-row">
-        <div className="pf-field" style={{ maxWidth: 260 }}>
-          <label className="pf-label">Icon</label>
+        <div className="pf-field">
+          <label className="pf-label">Provider</label>
           <ProviderIconPicker
             value={provider.icon}
             onChange={(icon) => update({ icon })}
@@ -116,12 +253,33 @@ function ProviderTabPanel({
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">Model ID</label>
-          <input
-            className="pf-input"
-            value={provider.model}
-            onChange={(e) => update({ model: e.target.value })}
-            placeholder="e.g. gpt-4o"
-          />
+          <div className="pf-model-group">
+            <input
+              className="pf-input"
+              value={provider.model}
+              onChange={(e) => update({ model: e.target.value })}
+              placeholder="e.g. gpt-4o"
+            />
+            {canDiscoverModels && (
+              <button
+                className="pf-model-search-btn"
+                onClick={handleModelSearch}
+                title="Discover models from endpoint"
+                type="button"
+              >
+                <Search size={13} />
+              </button>
+            )}
+            {modelPickerOpen && (
+              <ModelPickerDropdown
+                models={modelList}
+                loading={modelLoading}
+                error={modelError}
+                onSelect={(id) => update({ model: id })}
+                onClose={() => setModelPickerOpen(false)}
+              />
+            )}
+          </div>
         </div>
         <div className="pf-field">
           <label className="pf-label">Base URL</label>
@@ -268,8 +426,7 @@ function ProviderTabPanel({
       </div>
 
       {/* Test connection row */}
-      <div className="pf-row" style={{ borderTop: '1px solid var(--border)', paddingTop: 'var(--space-sm)', marginTop: 'var(--space-xs)' }}>
-        <div className="pf-field pf-field-full" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-sm)' }}>
+      <div className="pf-action-row">
           <button
             type="button"
             className="btn-test"
@@ -293,7 +450,6 @@ function ProviderTabPanel({
               {testResult.message}
             </span>
           )}
-        </div>
       </div>
     </div>
   );
@@ -394,6 +550,30 @@ export function ProvidersTab({
     setDirtyProviders(true);
   }, [setProvidersList, setDirtyProviders]);
 
+  const handleProviderMoveUp = useCallback(() => {
+    if (activeProviderTab <= 0) return;
+    setProvidersList((prev) => {
+      const next = [...prev];
+      [next[activeProviderTab - 1], next[activeProviderTab]] =
+        [next[activeProviderTab], next[activeProviderTab - 1]];
+      return next;
+    });
+    setActiveProviderTab((prev) => prev - 1);
+    setDirtyProviders(true);
+  }, [activeProviderTab, setProvidersList, setDirtyProviders]);
+
+  const handleProviderMoveDown = useCallback(() => {
+    if (activeProviderTab >= providersList.length - 1) return;
+    setProvidersList((prev) => {
+      const next = [...prev];
+      [next[activeProviderTab], next[activeProviderTab + 1]] =
+        [next[activeProviderTab + 1], next[activeProviderTab]];
+      return next;
+    });
+    setActiveProviderTab((prev) => prev + 1);
+    setDirtyProviders(true);
+  }, [activeProviderTab, providersList.length, setProvidersList, setDirtyProviders]);
+
   if (providersLoading) {
     return <div className="section-loading">Loading...</div>;
   }
@@ -411,9 +591,7 @@ export function ProvidersTab({
     return (
       <>
         <div className="settings-header">
-          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-            <span className="settings-header-with-toggle">Providers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
-          </h3>
+          <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
         </div>
         <RawTomlEditor
           content={rawContent}
@@ -431,9 +609,7 @@ export function ProvidersTab({
   return (
     <>
     <div className="settings-header">
-      <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-        <span className="settings-header-with-toggle">Providers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
-      </h3>
+      <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
     </div>
     <div className="sub-list-layout">
       {/* Left sidebar list */}
@@ -464,14 +640,32 @@ export function ProvidersTab({
             </button>
           ))}
         </div>
-        <button
-          className="sub-list-item sub-list-item-add"
-          onClick={handleProviderAdd}
-          title="Add provider"
-        >
-          <Plus size={13} />
-          <span>Add</span>
-        </button>
+        <div className="sub-list-actions">
+          <button
+            className="sub-list-item sub-list-item-add"
+            onClick={handleProviderAdd}
+            title="Add provider"
+          >
+            <Plus size={13} />
+            <span>Add</span>
+          </button>
+          <button
+            className="sub-list-action-btn"
+            onClick={handleProviderMoveUp}
+            disabled={activeProviderTab <= 0 || providersList.length === 0}
+            title="Move up"
+          >
+            <ChevronUp size={14} />
+          </button>
+          <button
+            className="sub-list-action-btn"
+            onClick={handleProviderMoveDown}
+            disabled={activeProviderTab >= providersList.length - 1 || providersList.length === 0}
+            title="Move down"
+          >
+            <ChevronDown size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Right detail panel */}

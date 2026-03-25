@@ -1,9 +1,11 @@
 //! JSONL-based `TranscriptStore` implementation.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
 use tracing::instrument;
 
 use y_core::session::{SessionError, TranscriptStore};
@@ -17,6 +19,12 @@ use y_core::types::{Message, SessionId};
 pub struct JsonlTranscriptStore {
     /// Base directory for transcript files.
     base_dir: PathBuf,
+    /// Write lock to serialise concurrent appends.
+    ///
+    /// `O_APPEND` guarantees atomic positioning but NOT atomic writes for
+    /// buffers exceeding `PIPE_BUF` (~4KB). Serialising through this mutex
+    /// prevents interleaved bytes when long messages are written concurrently.
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl JsonlTranscriptStore {
@@ -24,6 +32,7 @@ impl JsonlTranscriptStore {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -54,6 +63,9 @@ impl TranscriptStore for JsonlTranscriptStore {
                 message: format!("serialize message: {e}"),
             })?;
         line.push('\n');
+
+        // Serialise writes so concurrent appends cannot interleave bytes.
+        let _guard = self.write_lock.lock().await;
 
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)

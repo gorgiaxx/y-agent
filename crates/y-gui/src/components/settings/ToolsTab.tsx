@@ -2,12 +2,12 @@
 // ToolsTab -- Tool Registry configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { ToolsFormData } from './settingsTypes';
 import { jsonToTools } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
-import { serializeToml } from '../../utils/tomlUtils';
+import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { TOOLS_SCHEMA } from '../../utils/settingsSchemas';
 import { Checkbox } from '../ui';
 
@@ -29,6 +29,7 @@ export function ToolsTab({
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const cachedRawToml = useRef<string | undefined>(undefined);
 
   const loadForm = useCallback(async () => {
     setLoading(true);
@@ -40,9 +41,11 @@ export function ToolsTab({
       try {
         const raw = await loadSection('tools');
         setRawToolsToml(raw);
+        cachedRawToml.current = raw;
         setRawContent(raw);
       } catch {
         setRawToolsToml(undefined);
+        cachedRawToml.current = undefined;
         setRawContent('');
       }
     } catch {
@@ -58,7 +61,7 @@ export function ToolsTab({
 
   const handleToggleRaw = useCallback((next: boolean) => {
     if (next) {
-      setRawContent(serializeToml(toolsForm as unknown as Record<string, unknown>, TOOLS_SCHEMA));
+      setRawContent(mergeIntoRawToml(cachedRawToml.current, toolsForm as unknown as Record<string, unknown>, TOOLS_SCHEMA));
     }
     setRawMode(next);
   }, [toolsForm]);

@@ -16,11 +16,13 @@ import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
+import { ThinkingCard } from './ThinkingCard';
 import {
   makeMarkdownComponents,
   MarkdownSegment,
   AssistantMessageShell,
   extractThinkTags,
+  escapeThinkTags,
 } from './MessageShared';
 import { processStreamContent } from '../../../hooks/useStreamContent';
 import { segmentActions } from '../../../hooks/useActionSegment';
@@ -41,11 +43,13 @@ export function StreamingBubble({ message, toolResults }: StreamingBubbleProps) 
   const codeThemeStyle = resolvedTheme === 'light' ? oneLight : oneDark;
   const markdownComponents = useMemo(() => makeMarkdownComponents(codeThemeStyle), [codeThemeStyle]);
 
-  // Derive effective content (with <think> tags stripped).
-  const effectiveContent = useMemo(() => {
-    if (typeof message.metadata?.reasoning_content === 'string') return message.content;
-    return extractThinkTags(message.content).strippedContent;
-  }, [message.content, message.metadata?.reasoning_content]);
+  // Derive effective content.
+  // When metadata.reasoning_content exists (API-level reasoning like Claude),
+  // the content field does not contain <think> tags.
+  // When it does not exist, content may start with <think>...</think> and
+  // each rendering path below handles extraction + ThinkingCard rendering
+  // in the correct visual position.
+  const effectiveContent = message.content;
 
   // Process content to extract text segments and tool call blocks.
   const streamResult = useMemo(() => {
@@ -89,6 +93,26 @@ export function StreamingBubble({ message, toolResults }: StreamingBubbleProps) 
     <AssistantMessageShell message={message} isStreaming={true}>
       {streamResult && actionResult && actionResult.actions.length > 0 ? (
         <>
+          {/* Preamble: text segments before the first tool call (e.g. initial reasoning) */}
+          {actionResult.preamble.map((seg, idx) => {
+            if (seg.type !== 'text') return null;
+            const think = extractThinkTags(seg.text);
+            return (
+              <div key={`preamble-${idx}`}>
+                {think.thinkContent && (
+                  <ThinkingCard
+                    content={think.thinkContent}
+                    isStreaming={think.isThinkingIncomplete}
+                  />
+                )}
+                {think.strippedContent.trim() && (
+                  <div className="message-content markdown-body">
+                    <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {/* Action Segment: intermediate tool calls + text */}
           <ActionCard
             segments={actionResult.actions}
@@ -97,24 +121,49 @@ export function StreamingBubble({ message, toolResults }: StreamingBubbleProps) 
             hasPendingToolCall={streamResult.hasPendingToolCall}
             toolResultsMap={toolResultsMap}
             markdownComponents={markdownComponents}
+            segmentIndexOffset={actionResult.preamble.length}
           />
           {/* Conclusion: trailing text from final LLM iteration */}
-          {actionResult.conclusion && actionResult.conclusion.type === 'text' && (
-            <div className="message-content markdown-body">
-              <MarkdownSegment
-                text={actionResult.conclusion.text}
-                components={markdownComponents}
-              />
-            </div>
-          )}
+          {actionResult.conclusion && actionResult.conclusion.type === 'text' && (() => {
+            const think = extractThinkTags(actionResult.conclusion!.text);
+            return (
+              <>
+                {think.thinkContent && (
+                  <ThinkingCard
+                    content={think.thinkContent}
+                    isStreaming={think.isThinkingIncomplete}
+                  />
+                )}
+                {think.strippedContent.trim() && (
+                  <div className="message-content markdown-body">
+                    <MarkdownSegment
+                      text={think.strippedContent}
+                      components={markdownComponents}
+                    />
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </>
       ) : streamResult ? (
         <div className="message-content">
           {streamResult.segments.map((seg, idx) => {
             if (seg.type === 'text') {
+              const think = extractThinkTags(seg.text);
               return (
-                <div key={`text-${idx}`} className="markdown-body">
-                  <MarkdownSegment text={seg.text} components={markdownComponents} />
+                <div key={`text-${idx}`}>
+                  {think.thinkContent && (
+                    <ThinkingCard
+                      content={think.thinkContent}
+                      isStreaming={think.isThinkingIncomplete}
+                    />
+                  )}
+                  {think.strippedContent.trim() && (
+                    <div className="markdown-body">
+                      <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -148,16 +197,29 @@ export function StreamingBubble({ message, toolResults }: StreamingBubbleProps) 
             </div>
           )}
         </div>
-      ) : (
-        <div className="message-content markdown-body">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
-          >
-            {effectiveContent}
-          </ReactMarkdown>
-        </div>
-      )}
+      ) : (() => {
+        const think = extractThinkTags(effectiveContent);
+        return (
+          <>
+            {think.thinkContent && (
+              <ThinkingCard
+                content={think.thinkContent}
+                isStreaming={think.isThinkingIncomplete}
+              />
+            )}
+            {think.strippedContent.trim() && (
+              <div className="message-content markdown-body">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={markdownComponents}
+                >
+                  {escapeThinkTags(think.strippedContent)}
+                </ReactMarkdown>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {message.tool_calls.length > 0 && (
         <div className="message-tool-calls">

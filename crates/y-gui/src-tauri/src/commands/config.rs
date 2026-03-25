@@ -271,6 +271,67 @@ pub async fn provider_test(
     .await
 }
 
+/// Fetch available models from an OpenAI-compatible `/v1/models` endpoint.
+///
+/// Returns a JSON array of `{id, display_name}` objects.
+#[tauri::command]
+pub async fn provider_list_models(
+    base_url: String,
+    api_key: String,
+    api_key_env: String,
+) -> Result<serde_json::Value, String> {
+    let effective_key = if !api_key.is_empty() {
+        api_key
+    } else if !api_key_env.is_empty() {
+        std::env::var(&api_key_env)
+            .map_err(|_| format!("Environment variable '{api_key_env}' is not set"))?
+    } else {
+        String::new()
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let mut req = client.get(&url);
+    if !effective_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {effective_key}"));
+    }
+
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        let detail: String = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| {
+                v.pointer("/error/message")
+                    .and_then(|m| m.as_str())
+                    .map(std::borrow::ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| {
+                if body.is_empty() {
+                    format!("(no response body, HTTP {status})")
+                } else {
+                    body.chars().take(200).collect()
+                }
+            });
+        return Err(format!("HTTP {status}: {detail}"));
+    }
+
+    // Parse and return the full response JSON so the frontend can handle it.
+    let value: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse response: {e}"))?;
+    Ok(value)
+}
+
 // ---------------------------------------------------------------------------
 // MCP server config commands (JSON-based, stored in <config_dir>/mcp.json)
 // ---------------------------------------------------------------------------

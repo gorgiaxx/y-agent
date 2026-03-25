@@ -49,6 +49,7 @@ export interface StreamContentResult {
 
 /** Extract text content of an XML tag from a block, e.g. <name>foo</name> → "foo". */
 function extractTag(block: string, tagName: string): string {
+  block = block.trim();
   const open = `<${tagName}>`;
   const close = `</${tagName}>`;
   const start = block.indexOf(open);

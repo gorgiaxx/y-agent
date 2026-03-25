@@ -170,6 +170,18 @@
   background: rgba(255, 255, 255, 0.05);
 }
 
+.session-item--selected {
+  background: rgba(96, 165, 250, 0.12);
+}
+
+.session-item--selected:hover {
+  background: rgba(96, 165, 250, 0.18);
+}
+
+.session-item--selected.active {
+  background: rgba(96, 165, 250, 0.15);
+}
+
 /* ---- Spinner ---- */
 @keyframes session-spin {
   to {
@@ -249,4 +261,81 @@
 
 .btn-session-action:hover {
   color: var(--text-primary);
+}
+
+/* ---- Drag-and-drop feedback ---- */
+.session-item--dragging {
+  opacity: 0.35;
+  transform: scale(0.97);
+  border: 1px dashed var(--border);
+  user-select: none;
+  cursor: grabbing;
+}
+
+.session-item--drag-over-above {
+  box-shadow: inset 0 2px 0 0 var(--accent, #60a5fa);
+}
+
+.session-item--drag-over-below {
+  box-shadow: inset 0 -2px 0 0 var(--accent, #60a5fa);
+}
+
+/* ---- Batch action bar ---- */
+.batch-action-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-primary);
+  border-top: 1px solid var(--border);
+  animation: batch-bar-slide-in 0.15s ease;
+  z-index: 10;
+}
+
+@keyframes batch-bar-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.batch-action-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-right: auto;
+  white-space: nowrap;
+}
+
+.batch-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.batch-action-btn:hover {
+  background: var(--surface-hover);
+}
+
+.batch-action-btn--delete {
+  color: var(--error, #f87171);
+  border-color: var(--error, #f87171);
+}
+
+.batch-action-btn--delete:hover {
+  background: rgba(248, 113, 113, 0.1);
 }

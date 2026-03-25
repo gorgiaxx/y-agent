@@ -2,12 +2,12 @@
 // HooksTab -- Hook System (Middleware & Event Bus) configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { HooksFormData } from './settingsTypes';
 import { jsonToHooks } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
-import { serializeToml } from '../../utils/tomlUtils';
+import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { HOOKS_SCHEMA } from '../../utils/settingsSchemas';
 
 interface HooksTabProps {
@@ -28,6 +28,7 @@ export function HooksTab({
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const cachedRawToml = useRef<string | undefined>(undefined);
 
   const loadForm = useCallback(async () => {
     setLoading(true);
@@ -39,9 +40,11 @@ export function HooksTab({
       try {
         const raw = await loadSection('hooks');
         setRawHooksToml(raw);
+        cachedRawToml.current = raw;
         setRawContent(raw);
       } catch {
         setRawHooksToml(undefined);
+        cachedRawToml.current = undefined;
         setRawContent('');
       }
     } catch {
@@ -57,7 +60,7 @@ export function HooksTab({
 
   const handleToggleRaw = useCallback((next: boolean) => {
     if (next) {
-      setRawContent(serializeToml(hooksForm as unknown as Record<string, unknown>, HOOKS_SCHEMA));
+      setRawContent(mergeIntoRawToml(cachedRawToml.current, hooksForm as unknown as Record<string, unknown>, HOOKS_SCHEMA));
     }
     setRawMode(next);
   }, [hooksForm]);

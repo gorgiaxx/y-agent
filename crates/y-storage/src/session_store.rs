@@ -227,10 +227,45 @@ impl SessionStore for SqliteSessionStore {
     async fn ancestors(&self, id: &SessionId) -> Result<Vec<SessionNode>, SessionError> {
         let node = self.get(id).await?;
 
-        let mut ancestors = Vec::new();
+        if node.path.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Batch query: fetch all ancestors in a single round-trip.
+        let placeholders: Vec<String> = (1..=node.path.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            r"SELECT id, parent_id, root_id, depth, path, session_type, state,
+                     agent_id, title, token_count, message_count, created_at, updated_at
+              FROM session_metadata WHERE id IN ({})",
+            placeholders.join(", ")
+        );
+
+        let mut query = sqlx::query_as::<_, SessionRow>(&sql);
         for ancestor_id in &node.path {
-            let ancestor = self.get(ancestor_id).await?;
-            ancestors.push(ancestor);
+            query = query.bind(ancestor_id.as_str());
+        }
+
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| SessionError::StorageError {
+                message: e.to_string(),
+            })?;
+
+        // Build a lookup map and reorder to match the original path order.
+        let mut by_id: std::collections::HashMap<String, SessionNode> = rows
+            .into_iter()
+            .map(|r| {
+                let node = r.into_session_node()?;
+                Ok((node.id.as_str().to_string(), node))
+            })
+            .collect::<Result<_, SessionError>>()?;
+
+        let mut ancestors = Vec::with_capacity(node.path.len());
+        for ancestor_id in &node.path {
+            if let Some(ancestor) = by_id.remove(ancestor_id.as_str()) {
+                ancestors.push(ancestor);
+            }
         }
 
         Ok(ancestors)

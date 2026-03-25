@@ -2,13 +2,13 @@
 // BrowserTab -- Browser (CDP) configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { TagChipInput } from './TagChipInput';
 import type { BrowserFormData } from './settingsTypes';
 import { jsonToBrowser } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
-import { serializeToml } from '../../utils/tomlUtils';
+import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { BROWSER_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Checkbox } from '../ui';
@@ -31,6 +31,7 @@ export function BrowserTab({
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const cachedRawToml = useRef<string | undefined>(undefined);
 
   const loadBrowserForm = useCallback(async () => {
     setLoading(true);
@@ -43,8 +44,10 @@ export function BrowserTab({
       try {
         const raw = await loadSection('browser');
         setRawBrowserToml(raw);
+        cachedRawToml.current = raw;
       } catch {
         setRawBrowserToml(undefined);
+        cachedRawToml.current = undefined;
       }
     } catch {
       // Use defaults if section not found.
@@ -59,7 +62,7 @@ export function BrowserTab({
 
   const handleToggleRaw = useCallback((next: boolean) => {
     if (next) {
-      setRawContent(serializeToml(browserForm as unknown as Record<string, unknown>, BROWSER_SCHEMA));
+      setRawContent(mergeIntoRawToml(cachedRawToml.current, browserForm as unknown as Record<string, unknown>, BROWSER_SCHEMA));
     }
     setRawMode(next);
   }, [browserForm]);
@@ -97,6 +100,7 @@ export function BrowserTab({
       </h3>
     </div>
     <div className="settings-form-wrap">
+      {/* Enable toggle */}
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">
@@ -110,6 +114,7 @@ export function BrowserTab({
         </div>
       </div>
 
+      {/* Launch mode */}
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">Launch Mode</label>
@@ -137,10 +142,10 @@ export function BrowserTab({
       </div>
 
       {browserForm.launch_mode !== 'remote' ? (
-        /* Local Chrome mode */
+        /* ------ Local Chrome mode ------ */
         <>
-        <div className="pf-row">
-          <div className="pf-field" style={{ flex: 2 }}>
+        <div className="pf-row pf-row-2-1">
+          <div className="pf-field">
             <label className="pf-label">Chrome Path</label>
             <input
               className="pf-input"
@@ -150,7 +155,7 @@ export function BrowserTab({
             />
             <span className="pf-hint">Path to Chrome/Chromium executable. Empty = auto-detect.</span>
           </div>
-          <div className="pf-field" style={{ maxWidth: '140px' }}>
+          <div className="pf-field">
             <label className="pf-label">Debug Port</label>
             <input
               className="pf-input pf-input-num"
@@ -179,7 +184,7 @@ export function BrowserTab({
         </div>
         </>
       ) : (
-        /* Remote CDP mode */
+        /* ------ Remote CDP mode ------ */
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">CDP Endpoint URL</label>
@@ -194,6 +199,10 @@ export function BrowserTab({
         </div>
       )}
 
+      {/* Common settings */}
+      <div className="pf-section-divider">
+        <span className="pf-section-title">Limits</span>
+      </div>
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">Timeout (ms)</label>
@@ -217,6 +226,11 @@ export function BrowserTab({
             onChange={(e) => { setBrowserForm({ ...browserForm, max_screenshot_dim: Number(e.target.value) || 4096 }); setDirtyBrowser(true); }}
           />
         </div>
+      </div>
+
+      {/* Security */}
+      <div className="pf-section-divider">
+        <span className="pf-section-title">Security</span>
       </div>
       <div className="pf-row">
         <div className="pf-field pf-field-full">

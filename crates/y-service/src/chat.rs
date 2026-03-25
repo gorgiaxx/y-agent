@@ -13,8 +13,6 @@
 //! so that sub-agents (A2A) share the same execution path. `ChatService` is now
 //! a thin session-management wrapper.
 
-use std::fmt;
-
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -176,35 +174,24 @@ pub struct TurnResult {
 }
 
 /// Error returned by [`ChatService::execute_turn`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TurnError {
     /// LLM request failed.
+    #[error("LLM error: {0}")]
     LlmError(String),
     /// Context assembly failed.
+    #[error("Context error: {0}")]
     ContextError(String),
     /// Tool-call iteration limit exceeded.
+    #[error("Tool call loop limit ({max_iterations}) exceeded")]
     ToolLoopLimitExceeded {
         /// Maximum allowed iterations.
         max_iterations: usize,
     },
     /// The turn was explicitly cancelled by the caller.
+    #[error("Cancelled")]
     Cancelled,
 }
-
-impl fmt::Display for TurnError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TurnError::LlmError(msg) => write!(f, "LLM error: {msg}"),
-            TurnError::ContextError(msg) => write!(f, "Context error: {msg}"),
-            TurnError::ToolLoopLimitExceeded { max_iterations } => {
-                write!(f, "Tool call loop limit ({max_iterations}) exceeded")
-            }
-            TurnError::Cancelled => write!(f, "Cancelled"),
-        }
-    }
-}
-
-impl std::error::Error for TurnError {}
 
 /// Input for a turn execution.
 pub struct TurnInput<'a> {
@@ -559,12 +546,18 @@ impl ChatService {
             return Err(ResendTurnError::TranscriptEmpty);
         }
 
-        // 5. Build PreparedTurn from the truncated transcript.
-        let user_input = if let Some(msg) = history.last() {
-            msg.content.clone()
-        } else {
+        // The last message after truncation must be the original user message.
+        let Some(last_msg) = history.last() else {
+            // Unreachable: guarded by is_empty() above.
             return Err(ResendTurnError::TranscriptEmpty);
         };
+        if last_msg.role != Role::User {
+            return Err(ResendTurnError::TruncateFailed(format!(
+                "expected last message to be User after truncation, found {:?}",
+                last_msg.role
+            )));
+        }
+        let user_input = last_msg.content.clone();
         let turn_number = u32::try_from(history.len()).unwrap_or(0);
         let session_uuid =
             Uuid::parse_str(request.session_id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
@@ -772,10 +765,17 @@ impl ChatService {
             metadata: meta,
         };
 
-        let _ = container
+        if let Err(e) = container
             .session_manager
             .append_message(&input.session_id, &assistant_msg)
-            .await;
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                session_id = %input.session_id,
+                "failed to persist assistant message to session transcript"
+            );
+        }
 
         // Mirror to SQLite chat_message_store for pruning engine visibility.
         Self::mirror_to_chat_message_store(
@@ -842,6 +842,7 @@ impl ChatService {
                     ContextCategory::SystemPrompt
                         | ContextCategory::Skills
                         | ContextCategory::Knowledge
+                        | ContextCategory::Tools
                 )
             })
             .map(|item| item.content.as_str())

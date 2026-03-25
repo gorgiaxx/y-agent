@@ -73,17 +73,51 @@ impl OpenAiProvider {
         request
             .messages
             .iter()
-            .map(|m| OpenAiMessage {
-                role: match m.role {
+            .map(|m| {
+                let role = match m.role {
                     y_core::types::Role::User => "user".to_string(),
                     y_core::types::Role::Assistant => "assistant".to_string(),
                     y_core::types::Role::System => "system".to_string(),
                     y_core::types::Role::Tool => "tool".to_string(),
-                },
-                content: Some(m.content.clone()),
-                reasoning_content: None,
-                tool_call_id: m.tool_call_id.clone(),
-                tool_calls: None,
+                };
+
+                // For assistant messages with tool calls, set content to None
+                // and populate the tool_calls array (OpenAI API contract).
+                let (content, tool_calls) =
+                    if m.role == y_core::types::Role::Assistant && !m.tool_calls.is_empty() {
+                        let tcs: Vec<OpenAiToolCall> = m
+                            .tool_calls
+                            .iter()
+                            .map(|tc| OpenAiToolCall {
+                                id: tc.id.clone(),
+                                function: OpenAiToolCallFunction {
+                                    name: tc.name.clone(),
+                                    arguments: match &tc.arguments {
+                                        serde_json::Value::String(s) => s.clone(),
+                                        other => serde_json::to_string(other)
+                                            .unwrap_or_else(|_| "{}".to_string()),
+                                    },
+                                },
+                            })
+                            .collect();
+                        // Content may be empty or present alongside tool calls.
+                        let content = if m.content.is_empty() {
+                            None
+                        } else {
+                            Some(m.content.clone())
+                        };
+                        (content, Some(tcs))
+                    } else {
+                        (Some(m.content.clone()), None)
+                    };
+
+                OpenAiMessage {
+                    role,
+                    content,
+                    reasoning_content: None,
+                    tool_call_id: m.tool_call_id.clone(),
+                    tool_calls,
+                }
             })
             .collect()
     }
@@ -468,8 +502,12 @@ fn extract_sse_event(buffer: &mut String) -> Option<String> {
 
     let raw_event: String = buffer.drain(..boundary).collect();
     // Consume the boundary newlines.
-    while buffer.starts_with('\n') || buffer.starts_with('\r') {
-        buffer.remove(0);
+    let trim_count = buffer
+        .chars()
+        .take_while(|c| *c == '\n' || *c == '\r')
+        .count();
+    if trim_count > 0 {
+        buffer.drain(..trim_count);
     }
 
     // Extract data from `data: <payload>` lines.

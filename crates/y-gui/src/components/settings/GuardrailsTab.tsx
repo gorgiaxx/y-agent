@@ -2,12 +2,12 @@
 // GuardrailsTab -- Guardrails & Security configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GuardrailsFormData } from './settingsTypes';
 import { jsonToGuardrails } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
-import { serializeToml } from '../../utils/tomlUtils';
+import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { GUARDRAILS_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Checkbox } from '../ui';
@@ -30,6 +30,7 @@ export function GuardrailsTab({
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const cachedRawToml = useRef<string | undefined>(undefined);
 
   const loadForm = useCallback(async () => {
     setLoading(true);
@@ -41,9 +42,11 @@ export function GuardrailsTab({
       try {
         const raw = await loadSection('guardrails');
         setRawGuardrailsToml(raw);
+        cachedRawToml.current = raw;
         setRawContent(raw);
       } catch {
         setRawGuardrailsToml(undefined);
+        cachedRawToml.current = undefined;
         setRawContent('');
       }
     } catch {
@@ -59,7 +62,7 @@ export function GuardrailsTab({
 
   const handleToggleRaw = useCallback((next: boolean) => {
     if (next) {
-      setRawContent(serializeToml(guardrailsForm as unknown as Record<string, unknown>, GUARDRAILS_SCHEMA));
+      setRawContent(mergeIntoRawToml(cachedRawToml.current, guardrailsForm as unknown as Record<string, unknown>, GUARDRAILS_SCHEMA));
     }
     setRawMode(next);
   }, [guardrailsForm]);

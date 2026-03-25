@@ -24,11 +24,13 @@ import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
+import { ThinkingCard } from './ThinkingCard';
 import {
   makeMarkdownComponents,
   MarkdownSegment,
   AssistantMessageShell,
   extractThinkTags,
+  escapeThinkTags,
 } from './MessageShared';
 import { processStreamContent, type ContentSegment } from '../../../hooks/useStreamContent';
 import { segmentActions } from '../../../hooks/useActionSegment';
@@ -47,11 +49,13 @@ export function StaticBubble({ message }: StaticBubbleProps) {
   const codeThemeStyle = resolvedTheme === 'light' ? oneLight : oneDark;
   const markdownComponents = useMemo(() => makeMarkdownComponents(codeThemeStyle), [codeThemeStyle]);
 
-  // Derive effective content (with <think> tags stripped).
-  const effectiveContent = useMemo(() => {
-    if (typeof message.metadata?.reasoning_content === 'string') return message.content;
-    return extractThinkTags(message.content).strippedContent;
-  }, [message.content, message.metadata?.reasoning_content]);
+  // Derive effective content.
+  // When metadata.reasoning_content exists (API-level reasoning like Claude),
+  // the content field does not contain <think> tags.
+  // When it does not exist, content may start with <think>...</think> and
+  // each rendering path below handles extraction + ThinkingCard rendering
+  // in the correct visual position.
+  const effectiveContent = message.content;
 
   // Process content to extract text segments and tool call blocks.
   // Applied to completed messages so that accumulated multi-iteration content
@@ -104,25 +108,27 @@ export function StaticBubble({ message }: StaticBubbleProps) {
     return segmentActions(streamResult.segments, false);
   }, [streamResult]);
 
-  // --- Path 2: Backend history ---
-  // The backend persists the final assistant message with tool_calls: vec![],
-  // so message.tool_calls is ALWAYS empty for history messages.
-  // Instead, we use metadata.tool_results to reconstruct the action segment.
   const historyActionSegments = useMemo((): ContentSegment[] | null => {
     // Only use this path when XML-based parsing yielded nothing.
     if (streamResult) return null;
     // No tool results in metadata => no actions to show.
     if (metaToolResults.length === 0) return null;
 
+    const segments: ContentSegment[] = [];
+
     // Build synthetic tool_call segments from metadata.tool_results.
-    return metaToolResults.map((tr) => ({
-      type: 'tool_call' as const,
-      toolCall: {
-        name: tr.name,
-        arguments: tr.arguments ?? '',
-        startIndex: 0,
-      },
-    }));
+    metaToolResults.forEach((tr) => {
+      segments.push({
+        type: 'tool_call' as const,
+        toolCall: {
+          name: tr.name,
+          arguments: tr.arguments ?? '',
+          startIndex: 0,
+        },
+      });
+    });
+
+    return segments;
   }, [streamResult, metaToolResults]);
 
   // Build tool results map for the history path (index by position).
@@ -145,6 +151,26 @@ export function StaticBubble({ message }: StaticBubbleProps) {
       {hasXmlActions ? (
         /* Path 1: XML-based action segment (just-completed or accumulated content) */
         <>
+          {/* Preamble: text segments before the first tool call (e.g. initial reasoning) */}
+          {actionResult!.preamble.map((seg, idx) => {
+            if (seg.type !== 'text') return null;
+            const think = extractThinkTags(seg.text);
+            return (
+              <div key={`preamble-${idx}`}>
+                {think.thinkContent && (
+                  <ThinkingCard
+                    content={think.thinkContent}
+                    isStreaming={false}
+                  />
+                )}
+                {think.strippedContent.trim() && (
+                  <div className="message-content markdown-body">
+                    <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
           <ActionCard
             segments={actionResult!.actions}
             toolCallCount={actionResult!.toolCallCount}
@@ -152,15 +178,30 @@ export function StaticBubble({ message }: StaticBubbleProps) {
             hasPendingToolCall={false}
             toolResultsMap={toolResultsMap}
             markdownComponents={markdownComponents}
+            segmentIndexOffset={actionResult!.preamble.length}
           />
-          {actionResult!.conclusion && actionResult!.conclusion.type === 'text' && (
-            <div className="message-content markdown-body">
-              <MarkdownSegment
-                text={actionResult!.conclusion.text}
-                components={markdownComponents}
-              />
-            </div>
-          )}
+          {/* Conclusion: trailing text from final LLM iteration */}
+          {actionResult!.conclusion && actionResult!.conclusion.type === 'text' && (() => {
+            const think = extractThinkTags(actionResult!.conclusion!.text);
+            return (
+              <>
+                {think.thinkContent && (
+                  <ThinkingCard
+                    content={think.thinkContent}
+                    isStreaming={false}
+                  />
+                )}
+                {think.strippedContent.trim() && (
+                  <div className="message-content markdown-body">
+                    <MarkdownSegment
+                      text={think.strippedContent}
+                      components={markdownComponents}
+                    />
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </>
       ) : hasHistoryActions ? (
         /* Path 2: Backend history -- action segment from metadata.tool_results */
@@ -174,25 +215,49 @@ export function StaticBubble({ message }: StaticBubbleProps) {
             markdownComponents={markdownComponents}
           />
           {/* Message content is the conclusion (final LLM response) */}
-          {effectiveContent.trim() && (
-            <div className="message-content markdown-body">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={markdownComponents}
-              >
-                {effectiveContent}
-              </ReactMarkdown>
-            </div>
-          )}
+          {effectiveContent.trim() && (() => {
+            const think = extractThinkTags(effectiveContent);
+            return (
+              <>
+                {think.thinkContent && (
+                  <ThinkingCard
+                    content={think.thinkContent}
+                    isStreaming={false}
+                  />
+                )}
+                {think.strippedContent.trim() && (
+                  <div className="message-content markdown-body">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={markdownComponents}
+                    >
+                      {escapeThinkTags(think.strippedContent)}
+                    </ReactMarkdown>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </>
       ) : streamResult ? (
         /* Fallback: XML segments exist but no action grouping needed */
         <div className="message-content">
           {streamResult.segments.map((seg, idx) => {
             if (seg.type === 'text') {
+              const think = extractThinkTags(seg.text);
               return (
-                <div key={`text-${idx}`} className="markdown-body">
-                  <MarkdownSegment text={seg.text} components={markdownComponents} />
+                <div key={`text-${idx}`}>
+                  {think.thinkContent && (
+                    <ThinkingCard
+                      content={think.thinkContent}
+                      isStreaming={false}
+                    />
+                  )}
+                  {think.strippedContent.trim() && (
+                    <div className="markdown-body">
+                      <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -218,17 +283,29 @@ export function StaticBubble({ message }: StaticBubbleProps) {
             return null;
           })}
         </div>
-      ) : (
-        /* Simple text-only message */
-        <div className="message-content markdown-body">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
-          >
-            {effectiveContent}
-          </ReactMarkdown>
-        </div>
-      )}
+      ) : (() => {
+        const think = extractThinkTags(effectiveContent);
+        return (
+          <>
+            {think.thinkContent && (
+              <ThinkingCard
+                content={think.thinkContent}
+                isStreaming={false}
+              />
+            )}
+            {think.strippedContent.trim() && (
+              <div className="message-content markdown-body">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={markdownComponents}
+                >
+                  {escapeThinkTags(think.strippedContent)}
+                </ReactMarkdown>
+              </div>
+            )}
+          </>
+        );
+      })()}
     </AssistantMessageShell>
   );
 }

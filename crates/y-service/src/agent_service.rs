@@ -191,6 +191,17 @@ struct LlmIterationData {
     response_text_raw: String,
 }
 
+/// Parameters for building the final agent execution result.
+///
+/// Extracted from a tuple to improve readability at the call site.
+struct FinalResultParams {
+    final_model: String,
+    final_provider_id: Option<String>,
+    owns_trace: bool,
+    context_window: usize,
+    reasoning_duration_ms: Option<u64>,
+}
+
 // ---------------------------------------------------------------------------
 // AgentService
 // ---------------------------------------------------------------------------
@@ -424,13 +435,13 @@ impl AgentService {
                         progress.as_ref(),
                         &iter_data,
                         ctx,
-                        (
+                        FinalResultParams {
                             final_model,
                             final_provider_id,
                             owns_trace,
-                            iter_ctx_window,
-                            iter_reasoning_duration_ms,
-                        ),
+                            context_window: iter_ctx_window,
+                            reasoning_duration_ms: iter_reasoning_duration_ms,
+                        },
                     )
                     .await;
                 }
@@ -867,11 +878,14 @@ impl AgentService {
         // Track new messages added in this iteration for mid-loop persistence.
         let msgs_before = ctx.new_messages.len();
 
-        let assistant_msg = Self::build_assistant_msg(
-            response,
-            response.content.clone().unwrap_or_default(),
-            response.tool_calls.clone(),
-        );
+        let iter_content = response.content.clone().unwrap_or_default();
+
+        // Accumulate this iteration's text so the final persisted message
+        // includes all iterations' content (think blocks, intermediate text).
+        ctx.accumulated_content.push_str(&iter_content);
+
+        let assistant_msg =
+            Self::build_assistant_msg(response, iter_content, response.tool_calls.clone());
 
         ctx.working_history.push(assistant_msg.clone());
         ctx.new_messages.push(assistant_msg);
@@ -931,6 +945,11 @@ impl AgentService {
         // Track new messages added in this iteration for mid-loop persistence.
         let msgs_before = ctx.new_messages.len();
 
+        // Accumulate this iteration's text so the final persisted message
+        // includes all iterations' content (think blocks, tool call XML,
+        // intermediate text).
+        ctx.accumulated_content.push_str(text);
+
         let assistant_msg = Self::build_assistant_msg(response, text.to_string(), vec![]);
 
         ctx.working_history.push(assistant_msg.clone());
@@ -980,10 +999,15 @@ impl AgentService {
         progress: Option<&TurnEventSender>,
         data: &LlmIterationData,
         ctx: ToolExecContext,
-        params: (String, Option<String>, bool, usize, Option<u64>),
+        params: FinalResultParams,
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
-        let (final_model, final_provider_id, owns_trace, ctx_window, reasoning_duration_ms) =
-            params;
+        let FinalResultParams {
+            final_model,
+            final_provider_id,
+            owns_trace,
+            context_window: ctx_window,
+            reasoning_duration_ms,
+        } = params;
         let raw_content = response
             .content
             .clone()

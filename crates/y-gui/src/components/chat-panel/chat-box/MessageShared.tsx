@@ -12,7 +12,7 @@
  *   AssistantMessageShell -- shared layout wrapper for assistant messages
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -122,6 +122,19 @@ export function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSP
   return components;
 }
 
+/* ---- escapeThinkTags ---- */
+
+/**
+ * Escape literal `<think>` / `</think>` tags in text so ReactMarkdown does
+ * not interpret them as HTML elements. After extraction, any remaining
+ * `<think>` in the content is just regular text the LLM happened to mention.
+ */
+export function escapeThinkTags(text: string): string {
+  return text
+    .replace(/<think>/g, '&lt;think&gt;')
+    .replace(/<\/think>/g, '&lt;/think&gt;');
+}
+
 /* ---- MarkdownSegment ---- */
 
 /** Render a markdown text segment. */
@@ -130,12 +143,24 @@ export function MarkdownSegment({ text, components }: { text: string; components
   if (!text.trim()) return null;
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-      {text}
+      {escapeThinkTags(text)}
     </ReactMarkdown>
   );
 }
 
 /* ---- extractThinkTags ---- */
+
+/**
+ * Minimum character count for completed `<think>` content to be treated as
+ * genuine reasoning. Content shorter than this (e.g. `<think>/</think>` where
+ * the LLM is just mentioning the tag syntax) is treated as a false positive
+ * and returned as part of the normal content.
+ *
+ * This guard only applies to COMPLETED think blocks (both tags present).
+ * Still-streaming blocks (no closing tag) are always returned since the
+ * content is still growing.
+ */
+const MIN_THINK_CONTENT_LENGTH = 5;
 
 /**
  * Extract `<think>...</think>` tags from message content.
@@ -156,10 +181,9 @@ export function extractThinkTags(content: string): {
   const closeTag = '</think>';
 
   const openIdx = content.indexOf(openTag);
-  if (openIdx < 0) {
+  if (openIdx != 0) {
     return { thinkContent: null, strippedContent: content, isThinkingIncomplete: false };
   }
-
   const afterOpen = openIdx + openTag.length;
   const closeIdx = content.indexOf(closeTag, afterOpen);
 
@@ -176,6 +200,14 @@ export function extractThinkTags(content: string): {
 
   // Complete <think>...</think> block found.
   const thinkContent = content.slice(afterOpen, closeIdx).trim();
+
+  // Guard: if the content between tags is too short, it is likely the LLM
+  // mentioning the tag syntax (e.g. `<think>/</think>`) rather than embedding
+  // actual reasoning. Treat such cases as normal content (no extraction).
+  if (thinkContent.length < MIN_THINK_CONTENT_LENGTH) {
+    return { thinkContent: null, strippedContent: content, isThinkingIncomplete: false };
+  }
+
   // Strip the entire <think>...</think> block from the content.
   const strippedContent = (
     content.slice(0, openIdx) + content.slice(closeIdx + closeTag.length)
@@ -263,14 +295,6 @@ export function AssistantMessageShell({
 }) {
   const isSystem = message.role === 'system';
 
-  // Extract <think> tags from content for models that inline reasoning.
-  // Priority: metadata.reasoning_content (from stream_reasoning_delta) takes
-  // precedence over <think> tag extraction.
-  const thinkTagResult = useMemo(() => {
-    if (typeof message.metadata?.reasoning_content === 'string') return null;
-    return extractThinkTags(message.content);
-  }, [message.content, message.metadata?.reasoning_content]);
-
   return (
     <div className={`message-bubble ${message.role}`}>
       <Avatar role={message.role} />
@@ -293,13 +317,10 @@ export function AssistantMessageShell({
             durationMs={(message.metadata?.reasoning_duration_ms ?? message.metadata?._reasoningDurationMs) as number | undefined}
           />
         )}
-        {/* Source 2: <think> tags embedded in message content */}
-        {thinkTagResult?.thinkContent && (
-          <ThinkingCard
-            content={thinkTagResult.thinkContent}
-            isStreaming={isStreaming && thinkTagResult.isThinkingIncomplete}
-          />
-        )}
+        {/* <think> tag extraction is handled by child components
+            (StreamingBubble / StaticBubble) in each rendering path,
+            so the ThinkingCard appears in the correct position
+            (e.g. after ActionCard in the conclusion). */}
 
         {children}
 

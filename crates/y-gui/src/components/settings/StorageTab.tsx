@@ -2,12 +2,12 @@
 // StorageTab -- Storage (SQLite) configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { StorageFormData } from './settingsTypes';
 import { jsonToStorage } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
-import { serializeToml } from '../../utils/tomlUtils';
+import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { STORAGE_SCHEMA } from '../../utils/settingsSchemas';
 import { Checkbox } from '../ui';
 
@@ -29,6 +29,7 @@ export function StorageTab({
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const cachedRawToml = useRef<string | undefined>(undefined);
 
   const loadForm = useCallback(async () => {
     setLoading(true);
@@ -40,9 +41,11 @@ export function StorageTab({
       try {
         const raw = await loadSection('storage');
         setRawStorageToml(raw);
+        cachedRawToml.current = raw;
         setRawContent(raw);
       } catch {
         setRawStorageToml(undefined);
+        cachedRawToml.current = undefined;
         setRawContent('');
       }
     } catch {
@@ -58,8 +61,8 @@ export function StorageTab({
 
   const handleToggleRaw = useCallback((next: boolean) => {
     if (next) {
-      // Form -> Raw: serialize current form data
-      setRawContent(serializeToml(storageForm as unknown as Record<string, unknown>, STORAGE_SCHEMA));
+      // Form -> Raw: merge form data into cached raw TOML to preserve comments.
+      setRawContent(mergeIntoRawToml(cachedRawToml.current, storageForm as unknown as Record<string, unknown>, STORAGE_SCHEMA));
     }
     setRawMode(next);
   }, [storageForm]);

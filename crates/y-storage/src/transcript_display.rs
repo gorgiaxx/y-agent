@@ -6,9 +6,11 @@
 //! Design reference: `GUI_SESSION_SEPARATION_PLAN.md` §3.1, Step 1.2.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
 use tracing::instrument;
 
 use y_core::session::{DisplayTranscriptStore, SessionError};
@@ -27,6 +29,9 @@ use crate::transcript::read_messages_from_file;
 pub struct JsonlDisplayTranscriptStore {
     /// Base directory for transcript files.
     base_dir: PathBuf,
+    /// Write lock to serialise concurrent appends (same rationale as
+    /// `JsonlTranscriptStore::write_lock`).
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl JsonlDisplayTranscriptStore {
@@ -34,6 +39,7 @@ impl JsonlDisplayTranscriptStore {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -65,6 +71,9 @@ impl DisplayTranscriptStore for JsonlDisplayTranscriptStore {
                 message: format!("serialize message: {e}"),
             })?;
         line.push('\n');
+
+        // Serialise writes so concurrent appends cannot interleave bytes.
+        let _guard = self.write_lock.lock().await;
 
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)

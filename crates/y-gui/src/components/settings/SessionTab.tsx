@@ -2,12 +2,12 @@
 // SessionTab -- Session configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { SessionFormData } from './settingsTypes';
 import { jsonToSession } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
-import { serializeToml } from '../../utils/tomlUtils';
+import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { SESSION_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Checkbox } from '../ui';
@@ -30,6 +30,7 @@ export function SessionTab({
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const cachedRawToml = useRef<string | undefined>(undefined);
 
   const loadSessionForm = useCallback(async () => {
     setLoading(true);
@@ -42,8 +43,10 @@ export function SessionTab({
       try {
         const raw = await loadSection('session');
         setRawSessionToml(raw);
+        cachedRawToml.current = raw;
       } catch {
         setRawSessionToml(undefined);
+        cachedRawToml.current = undefined;
       }
     } catch {
       // Use defaults if section not found.
@@ -58,7 +61,7 @@ export function SessionTab({
 
   const handleToggleRaw = useCallback((next: boolean) => {
     if (next) {
-      setRawContent(serializeToml(sessionForm as unknown as Record<string, unknown>, SESSION_SCHEMA));
+      setRawContent(mergeIntoRawToml(cachedRawToml.current, sessionForm as unknown as Record<string, unknown>, SESSION_SCHEMA));
     }
     setRawMode(next);
   }, [sessionForm]);
