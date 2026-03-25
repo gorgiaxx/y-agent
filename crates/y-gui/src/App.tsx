@@ -176,7 +176,7 @@ function App() {
   const refreshProviders = useCallback(() => {
     invoke<ProviderInfo[]>('provider_list')
       .then(setProviders)
-      .catch(console.error);
+      .catch((e) => console.warn('Failed to load provider list:', e));
   }, []);
 
   // Build provider icon map from the providers TOML config.
@@ -207,14 +207,14 @@ function App() {
           // Ignore parse errors for icon map.
         }
       })
-      .catch(() => {});
+      .catch((e) => console.warn('Failed to load provider icons:', e));
   }, [loadSection]);
 
   // Load system status and provider list on mount.
   useEffect(() => {
     invoke<SystemStatus>('system_status')
       .then(setSystemStatus)
-      .catch(console.error);
+      .catch((e) => console.warn('Failed to load system status:', e));
     refreshProviders();
     refreshProviderIcons();
   }, [refreshProviders, refreshProviderIcons]);
@@ -331,7 +331,12 @@ function App() {
   // Fallback: extract status bar meta from loaded messages (session switch,
   // page reload). Only runs if there are backend-loaded messages that
   // aren't streaming placeholders.
+  // Guarded: skip while streaming or loading -- the `chat:complete` event
+  // listener and the live-diagnostics useEffect handle those cases, so
+  // running here would just waste CPU on every streaming delta.
   useEffect(() => {
+    if (isStreaming || isLoadingMessages) return;
+
     const lastAssistant = [...messages].reverse().find(
       (m) => m.role === 'assistant' && !m.id?.startsWith('streaming-'),
     );
@@ -366,7 +371,7 @@ function App() {
         contextTokensUsed: contextTokensUsed ?? undefined,
       }));
     }
-  }, [messages]);
+  }, [messages, isStreaming, isLoadingMessages]);
 
   // ------------------------------------------------------------------
   // Handlers -- thin delegation to useChat
@@ -527,7 +532,7 @@ function App() {
         case 'status':
           invoke<SystemStatus>('system_status')
             .then(setSystemStatus)
-            .catch(console.error);
+            .catch((e) => console.warn('Failed to refresh system status:', e));
           return true;
         case 'help':
           // Phase 1 placeholder: open settings as a stand-in.
