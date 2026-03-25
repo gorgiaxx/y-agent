@@ -247,8 +247,15 @@ export function extractThinkTags(content: string): {
 
 /* ---- ActionBar ---- */
 
+export interface ActionBarProps {
+  /** Text content to copy / share (typically the final answer, think-tags stripped). */
+  content: string;
+  /** Session ID for future feedback submission. */
+  sessionId?: string;
+}
+
 /** Action bar shown on hover for assistant / system messages. */
-export function ActionBar({ content }: { content: string }) {
+export function ActionBar({ content }: ActionBarProps) {
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
 
@@ -312,13 +319,20 @@ export function ActionBar({ content }: { content: string }) {
 export function AssistantMessageShell({
   message,
   isStreaming,
+  copyContent,
   children,
 }: {
   message: Message;
   isStreaming: boolean;
+  /** Text to copy when the user clicks the copy button.
+   *  When omitted, falls back to strippedContent of message.content. */
+  copyContent?: string;
   children: React.ReactNode;
 }) {
   const isSystem = message.role === 'system';
+
+  // Fallback: strip think tags from the raw content.
+  const effectiveCopyContent = copyContent ?? extractThinkTags(message.content).strippedContent;
 
   return (
     <div className={`message-bubble ${message.role}`}>
@@ -349,7 +363,7 @@ export function AssistantMessageShell({
 
         {children}
 
-        <ActionBar content={message.content} />
+        <ActionBar content={effectiveCopyContent} />
 
         <div className="message-footer">
           <span className="message-time">

@@ -25,6 +25,7 @@ import type { ToolResultRecord } from '../../../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
 import {
   AssistantMessageShell,
+  extractThinkTags,
 } from './MessageShared';
 import { type ContentSegment } from '../../../hooks/useStreamContent';
 import { ActionCard } from './ActionCard';
@@ -96,8 +97,31 @@ export function StaticBubble({ message }: StaticBubbleProps) {
   const hasXmlActions = streamResult && actionResult && actionResult.actions.length > 0;
   const hasHistoryActions = !streamResult && historyActionSegments && historyActionSegments.length > 0;
 
+  // Compute the text to use for the copy button: only the final answer
+  // (last LLM call's strippedContent, with think tags removed).
+  const copyContent = useMemo(() => {
+    if (hasXmlActions && actionResult!.conclusion?.type === 'text') {
+      // XML actions path: conclusion is the final LLM answer.
+      return extractThinkTags(actionResult!.conclusion.text).strippedContent;
+    }
+    if (hasHistoryActions) {
+      // History actions path: effectiveContent is the final LLM answer.
+      return extractThinkTags(effectiveContent).strippedContent;
+    }
+    if (streamResult) {
+      // Fallback XML segments: find the last text segment.
+      const textSegs = streamResult.segments.filter((s) => s.type === 'text');
+      const last = textSegs[textSegs.length - 1];
+      if (last?.type === 'text') {
+        return extractThinkTags(last.text).strippedContent;
+      }
+    }
+    // Plain text (no actions): strip think tags from the full content.
+    return extractThinkTags(effectiveContent).strippedContent;
+  }, [hasXmlActions, hasHistoryActions, actionResult, streamResult, effectiveContent]);
+
   return (
-    <AssistantMessageShell message={message} isStreaming={false}>
+    <AssistantMessageShell message={message} isStreaming={false} copyContent={copyContent}>
       {hasXmlActions ? (
         /* Path 1: XML-based action segment (just-completed or accumulated content) */
         <>

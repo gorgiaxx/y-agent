@@ -11,6 +11,7 @@
  * The ThinkContentBlock component handles the repeated think-tag extraction pattern.
  */
 
+import { useMemo } from 'react';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
@@ -40,8 +41,28 @@ export function StreamingBubble({ message, toolResults }: StreamingBubbleProps) 
     actionResult,
   } = useAssistantBubble(effectiveContent, toolResults ?? []);
 
+  // Compute the text to use for the copy button: only the final answer
+  // (last LLM call's strippedContent, with think tags removed).
+  const copyContent = useMemo(() => {
+    if (streamResult && actionResult && actionResult.actions.length > 0) {
+      if (actionResult.conclusion?.type === 'text') {
+        return extractThinkTags(actionResult.conclusion.text).strippedContent;
+      }
+      // Still streaming actions, no conclusion yet.
+      return '';
+    }
+    if (streamResult) {
+      const textSegs = streamResult.segments.filter((s) => s.type === 'text');
+      const last = textSegs[textSegs.length - 1];
+      if (last?.type === 'text') {
+        return extractThinkTags(last.text).strippedContent;
+      }
+    }
+    return extractThinkTags(effectiveContent).strippedContent;
+  }, [streamResult, actionResult, effectiveContent]);
+
   return (
-    <AssistantMessageShell message={message} isStreaming={true}>
+    <AssistantMessageShell message={message} isStreaming={true} copyContent={copyContent}>
       {streamResult && actionResult && actionResult.actions.length > 0 ? (
         <>
           {/* Preamble: text segments before the first tool call */}
