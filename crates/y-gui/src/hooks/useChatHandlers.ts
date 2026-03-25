@@ -1,0 +1,275 @@
+// ---------------------------------------------------------------------------
+// useChatHandlers -- chat action handlers extracted from App.tsx.
+//
+// Thin delegation layer that composes useChat operations with session
+// management, workspace assignment, and diagnostics integration.
+// Also includes the slash-command handler.
+// ---------------------------------------------------------------------------
+
+import { useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import type { ChatStarted } from '../types';
+import type { ViewType } from '../components/Sidebar';
+
+export interface ChatDeps {
+  // Session deps
+  activeSessionId: string | null;
+  createSession: (title?: string) => Promise<{ id: string; title: string | null } | null>;
+  selectSession: (id: string) => void;
+  deleteSession: (id: string) => Promise<void>;
+  refreshSessions: () => void;
+  clearMessages: () => void;
+
+  // Chat deps
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[]) => Promise<ChatStarted | null>;
+  editAndResend: (sessionId: string, newContent: string, providerId?: string) => Promise<ChatStarted | null>;
+  editMessage: (messageId: string, content: string) => void;
+  cancelEdit: () => void;
+  undoToMessage: (sessionId: string, messageId: string) => Promise<unknown>;
+  resendLastTurn: (sessionId: string, messageId: string, content: string, providerId?: string) => Promise<unknown>;
+  restoreBranch: (sessionId: string, checkpointId: string) => Promise<unknown>;
+  pendingEdit: { messageId: string; content: string } | null;
+
+  // Provider
+  selectedProviderId: string;
+
+  // Workspace
+  welcomeWorkspaceId: string | null;
+  assignSession: (workspaceId: string, sessionId: string) => Promise<void>;
+  refreshWorkspaces: () => Promise<void>;
+
+  // Diagnostics integration
+  addUserMessage: (content: string, sessionId: string) => void;
+
+  // Navigation
+  setActiveView: (view: ViewType) => void;
+  setDiagOpen: (fn: (prev: boolean) => boolean) => void;
+  setObsOpen: (fn: (prev: boolean) => boolean) => void;
+}
+
+export interface UseChatHandlersReturn {
+  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[]) => Promise<void>;
+  handleEditMessage: (content: string, messageId: string) => void;
+  handleUndoMessage: (messageId: string) => Promise<void>;
+  handleCancelEdit: () => void;
+  handleRestoreBranch: (checkpointId: string) => Promise<void>;
+  handleResendMessage: (content: string, messageId: string) => Promise<void>;
+  handleClearSession: () => Promise<void>;
+  handleNewChat: () => Promise<void>;
+  handleNewChatInWorkspace: (workspaceId: string) => Promise<void>;
+  handleDeleteSession: (id: string) => Promise<void>;
+  handleCreateWorkspace: (name: string, path: string) => Promise<void>;
+  handleCommand: (commandName: string) => boolean;
+}
+
+export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
+  const {
+    activeSessionId,
+    createSession,
+    selectSession,
+    deleteSession,
+    refreshSessions,
+    clearMessages,
+    sendMessage,
+    editAndResend,
+    editMessage,
+    cancelEdit,
+    undoToMessage,
+    resendLastTurn,
+    restoreBranch,
+    pendingEdit,
+    selectedProviderId,
+    welcomeWorkspaceId,
+    assignSession,
+    refreshWorkspaces,
+    addUserMessage,
+    setActiveView,
+    setDiagOpen,
+    setObsOpen,
+  } = deps;
+
+  const handleSend = useCallback(
+    async (message: string, skillNames?: string[], knowledgeCollections?: string[]) => {
+      let sid = activeSessionId;
+      if (!sid) {
+        const session = await createSession();
+        if (!session) return;
+        sid = session.id;
+
+        // If a workspace is selected on the welcome page, assign the session.
+        if (welcomeWorkspaceId) {
+          await assignSession(welcomeWorkspaceId, sid);
+        }
+      }
+
+      const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
+
+      // If in edit mode, use the transactional editAndResend.
+      if (pendingEdit) {
+        addUserMessage(message, sid);
+        const result = await editAndResend(sid, message, providerArg);
+        if (result) {
+          if (result.session_id !== activeSessionId) {
+            selectSession(result.session_id);
+          }
+          refreshSessions();
+        }
+        return;
+      }
+
+      // Normal send -- pass skills and knowledge collections to the backend.
+      addUserMessage(message, sid);
+      const result = await sendMessage(message, sid, providerArg, skillNames, knowledgeCollections);
+      if (result) {
+        if (result.session_id !== activeSessionId) {
+          selectSession(result.session_id);
+        }
+        refreshSessions();
+      }
+    },
+    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage, selectedProviderId, pendingEdit, editAndResend, welcomeWorkspaceId, assignSession],
+  );
+
+  const handleEditMessage = useCallback((content: string, messageId: string) => {
+    editMessage(messageId, content);
+  }, [editMessage]);
+
+  const handleUndoMessage = useCallback(
+    async (messageId: string) => {
+      if (!activeSessionId) return;
+      await undoToMessage(activeSessionId, messageId);
+    },
+    [activeSessionId, undoToMessage],
+  );
+
+  const handleCancelEdit = useCallback(() => {
+    cancelEdit();
+  }, [cancelEdit]);
+
+  const handleRestoreBranch = useCallback(
+    async (checkpointId: string) => {
+      if (!activeSessionId) return;
+      await restoreBranch(activeSessionId, checkpointId);
+    },
+    [activeSessionId, restoreBranch],
+  );
+
+  const handleResendMessage = useCallback(
+    async (content: string, messageId: string) => {
+      if (!activeSessionId) return;
+      const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
+      await resendLastTurn(activeSessionId, messageId, content, providerArg);
+    },
+    [activeSessionId, resendLastTurn, selectedProviderId],
+  );
+
+  const handleClearSession = useCallback(async () => {
+    if (!activeSessionId) return;
+    await deleteSession(activeSessionId);
+    clearMessages();
+  }, [activeSessionId, deleteSession, clearMessages]);
+
+  const handleNewChat = useCallback(async () => {
+    clearMessages();
+    const session = await createSession();
+    if (session) {
+      selectSession(session.id);
+    }
+  }, [createSession, selectSession, clearMessages]);
+
+  const handleNewChatInWorkspace = useCallback(
+    async (workspaceId: string) => {
+      clearMessages();
+      const session = await createSession();
+      if (session) {
+        await assignSession(workspaceId, session.id);
+        selectSession(session.id);
+      }
+    },
+    [createSession, selectSession, clearMessages, assignSession],
+  );
+
+  const handleDeleteSession = useCallback(
+    async (id: string) => {
+      await deleteSession(id);
+      if (activeSessionId === id) {
+        clearMessages();
+      }
+    },
+    [deleteSession, activeSessionId, clearMessages],
+  );
+
+  const handleCreateWorkspace = useCallback(
+    async (name: string, path: string) => {
+      try {
+        await invoke('workspace_create', { name, path });
+        await refreshWorkspaces();
+      } catch (e) {
+        console.error('Failed to create workspace:', e);
+      }
+    },
+    [refreshWorkspaces],
+  );
+
+  // Slash-command handler -- maps command names to existing GUI actions.
+  const handleCommand = useCallback(
+    (commandName: string): boolean => {
+      switch (commandName) {
+        case 'new':
+          handleNewChat();
+          return true;
+        case 'clear':
+          clearMessages();
+          return true;
+        case 'compact':
+          if (activeSessionId) {
+            invoke('context_compact', { sessionId: activeSessionId })
+              .then(() => console.log('Compaction completed'))
+              .catch((e) => console.error('Compaction failed:', e));
+          }
+          return true;
+        case 'settings':
+          setActiveView('settings');
+          return true;
+        case 'diagnostics':
+          setDiagOpen((prev) => !prev);
+          return true;
+        case 'observability':
+          setObsOpen((prev) => !prev);
+          return true;
+        case 'status':
+          invoke<unknown>('system_status')
+            .then(() => console.log('Status refreshed'))
+            .catch((e) => console.warn('Failed to refresh system status:', e));
+          return true;
+        case 'help':
+          setActiveView('settings');
+          return true;
+        case 'export':
+          console.log('Export command triggered -- not yet implemented');
+          return true;
+        case 'model':
+          setActiveView('settings');
+          return true;
+        default:
+          return false;
+      }
+    },
+    [handleNewChat, clearMessages, activeSessionId, setActiveView, setDiagOpen, setObsOpen],
+  );
+
+  return {
+    handleSend,
+    handleEditMessage,
+    handleUndoMessage,
+    handleCancelEdit,
+    handleRestoreBranch,
+    handleResendMessage,
+    handleClearSession,
+    handleNewChat,
+    handleNewChatInWorkspace,
+    handleDeleteSession,
+    handleCreateWorkspace,
+    handleCommand,
+  };
+}

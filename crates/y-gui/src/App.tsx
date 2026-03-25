@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback, useRef, startTransition } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { Activity, Eye } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import type { ViewType } from './components/Sidebar';
@@ -28,10 +27,16 @@ import { useSkills } from './hooks/useSkills';
 import { useKnowledge } from './hooks/useKnowledge';
 import { useAgents } from './hooks/useAgents';
 import { useThemeProvider, ThemeContext } from './hooks/useTheme';
-import type { SystemStatus, ProviderInfo, TurnMeta, ChatCompletePayload } from './types';
+import { useProviders } from './hooks/useProviders';
+import { useStatusBarMeta } from './hooks/useStatusBarMeta';
+import { useChatHandlers } from './hooks/useChatHandlers';
 import './App.css';
 
 function App() {
+  // ------------------------------------------------------------------
+  // Domain hooks
+  // ------------------------------------------------------------------
+
   const {
     sessions,
     activeSessionId,
@@ -40,6 +45,7 @@ function App() {
     deleteSession,
     refreshSessions,
   } = useSessions();
+
   const {
     messages,
     isStreaming,
@@ -65,6 +71,7 @@ function App() {
 
   const { config, updateConfig, loadSection, saveSection, reloadConfig: rawReloadConfig } = useConfig();
   const themeCtx = useThemeProvider(config.theme);
+
   const {
     workspaces,
     sessionWorkspaceMap,
@@ -75,9 +82,12 @@ function App() {
     refreshWorkspaces,
   } = useWorkspaces();
 
+  // ------------------------------------------------------------------
+  // Navigation state
+  // ------------------------------------------------------------------
+
   const [activeView, setActiveView] = useState<ViewType>('chat');
   const [inputExpanded, setInputExpanded] = useState(false);
-  // Track which workspace is selected on the welcome page.
   const [welcomeWorkspaceId, setWelcomeWorkspaceId] = useState<string | null>(null);
 
   // Default welcome workspace to first workspace (alphabetically).
@@ -89,16 +99,20 @@ function App() {
       setWelcomeWorkspaceId(sorted[0].id);
     }
   }, [workspaces, welcomeWorkspaceId]);
-  // Show the window once the React tree is mounted to avoid the white-flash
-  // that occurs when the native window renders before CSS is applied.
+
+  // Show the window once the React tree is mounted to avoid white-flash.
   useEffect(() => {
     invoke('show_window').catch(() => {});
   }, []);
 
-  // When not in chat view, treat diagnostics as global (no active session).
+  // ------------------------------------------------------------------
+  // Diagnostics & Observability
+  // ------------------------------------------------------------------
+
   const diagnosticSessionId = activeView === 'chat' ? activeSessionId : null;
   const { entries, summary, isActive, clear: clearDiagnostics, addUserMessage } =
     useDiagnostics(diagnosticSessionId);
+
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('general');
   const [diagOpen, setDiagOpen] = useState(false);
   const [obsOpen, setObsOpen] = useState(false);
@@ -109,6 +123,11 @@ function App() {
     active: obsOpen,
     timeRange: obsTimeRange,
   });
+
+  // ------------------------------------------------------------------
+  // Skills
+  // ------------------------------------------------------------------
+
   const {
     skills,
     getSkillDetail,
@@ -131,12 +150,16 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [importStatus, clearImportStatus]);
+
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
 
-  // Knowledge state
+  // ------------------------------------------------------------------
+  // Knowledge
+  // ------------------------------------------------------------------
+
   const {
     collections: kbCollections,
     entries: kbEntries,
@@ -156,70 +179,30 @@ function App() {
     cancelIngest: cancelKbIngest,
   } = useKnowledge();
 
+  // ------------------------------------------------------------------
+  // Agents
+  // ------------------------------------------------------------------
+
   const { agents, getAgentDetail, saveAgent, resetAgent, reloadAgents } = useAgents();
 
-  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState('auto');
-  /** Map from provider ID to icon identifier (loaded from providers TOML). */
-  const [providerIconMap, setProviderIconMap] = useState<Record<string, string>>({});
-  const [statusBarMeta, setStatusBarMeta] = useState<{
-    provider?: string;
-    providerId?: string;
-    tokens?: { input: number; output: number };
-    cost?: number;
-    contextWindow?: number;
-    contextTokensUsed?: number;
-  }>({});
+  // ------------------------------------------------------------------
+  // Providers & System Status (extracted hook)
+  // ------------------------------------------------------------------
 
-  // Reusable: fetch the latest provider list from backend.
-  const refreshProviders = useCallback(() => {
-    invoke<ProviderInfo[]>('provider_list')
-      .then(setProviders)
-      .catch((e) => console.warn('Failed to load provider list:', e));
-  }, []);
+  const {
+    systemStatus,
+    providers,
+    selectedProviderId,
+    setSelectedProviderId,
+    providerIconMap,
+    refreshProviders,
+    refreshProviderIcons,
+  } = useProviders(loadSection);
 
-  // Build provider icon map from the providers TOML config.
-  const refreshProviderIcons = useCallback(() => {
-    loadSection('providers')
-      .then((toml) => {
-        try {
-          // Simple TOML parsing: extract icon = "..." lines within [[providers]] blocks.
-          const map: Record<string, string> = {};
-          let currentId: string | null = null;
-          for (const line of toml.split('\n')) {
-            const trimmed = line.trim();
-            const idMatch = trimmed.match(/^id\s*=\s*"([^"]+)"/);
-            if (idMatch) {
-              currentId = idMatch[1];
-            }
-            const iconMatch = trimmed.match(/^icon\s*=\s*"([^"]+)"/);
-            if (iconMatch && currentId) {
-              map[currentId] = iconMatch[1];
-            }
-            // Reset on new provider block.
-            if (trimmed === '[[providers]]') {
-              currentId = null;
-            }
-          }
-          setProviderIconMap(map);
-        } catch {
-          // Ignore parse errors for icon map.
-        }
-      })
-      .catch((e) => console.warn('Failed to load provider icons:', e));
-  }, [loadSection]);
+  // ------------------------------------------------------------------
+  // Developer mode: Ctrl+Shift+I toggles DevTools
+  // ------------------------------------------------------------------
 
-  // Load system status and provider list on mount.
-  useEffect(() => {
-    invoke<SystemStatus>('system_status')
-      .then(setSystemStatus)
-      .catch((e) => console.warn('Failed to load system status:', e));
-    refreshProviders();
-    refreshProviderIcons();
-  }, [refreshProviders, refreshProviderIcons]);
-
-  // Developer mode: Ctrl+Shift+I (or Cmd+Shift+I on macOS) toggles DevTools.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'I') {
@@ -231,7 +214,10 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Load messages when active session changes.
+  // ------------------------------------------------------------------
+  // Load messages when active session changes
+  // ------------------------------------------------------------------
+
   useEffect(() => {
     if (activeSessionId) {
       loadMessages(activeSessionId);
@@ -240,335 +226,67 @@ function App() {
     }
   }, [activeSessionId, loadMessages, clearMessages]);
 
-  // Track last response metadata for status bar.
-  const applyMeta = useCallback((meta: TurnMeta | null) => {
-    startTransition(() => {
-      if (meta) {
-        setStatusBarMeta({
-          provider: meta.model || meta.provider_id || undefined,
-          providerId: meta.provider_id || undefined,
-          tokens: {
-            input: meta.context_tokens_used || meta.input_tokens,
-            output: meta.output_tokens,
-          },
-          cost: meta.cost_usd,
-          contextWindow: meta.context_window,
-          contextTokensUsed: meta.context_tokens_used,
-        });
-        if (meta.provider_id) {
-          setSelectedProviderId(meta.provider_id);
-        }
-      } else {
-        setStatusBarMeta({});
-        setSelectedProviderId('auto');
-      }
-    });
-  }, []);
-
-  const fallbackSyncSessionIdRef = useRef<string | null>(null);
-
-  // On session switch: restore from backend-cached metadata.
-  useEffect(() => {
-    fallbackSyncSessionIdRef.current = null;
-    if (!activeSessionId) {
-      applyMeta(null);
-      return;
-    }
-    invoke<TurnMeta | null>('session_last_turn_meta', { sessionId: activeSessionId })
-      .then(applyMeta)
-      .catch(() => applyMeta(null));
-  }, [activeSessionId, applyMeta]);
-
-  // Listen directly to chat:complete events for status bar meta.
-  // This is the authoritative source — fires once per turn completion with
-  // all fields already resolved.  Avoids the race condition where the
-  // messages-based useEffect would process the streaming placeholder
-  // (which lacks metadata) before the backend reload finishes.
-  const activeSessionIdRef = useRef(activeSessionId);
-  activeSessionIdRef.current = activeSessionId;
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listen<ChatCompletePayload>('chat:complete', (e) => {
-      const payload = e.payload;
-      // Only update if the event belongs to the currently viewed session.
-      if (payload.session_id !== activeSessionIdRef.current) return;
-      startTransition(() => {
-        setStatusBarMeta({
-          provider: payload.model || payload.provider_id || undefined,
-          providerId: payload.provider_id || undefined,
-          tokens: {
-            input: payload.context_tokens_used || payload.input_tokens,
-            output: payload.output_tokens,
-          },
-          cost: payload.cost_usd,
-          contextWindow: payload.context_window,
-          contextTokensUsed: payload.context_tokens_used,
-        });
-      });
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
-  }, []);
-
-  // Live update: when diagnostics entries change during an active run,
-  // extract the latest llm_response and update the status bar so the
-  // token occupancy reflects each iteration in real time.
-  useEffect(() => {
-    if (!isActive) return;
-    // Find the last llm_response entry from the root agent only.
-    // Subagent entries (title-generator, pruning-summarizer, etc.) carry
-    // a different agent_name and must not overwrite the status bar.
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const ev = entries[i].event;
-      if (ev.type === 'llm_response' && (!ev.agent_name || ev.agent_name === 'chat-turn')) {
-        startTransition(() => {
-          setStatusBarMeta((prev) => ({
-            ...prev,
-            provider: ev.model || prev.provider,
-            tokens: { input: ev.input_tokens, output: ev.output_tokens },
-            cost: (prev.cost ?? 0) > ev.cost_usd ? prev.cost : ev.cost_usd,
-            contextTokensUsed: ev.input_tokens,
-            contextWindow: ev.context_window || prev.contextWindow,
-          }));
-        });
-        break;
-      }
-    }
-  }, [entries, isActive]);
-
-  // Fallback: extract status bar meta from loaded messages (session switch,
-  // page reload). Only runs if there are backend-loaded messages that
-  // aren't streaming placeholders.
-  // Guarded: skip while streaming or loading -- the `chat:complete` event
-  // listener and the live-diagnostics useEffect handle those cases, so
-  // running here would just waste CPU on every streaming delta.
-  useEffect(() => {
-    if (isStreaming || isLoadingMessages) return;
-
-    const lastAssistant = [...messages].reverse().find(
-      (m) => m.role === 'assistant' && !m.id?.startsWith('streaming-'),
-    );
-    if (!lastAssistant) return;
-
-    const meta = lastAssistant.metadata as Record<string, unknown> | undefined;
-    const usage = meta?.usage as Record<string, unknown> | undefined;
-    const providerId = (meta?.provider_id as string | undefined);
-    const model = lastAssistant.model
-      || (meta?.model as string | undefined)
-      || providerId;
-    const tokens = lastAssistant.tokens
-      || (meta?.input_tokens != null && meta?.output_tokens != null
-        ? { input: meta.input_tokens as number, output: meta.output_tokens as number }
-        : undefined)
-      || (usage?.input_tokens != null && usage?.output_tokens != null
-        ? { input: usage.input_tokens as number, output: usage.output_tokens as number }
-        : undefined);
-    const cost = lastAssistant.cost ?? (meta?.cost_usd as number | undefined);
-    const contextWindow = lastAssistant.context_window ?? (meta?.context_window as number | undefined);
-    const contextTokensUsed = (meta?.context_tokens_used as number | undefined);
-
-    if (model || tokens || cost != null || contextWindow != null) {
-      setStatusBarMeta((prev) => ({
-        provider: model || undefined,
-        providerId: providerId || prev.providerId,
-        tokens: tokens && contextTokensUsed
-          ? { input: contextTokensUsed, output: tokens.output }
-          : tokens,
-        cost,
-        contextWindow: contextWindow ?? undefined,
-        contextTokensUsed: contextTokensUsed ?? undefined,
-      }));
-
-      // Sync the input model if it's the first time processing this session
-      // via the fallback hook and we found a providerId.
-      if (providerId && activeSessionId && fallbackSyncSessionIdRef.current !== activeSessionId) {
-        setSelectedProviderId(providerId);
-        fallbackSyncSessionIdRef.current = activeSessionId;
-      }
-    }
-  }, [messages, isStreaming, isLoadingMessages, activeSessionId]);
-
   // ------------------------------------------------------------------
-  // Handlers -- thin delegation to useChat
+  // Status bar meta (extracted hook)
   // ------------------------------------------------------------------
 
-  const handleSend = useCallback(
-    async (message: string, skillNames?: string[], knowledgeCollections?: string[]) => {
-      let sid = activeSessionId;
-      if (!sid) {
-        const session = await createSession();
-        if (!session) return;
-        sid = session.id;
-
-        // If a workspace is selected on the welcome page, assign the session.
-        if (welcomeWorkspaceId) {
-          await assignSession(welcomeWorkspaceId, sid);
-        }
-      }
-
-      const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
-
-      // If in edit mode, use the transactional editAndResend.
-      if (pendingEdit) {
-        addUserMessage(message, sid);
-        const result = await editAndResend(sid, message, providerArg);
-        if (result) {
-          if (result.session_id !== activeSessionId) {
-            selectSession(result.session_id);
-          }
-          refreshSessions();
-        }
-        return;
-      }
-
-      // Normal send — pass skills and knowledge collections to the backend.
-      addUserMessage(message, sid);
-      const result = await sendMessage(message, sid, providerArg, skillNames, knowledgeCollections);
-      if (result) {
-        if (result.session_id !== activeSessionId) {
-          selectSession(result.session_id);
-        }
-        refreshSessions();
-      }
-    },
-    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage, selectedProviderId, pendingEdit, editAndResend, welcomeWorkspaceId, assignSession],
-  );
-
-  const handleEditMessage = useCallback((content: string, messageId: string) => {
-    editMessage(messageId, content);
-  }, [editMessage]);
-
-  const handleUndoMessage = useCallback(
-    async (messageId: string) => {
-      if (!activeSessionId) return;
-      await undoToMessage(activeSessionId, messageId);
-    },
-    [activeSessionId, undoToMessage],
-  );
-
-  const handleCancelEdit = useCallback(() => {
-    cancelEdit();
-  }, [cancelEdit]);
-
-  const handleRestoreBranch = useCallback(
-    async (checkpointId: string) => {
-      if (!activeSessionId) return;
-      await restoreBranch(activeSessionId, checkpointId);
-    },
-    [activeSessionId, restoreBranch],
-  );
-
-  const handleResendMessage = useCallback(
-    async (content: string, messageId: string) => {
-      if (!activeSessionId) return;
-      const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
-      await resendLastTurn(activeSessionId, messageId, content, providerArg);
-    },
-    [activeSessionId, resendLastTurn, selectedProviderId],
-  );
-
-  const handleClearSession = useCallback(async () => {
-    if (!activeSessionId) return;
-    await deleteSession(activeSessionId);
-    clearMessages();
-  }, [activeSessionId, deleteSession, clearMessages]);
-
-  const handleNewChat = useCallback(async () => {
-    clearMessages();
-    const session = await createSession();
-    if (session) {
-      selectSession(session.id);
-    }
-  }, [createSession, selectSession, clearMessages]);
-
-  const handleNewChatInWorkspace = useCallback(
-    async (workspaceId: string) => {
-      clearMessages();
-      const session = await createSession();
-      if (session) {
-        await assignSession(workspaceId, session.id);
-        selectSession(session.id);
-      }
-    },
-    [createSession, selectSession, clearMessages, assignSession],
-  );
-
-  const handleDeleteSession = useCallback(
-    async (id: string) => {
-      await deleteSession(id);
-      if (activeSessionId === id) {
-        clearMessages();
-      }
-    },
-    [deleteSession, activeSessionId, clearMessages],
-  );
-
-  const handleCreateWorkspace = useCallback(
-    async (name: string, path: string) => {
-      try {
-        await invoke('workspace_create', { name, path });
-        await refreshWorkspaces();
-      } catch (e) {
-        console.error('Failed to create workspace:', e);
-      }
-    },
-    [refreshWorkspaces],
-  );
+  const statusBarMeta = useStatusBarMeta({
+    activeSessionId,
+    messages,
+    isStreaming,
+    isLoadingMessages,
+    diagnosticEntries: entries,
+    isDiagnosticsActive: isActive,
+  });
 
   // ------------------------------------------------------------------
-  // Slash-command handler -- maps command names to existing GUI actions
+  // Chat handlers (extracted hook)
   // ------------------------------------------------------------------
 
-  const handleCommand = useCallback(
-    (commandName: string): boolean => {
-      switch (commandName) {
-        case 'new':
-          handleNewChat();
-          return true;
-        case 'clear':
-          clearMessages();
-          return true;
-        case 'compact':
-          if (activeSessionId) {
-            invoke('context_compact', { sessionId: activeSessionId })
-              .then(() => console.log('Compaction completed'))
-              .catch((e) => console.error('Compaction failed:', e));
-          }
-          return true;
-        case 'settings':
-          setActiveView('settings');
-          return true;
-        case 'diagnostics':
-          setDiagOpen((prev) => !prev);
-          return true;
-        case 'observability':
-          setObsOpen((prev) => !prev);
-          return true;
-        case 'status':
-          invoke<SystemStatus>('system_status')
-            .then(setSystemStatus)
-            .catch((e) => console.warn('Failed to refresh system status:', e));
-          return true;
-        case 'help':
-          // Phase 1 placeholder: open settings as a stand-in.
-          setActiveView('settings');
-          return true;
-        case 'export':
-          // Phase 1 placeholder: log to console until export UI is built.
-          console.log('Export command triggered -- not yet implemented');
-          return true;
-        case 'model':
-          // Phase 1 placeholder: open settings on the providers tab.
-          setActiveView('settings');
-          return true;
-        default:
-          return false;
-      }
-    },
-    [handleNewChat, clearMessages, activeSessionId],
-  );
+  const {
+    handleSend,
+    handleEditMessage,
+    handleUndoMessage,
+    handleCancelEdit,
+    handleRestoreBranch,
+    handleResendMessage,
+    handleClearSession,
+    handleNewChat,
+    handleNewChatInWorkspace,
+    handleDeleteSession,
+    handleCreateWorkspace,
+    handleCommand,
+  } = useChatHandlers({
+    activeSessionId,
+    createSession,
+    selectSession,
+    deleteSession,
+    refreshSessions,
+    clearMessages,
+    sendMessage,
+    editAndResend,
+    editMessage,
+    cancelEdit,
+    undoToMessage,
+    resendLastTurn,
+    restoreBranch,
+    pendingEdit,
+    selectedProviderId,
+    welcomeWorkspaceId,
+    assignSession,
+    refreshWorkspaces,
+    addUserMessage,
+    setActiveView,
+    setDiagOpen,
+    setObsOpen,
+  });
 
   // Determine if input should be disabled: streaming OR a compound operation is in progress.
   const inputDisabled = isStreaming || (opStatus !== 'idle' && opStatus !== 'sending');
+
+  // ------------------------------------------------------------------
+  // Render
+  // ------------------------------------------------------------------
 
   return (
     <ThemeContext.Provider value={themeCtx}>
@@ -807,8 +525,6 @@ function App() {
           providerIcons={providerIconMap}
         />
       )}
-
-
 
       {importDialogOpen && (
         <SkillImportDialog
