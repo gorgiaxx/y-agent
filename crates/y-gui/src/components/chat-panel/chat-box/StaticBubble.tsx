@@ -17,8 +17,6 @@
  */
 
 import { useMemo } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '../../../types';
@@ -30,7 +28,6 @@ import {
   MarkdownSegment,
   AssistantMessageShell,
   extractThinkTags,
-  escapeThinkTags,
 } from './MessageShared';
 import { processStreamContent, type ContentSegment } from '../../../hooks/useStreamContent';
 import { segmentActions } from '../../../hooks/useActionSegment';
@@ -227,12 +224,7 @@ export function StaticBubble({ message }: StaticBubbleProps) {
                 )}
                 {think.strippedContent.trim() && (
                   <div className="message-content markdown-body">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={markdownComponents}
-                    >
-                      {escapeThinkTags(think.strippedContent)}
-                    </ReactMarkdown>
+                    <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
                   </div>
                 )}
               </>
@@ -295,12 +287,7 @@ export function StaticBubble({ message }: StaticBubbleProps) {
             )}
             {think.strippedContent.trim() && (
               <div className="message-content markdown-body">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={markdownComponents}
-                >
-                  {escapeThinkTags(think.strippedContent)}
-                </ReactMarkdown>
+                <MarkdownSegment text={think.strippedContent} components={markdownComponents} />
               </div>
             )}
           </>

@@ -115,6 +115,53 @@ let unlistenFns: UnlistenFn[] = [];
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
+/**
+ * Map a raw backend diagnostics record to a typed DiagnosticsEntry.
+ * Shared by loadSubagentHistory, reloadSessionHistory, and the session
+ * history loader inside the hook.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapRawToEntry(item: any, idPrefix: string, idx: number): DiagnosticsEntry {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let event: any;
+  const timestamp = (item.timestamp as string) || new Date().toISOString();
+  switch (item.type) {
+    case 'user_message':
+      event = { type: 'user_message' as const, content: item.content as string };
+      break;
+    case 'llm_response':
+      event = {
+        type: 'llm_response' as const,
+        iteration: item.iteration as number,
+        model: item.model as string,
+        input_tokens: item.input_tokens as number,
+        output_tokens: item.output_tokens as number,
+        duration_ms: item.duration_ms as number,
+        cost_usd: item.cost_usd as number,
+        tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
+        prompt_preview: item.prompt_preview as string,
+        response_text: item.response_text as string,
+        context_window: item.context_window as number,
+        agent_name: item.agent_name as string | undefined,
+      };
+      break;
+    case 'tool_result':
+      event = {
+        type: 'tool_result' as const,
+        name: item.name as string,
+        success: item.success as boolean,
+        duration_ms: item.duration_ms as number,
+        input_preview: (item.input_preview as string) ?? undefined,
+        result_preview: item.result_preview as string,
+        agent_name: item.agent_name as string | undefined,
+      };
+      break;
+    default:
+      event = { type: 'user_message' as const, content: '' };
+  }
+  return { id: `${idPrefix}-${idx}`, timestamp, event };
+}
+
 /** Fetch all subagent diagnostics (across all sessions) from the database and
  *  replace the nil-UUID entries in `sharedState`. Called on init and again
  *  whenever a `diagnostics:subagent_completed` event arrives.              */
@@ -124,42 +171,7 @@ async function loadSubagentHistory() {
     const raw = await invoke<any[]>('diagnostics_get_subagent_history', { limit: 50 });
     if (!raw || raw.length === 0) return;
 
-    const histEntries: DiagnosticsEntry[] = raw.map((item, idx) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let event: any;
-      const timestamp = item.timestamp as string;
-      switch (item.type) {
-        case 'llm_response':
-          event = {
-            type: 'llm_response' as const,
-            iteration: item.iteration as number,
-            model: item.model as string,
-            input_tokens: item.input_tokens as number,
-            output_tokens: item.output_tokens as number,
-            duration_ms: item.duration_ms as number,
-            cost_usd: item.cost_usd as number,
-            tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
-            prompt_preview: item.prompt_preview as string,
-            response_text: item.response_text as string,
-            agent_name: item.agent_name as string | undefined,
-          };
-          break;
-        case 'tool_result':
-          event = {
-            type: 'tool_result' as const,
-            name: item.name as string,
-            success: item.success as boolean,
-            duration_ms: item.duration_ms as number,
-            input_preview: (item.input_preview as string) ?? undefined,
-            result_preview: item.result_preview as string,
-            agent_name: item.agent_name as string | undefined,
-          };
-          break;
-        default:
-          event = { type: 'user_message' as const, content: '' };
-      }
-      return { id: `subagent-${idx}`, timestamp, event };
-    });
+    const histEntries = raw.map((item, idx) => mapRawToEntry(item, 'subagent', idx));
 
     broadcastUpdate((prev) => ({
       ...prev,
@@ -183,45 +195,7 @@ async function reloadSessionHistory(sessionId: string) {
     const raw = await invoke<any[]>('diagnostics_get_by_session', { sessionId, limit: 50 });
     if (!raw || raw.length === 0) return;
 
-    const histEntries: DiagnosticsEntry[] = raw.map((item, idx) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let event: any;
-      const timestamp = item.timestamp as string;
-      switch (item.type) {
-        case 'user_message':
-          event = { type: 'user_message' as const, content: item.content as string };
-          break;
-        case 'llm_response':
-          event = {
-            type: 'llm_response' as const,
-            iteration: item.iteration as number,
-            model: item.model as string,
-            input_tokens: item.input_tokens as number,
-            output_tokens: item.output_tokens as number,
-            duration_ms: item.duration_ms as number,
-            cost_usd: item.cost_usd as number,
-            tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
-            prompt_preview: item.prompt_preview as string,
-            response_text: item.response_text as string,
-            agent_name: item.agent_name as string | undefined,
-          };
-          break;
-        case 'tool_result':
-          event = {
-            type: 'tool_result' as const,
-            name: item.name as string,
-            success: item.success as boolean,
-            duration_ms: item.duration_ms as number,
-            input_preview: (item.input_preview as string) ?? undefined,
-            result_preview: item.result_preview as string,
-            agent_name: item.agent_name as string | undefined,
-          };
-          break;
-        default:
-          event = { type: 'user_message' as const, content: '' };
-      }
-      return { id: `hist-${sessionId}-${idx}`, timestamp, event };
-    });
+    const histEntries = raw.map((item, idx) => mapRawToEntry(item, `hist-${sessionId}`, idx));
 
     broadcastUpdate((prev) => {
       const existing = prev.sessionEntries[sessionId] ?? [];
@@ -424,45 +398,7 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
         const raw = await invoke<any[]>('diagnostics_get_by_session', { sessionId: sid, limit: 50 });
         if (!raw || raw.length === 0) return;
 
-        const histEntries: DiagnosticsEntry[] = raw.map((item, idx) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let event: any;
-          const timestamp = item.timestamp as string;
-          switch (item.type) {
-            case 'user_message':
-              event = { type: 'user_message' as const, content: item.content as string };
-              break;
-            case 'llm_response':
-              event = {
-                type: 'llm_response' as const,
-                iteration: item.iteration as number,
-                model: item.model as string,
-                input_tokens: item.input_tokens as number,
-                output_tokens: item.output_tokens as number,
-                duration_ms: item.duration_ms as number,
-                cost_usd: item.cost_usd as number,
-                tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
-                prompt_preview: item.prompt_preview as string,
-                response_text: item.response_text as string,
-                agent_name: item.agent_name as string | undefined,
-              };
-              break;
-            case 'tool_result':
-              event = {
-                type: 'tool_result' as const,
-                name: item.name as string,
-                success: item.success as boolean,
-                duration_ms: item.duration_ms as number,
-                input_preview: (item.input_preview as string) ?? undefined,
-                result_preview: item.result_preview as string,
-                agent_name: item.agent_name as string | undefined,
-              };
-              break;
-            default:
-              event = { type: 'user_message' as const, content: '' };
-          }
-          return { id: `hist-${sid}-${idx}`, timestamp, event };
-        });
+        const histEntries = raw.map((item, idx) => mapRawToEntry(item, `hist-${sid}`, idx));
 
         // Final guard: only seed if still no live entries.
         broadcastUpdate((prev) => {

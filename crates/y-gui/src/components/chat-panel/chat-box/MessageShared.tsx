@@ -203,7 +203,10 @@ export function extractThinkTags(content: string): {
   const closeTag = '</think>';
 
   const openIdx = content.indexOf(openTag);
-  if (openIdx != 0) {
+  // Allow leading whitespace before the <think> tag.
+  // Only extract when the tag appears at the effective start of the content
+  // (i.e. nothing but whitespace before it).
+  if (openIdx < 0 || content.slice(0, openIdx).trim().length > 0) {
     return { thinkContent: null, strippedContent: content, isThinkingIncomplete: false };
   }
   const afterOpen = openIdx + openTag.length;
@@ -224,7 +227,7 @@ export function extractThinkTags(content: string): {
   const thinkContent = content.slice(afterOpen, closeIdx).trim();
 
   // Guard: if the content between tags is too short, it is likely the LLM
-  // mentioning the tag syntax (e.g. `<think>/</think>`) rather than embedding
+  // mentioning the tag syntax (e.g. `<think>/<think>`) rather than embedding
   // actual reasoning. Treat such cases as normal content (no extraction).
   if (thinkContent.length < MIN_THINK_CONTENT_LENGTH) {
     return { thinkContent: null, strippedContent: content, isThinkingIncomplete: false };
