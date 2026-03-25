@@ -172,8 +172,11 @@ function ProviderTabPanel({
   };
 
   // Determine whether model discovery is available.
-  const canDiscoverModels =
-    provider.provider_type === 'openai-compat' && !!provider.base_url?.trim();
+  const supportsDiscoveryProvider =
+    provider.provider_type === 'openai-compat' ||
+    provider.provider_type === 'anthropic';
+
+  const canDiscoverModels = supportsDiscoveryProvider && !!provider.base_url?.trim();
 
   const handleModelSearch = async () => {
     if (!provider.base_url) return;
