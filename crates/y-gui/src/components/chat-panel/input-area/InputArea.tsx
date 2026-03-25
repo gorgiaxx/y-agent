@@ -161,6 +161,7 @@ export function InputArea({
   const providerDropdownRef = useRef<HTMLDivElement>(null);
   const kbPickerRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
+  const lastCompEndRef = useRef<number>(0);
 
   // Close provider dropdown on outside click.
   useEffect(() => {
@@ -343,13 +344,22 @@ export function InputArea({
     queueMicrotask(() => { sendingRef.current = false; });
   }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections]);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    document.execCommand('insertText', false, text);
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Ignore key events during IME composition (e.g. Chinese pinyin input).
-    // The Enter key used to confirm an IME composition should NOT trigger a
-    // message send.  On some platforms a single Enter press during composition
-    // can fire two keydown events (isComposing=true then isComposing=false),
-    // which would cause a double-send without this guard.
-    if (e.nativeEvent.isComposing || e.keyCode === 229) {
+    if (e.nativeEvent.isComposing) {
+      return;
+    }
+
+    // On some platforms a single Enter press during composition can fire two 
+    // keydown events (isComposing=true then isComposing=false).
+    // To prevent it, we ignore keydown events immediately after composition ends.
+    if (Date.now() - lastCompEndRef.current < 100) {
       return;
     }
 
@@ -433,7 +443,11 @@ export function InputArea({
             className="input-editable"
             contentEditable={!disabled}
             onInput={handleInput}
+            onPaste={handlePaste}
             onKeyDown={handleKeyDown}
+            onCompositionEnd={() => {
+              lastCompEndRef.current = Date.now();
+            }}
             data-placeholder={disabled ? 'Waiting for response...' : 'Type a message... (/ for commands), Enter to send, Shift+Enter for newline)'}
             role="textbox"
             aria-multiline="true"
