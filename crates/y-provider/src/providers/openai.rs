@@ -691,7 +691,9 @@ struct OpenAiChoice {
 
 #[derive(Debug, Deserialize)]
 struct OpenAiUsage {
+    #[serde(default)]
     prompt_tokens: u32,
+    #[serde(default)]
     completion_tokens: u32,
 }
 
@@ -889,7 +891,8 @@ mod tests {
         assert_eq!(response.id, "chatcmpl-123");
         assert_eq!(response.choices.len(), 1);
         assert_eq!(response.choices[0].message.content, Some("Hello!".into()));
-        assert_eq!(response.usage.unwrap().prompt_tokens, 10);
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 10);
     }
 
     #[test]
@@ -982,6 +985,19 @@ mod tests {
         let chunk: OpenAiStreamChunk = serde_json::from_str(json).unwrap();
         assert_eq!(chunk.choices[0].finish_reason.as_deref(), Some("stop"));
         assert!(chunk.usage.is_some());
+    }
+
+    /// Regression test: openai-compat providers (e.g. MiniMax) may return usage objects
+    /// without `prompt_tokens`/`completion_tokens`, using `total_tokens` instead.
+    /// The parser must tolerate this and default missing fields to 0.
+    #[test]
+    fn test_stream_chunk_compat_usage_without_prompt_tokens() {
+        let json = r#"{"id":"061029ccbac41519c69f764cc06f5024","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":null}],"created":1774253772,"model":"MiniMax-M2.7-highspeed","object":"chat.completion.chunk","usage":{"total_tokens":0,"total_characters":0}}"#;
+        let chunk: OpenAiStreamChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices.len(), 1);
+        let usage = chunk.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 0);
+        assert_eq!(usage.completion_tokens, 0);
     }
 
     #[test]

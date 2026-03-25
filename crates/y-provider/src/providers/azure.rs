@@ -621,7 +621,9 @@ struct AzureChoice {
 
 #[derive(Debug, Deserialize)]
 struct AzureUsage {
+    #[serde(default)]
     prompt_tokens: u32,
+    #[serde(default)]
     completion_tokens: u32,
 }
 
