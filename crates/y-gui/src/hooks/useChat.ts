@@ -148,9 +148,29 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     // into the newly selected session's chat panel.
     setError(null);
     // Restore context reset points for the new session.
-    setContextResetPoints(
-      activeSessionId ? contextResetMapRef.current.get(activeSessionId) ?? [] : [],
-    );
+    // First check the in-memory map, then asynchronously load from backend.
+    if (activeSessionId) {
+      const cached = contextResetMapRef.current.get(activeSessionId);
+      if (cached) {
+        setContextResetPoints(cached);
+      } else {
+        // Load from backend (persisted across restarts).
+        invoke<number | null>('session_get_context_reset', { sessionId: activeSessionId })
+          .then((idx) => {
+            if (activeSessionIdRef.current !== activeSessionId) return;
+            if (idx != null) {
+              const points = [idx];
+              contextResetMapRef.current.set(activeSessionId, points);
+              setContextResetPoints(points);
+            } else {
+              setContextResetPoints([]);
+            }
+          })
+          .catch((e) => console.warn('[chat] failed to load context reset:', e));
+      }
+    } else {
+      setContextResetPoints([]);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId]);
 
@@ -595,7 +615,27 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     });
 
     try {
-      const msgs = await invoke<Message[]>('session_get_messages', { sessionId });
+      // Fetch messages and persisted context reset index in parallel.
+      const [msgs, resetIdx] = await Promise.all([
+        invoke<Message[]>('session_get_messages', { sessionId }),
+        invoke<number | null>('session_get_context_reset', { sessionId }),
+      ]);
+
+      // Restore persisted context reset points.
+      if (resetIdx != null) {
+        const points = [resetIdx];
+        contextResetMapRef.current.set(sessionId, points);
+        if (activeSessionIdRef.current === sessionId) {
+          setContextResetPoints(points);
+        }
+      } else if (!contextResetMapRef.current.has(sessionId)) {
+        // No persisted reset and no in-memory entry: ensure clean state.
+        contextResetMapRef.current.set(sessionId, []);
+        if (activeSessionIdRef.current === sessionId) {
+          setContextResetPoints([]);
+        }
+      }
+
       // Preserve skill tags from cached messages.
       const mergedMsgs = mergeSkillsFromCache(msgs, sessionMessagesRef.current, sessionId);
       console.log(`[chat] loadMessages: got ${mergedMsgs.length} messages for session=${sessionId}, active=${activeSessionIdRef.current}`);
@@ -1136,6 +1176,10 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     const updated = [...existing, idx];
     contextResetMapRef.current.set(sid, updated);
     setContextResetPoints(updated);
+
+    // Persist to backend so it survives app restarts.
+    invoke('session_set_context_reset', { sessionId: sid, index: idx })
+      .catch((e) => console.error('[chat] failed to persist context reset:', e));
   }, []);
 
   return {

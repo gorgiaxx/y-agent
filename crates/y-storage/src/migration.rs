@@ -25,7 +25,45 @@ pub async fn run_embedded_migrations(pool: &SqlitePool) -> Result<(), StorageErr
             message: format!("schema initialization failed: {e}"),
         })?;
 
+    // Post-schema migrations for existing databases that were created before
+    // new columns were added to schema.sql. SQLite lacks ADD COLUMN IF NOT
+    // EXISTS, so we check PRAGMA table_info first.
+    add_column_if_missing(pool, "session_metadata", "context_reset_index", "INTEGER").await?;
+
     info!("SQLite schema initialized");
+
+    Ok(())
+}
+
+/// Add a column to an existing table only if it is not already present.
+///
+/// Uses `PRAGMA table_info` to inspect the schema, then runs `ALTER TABLE`
+/// when the column is missing. This is safe to call repeatedly (idempotent).
+async fn add_column_if_missing(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    col_type: &str,
+) -> Result<(), StorageError> {
+    let rows: Vec<(String,)> = sqlx::query_as(&format!(
+        "SELECT name FROM pragma_table_info('{table}') WHERE name = '{column}'"
+    ))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| StorageError::Migration {
+        message: format!("failed to inspect {table}.{column}: {e}"),
+    })?;
+
+    if rows.is_empty() {
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {col_type}");
+        sqlx::query(&sql)
+            .execute(pool)
+            .await
+            .map_err(|e| StorageError::Migration {
+                message: format!("failed to add {table}.{column}: {e}"),
+            })?;
+        info!("Added column {table}.{column} ({col_type})");
+    }
 
     Ok(())
 }

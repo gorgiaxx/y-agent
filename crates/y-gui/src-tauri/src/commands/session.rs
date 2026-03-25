@@ -200,3 +200,42 @@ pub async fn session_truncate_messages(
         .map_err(|e| format!("Failed to truncate context transcript: {e}"))?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Context reset persistence
+// ---------------------------------------------------------------------------
+
+/// Get the persisted context reset index for a session.
+///
+/// Returns `null` if no reset has been set (full context is used).
+#[tauri::command]
+pub async fn session_get_context_reset(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Option<u32>, String> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .get_context_reset_index(&sid)
+        .await
+        .map_err(|e| format!("Failed to get context reset: {e}"))
+}
+
+/// Set or clear the context reset index for a session.
+///
+/// Pass `null` for `index` to clear (use full context).
+#[tauri::command]
+pub async fn session_set_context_reset(
+    state: State<'_, AppState>,
+    session_id: String,
+    index: Option<u32>,
+) -> Result<(), String> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .set_context_reset_index(&sid, index)
+        .await
+        .map_err(|e| format!("Failed to set context reset: {e}"))
+}

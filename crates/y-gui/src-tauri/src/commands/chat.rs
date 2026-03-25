@@ -134,7 +134,31 @@ pub async fn chat_send(
 
     // If context reset is active, trim history so only messages after the
     // reset point are sent to the LLM (fresh context).
-    if let Some(start_idx) = context_start_index {
+    // Resolve from the frontend parameter first, falling back to the
+    // DB-persisted value so context resets survive app restarts even if the
+    // frontend hasn't loaded the value yet.
+    let effective_start_idx = match context_start_index {
+        Some(idx) => Some(idx),
+        None => {
+            // Fallback: read persisted context_reset_index from database.
+            state
+                .container
+                .session_manager
+                .get_context_reset_index(&prepared.session_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|v| v as usize)
+        }
+    };
+    if let Some(start_idx) = effective_start_idx {
+        tracing::info!(
+            session_id = %prepared.session_id.0,
+            context_start_index = start_idx,
+            history_len = prepared.history.len(),
+            from_frontend = context_start_index.is_some(),
+            "applying context reset: trimming history"
+        );
         if start_idx < prepared.history.len() {
             prepared.history.drain(..start_idx);
         }

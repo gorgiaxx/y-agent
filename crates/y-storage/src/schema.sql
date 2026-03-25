@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS session_metadata (
     label           TEXT,
     last_compaction TEXT,
     compaction_count INTEGER NOT NULL DEFAULT 0,
+    context_reset_index INTEGER,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

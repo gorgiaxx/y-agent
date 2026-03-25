@@ -281,6 +281,26 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Get the persisted context reset index for a session.
+    pub async fn get_context_reset_index(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<u32>, SessionManagerError> {
+        Ok(self.session_store.get_context_reset_index(id).await?)
+    }
+
+    /// Set or clear the context reset index for a session.
+    pub async fn set_context_reset_index(
+        &self,
+        id: &SessionId,
+        index: Option<u32>,
+    ) -> Result<(), SessionManagerError> {
+        self.session_store
+            .set_context_reset_index(id, index)
+            .await?;
+        Ok(())
+    }
+
     /// Generate a session title by summarizing the conversation via agent delegation.
     ///
     /// Delegates to the `title-generator` built-in agent defined in

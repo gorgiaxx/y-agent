@@ -309,6 +309,50 @@ impl SessionStore for SqliteSessionStore {
 
         Ok(())
     }
+
+    #[instrument(skip(self), fields(session_id = %id))]
+    async fn get_context_reset_index(&self, id: &SessionId) -> Result<Option<u32>, SessionError> {
+        let row: Option<(Option<i64>,)> =
+            sqlx::query_as("SELECT context_reset_index FROM session_metadata WHERE id = ?1")
+                .bind(id.as_str())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SessionError::StorageError {
+                    message: e.to_string(),
+                })?;
+
+        match row {
+            Some((val,)) => Ok(val.and_then(|v| u32::try_from(v).ok())),
+            None => Err(SessionError::NotFound { id: id.to_string() }),
+        }
+    }
+
+    #[instrument(skip(self), fields(session_id = %id, index = ?index))]
+    async fn set_context_reset_index(
+        &self,
+        id: &SessionId,
+        index: Option<u32>,
+    ) -> Result<(), SessionError> {
+        let result = sqlx::query(
+            r"UPDATE session_metadata
+              SET context_reset_index = ?1,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              WHERE id = ?2",
+        )
+        .bind(index.map(i64::from))
+        .bind(id.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionError::StorageError {
+            message: e.to_string(),
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionError::NotFound { id: id.to_string() });
+        }
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

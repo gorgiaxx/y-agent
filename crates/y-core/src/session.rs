@@ -156,6 +156,21 @@ pub trait SessionStore: Send + Sync {
     /// This permanently removes the session metadata row. Transcript files
     /// must be removed separately by the caller (they are not in the database).
     async fn delete(&self, id: &SessionId) -> Result<(), SessionError>;
+
+    /// Get the context reset index for a session.
+    ///
+    /// Returns `None` if no reset has been set (full context is used).
+    async fn get_context_reset_index(&self, id: &SessionId) -> Result<Option<u32>, SessionError>;
+
+    /// Set or clear the context reset index for a session.
+    ///
+    /// When set, the LLM context is trimmed to only include messages after
+    /// this index. Pass `None` to clear (use full context).
+    async fn set_context_reset_index(
+        &self,
+        id: &SessionId,
+        index: Option<u32>,
+    ) -> Result<(), SessionError>;
 }
 
 /// Read/write interface for session message transcripts (JSONL).

@@ -141,6 +141,8 @@ pub fn run() {
             commands::session::session_get_messages,
             commands::session::session_delete,
             commands::session::session_truncate_messages,
+            commands::session::session_get_context_reset,
+            commands::session::session_set_context_reset,
             // Diagnostics
             commands::diagnostics::diagnostics_get_by_session,
             commands::diagnostics::diagnostics_get_subagent_history,
