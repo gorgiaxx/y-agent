@@ -1,9 +1,16 @@
 //! Tool call parser for prompt-based tool calling protocol.
 //!
-//! Extracts `<tool_call>` XML-tag blocks from LLM text output and parses
-//! the JSON payload inside. This is the core mechanism for provider-agnostic
-//! tool calling — the LLM outputs structured tool calls in its text, and
-//! this parser extracts them.
+//! Extracts tool call blocks from LLM text output using multiple envelope
+//! formats (y-agent `<tool_call>`, `DeepSeek` DSML, `MiniMax` M2) and parses
+//! the inner payload. This is the core mechanism for provider-agnostic
+//! tool calling -- the LLM outputs structured tool calls in its text, and
+//! this parser extracts them with tolerant matching.
+//!
+//! Supported envelope formats:
+//! - `<tool_call>...</tool_call>` (y-agent custom, GLM-4, `Qwen3Coder`)
+//! - `<function_calls>...</function_calls>` (generic XML tool calling)
+//! - `<|DSML|function_calls>...</|DSML|function_calls>` (`DeepSeek` V3.2)
+//! - `<minimax:tool_call>...</minimax:tool_call>` (`MiniMax` M2)
 //!
 //! Design reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
 
@@ -29,11 +36,53 @@ pub struct ParseResult {
     pub warnings: Vec<String>,
 }
 
-const OPEN_TAG: &str = "<tool_call>";
-const CLOSE_TAG: &str = "</tool_call>";
+/// An envelope tag pair that wraps tool call content.
+struct TagPair {
+    open: &'static str,
+    close: &'static str,
+}
 
-/// Parse `<tool_call>...</tool_call>` blocks from LLM text output.
+/// All supported envelope formats, checked in order.
+const ENVELOPES: &[TagPair] = &[
+    TagPair {
+        open: "<tool_call>",
+        close: "</tool_call>",
+    },
+    TagPair {
+        open: "<function_calls>",
+        close: "</function_calls>",
+    },
+    TagPair {
+        open: "<\u{ff5c}DSML\u{ff5c}function_calls>",
+        close: "</\u{ff5c}DSML\u{ff5c}function_calls>",
+    },
+    TagPair {
+        open: "<minimax:tool_call>",
+        close: "</minimax:tool_call>",
+    },
+];
+
+/// Find the earliest occurring envelope open tag from `cursor` onward.
 ///
+/// Returns `(tag_pair_index, absolute_offset_of_open_tag)` for the earliest
+/// match, or `None` if no envelope tag is found.
+fn find_earliest_envelope(raw: &str, cursor: usize) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize)> = None;
+    for (idx, pair) in ENVELOPES.iter().enumerate() {
+        if let Some(offset) = raw[cursor..].find(pair.open) {
+            let abs = cursor + offset;
+            if best.is_none_or(|(_, prev)| abs < prev) {
+                best = Some((idx, abs));
+            }
+        }
+    }
+    best
+}
+
+/// Parse tool call blocks from LLM text output.
+///
+/// Recognises multiple envelope formats (y-agent `<tool_call>`, `DeepSeek`
+/// DSML, `MiniMax`) and dispatches inner content to format-specific parsers.
 /// Returns the remaining text (with tool call blocks removed) and the
 /// extracted tool calls. Malformed blocks are treated as regular text
 /// and a warning is emitted.
@@ -44,67 +93,44 @@ pub fn parse_tool_calls(raw: &str) -> ParseResult {
     let mut cursor = 0;
 
     while cursor < raw.len() {
-        // Find the next <tool_call> tag.
-        if let Some(start_offset) = raw[cursor..].find(OPEN_TAG) {
-            let tag_start = cursor + start_offset;
-            let content_start = tag_start + OPEN_TAG.len();
+        if let Some((env_idx, tag_start)) = find_earliest_envelope(raw, cursor) {
+            let pair = &ENVELOPES[env_idx];
+            let content_start = tag_start + pair.open.len();
 
-            // Find the matching </tool_call> tag.
-            if let Some(end_offset) = raw[content_start..].find(CLOSE_TAG) {
+            // Find the matching close tag.
+            if let Some(end_offset) = raw[content_start..].find(pair.close) {
                 let content_end = content_start + end_offset;
 
                 // Append text before this tool call block.
                 text.push_str(&raw[cursor..tag_start]);
 
-                // Extract and parse the JSON content.
+                // Extract and parse the inner content.
                 let inner_raw = raw[content_start..content_end].trim();
                 let inner = &sanitize_json_newlines(inner_raw);
 
                 if inner.is_empty() {
-                    warnings.push("empty <tool_call> block skipped".into());
+                    warnings.push(format!("empty {} block skipped", pair.open));
                 } else {
-                    // Try XML-nested format first (primary, more token-efficient):
-                    //   <name>tool_name</name>
-                    //   <arguments>{"key": "value"}</arguments>
-                    // Then function-attribute format (common in Llama/Qwen models):
-                    //   <function=tool_name>
-                    //   <parameter=key>value</parameter>
-                    //   </function>
-                    // Fall back to JSON format for backward compatibility:
-                    //   {"name": "tool_name", "arguments": {"key": "value"}}
-                    if let Ok(tc) = try_parse_xml_tool_call(inner) {
-                        tool_calls.push(tc);
-                    } else if let Ok(tc) = try_parse_function_format(inner) {
-                        tool_calls.push(tc);
-                    } else if let Ok(json) =
-                        serde_json::from_str::<serde_json::Value>(inner.as_str())
-                    {
-                        match extract_tool_call(&json) {
-                            Ok(tc) => tool_calls.push(tc),
-                            Err(msg) => {
-                                warnings.push(msg);
-                                text.push_str(&raw[tag_start..content_end + CLOSE_TAG.len()]);
-                            }
-                        }
-                    } else {
-                        warnings.push(
-                            "invalid content in <tool_call>: \
-                             not XML-nested, function-attribute, nor JSON format"
-                                .into(),
-                        );
-                        // Malformed: keep as text.
-                        text.push_str(&raw[tag_start..content_end + CLOSE_TAG.len()]);
-                    }
+                    parse_inner_content(
+                        inner,
+                        raw,
+                        tag_start,
+                        content_end,
+                        pair,
+                        &mut tool_calls,
+                        &mut warnings,
+                        &mut text,
+                    );
                 }
 
-                cursor = content_end + CLOSE_TAG.len();
+                cursor = content_end + pair.close.len();
             } else {
-                // Unclosed tag — treat everything from here as text.
+                // Unclosed tag -- treat everything from here as text.
                 text.push_str(&raw[cursor..]);
                 cursor = raw.len();
             }
         } else {
-            // No more tags — append remaining text.
+            // No more envelope tags -- append remaining text.
             text.push_str(&raw[cursor..]);
             cursor = raw.len();
         }
@@ -115,6 +141,78 @@ pub fn parse_tool_calls(raw: &str) -> ParseResult {
         tool_calls,
         warnings,
     }
+}
+
+/// Dispatch inner content of a matched envelope to format-specific parsers.
+///
+/// Tries parsers in priority order:
+/// 1. XML-nested (`<name>...</name><arguments>...</arguments>`)
+/// 2. Function-attribute (`<function=NAME><parameter=KEY>VALUE</parameter></function>`)
+/// 3. DSML invoke (`<|DSML|invoke name="...">...`)
+/// 4. `MiniMax` invoke (`<invoke name="...">...`)
+/// 5. GLM `arg_key/arg_value` (`func_name\n<arg_key>k</arg_key><arg_value>v</arg_value>`)
+/// 6. JSON object (`{"name": "...", "arguments": {...}}`)
+fn parse_inner_content(
+    inner: &str,
+    raw: &str,
+    tag_start: usize,
+    content_end: usize,
+    pair: &TagPair,
+    tool_calls: &mut Vec<ParsedToolCall>,
+    warnings: &mut Vec<String>,
+    text: &mut String,
+) {
+    // 1. XML-nested format
+    if let Ok(tc) = try_parse_xml_tool_call(inner) {
+        tool_calls.push(tc);
+        return;
+    }
+
+    // 2. Function-attribute format (Llama/Qwen)
+    if let Ok(tc) = try_parse_function_format(inner) {
+        tool_calls.push(tc);
+        return;
+    }
+
+    // 3. DSML invoke format (DeepSeek V3.2) -- can yield multiple tool calls
+    if let Ok(tcs) = try_parse_dsml_invokes(inner) {
+        tool_calls.extend(tcs);
+        return;
+    }
+
+    // 4. MiniMax invoke format -- can yield multiple tool calls
+    if let Ok(tcs) = try_parse_minimax_invokes(inner) {
+        tool_calls.extend(tcs);
+        return;
+    }
+
+    // 5. GLM arg_key/arg_value format
+    if let Ok(tc) = try_parse_glm_arg_format(inner) {
+        tool_calls.push(tc);
+        return;
+    }
+
+    // 6. JSON fallback
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(inner) {
+        match extract_tool_call(&json) {
+            Ok(tc) => {
+                tool_calls.push(tc);
+                return;
+            }
+            Err(msg) => {
+                warnings.push(msg);
+                text.push_str(&raw[tag_start..content_end + pair.close.len()]);
+                return;
+            }
+        }
+    }
+
+    // Nothing matched -- malformed block.
+    warnings.push(format!(
+        "invalid content in {}: not a recognized tool call format",
+        pair.open
+    ));
+    text.push_str(&raw[tag_start..content_end + pair.close.len()]);
 }
 
 /// Extract a `ParsedToolCall` from a parsed JSON value.
@@ -298,6 +396,346 @@ fn try_parse_function_format(inner: &str) -> Result<ParsedToolCall, String> {
         name: name.to_string(),
         arguments: serde_json::Value::Object(args),
     })
+}
+
+/// Try to parse `DeepSeek` V3.2 DSML invoke blocks from inner content.
+///
+/// Handles:
+/// ```xml
+/// <|DSML|invoke name="get_weather">
+/// <|DSML|parameter name="location" string="true">value</|DSML|parameter>
+/// </|DSML|invoke>
+/// ```
+///
+/// A single DSML envelope can contain multiple `<|DSML|invoke>` blocks,
+/// so this returns `Vec<ParsedToolCall>`.
+fn try_parse_dsml_invokes(inner: &str) -> Result<Vec<ParsedToolCall>, String> {
+    // Fullwidth vertical bar used by DeepSeek DSML tags.
+    const INVOKE_OPEN: &str = "<\u{ff5c}DSML\u{ff5c}invoke ";
+    const INVOKE_CLOSE: &str = "</\u{ff5c}DSML\u{ff5c}invoke>";
+    const PARAM_OPEN: &str = "<\u{ff5c}DSML\u{ff5c}parameter ";
+    const PARAM_CLOSE: &str = "</\u{ff5c}DSML\u{ff5c}parameter>";
+
+    if !inner.contains(INVOKE_OPEN) {
+        return Err("no DSML invoke tag found".into());
+    }
+
+    let mut results = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < inner.len() {
+        let Some(inv_start) = inner[cursor..].find(INVOKE_OPEN) else {
+            break;
+        };
+        let inv_abs = cursor + inv_start;
+        let after_invoke_prefix = inv_abs + INVOKE_OPEN.len();
+
+        // Extract function name from `name="..."`.
+        let name = extract_quoted_attr(&inner[after_invoke_prefix..], "name")
+            .ok_or_else(|| "missing name attribute in DSML invoke".to_string())?;
+        if name.is_empty() {
+            return Err("empty name in DSML invoke".into());
+        }
+
+        // Find closing tag for this invoke block.
+        let invoke_body_start = inner[after_invoke_prefix..]
+            .find('>')
+            .map_or(after_invoke_prefix, |i| after_invoke_prefix + i + 1);
+
+        let invoke_end = inner[invoke_body_start..]
+            .find(INVOKE_CLOSE)
+            .map_or(inner.len(), |i| invoke_body_start + i);
+
+        let body = &inner[invoke_body_start..invoke_end];
+
+        // Extract parameters.
+        let mut args = serde_json::Map::new();
+        let mut pcursor = 0;
+        while pcursor < body.len() {
+            let Some(p_start) = body[pcursor..].find(PARAM_OPEN) else {
+                break;
+            };
+            let p_abs = pcursor + p_start;
+            let after_param_prefix = p_abs + PARAM_OPEN.len();
+
+            let param_name =
+                extract_quoted_attr(&body[after_param_prefix..], "name").unwrap_or_default();
+
+            let param_body_start = body[after_param_prefix..]
+                .find('>')
+                .map_or(after_param_prefix, |i| after_param_prefix + i + 1);
+
+            let param_end = body[param_body_start..]
+                .find(PARAM_CLOSE)
+                .map_or(body.len(), |i| param_body_start + i);
+
+            let value = body[param_body_start..param_end].trim();
+
+            if !param_name.is_empty() {
+                args.insert(
+                    param_name.to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+            }
+
+            pcursor = if param_end < body.len() {
+                param_end + PARAM_CLOSE.len()
+            } else {
+                body.len()
+            };
+        }
+
+        results.push(ParsedToolCall {
+            name: name.to_string(),
+            arguments: serde_json::Value::Object(args),
+        });
+
+        cursor = if invoke_end < inner.len() {
+            invoke_end + INVOKE_CLOSE.len()
+        } else {
+            inner.len()
+        };
+    }
+
+    if results.is_empty() {
+        return Err("no complete DSML invoke blocks found".into());
+    }
+    Ok(results)
+}
+
+/// Try to parse `MiniMax` M2 invoke blocks from inner content.
+///
+/// Handles:
+/// ```xml
+/// <invoke name="func_name">
+/// <parameter name="key">value</parameter>
+/// </invoke>
+/// ```
+///
+/// A single `MiniMax` envelope can contain multiple `<invoke>` blocks.
+fn try_parse_minimax_invokes(inner: &str) -> Result<Vec<ParsedToolCall>, String> {
+    const INVOKE_OPEN: &str = "<invoke name=";
+    const INVOKE_CLOSE: &str = "</invoke>";
+    const PARAM_OPEN: &str = "<parameter name=";
+    const PARAM_CLOSE: &str = "</parameter>";
+
+    if !inner.contains(INVOKE_OPEN) {
+        return Err("no MiniMax invoke tag found".into());
+    }
+
+    let mut results = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < inner.len() {
+        let Some(inv_start) = inner[cursor..].find(INVOKE_OPEN) else {
+            break;
+        };
+        let inv_abs = cursor + inv_start;
+        let after_prefix = inv_abs + INVOKE_OPEN.len();
+
+        // Extract function name from the segment after `name=`. Since
+        // INVOKE_OPEN already consumed `name=`, the segment starts with
+        // the quoted value (e.g. `"file_read">`).
+        let tag_rest = &inner[after_prefix..];
+        let tag_close = tag_rest.find('>').ok_or("unclosed invoke tag")?;
+        let name_segment = tag_rest[..tag_close].trim();
+        let name = extract_first_quoted(name_segment).unwrap_or_else(|| strip_quotes(name_segment));
+        if name.is_empty() {
+            return Err("empty function name in MiniMax invoke".into());
+        }
+
+        let body_start = after_prefix + tag_close + 1;
+        let body_end = inner[body_start..]
+            .find(INVOKE_CLOSE)
+            .map_or(inner.len(), |i| body_start + i);
+
+        let body = &inner[body_start..body_end];
+
+        // Extract parameters.
+        let mut args = serde_json::Map::new();
+        let mut pcursor = 0;
+        while pcursor < body.len() {
+            let Some(p_start) = body[pcursor..].find(PARAM_OPEN) else {
+                break;
+            };
+            let p_abs = pcursor + p_start;
+            let after_param = p_abs + PARAM_OPEN.len();
+
+            let param_rest = &body[after_param..];
+            let Some(param_close) = param_rest.find('>') else {
+                break;
+            };
+            let param_segment = param_rest[..param_close].trim();
+            // PARAM_OPEN already consumed `name=`, so the segment starts with
+            // the quoted value (e.g. `"path" string="true"`). Extract just the
+            // first quoted string as the parameter name.
+            let param_name =
+                extract_first_quoted(param_segment).unwrap_or_else(|| strip_quotes(param_segment));
+
+            let val_start = after_param + param_close + 1;
+            let val_end = body[val_start..]
+                .find(PARAM_CLOSE)
+                .map_or(body.len(), |i| val_start + i);
+
+            let value = body[val_start..val_end].trim();
+            if !param_name.is_empty() {
+                args.insert(
+                    param_name.to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+            }
+
+            pcursor = if val_end < body.len() {
+                val_end + PARAM_CLOSE.len()
+            } else {
+                body.len()
+            };
+        }
+
+        results.push(ParsedToolCall {
+            name: name.to_string(),
+            arguments: serde_json::Value::Object(args),
+        });
+
+        cursor = if body_end < inner.len() {
+            body_end + INVOKE_CLOSE.len()
+        } else {
+            inner.len()
+        };
+    }
+
+    if results.is_empty() {
+        return Err("no complete MiniMax invoke blocks found".into());
+    }
+    Ok(results)
+}
+
+/// Try to parse GLM-4 / GLM-4.7 `arg_key/arg_value` format.
+///
+/// Handles:
+/// ```text
+/// func_name
+/// <arg_key>location</arg_key>
+/// <arg_value>Beijing</arg_value>
+/// ```
+///
+/// Also handles zero-arg calls: `func_name` with no `<arg_key>` tags.
+fn try_parse_glm_arg_format(inner: &str) -> Result<ParsedToolCall, String> {
+    const ARG_KEY_OPEN: &str = "<arg_key>";
+    const ARG_KEY_CLOSE: &str = "</arg_key>";
+    const ARG_VAL_OPEN: &str = "<arg_value>";
+    const ARG_VAL_CLOSE: &str = "</arg_value>";
+
+    // GLM format requires either `<arg_key>` tags or a bare function name
+    // without any other XML tags in the content. We use the presence of
+    // `<arg_key>` or a simple identifier-like string to identify this format.
+    let has_arg_keys = inner.contains(ARG_KEY_OPEN);
+
+    // If no arg_key tags, check if this looks like a bare function name
+    // (single identifier, no XML-like content other than what we already tried).
+    if !has_arg_keys {
+        let trimmed = inner.trim();
+        // A bare function name: no spaces, no '<', no '{', no '"', looks like an identifier
+        let is_identifier = !trimmed.is_empty()
+            && !trimmed.contains('<')
+            && !trimmed.contains('{')
+            && !trimmed.contains('"')
+            && !trimmed.contains(' ')
+            && !trimmed.contains('\n');
+        if is_identifier {
+            return Ok(ParsedToolCall {
+                name: trimmed.to_string(),
+                arguments: serde_json::Value::Object(serde_json::Map::new()),
+            });
+        }
+        return Err("no GLM arg_key tags found and not a bare function name".into());
+    }
+
+    // Extract function name: everything before the first `<arg_key>` or `<`.
+    let first_tag = inner.find(ARG_KEY_OPEN).unwrap_or(inner.len());
+    // Function name might be on its own line or directly before the first tag.
+    let name_part = inner[..first_tag].trim();
+    // The function name could have a newline separator.
+    let name = name_part.lines().next().unwrap_or("").trim();
+    if name.is_empty() {
+        return Err("empty function name in GLM arg format".into());
+    }
+
+    // Extract key-value pairs.
+    let mut args = serde_json::Map::new();
+    let mut cursor = 0;
+    while cursor < inner.len() {
+        let Some(key_start) = inner[cursor..].find(ARG_KEY_OPEN) else {
+            break;
+        };
+        let key_abs = cursor + key_start + ARG_KEY_OPEN.len();
+
+        let Some(key_end_off) = inner[key_abs..].find(ARG_KEY_CLOSE) else {
+            break;
+        };
+        let key = inner[key_abs..key_abs + key_end_off].trim();
+
+        let after_key_close = key_abs + key_end_off + ARG_KEY_CLOSE.len();
+
+        // Find matching <arg_value>...</arg_value>.
+        let Some(val_start_off) = inner[after_key_close..].find(ARG_VAL_OPEN) else {
+            break;
+        };
+        let val_abs = after_key_close + val_start_off + ARG_VAL_OPEN.len();
+
+        let Some(val_end_off) = inner[val_abs..].find(ARG_VAL_CLOSE) else {
+            break;
+        };
+        let value = inner[val_abs..val_abs + val_end_off].trim();
+
+        if !key.is_empty() {
+            // Try to parse as JSON first (for objects/arrays/numbers/booleans),
+            // fall back to string.
+            let json_val = serde_json::from_str::<serde_json::Value>(value)
+                .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+            args.insert(key.to_string(), json_val);
+        }
+
+        cursor = val_abs + val_end_off + ARG_VAL_CLOSE.len();
+    }
+
+    Ok(ParsedToolCall {
+        name: name.to_string(),
+        arguments: serde_json::Value::Object(args),
+    })
+}
+
+/// Extract a quoted attribute value from a tag fragment.
+///
+/// e.g. `extract_quoted_attr("name=\"get_weather\" string=\"true\">", "name")`
+/// returns `Some("get_weather")`.
+fn extract_quoted_attr<'a>(tag_fragment: &'a str, attr: &str) -> Option<&'a str> {
+    let prefix = format!("{attr}=\"");
+    let start = tag_fragment.find(&prefix)? + prefix.len();
+    let end = tag_fragment[start..].find('"')? + start;
+    Some(&tag_fragment[start..end])
+}
+
+/// Strip surrounding single or double quotes from a string.
+fn strip_quotes(s: &str) -> &str {
+    let s = s.trim();
+    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+/// Extract the first double-quoted substring from text.
+///
+/// e.g. `extract_first_quoted("\"path\" string=\"true\"")` -> `Some("path")`
+///
+/// Useful when a tag prefix already consumed `name=` and the remaining text
+/// starts with the quoted value, possibly followed by extra attributes.
+fn extract_first_quoted(s: &str) -> Option<&str> {
+    let start = s.find('"')? + 1;
+    let end = s[start..].find('"')? + start;
+    Some(&s[start..end])
 }
 
 /// Sanitize raw newline characters inside JSON string literals.
@@ -893,5 +1331,335 @@ line2"}"#;
         let input = "{\n  \"key\": \"value\"\n}";
         let sanitized = sanitize_json_newlines(input);
         assert_eq!(sanitized, input);
+    }
+
+    // -----------------------------------------------------------------------
+    // DeepSeek V3.2 DSML format tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_dsml_single_invoke() {
+        let input = "Let me check the weather.\n\n\
+            <\u{ff5c}DSML\u{ff5c}function_calls>\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"get_weather\">\n\
+            <\u{ff5c}DSML\u{ff5c}parameter name=\"location\" string=\"true\">\
+            Beijing</\u{ff5c}DSML\u{ff5c}parameter>\n\
+            </\u{ff5c}DSML\u{ff5c}invoke>\n\
+            </\u{ff5c}DSML\u{ff5c}function_calls>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "get_weather");
+        assert_eq!(result.tool_calls[0].arguments["location"], "Beijing");
+        assert!(result.text.contains("Let me check the weather."));
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_dsml_multiple_invokes() {
+        let input = "\
+            <\u{ff5c}DSML\u{ff5c}function_calls>\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"get_weather\">\n\
+            <\u{ff5c}DSML\u{ff5c}parameter name=\"location\" string=\"true\">\
+            Hangzhou</\u{ff5c}DSML\u{ff5c}parameter>\n\
+            <\u{ff5c}DSML\u{ff5c}parameter name=\"date\" string=\"true\">\
+            2024-01-16</\u{ff5c}DSML\u{ff5c}parameter>\n\
+            </\u{ff5c}DSML\u{ff5c}invoke>\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"get_weather\">\n\
+            <\u{ff5c}DSML\u{ff5c}parameter name=\"location\" string=\"true\">\
+            Beijing</\u{ff5c}DSML\u{ff5c}parameter>\n\
+            <\u{ff5c}DSML\u{ff5c}parameter name=\"date\" string=\"true\">\
+            2024-01-16</\u{ff5c}DSML\u{ff5c}parameter>\n\
+            </\u{ff5c}DSML\u{ff5c}invoke>\n\
+            </\u{ff5c}DSML\u{ff5c}function_calls>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].arguments["location"], "Hangzhou");
+        assert_eq!(result.tool_calls[1].arguments["location"], "Beijing");
+        assert_eq!(result.tool_calls[0].arguments["date"], "2024-01-16");
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_dsml_no_params() {
+        let input = "\
+            <\u{ff5c}DSML\u{ff5c}function_calls>\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"file_list\">\n\
+            </\u{ff5c}DSML\u{ff5c}invoke>\n\
+            </\u{ff5c}DSML\u{ff5c}function_calls>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "file_list");
+        assert!(result.tool_calls[0]
+            .arguments
+            .as_object()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn test_parse_dsml_unclosed_envelope() {
+        // Missing close tag -- treated as text.
+        let input = "text <\u{ff5c}DSML\u{ff5c}function_calls> some content here";
+        let result = parse_tool_calls(input);
+        assert!(result.tool_calls.is_empty());
+        assert!(result.text.contains("some content here"));
+    }
+
+    #[test]
+    fn test_parse_dsml_with_surrounding_text() {
+        // Reproduces the user's example: LLM outputs Chinese text then DSML.
+        let input = "\
+            I will create an agent for you. Let me check existing files.\n\n\
+            <\u{ff5c}DSML\u{ff5c}function_calls>\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"file_list\">\n\n\
+            </\u{ff5c}DSML\u{ff5c}invoke>\n\
+            </\u{ff5c}DSML\u{ff5c}function_calls>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "file_list");
+        assert!(result.text.contains("I will create an agent for you."));
+    }
+
+    // -----------------------------------------------------------------------
+    // MiniMax M2 format tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_minimax_single_invoke() {
+        let input = "Searching for info.\n\n\
+            <minimax:tool_call>\n\
+            <invoke name=\"web_search\">\n\
+            <parameter name=\"query\">rust programming</parameter>\n\
+            </invoke>\n\
+            </minimax:tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "web_search");
+        assert_eq!(result.tool_calls[0].arguments["query"], "rust programming");
+        assert!(result.text.contains("Searching for info."));
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_minimax_multiple_invokes() {
+        let input = "\
+            <minimax:tool_call>\n\
+            <invoke name=\"file_read\">\n\
+            <parameter name=\"path\">/src/main.rs</parameter>\n\
+            </invoke>\n\
+            <invoke name=\"file_read\">\n\
+            <parameter name=\"path\">/src/lib.rs</parameter>\n\
+            </invoke>\n\
+            </minimax:tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].arguments["path"], "/src/main.rs");
+        assert_eq!(result.tool_calls[1].arguments["path"], "/src/lib.rs");
+    }
+
+    #[test]
+    fn test_parse_minimax_quoted_names() {
+        let input = "\
+            <minimax:tool_call>\n\
+            <invoke name=\"shell_exec\">\n\
+            <parameter name=\"command\">ls -la</parameter>\n\
+            <parameter name=\"timeout\">30</parameter>\n\
+            </invoke>\n\
+            </minimax:tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].arguments["command"], "ls -la");
+        assert_eq!(result.tool_calls[0].arguments["timeout"], "30");
+    }
+
+    // -----------------------------------------------------------------------
+    // GLM-4 / GLM-4.7 arg_key/arg_value format tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_glm_arg_format_with_args() {
+        let input = "\
+            <tool_call>\n\
+            get_weather\n\
+            <arg_key>location</arg_key>\n\
+            <arg_value>Beijing</arg_value>\n\
+            <arg_key>unit</arg_key>\n\
+            <arg_value>celsius</arg_value>\n\
+            </tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "get_weather");
+        assert_eq!(result.tool_calls[0].arguments["location"], "Beijing");
+        assert_eq!(result.tool_calls[0].arguments["unit"], "celsius");
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_glm_arg_format_zero_args() {
+        // GLM-4.7 zero-arg format: bare function name inside <tool_call>.
+        let input = "<tool_call>list_files</tool_call>";
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "list_files");
+        assert!(result.tool_calls[0]
+            .arguments
+            .as_object()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn test_parse_glm_arg_format_json_value() {
+        // GLM format with a JSON-parseable value (number).
+        let input = "\
+            <tool_call>\n\
+            calculator\n\
+            <arg_key>expression</arg_key>\n\
+            <arg_value>42</arg_value>\n\
+            </tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "calculator");
+        // 42 is parsed as a JSON number.
+        assert_eq!(result.tool_calls[0].arguments["expression"], 42);
+    }
+
+    #[test]
+    fn test_parse_glm_inline_arg_key() {
+        // GLM-4.7 style: function name directly before <arg_key> without newline.
+        let input = "\
+            <tool_call>get_weather<arg_key>city</arg_key>\
+            <arg_value>Tokyo</arg_value></tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "get_weather");
+        assert_eq!(result.tool_calls[0].arguments["city"], "Tokyo");
+    }
+
+    // -----------------------------------------------------------------------
+    // Mixed envelope tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_mixed_envelopes() {
+        // Different envelope types in the same output.
+        let input = "\
+            <tool_call>\n\
+            {\"name\": \"file_read\", \"arguments\": {\"path\": \"/a.rs\"}}\n\
+            </tool_call>\n\n\
+            <minimax:tool_call>\n\
+            <invoke name=\"web_search\">\n\
+            <parameter name=\"query\">test</parameter>\n\
+            </invoke>\n\
+            </minimax:tool_call>";
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[1].name, "web_search");
+    }
+
+    #[test]
+    fn test_strip_tool_call_blocks_dsml() {
+        let input = "Hello\n\
+            <\u{ff5c}DSML\u{ff5c}function_calls>\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"test\">\n\
+            </\u{ff5c}DSML\u{ff5c}invoke>\n\
+            </\u{ff5c}DSML\u{ff5c}function_calls>\n\
+            World";
+
+        let stripped = strip_tool_call_blocks(input);
+        assert!(!stripped.contains("DSML"));
+        assert!(stripped.contains("Hello"));
+        assert!(stripped.contains("World"));
+    }
+
+    #[test]
+    fn test_strip_tool_call_blocks_minimax() {
+        let input = "Before\n\
+            <minimax:tool_call>\n\
+            <invoke name=\"test\">\n\
+            <parameter name=\"key\">val</parameter>\n\
+            </invoke>\n\
+            </minimax:tool_call>\n\
+            After";
+
+        let stripped = strip_tool_call_blocks(input);
+        assert!(!stripped.contains("minimax"));
+        assert!(stripped.contains("Before"));
+        assert!(stripped.contains("After"));
+    }
+
+    #[test]
+    fn test_parse_function_calls_envelope() {
+        let input = r#"Here is the result.
+<function_calls>
+<invoke name="file_read">
+<parameter name="path" string="true">.</parameter>
+</invoke>
+</function_calls>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(
+            result.tool_calls.len(),
+            1,
+            "warnings: {:?}",
+            result.warnings
+        );
+        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[0].arguments["path"], ".");
+        assert!(result.text.contains("Here is the result."));
+        assert!(!result.text.contains("function_calls"));
+    }
+
+    #[test]
+    fn test_parse_function_calls_multiple_invokes() {
+        let input = r#"<function_calls>
+<invoke name="file_read">
+<parameter name="path">/src/main.rs</parameter>
+</invoke>
+<invoke name="shell_exec">
+<parameter name="command">ls -la</parameter>
+</invoke>
+</function_calls>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(
+            result.tool_calls.len(),
+            2,
+            "warnings: {:?}",
+            result.warnings
+        );
+        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[0].arguments["path"], "/src/main.rs");
+        assert_eq!(result.tool_calls[1].name, "shell_exec");
+        assert_eq!(result.tool_calls[1].arguments["command"], "ls -la");
+    }
+
+    #[test]
+    fn test_strip_tool_call_blocks_function_calls() {
+        let input = "Before\n\
+            <function_calls>\n\
+            <invoke name=\"test\">\n\
+            <parameter name=\"key\">val</parameter>\n\
+            </invoke>\n\
+            </function_calls>\n\
+            After";
+
+        let stripped = strip_tool_call_blocks(input);
+        assert!(!stripped.contains("function_calls"));
+        assert!(stripped.contains("Before"));
+        assert!(stripped.contains("After"));
     }
 }
