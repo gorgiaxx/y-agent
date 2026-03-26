@@ -116,12 +116,31 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const activeRunIdRef = useRef<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
-  // Operation state machine.
+  // Operation state machine -- per-session.
+  // A ref Map tracks each session's opStatus so that switching sessions
+  // restores the correct state instead of leaking one session's status
+  // into another (e.g. Session A is streaming, user switches to idle Session B).
+  const opStatusMapRef = useRef(new Map<string, ChatOpStatus>());
   const [opStatus, setOpStatus] = useState<ChatOpStatus>('idle');
   const opStatusRef = useRef<ChatOpStatus>('idle');
   const setOp = useCallback((status: ChatOpStatus) => {
     opStatusRef.current = status;
     setOpStatus(status);
+    // Persist into the per-session map.
+    const sid = activeSessionIdRef.current;
+    if (sid) {
+      opStatusMapRef.current.set(sid, status);
+    }
+  }, []);
+
+  /** Update opStatus for a specific session. Only touches visible state
+   *  if that session is currently active; otherwise just updates the map. */
+  const setOpForSession = useCallback((sessionId: string, status: ChatOpStatus) => {
+    opStatusMapRef.current.set(sessionId, status);
+    if (sessionId === activeSessionIdRef.current) {
+      opStatusRef.current = status;
+      setOpStatus(status);
+    }
   }, []);
 
   // Pending edit state (exposed to InputArea for banner).
@@ -142,7 +161,20 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     // Cancel edit mode when switching sessions.
     if (pendingEdit) {
       setPendingEdit(null);
-      setOp('idle');
+    }
+    // Restore the new session's opStatus (default: idle).
+    // This prevents a running session's status from leaking into
+    // an idle session's InputArea, which would leave it disabled.
+    const restoredOp = activeSessionId
+      ? (opStatusMapRef.current.get(activeSessionId) ?? 'idle')
+      : 'idle';
+    opStatusRef.current = restoredOp;
+    setOpStatus(restoredOp);
+    // Restore tool results for the new session.
+    if (activeSessionId) {
+      setVisibleToolResults(toolResultsRef.current.get(activeSessionId) ?? []);
+    } else {
+      setVisibleToolResults([]);
     }
     // Clear error from the previous session so it does not leak
     // into the newly selected session's chat panel.
@@ -372,9 +404,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               syncVisible(sessionId);
             } finally {
               // Transition to idle AFTER the cache is updated, not before.
-              if (opStatusRef.current !== 'idle') {
-                setOp('idle');
-              }
+              // Use session-aware setter so a background session's completion
+              // does not reset the active session's input state.
+              setOpForSession(sessionId, 'idle');
             }
           })();
 
@@ -535,7 +567,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
 
         // Return to idle on error too.
-        if (opStatusRef.current !== 'idle') {
+        if (sessionId) {
+          setOpForSession(sessionId, 'idle');
+        } else if (opStatusRef.current !== 'idle') {
           setOp('idle');
         }
       } else if (event.type === 'tool_result') {
@@ -560,7 +594,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     return () => {
       chatBusSubscribers.delete(handler);
     };
-  }, [syncVisible, setOp]);
+  }, [syncVisible, setOp, setOpForSession]);
 
   // ------------------------------------------------------------------
   // Safety timeout: if opStatus stays non-idle for too long without any

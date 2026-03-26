@@ -390,6 +390,7 @@ function App() {
               />
             )}
             <InputArea
+              key={activeSessionId ?? '__no_session__'}
               onSend={handleSend}
               onStop={cancelRun}
               onCommand={handleCommand}
