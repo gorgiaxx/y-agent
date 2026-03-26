@@ -1,7 +1,7 @@
 //! Bot webhook routes.
 //!
 //! Provides HTTP endpoints for receiving inbound events from bot platforms
-//! (Feishu, Telegram). Events are verified, parsed, and then processed
+//! (Feishu, Discord, Telegram). Events are verified, parsed, and then processed
 //! asynchronously via [`BotService`].
 
 use std::collections::HashMap;
@@ -110,10 +110,100 @@ async fn feishu_webhook(
 }
 
 // ---------------------------------------------------------------------------
+// Discord webhook handler
+// ---------------------------------------------------------------------------
+
+/// `POST /api/v1/bots/discord/webhook` — receive Discord Interactions Endpoint callbacks.
+///
+/// Discord requires the endpoint to respond to PING interactions with a PONG
+/// and validates Ed25519 signatures on every request.
+async fn discord_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let Some(ref discord_bot) = state.discord_bot else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Discord bot not configured" })),
+        );
+    };
+
+    // Convert headers to HashMap<String, String> (lowercase keys).
+    let header_map: HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(k, v)| {
+            v.to_str()
+                .ok()
+                .map(|val| (k.as_str().to_lowercase(), val.to_string()))
+        })
+        .collect();
+
+    // 1. Verify Ed25519 signature.
+    if let Err(e) = discord_bot.verify_signature(&header_map, &body) {
+        warn!(error = %e, "Discord webhook: signature verification failed");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Invalid signature" })),
+        );
+    }
+
+    // 2. Parse JSON body.
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = %e, "Discord webhook: invalid JSON body");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid JSON" })),
+            );
+        }
+    };
+
+    // 3. Handle PING challenge (Interaction type 1).
+    if let Some(pong_resp) = discord_bot.handle_challenge(&payload) {
+        info!("Discord webhook: responded to PING interaction");
+        return (StatusCode::OK, Json(pong_resp));
+    }
+
+    // 4. Parse the event.
+    let message = match discord_bot.parse_event(&payload) {
+        Ok(msg) => msg,
+        Err(y_bot::BotError::UnsupportedEvent(evt_type)) => {
+            info!(event_type = %evt_type, "Discord webhook: ignoring unsupported event");
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "ignored" })),
+            );
+        }
+        Err(e) => {
+            warn!(error = %e, "Discord webhook: failed to parse event");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("Parse error: {e}") })),
+            );
+        }
+    };
+
+    // 5. Spawn async processing.
+    let container = Arc::clone(&state.container);
+    let bot = Arc::clone(discord_bot);
+    tokio::spawn(async move {
+        if let Err(e) = BotService::handle_message(&container, bot.as_ref(), message).await {
+            error!(error = %e, "Discord bot: message handling failed");
+        }
+    });
+
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
 /// Bot webhook route group.
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/v1/bots/feishu/webhook", post(feishu_webhook))
+    Router::new()
+        .route("/api/v1/bots/feishu/webhook", post(feishu_webhook))
+        .route("/api/v1/bots/discord/webhook", post(discord_webhook))
 }

@@ -59,8 +59,10 @@ tracing-appender = "0.2"
 # Identifiers
 uuid = { version = "1", features = ["v4", "serde"] }
 
-# Hashing
+# Hashing / Crypto
 sha2 = "0.10"
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+hex = "0.4"
 chardetng = "0.1"
 encoding_rs = "0.8"
 

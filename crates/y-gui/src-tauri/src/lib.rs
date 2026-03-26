@@ -115,7 +115,7 @@ pub fn run() {
             // Upgrade sub-agent runner from SingleTurnRunner to
             // ServiceAgentRunner so delegated agents (skill-ingestion, etc.)
             // get the full execution loop with multi-turn tool calling.
-            container.init_agent_runner();
+            rt.block_on(container.init_agent_runner());
 
             let app_state = AppState::new(Arc::clone(&container), config_path.clone());
             app.manage(app_state);

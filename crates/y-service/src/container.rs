@@ -583,8 +583,11 @@ impl ServiceContainer {
         diagnostics: &Arc<DiagnosticsSubscriber<dyn TraceStore>>,
     ) -> AgentInitResult {
         let agents_dir = config_dir.map(|p| p.join("agents"));
-        let agent_registry = Arc::new(Mutex::new(AgentRegistry::new_with_user_agents(agents_dir.as_deref())));
-        let mut agent_pool = AgentPool::with_registry(MultiAgentConfig::default(), Arc::clone(&agent_registry));
+        let agent_registry = Arc::new(Mutex::new(AgentRegistry::new_with_user_agents(
+            agents_dir.as_deref(),
+        )));
+        let mut agent_pool =
+            AgentPool::with_registry(MultiAgentConfig::default(), Arc::clone(&agent_registry));
 
         let runner = Arc::new(SingleTurnRunner::new(
             Arc::clone(provider_pool) as Arc<dyn y_core::provider::ProviderPool>
@@ -741,16 +744,14 @@ impl ServiceContainer {
     /// direct pool access paths.
     ///
     /// Must be called **after** the container has been wrapped in `Arc`.
-    pub fn init_agent_runner(self: &Arc<Self>) {
+    pub async fn init_agent_runner(self: &Arc<Self>) {
         let runner = Arc::new(crate::agent_service::ServiceAgentRunner::new(Arc::clone(
             self,
         )));
-        // The agent_pool held by the container is behind a Mutex.
-        // We acquire it synchronously (blocking_lock) since this runs once
-        // during startup, before any async work begins.
+        // The agent_pool held by the container is behind a tokio::sync::Mutex.
         // Since the delegator shares this same pool (via MutexPoolDelegator),
         // the runner swap automatically takes effect for all delegation calls.
-        self.agent_pool.blocking_lock().set_runner(runner);
+        self.agent_pool.lock().await.set_runner(runner);
         tracing::info!("ServiceAgentRunner initialised for sub-agent delegation");
     }
 

@@ -3,7 +3,7 @@ name = "y-bot"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Bot platform adapters for y-agent — Feishu, Telegram (stub)"
+description = "Bot platform adapters for y-agent — Feishu, Discord, Telegram (stub)"
 
 [dependencies]
 async-trait = { workspace = true }
@@ -13,6 +13,8 @@ reqwest = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 sha2 = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 

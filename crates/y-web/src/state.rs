@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use y_bot::discord::DiscordBot;
 use y_bot::feishu::FeishuBot;
 use y_service::ServiceContainer;
 
@@ -32,6 +33,8 @@ pub struct AppState {
     pub version: String,
     /// Feishu bot adapter (None if not configured).
     pub feishu_bot: Option<Arc<FeishuBot>>,
+    /// Discord bot adapter (None if not configured).
+    pub discord_bot: Option<Arc<DiscordBot>>,
 }
 
 impl AppState {
@@ -41,6 +44,7 @@ impl AppState {
             container,
             version: version.to_string(),
             feishu_bot: None,
+            discord_bot: None,
         }
     }
 
@@ -48,6 +52,13 @@ impl AppState {
     #[must_use]
     pub fn with_feishu_bot(mut self, bot: FeishuBot) -> Self {
         self.feishu_bot = Some(Arc::new(bot));
+        self
+    }
+
+    /// Create a new `AppState` with a Discord bot adapter.
+    #[must_use]
+    pub fn with_discord_bot(mut self, bot: DiscordBot) -> Self {
+        self.discord_bot = Some(Arc::new(bot));
         self
     }
 }

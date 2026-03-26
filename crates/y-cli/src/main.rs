@@ -200,7 +200,7 @@ async fn main() -> Result<()> {
         Some(Commands::Serve(ref args)) => {
             let services = wire::wire(&config).await?;
             let services = std::sync::Arc::new(services);
-            services.init_agent_runner();
+            services.init_agent_runner().await;
             commands::serve::run(services, args).await?;
         }
         None => {

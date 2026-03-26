@@ -4,6 +4,7 @@
 //! for integrating y-agent with messaging platforms:
 //!
 //! - **Feishu** (飞书 / Lark) — fully implemented webhook-based adapter
+//! - **Discord** — fully implemented Interactions Endpoint + REST API adapter
 //! - **Telegram** — interface reserved, implementation pending
 //!
 //! ## Architecture
@@ -16,6 +17,7 @@
 //!                                      BotPlatform::send_message()
 //! ```
 
+pub mod discord;
 pub mod error;
 pub mod feishu;
 pub mod telegram;
@@ -33,6 +35,7 @@ pub use error::BotError;
 #[serde(rename_all = "snake_case")]
 pub enum PlatformKind {
     Feishu,
+    Discord,
     Telegram,
 }
 
@@ -40,6 +43,7 @@ impl std::fmt::Display for PlatformKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PlatformKind::Feishu => write!(f, "feishu"),
+            PlatformKind::Discord => write!(f, "discord"),
             PlatformKind::Telegram => write!(f, "telegram"),
         }
     }
