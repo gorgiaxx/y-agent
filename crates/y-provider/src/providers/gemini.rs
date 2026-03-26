@@ -298,17 +298,23 @@ impl LlmProvider for GeminiProvider {
         let body = Self::build_request_body(request);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let response = self
+        let mut request_builder = self
             .client
             .post(self.generate_url())
-            .header("x-goog-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                message: e.to_string(),
-            })?;
+            .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request_builder = request_builder.header("x-goog-api-key", &self.api_key);
+        }
+
+        let response =
+            request_builder
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkError {
+                    message: e.to_string(),
+                })?;
 
         let status = response.status();
 
@@ -365,17 +371,23 @@ impl LlmProvider for GeminiProvider {
         let body = Self::build_request_body(request);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let response = self
+        let mut request_builder = self
             .client
             .post(self.stream_url())
-            .header("x-goog-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                message: e.to_string(),
-            })?;
+            .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request_builder = request_builder.header("x-goog-api-key", &self.api_key);
+        }
+
+        let response =
+            request_builder
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkError {
+                    message: e.to_string(),
+                })?;
 
         let status = response.status();
         if !status.is_success() {

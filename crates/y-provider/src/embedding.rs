@@ -145,14 +145,7 @@ impl OpenAiEmbeddingProvider {
             config.api_key.clone()
         };
 
-        if api_key.is_empty() {
-            return Err(EmbeddingError::ProviderError {
-                message: format!(
-                    "embedding API key not found: set {} or provide api_key directly",
-                    config.api_key_env
-                ),
-            });
-        }
+        // Skip the error. Empty API key is allowed for local/open endpoints.
 
         Ok(Self {
             client: reqwest::Client::new(),
@@ -184,11 +177,17 @@ impl OpenAiEmbeddingProvider {
             dimensions: Some(self.dimensions),
         };
 
-        let response = self
+        let mut request_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response = request_builder
             .json(&request_body)
             .send()
             .await
@@ -327,15 +326,7 @@ mod tests {
         assert_eq!(parsed.model, "text-embedding-3-small");
     }
 
-    #[test]
-    fn test_provider_creation_fails_without_key() {
-        let config = EmbeddingConfig {
-            api_key_env: "Y_NONEXISTENT_KEY_12345".to_string(),
-            ..Default::default()
-        };
-        let result = OpenAiEmbeddingProvider::from_config(&config);
-        assert!(result.is_err());
-    }
+    // Empty key test doesn't apply because we allow empty keys.
 
     #[test]
     fn test_provider_debug() {

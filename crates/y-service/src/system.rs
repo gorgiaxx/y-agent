@@ -233,18 +233,13 @@ impl SystemService {
     /// Providers using OpenAI-compatible REST are actively tested via a
     /// single-token chat completion. Other types return Ok immediately.
     pub async fn test_provider(request: ProviderTestRequest) -> Result<String, String> {
-        // Ollama runs locally without authentication; allow empty key.
-        let key_optional = request.provider_type == "ollama";
-
         let effective_key = if !request.api_key.is_empty() {
             request.api_key.clone()
         } else if !request.api_key_env.is_empty() {
             std::env::var(&request.api_key_env)
                 .map_err(|_| format!("Environment variable '{}' is not set", request.api_key_env))?
-        } else if key_optional {
-            String::new()
         } else {
-            return Err("No API key configured (set 'API Key' or 'API Key Env Var')".into());
+            String::new()
         };
 
         let client = reqwest::Client::builder()
@@ -293,11 +288,14 @@ impl SystemService {
                     "max_tokens": 1,
                     "messages": [{ "role": "user", "content": "ping" }]
                 });
-                let response = client
+                let mut req = client
                     .post(&url)
-                    .header("x-api-key", &effective_key)
                     .header("anthropic-version", "2023-06-01")
-                    .header("Content-Type", "application/json")
+                    .header("Content-Type", "application/json");
+                if !effective_key.is_empty() {
+                    req = req.header("x-api-key", &effective_key);
+                }
+                let response = req
                     .json(&body)
                     .send()
                     .await
@@ -309,12 +307,20 @@ impl SystemService {
                     .base_url
                     .as_deref()
                     .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
-                let url = format!(
-                    "{}/models/{}:generateContent?key={}",
-                    resolved_base.trim_end_matches('/'),
-                    request.model,
-                    effective_key
-                );
+                let url = if effective_key.is_empty() {
+                    format!(
+                        "{}/models/{}:generateContent",
+                        resolved_base.trim_end_matches('/'),
+                        request.model,
+                    )
+                } else {
+                    format!(
+                        "{}/models/{}:generateContent?key={}",
+                        resolved_base.trim_end_matches('/'),
+                        request.model,
+                        effective_key
+                    )
+                };
                 let body = serde_json::json!({
                     "contents": [{"parts": [{"text": "ping"}]}],
                     "generationConfig": {"maxOutputTokens": 1}

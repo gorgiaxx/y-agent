@@ -171,17 +171,24 @@ impl LlmProvider for OpenAiProvider {
         let body = self.build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let response = self
+        let mut request_builder = self
             .client
             .post(self.api_url("chat/completions"))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                message: e.to_string(),
-            })?;
+            .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response =
+            request_builder
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkError {
+                    message: e.to_string(),
+                })?;
 
         let status = response.status();
 
@@ -292,17 +299,24 @@ impl LlmProvider for OpenAiProvider {
         let body = self.build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let response = self
+        let mut request_builder = self
             .client
             .post(self.api_url("chat/completions"))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                message: e.to_string(),
-            })?;
+            .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response =
+            request_builder
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkError {
+                    message: e.to_string(),
+                })?;
 
         let status = response.status();
         if !status.is_success() {
