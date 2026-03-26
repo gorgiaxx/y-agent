@@ -232,7 +232,7 @@
 }
 
 .obs-provider-card:hover {
-  border-color: rgba(255, 255, 255, 0.09);
+  border-color: var(--border-focus);
 }
 
 .obs-provider-identity {
@@ -297,7 +297,7 @@
 }
 
 .obs-badge-type {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
   color: var(--text-secondary);
 }
 
@@ -380,7 +380,7 @@
 }
 
 .obs-agent-card:hover {
-  border-color: rgba(255, 255, 255, 0.09);
+  border-color: var(--border-focus);
 }
 
 .obs-agent-header {
@@ -406,7 +406,7 @@
 
 .obs-agent-icon.state-creating,
 .obs-agent-icon.state-configuring {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
   color: var(--text-secondary);
 }
 
@@ -450,7 +450,7 @@
 
 .obs-agent-state.state-creating,
 .obs-agent-state.state-configuring {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
   color: var(--text-secondary);
 }
 
@@ -496,7 +496,7 @@
   display: inline-flex;
   padding: 1px 5px;
   font-size: 10px;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   background: var(--surface-tertiary);
   color: var(--text-muted);
   border-radius: var(--radius-sm);

@@ -25,7 +25,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           'text-[var(--text-primary)]',
           'outline-none',
           'transition-colors duration-150',
-          'focus:border-[rgba(255,255,255,0.15)]',
+          'focus:border-[var(--border-focus)]',
           'placeholder:text-[var(--text-muted)]',
           className,
         ].join(' ')}
@@ -68,7 +68,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           'transition-colors duration-150',
           'resize-y',
           'tab-size-2',
-          'focus:border-[rgba(255,255,255,0.15)]',
+          'focus:border-[var(--border-focus)]',
           className,
         ].join(' ')}
         {...props}

@@ -63,7 +63,7 @@
   background: var(--surface-tertiary);
   padding: 2px var(--space-xs);
   border-radius: var(--radius-sm);
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   letter-spacing: 0.02em;
 }
 
@@ -245,7 +245,7 @@
 /* Inline code */
 .markdown-body .inline-code,
 .markdown-body code:not([class*="language-"]) {
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
   background: var(--surface-code);
   padding: 0.15em 0.45em;
@@ -324,7 +324,7 @@
 
 .code-block-lang {
   font-size: 10px;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.07em;

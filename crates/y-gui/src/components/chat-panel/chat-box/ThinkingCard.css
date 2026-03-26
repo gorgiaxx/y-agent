@@ -8,7 +8,7 @@
 
 .thinking-card-content {
   font-size: 13px;
-  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-family: var(--font-sans);
   color: var(--text-secondary);
   line-height: 1.6;
   white-space: pre-wrap;

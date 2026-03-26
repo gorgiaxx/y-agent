@@ -290,7 +290,7 @@
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-family: var(--font-mono);
 }
 
 .knowledge-load-more {

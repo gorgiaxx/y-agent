@@ -30,7 +30,7 @@
 .chat-empty-title {
   font-size: 17px;
   font-weight: 400;
-  font-family: SF Pro Display, SF Pro Icons, Helvetica Neue, Helvetica, Arial, sans-serif;;
+  font-family: var(--font-display);
   font-style: italic;
   color: var(--text-secondary);
   margin: 0;
@@ -145,9 +145,9 @@
   border-radius: var(--radius-sm);
   background: linear-gradient(
     90deg,
-    var(--bg-tertiary) 25%,
-    var(--bg-secondary) 50%,
-    var(--bg-tertiary) 75%
+    var(--surface-tertiary) 25%,
+    var(--surface-secondary) 50%,
+    var(--surface-tertiary) 75%
   );
   background-size: 200% 100%;
   animation: skeleton-pulse 1.5s ease-in-out infinite;

@@ -45,8 +45,8 @@ export const SelectTrigger = forwardRef<
       'text-[var(--text-primary)]',
       'cursor-pointer outline-none',
       'transition-colors duration-150',
-      'focus:border-white/15',
-      'data-[state=open]:border-white/15',
+      'focus:border-[var(--border-focus)]',
+      'data-[state=open]:border-[var(--border-focus)]',
       className,
     ].join(' ')}
     style={{ overflow: 'hidden', whiteSpace: 'nowrap', ...style }}

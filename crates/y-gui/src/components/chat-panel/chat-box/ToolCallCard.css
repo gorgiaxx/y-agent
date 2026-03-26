@@ -3,7 +3,7 @@
 .tool-call-name {
   font-size: 12px;
   font-weight: 500;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   color: var(--text-primary);
   letter-spacing: 0.01em;
 }
@@ -67,7 +67,7 @@
 
 .tool-call-code {
   font-size: 12px;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   background: var(--surface-code);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

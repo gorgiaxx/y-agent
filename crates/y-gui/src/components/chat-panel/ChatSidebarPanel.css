@@ -174,11 +174,11 @@
 }
 
 .session-item.active {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-active);
 }
 
 .session-item--selected {
-  background: rgba(96, 165, 250, 0.12);
+  background: var(--info-subtle);
 }
 
 .session-item--selected:hover {
@@ -280,11 +280,11 @@
 }
 
 .session-item--drag-over-above {
-  box-shadow: inset 0 2px 0 0 var(--accent, #60a5fa);
+  box-shadow: inset 0 2px 0 0 var(--accent);
 }
 
 .session-item--drag-over-below {
-  box-shadow: inset 0 -2px 0 0 var(--accent, #60a5fa);
+  box-shadow: inset 0 -2px 0 0 var(--accent);
 }
 
 /* ---- Batch action bar ---- */

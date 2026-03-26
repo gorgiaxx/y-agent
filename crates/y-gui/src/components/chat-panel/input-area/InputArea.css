@@ -26,7 +26,7 @@
 }
 
 .input-container:focus-within {
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: var(--border-focus);
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.03);
 }
 
@@ -136,7 +136,7 @@
   border: none;
   border-radius: var(--radius-md);
   background: var(--accent);
-  color: #0f0f0f;
+  color: var(--accent-contrast);
   cursor: pointer;
   flex-shrink: 0;
   transition: opacity 0.15s ease, transform 0.12s ease;
@@ -160,6 +160,7 @@
   gap: 2px;
   padding: 4px var(--space-sm);
   border-top: 1px solid var(--border);
+  user-select: none;
 }
 
 .toolbar-btn {
@@ -377,9 +378,6 @@
   background: rgba(100, 160, 220, 0.06);
   color: var(--text-primary);
 }
-
-
-
 
 .toolbar-kb-item-name {
   flex: 1;

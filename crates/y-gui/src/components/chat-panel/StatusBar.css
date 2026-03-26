@@ -9,6 +9,7 @@
   color: var(--text-muted);
   flex-shrink: 0;
   letter-spacing: 0.01em;
+  user-select: none;
 }
 
 .status-left,
@@ -36,7 +37,7 @@
 }
 
 .status-model {
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.02em;
 }
@@ -61,7 +62,7 @@
 }
 
 .status-token-ratio {
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
