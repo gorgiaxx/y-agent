@@ -17,6 +17,7 @@ export interface ProviderFormData {
   id: string;
   provider_type: string;
   model: string;
+  enabled: boolean;
   tags: string[];
   max_concurrency: number;
   context_window: number;
@@ -173,6 +174,7 @@ export function emptyProvider(): ProviderFormData {
     id: '',
     provider_type: 'openai',
     model: '',
+    enabled: true,
     tags: [],
     max_concurrency: 5,
     context_window: 128000,
@@ -332,6 +334,7 @@ export function providersToToml(providers: ProviderFormData[]): string {
     lines.push(`id = "${escapeTomlString(p.id)}"`);
     lines.push(`provider_type = "${escapeTomlString(p.provider_type)}"`);
     lines.push(`model = "${escapeTomlString(p.model)}"`);
+    if (!p.enabled) lines.push('enabled = false');
     if (p.tags.length > 0) {
       lines.push(`tags = [${p.tags.map((t) => `"${escapeTomlString(t)}"`).join(', ')}]`);
     }
@@ -370,6 +373,7 @@ export function jsonToProviders(json: any): ProviderFormData[] {
     id: p.id ?? '',
     provider_type: p.provider_type ?? 'openai',
     model: p.model ?? '',
+    enabled: p.enabled !== false,
     tags: Array.isArray(p.tags) ? p.tags : [],
     max_concurrency: p.max_concurrency ?? 5,
     context_window: p.context_window ?? 128000,

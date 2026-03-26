@@ -812,6 +812,35 @@
   background: var(--error-subtle);
 }
 
+/* Disabled provider sidebar item */
+.sub-list-item--disabled {
+  opacity: 0.45;
+}
+
+.sub-list-item--disabled .sub-list-item-label {
+  text-decoration: line-through;
+}
+
+/* Enable toggle within provider form */
+.pf-enable-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.pf-enable-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+  user-select: none;
+}
+
+.pf-enable-label--on {
+  color: var(--success, #6fcf97);
+}
+
 /* Action row: Add + Up/Down arrows */
 .sub-list-actions {
   display: flex;

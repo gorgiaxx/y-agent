@@ -807,6 +807,7 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "shell_exec",
     "browser",
     "web_fetch",
+    "task",
 ];
 
 /// Pre-activate all built-in tools as always-active in the activation set.
@@ -855,6 +856,37 @@ fn build_core_tools_summary(set: &ToolActivationSet) -> String {
          For shell operations not covered above, use shell_exec."
             .to_string(),
     );
+    lines.join("\n")
+}
+
+/// Generate a compact tools summary for a sub-agent from filtered definitions.
+///
+/// Same Markdown table format as [`build_core_tools_summary`] but operates on
+/// an arbitrary slice of [`ToolDefinition`]s (typically the agent's allowed
+/// tools after filtering). Returns an empty string when `defs` is empty.
+pub(crate) fn build_agent_tools_summary(defs: &[y_core::tool::ToolDefinition]) -> String {
+    if defs.is_empty() {
+        return String::new();
+    }
+    let mut sorted: Vec<&y_core::tool::ToolDefinition> = defs.iter().collect();
+    sorted.sort_by_key(|d| d.name.as_str());
+    let mut lines = vec![
+        "## Available Tools\n".to_string(),
+        "| Tool | Description | Usage |".to_string(),
+        "|------|-------------|-------|".to_string(),
+    ];
+    for def in &sorted {
+        let desc = def
+            .description
+            .split('.')
+            .next()
+            .unwrap_or(&def.description)
+            .trim();
+        let usage = extract_usage_hint(&def.parameters);
+        lines.push(format!("| {} | {} | {} |", def.name.as_str(), desc, usage));
+    }
+    lines.push(String::new());
+    lines.push("Use ONLY these tool names. Do NOT invent tool names.".to_string());
     lines.join("\n")
 }
 
@@ -921,6 +953,15 @@ pub fn build_providers_from_config(
     let mut providers: Vec<Arc<dyn LlmProvider>> = Vec::new();
 
     for config in &pool_config.providers {
+        // Skip disabled providers.
+        if !config.enabled {
+            info!(
+                provider_id = %config.id,
+                "provider is disabled, skipping"
+            );
+            continue;
+        }
+
         let Some(api_key) = config.resolve_api_key() else {
             let env_var = config.api_key_env.as_deref().unwrap_or("(not configured)");
             warn!(
@@ -1075,6 +1116,7 @@ mod tests {
                 id: "test-no-key".into(),
                 provider_type: "openai".into(),
                 model: "gpt-4".into(),
+                enabled: true,
                 tags: vec![],
                 max_concurrency: 5,
                 context_window: 128_000,
@@ -1103,6 +1145,7 @@ mod tests {
                 id: "test-unsupported".into(),
                 provider_type: "unsupported_backend".into(),
                 model: "some-model".into(),
+                enabled: true,
                 tags: vec![],
                 max_concurrency: 5,
                 context_window: 128_000,
@@ -1133,6 +1176,7 @@ mod tests {
                 id: "my-compat".into(),
                 provider_type: "openai-compat".into(),
                 model: "local-model".into(),
+                enabled: true,
                 tags: vec![],
                 max_concurrency: 2,
                 context_window: 32_000,
@@ -1167,6 +1211,7 @@ mod tests {
                 id: "deepseek-chat".into(),
                 provider_type: "deepseek".into(),
                 model: "deepseek-chat".into(),
+                enabled: true,
                 tags: vec![],
                 max_concurrency: 3,
                 context_window: 64_000,
@@ -1210,5 +1255,66 @@ mod tests {
         let registry = Arc::new(RwLock::new(y_skills::SkillRegistryImpl::new()));
         let _service = sc.skill_ingestion_service(registry);
         // Construction succeeds -- delegator is correctly wired.
+    }
+
+    // -- build_agent_tools_summary tests --
+
+    fn make_tool_def(
+        name: &str,
+        desc: &str,
+        params: serde_json::Value,
+    ) -> y_core::tool::ToolDefinition {
+        y_core::tool::ToolDefinition {
+            name: y_core::types::ToolName::from_string(name),
+            description: desc.to_string(),
+            help: None,
+            parameters: params,
+            result_schema: None,
+            category: y_core::tool::ToolCategory::Shell,
+            tool_type: y_core::tool::ToolType::BuiltIn,
+            capabilities: Default::default(),
+            is_dangerous: false,
+        }
+    }
+
+    #[test]
+    fn test_build_agent_tools_summary_empty() {
+        let summary = super::build_agent_tools_summary(&[]);
+        assert!(summary.is_empty());
+    }
+
+    #[test]
+    fn test_build_agent_tools_summary_single_tool() {
+        let defs = vec![make_tool_def(
+            "shell_exec",
+            "Execute a shell command. Runs in sandbox.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Shell command to run"}
+                },
+                "required": ["command"]
+            }),
+        )];
+        let summary = super::build_agent_tools_summary(&defs);
+        assert!(summary.contains("## Available Tools"));
+        assert!(summary.contains("| shell_exec |"));
+        assert!(summary.contains("Execute a shell command"));
+        assert!(summary.contains("Use ONLY these tool names"));
+    }
+
+    #[test]
+    fn test_build_agent_tools_summary_sorted() {
+        let defs = vec![
+            make_tool_def("file_write", "Write a file.", serde_json::json!({})),
+            make_tool_def("browser", "Open a browser.", serde_json::json!({})),
+            make_tool_def("shell_exec", "Execute shell.", serde_json::json!({})),
+        ];
+        let summary = super::build_agent_tools_summary(&defs);
+        let browser_pos = summary.find("browser").unwrap();
+        let file_write_pos = summary.find("file_write").unwrap();
+        let shell_exec_pos = summary.find("shell_exec").unwrap();
+        assert!(browser_pos < file_write_pos);
+        assert!(file_write_pos < shell_exec_pos);
     }
 }

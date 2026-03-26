@@ -111,12 +111,24 @@ impl ProviderPoolImpl {
     /// Validates the config, resolves API keys and proxy URLs per provider,
     /// constructs the appropriate provider backend for each entry, and
     /// delegates to [`from_providers`](Self::from_providers).
+    ///
+    /// Providers with `enabled = false` are silently skipped.
     pub fn from_config(config: &ProviderPoolConfig) -> Result<Self, ProviderPoolError> {
         config.validate()?;
 
         let mut providers: Vec<Arc<dyn LlmProvider>> = Vec::with_capacity(config.providers.len());
 
         for cfg in &config.providers {
+            // Skip disabled providers -- they are kept in config but excluded
+            // from the active pool.
+            if !cfg.enabled {
+                tracing::info!(
+                    provider_id = %cfg.id,
+                    "provider is disabled, skipping pool registration"
+                );
+                continue;
+            }
+
             let api_key = cfg.resolve_api_key().unwrap_or_default();
             let proxy_url = config.resolve_proxy_url(&cfg.id, &cfg.tags);
 
@@ -777,6 +789,7 @@ mod tests {
                     id: "openai-1".into(),
                     provider_type: "openai".into(),
                     model: "gpt-4o".into(),
+                    enabled: true,
                     tags: vec!["general".into()],
                     max_concurrency: 3,
                     context_window: 128_000,
@@ -794,6 +807,7 @@ mod tests {
                     id: "anthropic-1".into(),
                     provider_type: "anthropic".into(),
                     model: "claude-3-opus".into(),
+                    enabled: true,
                     tags: vec!["reasoning".into()],
                     max_concurrency: 3,
                     context_window: 200_000,
@@ -811,6 +825,7 @@ mod tests {
                     id: "gemini-1".into(),
                     provider_type: "gemini".into(),
                     model: "gemini-2.0-flash".into(),
+                    enabled: true,
                     tags: vec!["fast".into()],
                     max_concurrency: 5,
                     context_window: 1_000_000,
@@ -828,6 +843,7 @@ mod tests {
                     id: "ollama-local".into(),
                     provider_type: "ollama".into(),
                     model: "llama3.1:8b".into(),
+                    enabled: true,
                     tags: vec!["local".into()],
                     max_concurrency: 3,
                     context_window: 32_768,
@@ -845,6 +861,7 @@ mod tests {
                     id: "azure-1".into(),
                     provider_type: "azure".into(),
                     model: "gpt-4o".into(),
+                    enabled: true,
                     tags: vec!["cloud".into()],
                     max_concurrency: 5,
                     context_window: 128_000,
@@ -913,6 +930,7 @@ mod tests {
                 id: "unknown-1".into(),
                 provider_type: "supermodel".into(),
                 model: "best".into(),
+                enabled: true,
                 tags: vec![],
                 max_concurrency: 5,
                 context_window: 128_000,

@@ -208,7 +208,7 @@ function ProviderTabPanel({
 
   return (
     <div className="sidetab-tab-form">
-      {/* Row 0: Icon picker */}
+      {/* Row 0: Icon picker + Enable toggle */}
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">Provider</label>
@@ -216,6 +216,23 @@ function ProviderTabPanel({
             value={provider.icon}
             onChange={(icon) => update({ icon })}
           />
+        </div>
+        <div className="pf-field">
+          <label className="pf-label">Enabled</label>
+          <label className="pf-enable-toggle">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={provider.enabled}
+              className={`raw-mode-switch-track ${provider.enabled ? 'raw-mode-switch-track--on' : ''}`}
+              onClick={() => update({ enabled: !provider.enabled })}
+            >
+              <span className="raw-mode-switch-thumb" />
+            </button>
+            <span className={`pf-enable-label ${provider.enabled ? 'pf-enable-label--on' : ''}`}>
+              {provider.enabled ? 'Active' : 'Disabled'}
+            </span>
+          </label>
         </div>
       </div>
 
@@ -621,7 +638,7 @@ export function ProvidersTab({
           {providersList.map((p, i) => (
             <button
               key={i}
-              className={`sub-list-item ${activeProviderTab === i ? 'active' : ''}`}
+              className={`sub-list-item ${activeProviderTab === i ? 'active' : ''} ${!p.enabled ? 'sub-list-item--disabled' : ''}`}
               onClick={() => setActiveProviderTab(i)}
             >
               {p.icon ? (

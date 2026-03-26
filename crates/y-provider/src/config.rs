@@ -53,6 +53,11 @@ pub struct ProviderConfig {
     /// Model name (e.g., "gpt-4o", "claude-3-opus").
     pub model: String,
 
+    /// Whether this provider is enabled. Disabled providers are excluded from
+    /// the pool and will not receive any requests.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
     /// Tags for routing (e.g., `["reasoning", "fast", "code"]`).
     #[serde(default = "default_tags", deserialize_with = "deserialize_tags")]
     pub tags: Vec<String>,
@@ -435,6 +440,7 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    enabled: true,
                 },
                 ProviderConfig {
                     id: "dup".into(),
@@ -452,6 +458,7 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    enabled: true,
                 },
             ],
             ..Default::default()
@@ -478,6 +485,7 @@ mod tests {
             id: "test".into(),
             provider_type: "openai".into(),
             model: "gpt-4".into(),
+            enabled: true,
             tags: vec![],
             max_concurrency: 5,
             context_window: 128_000,
@@ -507,6 +515,7 @@ mod tests {
             id: "test".into(),
             provider_type: "openai".into(),
             model: "gpt-4".into(),
+            enabled: true,
             tags: vec![],
             max_concurrency: 5,
             context_window: 128_000,
