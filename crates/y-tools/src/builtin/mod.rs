@@ -6,6 +6,7 @@ pub mod file_read;
 pub mod file_write;
 pub mod knowledge_search;
 pub mod shell_exec;
+pub mod task;
 pub mod tool_search;
 pub mod web_fetch;
 
@@ -47,6 +48,10 @@ pub async fn register_builtin_tools(
             shell_exec::ShellExecTool::tool_definition(),
         ),
         (
+            Arc::new(task::TaskTool::new()),
+            task::TaskTool::tool_definition(),
+        ),
+        (
             Arc::new(tool_search::ToolSearchTool::new()),
             tool_search::ToolSearchTool::tool_definition(),
         ),
@@ -85,8 +90,8 @@ mod tests {
     async fn test_register_builtin_tools_populates_registry() {
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None).await;
-        // 3 core tools + tool_search + browser + web_fetch = 6
-        assert_eq!(registry.len().await, 6);
+        // 3 core tools + task + tool_search + browser + web_fetch = 7
+        assert_eq!(registry.len().await, 7);
     }
 
     #[tokio::test]
@@ -103,8 +108,8 @@ mod tests {
             Some(knowledge),
         )
         .await;
-        // 6 + knowledge_search = 7
-        assert_eq!(registry.len().await, 7);
+        // 7 + knowledge_search = 8
+        assert_eq!(registry.len().await, 8);
     }
 
     #[tokio::test]
@@ -118,5 +123,6 @@ mod tests {
         assert!(names.contains(&"shell_exec"));
         assert!(names.contains(&"tool_search"));
         assert!(names.contains(&"web_fetch"));
+        assert!(names.contains(&"task"));
     }
 }

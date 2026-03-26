@@ -102,6 +102,10 @@ impl Tool for ShellExecTool {
         let timeout = Duration::from_secs(timeout_secs);
         let working_dir = input.arguments["working_dir"].as_str();
 
+        tracing::info!(
+            "Executing shell command: `{command}` (working_dir: {working_dir:?}, timeout_secs: {timeout_secs})"
+        );
+
         // Prefer the injected CommandRunner (runtime-aware execution).
         // Falls back to direct local execution when no runner is provided
         // (backward compatibility for tests and standalone usage).

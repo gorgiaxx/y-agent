@@ -44,6 +44,7 @@ description = "Search and retrieve information from knowledge base and documents
 [categories.agent]
 label = "Agent & Workflow"
 description = "Delegate to sub-agents, manage workflows. Agents are also discoverable via keyword search."
+tools = ["task"]
 
 [categories.meta]
 label = "Meta Tools"

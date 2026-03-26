@@ -440,16 +440,15 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
         // Start a trace for this subagent execution.
         let trace_session_id = session_id.unwrap_or(uuid::Uuid::nil());
         let trace_name = format!("subagent:{agent_name}");
-        let input_preview = match &input {
-            serde_json::Value::String(s) => s.chars().take(200).collect::<String>(),
-            other => {
-                let s = other.to_string();
-                s.chars().take(200).collect::<String>()
-            }
+        let full_input = match &input {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
         };
+        // Keep the full input JSON for trace metadata (input is moved into delegate).
+        let input_json = input.clone();
         let trace_id = self
             .diagnostics
-            .on_trace_start(trace_session_id, &trace_name, &input_preview)
+            .on_trace_start(trace_session_id, &trace_name, &full_input)
             .await
             .ok();
 
@@ -468,6 +467,19 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
                 .delegate(agent_name, input, context_strategy, session_id)
                 .await
         };
+
+        // Store the full delegation input in the trace metadata so
+        // diagnostics consumers can inspect the complete request body.
+        if let Some(tid) = trace_id {
+            if let Ok(mut trace) = self.diagnostics.store().get_trace(tid).await {
+                if let serde_json::Value::Object(ref mut map) = trace.metadata {
+                    map.insert("input".to_string(), input_json);
+                } else {
+                    trace.metadata = serde_json::json!({ "input": input_json });
+                }
+                let _ = self.diagnostics.store().update_trace(trace).await;
+            }
+        }
 
         // Close the trace.  Per-iteration generation and tool-call
         // observations have already been recorded by AgentService::execute()

@@ -334,6 +334,19 @@ mod tests {
         async fn delete(&self, _id: &SessionId) -> Result<(), SessionError> {
             Ok(())
         }
+        async fn get_context_reset_index(
+            &self,
+            _id: &SessionId,
+        ) -> Result<Option<u32>, SessionError> {
+            Ok(None)
+        }
+        async fn set_context_reset_index(
+            &self,
+            _id: &SessionId,
+            _index: Option<u32>,
+        ) -> Result<(), SessionError> {
+            Ok(())
+        }
     }
 
     #[async_trait::async_trait]

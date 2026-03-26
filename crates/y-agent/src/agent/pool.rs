@@ -8,11 +8,11 @@
 //! the instance lifecycle state machine.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 use uuid::Uuid;
 
 use y_core::agent::{
@@ -215,7 +215,7 @@ pub struct AgentPool {
     /// Semaphore controlling max concurrent running instances.
     concurrency_semaphore: Semaphore,
     /// Shared reference to the agent registry for definition lookup.
-    registry: Arc<RwLock<AgentRegistry>>,
+    registry: Arc<Mutex<AgentRegistry>>,
     /// Optional runner for executing agent LLM calls.
     /// Injected at startup via `set_runner()`.
     runner: Option<Arc<dyn AgentRunner>>,
@@ -240,14 +240,14 @@ impl AgentPool {
             config,
             instances: HashMap::new(),
             concurrency_semaphore: Semaphore::new(max),
-            registry: Arc::new(RwLock::new(AgentRegistry::new())),
+            registry: Arc::new(Mutex::new(AgentRegistry::new())),
             runner: None,
             delegation_tracker: Arc::new(DelegationTracker::new()),
         }
     }
 
     /// Create a pool with a shared registry.
-    pub fn with_registry(config: MultiAgentConfig, registry: Arc<RwLock<AgentRegistry>>) -> Self {
+    pub fn with_registry(config: MultiAgentConfig, registry: Arc<Mutex<AgentRegistry>>) -> Self {
         let max = config.max_concurrent_agents;
         Self {
             config,
@@ -268,7 +268,7 @@ impl AgentPool {
     }
 
     /// Get a reference to the shared registry.
-    pub fn registry(&self) -> &Arc<RwLock<AgentRegistry>> {
+    pub fn registry(&self) -> &Arc<Mutex<AgentRegistry>> {
         &self.registry
     }
 
@@ -424,12 +424,7 @@ impl AgentDelegator for AgentPool {
     ) -> Result<DelegationOutput, DelegationError> {
         // Step 1: Resolve agent definition from registry (scoped to drop guard before await)
         let definition = {
-            let registry = self
-                .registry
-                .read()
-                .map_err(|_| DelegationError::DelegationFailed {
-                    message: "registry lock poisoned".to_string(),
-                })?;
+            let registry = self.registry.lock().await;
 
             registry
                 .get(agent_name)

@@ -31,6 +31,7 @@ pub mod skill_evolution;
 pub mod skill_ingestion;
 pub mod skill_service;
 pub mod system;
+pub mod task_delegation_orchestrator;
 pub mod tool_search_orchestrator;
 pub mod workflow_service;
 pub mod workspace;

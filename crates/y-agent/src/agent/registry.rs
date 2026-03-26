@@ -49,6 +49,8 @@ pub struct AgentRegistry {
     definitions: HashMap<String, AgentDefinition>,
     /// Original built-in definitions, preserved for reset support.
     builtin_originals: HashMap<String, AgentDefinition>,
+    /// Template variables for TOML expansion (e.g. `{{YAGENT_CONFIG_PATH}}`).
+    template_vars: Vec<(String, String)>,
 }
 
 impl AgentRegistry {
@@ -57,11 +59,8 @@ impl AgentRegistry {
     /// If `user_agents_dir` is provided and exists, user-defined agent TOML
     /// files in that directory are loaded and may override built-in agents.
     pub fn new_with_user_agents(user_agents_dir: Option<&Path>) -> Self {
-        let mut registry = Self {
-            definitions: HashMap::new(),
-            builtin_originals: HashMap::new(),
-        };
-        registry.register_builtins();
+        let config_dir = user_agents_dir.and_then(|p| p.parent());
+        let mut registry = Self::new_with_config_dir(config_dir);
 
         if let Some(dir) = user_agents_dir {
             if let Err(errors) = registry.load_user_agents(dir) {
@@ -76,7 +75,27 @@ impl AgentRegistry {
 
     /// Create a new registry with built-in agent definitions pre-registered.
     pub fn new() -> Self {
-        Self::new_with_user_agents(None)
+        Self::new_with_config_dir(None)
+    }
+
+    /// Create a new registry, establishing the configuration directory used for template expansion
+    /// (e.g., matching `{{YAGENT_CONFIG_PATH}}`).
+    pub fn new_with_config_dir(config_dir: Option<&Path>) -> Self {
+        let mut registry = Self {
+            definitions: HashMap::new(),
+            builtin_originals: HashMap::new(),
+            template_vars: Vec::new(),
+        };
+
+        let path_str =
+            config_dir.map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
+
+        registry
+            .template_vars
+            .push(("{{YAGENT_CONFIG_PATH}}".to_string(), path_str));
+
+        registry.register_builtins();
+        registry
     }
 
     /// Create an empty registry (no built-ins). Useful for testing.
@@ -84,7 +103,17 @@ impl AgentRegistry {
         Self {
             definitions: HashMap::new(),
             builtin_originals: HashMap::new(),
+            template_vars: Vec::new(),
         }
+    }
+
+    /// Expand registered template variables in a TOML string.
+    pub fn expand_templates(&self, content: &str) -> String {
+        let mut processed = content.to_string();
+        for (key, val) in &self.template_vars {
+            processed = processed.replace(key, val);
+        }
+        processed
     }
 
     /// Register a new agent definition.
@@ -323,19 +352,22 @@ impl AgentRegistry {
                 .unwrap_or_default();
 
             match std::fs::read_to_string(&path) {
-                Ok(content) => match AgentDefinition::from_toml(&content) {
-                    Ok(mut def) => {
-                        // User-loaded agents are always UserDefined tier,
-                        // even if they override a built-in.
-                        def.trust_tier = TrustTier::UserDefined;
-                        if let Err(e) = self.register_or_override(def) {
+                Ok(content) => {
+                    let expanded = self.expand_templates(&content);
+                    match AgentDefinition::from_toml(&expanded) {
+                        Ok(mut def) => {
+                            // User-loaded agents are always UserDefined tier,
+                            // even if they override a built-in.
+                            def.trust_tier = TrustTier::UserDefined;
+                            if let Err(e) = self.register_or_override(def) {
+                                errors.push((filename, e.to_string()));
+                            }
+                        }
+                        Err(e) => {
                             errors.push((filename, e.to_string()));
                         }
                     }
-                    Err(e) => {
-                        errors.push((filename, e.to_string()));
-                    }
-                },
+                }
                 Err(e) => {
                     errors.push((filename, e.to_string()));
                 }
@@ -402,7 +434,8 @@ impl AgentRegistry {
     /// Also saves a copy of each original definition for reset support.
     fn register_builtins(&mut self) {
         for (name, toml_str) in Self::builtin_toml_sources() {
-            let def = AgentDefinition::from_toml(toml_str)
+            let expanded = self.expand_templates(toml_str);
+            let def = AgentDefinition::from_toml(&expanded)
                 .unwrap_or_else(|e| panic!("built-in agent '{name}' should parse: {e}"));
             self.builtin_originals.insert(def.id.clone(), def.clone());
             self.definitions.insert(def.id.clone(), def);
@@ -554,7 +587,7 @@ mod tests {
         let aa = registry.get("agent-architect").unwrap();
         assert_eq!(aa.name, "agent-architect");
         assert_eq!(aa.trust_tier, TrustTier::BuiltIn);
-        assert_eq!(aa.mode, AgentMode::Plan);
+        assert_eq!(aa.mode, AgentMode::Build);
     }
 
     /// T-MA-R2-03: Registry `search()` filters by name/capabilities.
@@ -576,7 +609,7 @@ mod tests {
         assert_eq!(results[0].id, "reviewer-1");
 
         // Search by description
-        let results = registry.search("capability gaps");
+        let results = registry.search("agent definitions");
         assert!(!results.is_empty());
         assert!(results.iter().any(|d| d.id == "agent-architect"));
 
@@ -645,11 +678,9 @@ mod tests {
             .register(user_definition("user-1", "User Agent"))
             .unwrap();
 
-        // Built-in agent-architect is plan mode, tool-engineer is build mode
-        let plan_agents = registry.search_by_mode(AgentMode::Plan);
-        assert!(plan_agents.iter().any(|a| a.id == "agent-architect"));
-
+        // Built-in agent-architect and tool-engineer are both build mode
         let build_agents = registry.search_by_mode(AgentMode::Build);
+        assert!(build_agents.iter().any(|a| a.id == "agent-architect"));
         assert!(build_agents.iter().any(|a| a.id == "tool-engineer"));
 
         // User agent is General mode
@@ -757,11 +788,11 @@ mod tests {
 
         // Search by mode only
         let results = registry.search_advanced(&SearchCriteria {
-            mode: Some(AgentMode::Plan),
+            mode: Some(AgentMode::Build),
             ..Default::default()
         });
         assert!(results.iter().any(|d| d.id == "agent-architect"));
-        assert!(!results.iter().any(|d| d.id == "tool-engineer"));
+        assert!(results.iter().any(|d| d.id == "tool-engineer"));
 
         // Search by tier + mode
         let results = registry.search_advanced(&SearchCriteria {
@@ -807,8 +838,9 @@ mod tests {
     fn test_builtin_agent_agent_architect() {
         let registry = AgentRegistry::new();
         let def = registry.get("agent-architect").unwrap();
-        assert_eq!(def.mode, AgentMode::Plan);
+        assert_eq!(def.mode, AgentMode::Build);
         assert!(def.denied_tools.contains(&"shell_exec".to_string()));
+        assert!(def.allowed_tools.contains(&"file_write".to_string()));
     }
 
     /// T-MA-P4-13: Registry loads all 8 built-in agents at startup.
@@ -869,7 +901,7 @@ mod tests {
         // agent-architect should remain unchanged
         let aa = registry.get("agent-architect").unwrap();
         assert_eq!(aa.trust_tier, TrustTier::BuiltIn);
-        assert_eq!(aa.mode, AgentMode::Plan);
+        assert_eq!(aa.mode, AgentMode::Build);
     }
 
     /// Reset an overridden built-in to its original definition.
@@ -979,6 +1011,46 @@ system_prompt = "You are my custom tool engineer."
         assert_eq!(
             registry.get("agent-architect").unwrap().trust_tier,
             TrustTier::BuiltIn
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_template_expansion_in_user_agents() {
+        let tmp = std::env::temp_dir().join("y-agent-test-template-expansion");
+        let agents_dir = tmp.join("agents");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        let toml_content = r#"
+id = "template-agent"
+name = "Template Agent"
+description = "Writes to {{YAGENT_CONFIG_PATH}}/agents/test.toml"
+mode = "general"
+trust_tier = "user_defined"
+system_prompt = "Store in {{YAGENT_CONFIG_PATH}}/data"
+"#;
+        std::fs::write(agents_dir.join("template-agent.toml"), toml_content).unwrap();
+
+        let registry = AgentRegistry::new_with_user_agents(Some(&agents_dir));
+        let loaded = registry
+            .get("template-agent")
+            .expect("Agent should load successfully");
+
+        let expected_path = tmp.to_string_lossy();
+        assert!(
+            loaded.description.contains(&*expected_path),
+            "description should contain expanded path"
+        );
+        assert!(
+            loaded.system_prompt.contains(&*expected_path),
+            "system_prompt should contain expanded path"
+        );
+        assert!(
+            !loaded.description.contains("{{YAGENT_CONFIG_PATH}}"),
+            "template should be expanded"
         );
 
         // Cleanup

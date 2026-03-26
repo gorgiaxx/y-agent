@@ -140,9 +140,12 @@ pub async fn agent_save(
     id: String,
     toml_content: String,
 ) -> Result<(), String> {
+    let mut registry = state.container.agent_registry.lock().await;
+
     // Parse the TOML to validate it's a proper AgentDefinition.
-    let mut def: y_agent::agent::definition::AgentDefinition =
-        toml::from_str(&toml_content).map_err(|e| format!("Invalid agent TOML: {e}"))?;
+    let expanded_toml = registry.expand_templates(&toml_content);
+    let mut def = y_agent::agent::definition::AgentDefinition::from_toml(&expanded_toml)
+        .map_err(|e| format!("Invalid agent TOML: {e}"))?;
 
     // Ensure the ID matches.
     def.id.clone_from(&id);
@@ -156,7 +159,6 @@ pub async fn agent_save(
         .map_err(|e| format!("Failed to write agent file: {e}"))?;
 
     // Update in-memory registry (forces UserDefined tier).
-    let mut registry = state.container.agent_registry.lock().await;
     def.trust_tier = y_agent::TrustTier::UserDefined;
     let _ = registry.register_or_override(def);
 

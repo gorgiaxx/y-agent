@@ -24,7 +24,8 @@ const PROMPT_DATETIME: &str = include_str!("../../../config/prompts/core_datetim
 const PROMPT_ENVIRONMENT: &str = include_str!("../../../config/prompts/core_environment.txt");
 const PROMPT_GUIDELINES: &str = include_str!("../../../config/prompts/core_guidelines.txt");
 const PROMPT_SECURITY: &str = include_str!("../../../config/prompts/core_security.txt");
-const PROMPT_TOOL_PROTOCOL: &str = include_str!("../../../config/prompts/core_tool_protocol.txt");
+pub const PROMPT_TOOL_PROTOCOL: &str =
+    include_str!("../../../config/prompts/core_tool_protocol.txt");
 
 const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.txt");
 const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_planning.txt");

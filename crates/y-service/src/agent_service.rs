@@ -1253,16 +1253,19 @@ impl AgentService {
         messages
     }
 
-    /// Build tool definitions filtered by an agent's allowed/denied tool lists.
+    /// Filter tool definitions by an agent's allowed/denied tool lists.
+    ///
+    /// Returns the raw [`ToolDefinition`]s so callers can both build JSON
+    /// tool schemas and generate a tools summary for prompt injection.
     ///
     /// - `"*"` in `allowed` means all tools in the registry.
-    /// - Empty `allowed` means no tools.
+    /// - Empty `allowed` means no tools (returns empty vec).
     /// - `denied` overrides `allowed`.
-    pub async fn build_filtered_tool_definitions(
+    async fn filter_tool_definitions(
         container: &ServiceContainer,
         allowed: &[String],
         denied: &[String],
-    ) -> Vec<serde_json::Value> {
+    ) -> Vec<y_core::tool::ToolDefinition> {
         if allowed.is_empty() {
             return vec![];
         }
@@ -1270,13 +1273,28 @@ impl AgentService {
         let defs = container.tool_registry.get_all_definitions().await;
         let allow_all = allowed.iter().any(|a| a == "*");
 
-        defs.iter()
+        defs.into_iter()
             .filter(|def| {
                 let name = def.name.as_str();
                 let is_allowed = allow_all || allowed.iter().any(|a| a == name);
                 let is_denied = denied.iter().any(|d| d == name);
                 is_allowed && !is_denied
             })
+            .collect()
+    }
+
+    /// Build tool definitions filtered by an agent's allowed/denied tool lists.
+    ///
+    /// Returns `OpenAI` function-calling JSON format. Delegates filtering to
+    /// `filter_tool_definitions`.
+    pub async fn build_filtered_tool_definitions(
+        container: &ServiceContainer,
+        allowed: &[String],
+        denied: &[String],
+    ) -> Vec<serde_json::Value> {
+        Self::filter_tool_definitions(container, allowed, denied)
+            .await
+            .iter()
             .map(|def| {
                 serde_json::json!({
                     "type": "function",
@@ -1292,7 +1310,9 @@ impl AgentService {
 
     /// Execute a tool call — delegates to the tool registry.
     ///
-    /// Special handling for `tool_search`: delegates to [`ToolSearchOrchestrator`].
+    /// Special handling for `tool_search` and `task`: these meta-tools are
+    /// intercepted and routed to their respective orchestrators which have
+    /// access to the full `ServiceContainer`.
     async fn execute_tool_call(
         container: &ServiceContainer,
         tc: &ToolCallRequest,
@@ -1302,7 +1322,7 @@ impl AgentService {
         if tc.name == "tool_search" {
             let sources = crate::tool_search_orchestrator::CapabilitySearchSources {
                 skill_search: Some(&container.skill_search),
-                agent_registry: Some(&container.agent_registry),
+                agent_registry: Some(&*container.agent_registry),
             };
             let result =
                 crate::tool_search_orchestrator::ToolSearchOrchestrator::handle_with_sources(
@@ -1315,6 +1335,18 @@ impl AgentService {
                 .await;
 
             return result;
+        }
+
+        // Intercept task calls — delegate to a sub-agent via AgentDelegator.
+        if tc.name == "task" {
+            let session_uuid =
+                uuid::Uuid::parse_str(session_id.as_str()).unwrap_or_else(|_| uuid::Uuid::new_v4());
+            return crate::task_delegation_orchestrator::TaskDelegationOrchestrator::handle(
+                &tc.arguments,
+                container.agent_delegator.as_ref(),
+                Some(session_uuid),
+            )
+            .await;
         }
 
         let tool_name = ToolName::from_string(&tc.name);
@@ -1509,6 +1541,28 @@ impl AgentService {
 }
 
 // ---------------------------------------------------------------------------
+// Sub-agent prompt augmentation
+// ---------------------------------------------------------------------------
+
+/// Build the effective system prompt for a sub-agent, injecting tool protocol
+/// and an available-tools summary when the agent has tools.
+///
+/// When `filtered_defs` is empty the base prompt is returned unchanged.
+fn build_subagent_system_prompt(
+    base_prompt: &str,
+    filtered_defs: &[y_core::tool::ToolDefinition],
+) -> String {
+    if filtered_defs.is_empty() {
+        return base_prompt.to_string();
+    }
+
+    let tool_protocol = y_prompt::PROMPT_TOOL_PROTOCOL;
+    let tools_summary = crate::container::build_agent_tools_summary(filtered_defs);
+
+    format!("{base_prompt}\n\n{tool_protocol}\n\n{tools_summary}")
+}
+
+// ---------------------------------------------------------------------------
 // ServiceAgentRunner — bridges AgentPool.delegate() → AgentService.execute()
 // ---------------------------------------------------------------------------
 
@@ -1532,12 +1586,41 @@ impl AgentRunner for ServiceAgentRunner {
     async fn run(&self, config: AgentRunConfig) -> Result<AgentRunOutput, DelegationError> {
         let start = std::time::Instant::now();
 
+        // Filter tool definitions from allowed_tools/denied_tools.
+        // When allowed_tools is non-empty, agents can make tool calls across
+        // multiple iterations (e.g. skill-ingestion reading companion files).
+        let filtered_defs = AgentService::filter_tool_definitions(
+            &self.container,
+            &config.allowed_tools,
+            &config.denied_tools,
+        )
+        .await;
+
+        // Augment the system prompt with tool protocol and available-tools
+        // summary when the agent has tools.
+        let system_prompt = build_subagent_system_prompt(&config.system_prompt, &filtered_defs);
+
+        // Convert filtered definitions to OpenAI function-calling JSON.
+        let tool_definitions: Vec<serde_json::Value> = filtered_defs
+            .iter()
+            .map(|def| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": def.name.as_str(),
+                        "description": def.description,
+                        "parameters": def.parameters,
+                    }
+                })
+            })
+            .collect();
+
         // Build messages: system_prompt + input as user message.
         let mut messages = Vec::with_capacity(2);
         messages.push(Message {
             message_id: y_core::types::generate_message_id(),
             role: Role::System,
-            content: config.system_prompt.clone(),
+            content: system_prompt.clone(),
             tool_call_id: None,
             tool_calls: vec![],
             timestamp: y_core::types::now(),
@@ -1557,16 +1640,6 @@ impl AgentRunner for ServiceAgentRunner {
             timestamp: y_core::types::now(),
             metadata: serde_json::Value::Null,
         });
-
-        // Build tool definitions from allowed_tools/denied_tools.
-        // When allowed_tools is non-empty, agents can make tool calls across
-        // multiple iterations (e.g. skill-ingestion reading companion files).
-        let tool_definitions = AgentService::build_filtered_tool_definitions(
-            &self.container,
-            &config.allowed_tools,
-            &config.denied_tools,
-        )
-        .await;
 
         // Determine max_iterations: if tools are available, use the agent
         // definition's max_iterations; otherwise single-turn.
@@ -1591,7 +1664,7 @@ impl AgentRunner for ServiceAgentRunner {
 
         let exec_config = AgentExecutionConfig {
             agent_name: config.agent_name.clone(),
-            system_prompt: config.system_prompt.clone(),
+            system_prompt,
             max_iterations,
             tool_definitions,
             tool_calling_mode,
@@ -1713,5 +1786,56 @@ mod tests {
         assert!(AgentExecutionError::Cancelled
             .to_string()
             .contains("Cancelled"));
+    }
+
+    // -- build_subagent_system_prompt tests --
+
+    fn make_test_tool_def(name: &str) -> y_core::tool::ToolDefinition {
+        y_core::tool::ToolDefinition {
+            name: y_core::types::ToolName::from_string(name),
+            description: format!("{name} description. Extra detail."),
+            help: None,
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "arg1": {"type": "string", "description": "First argument"}
+                },
+                "required": ["arg1"]
+            }),
+            result_schema: None,
+            category: y_core::tool::ToolCategory::Shell,
+            tool_type: y_core::tool::ToolType::BuiltIn,
+            capabilities: Default::default(),
+            is_dangerous: false,
+        }
+    }
+
+    #[test]
+    fn test_subagent_prompt_unchanged_without_tools() {
+        let base = "You are a test agent.";
+        let result = super::build_subagent_system_prompt(base, &[]);
+        assert_eq!(result, base);
+    }
+
+    #[test]
+    fn test_subagent_prompt_includes_protocol_and_summary() {
+        let base = "You are a test agent.";
+        let defs = vec![make_test_tool_def("shell_exec")];
+        let result = super::build_subagent_system_prompt(base, &defs);
+
+        assert!(result.starts_with(base));
+        assert!(result.contains("Tool Usage Protocol"));
+        assert!(result.contains("## Available Tools"));
+        assert!(result.contains("| shell_exec |"));
+    }
+
+    #[test]
+    fn test_subagent_prompt_preserves_base() {
+        let base = "Custom system prompt with specific instructions.";
+        let defs = vec![make_test_tool_def("file_read")];
+        let result = super::build_subagent_system_prompt(base, &defs);
+
+        assert!(result.starts_with(base));
+        assert!(result.contains("file_read"));
     }
 }

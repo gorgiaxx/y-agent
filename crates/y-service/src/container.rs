@@ -81,7 +81,7 @@ pub struct ServiceContainer {
     pub guardrail_manager: GuardrailManager,
 
     /// Agent registry for definition management.
-    pub agent_registry: Mutex<AgentRegistry>,
+    pub agent_registry: Arc<Mutex<AgentRegistry>>,
 
     /// Agent pool for runtime instance management.
     /// Shared via `Arc` with `MutexPoolDelegator` so that runner upgrades
@@ -378,8 +378,9 @@ tools = ["tool_search"]
         let diagnostics = Arc::new(DiagnosticsSubscriber::new(trace_store_dyn));
 
         // 13. Agent infrastructure.
+        let config_dir = config.prompts_dir.as_ref().and_then(|p| p.parent());
         let (agent_registry, agent_pool_for_services, agent_delegator, delegation_tracker) =
-            Self::init_agent_and_diagnostics(&provider_pool, &diagnostics);
+            Self::init_agent_and_diagnostics(config_dir, &provider_pool, &diagnostics);
 
         // 14. Pruning engine -- wired with agent_delegator for progressive pruning.
         let pruning_engine =
@@ -563,7 +564,7 @@ impl AgentDelegator for MutexPoolDelegator {
 
 /// Result of agent sub-system initialisation.
 type AgentInitResult = (
-    Mutex<AgentRegistry>,
+    Arc<Mutex<AgentRegistry>>,
     Arc<Mutex<AgentPool>>,
     Arc<dyn AgentDelegator>,
     Arc<DelegationTracker>,
@@ -577,11 +578,13 @@ impl ServiceContainer {
     /// When `init_agent_runner()` swaps the runner to `ServiceAgentRunner`,
     /// the change automatically affects the delegation path.
     fn init_agent_and_diagnostics(
+        config_dir: Option<&std::path::Path>,
         provider_pool: &Arc<ProviderPoolImpl>,
         diagnostics: &Arc<DiagnosticsSubscriber<dyn TraceStore>>,
     ) -> AgentInitResult {
-        let agent_registry = Mutex::new(AgentRegistry::new());
-        let mut agent_pool = AgentPool::new(MultiAgentConfig::default());
+        let agents_dir = config_dir.map(|p| p.join("agents"));
+        let agent_registry = Arc::new(Mutex::new(AgentRegistry::new_with_user_agents(agents_dir.as_deref())));
+        let mut agent_pool = AgentPool::with_registry(MultiAgentConfig::default(), Arc::clone(&agent_registry));
 
         let runner = Arc::new(SingleTurnRunner::new(
             Arc::clone(provider_pool) as Arc<dyn y_core::provider::ProviderPool>

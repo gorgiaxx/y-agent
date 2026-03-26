@@ -255,8 +255,8 @@ impl ToolSearchOrchestrator {
                         "description": a.description,
                         "mode": format!("{:?}", a.mode),
                         "capabilities": a.capabilities,
-                        "usage": "Agents are internal sub-agents managed by \
-                            the system -- do NOT call them as tools.",
+                        "usage": "Use the 'task' tool to delegate work to this agent: \
+                            task({\"agent_name\": \"<id>\", \"prompt\": \"<your_task>\"})",
                     })
                 })
                 .collect::<Vec<_>>()
@@ -271,8 +271,8 @@ impl ToolSearchOrchestrator {
             success: true,
             content: serde_json::json!({
                 "query": query,
-                "note": "Only items under 'tools' can be called as tool_call. \
-                    Skills and agents are NOT callable tools.",
+                "note": "Items under 'tools' can be called directly. \
+                    To delegate to an agent, use the 'task' tool with the agent's id.",
                 "tools": {
                     "results": tools_json,
                     "count": tools_json.len(),
