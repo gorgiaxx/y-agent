@@ -60,6 +60,11 @@ impl DiscordBot {
             verifying_key,
         }
     }
+
+    /// Access the underlying configuration.
+    pub fn config(&self) -> &DiscordBotConfig {
+        &self.config
+    }
 }
 
 /// Parse a hex-encoded Ed25519 public key into a `VerifyingKey`.

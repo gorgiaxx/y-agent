@@ -17,6 +17,8 @@ ed25519-dalek = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

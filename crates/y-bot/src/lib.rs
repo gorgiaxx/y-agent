@@ -3,21 +3,24 @@
 //! This crate provides a unified [`BotPlatform`] trait and concrete adapters
 //! for integrating y-agent with messaging platforms:
 //!
-//! - **Feishu** (飞书 / Lark) — fully implemented webhook-based adapter
-//! - **Discord** — fully implemented Interactions Endpoint + REST API adapter
-//! - **Telegram** — interface reserved, implementation pending
+//! - **Feishu** -- fully implemented webhook-based adapter
+//! - **Discord** -- Gateway (WebSocket) + REST API adapter
+//! - **Telegram** -- interface reserved, implementation pending
 //!
 //! ## Architecture
 //!
 //! ```text
-//! Platform webhook  →  y-web route  →  BotPlatform::parse_event()
-//!                                          ↓
-//!                                      BotService (y-service)
-//!                                          ↓
-//!                                      BotPlatform::send_message()
+//! Discord Gateway (WS)  ->  MESSAGE_CREATE  ->  InboundMessage channel
+//!                                                     |
+//! Platform webhook  ->  y-web route  ->  BotPlatform::parse_event()
+//!                                                     |
+//!                                             BotService (y-service)
+//!                                                     |
+//!                                             BotPlatform::send_message()
 //! ```
 
 pub mod discord;
+pub mod discord_gateway;
 pub mod error;
 pub mod feishu;
 pub mod telegram;

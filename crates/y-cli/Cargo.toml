@@ -13,6 +13,7 @@ doc = false
 [dependencies]
 y-core = { workspace = true }
 y-agent = { workspace = true }
+y-bot = { workspace = true }
 y-service = { workspace = true }
 
 # Kept as direct dependencies because CLI commands use concrete types from these crates.

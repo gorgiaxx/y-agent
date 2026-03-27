@@ -15,7 +15,7 @@
 # webhook_secret = ""        # Optional: for webhook request verification
 
 # --- Discord ---
-# [discord]
-# token = ""                 # Bot token from Discord Developer Portal
-# application_id = ""        # Application ID
-# public_key = ""            # Ed25519 public key for Interactions Endpoint verification
+[discord]
+token = ""          # Bot token from Discord Developer Portal
+application_id = "" # Application ID
+public_key = ""     # Ed25519 public key for Interactions Endpoint verification

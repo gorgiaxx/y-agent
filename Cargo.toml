@@ -90,6 +90,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 # Docker
 bollard = "0.18"
 futures-util = "0.3"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 
 # JSON Schema validation
 jsonschema = "0.28"

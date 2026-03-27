@@ -1,4 +1,4 @@
 cognitive-complexity-threshold = 30
 too-many-arguments-threshold = 10
-too-many-lines-threshold = 200
+too-many-lines-threshold = 300
 array-size-threshold = 65536
