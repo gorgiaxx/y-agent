@@ -1,17 +1,18 @@
 # y-agent
 
-> A modular, extensible AI agent runtime written in Rust.
+> A modular, extensible AI agent framework written in Rust.
 
-**Async-first** · **Model-agnostic** · **Full observability** · **WAL-based recoverability** · **Self-evolving skills**
+**Async-first** -- **Model-agnostic** -- **Full observability** -- **WAL-based recoverability** -- **Self-evolving skills**
 
 ---
 
 ## Table of Contents
 
 - [Highlights](#highlights)
-- [Quick Start (Required Steps)](#quick-start-required-steps)
-- [GUI Usage Guide](#gui-usage-guide)
-- [Knowledge Base Configuration](#knowledge-base-configuration)
+- [Quick Start](#quick-start)
+- [GUI Desktop App](#gui-desktop-app)
+- [Knowledge Base](#knowledge-base)
+- [Bot Adapters](#bot-adapters)
 - [Configuration Reference](#configuration-reference)
 - [Architecture](#architecture)
 - [Crate Map](#crate-map)
@@ -24,87 +25,90 @@
 
 ## Highlights
 
-- **Multi-Provider LLM Pool** — Tag-based routing, automatic failover, provider freeze/thaw
-- **DAG Workflow Engine** — Typed channels, checkpointing, interrupt/resume protocol
-- **Lazy Tool System** — JSON Schema validation, LRU activation, dynamic tool creation at runtime
-- **Three-Tier Memory** — Short-term, long-term (Qdrant), and working memory with semantic search
-- **Multi-Agent Collaboration** — Session tree, parent/child delegation, 4 collaboration patterns
-- **Guardrails & Safety** — Content filtering, PII detection, loop detection, risk scoring as middleware
-- **Context Pipeline** — 7-stage middleware chain for token-budget-aware prompt assembly
-- **Knowledge Base** — Multi-level chunking (L0/L1/L2), hybrid retrieval (BM25 + vector), semantic search
-- **Skill Evolution** — Git-like versioning, experience capture, self-improvement with HITL approval
-- **Browser Tool** — Web browsing via Chrome DevTools Protocol, headless or visible mode
-- **Full Observability** — Span-based tracing, cost intelligence, trace replay
+| Capability | Description |
+|---|---|
+| **Multi-Provider LLM Pool** | Tag-based routing, automatic failover, provider freeze/thaw, enable/disable toggle |
+| **DAG Workflow Engine** | Typed channels, checkpointing, interrupt/resume protocol |
+| **Tool System** | JSON Schema validation, LRU activation, dynamic tool creation, multi-format parser (OpenAI, DeepSeek DSML, MiniMax, GLM4) |
+| **Three-Tier Memory** | Short-term, long-term (Qdrant), and working memory with semantic search |
+| **Multi-Agent Collaboration** | Session tree, parent/child delegation, TOML-defined agents with template expansion |
+| **Guardrails & Safety** | Content filtering, PII detection, loop detection, risk scoring middleware |
+| **Context Pipeline** | 7-stage middleware chain for token-budget-aware prompt assembly |
+| **Knowledge Base** | Multi-level chunking (L0/L1/L2), hybrid retrieval (BM25 + vector), semantic search |
+| **Skill Evolution** | Git-like versioning, experience capture, self-improvement with HITL approval |
+| **Browser Tool** | Web browsing via Chrome DevTools Protocol, headless or visible mode |
+| **Bot Adapters** | Discord, Feishu (Lark), and Telegram integration via `y-bot` |
+| **Full Observability** | Span-based tracing, cost intelligence, trace replay |
+| **Built-in Tools** | `shell_exec`, `file_read`, `file_write`, `web_fetch`, `knowledge_search`, `tool_search`, `task` (delegation) |
 
 ---
 
-## Quick Start (Required Steps)
-
-Follow these steps **in order** to get y-agent running. Steps marked with ⚠️ are **mandatory**.
+## Quick Start
 
 ### 1. Prerequisites
 
-| Dependency | Required? | Installation |
-|------------|-----------|--------------|
-| **Rust 1.76+** | ⚠️ Yes | `rustup update stable` |
-| **Node.js 18+** | ⚠️ Yes (for GUI) | [nodejs.org](https://nodejs.org) |
-| **SQLite 3.35+** | Embedded | Already included, no action needed |
-| **Chrome / Chromium** | Optional | For browser tool — auto-detected |
-| PostgreSQL 14+ | Optional | For diagnostics/analytics |
-| Qdrant | Optional | For vector search (knowledge base semantic retrieval) |
+| Dependency | Required? | Notes |
+|---|---|---|
+| **Rust 1.94+** | Yes | Pinned in `rust-toolchain.toml` |
+| **Node.js 18+** | Yes (GUI only) | [nodejs.org](https://nodejs.org) |
+| **SQLite 3.35+** | Embedded | Bundled, no action needed |
+| **Chrome / Chromium** | Optional | For the browser tool (auto-detected) |
+| PostgreSQL 14+ | Optional | For diagnostics / analytics |
+| Qdrant | Optional | For semantic vector search |
 
-### 2. ⚠️ Build the Project
+### 2. Build
 
 ```bash
-# Clone the repository
+# Clone
 git clone https://github.com/gorgias/y-agent.git
 cd y-agent
 
-# Build CLI only
+# Build CLI + Web server
 cargo build --release
+# Binary: target/release/y-agent
 
-# Or build GUI (Tauri desktop app)
+# Or build the GUI desktop app (Tauri v2)
 cd crates/y-gui && npm install && cd ../..
 ./scripts/build-release.sh gui
 ```
 
-### 3. ⚠️ Initialize Configuration
-
-Run the init command to generate all configuration files:
+### 3. Initialize Configuration
 
 ```bash
-# Interactive mode (recommended for first time)
+# Interactive (recommended for first setup)
 y-agent init
 
-# Non-interactive (for scripting / CI)
+# Non-interactive
 y-agent init --non-interactive --provider openai
 ```
 
-This creates the following file structure:
+This generates the configuration tree:
 
 ```
 ./
-├── .env                       # API key placeholders
-├── config/
-│   ├── y-agent.toml           # Global settings (log level, output)
-│   ├── providers.toml         # ⚠️ LLM provider pool (MUST configure)
-│   ├── knowledge.toml         # Knowledge base & embedding settings
-│   ├── storage.toml           # Database & transcript settings
-│   ├── session.toml           # Session tree, compaction, auto-archive
-│   ├── runtime.toml           # Docker/Native sandbox, resource limits
-│   ├── browser.toml           # Browser tool settings
-│   ├── hooks.toml             # Middleware timeouts, event bus capacity
-│   ├── tools.toml             # Tool registry limits, MCP servers
-│   └── guardrails.toml        # Permission model, loop detection, risk scoring
-└── data/
-    └── transcripts/           # Session transcript storage
+  .env                         # API key placeholders
+  config/
+    y-agent.example.toml       # Global settings (log level, output)
+    providers.example.toml     # LLM provider pool  ** MUST configure **
+    knowledge.example.toml     # Knowledge base & embedding
+    storage.example.toml       # Database & transcript
+    session.example.toml       # Session tree, compaction, auto-archive
+    runtime.example.toml       # Docker / Native sandbox, resource limits
+    browser.example.toml       # Browser tool
+    hooks.example.toml         # Middleware timeouts, event bus capacity
+    tools.example.toml         # Tool registry limits, MCP servers
+    guardrails.example.toml    # Permission model, loop detection, risk scoring
+    agents/                    # TOML-based agent definitions
+    prompts/                   # System prompt templates
+  data/
+    transcripts/               # Session transcript storage
 ```
 
-### 4. ⚠️ Configure at Least One LLM Provider
+### 4. Configure at Least One LLM Provider
 
 This is the **most critical step**. Without a provider, y-agent cannot function.
 
-Edit `config/providers.toml` (or use the GUI Settings → Providers tab):
+Copy `config/providers.example.toml` to `config/providers.toml` and edit it (or use the GUI Settings -> Providers tab):
 
 ```toml
 [[providers]]
@@ -115,95 +119,93 @@ tags = ["reasoning", "general"]
 max_concurrency = 3
 context_window = 128000
 api_key = "sk-your-openai-key-here"
-# Or use environment variable instead:
+enabled = true
+# Or use an environment variable:
 # api_key_env = "OPENAI_API_KEY"
 ```
 
 <details>
-<summary>📋 Provider presets (click to expand)</summary>
+<summary>Provider presets (click to expand)</summary>
 
-| Key | Provider Type | Model | API Key Env Var | Base URL |
-|-----|--------------|-------|-----------------|----------|
+| Provider | `provider_type` | Model Example | API Key Env Var | Base URL |
+|---|---|---|---|---|
 | OpenAI | `openai` | `gpt-4o` | `OPENAI_API_KEY` | *(default)* |
-| Anthropic | `anthropic` | `claude-3-5-sonnet-20241022` | `ANTHROPIC_API_KEY` | *(default)* |
-| Google Gemini | `gemini` | `gemini-2.0-flash` | `GEMINI_API_KEY` | *(default)* |
+| Anthropic | `anthropic` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` | *(default)* |
+| Google Gemini | `gemini` | `gemini-2.5-flash` | `GEMINI_API_KEY` | *(default)* |
 | DeepSeek | `openai` | `deepseek-chat` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/v1` |
-| Groq | `openai` | `llama-3.1-70b-versatile` | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` |
-| Together AI | `openai` | `meta-llama/Llama-3.1-70B` | `TOGETHER_API_KEY` | `https://api.together.xyz/v1` |
-| Ollama (local) | `ollama` | `llama3.1:8b` | *(none)* | `http://localhost:11434` |
+| Groq | `openai` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` |
+| Together AI | `openai` | `meta-llama/Llama-3.3-70B` | `TOGETHER_API_KEY` | `https://api.together.xyz/v1` |
+| Ollama (local) | `ollama` | `llama3.1:8b` | *(none -- no key required)* | `http://localhost:11434` |
 | Azure OpenAI | `azure` | `gpt-4o` | *(your key)* | `https://your-resource.openai.azure.com/openai/deployments/gpt-4o` |
-| Custom (OpenAI-compat) | `custom` | *(user-specified)* | *(user-specified)* | *(your endpoint `/v1`)* |
+| Any OpenAI-compat | `openai` | *(user-specified)* | *(user-specified)* | *(your endpoint /v1)* |
 
-**Tip:** You can configure multiple providers. y-agent will route requests based on tags and automatically failover if a provider is unavailable.
+Multiple providers can coexist. y-agent routes requests by tags and automatically fails over when a provider is unavailable. Providers can be toggled on/off with the `enabled` field.
 
 </details>
 
-### 5. Start Using
+### 5. Start
 
 ```bash
-# CLI chat mode
+# CLI interactive chat
 y-agent chat
 
+# TUI mode (ratatui terminal UI)
+y-agent tui
+
+# Start the Web API server (axum, port 8080)
+y-agent serve
+
 # Or launch the GUI desktop app
-# (if built via build-release.sh, find the .app / .dmg / .AppImage in dist/)
+# (built via build-release.sh -- .app / .dmg / .AppImage in dist/)
 ```
 
 ---
 
-## GUI Usage Guide
+## GUI Desktop App
 
-y-agent includes a **Tauri-based desktop GUI** with a modern interface. Here's how to use it:
+y-agent ships with a **Tauri v2 desktop GUI** built with React 19 and TypeScript. The frontend uses Radix UI primitives, Lucide icons, react-virtuoso for virtualized lists, and Mermaid for diagram rendering.
 
-### Layout Overview
+### Layout
 
-The GUI has a **VSCode-style layout** with a sidebar on the left and a main content area:
+The GUI follows a **VSCode-style layout** with a sidebar and main content area:
 
-| Sidebar Icon | Panel | Description |
-|:---:|---------|-------------|
-| 💬 | **Sessions** | Chat history, organized by workspaces |
-| ⚡ | **Automation** | Workflow automation *(coming soon)* |
-| 🧩 | **Skills** | Installed skills — search, import, enable/disable |
-| 📖 | **Knowledge** | Knowledge base collections — create, import, search |
-| 🤖 | **Agents** | Registered agents — built-in, user-defined, dynamic |
+| Sidebar Panel | Description |
+|---|---|
+| **Sessions** | Chat history, organized by workspaces |
+| **Automation** | Workflow automation (DAG editor) |
+| **Skills** | Installed skills -- search, import, enable/disable |
+| **Knowledge** | Knowledge base collections -- create, import, search |
+| **Agents** | Registered agents -- built-in, user-defined, dynamic |
 
 ### Chat Interface
 
-1. **New Session** — Click the `+` button in the sidebar (Sessions view) to start a new chat
-2. **Type a message** — Use the input area at the bottom; press `Enter` to send, `Shift+Enter` for a newline
-3. **Slash Commands** — Type `/` to open the command menu:
-   - `/new` — Create new session
-   - `/clear` — Clear current session
-   - `/settings` — Open settings overlay
-   - `/model <name>` — Switch LLM model
-   - `/status` — Show system status
-   - `/diagnostics` — Toggle diagnostics panel
-   - `/export` — Export current session
-4. **Mention Skills** — Type `/` and select a skill to attach it to the current message as `@skill-name`
-5. **Knowledge Base** — Click the 📖 button in the toolbar to select knowledge collections for retrieval-augmented generation (RAG)
-6. **Model Selector** — Click the `@` button in the toolbar to switch between configured providers
-7. **Context Reset** — Click the eraser (🧹) button to insert a context reset divider; messages before the divider won't be included in future context
-8. **Stop Generation** — Click the ■ button (appears during streaming) to cancel an ongoing response
+- **New Session** -- Click the `+` button in the sidebar to start a new chat
+- **Send** -- Press `Enter` to send, `Shift+Enter` for a newline
+- **Slash Commands** -- Type `/` to open the command menu (`/new`, `/clear`, `/settings`, `/model <name>`, `/status`, `/diagnostics`, `/export`)
+- **Skill Mention** -- Type `/` and select a skill to attach as `@skill-name`
+- **Knowledge RAG** -- Click the knowledge button in the toolbar to attach collections for retrieval-augmented generation
+- **Model Selector** -- Click the `@` button to switch between configured providers
+- **Context Reset** -- Click the eraser button to insert a context reset divider; messages before it are excluded from future context
+- **Stop Generation** -- Click the stop button during streaming to cancel
 
 ### Workspaces
 
-Workspaces let you organize sessions by project:
-
-1. Click the **folder icon** in the sidebar header to create a new workspace
-2. Give it a name and a path on your filesystem
-3. New sessions can be created within a workspace (`+` button on workspace row)
-4. Right-click (⋯ menu) on a session to move it between workspaces
+1. Click the folder icon in the sidebar header to create a new workspace
+2. Give it a name and a filesystem path
+3. Create sessions within a workspace
+4. Move sessions between workspaces via the context menu
 
 ### Settings
 
-Open settings via `/settings` command or the gear icon:
+Open via `/settings` or the gear icon:
 
-| Tab | What You Can Configure |
-|-----|----------------------|
-| **General** | Theme (dark/light), log level, output format |
-| **Providers** | Add/edit/delete LLM providers, test connections, set API keys |
+| Tab | Configures |
+|---|---|
+| **General** | Theme (dark / light), log level, output format |
+| **Providers** | Add / edit / delete / test / toggle LLM providers |
 | **Session** | Max tree depth, compaction threshold, auto-archive |
-| **Runtime** | Execution backend (Native/Docker/SSH), Python/Bun venvs |
-| **Browser** | Enable/disable browser tool, headless mode, Chrome path |
+| **Runtime** | Execution backend (Native / Docker / SSH), Python / Bun venvs |
+| **Browser** | Browser tool toggle, headless mode, Chrome path |
 | **Storage** | SQLite path, WAL mode, transcript directory |
 | **Tools** | Max active tools, MCP server configuration |
 | **Guardrails** | Permission model, loop detection, risk scoring |
@@ -212,131 +214,95 @@ Open settings via `/settings` command or the gear icon:
 
 ### Status Bar
 
-The bottom status bar shows:
-- **Current session ID** and turn count
-- **Token usage** with a progress bar relative to the context window
-- **Active provider** and model name
+The bottom status bar displays:
+- Current session ID and turn count
+- Token usage progress relative to the context window
+- Active provider and model name
 
 ---
 
-## Knowledge Base Configuration
+## Knowledge Base
 
-The knowledge base supports **multi-level chunking** (L0 summary → L1 sections → L2 paragraphs) and **hybrid retrieval** (BM25 keyword search + vector semantic search).
+The knowledge base supports **multi-level chunking** (L0 summary, L1 sections, L2 paragraphs) and **hybrid retrieval** (BM25 keyword search + vector semantic search).
 
-### Basic Setup (Keyword Search Only)
-
-Out of the box, the knowledge base works with **keyword-based (BM25) search**. No external services needed:
+### Keyword-Only (No External Services)
 
 ```toml
-# config/knowledge.toml — minimal working config
+# config/knowledge.toml
 embedding_enabled = false
 retrieval_strategy = "keyword"
 ```
 
-### Full Setup (Semantic / Hybrid Search)
+### Full Semantic / Hybrid Search
 
-To enable **vector-based semantic search**, you need to configure an OpenAI-compatible embedding API:
-
-#### Step 1: Start Qdrant (vector database)
+#### Step 1 -- Start Qdrant
 
 ```bash
-# Using Docker
+# Docker
 docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant:v1.8.4
 
 # Or via docker-compose (includes PostgreSQL + Qdrant)
 docker compose up -d qdrant
 ```
 
-#### Step 2: Configure Embedding API
-
-Edit `config/knowledge.toml`:
+#### Step 2 -- Configure Embedding
 
 ```toml
-# --- Enable Embedding ---
+# config/knowledge.toml
 embedding_enabled = true
-
-# --- Embedding Model ---
-# OpenAI (default)
 embedding_model = "text-embedding-3-small"
 embedding_dimensions = 1536
 embedding_base_url = "https://api.openai.com/v1"
-embedding_api_key_env = "OPENAI_API_KEY"     # reads from environment variable
-# embedding_api_key = "sk-..."               # or set key directly (takes precedence)
-
-# Max tokens per embedding request (set to your model's limit)
-# 8192 for OpenAI text-embedding-3-small/large
-# 512  for most local GGUF models (bge-small, gte-small)
+embedding_api_key_env = "OPENAI_API_KEY"
 embedding_max_tokens = 8192
 
-# --- Retrieval Strategy ---
-# "hybrid"   — BM25 + vector (recommended, best results)
-# "semantic" — vector search only
-# "keyword"  — BM25 only
-retrieval_strategy = "hybrid"
+retrieval_strategy = "hybrid"   # "hybrid" | "semantic" | "keyword"
 bm25_weight = 1.0
 vector_weight = 1.0
 ```
 
 <details>
-<summary>🔧 Using alternative embedding providers (click to expand)</summary>
+<summary>Alternative embedding providers (click to expand)</summary>
 
-Any **OpenAI-compatible** `/v1/embeddings` endpoint works. Examples:
+Any **OpenAI-compatible** `/v1/embeddings` endpoint works:
 
 ```toml
-# --- Ollama local embeddings ---
-embedding_enabled = true
+# Ollama local
 embedding_model = "nomic-embed-text"
 embedding_dimensions = 768
 embedding_base_url = "http://localhost:11434/v1"
 embedding_api_key = "not-needed"
 embedding_max_tokens = 512
 
-# --- Azure OpenAI Embeddings ---
-embedding_enabled = true
+# Azure OpenAI
 embedding_model = "text-embedding-3-small"
 embedding_dimensions = 1536
 embedding_base_url = "https://your-resource.openai.azure.com/openai/deployments/text-embedding-3-small"
 embedding_api_key_env = "AZURE_EMBEDDING_KEY"
-
-# --- Cohere / any OpenAI-compatible server ---
-embedding_enabled = true
-embedding_model = "embed-english-v3.0"
-embedding_dimensions = 1024
-embedding_base_url = "https://your-proxy.example.com/v1"
-embedding_api_key = "your-key"
 ```
 
 </details>
 
-#### Step 3: Configure Qdrant Connection
-
-Qdrant is configured in `config/storage.toml` or via environment variables:
+#### Step 3 -- Configure Qdrant
 
 ```bash
-# Environment variable
 export Y_QDRANT_URL=http://localhost:6334
-
-# Or in docker-compose, it's already wired up
+# Or set in docker-compose (pre-wired)
 ```
 
-### Using the Knowledge Base
+### Usage
 
 **Via GUI:**
 
-1. Click the **📖 Knowledge** tab in the sidebar
-2. Click `+` to create a new collection (e.g., "project-docs")
-3. Select a collection, then click **Import** to add files (supports `.md`, `.txt`, `.pdf`, `.rs`, `.py`, `.js`, `.ts`, `.toml`, `.yaml`, `.json`, `.html`, `.csv`, and more)
-4. You can also import entire folders — all supported files will be recursively scanned
-5. When chatting, click the **📖 button** in the input toolbar to attach knowledge collections for RAG
-6. Or use the `/` command menu → select a knowledge collection
+1. Open the **Knowledge** tab in the sidebar
+2. Click `+` to create a collection
+3. Click **Import** to add files (`.md`, `.txt`, `.pdf`, `.rs`, `.py`, `.js`, `.ts`, `.toml`, `.yaml`, `.json`, `.html`, `.csv`, and more) or entire folders
+4. Attach collections to a chat via the knowledge button in the input toolbar
 
 **Via CLI:**
 
 ```bash
-# Ingest a file
 y-agent knowledge ingest --file docs/guide.md --collection project-docs
-
-# Search knowledge base
 y-agent knowledge search "how does the auth module work"
 ```
 
@@ -344,47 +310,78 @@ y-agent knowledge search "how does the auth module work"
 
 ```toml
 # config/knowledge.toml
-l0_max_tokens = 200     # L0: document summary (~100 tokens)
-l1_max_tokens = 500     # L1: section overviews (~500 tokens)
-l2_max_tokens = 450     # L2: paragraph chunks (source for retrieval)
+l0_max_tokens = 200       # L0: document summary
+l1_max_tokens = 500       # L1: section overviews
+l2_max_tokens = 450       # L2: paragraph chunks (retrieval source)
 
-max_chunks_per_entry = 5000       # Safety limit per document
-min_similarity_threshold = 0.65   # Discard results below this relevance
+max_chunks_per_entry = 5000
+min_similarity_threshold = 0.65
 ```
+
+---
+
+## Bot Adapters
+
+The `y-bot` crate provides platform adapters that expose y-agent as a messaging bot:
+
+| Platform | Transport | Status |
+|---|---|---|
+| **Discord** | Interactions Endpoint (Ed25519 signature verification) | Implemented |
+| **Feishu (Lark)** | Event webhook | Implemented |
+| **Telegram** | Bot API webhook | Implemented |
+
+Bot adapters are wired into `y-web` and share the same `ServiceContainer`. Configure them in `config/bots.toml`.
 
 ---
 
 ## Configuration Reference
 
-### Configuration Precedence (Highest → Lowest)
+### Precedence (Highest to Lowest)
 
-1. **CLI arguments** — `--log-level debug`
-2. **Environment variables** — `Y_AGENT_LOG_LEVEL=debug`
-3. **User config dir** — `~/.config/y-agent/`
-4. **Project config dir** — `./config/`
+1. **CLI arguments** -- `--log-level debug`
+2. **Environment variables** -- `Y_AGENT_LOG_LEVEL=debug`
+3. **User config directory** -- `~/.config/y-agent/`
+4. **Project config directory** -- `./config/`
 5. **Built-in defaults**
 
-### Config Files Overview
+### Config Files
 
 | File | Description | Must Configure? |
-|------|-------------|:---:|
-| `providers.toml` | LLM provider pool (API keys, models, routing tags) | ⚠️ **Yes** |
+|---|---|---|
+| `providers.toml` | LLM provider pool (API keys, models, routing tags, enable toggle) | **Yes** |
 | `y-agent.toml` | Global settings (log level, output format) | No |
-| `knowledge.toml` | Knowledge base embedding & retrieval settings | Only if using embedding |
+| `knowledge.toml` | Knowledge base embedding & retrieval | Only if using embedding |
 | `storage.toml` | SQLite database path, WAL mode, transcripts | No |
 | `session.toml` | Session tree depth, compaction, auto-archive | No |
-| `runtime.toml` | Execution backend (Docker/Native/SSH), sandboxing | No |
-| `browser.toml` | Browser tool (Chrome, headless mode, CDP config) | Only if using browser |
+| `runtime.toml` | Execution backend (Docker / Native / SSH), sandboxing | No |
+| `browser.toml` | Browser tool (Chrome, headless mode, CDP) | Only if using browser |
 | `hooks.toml` | Middleware timeouts, event bus capacity | No |
 | `tools.toml` | Tool registry limits, MCP server connections | Only if using MCP |
 | `guardrails.toml` | Permission model, loop detection, risk scoring | No |
+| `bots.toml` | Bot adapter configuration (Discord, Feishu, Telegram) | Only if using bots |
+
+### Agent Definitions
+
+Agent definitions live in `config/agents/` as TOML files. They support **template expansion** -- placeholders like `{{YAGENT_CONFIG_PATH}}` are resolved to system-specific paths at load time. Built-in agents include:
+
+| Agent | Purpose |
+|---|---|
+| `skill-ingestion` | Skill import and validation |
+| `skill-security-check` | Security audit for skill packages |
+| `agent-architect` | Agent design and configuration |
+| `tool-engineer` | Dynamic tool creation |
+| `title-generator` | Session title auto-generation |
+| `compaction-summarizer` | Context compaction |
+| `context-summarizer` | Context summary generation |
+| `pruning-summarizer` | Context pruning optimization |
+| `task-intent-analyzer` | Intent classification for delegation |
+| `pattern-extractor` | Pattern extraction from conversations |
+| `capability-assessor` | Capability assessment |
 
 ### Proxy Configuration
 
-y-agent supports multi-level proxy (global → tag-based → per-provider):
-
 ```toml
-# In providers.toml
+# providers.toml -- multi-level proxy (global -> tag-based -> per-provider)
 [proxy]
 default_scheme = "socks5"
 
@@ -392,25 +389,21 @@ default_scheme = "socks5"
 url = "socks5://proxy.company.com:1080"
 
 [proxy.providers.ollama-local]
-enabled = false  # Local provider, no proxy needed
+enabled = false   # Local provider, no proxy
 ```
 
 ### Browser Tool Configuration
 
-To enable the browser tool for web browsing tasks:
-
 ```toml
 # config/browser.toml
 enabled = true
-auto_launch = true        # Auto-launch Chrome (recommended)
-headless = true            # Set false for visible browser
-# chrome_path = ""         # Leave empty for auto-detection
+auto_launch = true
+headless = true
+# chrome_path = ""       # Leave empty for auto-detection
 local_cdp_port = 9222
 ```
 
 ### MCP Server Configuration
-
-Connect to Model Context Protocol servers for additional tools:
 
 ```toml
 # config/tools.toml
@@ -424,8 +417,6 @@ enabled = true
 
 ### Environment Variables
 
-Key environment variables (set in `.env` or your shell):
-
 ```bash
 # LLM Provider API keys
 OPENAI_API_KEY=sk-...
@@ -434,9 +425,9 @@ DEEPSEEK_API_KEY=sk-...
 GEMINI_API_KEY=AIza...
 
 # Infrastructure
-Y_AGENT_PORT=8080          # Web API port
-Y_QDRANT_URL=http://localhost:6334   # Qdrant vector DB
-RUST_LOG=info              # Log level
+Y_AGENT_PORT=8080
+Y_QDRANT_URL=http://localhost:6334
+RUST_LOG=info
 ```
 
 ---
@@ -446,58 +437,66 @@ RUST_LOG=info              # Log level
 ```mermaid
 flowchart TB
     subgraph Clients["Client Layer"]
-        CLI["CLI\n(clap)"]
-        TUI["TUI\n(ratatui)"]
-        GUI["GUI\n(Tauri)"]
-        API["Web API\n(axum)"]
+        CLI["CLI (clap)"]
+        TUI["TUI (ratatui)"]
+        GUI["GUI (Tauri v2)"]
+        API["Web API (axum)"]
+        Bots["Bot Adapters"]
     end
 
     subgraph Service["Service Layer"]
         ChatSvc["ChatService"]
         CostSvc["CostService"]
         SysSvc["SystemService"]
+        ObsSvc["ObservabilityService"]
+        WorkflowSvc["WorkflowService"]
+        SkillSvc["SkillService"]
+        AgentSvc["AgentService"]
+        SchedulerSvc["SchedulerService"]
+        KBSvc["KnowledgeService"]
+        BotSvc["BotService"]
     end
 
     subgraph Core["Core Layer"]
         Router["Request Router"]
         Scheduler["Message Scheduler"]
         Orchestrator["Agent Orchestrator"]
-        DAG["DAG Engine\n+ Typed Channels"]
-        Checkpoint["Checkpoint\nManager"]
+        DAG["DAG Engine + Typed Channels"]
+        Checkpoint["Checkpoint Manager"]
     end
 
     subgraph Extensibility["Extensibility Layer"]
-        CtxMW["Context\nMiddleware"]
-        ToolMW["Tool\nMiddleware"]
-        LlmMW["LLM\nMiddleware"]
-        EventBus["Async\nEvent Bus"]
+        CtxMW["Context Middleware"]
+        ToolMW["Tool Middleware"]
+        LlmMW["LLM Middleware"]
+        EventBus["Async Event Bus"]
     end
 
     subgraph Execution["Execution Layer"]
-        Providers["Provider Pool\n(tag routing, failover)"]
-        ToolReg["Tool Registry\n(4 types, lazy loading)"]
-        AgentPool["Agent Pool\n(delegation)"]
+        Providers["Provider Pool (tag routing, failover)"]
+        ToolReg["Tool Registry (built-in, dynamic, MCP)"]
+        AgentPool["Agent Pool (delegation)"]
         Runtime["Runtime Manager"]
-        PromptSys["Prompt\nSystem"]
+        PromptSys["Prompt System"]
         Docker["Docker"]
         Native["Native"]
         SSH["SSH"]
     end
 
-    subgraph State ["State Layer"]
-        SessionMgr["Session\nManager"]
-        STM["Short-Term\nMemory"]
-        LTM["Long-Term\nMemory"]
-        WM["Working\nMemory"]
-        SkillReg["Skill\nRegistry"]
-        KB["Knowledge\nBase"]
-        Journal["File\nJournal"]
+    subgraph State["State Layer"]
+        SessionMgr["Session Manager"]
+        STM["Short-Term Memory"]
+        LTM["Long-Term Memory"]
+        WM["Working Memory"]
+        SkillReg["Skill Registry"]
+        KB["Knowledge Base"]
+        Journal["File Journal"]
     end
 
-    subgraph Infra ["Infrastructure"]
-        SQLite[("SQLite\n(operational)")]
-        PG[("PostgreSQL\n(diagnostics)")]
-        Qdrant[("Qdrant\n(vectors)")]
+    subgraph Infra["Infrastructure"]
+        SQLite[("SQLite (operational)")]
+        PG[("PostgreSQL (diagnostics)")]
+        Qdrant[("Qdrant (vectors)")]
     end
 
     Clients --> Service
@@ -526,106 +525,158 @@ flowchart TB
 ### Layer Responsibilities
 
 | Layer | Purpose |
-|-------|---------|
-| **Client** | User-facing entry points — CLI, TUI, Tauri GUI, REST API — all thin wrappers over the Service layer |
-| **Service** | Shared business logic (`ChatService`, `CostService`, `SystemService`), consumed by every client |
+|---|---|
+| **Client** | User-facing entry points -- CLI, TUI, Tauri GUI, REST API, bot adapters -- all thin wrappers over the Service layer |
+| **Service** | Shared business logic (`ChatService`, `CostService`, `SystemService`, `ObservabilityService`, `WorkflowService`, `SkillService`, `AgentService`, `SchedulerService`, `BotService`) |
 | **Core** | Request routing, message scheduling, DAG-based orchestration with typed channels and checkpointing |
 | **Extensibility** | Three middleware chains (Context, Tool, LLM), async event bus, lifecycle hooks |
-| **Execution** | LLM provider pool with failover, tool registry (4 types), agent delegation pool, sandboxed runtimes |
-| **State** | Session tree, three-tier memory (STM/LTM/WM), skill registry, knowledge base, file journal |
-| **Infrastructure** | SQLite (operational state), PostgreSQL (diagnostics/analytics), Qdrant (semantic vectors) |
+| **Execution** | LLM provider pool with failover, tool registry (built-in + dynamic + MCP), agent delegation pool, sandboxed runtimes |
+| **State** | Session tree, three-tier memory (STM / LTM / WM), skill registry, knowledge base, file journal |
+| **Infrastructure** | SQLite (operational state), PostgreSQL (diagnostics / analytics), Qdrant (semantic vectors) |
 
 ---
 
 ## Crate Map
 
-```
-crates/
-├── y-core/           # Trait definitions, shared types, error types
-├── y-agent/          # Orchestrator, DAG engine, multi-agent pool, delegation
-├── y-service/        # Business layer — ChatService, CostService, SystemService
-├── y-cli/            # CLI + TUI (clap + ratatui)
-├── y-gui/            # Desktop GUI (Tauri v2 + React + TypeScript)
-├── y-web/            # REST API server (axum)
-├── y-provider/       # LLM provider pool, routing, streaming
-├── y-context/        # Context pipeline, token budget, memory integration
-├── y-hooks/          # Middleware chains, event bus, plugin loading
-├── y-tools/          # Tool registry, JSON Schema validation
-├── y-mcp/            # MCP protocol client/server
-├── y-prompt/         # Prompt sections, templates, TOML store
-├── y-skills/         # Skill discovery, validation, manifest
-├── y-knowledge/      # Knowledge base chunking, indexing, retrieval
-├── y-session/        # Session tree, transcript, branching
-├── y-storage/        # SQLite/Postgres/Qdrant backends
-├── y-runtime/        # Native/Docker/SSH sandbox execution
-├── y-scheduler/      # Cron/interval scheduling, workflow triggers
-├── y-guardrails/     # Content filtering, PII, safety middleware
-├── y-journal/        # File change journal, rollback engine
-├── y-browser/        # Browser tool via Chrome DevTools Protocol
-├── y-bot/            # Bot agent definitions
-├── y-diagnostics/    # Tracing, metrics, health checks
-└── y-test-utils/     # Mocks, fixtures, assertion helpers
-```
+The workspace contains **24 crates** organized by concern:
+
+### Core
+
+| Crate | Description |
+|---|---|
+| `y-core` | Trait definitions, shared types, error types |
+
+### Infrastructure
+
+| Crate | Description |
+|---|---|
+| `y-provider` | LLM provider pool (OpenAI, Anthropic, Gemini, Azure, Ollama), tag routing, streaming |
+| `y-session` | Session tree, transcript, branching |
+| `y-context` | Context pipeline, token budget, memory integration |
+| `y-storage` | SQLite / PostgreSQL / Qdrant backends |
+| `y-knowledge` | Knowledge base chunking, indexing, hybrid retrieval |
+| `y-diagnostics` | Tracing, metrics, health checks |
+
+### Middleware
+
+| Crate | Description |
+|---|---|
+| `y-hooks` | Middleware chains, event bus, plugin loading |
+| `y-guardrails` | Content filtering, PII detection, safety middleware |
+| `y-prompt` | Prompt sections, templates, TOML store |
+| `y-mcp` | Model Context Protocol client / server |
+
+### Capabilities
+
+| Crate | Description |
+|---|---|
+| `y-tools` | Tool registry, JSON Schema validation, multi-format parser |
+| `y-skills` | Skill discovery, validation, manifest |
+| `y-runtime` | Native / Docker / SSH sandbox execution |
+| `y-scheduler` | Cron / interval scheduling, workflow triggers |
+| `y-browser` | Browser tool via Chrome DevTools Protocol |
+| `y-journal` | File change journal, rollback engine |
+
+### Orchestration
+
+| Crate | Description |
+|---|---|
+| `y-agent` | Orchestrator, DAG engine, multi-agent pool, delegation |
+| `y-bot` | Bot adapters (Discord, Feishu, Telegram) |
+
+### Service
+
+| Crate | Description |
+|---|---|
+| `y-service` | Business logic layer -- `ChatService`, `CostService`, `SystemService`, `ObservabilityService`, DI container |
+
+### Presentation
+
+| Crate | Description |
+|---|---|
+| `y-cli` | CLI + TUI (clap + ratatui) |
+| `y-web` | REST API server (axum) with bot adapter routing |
+| `y-gui` | Desktop GUI (Tauri v2 + React 19 + TypeScript) |
+
+### Testing
+
+| Crate | Description |
+|---|---|
+| `y-test-utils` | Mocks, fixtures, assertion helpers |
 
 ---
 
 ## Building from Source
 
-### Build CLI Only
+### CLI + Web Server
 
 ```bash
 cargo build --release
 # Binary: target/release/y-agent
 ```
 
-### Build GUI (Tauri Desktop App)
+### GUI (Tauri v2 Desktop App)
 
 ```bash
-# Prerequisites: Node.js 18+, npm
 cd crates/y-gui && npm install && cd ../..
-
-# Build release bundles
 ./scripts/build-release.sh gui
 # Output: dist/y-agent-gui-<version>-<platform>.zip
-#   macOS: .dmg, .app
-#   Linux: .deb, .AppImage
+#   macOS:   .dmg, .app
+#   Linux:   .deb, .AppImage
 #   Windows: .msi, .exe
 ```
 
-### Build Everything
+### Full Release Build
 
 ```bash
 ./scripts/build-release.sh
 # Builds both CLI zip and GUI bundle
 ```
 
-### Tests & Benchmarks
+### Nix
 
 ```bash
-cargo test                    # All tests
-cargo test -p y-core          # Single crate
-cargo bench                   # All benchmarks
+nix build           # Build the CLI package
+nix develop          # Enter dev shell with all dependencies
+```
+
+### Tests
+
+```bash
+cargo test                     # All workspace tests
+cargo test -p y-core           # Single crate
+```
+
+### Quality Gates
+
+After any code change, all four checks must pass:
+
+```bash
+cargo clippy --workspace -- -D warnings
+cargo check --workspace
+cargo doc --workspace --no-deps
+cargo fmt --all
 ```
 
 ---
 
 ## Deployment
 
-### Docker Quick Start
+### Docker Compose
 
 ```bash
-y-agent init                        # Generate .env + config
-docker compose up -d                # Start full stack (y-agent + PG + Qdrant)
-./scripts/health-check.sh           # Verify health
-docker compose logs -f y-agent      # Follow logs
+y-agent init
+docker compose up -d
+./scripts/health-check.sh
+docker compose logs -f y-agent
 ```
 
-The `docker-compose.yml` includes:
-- **y-agent** — Main application (port 8080)
-- **PostgreSQL 16** — Diagnostics & analytics
-- **Qdrant v1.8.4** — Vector store for knowledge base & memory
+The `docker-compose.yml` provisions:
+- **y-agent** -- Main application (port 8080)
+- **PostgreSQL 16** -- Diagnostics & analytics
+- **Qdrant v1.8.4** -- Vector store for knowledge base & memory
 
-### Native Install (No Docker)
+### Native Install
 
 ```bash
 ./scripts/native-install.sh
@@ -637,25 +688,22 @@ Creates: binary at `$PREFIX/bin/y-agent`, config at `~/.config/y-agent/`, data a
 
 ### Production (GitHub Actions)
 
-Push a version tag to trigger the full pipeline:
+Push a version tag to trigger the CI/CD pipeline:
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+./scripts/bump-version.sh 0.2.0    # Update version across Cargo.toml, package.json, tauri.conf.json, package.nix
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
-The pipeline will:
-1. Run CI checks (clippy, tests, fmt, audit)
-2. Build multi-arch Docker images (`linux/amd64`, `linux/arm64`)
-3. Publish to GHCR (`ghcr.io`)
-4. Build native binaries for 4 platforms
-5. Create a GitHub Release
-6. Deploy to production via SSH
+The CI pipeline (`.github/workflows/ci.yml`) runs:
+1. **Format** -- `cargo fmt --check`
+2. **Build & Test** -- clippy, check, test, doc (single runner with shared compilation cache)
 
 <details>
-<summary>Required GitHub Secrets</summary>
+<summary>Required GitHub Secrets for deployment</summary>
 
 | Secret | Description |
-|--------|-------------|
+|---|---|
 | `DEPLOY_HOST` | Target server address |
 | `DEPLOY_USER` | SSH username |
 | `DEPLOY_SSH_KEY` | SSH private key |
@@ -667,18 +715,29 @@ The pipeline will:
 
 ## Documentation
 
-Detailed guides are located under `docs/`. Key references:
+Detailed documentation is organized under `docs/`:
+
+| Directory | Purpose |
+|---|---|
+| `docs/design/` | 30+ per-subsystem design documents |
+| `docs/standards/` | Engineering standards, test strategy, database schema, tool call protocol, skill standard, DSL spec, agent autonomy model |
+| `docs/plan/` | Project and per-module R&D plans |
+| `docs/api/` | API documentation |
+| `docs/guides/` | User and developer guides |
+| `docs/research/` | Research notes |
+| `docs/schema/` | Schema specifications |
+
+Top-level references:
 
 | Document | Purpose |
-|----------|---------|
-| `docs/design/` | Per-subsystem design documents |
-| `docs/standards/` | Engineering standards, test strategy, schema |
-| `docs/plan/` | Project and per-module R&D plans |
+|---|---|
 | `DESIGN_OVERVIEW.md` | Authoritative cross-cutting alignment index |
 | `DESIGN_RULE.md` | Design document standards and validation checklist |
+| `VISION.md` | Project vision (Chinese) |
+| `CLAUDE.md` | Engineering protocol and contribution rules |
 
 ---
 
 ## License
 
-MIT OR Apache-2.0
+MIT
