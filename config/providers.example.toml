@@ -28,6 +28,15 @@ health_check_interval_secs = 30
 #
 # API Key: set `api_key` directly, or use `api_key_env` to read
 # from an environment variable (fallback).
+#
+# Tool Calling Mode (two-layer system):
+#   Auto-detected from provider_type -- override with `tool_calling_mode`:
+#   - "native"       (default for: openai, anthropic, azure, gemini, deepseek)
+#     Tool definitions sent via API; structured tool_call responses parsed.
+#   - "prompt_based" (default for: openai-compat, custom, ollama)
+#     Tool definitions injected into system prompt; XML parser extracts calls.
+#   Set `tool_calling_mode = "native"` on an openai-compat provider to force
+#   native tool calling when the relay supports it.
 # ==============================================================================
 
 [[providers]]

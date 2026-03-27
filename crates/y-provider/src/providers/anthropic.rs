@@ -14,7 +14,7 @@ use tracing::instrument;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType,
+    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -42,6 +42,7 @@ impl AnthropicProvider {
         tags: Vec<String>,
         max_concurrency: usize,
         context_window: usize,
+        tool_calling_mode: ToolCallingMode,
     ) -> Self {
         let base_url = base_url.unwrap_or_else(|| ANTHROPIC_API_URL.to_string());
 
@@ -65,6 +66,7 @@ impl AnthropicProvider {
                 context_window,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
+                tool_calling_mode,
             },
         }
     }
@@ -929,6 +931,7 @@ mod tests {
             vec!["reasoning".into(), "code".into()],
             3,
             200_000,
+            ToolCallingMode::default(),
         );
 
         let meta = provider.metadata();
@@ -949,6 +952,7 @@ mod tests {
             vec![],
             3,
             200_000,
+            ToolCallingMode::default(),
         );
         assert_eq!(
             provider.api_url("messages"),
@@ -967,6 +971,7 @@ mod tests {
             vec![],
             3,
             200_000,
+            ToolCallingMode::default(),
         );
         assert_eq!(
             provider.api_url("messages"),

@@ -348,3 +348,88 @@ function isPartialToolCallPrefix(s: string): boolean {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Native Mode Synethsis
+// ---------------------------------------------------------------------------
+
+/**
+ * Synthesize a StreamContentResult for Native mode tool calls.
+ * 
+ * In Native mode, the LLM does NOT emit `<tool_call>` XML tags. Instead, it natively outputs
+ * tool parameters, which the backend provides as separate objects.
+ * However, the backend still accumulates `<think>...</think>` multi-iteration markers in `content`.
+ * 
+ * This function artificially splits the `content` at each `<think>` tag boundary and interleaves
+ * the native tool calls right before the final conclusion block so `ActionCard` can chronologically
+ * group them exactly as it does for Prompt-Based models.
+ */
+export function synthesizeNativeStreamResult(
+  content: string,
+  nativeToolCalls: Array<{ name: string; arguments?: string }>
+): StreamContentResult | null {
+  if (nativeToolCalls.length === 0 && !content.includes('<think>')) return null;
+
+  const toolCalls: ParsedToolCall[] = nativeToolCalls.map((tc) => ({
+    name: tc.name,
+    arguments: tc.arguments ?? '',
+    startIndex: 0,
+  }));
+
+  const segments: ContentSegment[] = [];
+  const thinkIndices: number[] = [];
+  let searchIdx = 0;
+
+  while (true) {
+    const idx = content.indexOf('<think>', searchIdx);
+    if (idx < 0) break;
+    thinkIndices.push(idx);
+    searchIdx = idx + '<think>'.length;
+  }
+
+  // No multiple iterations detected. Just group text then all tools.
+  if (thinkIndices.length === 0) {
+    if (content.trim()) segments.push({ type: 'text', text: content });
+    toolCalls.forEach((tc) => segments.push({ type: 'tool_call', toolCall: tc }));
+    return { segments, displayText: content, toolCalls, hasPendingToolCall: false };
+  }
+
+  // Pre-think text (if any) goes into its own segment to become Preamble
+  if (thinkIndices[0] > 0) {
+    const preText = content.slice(0, thinkIndices[0]);
+    if (preText.trim()) {
+      segments.push({ type: 'text', text: preText });
+    }
+  }
+
+  // Split into chunks based on `<think>` tag offsets
+  const chunks: string[] = [];
+  for (let i = 0; i < thinkIndices.length; i++) {
+    const start = thinkIndices[i];
+    const end = i < thinkIndices.length - 1 ? thinkIndices[i + 1] : content.length;
+    chunks.push(content.slice(start, end));
+  }
+
+  // Distribute chunks and tools.
+  // We place ALL remaining tools right before the final chunk (the conclusion).
+  let toolsPlaced = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    segments.push({ type: 'text', text: chunks[i] });
+
+    if (i === chunks.length - 1) {
+      // Last chunk: pop it, insert all tools, then put it back
+      const lastChunk = segments.pop()!;
+      while (toolsPlaced < toolCalls.length) {
+        segments.push({ type: 'tool_call', toolCall: toolCalls[toolsPlaced++] });
+      }
+      segments.push(lastChunk);
+    } else {
+      // Intermediate turn: put exactly one tool call if available
+      if (toolsPlaced < toolCalls.length) {
+        segments.push({ type: 'tool_call', toolCall: toolCalls[toolsPlaced++] });
+      }
+    }
+  }
+
+  return { segments, displayText: content, toolCalls, hasPendingToolCall: false };
+}

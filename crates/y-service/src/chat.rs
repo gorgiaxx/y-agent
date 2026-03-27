@@ -640,11 +640,30 @@ impl ChatService {
         use y_core::provider::ToolCallingMode;
 
         // 1. Build tool definitions (all tools for root agent).
-        let tool_calling_mode = ToolCallingMode::default();
-        let tool_defs = match tool_calling_mode {
-            ToolCallingMode::Native => Self::build_tool_definitions(container).await,
-            ToolCallingMode::PromptBased => vec![],
+        //
+        // Tool definitions are always built regardless of mode. In Native mode
+        // they are sent via the provider's API; in PromptBased mode the provider
+        // ignores them (they are injected into the prompt instead). The fallback
+        // path in agent_service handles both cases.
+        // Resolve tool_calling_mode from the provider that will serve this
+        // request. When the user selects a specific provider_id, use its mode;
+        // otherwise fall back to the first available provider's mode or the
+        // enum default (Native).
+        let tool_calling_mode = {
+            let pool = container.provider_pool().await;
+            let metadata_list = pool.list_metadata();
+            if let Some(ref pid) = input.provider_id {
+                metadata_list
+                    .iter()
+                    .find(|m| m.id.to_string() == *pid)
+                    .map_or(ToolCallingMode::default(), |m| m.tool_calling_mode)
+            } else {
+                metadata_list
+                    .first()
+                    .map_or(ToolCallingMode::default(), |m| m.tool_calling_mode)
+            }
         };
+        let tool_defs = Self::build_tool_definitions(container).await;
 
         // 2. Construct execution config for the root agent.
         let max_tool_iterations = container.guardrail_manager.config().max_tool_iterations;

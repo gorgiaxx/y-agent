@@ -13,7 +13,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { ToolResultRecord } from '../../../hooks/useChat';
 import { makeMarkdownComponents } from './MessageShared';
-import { processStreamContent, type StreamContentResult } from '../../../hooks/useStreamContent';
+import { processStreamContent, synthesizeNativeStreamResult, type StreamContentResult } from '../../../hooks/useStreamContent';
 import { segmentActions, type ActionSegmentResult } from '../../../hooks/useActionSegment';
 import { useResolvedTheme } from '../../../hooks/useTheme';
 
@@ -62,10 +62,13 @@ export function useAssistantBubble(
       !content.includes('<tool_cal') &&
       !content.includes('<tool_result')
     ) {
+      if (toolResults.length > 0) {
+        return synthesizeNativeStreamResult(content, toolResults);
+      }
       return null;
     }
     return processStreamContent(content);
-  }, [content]);
+  }, [content, toolResults]);
 
   // Build the tool results lookup by matching tool names with consumed-set dedup.
   const toolResultsMap = useMemo(() => {

@@ -241,7 +241,7 @@ impl RuntimeAdapter for NativeRuntime {
         if request.stdin.is_some() {
             cmd.stdin(std::process::Stdio::piped());
         } else {
-            cmd.stdin(std::process::Stdio::null());
+            cmd.stdin(std::process::Stdio::inherit());
         }
 
         let start = std::time::Instant::now();

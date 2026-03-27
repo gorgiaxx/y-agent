@@ -14,7 +14,7 @@ use tracing::instrument;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType,
+    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -43,6 +43,7 @@ impl OllamaProvider {
         tags: Vec<String>,
         max_concurrency: usize,
         context_window: usize,
+        tool_calling_mode: ToolCallingMode,
     ) -> Self {
         let base_url = base_url.unwrap_or_else(|| OLLAMA_DEFAULT_URL.to_string());
 
@@ -68,6 +69,7 @@ impl OllamaProvider {
                 context_window,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
+                tool_calling_mode,
             },
         }
     }
@@ -554,6 +556,7 @@ mod tests {
             vec!["local".into(), "fast".into(), "free".into()],
             3,
             32_768,
+            ToolCallingMode::default(),
         );
 
         let meta = provider.metadata();
@@ -577,6 +580,7 @@ mod tests {
             vec![],
             3,
             32_768,
+            ToolCallingMode::default(),
         );
         assert_eq!(
             provider.api_url("api/chat"),
@@ -595,6 +599,7 @@ mod tests {
             vec![],
             3,
             32_768,
+            ToolCallingMode::default(),
         );
         assert_eq!(
             provider.api_url("api/chat"),

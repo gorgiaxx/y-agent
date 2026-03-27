@@ -235,6 +235,7 @@ mod tests {
                     context_window: 128_000,
                     cost_per_1k_input: 0.01,
                     cost_per_1k_output: 0.03,
+                    tool_calling_mode: ToolCallingMode::default(),
                 },
             }
         }
@@ -250,6 +251,7 @@ mod tests {
                     context_window: 128_000,
                     cost_per_1k_input: cost_input,
                     cost_per_1k_output: 0.03,
+                    tool_calling_mode: ToolCallingMode::default(),
                 },
             }
         }

@@ -1,6 +1,6 @@
 //! `InjectTools` pipeline stage (priority 500).
 //!
-//! Design reference: context-session-design.md §Pipeline Stages
+//! Design reference: context-session-design.md [Pipeline Stages]
 //!
 //! Implements Tool Lazy Loading with dual-mode support:
 //!
@@ -11,12 +11,22 @@
 //!
 //! - **Native**: Injects a flat list of tool names plus a `tool_search`
 //!   meta-tool definition (backward compatibility).
+//!
+//! ## Dynamic mode selection
+//!
+//! When constructed via [`InjectTools::dynamic`], the provider carries data
+//! for **both** modes and reads the active `ToolCallingMode` from a shared
+//! `PromptContext` at each `provide()` call. This allows the mode to change
+//! per-request (based on which provider is selected) and supports hot-reload.
 
 use std::fmt::Write;
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::sync::RwLock;
 
 use y_core::provider::ToolCallingMode;
+use y_prompt::PromptContext;
 
 use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
@@ -27,7 +37,7 @@ fn estimate_tokens(text: &str) -> u32 {
     u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
 }
 
-/// `InjectTools` — injects tool discovery info into the context.
+/// `InjectTools` -- injects tool discovery info into the context.
 ///
 /// Runs at priority 500 (`INJECT_TOOLS`).
 pub struct InjectTools {
@@ -35,12 +45,18 @@ pub struct InjectTools {
     tool_names: Vec<String>,
     /// Whether to include the `tool_search` meta-tool definition.
     include_tool_search: bool,
-    /// Tool calling mode (determines injection strategy).
+    /// Static tool calling mode (used when `prompt_context` is `None`).
     mode: ToolCallingMode,
     /// Taxonomy root summary (used in `PromptBased` mode).
     taxonomy_summary: Option<String>,
     /// Compact core-tools summary (always-active tools, dynamically generated).
     core_tools_summary: Option<String>,
+    /// Shared prompt context for dynamic mode selection.
+    ///
+    /// When `Some`, `provide()` reads `config_flags["tool_calling.prompt_based"]`
+    /// to decide which mode to use, ignoring the static `mode` field.
+    /// This enables per-request mode switching driven by the service layer.
+    prompt_context: Option<Arc<RwLock<PromptContext>>>,
 }
 
 impl InjectTools {
@@ -52,6 +68,7 @@ impl InjectTools {
             mode: ToolCallingMode::Native,
             taxonomy_summary: None,
             core_tools_summary: None,
+            prompt_context: None,
         }
     }
 
@@ -63,6 +80,7 @@ impl InjectTools {
             mode: ToolCallingMode::Native,
             taxonomy_summary: None,
             core_tools_summary: None,
+            prompt_context: None,
         }
     }
 
@@ -74,6 +92,7 @@ impl InjectTools {
             mode: ToolCallingMode::PromptBased,
             taxonomy_summary: Some(taxonomy_summary),
             core_tools_summary: None,
+            prompt_context: None,
         }
     }
 
@@ -91,12 +110,60 @@ impl InjectTools {
             mode: ToolCallingMode::PromptBased,
             taxonomy_summary: Some(taxonomy_summary),
             core_tools_summary: Some(core_tools_summary),
+            prompt_context: None,
+        }
+    }
+
+    /// Create a **dynamic** `InjectTools` that carries data for both modes
+    /// and reads the active mode from `PromptContext` at each `provide()` call.
+    ///
+    /// The service layer sets `config_flags["tool_calling.prompt_based"]` on
+    /// `PromptContext` before each context pipeline assembly, so the injection
+    /// strategy matches the provider actually selected for that turn.
+    ///
+    /// This also supports hot-reload: when providers are reloaded, the
+    /// per-request flag is re-evaluated automatically.
+    pub fn dynamic(
+        tool_names: Vec<String>,
+        taxonomy_summary: String,
+        core_tools_summary: String,
+        prompt_context: Arc<RwLock<PromptContext>>,
+    ) -> Self {
+        Self {
+            tool_names,
+            include_tool_search: true,
+            // Fallback mode when prompt_context read fails (should not happen).
+            mode: ToolCallingMode::Native,
+            taxonomy_summary: Some(taxonomy_summary),
+            core_tools_summary: Some(core_tools_summary),
+            prompt_context: Some(prompt_context),
         }
     }
 
     /// Set the tool calling mode.
     pub fn set_mode(&mut self, mode: ToolCallingMode) {
         self.mode = mode;
+    }
+
+    /// Resolve the effective tool calling mode.
+    ///
+    /// When a shared `PromptContext` is available (dynamic mode), reads
+    /// the `tool_calling.prompt_based` config flag. Otherwise falls back
+    /// to the static `mode` field.
+    async fn resolve_mode(&self) -> ToolCallingMode {
+        if let Some(ref ctx) = self.prompt_context {
+            let pctx = ctx.read().await;
+            if pctx
+                .config_flags
+                .get("tool_calling.prompt_based")
+                .copied()
+                .unwrap_or(false)
+            {
+                return ToolCallingMode::PromptBased;
+            }
+            return ToolCallingMode::Native;
+        }
+        self.mode
     }
 }
 
@@ -111,7 +178,8 @@ impl ContextProvider for InjectTools {
     }
 
     async fn provide(&self, ctx: &mut AssembledContext) -> Result<(), ContextPipelineError> {
-        match self.mode {
+        let mode = self.resolve_mode().await;
+        match mode {
             ToolCallingMode::PromptBased => self.provide_prompt_based(ctx),
             ToolCallingMode::Native => self.provide_native(ctx),
         }
@@ -296,6 +364,7 @@ mod tests {
             mode: ToolCallingMode::PromptBased,
             taxonomy_summary: None,
             core_tools_summary: None,
+            prompt_context: None,
         };
 
         let mut ctx = AssembledContext::default();
@@ -336,5 +405,105 @@ mod tests {
         let content = &ctx.items[0].content;
         assert!(!content.contains("Available Tools"));
         assert!(content.contains("Categories"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Dynamic mode tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_dynamic_mode_reads_prompt_context_native() {
+        // PromptContext has no prompt_based flag -> should use Native mode.
+        let pctx = Arc::new(RwLock::new(PromptContext::default()));
+        let provider = InjectTools::dynamic(
+            vec!["read_file".into(), "write_file".into()],
+            "## Tool Categories\n| file | File ops |".to_string(),
+            "## Core Tools\n- read_file: Read".to_string(),
+            pctx,
+        );
+
+        let mut ctx = AssembledContext::default();
+        provider.provide(&mut ctx).await.unwrap();
+
+        assert_eq!(ctx.items.len(), 1);
+        let content = &ctx.items[0].content;
+        // Native mode: "Available Tools" header.
+        assert!(content.contains("Available Tools"));
+        assert!(content.contains("read_file"));
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_mode_reads_prompt_context_prompt_based() {
+        // PromptContext has prompt_based flag -> should use PromptBased mode.
+        let pctx = Arc::new(RwLock::new(PromptContext {
+            config_flags: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("tool_calling.prompt_based".into(), true);
+                m
+            },
+            ..Default::default()
+        }));
+        let provider = InjectTools::dynamic(
+            vec!["read_file".into(), "write_file".into()],
+            "## Tool Categories\n| file | File ops |".to_string(),
+            "## Core Tools\n- read_file: Read".to_string(),
+            pctx,
+        );
+
+        let mut ctx = AssembledContext::default();
+        provider.provide(&mut ctx).await.unwrap();
+
+        assert_eq!(ctx.items.len(), 1);
+        let content = &ctx.items[0].content;
+        // PromptBased mode: taxonomy content, NOT "Available Tools".
+        assert!(content.contains("Tool Categories"));
+        assert!(content.contains("Core Tools"));
+        assert!(!content.contains("Available Tools"));
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_mode_switches_between_calls() {
+        let pctx = Arc::new(RwLock::new(PromptContext::default()));
+        let provider = InjectTools::dynamic(
+            vec!["read_file".into()],
+            "## Taxonomy Summary".to_string(),
+            "## Core Tools\n- read_file: Read".to_string(),
+            Arc::clone(&pctx),
+        );
+
+        // First call: Native (no flag set).
+        {
+            let mut ctx = AssembledContext::default();
+            provider.provide(&mut ctx).await.unwrap();
+            assert!(ctx.items[0].content.contains("Available Tools"));
+        }
+
+        // Set flag to prompt_based.
+        {
+            let mut p = pctx.write().await;
+            p.config_flags
+                .insert("tool_calling.prompt_based".into(), true);
+        }
+
+        // Second call: PromptBased.
+        {
+            let mut ctx = AssembledContext::default();
+            provider.provide(&mut ctx).await.unwrap();
+            assert!(ctx.items[0].content.contains("Taxonomy Summary"));
+            assert!(!ctx.items[0].content.contains("Available Tools"));
+        }
+
+        // Clear flag back to native.
+        {
+            let mut p = pctx.write().await;
+            p.config_flags.remove("tool_calling.prompt_based");
+        }
+
+        // Third call: Native again.
+        {
+            let mut ctx = AssembledContext::default();
+            provider.provide(&mut ctx).await.unwrap();
+            assert!(ctx.items[0].content.contains("Available Tools"));
+        }
     }
 }

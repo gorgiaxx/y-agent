@@ -313,6 +313,10 @@ tools = ["tool_search"]
         };
 
         // 10. Context pipeline.
+        //
+        // PromptContext is created without any static flags; the service layer
+        // sets `tool_calling.prompt_based` per-request based on the provider
+        // actually selected for that turn (see agent_service.rs).
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
         let mut context_pipeline = ContextPipeline::new();
         {
@@ -328,16 +332,30 @@ tools = ["tool_search"]
         }
         context_pipeline.register(Box::new(InjectContextStatus::new(4096)));
 
-        // 10b. Register InjectTools (PromptBased mode) with taxonomy + core tools.
-        // Core-tools summary is generated from always-active definitions so the
-        // prompt is never out of sync with the actual tool registry.
+        // 10b. Register InjectTools in dynamic mode.
+        //
+        // Carries data for both PromptBased and Native modes. At each
+        // `provide()` call, reads `config_flags["tool_calling.prompt_based"]`
+        // from the shared PromptContext to decide which strategy to use.
+        // The service layer sets this flag per-request based on the provider
+        // actually selected for that turn, so the injection strategy matches
+        // the provider. Hot-reload is automatic: new provider configurations
+        // affect subsequent per-request flag updates.
         let core_tools_summary = {
             let set = tool_activation_set.read().await;
             build_core_tools_summary(&set)
         };
-        context_pipeline.register(Box::new(InjectTools::with_taxonomy_and_core_tools(
+        let tool_names: Vec<String> = tool_registry
+            .get_all_definitions()
+            .await
+            .iter()
+            .map(|d| d.name.as_str().to_string())
+            .collect();
+        context_pipeline.register(Box::new(InjectTools::dynamic(
+            tool_names,
             tool_taxonomy.root_summary(),
             core_tools_summary,
+            Arc::clone(&prompt_context),
         )));
 
         // 10c. Register InjectSkills (dynamic -- reads active_skills from PromptContext).
@@ -633,6 +651,11 @@ impl ServiceContainer {
         let new_pool = Arc::new(ProviderPoolImpl::from_providers(providers, pool_config));
         let mut guard = self.provider_pool.write().await;
         *guard = new_pool;
+
+        // The `tool_calling.prompt_based` flag is now set per-request in
+        // agent_service.rs based on the provider selected for that turn.
+        // No static sync needed here.
+
         info!(
             providers = pool_config.providers.len(),
             "Provider pool hot-reloaded"
@@ -977,6 +1000,7 @@ pub fn build_providers_from_config(
         };
 
         let proxy_url = pool_config.resolve_proxy_url(&config.id, &config.tags);
+        let tool_calling_mode = config.resolve_tool_calling_mode();
 
         match config.provider_type.as_str() {
             "openai" | "openai-compat" => {
@@ -993,6 +1017,7 @@ pub fn build_providers_from_config(
                     config.tags.clone(),
                     config.max_concurrency,
                     config.context_window,
+                    tool_calling_mode,
                 )));
             }
             "anthropic" => {
@@ -1005,6 +1030,7 @@ pub fn build_providers_from_config(
                     config.tags.clone(),
                     config.max_concurrency,
                     config.context_window,
+                    tool_calling_mode,
                 )));
             }
             "gemini" => {
@@ -1017,6 +1043,7 @@ pub fn build_providers_from_config(
                     config.tags.clone(),
                     config.max_concurrency,
                     config.context_window,
+                    tool_calling_mode,
                 )));
             }
             "ollama" => {
@@ -1029,6 +1056,7 @@ pub fn build_providers_from_config(
                     config.tags.clone(),
                     config.max_concurrency,
                     config.context_window,
+                    tool_calling_mode,
                 )));
             }
             "azure" => {
@@ -1041,6 +1069,7 @@ pub fn build_providers_from_config(
                     config.tags.clone(),
                     config.max_concurrency,
                     config.context_window,
+                    tool_calling_mode,
                 )));
             }
             "deepseek" => {
@@ -1059,6 +1088,7 @@ pub fn build_providers_from_config(
                     config.tags.clone(),
                     config.max_concurrency,
                     config.context_window,
+                    tool_calling_mode,
                 )));
             }
             other => {

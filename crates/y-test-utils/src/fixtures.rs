@@ -85,6 +85,7 @@ pub fn make_provider_metadata(name: &str) -> ProviderMetadata {
         context_window: 4096,
         cost_per_1k_input: 0.001,
         cost_per_1k_output: 0.002,
+        tool_calling_mode: ToolCallingMode::default(),
     }
 }
 

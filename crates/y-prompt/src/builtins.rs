@@ -86,7 +86,7 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         800,
         450,
         SectionCategoryTag::Behavioral,
-        ConditionTag::Always,
+        ConditionTag::ToolProtocolEnabled,
     ),
     (
         "core.persona",
@@ -144,6 +144,11 @@ enum ConditionTag {
     PersonaEnabled,
     ModePlan,
     ModeExplore,
+    /// Include `core.tool_protocol` only when `PromptBased` tool calling is active.
+    ///
+    /// In Native mode, the LLM uses API-level tool definitions and does not
+    /// need the XML-based tool calling instructions (~800 tokens saved).
+    ToolProtocolEnabled,
 }
 
 impl ConditionTag {
@@ -153,6 +158,9 @@ impl ConditionTag {
             Self::PersonaEnabled => SectionCondition::ConfigFlag("persona.enabled".into()),
             Self::ModePlan => SectionCondition::ModeIs("plan".into()),
             Self::ModeExplore => SectionCondition::ModeIs("explore".into()),
+            Self::ToolProtocolEnabled => {
+                SectionCondition::ConfigFlag("tool_calling.prompt_based".into())
+            }
         }
     }
 }

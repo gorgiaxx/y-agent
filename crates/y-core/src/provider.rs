@@ -20,7 +20,20 @@ use crate::types::{Message, ProviderId, Timestamp, TokenUsage};
 
 /// How tool calling is communicated to the LLM.
 ///
-/// Design reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
+/// Two-layer design (see `docs/standards/TOOL_CALL_PROTOCOL.md`):
+///
+/// - **Layer 1 (API type)**: First-party providers (`OpenAI`, Anthropic, Azure,
+///   Gemini, `DeepSeek`) default to [`Native`](Self::Native) -- tool definitions
+///   are sent via the provider's HTTP API and tool calls are extracted from
+///   structured response fields.
+///
+/// - **Layer 2 (XML tags)**: Compatibility providers (`openai-compat`, `custom`,
+///   `ollama`) default to [`PromptBased`](Self::PromptBased) -- tool definitions
+///   are injected into the system prompt and the lenient XML parser extracts
+///   tool calls from the model's text output.
+///
+/// Per-provider override is available via `tool_calling_mode` in the provider
+/// TOML configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCallingMode {
@@ -29,12 +42,17 @@ pub enum ToolCallingMode {
     /// The LLM is taught to emit `<tool_call>` XML tags in its text output.
     /// The `tools` field in [`ChatRequest`] is left empty; providers do not send
     /// tool definitions in the HTTP request body.
-    #[default]
+    ///
+    /// Default for compatibility providers (`openai-compat`, `custom`, `ollama`).
     PromptBased,
     /// Tool calling via provider-native API fields (`OpenAI` `tools`, Anthropic `tools`).
     ///
     /// Tool definitions are sent in the HTTP request body and tool calls are
     /// extracted from provider-specific response fields.
+    ///
+    /// Default for first-party providers (`openai`, `anthropic`, `azure`,
+    /// `gemini`, `deepseek`).
+    #[default]
     Native,
 }
 
@@ -153,6 +171,8 @@ pub struct ProviderMetadata {
     pub context_window: usize,
     pub cost_per_1k_input: f64,
     pub cost_per_1k_output: f64,
+    /// Effective tool calling mode for this provider (resolved from config).
+    pub tool_calling_mode: ToolCallingMode,
 }
 
 /// Supported provider backend types.

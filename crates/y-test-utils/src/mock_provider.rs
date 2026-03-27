@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType,
+    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
 };
 use y_core::types::{ProviderId, TokenUsage};
 
@@ -48,6 +48,7 @@ impl MockProvider {
                 context_window: 4096,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
+                tool_calling_mode: ToolCallingMode::default(),
             },
             behaviour,
             call_count: Arc::new(AtomicUsize::new(0)),

@@ -269,6 +269,40 @@ function ProviderTabPanel({
         </div>
       </div>
 
+      {/* Row 1b: Tool Calling Mode */}
+      {(() => {
+        const promptBasedDefaults = ['openai-compat', 'custom', 'ollama'];
+        const effectiveMode = provider.tool_calling_mode
+          ?? (promptBasedDefaults.includes(provider.provider_type) ? 'prompt_based' : 'native');
+        const isNative = effectiveMode === 'native';
+        return (
+          <div className="pf-row">
+            <div className="pf-field">
+              <label className="pf-label">Tool Calling Mode</label>
+              <label className="pf-enable-toggle">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isNative}
+                  className={`raw-mode-switch-track ${isNative ? 'raw-mode-switch-track--on' : ''}`}
+                  onClick={() => update({ tool_calling_mode: isNative ? 'prompt_based' : 'native' })}
+                >
+                  <span className="raw-mode-switch-thumb" />
+                </button>
+                <span className={`pf-enable-label ${isNative ? 'pf-enable-label--on' : ''}`}>
+                  {isNative ? 'Native' : 'Prompt-based'}
+                </span>
+              </label>
+              <span className="pf-hint">
+                {provider.tool_calling_mode
+                  ? 'Manually set'
+                  : `Auto-detected from provider type (${promptBasedDefaults.includes(provider.provider_type) ? 'prompt_based' : 'native'})`}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Row 2: Model + Base URL */}
       <div className="pf-row">
         <div className="pf-field">

@@ -11,7 +11,7 @@ use tracing::instrument;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType,
+    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -36,6 +36,7 @@ impl OpenAiProvider {
         tags: Vec<String>,
         max_concurrency: usize,
         context_window: usize,
+        tool_calling_mode: ToolCallingMode,
     ) -> Self {
         let base_url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
@@ -59,6 +60,7 @@ impl OpenAiProvider {
                 context_window,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
+                tool_calling_mode,
             },
         }
     }
@@ -773,6 +775,7 @@ struct OpenAiStreamToolCallFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use y_core::provider::ToolCallingMode;
 
     #[test]
     fn test_openai_provider_metadata() {
@@ -785,6 +788,7 @@ mod tests {
             vec!["reasoning".into(), "general".into()],
             5,
             128_000,
+            ToolCallingMode::default(),
         );
 
         let meta = provider.metadata();
@@ -805,6 +809,7 @@ mod tests {
             vec![],
             5,
             128_000,
+            ToolCallingMode::default(),
         );
 
         assert_eq!(
@@ -824,6 +829,7 @@ mod tests {
             vec![],
             5,
             128_000,
+            ToolCallingMode::default(),
         );
 
         assert_eq!(
@@ -921,6 +927,7 @@ mod tests {
             vec!["general".into()],
             5,
             128_000,
+            ToolCallingMode::default(),
         );
         assert_eq!(provider.metadata().id, ProviderId::from_string("proxied"));
 
@@ -934,6 +941,7 @@ mod tests {
             vec![],
             3,
             128_000,
+            ToolCallingMode::default(),
         );
         assert_eq!(
             provider2.metadata().id,

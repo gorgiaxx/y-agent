@@ -479,6 +479,18 @@ impl AgentService {
         config: &AgentExecutionConfig,
     ) -> (AssembledContext, Option<Uuid>, bool) {
         let assembled = if config.use_context_pipeline {
+            // Update per-request tool protocol flag so the system prompt
+            // includes/excludes XML tool protocol based on this request's mode.
+            {
+                let mut pctx = container.prompt_context.write().await;
+                if config.tool_calling_mode == ToolCallingMode::PromptBased {
+                    pctx.config_flags
+                        .insert("tool_calling.prompt_based".into(), true);
+                } else {
+                    pctx.config_flags.remove("tool_calling.prompt_based");
+                }
+            }
+
             let context_request = ContextRequest {
                 user_query: config.user_query.clone(),
                 session_id: config.session_id.clone(),
@@ -1544,22 +1556,37 @@ impl AgentService {
 // Sub-agent prompt augmentation
 // ---------------------------------------------------------------------------
 
-/// Build the effective system prompt for a sub-agent, injecting tool protocol
-/// and an available-tools summary when the agent has tools.
+/// Build the effective system prompt for a sub-agent.
 ///
 /// When `filtered_defs` is empty the base prompt is returned unchanged.
+///
+/// In [`ToolCallingMode::Native`] the base prompt is returned unchanged
+/// because tools are sent via the API `tools` field -- no prompt injection
+/// needed.
+///
+/// In [`ToolCallingMode::PromptBased`] the XML tool protocol and an
+/// available-tools summary table are appended to the base prompt.
 fn build_subagent_system_prompt(
     base_prompt: &str,
     filtered_defs: &[y_core::tool::ToolDefinition],
+    tool_calling_mode: ToolCallingMode,
 ) -> String {
     if filtered_defs.is_empty() {
         return base_prompt.to_string();
     }
 
-    let tool_protocol = y_prompt::PROMPT_TOOL_PROTOCOL;
-    let tools_summary = crate::container::build_agent_tools_summary(filtered_defs);
-
-    format!("{base_prompt}\n\n{tool_protocol}\n\n{tools_summary}")
+    match tool_calling_mode {
+        ToolCallingMode::Native => {
+            // Native mode: tools are sent via the API `tools` field.
+            // No prompt injection needed -- avoids redundant token usage.
+            base_prompt.to_string()
+        }
+        ToolCallingMode::PromptBased => {
+            let tools_summary = crate::container::build_agent_tools_summary(filtered_defs);
+            let tool_protocol = y_prompt::PROMPT_TOOL_PROTOCOL;
+            format!("{base_prompt}\n\n{tool_protocol}\n\n{tools_summary}")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1596,10 +1623,6 @@ impl AgentRunner for ServiceAgentRunner {
         )
         .await;
 
-        // Augment the system prompt with tool protocol and available-tools
-        // summary when the agent has tools.
-        let system_prompt = build_subagent_system_prompt(&config.system_prompt, &filtered_defs);
-
         // Convert filtered definitions to OpenAI function-calling JSON.
         let tool_definitions: Vec<serde_json::Value> = filtered_defs
             .iter()
@@ -1614,6 +1637,27 @@ impl AgentRunner for ServiceAgentRunner {
                 })
             })
             .collect();
+
+        // Determine max_iterations: if tools are available, use the agent
+        // definition's max_iterations; otherwise single-turn.
+        let max_iterations = if tool_definitions.is_empty() {
+            1
+        } else {
+            config.max_iterations
+        };
+
+        // Determine tool calling mode: use Native when tools are available.
+        let tool_calling_mode = if tool_definitions.is_empty() {
+            ToolCallingMode::default()
+        } else {
+            ToolCallingMode::Native
+        };
+
+        // Augment the system prompt with tool protocol and available-tools
+        // summary when the agent has tools. In Native mode the XML tool
+        // protocol is omitted (~800 tokens saved).
+        let system_prompt =
+            build_subagent_system_prompt(&config.system_prompt, &filtered_defs, tool_calling_mode);
 
         // Build messages: system_prompt + input as user message.
         let mut messages = Vec::with_capacity(2);
@@ -1640,21 +1684,6 @@ impl AgentRunner for ServiceAgentRunner {
             timestamp: y_core::types::now(),
             metadata: serde_json::Value::Null,
         });
-
-        // Determine max_iterations: if tools are available, use the agent
-        // definition's max_iterations; otherwise single-turn.
-        let max_iterations = if tool_definitions.is_empty() {
-            1
-        } else {
-            config.max_iterations
-        };
-
-        // Determine tool calling mode: use Native when tools are available.
-        let tool_calling_mode = if tool_definitions.is_empty() {
-            ToolCallingMode::default()
-        } else {
-            ToolCallingMode::Native
-        };
 
         // Pick up a pre-created trace_id from the diagnostics delegator
         // (set via SUBAGENT_TRACE_ID task-local).
@@ -1813,7 +1842,7 @@ mod tests {
     #[test]
     fn test_subagent_prompt_unchanged_without_tools() {
         let base = "You are a test agent.";
-        let result = super::build_subagent_system_prompt(base, &[]);
+        let result = super::build_subagent_system_prompt(base, &[], ToolCallingMode::PromptBased);
         assert_eq!(result, base);
     }
 
@@ -1821,7 +1850,7 @@ mod tests {
     fn test_subagent_prompt_includes_protocol_and_summary() {
         let base = "You are a test agent.";
         let defs = vec![make_test_tool_def("shell_exec")];
-        let result = super::build_subagent_system_prompt(base, &defs);
+        let result = super::build_subagent_system_prompt(base, &defs, ToolCallingMode::PromptBased);
 
         assert!(result.starts_with(base));
         assert!(result.contains("Tool Usage Protocol"));
@@ -1830,10 +1859,22 @@ mod tests {
     }
 
     #[test]
+    fn test_subagent_prompt_native_mode_returns_base_only() {
+        let base = "You are a test agent.";
+        let defs = vec![make_test_tool_def("shell_exec")];
+        let result = super::build_subagent_system_prompt(base, &defs, ToolCallingMode::Native);
+
+        // Native mode: tools are sent via API field, prompt is unchanged.
+        assert_eq!(result, base);
+        assert!(!result.contains("Available Tools"));
+        assert!(!result.contains("Tool Usage Protocol"));
+    }
+
+    #[test]
     fn test_subagent_prompt_preserves_base() {
         let base = "Custom system prompt with specific instructions.";
         let defs = vec![make_test_tool_def("file_read")];
-        let result = super::build_subagent_system_prompt(base, &defs);
+        let result = super::build_subagent_system_prompt(base, &defs, ToolCallingMode::PromptBased);
 
         assert!(result.starts_with(base));
         assert!(result.contains("file_read"));

@@ -73,7 +73,6 @@ export function StreamingBubble({ message, toolResults }: StreamingBubbleProps) 
                 key={`preamble-${idx}`}
                 content={seg.text}
                 markdownComponents={markdownComponents}
-                isStreaming
               />
             );
           })}
@@ -92,7 +91,6 @@ export function StreamingBubble({ message, toolResults }: StreamingBubbleProps) 
             <ThinkContentBlock
               content={actionResult.conclusion.text}
               markdownComponents={markdownComponents}
-              isStreaming
             />
           )}
         </>
@@ -145,11 +143,26 @@ export function StreamingBubble({ message, toolResults }: StreamingBubbleProps) 
         <ThinkContentBlock
           content={effectiveContent}
           markdownComponents={markdownComponents}
-          isStreaming
         />
       )}
 
-      {message.tool_calls.length > 0 && (
+      {/* Native tool call results (from progress events, no XML parsing). */}
+      {!streamResult && toolResults && toolResults.length > 0 && (
+        <div className="message-tool-calls">
+          {toolResults.map((tr, idx) => (
+            <ToolCallCard
+              key={`native-tc-${idx}`}
+              toolCall={{ id: `native-${idx}`, name: tr.name, arguments: tr.arguments ?? '' }}
+              status={tr.success ? 'success' : 'error'}
+              result={tr.resultPreview}
+              durationMs={tr.durationMs}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Native tool calls from message object (post-completion). */}
+      {!streamResult && message.tool_calls.length > 0 && (
         <div className="message-tool-calls">
           {message.tool_calls.map((tc) => (
             <ToolCallCard key={tc.id} toolCall={tc} />

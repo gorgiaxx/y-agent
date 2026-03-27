@@ -102,7 +102,12 @@ pub struct ProviderConfig {
     pub top_p: Option<f64>,
 
     /// Tool calling mode override for this provider.
-    /// `None` means use the global default (Native).
+    ///
+    /// `None` means auto-detect based on `provider_type`:
+    /// - `Native` for `openai`, `anthropic`, `azure`, `gemini`, `deepseek`
+    /// - `PromptBased` for `openai-compat`, `custom`, `ollama`, and others
+    ///
+    /// See [`ProviderConfig::resolve_tool_calling_mode`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calling_mode: Option<ToolCallingMode>,
 
@@ -378,6 +383,29 @@ impl ProviderConfig {
         self.api_key_env
             .as_ref()
             .and_then(|env_var| std::env::var(env_var).ok())
+    }
+
+    /// Resolve the effective tool calling mode for this provider.
+    ///
+    /// Priority: explicit `tool_calling_mode` override > auto-detect from
+    /// `provider_type`.
+    ///
+    /// First-party providers (`openai`, `anthropic`, `azure`, `gemini`,
+    /// `deepseek`) default to [`ToolCallingMode::Native`] because their APIs
+    /// support structured tool call fields.
+    ///
+    /// Compatibility/local providers (`openai-compat`, `custom`, `ollama`)
+    /// default to [`ToolCallingMode::PromptBased`] because many relay APIs
+    /// and local models do not reliably support native tool calling.
+    pub fn resolve_tool_calling_mode(&self) -> ToolCallingMode {
+        if let Some(mode) = self.tool_calling_mode {
+            return mode;
+        }
+        match self.provider_type.as_str() {
+            "openai" | "anthropic" | "azure" | "gemini" | "deepseek" => ToolCallingMode::Native,
+            // openai-compat, custom, ollama, and any unknown type.
+            _ => ToolCallingMode::PromptBased,
+        }
     }
 }
 
@@ -806,5 +834,68 @@ mod tests {
         let config: ProviderPoolConfig = toml::from_str(toml_str).expect("should parse");
         let global = config.proxy.global.as_ref().expect("global proxy");
         assert_eq!(global.auth_env.as_deref(), Some("MY_PROXY_CREDS"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Tool calling mode auto-detection tests
+    // -----------------------------------------------------------------------
+
+    fn make_provider_config(provider_type: &str) -> ProviderConfig {
+        ProviderConfig {
+            id: "test".into(),
+            provider_type: provider_type.into(),
+            model: "test".into(),
+            enabled: true,
+            tags: vec![],
+            max_concurrency: 5,
+            context_window: 128_000,
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            api_key: None,
+            api_key_env: None,
+            base_url: None,
+            temperature: None,
+            top_p: None,
+            tool_calling_mode: None,
+            icon: None,
+        }
+    }
+
+    #[test]
+    fn test_resolve_tool_calling_mode_native_providers() {
+        for pt in ["openai", "anthropic", "azure", "gemini", "deepseek"] {
+            let cfg = make_provider_config(pt);
+            assert_eq!(
+                cfg.resolve_tool_calling_mode(),
+                ToolCallingMode::Native,
+                "provider_type={pt} should default to Native"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_tool_calling_mode_prompt_based_providers() {
+        for pt in ["openai-compat", "custom", "ollama", "unknown"] {
+            let cfg = make_provider_config(pt);
+            assert_eq!(
+                cfg.resolve_tool_calling_mode(),
+                ToolCallingMode::PromptBased,
+                "provider_type={pt} should default to PromptBased"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_tool_calling_mode_explicit_override() {
+        let mut cfg = make_provider_config("ollama");
+        cfg.tool_calling_mode = Some(ToolCallingMode::Native);
+        assert_eq!(cfg.resolve_tool_calling_mode(), ToolCallingMode::Native);
+
+        let mut cfg = make_provider_config("openai");
+        cfg.tool_calling_mode = Some(ToolCallingMode::PromptBased);
+        assert_eq!(
+            cfg.resolve_tool_calling_mode(),
+            ToolCallingMode::PromptBased
+        );
     }
 }

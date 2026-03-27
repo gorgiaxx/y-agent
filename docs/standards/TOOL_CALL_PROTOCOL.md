@@ -1,17 +1,31 @@
 # Tool Call Protocol Standard
 
-> Provider-agnostic tool calling via prompt engineering
+> Two-layer tool calling: native API for first-party providers, XML fallback for compatibility
 
-**Version**: v0.2
+**Version**: v0.3
 **Created**: 2026-03-12
-**Updated**: 2026-03-13
+**Updated**: 2026-03-27
 **Status**: Draft
 
 ---
 
 ## TL;DR
 
-y-agent uses a **prompt-based tool calling protocol** that works with any LLM regardless of provider API. Instead of sending tool definitions via vendor-specific API fields (e.g., OpenAI `tools`), y-agent teaches the LLM how to call tools through the system prompt and parses tool calls from the LLM's text output using XML-like tags. This eliminates provider lock-in, reduces token consumption by 60-90%, and avoids accidental complexity from N provider-specific translation layers.
+y-agent uses a **two-layer tool calling system**:
+
+- **Layer 1 (Native)**: First-party providers (OpenAI, Anthropic, Azure, Gemini, DeepSeek)
+  send tool definitions via their native API fields and extract structured tool calls
+  from response objects. This is the **default** for these providers.
+
+- **Layer 2 (PromptBased)**: Compatibility providers (openai-compat, custom, ollama)
+  inject tool definitions into the system prompt and parse tool calls from XML tags
+  (`<tool_call>`) in the LLM's text output. A lenient, multi-format parser handles
+  variations across models.
+
+The layer is auto-detected from `provider_type` in the configuration. Users can
+override with `tool_calling_mode = "native"` or `tool_calling_mode = "prompt_based"`
+per provider. A fallback path in the execution loop also attempts XML parsing even
+in Native mode, ensuring tool calls are never missed.
 
 ---
 
@@ -19,11 +33,11 @@ y-agent uses a **prompt-based tool calling protocol** that works with any LLM re
 
 | Principle | Rationale |
 |-----------|-----------|
-| **Provider-agnostic** | Tool calling works via prompt instructions, not API-specific fields. Any LLM that follows instructions can use tools. |
+| **Two-layer system** | Native API tool calling for providers that support it; XML prompt-based fallback for the rest. Auto-detected from `provider_type`. |
 | **Two-tier visibility** | Core tools (Tier 1) are always available with schemas in the prompt. Extended tools (Tier 2) are loaded on demand via `tool_search`. |
 | **Explicit format** | XML tags are unambiguous, easy to parse, and well-understood by all major LLMs. |
-| **Dual mode** | `PromptBased` (default, universal) and `Native` (for providers with mature native tool calling) coexist via configuration. |
-| **Fail gracefully** | Malformed tool call tags are treated as regular text, not errors. |
+| **Native-first default** | `Native` is the default for first-party providers (openai, anthropic, azure, gemini, deepseek). `PromptBased` is the default for compatibility providers (openai-compat, custom, ollama). |
+| **Fail gracefully** | Malformed tool call tags are treated as regular text. Even in Native mode, a fallback XML parser catches tool calls emitted as text. |
 
 ---
 
@@ -306,14 +320,17 @@ tool_calling_mode = "native"  # Override for this provider only
 
 ## 10. Token Budget Analysis
 
-| Component | PromptBased | Native (current) |
-|-----------|------------|-------------------|
+| Component | PromptBased | Native |
+|-----------|------------|--------|
 | Tool protocol section | ~200 tokens | 0 |
 | Tier 1 core tool schemas | ~300 tokens | 0 |
 | Taxonomy root (Tier 2) | ~100 tokens | 0 |
-| Flat tool index | 0 | ~50 tokens |
+| Flat tool index (root agent) | 0 | ~50 tokens |
+| Sub-agent tools summary | ~200 tokens | 0 (via API field) |
 | Tool definitions in API | 0 | 5,000-25,000 tokens |
 | Activated tool schemas (per tool) | ~100-300 tokens | 0 (in API field) |
 | **Total (initial turn, 50 tools)** | **~600 tokens** | **~5,000-25,000 tokens** |
 
 Savings: **60-95%** on initial turns. The Tier 1 core tools add ~300 tokens vs. the original lazy-only approach, but eliminate the most common failure mode (LLMs guessing non-existent tool names). After tool activation, costs converge but prompt-based remains more efficient because only used tools are loaded.
+
+In Native mode, sub-agent system prompts are returned unchanged -- tool definitions are sent exclusively via the API `tools` field, avoiding redundant prompt injection.

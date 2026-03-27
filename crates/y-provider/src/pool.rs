@@ -131,6 +131,7 @@ impl ProviderPoolImpl {
 
             let api_key = cfg.resolve_api_key().unwrap_or_default();
             let proxy_url = config.resolve_proxy_url(&cfg.id, &cfg.tags);
+            let tool_calling_mode = cfg.resolve_tool_calling_mode();
 
             let provider: Arc<dyn LlmProvider> = match cfg.provider_type.as_str() {
                 "openai" | "openai-compat" | "openai_compatible" | "custom" => {
@@ -143,6 +144,7 @@ impl ProviderPoolImpl {
                         cfg.tags.clone(),
                         cfg.max_concurrency,
                         cfg.context_window,
+                        tool_calling_mode,
                     ))
                 }
                 "anthropic" => Arc::new(crate::providers::anthropic::AnthropicProvider::new(
@@ -154,6 +156,7 @@ impl ProviderPoolImpl {
                     cfg.tags.clone(),
                     cfg.max_concurrency,
                     cfg.context_window,
+                    tool_calling_mode,
                 )),
                 "gemini" => Arc::new(crate::providers::gemini::GeminiProvider::new(
                     &cfg.id,
@@ -164,6 +167,7 @@ impl ProviderPoolImpl {
                     cfg.tags.clone(),
                     cfg.max_concurrency,
                     cfg.context_window,
+                    tool_calling_mode,
                 )),
                 "ollama" => Arc::new(crate::providers::ollama::OllamaProvider::new(
                     &cfg.id,
@@ -174,6 +178,7 @@ impl ProviderPoolImpl {
                     cfg.tags.clone(),
                     cfg.max_concurrency,
                     cfg.context_window,
+                    tool_calling_mode,
                 )),
                 "azure" => Arc::new(crate::providers::azure::AzureOpenAiProvider::new(
                     &cfg.id,
@@ -184,6 +189,7 @@ impl ProviderPoolImpl {
                     cfg.tags.clone(),
                     cfg.max_concurrency,
                     cfg.context_window,
+                    tool_calling_mode,
                 )),
                 "deepseek" => {
                     let base_url = cfg
@@ -199,6 +205,7 @@ impl ProviderPoolImpl {
                         cfg.tags.clone(),
                         cfg.max_concurrency,
                         cfg.context_window,
+                        tool_calling_mode,
                     ))
                 }
                 unknown => {
@@ -548,6 +555,7 @@ mod tests {
                     context_window: 128_000,
                     cost_per_1k_input: 0.01,
                     cost_per_1k_output: 0.03,
+                    tool_calling_mode: ToolCallingMode::default(),
                 },
                 should_fail: false,
             })
@@ -564,6 +572,7 @@ mod tests {
                     context_window: 128_000,
                     cost_per_1k_input: 0.01,
                     cost_per_1k_output: 0.03,
+                    tool_calling_mode: ToolCallingMode::default(),
                 },
                 should_fail: true,
             })

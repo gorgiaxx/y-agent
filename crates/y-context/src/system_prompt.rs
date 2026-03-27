@@ -385,8 +385,9 @@ mod tests {
         assert!(item.content.contains("Guidelines"));
         // Should contain security.
         assert!(item.content.contains("Security rules"));
-        // Should contain tool protocol (which now includes behavior rules).
-        assert!(item.content.contains("Tool Behavior"));
+        // core.tool_protocol requires ConfigFlag("tool_calling.prompt_based")
+        // which is not set in general_ctx(), so it should be excluded.
+        assert!(!item.content.contains("Tool Behavior"));
         // Token estimate should be reasonable.
         assert!(item.token_estimate > 0);
     }
