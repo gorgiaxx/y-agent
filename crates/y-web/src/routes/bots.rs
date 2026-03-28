@@ -78,7 +78,7 @@ async fn feishu_webhook(
     }
 
     // 4. Parse the event.
-    let message = match feishu_bot.parse_event(&payload) {
+    let message = match feishu_bot.parse_event(&payload).await {
         Ok(msg) => msg,
         Err(y_bot::BotError::UnsupportedEvent(evt_type)) => {
             // Non-message events (bot added, reactions, etc.) — acknowledge silently.
@@ -167,7 +167,7 @@ async fn discord_webhook(
     }
 
     // 4. Parse the event.
-    let message = match discord_bot.parse_event(&payload) {
+    let message = match discord_bot.parse_event(&payload).await {
         Ok(msg) => msg,
         Err(y_bot::BotError::UnsupportedEvent(evt_type)) => {
             info!(event_type = %evt_type, "Discord webhook: ignoring unsupported event");

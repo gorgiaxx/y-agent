@@ -168,6 +168,83 @@ impl FeishuBot {
             }
         })
     }
+
+    /// Fetch a message by ID.
+    async fn get_message(&self, message_id: &str) -> Result<serde_json::Value, BotError> {
+        let token = self.tenant_access_token().await?;
+        let url = format!(
+            "{}/im/v1/messages/{}",
+            self.config.api_base_url(),
+            message_id
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let json: serde_json::Value = resp.json().await?;
+        if !status.is_success() || json.get("code").and_then(|v| v.as_u64()).unwrap_or(1) != 0 {
+            let api_msg = json
+                .get("msg")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error");
+            warn!(status = %status, msg = api_msg, "Feishu get_message failed");
+            return Err(BotError::ApiError(format!(
+                "Feishu get_message failed: {}",
+                api_msg
+            )));
+        }
+
+        Ok(json)
+    }
+
+    /// Download a message resource (image or file).
+    async fn download_resource(
+        &self,
+        message_id: &str,
+        file_key: &str,
+        resource_type: &str,
+    ) -> Result<(Vec<u8>, String), BotError> {
+        let token = self.tenant_access_token().await?;
+        let url = format!(
+            "{}/im/v1/messages/{}/resources/{}?type={}",
+            self.config.api_base_url(),
+            message_id,
+            file_key,
+            resource_type
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            warn!(status = %resp.status(), "Feishu download_resource failed");
+            return Err(BotError::ApiError(format!(
+                "Feishu download failed: {}",
+                resp.status()
+            )));
+        }
+
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| BotError::ApiError(e.to_string()))?
+            .to_vec();
+        Ok((bytes, content_type))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +253,7 @@ impl FeishuBot {
 
 #[async_trait::async_trait]
 impl BotPlatform for FeishuBot {
-    fn parse_event(&self, payload: &serde_json::Value) -> Result<InboundMessage, BotError> {
+    async fn parse_event(&self, payload: &serde_json::Value) -> Result<InboundMessage, BotError> {
         // Feishu event schema v2: { "schema": "2.0", "header": { "event_type": "..." }, "event": { ... } }
         let header = payload
             .get("header")
@@ -251,7 +328,80 @@ impl BotPlatform for FeishuBot {
             .to_string();
 
         // Extract text content based on message type.
-        let content = parse_feishu_content(raw_content, message_type);
+        let mut content = parse_feishu_content(raw_content, message_type);
+
+        let mentions = message.get("mentions");
+        if let Some(ments) = mentions.and_then(|m| m.as_array()) {
+            for m in ments {
+                let key = m.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("User");
+                let open_id = m
+                    .get("id")
+                    .and_then(|i| i.get("open_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                if key == "@_user_1" && content.starts_with("@_user_1 ") {
+                    content = content.replace("@_user_1 ", "");
+                } else if !key.is_empty() && !open_id.is_empty() {
+                    let formatted = format!("<at user_id=\"{}\">{}</at>", open_id, name);
+                    content = content.replace(key, &formatted);
+                }
+            }
+        }
+
+        if message_type == "merge_forward" {
+            if let Ok(msg_data) = self.get_message(&message_id).await {
+                if let Some(items) = msg_data.pointer("/data/items").and_then(|v| v.as_array()) {
+                    let mut lines = vec!["[Merged and Forwarded Messages]".to_string()];
+                    let limit = 50;
+                    for item in items.iter().take(limit) {
+                        let body_content = item
+                            .pointer("/body/content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let msg_t = item
+                            .get("msg_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("text");
+                        let sub_text = parse_feishu_content(body_content, msg_t);
+                        lines.push(format!("- {}", sub_text));
+                    }
+                    if items.len() > limit {
+                        lines.push(format!("... and {} more messages", items.len() - limit));
+                    }
+                    content = lines.join("\n");
+                }
+            } else {
+                content = "[Merged and Forwarded Message - could not fetch]".to_string();
+            }
+        }
+
+        let mut attachments = vec![];
+        let media_keys = extract_feishu_media_keys(raw_content, message_type);
+        for res in media_keys {
+            if let Ok((bytes, ctype)) = self
+                .download_resource(&message_id, &res.file_key, &res.resource_type)
+                .await
+            {
+                let temp_dir = std::env::temp_dir().join("y-agent-media");
+                let _ = std::fs::create_dir_all(&temp_dir);
+                let ext = guess_extension(&ctype);
+                let mut safe_name = res.file_name.clone();
+                if safe_name.is_empty() {
+                    safe_name = format!("{}.{}", res.file_key, ext);
+                }
+                let path = temp_dir.join(format!("{}_{}", message_id, safe_name));
+                let _ = std::fs::write(&path, &bytes);
+
+                attachments.push(crate::BotAttachment {
+                    file_name: safe_name,
+                    content_type: ctype,
+                    data: bytes,
+                    path: Some(path.to_string_lossy().to_string()),
+                });
+            }
+        }
 
         let chat_type = match chat_type_str {
             "group" => ChatType::Group,
@@ -267,6 +417,7 @@ impl BotPlatform for FeishuBot {
             content,
             chat_type,
             reply_to_message_id: root_id,
+            attachments,
             timestamp,
             raw: payload.clone(),
         })
@@ -474,9 +625,20 @@ fn parse_post_content(raw: &str) -> String {
                         }
                     }
                     "at" => {
-                        if let Some(name) = elem.get("user_name").and_then(|n| n.as_str()) {
-                            texts.push(format!("@{name}"));
+                        let name = elem
+                            .get("user_name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("User");
+                        let uid = elem.get("user_id").and_then(|n| n.as_str()).unwrap_or("");
+                        if !uid.is_empty() {
+                            texts.push(format!("<at user_id=\"{}\">{}</at>", uid, name));
+                        } else {
+                            texts.push(format!("@{}", name));
                         }
+                    }
+                    "img" | "media" => {
+                        let img_type = if tag == "img" { "Image" } else { "Media" };
+                        texts.push(format!("[{}]", img_type));
                     }
                     "md" => {
                         if let Some(text) = elem.get("text").and_then(|t| t.as_str()) {
@@ -492,31 +654,67 @@ fn parse_post_content(raw: &str) -> String {
     texts.join("").trim().to_string()
 }
 
-/// Strip `@bot` mentions from the content text.
-///
-/// Feishu inline mentions use the format `@_user_X` in the text field.
-/// The `mentions` array in the event provides the mapping. This function
-/// removes the bot's own mention so the remaining text represents the
-/// user's actual input.
-pub fn strip_bot_mention(content: &str, mentions: &serde_json::Value, bot_open_id: &str) -> String {
-    let Some(mentions_arr) = mentions.as_array() else {
-        return content.to_string();
-    };
+struct FeishuMediaRef {
+    file_key: String,
+    resource_type: String,
+    file_name: String,
+}
 
-    let mut result = content.to_string();
-    for mention in mentions_arr {
-        let open_id = mention
-            .pointer("/id/open_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if open_id == bot_open_id {
-            if let Some(key) = mention.get("key").and_then(|k| k.as_str()) {
-                result = result.replace(key, "");
+fn extract_feishu_media_keys(raw: &str, message_type: &str) -> Vec<FeishuMediaRef> {
+    let mut keys = vec![];
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        let image_key = v.get("image_key").and_then(|k| k.as_str());
+        let file_key = v.get("file_key").and_then(|k| k.as_str());
+        let file_name = v
+            .get("file_name")
+            .and_then(|k| k.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        match message_type {
+            "image" => {
+                if let Some(key) = image_key {
+                    keys.push(FeishuMediaRef {
+                        file_key: key.to_string(),
+                        resource_type: "image".to_string(),
+                        file_name,
+                    });
+                }
             }
+            "file" | "audio" | "sticker" => {
+                if let Some(key) = file_key {
+                    keys.push(FeishuMediaRef {
+                        file_key: key.to_string(),
+                        resource_type: "file".to_string(),
+                        file_name,
+                    });
+                }
+            }
+            "media" | "video" => {
+                if let Some(key) = file_key {
+                    keys.push(FeishuMediaRef {
+                        file_key: key.to_string(),
+                        resource_type: "file".to_string(),
+                        file_name,
+                    });
+                }
+            }
+            _ => {}
         }
     }
+    keys
+}
 
-    result.trim().to_string()
+fn guess_extension(mime: &str) -> &str {
+    match mime {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "video/mp4" => "mp4",
+        "audio/mpeg" => "mp3",
+        "application/pdf" => "pdf",
+        _ => "bin",
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -554,8 +752,8 @@ mod tests {
         assert_eq!(result, "[Image]");
     }
 
-    #[test]
-    fn test_parse_event_text_message() {
+    #[tokio::test]
+    async fn test_parse_event_text_message() {
         let bot = FeishuBot::new(FeishuBotConfig::default());
         let payload = serde_json::json!({
             "schema": "2.0",
@@ -586,7 +784,7 @@ mod tests {
             }
         });
 
-        let msg = bot.parse_event(&payload).unwrap();
+        let msg = bot.parse_event(&payload).await.unwrap();
         assert_eq!(msg.platform, PlatformKind::Feishu);
         assert_eq!(msg.chat_id, "oc_group1");
         assert_eq!(msg.message_id, "om_xyz");
@@ -595,8 +793,8 @@ mod tests {
         assert_eq!(msg.content, "@_user_1 Hello bot");
     }
 
-    #[test]
-    fn test_parse_event_unsupported_type() {
+    #[tokio::test]
+    async fn test_parse_event_unsupported_type() {
         let bot = FeishuBot::new(FeishuBotConfig::default());
         let payload = serde_json::json!({
             "schema": "2.0",
@@ -606,7 +804,7 @@ mod tests {
             "event": {}
         });
 
-        let result = bot.parse_event(&payload);
+        let result = bot.parse_event(&payload).await;
         assert!(matches!(result, Err(BotError::UnsupportedEvent(_))));
     }
 
@@ -695,27 +893,6 @@ mod tests {
         let headers = HashMap::new();
         // Should succeed even without any headers when no encrypt_key is configured.
         assert!(bot.verify_signature(&headers, b"anything").is_ok());
-    }
-
-    #[test]
-    fn test_strip_bot_mention() {
-        let mentions = serde_json::json!([{
-            "key": "@_user_1",
-            "id": { "open_id": "ou_bot" },
-            "name": "TestBot",
-        }]);
-        let result = strip_bot_mention("@_user_1 Hello bot", &mentions, "ou_bot");
-        assert_eq!(result, "Hello bot");
-    }
-
-    #[test]
-    fn test_strip_bot_mention_preserves_other() {
-        let mentions = serde_json::json!([
-            { "key": "@_user_1", "id": { "open_id": "ou_bot" }, "name": "Bot" },
-            { "key": "@_user_2", "id": { "open_id": "ou_human" }, "name": "Alice" },
-        ]);
-        let result = strip_bot_mention("@_user_1 Hello @_user_2", &mentions, "ou_bot");
-        assert_eq!(result, "Hello @_user_2");
     }
 
     #[test]

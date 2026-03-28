@@ -99,7 +99,7 @@ fn parse_verifying_key(hex_key: &str) -> Option<VerifyingKey> {
 
 #[async_trait::async_trait]
 impl BotPlatform for DiscordBot {
-    fn parse_event(&self, payload: &serde_json::Value) -> Result<InboundMessage, BotError> {
+    async fn parse_event(&self, payload: &serde_json::Value) -> Result<InboundMessage, BotError> {
         // Discord Interactions endpoint sends different payload types.
         // We also support gateway-forwarded MESSAGE_CREATE events.
 
@@ -320,6 +320,7 @@ fn parse_gateway_message(payload: &serde_json::Value) -> Result<InboundMessage, 
         content,
         chat_type,
         reply_to_message_id,
+        attachments: vec![],
         timestamp,
         raw: payload.clone(),
     })
@@ -351,8 +352,8 @@ mod tests {
         assert_eq!(bot.platform_kind(), PlatformKind::Discord);
     }
 
-    #[test]
-    fn test_discord_parse_event_message_create() {
+    #[tokio::test]
+    async fn test_discord_parse_event_message_create() {
         let bot = default_bot();
         let payload = serde_json::json!({
             "t": "MESSAGE_CREATE",
@@ -369,7 +370,7 @@ mod tests {
             }
         });
 
-        let msg = bot.parse_event(&payload).unwrap();
+        let msg = bot.parse_event(&payload).await.unwrap();
         assert_eq!(msg.platform, PlatformKind::Discord);
         assert_eq!(msg.chat_id, "ch_123");
         assert_eq!(msg.message_id, "msg_001");
@@ -380,8 +381,8 @@ mod tests {
         assert!(msg.reply_to_message_id.is_none());
     }
 
-    #[test]
-    fn test_discord_parse_event_dm() {
+    #[tokio::test]
+    async fn test_discord_parse_event_dm() {
         let bot = default_bot();
         let payload = serde_json::json!({
             "t": "MESSAGE_CREATE",
@@ -397,13 +398,13 @@ mod tests {
             }
         });
 
-        let msg = bot.parse_event(&payload).unwrap();
+        let msg = bot.parse_event(&payload).await.unwrap();
         assert_eq!(msg.chat_type, ChatType::P2p);
         assert_eq!(msg.chat_id, "dm_ch_999");
     }
 
-    #[test]
-    fn test_discord_parse_event_with_reply() {
+    #[tokio::test]
+    async fn test_discord_parse_event_with_reply() {
         let bot = default_bot();
         let payload = serde_json::json!({
             "t": "MESSAGE_CREATE",
@@ -420,28 +421,28 @@ mod tests {
             }
         });
 
-        let msg = bot.parse_event(&payload).unwrap();
+        let msg = bot.parse_event(&payload).await.unwrap();
         assert_eq!(msg.reply_to_message_id.as_deref(), Some("msg_original"));
     }
 
-    #[test]
-    fn test_discord_parse_event_unsupported() {
+    #[tokio::test]
+    async fn test_discord_parse_event_unsupported() {
         let bot = default_bot();
         let payload = serde_json::json!({
             "t": "GUILD_MEMBER_ADD",
             "d": {}
         });
 
-        let result = bot.parse_event(&payload);
+        let result = bot.parse_event(&payload).await;
         assert!(matches!(result, Err(BotError::UnsupportedEvent(_))));
     }
 
-    #[test]
-    fn test_discord_parse_event_interaction_unsupported() {
+    #[tokio::test]
+    async fn test_discord_parse_event_interaction_unsupported() {
         let bot = default_bot();
         // APPLICATION_COMMAND interaction (type 2)
         let payload = serde_json::json!({ "type": 2, "data": {} });
-        let result = bot.parse_event(&payload);
+        let result = bot.parse_event(&payload).await;
         assert!(
             matches!(result, Err(BotError::UnsupportedEvent(ref s)) if s == "APPLICATION_COMMAND")
         );

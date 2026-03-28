@@ -18,7 +18,7 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use super::discord::DiscordBotConfig;
 use super::{ChatType, InboundMessage, PlatformKind};
@@ -507,6 +507,7 @@ fn handle_message_create(data: &serde_json::Value, tx: &mpsc::UnboundedSender<In
         content,
         chat_type,
         reply_to_message_id,
+        attachments: vec![],
         timestamp,
         raw: data.clone(),
     };

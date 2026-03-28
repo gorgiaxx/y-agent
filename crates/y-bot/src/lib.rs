@@ -83,6 +83,9 @@ pub struct InboundMessage {
     pub reply_to_message_id: Option<String>,
     /// Message timestamp.
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Downloaded media attachments.
+    #[serde(default)]
+    pub attachments: Vec<BotAttachment>,
     /// Raw platform event payload for advanced use.
     pub raw: serde_json::Value,
 }
@@ -99,6 +102,35 @@ pub struct OutboundMessage {
 }
 
 // ---------------------------------------------------------------------------
+// Attachments
+// ---------------------------------------------------------------------------
+
+/// An attachment downloaded from a bot platform.
+#[derive(Clone, serde::Serialize)]
+pub struct BotAttachment {
+    /// File name (e.g. "image.png").
+    pub file_name: String,
+    /// MIME type.
+    pub content_type: String,
+    /// Raw file bytes.
+    #[serde(skip)]
+    pub data: Vec<u8>,
+    /// Optional absolute path if saved to disk.
+    pub path: Option<String>,
+}
+
+impl std::fmt::Debug for BotAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BotAttachment")
+            .field("file_name", &self.file_name)
+            .field("content_type", &self.content_type)
+            .field("data_len", &self.data.len())
+            .field("path", &self.path)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BotPlatform trait
 // ---------------------------------------------------------------------------
 
@@ -112,7 +144,7 @@ pub trait BotPlatform: Send + Sync {
     ///
     /// Returns `Err(BotError::UnsupportedEvent)` for events that do not
     /// represent user messages (e.g. bot-added events, reactions).
-    fn parse_event(&self, payload: &serde_json::Value) -> Result<InboundMessage, BotError>;
+    async fn parse_event(&self, payload: &serde_json::Value) -> Result<InboundMessage, BotError>;
 
     /// Send a reply message to the platform.
     ///

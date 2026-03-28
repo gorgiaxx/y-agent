@@ -42,7 +42,7 @@ impl TelegramBot {
 
 #[async_trait::async_trait]
 impl BotPlatform for TelegramBot {
-    fn parse_event(&self, _payload: &serde_json::Value) -> Result<InboundMessage, BotError> {
+    async fn parse_event(&self, _payload: &serde_json::Value) -> Result<InboundMessage, BotError> {
         Err(BotError::NotImplemented(
             "Telegram bot integration not yet implemented".into(),
         ))
@@ -77,10 +77,10 @@ impl BotPlatform for TelegramBot {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_telegram_stub_parse_event() {
+    #[tokio::test]
+    async fn test_telegram_stub_parse_event() {
         let bot = TelegramBot::new(TelegramBotConfig::default());
-        let result = bot.parse_event(&serde_json::json!({}));
+        let result = bot.parse_event(&serde_json::json!({})).await;
         assert!(matches!(result, Err(BotError::NotImplemented(_))));
     }
 
