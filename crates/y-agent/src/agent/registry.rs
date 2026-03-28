@@ -590,6 +590,41 @@ mod tests {
         assert_eq!(aa.mode, AgentMode::Build);
     }
 
+    /// Template variables in agent TOML are expanded during registration.
+    #[test]
+    fn test_template_expansion_in_builtins() {
+        let registry =
+            AgentRegistry::new_with_config_dir(Some(Path::new("/home/user/.config/y-agent")));
+
+        let aa = registry.get("agent-architect").unwrap();
+        // The system_prompt should contain the expanded path, not the template variable.
+        assert!(
+            !aa.system_prompt.contains("{{YAGENT_CONFIG_PATH}}"),
+            "template variable should be expanded"
+        );
+        assert!(
+            aa.system_prompt
+                .contains("/home/user/.config/y-agent/agents/"),
+            "expanded path should appear in system_prompt"
+        );
+    }
+
+    /// Template expansion with no config_dir falls back to ".".
+    #[test]
+    fn test_template_expansion_fallback() {
+        let registry = AgentRegistry::new();
+
+        let aa = registry.get("agent-architect").unwrap();
+        assert!(
+            !aa.system_prompt.contains("{{YAGENT_CONFIG_PATH}}"),
+            "template variable should be expanded even with fallback"
+        );
+        assert!(
+            aa.system_prompt.contains("./agents/"),
+            "fallback path '.' should produce './agents/' in system_prompt"
+        );
+    }
+
     /// T-MA-R2-03: Registry `search()` filters by name/capabilities.
     #[test]
     fn test_registry_search() {
