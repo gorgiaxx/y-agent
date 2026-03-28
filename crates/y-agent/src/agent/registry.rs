@@ -51,6 +51,8 @@ pub struct AgentRegistry {
     builtin_originals: HashMap<String, AgentDefinition>,
     /// Template variables for TOML expansion (e.g. `{{YAGENT_CONFIG_PATH}}`).
     template_vars: Vec<(String, String)>,
+    /// Path to the user-defined agents directory, retained for hot-reload.
+    agents_dir: Option<std::path::PathBuf>,
 }
 
 impl AgentRegistry {
@@ -61,6 +63,8 @@ impl AgentRegistry {
     pub fn new_with_user_agents(user_agents_dir: Option<&Path>) -> Self {
         let config_dir = user_agents_dir.and_then(|p| p.parent());
         let mut registry = Self::new_with_config_dir(config_dir);
+
+        registry.agents_dir = user_agents_dir.map(std::path::Path::to_path_buf);
 
         if let Some(dir) = user_agents_dir {
             if let Err(errors) = registry.load_user_agents(dir) {
@@ -85,6 +89,7 @@ impl AgentRegistry {
             definitions: HashMap::new(),
             builtin_originals: HashMap::new(),
             template_vars: Vec::new(),
+            agents_dir: None,
         };
 
         let path_str =
@@ -104,6 +109,7 @@ impl AgentRegistry {
             definitions: HashMap::new(),
             builtin_originals: HashMap::new(),
             template_vars: Vec::new(),
+            agents_dir: None,
         }
     }
 
@@ -111,7 +117,9 @@ impl AgentRegistry {
     pub fn expand_templates(&self, content: &str) -> String {
         let mut processed = content.to_string();
         for (key, val) in &self.template_vars {
-            processed = processed.replace(key, val);
+            // Escape backslashes for TOML basic strings (needed for Windows paths like C:\Users)
+            let escaped_val = val.replace('\\', "\\\\");
+            processed = processed.replace(key, &escaped_val);
         }
         processed
     }
@@ -379,6 +387,74 @@ impl AgentRegistry {
         } else {
             Err(errors)
         }
+    }
+
+    /// Hot-reload user-defined agents from the stored agents directory.
+    ///
+    /// Clears all `UserDefined` and `Dynamic` agents, then re-reads all
+    /// `*.toml` files from the directory provided at construction time.
+    /// Built-in agents (and their originals) are preserved.
+    ///
+    /// Returns `(loaded, errored)` counts.
+    pub fn reload_user_agents_from_dir(&mut self) -> (usize, usize) {
+        let Some(ref d) = self.agents_dir else {
+            tracing::warn!("no agents directory configured; skipping agent reload");
+            return (0, 0);
+        };
+        let dir = d.clone();
+
+        // Remove all non-built-in definitions.
+        self.definitions
+            .retain(|_, def| def.trust_tier == TrustTier::BuiltIn);
+
+        // Restore built-in originals (in case any were overridden by user TOML).
+        for (id, original) in &self.builtin_originals {
+            self.definitions
+                .entry(id.clone())
+                .or_insert_with(|| original.clone());
+        }
+
+        // Re-scan the directory.
+        match self.load_user_agents(&dir) {
+            Ok(()) => {
+                let user_count = self
+                    .definitions
+                    .values()
+                    .filter(|d| d.trust_tier == TrustTier::UserDefined)
+                    .count();
+                (user_count, 0)
+            }
+            Err(errors) => {
+                let err_count = errors.len();
+                for (file, err) in &errors {
+                    tracing::warn!("failed to load user agent from {file}: {err}");
+                }
+                let user_count = self
+                    .definitions
+                    .values()
+                    .filter(|d| d.trust_tier == TrustTier::UserDefined)
+                    .count();
+                (user_count, err_count)
+            }
+        }
+    }
+
+    /// Parse and register a single agent from raw TOML content.
+    ///
+    /// The agent is always registered as `UserDefined` tier regardless of
+    /// what the TOML specifies. Uses `register_or_override` so that
+    /// re-registration of the same ID replaces the previous definition.
+    ///
+    /// Returns the registered agent's ID on success.
+    pub fn register_agent_from_toml(&mut self, toml_content: &str) -> Result<String, String> {
+        let expanded = self.expand_templates(toml_content);
+        let mut def = AgentDefinition::from_toml(&expanded)
+            .map_err(|e| format!("failed to parse agent TOML: {e}"))?;
+        def.trust_tier = TrustTier::UserDefined;
+        let id = def.id.clone();
+        self.register_or_override(def)
+            .map_err(|e| format!("failed to register agent: {e}"))?;
+        Ok(id)
     }
 
     /// Check if a built-in agent has been overridden by a user-defined agent.
@@ -1090,5 +1166,125 @@ system_prompt = "Store in {{YAGENT_CONFIG_PATH}}/data"
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Hot-reload picks up newly added agent TOML files.
+    #[test]
+    fn test_reload_user_agents_from_dir() {
+        let tmp = std::env::temp_dir().join("y-agent-test-reload");
+        let agents_dir = tmp.join("agents");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        // Start with one user agent.
+        std::fs::write(
+            agents_dir.join("first.toml"),
+            r#"
+id = "first-agent"
+name = "First Agent"
+description = "The first agent"
+mode = "general"
+trust_tier = "user_defined"
+system_prompt = "first"
+"#,
+        )
+        .unwrap();
+
+        let mut registry = AgentRegistry::new_with_user_agents(Some(&agents_dir));
+        assert!(registry.get("first-agent").is_some());
+        assert!(registry.get("second-agent").is_none());
+
+        // Simulate agent-architect creating a new file at runtime.
+        std::fs::write(
+            agents_dir.join("second.toml"),
+            r#"
+id = "second-agent"
+name = "Second Agent"
+description = "Dynamically created"
+mode = "build"
+trust_tier = "user_defined"
+system_prompt = "second"
+"#,
+        )
+        .unwrap();
+
+        // Before reload, the new agent is not visible.
+        assert!(registry.get("second-agent").is_none());
+
+        // After reload, both agents are present.
+        let (loaded, errored) = registry.reload_user_agents_from_dir();
+        assert_eq!(errored, 0);
+        assert!(loaded >= 2);
+        assert!(registry.get("first-agent").is_some());
+        assert!(registry.get("second-agent").is_some());
+
+        // Built-in agents are still present.
+        assert!(registry.get("tool-engineer").is_some());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Single-agent registration from raw TOML content.
+    #[test]
+    fn test_register_agent_from_toml() {
+        let mut registry = AgentRegistry::new();
+
+        let toml = r#"
+id = "runtime-agent"
+name = "Runtime Agent"
+description = "Registered at runtime"
+mode = "explore"
+trust_tier = "built_in"
+system_prompt = "hello"
+"#;
+
+        let id = registry.register_agent_from_toml(toml).unwrap();
+        assert_eq!(id, "runtime-agent");
+
+        let def = registry.get("runtime-agent").unwrap();
+        assert_eq!(def.name, "Runtime Agent");
+        // Trust tier is forced to UserDefined regardless of TOML content.
+        assert_eq!(def.trust_tier, TrustTier::UserDefined);
+        assert_eq!(def.mode, AgentMode::Explore);
+    }
+
+    /// Re-registering the same agent ID via register_agent_from_toml
+    /// replaces the previous definition.
+    #[test]
+    fn test_register_agent_from_toml_override() {
+        let mut registry = AgentRegistry::new();
+
+        let v1 = r#"
+id = "evolving-agent"
+name = "Evolving Agent v1"
+description = "Version 1"
+mode = "general"
+trust_tier = "user_defined"
+system_prompt = "v1"
+"#;
+        registry.register_agent_from_toml(v1).unwrap();
+        assert_eq!(
+            registry.get("evolving-agent").unwrap().description,
+            "Version 1"
+        );
+
+        let v2 = r#"
+id = "evolving-agent"
+name = "Evolving Agent v2"
+description = "Version 2"
+mode = "build"
+trust_tier = "user_defined"
+system_prompt = "v2"
+"#;
+        registry.register_agent_from_toml(v2).unwrap();
+        assert_eq!(
+            registry.get("evolving-agent").unwrap().description,
+            "Version 2"
+        );
+        assert_eq!(
+            registry.get("evolving-agent").unwrap().mode,
+            AgentMode::Build
+        );
     }
 }

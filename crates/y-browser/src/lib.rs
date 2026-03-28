@@ -8,6 +8,7 @@
 //! # Architecture
 //!
 //! - [`CdpClient`] — WebSocket JSON-RPC client for CDP
+//! - [`BrowserSession`] — connection lifecycle manager (caching, dedup, exit watcher)
 //! - `BrowserActions` -- high-level operations (navigate, screenshot, click, etc.)
 //! - [`BrowserTool`] — implements `y-core::tool::Tool` for agent integration
 //! - [`SecurityPolicy`] — domain allowlist + SSRF protection
@@ -18,11 +19,14 @@ pub mod cdp_client;
 pub mod config;
 pub mod launcher;
 pub mod security;
+pub mod session;
 pub mod snapshot;
+pub mod timeouts;
 pub mod tool;
 
 pub use cdp_client::CdpClient;
 pub use config::BrowserConfig;
 pub use launcher::ChromeLauncher;
 pub use security::SecurityPolicy;
+pub use session::BrowserSession;
 pub use tool::BrowserTool;

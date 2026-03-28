@@ -2,15 +2,15 @@
 //!
 //! Exposes browser automation as a single unified tool for the agent.
 //! Key workflow: snapshot -> get refs -> click/type with refs.
+//!
+//! This module is a thin dispatch layer; all connection lifecycle is
+//! managed by [`crate::session::BrowserSession`].
 
 use std::sync::Arc;
-use std::sync::RwLock;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use y_core::runtime::RuntimeCapability;
 use y_core::tool::{
@@ -18,11 +18,8 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
-use crate::actions::BrowserActions;
-use crate::cdp_client::CdpClient;
 use crate::config::BrowserConfig;
-use crate::launcher::ChromeLauncher;
-use crate::security::SecurityPolicy;
+use crate::session::BrowserSession;
 use crate::snapshot::{truncate_output, SnapshotFormat};
 
 /// Maximum output characters before truncation.
@@ -104,72 +101,45 @@ impl BrowserAction {
 
     /// All valid action names, for error messages.
     fn all_names() -> &'static str {
-        "navigate, search, screenshot, snapshot, click, type, get_text, get_title, get_url, evaluate, wait, press_key, scroll, get_page_text, get_console_logs, close"
+        "navigate, search, screenshot, snapshot, click, type, get_text, get_title, \
+         get_url, evaluate, wait, press_key, scroll, get_page_text, \
+         get_console_logs, close"
     }
 }
 
 /// Browser tool for agent integration.
+///
+/// Thin dispatch wrapper around [`BrowserSession`].
 pub struct BrowserTool {
     def: ToolDefinition,
-    config: RwLock<BrowserConfig>,
-    client: Arc<CdpClient>,
-    actions: BrowserActions,
-    security: RwLock<SecurityPolicy>,
-    /// Locally launched Chrome process (if `auto_launch` is enabled).
-    launcher: Mutex<Option<ChromeLauncher>>,
-    /// Whether console monitoring has been started.
-    console_started: Mutex<bool>,
+    session: Arc<BrowserSession>,
 }
 
 impl BrowserTool {
     /// Create a new browser tool with the given configuration.
     pub fn new(config: BrowserConfig) -> Self {
-        // When auto_launch is true, the CDP URL is determined at launch time.
-        // Use the local port for the client; the launcher will spawn Chrome there.
-        let cdp_url = if config.launch_mode.is_auto_launch() {
-            format!("http://127.0.0.1:{}", config.local_cdp_port)
-        } else {
-            config.cdp_url.clone()
-        };
-
-        let client = Arc::new(CdpClient::new(
-            cdp_url,
-            Duration::from_millis(config.timeout_ms),
-        ));
-        let actions = BrowserActions::new(Arc::clone(&client));
-        let security = SecurityPolicy::new(
-            config.allowed_domains.clone(),
-            config.block_private_networks,
-        );
-
         Self {
             def: Self::tool_definition(),
-            config: RwLock::new(config),
-            client,
-            actions,
-            security: RwLock::new(security),
-            launcher: Mutex::new(None),
-            console_started: Mutex::new(false),
+            session: Arc::new(BrowserSession::new(config)),
         }
     }
 
+    /// Create a browser tool from an existing session (for sharing).
+    pub fn from_session(session: Arc<BrowserSession>) -> Self {
+        Self {
+            def: Self::tool_definition(),
+            session,
+        }
+    }
+
+    /// Get a reference to the underlying session.
+    pub fn session(&self) -> &Arc<BrowserSession> {
+        &self.session
+    }
+
     /// Hot-reload the browser configuration.
-    ///
-    /// Updates the stored config and rebuilds the security policy.
-    /// Does NOT affect an already-running Chrome session; changes
-    /// take effect on the next connection.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal locks are poisoned.
     pub fn reload_config(&self, new_config: BrowserConfig) {
-        let new_security = SecurityPolicy::new(
-            new_config.allowed_domains.clone(),
-            new_config.block_private_networks,
-        );
-        *self.security.write().unwrap() = new_security;
-        *self.config.write().unwrap() = new_config;
-        tracing::info!("Browser config hot-reloaded");
+        self.session.reload_config(new_config);
     }
 
     /// Get the tool definition.
@@ -238,7 +208,7 @@ impl BrowserTool {
                     },
                     "selector": {
                         "type": "string",
-                        "description": "Element ref from snapshot (e.g. '@e1') or CSS selector (for click/type/get_text)"
+                        "description": "Element ref from snapshot (e.g. '@e1') or CSS selector"
                     },
                     "text": {
                         "type": "string",
@@ -255,11 +225,11 @@ impl BrowserTool {
                     "format": {
                         "type": "string",
                         "enum": ["aria", "dom"],
-                        "description": "Snapshot format: 'aria' (accessibility, default) or 'dom' (HTML tree)"
+                        "description": "Snapshot format: 'aria' or 'dom'"
                     },
                     "interactive_only": {
                         "type": "boolean",
-                        "description": "Snapshot only interactive elements like buttons, links, inputs (default: true, much fewer tokens)"
+                        "description": "Snapshot only interactive elements (default: true)"
                     },
                     "key": {
                         "type": "string",
@@ -285,167 +255,42 @@ impl BrowserTool {
             category: ToolCategory::Network,
             tool_type: ToolType::BuiltIn,
             capabilities: RuntimeCapability::default(),
-            is_dangerous: true, // Browser automation can navigate to arbitrary URLs
+            is_dangerous: true,
         }
-    }
-
-    /// Ensure CDP connection is established, connecting if needed.
-    /// If `auto_launch` is enabled and no local Chrome is running, spawns one.
-    ///
-    /// Also detects stale connections (browser crashed / closed) and
-    /// automatically reconnects.
-    async fn ensure_connected(&self) -> Result<(), ToolError> {
-        // Quick check: if the existing connection is still alive, nothing to do.
-        if self.client.is_connected().await {
-            // For auto-launched Chrome, verify the process is still running.
-            let launcher_dead = {
-                let mut guard = self.launcher.lock().await;
-                if let Some(ref mut chrome) = *guard {
-                    // try_wait returns Some(status) if the process has exited.
-                    chrome.child_exited()
-                } else {
-                    false
-                }
-            };
-
-            if launcher_dead {
-                warn!("auto-launched Chrome process has exited, resetting connection");
-                self.reset_connection().await;
-            } else {
-                return Ok(());
-            }
-        } else if self.launcher.lock().await.is_some() {
-            // Connection is dead but launcher exists -- Chrome likely crashed.
-            warn!("CDP connection lost while launcher exists, resetting");
-            self.reset_connection().await;
-        }
-
-        let config = self.config.read().unwrap().clone();
-
-        // Auto-launch Chrome if configured.
-        if config.launch_mode.is_auto_launch() {
-            let mut launcher_guard = self.launcher.lock().await;
-            if launcher_guard.is_none() {
-                debug!("auto-launching Chrome");
-                let chrome = ChromeLauncher::launch(
-                    &config.chrome_path,
-                    config.local_cdp_port,
-                    config.launch_mode.is_headless(),
-                    config.use_user_profile,
-                )
-                .await
-                .map_err(|e| ToolError::ExternalServiceError {
-                    name: "browser".into(),
-                    message: format!("Failed to launch Chrome: {e}"),
-                })?;
-                *launcher_guard = Some(chrome);
-            }
-
-            // Use the launcher's actual port (may differ from config if
-            // the configured port was already in use).
-            let actual_port = launcher_guard.as_ref().unwrap().cdp_port();
-            let cdp_url = format!("http://127.0.0.1:{actual_port}");
-
-            debug!(cdp_url = %cdp_url, "connecting to CDP (auto-launched)");
-            self.client.set_cdp_url(cdp_url.clone());
-            self.client.connect().await.map_err(|e| {
-                ToolError::ExternalServiceError {
-                    name: "browser".into(),
-                    message: format!(
-                        "Failed to connect to Chrome CDP at '{cdp_url}': {e}. Chrome was auto-launched but CDP connection failed.",
-                    ),
-                }
-            })?;
-        } else {
-            let cdp_url = &config.cdp_url;
-            debug!(cdp_url = %cdp_url, "connecting to CDP");
-            self.client.connect().await.map_err(|e| {
-                ToolError::ExternalServiceError {
-                    name: "browser".into(),
-                    message: format!(
-                        "Failed to connect to Chrome CDP at '{cdp_url}': {e}. Make sure Chrome is running with --remote-debugging-port=9222",
-                    ),
-                }
-            })?;
-        }
-
-        // Start console monitoring on first connection.
-        let mut started = self.console_started.lock().await;
-        if !*started {
-            self.actions.enable_console_monitoring().await;
-            *started = true;
-        }
-
-        Ok(())
-    }
-
-    /// Shutdown the launcher and disconnect.
-    async fn shutdown(&self) {
-        self.client.disconnect().await;
-        let mut launcher_guard = self.launcher.lock().await;
-        if let Some(mut chrome) = launcher_guard.take() {
-            chrome.shutdown().await;
-        }
-        *self.console_started.lock().await = false;
-    }
-
-    /// Reset a stale connection: disconnect, tear down the launcher
-    /// (if any), and clear console monitoring state.
-    ///
-    /// After this call, the next `ensure_connected` will establish a
-    /// completely fresh connection.
-    async fn reset_connection(&self) {
-        debug!("resetting browser connection (stale/dead)");
-        self.client.disconnect().await;
-        let mut launcher_guard = self.launcher.lock().await;
-        if let Some(mut chrome) = launcher_guard.take() {
-            chrome.shutdown().await;
-        }
-        *self.console_started.lock().await = false;
     }
 
     /// Fetch the text content of a web page.
     ///
-    /// Connects to Chrome (auto-launching if configured), navigates to the
-    /// given URL, optionally waits for dynamic content, then extracts the
-    /// visible text of the page.
-    ///
-    /// This is the public API used by `WebFetchTool` to wrap the browser's
+    /// Public API used by `WebFetchTool` to wrap the browser's
     /// navigate + `get_page_text` workflow into a single call.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal `config` or `security` locks are poisoned.
     pub async fn fetch_page_text(
         &self,
         url: &str,
         wait_ms: Option<u64>,
     ) -> Result<String, ToolError> {
-        if !self.config.read().unwrap().enabled {
+        if !self.session.config().enabled {
             return Err(ToolError::PermissionDenied {
                 name: "web_fetch".into(),
                 reason: "browser tool is disabled in configuration".into(),
             });
         }
 
-        // Security check.
-        self.security
-            .read()
-            .unwrap()
+        self.session
+            .security()
             .validate_url(url)
             .map_err(|e| ToolError::PermissionDenied {
                 name: "web_fetch".into(),
                 reason: e.to_string(),
             })?;
 
-        self.ensure_connected().await?;
+        self.session.ensure_connected().await?;
 
-        self.actions
+        self.session
+            .actions()
             .navigate(url)
             .await
             .map_err(cdp_to_tool_error)?;
 
-        // Wait for dynamic content to load.
         if let Some(ms) = wait_ms {
             let ms = ms.min(10_000);
             if ms > 0 {
@@ -454,7 +299,8 @@ impl BrowserTool {
         }
 
         let text = self
-            .actions
+            .session
+            .actions()
             .get_page_text()
             .await
             .map_err(cdp_to_tool_error)?;
@@ -463,22 +309,13 @@ impl BrowserTool {
     }
 
     /// Search via a search engine and return the results page text.
-    ///
-    /// Connects to Chrome, builds a search URL, navigates to it, optionally
-    /// waits for JS rendering, then extracts the visible text.
-    ///
-    /// This is the public API used by `WebFetchTool` for its search action.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal `config` or `security` locks are poisoned.
     pub async fn search_page_text(
         &self,
         query: &str,
         search_engine: Option<&str>,
         wait_ms: Option<u64>,
     ) -> Result<String, ToolError> {
-        if !self.config.read().unwrap().enabled {
+        if !self.session.config().enabled {
             return Err(ToolError::PermissionDenied {
                 name: "web_fetch".into(),
                 reason: "browser tool is disabled in configuration".into(),
@@ -486,30 +323,28 @@ impl BrowserTool {
         }
 
         let engine = search_engine.map_or_else(
-            || self.config.read().unwrap().default_search_engine.clone(),
+            || self.session.config().default_search_engine.clone(),
             String::from,
         );
 
         let search_url = build_search_url(&engine, query)?;
 
-        // Security check.
-        self.security
-            .read()
-            .unwrap()
+        self.session
+            .security()
             .validate_url(&search_url)
             .map_err(|e| ToolError::PermissionDenied {
                 name: "web_fetch".into(),
                 reason: e.to_string(),
             })?;
 
-        self.ensure_connected().await?;
+        self.session.ensure_connected().await?;
 
-        self.actions
+        self.session
+            .actions()
             .navigate(&search_url)
             .await
             .map_err(cdp_to_tool_error)?;
 
-        // Wait for search results to render.
         if let Some(ms) = wait_ms {
             let ms = ms.min(10_000);
             if ms > 0 {
@@ -518,7 +353,8 @@ impl BrowserTool {
         }
 
         let text = self
-            .actions
+            .session
+            .actions()
             .get_page_text()
             .await
             .map_err(cdp_to_tool_error)?;
@@ -526,7 +362,7 @@ impl BrowserTool {
         Ok(truncate_output(&text, MAX_OUTPUT_CHARS))
     }
 
-    /// Handle the `search` action: build a search engine URL and navigate.
+    /// Handle the `search` action.
     async fn dispatch_search(&self, input: &ToolInput) -> Result<serde_json::Value, ToolError> {
         let query =
             require_str(&input.arguments, "query").map_err(|_| ToolError::ValidationError {
@@ -536,16 +372,14 @@ impl BrowserTool {
             })?;
 
         let engine = input.arguments["search_engine"].as_str().map_or_else(
-            || self.config.read().unwrap().default_search_engine.clone(),
+            || self.session.config().default_search_engine.clone(),
             String::from,
         );
 
         let search_url = build_search_url(&engine, query)?;
 
-        // Security check on the generated URL.
-        self.security
-            .read()
-            .unwrap()
+        self.session
+            .security()
             .validate_url(&search_url)
             .map_err(|e| ToolError::PermissionDenied {
                 name: "browser".into(),
@@ -553,7 +387,8 @@ impl BrowserTool {
             })?;
 
         let nav = self
-            .actions
+            .session
+            .actions()
             .navigate(&search_url)
             .await
             .map_err(cdp_to_tool_error)?;
@@ -572,29 +407,27 @@ impl BrowserTool {
         action: BrowserAction,
         input: &ToolInput,
     ) -> Result<serde_json::Value, ToolError> {
+        let actions = self.session.actions();
+
         match action {
             BrowserAction::Navigate => {
-                let url = input.arguments["url"]
-                    .as_str()
-                    .ok_or_else(|| ToolError::ValidationError {
-                        message: "Missing 'url' parameter for navigate. Example: {\"action\": \"navigate\", \"url\": \"https://example.com\"}".into(),
-                    })?;
+                let url =
+                    input.arguments["url"]
+                        .as_str()
+                        .ok_or_else(|| ToolError::ValidationError {
+                            message: "Missing 'url' parameter for navigate. Example: \
+                            {\"action\": \"navigate\", \"url\": \"https://example.com\"}"
+                                .into(),
+                        })?;
 
-                // Security check.
-                self.security
-                    .read()
-                    .unwrap()
-                    .validate_url(url)
-                    .map_err(|e| ToolError::PermissionDenied {
+                self.session.security().validate_url(url).map_err(|e| {
+                    ToolError::PermissionDenied {
                         name: "browser".into(),
                         reason: e.to_string(),
-                    })?;
+                    }
+                })?;
 
-                let nav = self
-                    .actions
-                    .navigate(url)
-                    .await
-                    .map_err(cdp_to_tool_error)?;
+                let nav = actions.navigate(url).await.map_err(cdp_to_tool_error)?;
                 Ok(serde_json::to_value(nav).unwrap_or_default())
             }
 
@@ -607,8 +440,7 @@ impl BrowserTool {
                     .as_u64()
                     .map(|q| u32::try_from(q).unwrap_or(100));
 
-                let shot = self
-                    .actions
+                let shot = actions
                     .screenshot(full_page, format, quality)
                     .await
                     .map_err(cdp_to_tool_error)?;
@@ -627,8 +459,7 @@ impl BrowserTool {
                     .unwrap_or(true);
 
                 let mut snap = match format {
-                    SnapshotFormat::Aria => self
-                        .actions
+                    SnapshotFormat::Aria => actions
                         .snapshot_aria(limit, interactive_only)
                         .await
                         .map_err(cdp_to_tool_error)?,
@@ -637,40 +468,45 @@ impl BrowserTool {
                             input.arguments["max_text_chars"].as_u64().unwrap_or(220),
                         )
                         .unwrap_or(220);
-                        self.actions
+                        actions
                             .snapshot_dom(limit, max_text)
                             .await
                             .map_err(cdp_to_tool_error)?
                     }
                 };
 
-                // Truncate large snapshot text.
                 snap.text = truncate_output(&snap.text, MAX_OUTPUT_CHARS);
                 Ok(serde_json::to_value(snap).unwrap_or_default())
             }
 
             BrowserAction::Click => {
-                let selector = require_str(&input.arguments, "selector")
-                    .map_err(|_| ToolError::ValidationError {
-                        message: "Missing 'selector' for click. Use an @ref from snapshot (e.g. '@e1') or a CSS selector (e.g. '#submit-btn').".into(),
-                    })?;
-                self.actions
-                    .click(selector)
-                    .await
-                    .map_err(cdp_to_tool_error)?;
+                let selector = require_str(&input.arguments, "selector").map_err(|_| {
+                    ToolError::ValidationError {
+                        message: "Missing 'selector' for click. Use an @ref from snapshot \
+                        (e.g. '@e1') or a CSS selector (e.g. '#submit-btn')."
+                            .into(),
+                    }
+                })?;
+                actions.click(selector).await.map_err(cdp_to_tool_error)?;
                 Ok(serde_json::json!({"action": "click", "selector": selector, "ok": true}))
             }
 
             BrowserAction::Type => {
-                let selector = require_str(&input.arguments, "selector")
-                    .map_err(|_| ToolError::ValidationError {
-                        message: "Missing 'selector' for type. Use an @ref from snapshot (e.g. '@e3') or a CSS selector.".into(),
-                    })?;
-                let text = require_str(&input.arguments, "text")
-                    .map_err(|_| ToolError::ValidationError {
-                        message: "Missing 'text' for type. Example: {\"action\": \"type\", \"selector\": \"@e3\", \"text\": \"hello\"}".into(),
-                    })?;
-                self.actions
+                let selector = require_str(&input.arguments, "selector").map_err(|_| {
+                    ToolError::ValidationError {
+                        message: "Missing 'selector' for type. Use an @ref from snapshot \
+                        (e.g. '@e3') or a CSS selector."
+                            .into(),
+                    }
+                })?;
+                let text = require_str(&input.arguments, "text").map_err(|_| {
+                    ToolError::ValidationError {
+                        message: "Missing 'text' for type. Example: \
+                        {\"action\": \"type\", \"selector\": \"@e3\", \"text\": \"hello\"}"
+                            .into(),
+                    }
+                })?;
+                actions
                     .type_text(selector, text)
                     .await
                     .map_err(cdp_to_tool_error)?;
@@ -678,12 +514,14 @@ impl BrowserTool {
             }
 
             BrowserAction::GetText => {
-                let selector = require_str(&input.arguments, "selector")
-                    .map_err(|_| ToolError::ValidationError {
-                        message: "Missing 'selector' for get_text. Use an @ref (e.g. '@e5') or CSS selector.".into(),
-                    })?;
-                let text = self
-                    .actions
+                let selector = require_str(&input.arguments, "selector").map_err(|_| {
+                    ToolError::ValidationError {
+                        message: "Missing 'selector' for get_text. Use an @ref \
+                        (e.g. '@e5') or CSS selector."
+                            .into(),
+                    }
+                })?;
+                let text = actions
                     .get_text(selector)
                     .await
                     .map_err(cdp_to_tool_error)?;
@@ -692,22 +530,24 @@ impl BrowserTool {
             }
 
             BrowserAction::GetTitle => {
-                let title = self.actions.get_title().await.map_err(cdp_to_tool_error)?;
+                let title = actions.get_title().await.map_err(cdp_to_tool_error)?;
                 Ok(serde_json::json!({"title": title}))
             }
 
             BrowserAction::GetUrl => {
-                let url = self.actions.get_url().await.map_err(cdp_to_tool_error)?;
+                let url = actions.get_url().await.map_err(cdp_to_tool_error)?;
                 Ok(serde_json::json!({"url": url}))
             }
 
             BrowserAction::Evaluate => {
-                let expression = require_str(&input.arguments, "expression")
-                    .map_err(|_| ToolError::ValidationError {
-                        message: "Missing 'expression' for evaluate. Example: {\"action\": \"evaluate\", \"expression\": \"document.title\"}".into(),
-                    })?;
-                let eval = self
-                    .actions
+                let expression = require_str(&input.arguments, "expression").map_err(|_| {
+                    ToolError::ValidationError {
+                        message: "Missing 'expression' for evaluate. Example: \
+                        {\"action\": \"evaluate\", \"expression\": \"document.title\"}"
+                            .into(),
+                    }
+                })?;
+                let eval = actions
                     .evaluate(expression)
                     .await
                     .map_err(cdp_to_tool_error)?;
@@ -717,7 +557,7 @@ impl BrowserTool {
             BrowserAction::Wait => {
                 let selector = input.arguments["selector"].as_str();
                 let ms = input.arguments["ms"].as_u64();
-                self.actions
+                actions
                     .wait(selector, ms)
                     .await
                     .map_err(cdp_to_tool_error)?;
@@ -725,14 +565,14 @@ impl BrowserTool {
             }
 
             BrowserAction::PressKey => {
-                let key = require_str(&input.arguments, "key")
-                    .map_err(|_| ToolError::ValidationError {
-                        message: "Missing 'key' for press_key. Example: {\"action\": \"press_key\", \"key\": \"Enter\"}".into(),
-                    })?;
-                self.actions
-                    .press_key(key)
-                    .await
-                    .map_err(cdp_to_tool_error)?;
+                let key = require_str(&input.arguments, "key").map_err(|_| {
+                    ToolError::ValidationError {
+                        message: "Missing 'key' for press_key. Example: \
+                        {\"action\": \"press_key\", \"key\": \"Enter\"}"
+                            .into(),
+                    }
+                })?;
+                actions.press_key(key).await.map_err(cdp_to_tool_error)?;
                 Ok(serde_json::json!({"action": "press_key", "key": key, "ok": true}))
             }
 
@@ -740,27 +580,26 @@ impl BrowserTool {
                 let direction = input.arguments["direction"].as_str().unwrap_or("down");
                 let pixels =
                     u32::try_from(input.arguments["pixels"].as_u64().unwrap_or(300)).unwrap_or(300);
-                self.actions
+                actions
                     .scroll(direction, pixels)
                     .await
                     .map_err(cdp_to_tool_error)?;
-                Ok(
-                    serde_json::json!({"action": "scroll", "direction": direction, "pixels": pixels, "ok": true}),
-                )
+                Ok(serde_json::json!({
+                    "action": "scroll",
+                    "direction": direction,
+                    "pixels": pixels,
+                    "ok": true
+                }))
             }
 
             BrowserAction::GetPageText => {
-                let text = self
-                    .actions
-                    .get_page_text()
-                    .await
-                    .map_err(cdp_to_tool_error)?;
+                let text = actions.get_page_text().await.map_err(cdp_to_tool_error)?;
                 let text = truncate_output(&text, MAX_OUTPUT_CHARS);
                 Ok(serde_json::json!({"text": text}))
             }
 
             BrowserAction::GetConsoleLogs => {
-                let logs = self.actions.take_console_logs().await;
+                let logs = actions.take_console_logs().await;
                 Ok(serde_json::json!({
                     "logs": logs,
                     "count": logs.len(),
@@ -773,30 +612,15 @@ impl BrowserTool {
 
     /// Collect console errors/warnings for inclusion in tool output.
     async fn collect_console_warnings(&self) -> Vec<String> {
-        self.actions
+        self.session
+            .actions()
             .peek_console_logs()
             .await
             .iter()
             .filter(|l| l.level == "error" || l.level == "warning")
-            .take(5) // limit to avoid flooding
+            .take(5)
             .map(|l| format!("[console.{}] {}", l.level, l.text))
             .collect()
-    }
-
-    /// Check whether the error indicates a broken connection that can be
-    /// recovered by reconnecting to the browser.
-    fn is_connection_error(err: &ToolError) -> bool {
-        match err {
-            ToolError::ExternalServiceError { message, .. } => {
-                let m = message.to_lowercase();
-                m.contains("websocket")
-                    || m.contains("closed connection")
-                    || m.contains("connection lost")
-                    || m.contains("not connected")
-                    || m.contains("cdp connection")
-            }
-            _ => false,
-        }
     }
 }
 
@@ -829,7 +653,7 @@ impl Default for BrowserTool {
 #[async_trait]
 impl Tool for BrowserTool {
     async fn execute(&self, input: ToolInput) -> Result<ToolOutput, ToolError> {
-        if !self.config.read().unwrap().enabled {
+        if !self.session.config().enabled {
             return Err(ToolError::PermissionDenied {
                 name: "browser".into(),
                 reason: "browser tool is disabled in configuration".into(),
@@ -857,7 +681,7 @@ impl Tool for BrowserTool {
 
         // Close doesn't need connection.
         if matches!(action, BrowserAction::Close) {
-            self.shutdown().await;
+            self.session.shutdown().await;
             return Ok(ToolOutput {
                 success: true,
                 content: serde_json::json!({"action": "close", "status": "disconnected"}),
@@ -866,22 +690,20 @@ impl Tool for BrowserTool {
             });
         }
 
-        self.ensure_connected().await?;
+        self.session.ensure_connected().await?;
 
         // Dispatch the action, with one automatic retry on connection errors.
-        // If the browser crashed mid-operation, we reconnect and try once more.
         let result = match self.dispatch_action(action.clone(), &input).await {
             Ok(v) => v,
-            Err(ref e) if Self::is_connection_error(e) => {
+            Err(ref e) if BrowserSession::is_connection_error(e) => {
                 warn!("browser action failed with connection error, attempting reconnect");
-                self.reset_connection().await;
-                self.ensure_connected().await?;
+                self.session.reset().await;
+                self.session.ensure_connected().await?;
                 self.dispatch_action(action, &input).await?
             }
             Err(e) => return Err(e),
         };
 
-        // Attach any console errors/warnings that occurred during the action.
         let console_warnings = self.collect_console_warnings().await;
 
         Ok(ToolOutput {

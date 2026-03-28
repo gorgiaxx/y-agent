@@ -15,6 +15,8 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, trace, warn};
 
+use crate::timeouts;
+
 /// Error type for CDP operations.
 #[derive(Debug, thiserror::Error)]
 pub enum CdpError {
@@ -575,6 +577,106 @@ impl CdpClient {
             let _ = sender.send(Err(CdpError::NotConnected));
         }
     }
+
+    /// Full health check: HTTP `/json/version` + WebSocket `Browser.getVersion`.
+    ///
+    /// This mirrors `OpenClaw`'s `isChromeCdpReady()` two-step probe:
+    /// 1. HTTP `/json/version` to verify Chrome is responsive.
+    /// 2. Open a temporary WebSocket to the browser endpoint and send
+    ///    `Browser.getVersion` to verify the CDP pipe is functional.
+    ///
+    /// Returns `true` only if both steps succeed within their timeouts.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `cdp_url` lock is poisoned.
+    pub async fn health_check(&self) -> bool {
+        let cdp_url_owned = self.cdp_url.read().unwrap().clone();
+        let url = cdp_url_owned.trim();
+
+        // For direct WS URLs, try a WS-only probe.
+        if url.starts_with("ws://") || url.starts_with("wss://") {
+            return ws_health_probe(url, timeouts::HEALTH_WS_TIMEOUT).await;
+        }
+
+        health_check_http(url).await
+    }
+}
+
+/// Standalone HTTP+WS health probe for a CDP endpoint.
+///
+/// Useful before establishing a persistent connection (e.g. during
+/// `ensure_connected()`) to verify that Chrome is actually alive.
+pub async fn health_check_http(base_url: &str) -> bool {
+    let base = base_url.trim().trim_end_matches('/');
+    let version_url = format!("{base}/json/version");
+
+    // Step 1: HTTP /json/version
+    let version_resp =
+        match timeout(timeouts::HEALTH_HTTP_TIMEOUT, reqwest::get(&version_url)).await {
+            Ok(Ok(resp)) if resp.status().is_success() => match resp.json::<VersionInfo>().await {
+                Ok(info) => info,
+                Err(_) => return false,
+            },
+            _ => return false,
+        };
+
+    // Step 2: Extract browser WS URL and run a WS health command.
+    let ws_url = match version_resp
+        .web_socket_debugger_url
+        .filter(|s| !s.is_empty())
+    {
+        Some(url) => normalize_ws_url(&url, base),
+        None => return true, // HTTP responded but no WS URL -- partial health
+    };
+
+    ws_health_probe(&ws_url, timeouts::HEALTH_WS_TIMEOUT).await
+}
+
+/// Open a temporary WebSocket and send `Browser.getVersion` as a health
+/// probe, mirroring `OpenClaw`'s `canRunCdpHealthCommand()`.
+async fn ws_health_probe(ws_url: &str, ws_timeout: Duration) -> bool {
+    let Ok(Ok((connect_result, _))) =
+        timeout(ws_timeout, tokio_tungstenite::connect_async(ws_url)).await
+    else {
+        return false;
+    };
+
+    let (mut writer, mut reader) = connect_result.split();
+
+    let cmd = serde_json::json!({
+        "id": 1,
+        "method": "Browser.getVersion"
+    });
+
+    if writer
+        .send(Message::Text(cmd.to_string().into()))
+        .await
+        .is_err()
+    {
+        return false;
+    }
+
+    // Wait for response with id=1.
+    let result = timeout(ws_timeout, async {
+        while let Some(msg) = reader.next().await {
+            let text = match msg {
+                Ok(Message::Text(t)) => t.to_string(),
+                Ok(Message::Close(_)) | Err(_) => break,
+                _ => continue,
+            };
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                if parsed.get("id") == Some(&serde_json::json!(1)) {
+                    return parsed.get("result").is_some();
+                }
+            }
+        }
+        false
+    })
+    .await;
+
+    let _ = writer.close().await;
+    result.unwrap_or(false)
 }
 
 impl Drop for CdpClient {
