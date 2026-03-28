@@ -9,7 +9,10 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::process::{Child, Command};
+use tokio::sync::watch;
 use tracing::{debug, info, warn};
+
+use crate::timeouts;
 
 /// Error type for Chrome launcher operations.
 #[derive(Debug, thiserror::Error)]
@@ -128,9 +131,9 @@ impl ChromeLauncher {
         };
 
         // Wait for CDP to become ready.
-        launcher.wait_ready(Duration::from_secs(15)).await?;
+        launcher.wait_ready(timeouts::LAUNCH_READY_WINDOW).await?;
 
-        info!(port, "Chrome CDP ready");
+        info!(port = actual_port, "Chrome CDP ready");
         Ok(launcher)
     }
 
@@ -201,7 +204,7 @@ impl ChromeLauncher {
                 // Give Chrome a moment to shut down gracefully.
                 tokio::select! {
                     _ = self.child.wait() => {},
-                    () = tokio::time::sleep(Duration::from_secs(3)) => {
+                    () = tokio::time::sleep(timeouts::STOP_GRACEFUL) => {
                         warn!("Chrome did not exit gracefully, force-killing");
                         let _ = self.child.kill().await;
                     }
@@ -215,6 +218,66 @@ impl ChromeLauncher {
         }
 
         let _ = self.child.wait().await;
+    }
+
+    /// Spawn a background task that waits for the Chrome process to exit
+    /// and signals via a `watch` channel.
+    ///
+    /// The returned `Receiver` yields `true` once the process exits.
+    /// This is the Rust equivalent of the openclaw `proc.on("exit", ...)` pattern.
+    ///
+    /// The watcher task is lightweight: it simply `await`s the child
+    /// process and then sends a single notification.
+    pub fn spawn_exit_watcher(&mut self) -> watch::Receiver<bool> {
+        let (tx, rx) = watch::channel(false);
+        let child_id = self.child.id();
+        let port = self.port;
+
+        // We need a separate handle to wait on the child without consuming
+        // the Child. tokio::process::Child::wait() requires &mut self,
+        // so we use the child's PID to detect exit via a polling task.
+        tokio::spawn(async move {
+            // Poll at a reasonable interval. We cannot call child.wait()
+            // here because we don't own the Child. Instead we check if
+            // the process still exists.
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if let Some(pid) = child_id {
+                    #[cfg(unix)]
+                    {
+                        // kill(pid, 0) checks if the process exists.
+                        use nix::sys::signal;
+                        use nix::unistd::Pid;
+                        let alive = signal::kill(
+                            Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX)),
+                            None,
+                        )
+                        .is_ok();
+                        if !alive {
+                            info!(port, pid, "Chrome process exited (detected by watcher)");
+                            let _ = tx.send(true);
+                            return;
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        // On non-Unix, fall back to checking if the port is
+                        // still responding.
+                        if !is_port_in_use(port) {
+                            info!(port, pid, "Chrome port no longer in use");
+                            let _ = tx.send(true);
+                            return;
+                        }
+                    }
+                } else {
+                    // No PID available (shouldn't happen), just signal exit.
+                    let _ = tx.send(true);
+                    return;
+                }
+            }
+        });
+
+        rx
     }
 }
 
@@ -352,16 +415,54 @@ fn detect_chrome() -> Option<PathBuf> {
 }
 
 /// Check if a TCP port is currently in use on 127.0.0.1.
-fn is_port_in_use(port: u16) -> bool {
+pub(crate) fn is_port_in_use(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
 }
 
 /// Find a free TCP port by binding to port 0.
-fn find_free_port() -> Option<u16> {
+pub(crate) fn find_free_port() -> Option<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
     let port = listener.local_addr().ok()?.port();
     drop(listener);
     Some(port)
+}
+
+/// Ensure a port is available for use, similar to the openclaw `ensurePortAvailable`.
+///
+/// If the port is currently in use, checks whether it's a Chrome instance
+/// by probing `/json/version`. Returns:
+/// - `Ok(PortStatus::Available)` if the port is free.
+/// - `Ok(PortStatus::ChromeRunning)` if Chrome is already listening on it.
+/// - `Err(...)` if the port is occupied by something else.
+pub async fn ensure_port_available(port: u16) -> Result<PortStatus, LaunchError> {
+    if !is_port_in_use(port) {
+        return Ok(PortStatus::Available);
+    }
+
+    // Port is in use -- check if it's Chrome.
+    let url = format!("http://127.0.0.1:{port}/json/version");
+    match tokio::time::timeout(timeouts::HEALTH_HTTP_TIMEOUT, reqwest::get(&url)).await {
+        Ok(Ok(resp)) if resp.status().is_success() => {
+            info!(port, "existing Chrome instance detected on port");
+            Ok(PortStatus::ChromeRunning)
+        }
+        _ => Err(LaunchError::SpawnFailed(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            format!(
+                "port {port} is in use by a non-Chrome process; \
+                 cannot launch Chrome"
+            ),
+        ))),
+    }
+}
+
+/// Result of a port availability check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortStatus {
+    /// The port is free and can be used.
+    Available,
+    /// Chrome is already running on this port (can be reused).
+    ChromeRunning,
 }
 
 /// Detect the default Chrome user-data directory for the current platform.
