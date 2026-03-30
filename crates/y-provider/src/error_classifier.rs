@@ -88,7 +88,10 @@ impl StandardError {
     /// Some errors (context window, content filter) are request-specific
     /// and don't indicate a provider problem.
     pub fn should_freeze(&self) -> bool {
-        !matches!(self, Self::ContextWindowExceeded | Self::ContentFiltered)
+        !matches!(
+            self,
+            Self::ContextWindowExceeded | Self::ContentFiltered | Self::NetworkError
+        )
     }
 }
 
