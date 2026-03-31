@@ -396,6 +396,11 @@ impl WorkflowExecutor {
         self.task_outputs.get(task_id)
     }
 
+    /// Get all task outputs.
+    pub fn all_outputs(&self) -> &HashMap<TaskId, TaskOutput> {
+        &self.task_outputs
+    }
+
     fn snapshot_channels(&self) -> HashMap<String, ChannelSnapshot> {
         let mut snaps = HashMap::new();
         for name in self.context.channel_names() {

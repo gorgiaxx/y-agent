@@ -284,7 +284,13 @@ impl SchedulerService {
 
     /// Manually trigger a schedule execution (for "Trigger Now" / replay).
     ///
-    /// Creates a new execution record as if the trigger had fired.
+    /// When a `WorkflowDispatcher` is available (injected via
+    /// `ServiceContainer::init_workflow_dispatcher`), creates a `Running`
+    /// execution record and spawns a real workflow dispatch in the background.
+    /// Returns the running record immediately (non-blocking for the GUI).
+    ///
+    /// Falls back to an instant placeholder completion when no dispatcher is
+    /// injected (backward compat for tests).
     pub async fn trigger_now(
         manager: &SchedulerManager,
         schedule_id: &str,
@@ -295,10 +301,6 @@ impl SchedulerService {
                 id: schedule_id.to_string(),
             }
         })?;
-
-        // Create execution record via the executor.
-        let exec_store = manager.execution_store();
-        let mut exec_store_guard = exec_store.lock().await;
 
         let now = chrono::Utc::now();
         let execution_id = format!("exec-manual-{}", uuid::Uuid::new_v4());
@@ -312,43 +314,114 @@ impl SchedulerService {
             "trigger_time": now.to_rfc3339(),
         });
 
-        // Placeholder response (instant completion for now).
-        let response_summary = serde_json::json!({
-            "status": "completed",
-            "message": "Manual trigger executed (placeholder)",
-            "workflow_execution_id": format!("workflow-{execution_id}"),
-        });
+        // Check if a dispatcher is available for real execution.
+        if let Some(dispatcher) = manager.dispatcher().await {
+            // Real dispatch path: create Running record, spawn async work.
+            let execution = y_scheduler::ScheduleExecution {
+                execution_id: execution_id.clone(),
+                schedule_id: schedule_id.to_string(),
+                triggered_at: now,
+                started_at: Some(now),
+                completed_at: None,
+                status: y_scheduler::ExecutionStatus::Running,
+                workflow_execution_id: None,
+                request_summary,
+                response_summary: serde_json::json!({}),
+                error_message: None,
+            };
 
-        let execution = y_scheduler::ScheduleExecution {
-            execution_id: execution_id.clone(),
-            schedule_id: schedule_id.to_string(),
-            triggered_at: now,
-            started_at: Some(now),
-            completed_at: Some(now),
-            status: y_scheduler::ExecutionStatus::Completed,
-            workflow_execution_id: Some(format!("workflow-{execution_id}")),
-            request_summary,
-            response_summary,
-            error_message: None,
-        };
+            {
+                let exec_store = manager.execution_store();
+                let mut guard = exec_store.lock().await;
+                guard.record(execution);
+            }
 
-        exec_store_guard.record(execution);
-        drop(exec_store_guard);
+            // Spawn real execution without blocking.
+            let workflow_id = schedule.workflow_id.clone();
+            let parameter_values = schedule.parameter_values.clone();
+            let exec_store = std::sync::Arc::clone(manager.execution_store());
+            let exec_id = execution_id.clone();
+
+            tokio::spawn(async move {
+                let dispatch_start = std::time::Instant::now();
+                match dispatcher.dispatch(&workflow_id, parameter_values).await {
+                    Ok(result) => {
+                        let duration_ms =
+                            u64::try_from(dispatch_start.elapsed().as_millis()).unwrap_or(0);
+                        let mut store = exec_store.lock().await;
+                        store.update(&exec_id, |rec| {
+                            rec.status = if result.success {
+                                y_scheduler::ExecutionStatus::Completed
+                            } else {
+                                y_scheduler::ExecutionStatus::Failed
+                            };
+                            rec.completed_at = Some(chrono::Utc::now());
+                            rec.response_summary = serde_json::json!({
+                                "status": if result.success { "completed" } else { "failed" },
+                                "summary": result.summary,
+                                "output": result.output,
+                                "duration_ms": duration_ms,
+                            });
+                            if !result.success {
+                                rec.error_message = result.error;
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let mut store = exec_store.lock().await;
+                        store.update(&exec_id, |rec| {
+                            rec.status = y_scheduler::ExecutionStatus::Failed;
+                            rec.completed_at = Some(chrono::Utc::now());
+                            rec.response_summary = serde_json::json!({
+                                "status": "failed",
+                                "error": e.to_string(),
+                            });
+                            rec.error_message = Some(e.to_string());
+                        });
+                    }
+                }
+            });
+        } else {
+            // Placeholder path: instant completion (no dispatcher injected).
+            let response_summary = serde_json::json!({
+                "status": "completed",
+                "message": "Manual trigger executed (placeholder)",
+                "workflow_execution_id": format!("workflow-{execution_id}"),
+            });
+
+            let execution = y_scheduler::ScheduleExecution {
+                execution_id: execution_id.clone(),
+                schedule_id: schedule_id.to_string(),
+                triggered_at: now,
+                started_at: Some(now),
+                completed_at: Some(now),
+                status: y_scheduler::ExecutionStatus::Completed,
+                workflow_execution_id: Some(format!("workflow-{execution_id}")),
+                request_summary,
+                response_summary,
+                error_message: None,
+            };
+
+            let exec_store = manager.execution_store();
+            let mut guard = exec_store.lock().await;
+            guard.record(execution);
+        }
 
         Self::get_execution(manager, &execution_id).await
     }
 
     /// Manually execute a workflow (for replay / manual run).
     ///
-    /// Creates a new execution record for the workflow without requiring a schedule.
+    /// When a `WorkflowDispatcher` is available, creates a `Running`
+    /// execution record and spawns real workflow execution. Returns the
+    /// running record immediately (non-blocking).
+    ///
+    /// Falls back to an instant placeholder when no dispatcher is injected.
     pub async fn execute_workflow(
         manager: &SchedulerManager,
         workflow_id: &str,
         workflow_name: &str,
     ) -> Result<ExecutionSummary, SchedulerServiceError> {
-        let exec_store = manager.execution_store();
-        let mut exec_store_guard = exec_store.lock().await;
-
         let now = chrono::Utc::now();
         let execution_id = format!("exec-wf-{}", uuid::Uuid::new_v4());
 
@@ -359,26 +432,97 @@ impl SchedulerService {
             "trigger_time": now.to_rfc3339(),
         });
 
-        let response_summary = serde_json::json!({
-            "status": "completed",
-            "message": "Workflow executed manually (placeholder)",
-        });
+        if let Some(dispatcher) = manager.dispatcher().await {
+            // Real dispatch path.
+            let execution = y_scheduler::ScheduleExecution {
+                execution_id: execution_id.clone(),
+                schedule_id: format!("workflow-{workflow_id}"),
+                triggered_at: now,
+                started_at: Some(now),
+                completed_at: None,
+                status: y_scheduler::ExecutionStatus::Running,
+                workflow_execution_id: None,
+                request_summary,
+                response_summary: serde_json::json!({}),
+                error_message: None,
+            };
 
-        let execution = y_scheduler::ScheduleExecution {
-            execution_id: execution_id.clone(),
-            schedule_id: format!("workflow-{workflow_id}"),
-            triggered_at: now,
-            started_at: Some(now),
-            completed_at: Some(now),
-            status: y_scheduler::ExecutionStatus::Completed,
-            workflow_execution_id: Some(execution_id.clone()),
-            request_summary,
-            response_summary,
-            error_message: None,
-        };
+            {
+                let exec_store = manager.execution_store();
+                let mut guard = exec_store.lock().await;
+                guard.record(execution);
+            }
 
-        exec_store_guard.record(execution);
-        drop(exec_store_guard);
+            let wf_id = workflow_id.to_string();
+            let exec_store = std::sync::Arc::clone(manager.execution_store());
+            let exec_id = execution_id.clone();
+
+            tokio::spawn(async move {
+                let dispatch_start = std::time::Instant::now();
+                match dispatcher
+                    .dispatch(&wf_id, serde_json::Value::Object(serde_json::Map::new()))
+                    .await
+                {
+                    Ok(result) => {
+                        let duration_ms =
+                            u64::try_from(dispatch_start.elapsed().as_millis()).unwrap_or(0);
+                        let mut store = exec_store.lock().await;
+                        store.update(&exec_id, |rec| {
+                            rec.status = if result.success {
+                                y_scheduler::ExecutionStatus::Completed
+                            } else {
+                                y_scheduler::ExecutionStatus::Failed
+                            };
+                            rec.completed_at = Some(chrono::Utc::now());
+                            rec.response_summary = serde_json::json!({
+                                "status": if result.success { "completed" } else { "failed" },
+                                "summary": result.summary,
+                                "output": result.output,
+                                "duration_ms": duration_ms,
+                            });
+                            if !result.success {
+                                rec.error_message = result.error;
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let mut store = exec_store.lock().await;
+                        store.update(&exec_id, |rec| {
+                            rec.status = y_scheduler::ExecutionStatus::Failed;
+                            rec.completed_at = Some(chrono::Utc::now());
+                            rec.response_summary = serde_json::json!({
+                                "status": "failed",
+                                "error": e.to_string(),
+                            });
+                            rec.error_message = Some(e.to_string());
+                        });
+                    }
+                }
+            });
+        } else {
+            // Placeholder path.
+            let response_summary = serde_json::json!({
+                "status": "completed",
+                "message": "Workflow executed manually (placeholder)",
+            });
+
+            let execution = y_scheduler::ScheduleExecution {
+                execution_id: execution_id.clone(),
+                schedule_id: format!("workflow-{workflow_id}"),
+                triggered_at: now,
+                started_at: Some(now),
+                completed_at: Some(now),
+                status: y_scheduler::ExecutionStatus::Completed,
+                workflow_execution_id: Some(execution_id.clone()),
+                request_summary,
+                response_summary,
+                error_message: None,
+            };
+
+            let exec_store = manager.execution_store();
+            let mut guard = exec_store.lock().await;
+            guard.record(execution);
+        }
 
         Self::get_execution(manager, &execution_id).await
     }

@@ -9,7 +9,8 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::config::SchedulerConfig;
-use crate::executor::{ExecutionStore, ScheduleExecution, ScheduleExecutor};
+use crate::dispatcher::WorkflowDispatcher;
+use crate::executor::{ExecutionStatus, ExecutionStore, ScheduleExecution, ScheduleExecutor};
 use crate::queue::{trigger_queue, TriggerReceiver, TriggerSender};
 use crate::recovery;
 use crate::store::{Schedule, ScheduleStore};
@@ -33,6 +34,12 @@ pub struct SchedulerManager {
     shutdown: Arc<Notify>,
     /// Sender for the trigger queue (kept to clone for external event injection).
     trigger_tx: Option<TriggerSender>,
+    /// Optional workflow dispatcher injected after construction.
+    ///
+    /// When `Some`, fired triggers are dispatched through the real orchestrator
+    /// instead of the placeholder `ScheduleExecutor`. Injected via
+    /// `set_dispatcher()` (same pattern as `AgentRunner` in `ServiceContainer`).
+    dispatcher: Arc<Mutex<Option<Arc<dyn WorkflowDispatcher>>>>,
 }
 
 impl SchedulerManager {
@@ -47,6 +54,7 @@ impl SchedulerManager {
             exec_handle: None,
             shutdown: Arc::new(Notify::new()),
             trigger_tx: None,
+            dispatcher: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -125,6 +133,22 @@ impl SchedulerManager {
         self.trigger_tx.as_ref()
     }
 
+    /// Inject the workflow dispatcher used to run real executions.
+    ///
+    /// Called once after the service container is fully initialised (same
+    /// pattern as `ServiceContainer::init_agent_runner`). Until this is
+    /// called, fired triggers fall back to the placeholder executor.
+    pub async fn set_dispatcher(&self, dispatcher: Arc<dyn WorkflowDispatcher>) {
+        let mut guard = self.dispatcher.lock().await;
+        *guard = Some(dispatcher);
+        info!("WorkflowDispatcher injected into SchedulerManager");
+    }
+
+    /// Return a clone of the dispatcher, if one has been injected.
+    pub async fn dispatcher(&self) -> Option<Arc<dyn WorkflowDispatcher>> {
+        self.dispatcher.lock().await.clone()
+    }
+
     /// Start the scheduler — spawns the trigger evaluation loop and executor loop.
     pub async fn start(&mut self, tick_interval: Duration) {
         if self.eval_handle.is_some() {
@@ -200,12 +224,18 @@ impl SchedulerManager {
         let exec_store = self.store.clone();
         let exec_executor = self.executor.clone();
         let exec_execution_store = self.execution_store.clone();
+        let exec_dispatcher = self.dispatcher.clone();
         let exec_handle = tokio::spawn(async move {
+            // Snapshot the dispatcher once when the loop starts; if a
+            // dispatcher is injected later it will be picked up only on
+            // restart.  For dynamic late-injection the per-trigger path
+            // re-reads the Arc<Mutex<>> on every received trigger.
             Self::executor_loop(
                 rx,
                 exec_store,
                 exec_executor,
                 exec_execution_store,
+                exec_dispatcher,
                 exec_shutdown,
             )
             .await;
@@ -221,6 +251,7 @@ impl SchedulerManager {
         store: Arc<Mutex<ScheduleStore>>,
         executor: Arc<Mutex<ScheduleExecutor>>,
         execution_store: Arc<Mutex<ExecutionStore>>,
+        dispatcher: Arc<Mutex<Option<Arc<dyn WorkflowDispatcher>>>>,
         shutdown: Arc<Notify>,
     ) {
         loop {
@@ -231,11 +262,15 @@ impl SchedulerManager {
                 }
                 trigger = rx.recv() => {
                     if let Some(fired) = trigger {
+                        // Re-read the dispatcher on every trigger so that
+                        // late injection (after loop start) takes effect.
+                        let current_dispatcher = dispatcher.lock().await.clone();
                         Self::handle_fired_trigger(
                             fired,
                             &store,
                             &executor,
                             &execution_store,
+                            current_dispatcher,
                         ).await;
                     } else {
                         info!("Trigger queue closed, executor stopping");
@@ -247,11 +282,19 @@ impl SchedulerManager {
     }
 
     /// Handle a single fired trigger.
+    ///
+    /// When a `WorkflowDispatcher` is available, creates a `Running` execution
+    /// record and spawns an async task to run the real workflow. Updates the
+    /// record to `Completed` or `Failed` on completion.
+    ///
+    /// Falls back to the placeholder `ScheduleExecutor` (instant `Completed`)
+    /// when no dispatcher has been injected.
     async fn handle_fired_trigger(
         fired: FiredTrigger,
         store: &Arc<Mutex<ScheduleStore>>,
         executor: &Arc<Mutex<ScheduleExecutor>>,
         execution_store: &Arc<Mutex<ExecutionStore>>,
+        dispatcher: Option<Arc<dyn WorkflowDispatcher>>,
     ) {
         let mut store_guard = store.lock().await;
         let schedule = if let Some(s) = store_guard.get(&fired.schedule_id) {
@@ -261,11 +304,97 @@ impl SchedulerManager {
             return;
         };
 
-        let mut exec_guard = executor.lock().await;
-        let mut exec_store_guard = execution_store.lock().await;
-        let execution_id =
-            exec_guard.trigger_execution(&schedule, &mut store_guard, &mut exec_store_guard);
-        debug!(execution_id = %execution_id, "Execution triggered");
+        if let Some(disp) = dispatcher {
+            // Real dispatch path: create a Running record, spawn real execution.
+            let now = chrono::Utc::now();
+            let execution_id = format!("exec-{}-{}", schedule.id, uuid::Uuid::new_v4());
+
+            let request_summary = serde_json::json!({
+                "schedule_id": schedule.id,
+                "schedule_name": schedule.name,
+                "workflow_id": schedule.workflow_id,
+                "trigger": serde_json::to_value(&schedule.trigger).unwrap_or_default(),
+                "parameter_values": schedule.parameter_values,
+                "trigger_time": fired.fired_at.to_rfc3339(),
+            });
+
+            let running_record = ScheduleExecution {
+                execution_id: execution_id.clone(),
+                schedule_id: schedule.id.clone(),
+                triggered_at: fired.fired_at,
+                started_at: Some(now),
+                completed_at: None,
+                status: ExecutionStatus::Running,
+                workflow_execution_id: None,
+                request_summary,
+                response_summary: serde_json::json!({}),
+                error_message: None,
+            };
+
+            {
+                let mut exec_store_guard = execution_store.lock().await;
+                exec_store_guard.record(running_record);
+            }
+
+            // Update last-fire timestamp immediately.
+            store_guard.update_last_fire(&schedule.id, now);
+            drop(store_guard);
+
+            // Spawn real execution without blocking the trigger loop.
+            let workflow_id = schedule.workflow_id.clone();
+            let parameter_values = schedule.parameter_values.clone();
+            let exec_store_clone = Arc::clone(execution_store);
+            let exec_id_clone = execution_id.clone();
+
+            tokio::spawn(async move {
+                let dispatch_start = std::time::Instant::now();
+                match disp.dispatch(&workflow_id, parameter_values).await {
+                    Ok(result) => {
+                        let duration_ms =
+                            u64::try_from(dispatch_start.elapsed().as_millis()).unwrap_or(0);
+                        let mut store = exec_store_clone.lock().await;
+                        store.update(&exec_id_clone, |rec| {
+                            rec.status = if result.success {
+                                ExecutionStatus::Completed
+                            } else {
+                                ExecutionStatus::Failed
+                            };
+                            rec.completed_at = Some(chrono::Utc::now());
+                            rec.response_summary = serde_json::json!({
+                                "status": if result.success { "completed" } else { "failed" },
+                                "summary": result.summary,
+                                "output": result.output,
+                                "duration_ms": duration_ms,
+                            });
+                            if !result.success {
+                                rec.error_message = result.error;
+                            }
+                        });
+                        debug!(execution_id = %exec_id_clone, "Dispatched workflow completed");
+                    }
+                    Err(e) => {
+                        let mut store = exec_store_clone.lock().await;
+                        store.update(&exec_id_clone, |rec| {
+                            rec.status = ExecutionStatus::Failed;
+                            rec.completed_at = Some(chrono::Utc::now());
+                            rec.response_summary = serde_json::json!({
+                                "status": "failed",
+                                "error": e.to_string(),
+                            });
+                            rec.error_message = Some(e.to_string());
+                        });
+                        warn!(execution_id = %exec_id_clone, error = %e, "Workflow dispatch error");
+                    }
+                }
+            });
+        } else {
+            // Placeholder path: instant completion via ScheduleExecutor.
+            let mut exec_guard = executor.lock().await;
+            let mut exec_store_guard = execution_store.lock().await;
+            let execution_id =
+                exec_guard.trigger_execution(&schedule, &mut store_guard, &mut exec_store_guard);
+            debug!(execution_id = %execution_id, "Placeholder execution triggered");
+        }
     }
 
     /// Stop the scheduler gracefully.
@@ -310,6 +439,7 @@ impl Default for SchedulerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatcher::{DispatchError, DispatchResult};
     use crate::store::TriggerConfig;
 
     #[tokio::test]
@@ -419,5 +549,44 @@ mod tests {
 
         let list = mgr.list_schedules().await;
         assert_eq!(list.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Dispatcher tests
+    // -----------------------------------------------------------------------
+
+    /// Minimal stub dispatcher for testing injection.
+    struct AlwaysOkDispatcher;
+
+    #[async_trait::async_trait]
+    impl WorkflowDispatcher for AlwaysOkDispatcher {
+        async fn dispatch(
+            &self,
+            workflow_id: &str,
+            _parameter_values: serde_json::Value,
+        ) -> Result<DispatchResult, DispatchError> {
+            Ok(DispatchResult {
+                success: true,
+                summary: format!("ok: {workflow_id}"),
+                output: serde_json::Value::Null,
+                duration_ms: 1,
+                error: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_manager_dispatcher_none_by_default() {
+        let mgr = SchedulerManager::with_defaults();
+        assert!(mgr.dispatcher().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_manager_set_dispatcher() {
+        let mgr = SchedulerManager::with_defaults();
+        assert!(mgr.dispatcher().await.is_none());
+
+        mgr.set_dispatcher(Arc::new(AlwaysOkDispatcher)).await;
+        assert!(mgr.dispatcher().await.is_some());
     }
 }

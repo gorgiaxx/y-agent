@@ -708,7 +708,7 @@ impl ServiceContainer {
     pub async fn reload_browser(&self, new_config: y_browser::BrowserConfig) {
         if let Some(tool) = self
             .tool_registry
-            .get_tool(&y_core::types::ToolName::from_string("browser"))
+            .get_tool(&y_core::types::ToolName::from_string("Browser"))
             .await
         {
             // Downcast the Arc<dyn Tool> to BrowserTool.
@@ -866,6 +866,20 @@ impl ServiceContainer {
         tracing::info!("ServiceAgentRunner initialised for sub-agent delegation");
     }
 
+    /// Two-phase initialisation: inject a `WorkflowDispatcher` into the
+    /// `SchedulerManager` so that fired triggers and manual workflow
+    /// executions run real DAG-based workflows.
+    ///
+    /// Uses the same pattern as [`init_agent_runner`](Self::init_agent_runner):
+    /// must be called **after** the container has been wrapped in `Arc`.
+    pub async fn init_workflow_dispatcher(self: &Arc<Self>) {
+        let dispatcher = Arc::new(crate::orchestrator_dispatcher::OrchestratorDispatcher::new(
+            Arc::clone(self),
+        ));
+        self.scheduler_manager.set_dispatcher(dispatcher).await;
+        tracing::info!("WorkflowDispatcher initialised for real workflow execution");
+    }
+
     /// Spawn per-provider tasks that drain metrics events and persist them.
     ///
     /// Each provider gets its own channel; we spawn one task per provider
@@ -931,7 +945,7 @@ pub(crate) const ESSENTIAL_TOOL_NAMES: &[&str] = &[
 /// Tools pre-activated as always-active (never LRU-evicted) but NOT in
 /// `ChatRequest.tools` by default. The LLM sees them in "Available Tools"
 /// and can use `ToolSearch` to load full schemas on demand.
-const DISCOVERABLE_TOOL_NAMES: &[&str] = &["browser"];
+const DISCOVERABLE_TOOL_NAMES: &[&str] = &["Browser"];
 
 /// Pre-activate essential and discoverable tools as always-active in the
 /// activation set. Both groups are never LRU-evicted; the difference is
@@ -1222,7 +1236,7 @@ mod tests {
     #[tokio::test]
     async fn test_container_creates_all_services() {
         let mut config = ServiceConfig::default();
-        config.storage.db_path = ":memory:".to_string();
+        config.storage = y_storage::StorageConfig::in_memory();
 
         let result = ServiceContainer::from_config(&config).await;
         assert!(result.is_ok(), "wiring with default config should succeed");
@@ -1242,7 +1256,7 @@ mod tests {
     #[tokio::test]
     async fn test_container_registers_middleware() {
         let mut config = ServiceConfig::default();
-        config.storage.db_path = ":memory:".to_string();
+        config.storage = y_storage::StorageConfig::in_memory();
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
         let _tool_guard = sc.guardrail_manager.tool_guard();
@@ -1381,7 +1395,7 @@ mod tests {
     #[tokio::test]
     async fn test_container_registers_context_providers() {
         let mut config = ServiceConfig::default();
-        config.storage.db_path = ":memory:".to_string();
+        config.storage = y_storage::StorageConfig::in_memory();
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
         assert_eq!(sc.context_pipeline.provider_count(), 4);
@@ -1390,7 +1404,7 @@ mod tests {
     #[tokio::test]
     async fn test_skill_ingestion_service_factory() {
         let mut config = ServiceConfig::default();
-        config.storage.db_path = ":memory:".to_string();
+        config.storage = y_storage::StorageConfig::in_memory();
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
         let registry = Arc::new(RwLock::new(y_skills::SkillRegistryImpl::new()));
@@ -1448,11 +1462,11 @@ mod tests {
     fn test_build_agent_tools_summary_sorted() {
         let defs = vec![
             make_tool_def("FileWrite", "Write a file.", serde_json::json!({})),
-            make_tool_def("browser", "Open a browser.", serde_json::json!({})),
+            make_tool_def("Browser", "Open a browser.", serde_json::json!({})),
             make_tool_def("ShellExec", "Execute shell.", serde_json::json!({})),
         ];
         let summary = super::build_agent_tools_summary(&defs);
-        let browser_pos = summary.find("browser").unwrap();
+        let browser_pos = summary.find("Browser").unwrap();
         let file_write_pos = summary.find("FileWrite").unwrap();
         let shell_exec_pos = summary.find("ShellExec").unwrap();
         assert!(browser_pos < file_write_pos);

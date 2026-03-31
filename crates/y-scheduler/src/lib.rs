@@ -15,6 +15,7 @@
 
 pub mod config;
 pub mod cron;
+pub mod dispatcher;
 pub mod event;
 pub mod event_bridge;
 pub mod executor;
@@ -30,6 +31,7 @@ pub mod trigger;
 // Re-export primary types.
 pub use config::{ConcurrencyPolicy, MissedPolicy, SchedulerConfig};
 pub use cron::CronSchedule;
+pub use dispatcher::{DispatchError, DispatchResult, WorkflowDispatcher};
 pub use event::EventSchedule;
 pub use executor::{
     ExecutionStatus, ExecutionStore, ScheduleContext, ScheduleExecution, ScheduleExecutor,

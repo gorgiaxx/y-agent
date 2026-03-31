@@ -116,6 +116,7 @@ pub fn run() {
             // ServiceAgentRunner so delegated agents (skill-ingestion, etc.)
             // get the full execution loop with multi-turn tool calling.
             rt.block_on(container.init_agent_runner());
+            rt.block_on(container.init_workflow_dispatcher());
             rt.block_on(container.init_callable_agents_text());
 
             let app_state = AppState::new(Arc::clone(&container), config_path.clone());
