@@ -362,7 +362,7 @@ Prompt hooks send the hook event context and a user-defined prompt to an LLM for
 
 #### Agent Hook Fields
 
-Agent hooks spawn a subagent that can use read-only tools (file read, grep, glob) to investigate the codebase before making a decision. This enables multi-turn verification that goes beyond what a single LLM call can assess (e.g., "verify that all unit tests pass before stopping").
+Agent hooks spawn a subagent that can use read-only tools (file read, grep, Glob) to investigate the codebase before making a decision. This enables multi-turn verification that goes beyond what a single LLM call can assess (e.g., "verify that all unit tests pass before stopping").
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

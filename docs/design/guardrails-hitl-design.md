@@ -28,7 +28,7 @@ These mechanisms are necessary but insufficient for production safety. They do n
 
 - **Agent loops**: An agent repeatedly calling the same tool with the same arguments (or cycling through tools) without making progress.
 - **Output validation**: Verifying that LLM outputs and tool results meet quality, safety, and format requirements before they are used downstream.
-- **Taint propagation**: When a dangerous operation (shell_exec) produces output, downstream operations that consume that output should be aware of its tainted origin.
+- **Taint propagation**: When a dangerous operation (ShellExec) produces output, downstream operations that consume that output should be aware of its tainted origin.
 - **Granular permissions**: The current dangerous-tool approval (AutoApprove/Notify/Confirm/Reject) is binary. There is no nuanced permission model that considers context, history, and risk level.
 
 Analysis of competitors reveals mature safety patterns:
@@ -197,7 +197,7 @@ When a redundant call is detected, LoopGuard:
 2. **Tracks redundancy rate**: Computes `N_redundant / N_tool_calls` for observability.
 3. **Escalates on persistence**: If the agent makes > 3 redundant calls without state changes, the call is blocked.
 
-State-modifying operations that reset the redundancy tracker for affected resources: `file_write`, `file_patch`, `shell_exec` (with write commands), `compress_experience` (context rewrite counts as state change).
+State-modifying operations that reset the redundancy tracker for affected resources: `FileWrite`, `file_patch`, `ShellExec` (with write commands), `compress_experience` (context rewrite counts as state change).
 
 This mechanism encourages the agent to leverage the Experience Store for evidence recall rather than re-executing expensive tool calls (file reads, web searches, API calls).
 
@@ -217,8 +217,8 @@ Taint tags are metadata labels attached to data flowing through the system. They
 
 | Taint Tag | Source | Propagation | Policy Impact |
 |-----------|--------|-------------|--------------|
-| `taint:shell` | shell_exec tool output | Any value derived from shell output inherits tag | Downstream file writes with shell-tainted content require confirmation |
-| `taint:network` | web_fetch, web_search output | Values containing network-sourced content inherit tag | LLM calls with network-tainted context get a safety preamble |
+| `taint:shell` | ShellExec tool output | Any value derived from shell output inherits tag | Downstream file writes with shell-tainted content require confirmation |
+| `taint:network` | WebFetch, web_search output | Values containing network-sourced content inherit tag | LLM calls with network-tainted context get a safety preamble |
 | `taint:user_input` | Raw user input | Propagates through tool args | Prevents direct injection into shell commands |
 | `taint:llm_generated` | LLM response content | Values from LLM responses | LLM-generated file content flagged for review |
 
@@ -271,16 +271,16 @@ flowchart TB
 
 | Permission Level | Behavior | Use Case |
 |-----------------|----------|----------|
-| **allow** | Execute immediately, no notification | Trusted operations (file_read, web_search) |
-| **notify** | Execute immediately, notify user after | Low-risk writes (file_write to known paths) |
-| **ask** | Pause execution, ask user for approval | Dangerous operations (shell_exec, git push) |
+| **allow** | Execute immediately, no notification | Trusted operations (FileRead, web_search) |
+| **notify** | Execute immediately, notify user after | Low-risk writes (FileWrite to known paths) |
+| **ask** | Pause execution, ask user for approval | Dangerous operations (ShellExec, git push) |
 | **deny** | Block execution, return error to agent | Forbidden operations (privilege escalation, path traversal) |
 
 Risk scoring factors:
 
 | Factor | Weight | Description |
 |--------|--------|-------------|
-| **Operation type** | High | shell_exec is inherently riskier than file_read |
+| **Operation type** | High | ShellExec is inherently riskier than FileRead |
 | **Taint level** | Medium | Operations on tainted data are riskier |
 | **Repetition** | Medium | Repeated dangerous operations escalate risk |
 | **Scope** | Low-Medium | Operations outside workspace are riskier |
@@ -304,9 +304,9 @@ sequenceDiagram
     participant PostG as Post-Guardrails
     participant TT as Taint Tracker
 
-    Agent->>TMW: tool_call(file_write, args)
+    Agent->>TMW: tool_call(FileWrite, args)
 
-    TMW->>PreG: evaluate(file_write, args)
+    TMW->>PreG: evaluate(FileWrite, args)
     PreG->>PreG: write-after-read check
     alt No prior read of target file
         PreG-->>TMW: Block("must read file before writing")
@@ -314,7 +314,7 @@ sequenceDiagram
     end
     PreG-->>TMW: Pass
 
-    TMW->>Perm: check_permission(file_write, context)
+    TMW->>Perm: check_permission(FileWrite, context)
     Perm->>Perm: compute risk score
     alt risk = ask
         Perm-->>TMW: Ask(reason)
@@ -324,13 +324,13 @@ sequenceDiagram
     end
     Perm-->>TMW: Allow
 
-    TMW->>LG: check_loop(file_write, args)
+    TMW->>LG: check_loop(FileWrite, args)
     LG-->>TMW: Pass (no loop detected)
 
-    TMW->>TE: execute(file_write, args)
+    TMW->>TE: execute(FileWrite, args)
     TE-->>TMW: ToolOutput
 
-    TMW->>PostG: evaluate(file_write, output)
+    TMW->>PostG: evaluate(FileWrite, output)
     PostG-->>TMW: Pass
 
     TMW->>TT: tag_output(output, taint:llm_generated)
@@ -481,13 +481,13 @@ erDiagram
 default = "ask"
 
 [permissions.rules]
-file_read = "allow"
-file_list = "allow"
-file_search = "allow"
-file_write = "notify"
-shell_exec = "ask"
+FileRead = "allow"
+FileList = "allow"
+FileSearch = "allow"
+FileWrite = "notify"
+ShellExec = "ask"
 web_search = "allow"
-web_fetch = "allow"
+WebFetch = "allow"
 memory_store = "allow"
 memory_recall = "allow"
 agent_create = "ask"
@@ -572,7 +572,7 @@ stateDiagram-v2
 | Concern | Approach |
 |---------|----------|
 | **Guardrail bypass** | Guardrails are middleware in the tool execution pipeline. There is no API to execute a tool without passing through middleware. Direct tool execution (bypassing ToolExecutor) is not exposed. |
-| **Permission escalation** | Auto-approve rules cannot be more permissive than the workspace-level policy. A rule allowing `shell_exec = "allow"` is rejected if the workspace policy is `shell_exec = "ask"`. |
+| **Permission escalation** | Auto-approve rules cannot be more permissive than the workspace-level policy. A rule allowing `ShellExec = "allow"` is rejected if the workspace policy is `ShellExec = "ask"`. |
 | **Taint spoofing** | Taint tags are set by the framework, not by tools or agents. Tools cannot self-declare their output as untainted. |
 | **Escalation integrity** | Escalation requests include the full operation context (tool name, args, risk score). Clients display this context to the user for informed decision-making. |
 | **Audit trail** | Every guardrail evaluation, permission decision, loop detection event, and taint propagation is logged to the diagnostics system with full context. |
@@ -691,7 +691,7 @@ stateDiagram-v2
 | # | Question | Owner | Due Date | Status |
 |---|----------|-------|----------|--------|
 | 1 | Should taint tags have a configurable decay distance (auto-remove after N operations)? | Safety team | 2026-03-27 | Open |
-| 2 | Should the permission model support time-based auto-approve (e.g., "allow file_write for the next 5 minutes")? | Safety team | 2026-03-27 | Open |
+| 2 | Should the permission model support time-based auto-approve (e.g., "allow FileWrite for the next 5 minutes")? | Safety team | 2026-03-27 | Open |
 | 3 | Should LoopGuard track cross-agent loops (Agent A delegates to Agent B which calls the same tool Agent A was looping on)? | Safety team | 2026-04-03 | Open |
 | 4 | What is the right default fail mode -- fail-open or fail-closed? Needs user research. | Safety team | 2026-04-15 | Open |
 | 5 | Should guardrails be composable (guardrail A's output feeds guardrail B's input) or independent (parallel evaluation)? | Safety team | 2026-04-03 | Open |

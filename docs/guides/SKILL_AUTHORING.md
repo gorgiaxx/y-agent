@@ -35,7 +35,7 @@ explicit = false  # false = can be auto-activated by keyword match
 
 # Required tools
 [dependencies]
-tools = ["read_file", "write_file", "shell_exec"]
+tools = ["FileRead", "FileWrite", "ShellExec"]
 
 # Skill parameters
 [parameters]
@@ -57,6 +57,7 @@ Review the following code according to the {{style_guide}} style guide.
 Report issues at {{severity}} level or above.
 
 Focus on:
+
 1. Logic errors and potential bugs
 2. Performance concerns
 3. Security vulnerabilities

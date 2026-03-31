@@ -26,12 +26,12 @@ All LLM reasoning operations within y-agent MUST be expressed as agent delegatio
 
 ### 2.2 Prohibited Patterns
 
-| Anti-Pattern | Example | Why It's Wrong |
-|-------------|---------|---------------|
-| **Module-scoped LLM trait** | `CompactionLlm` in `y-context` | Creates a parallel LLM abstraction outside the agent framework; bypasses observability, guardrails, and resource governance |
-| **Hardcoded prompt strings** | `build_summarize_prompt()` in Rust source | Prompts not managed through the Prompt System; cannot be customized, versioned, or audited |
-| **Inline agent loop** | Custom `loop { llm.call(); }` in a module | Duplicates retry, timeout, checkpointing, and guardrail logic already in the Orchestrator |
-| **Direct ProviderPool calls** | `provider_pool.chat_completion()` outside agent context | Bypasses middleware chains (Context, Tool, LLM), guardrails, and diagnostics |
+| Anti-Pattern                  | Example                                                 | Why It's Wrong                                                                                                              |
+| ----------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Module-scoped LLM trait**   | `CompactionLlm` in `y-context`                          | Creates a parallel LLM abstraction outside the agent framework; bypasses observability, guardrails, and resource governance |
+| **Hardcoded prompt strings**  | `build_summarize_prompt()` in Rust source               | Prompts not managed through the Prompt System; cannot be customized, versioned, or audited                                  |
+| **Inline agent loop**         | Custom `loop { llm.call(); }` in a module               | Duplicates retry, timeout, checkpointing, and guardrail logic already in the Orchestrator                                   |
+| **Direct ProviderPool calls** | `provider_pool.chat_completion()` outside agent context | Bypasses middleware chains (Context, Tool, LLM), guardrails, and diagnostics                                                |
 
 ### 2.3 Correct Pattern
 
@@ -96,11 +96,11 @@ At runtime, `y-agent`'s `AgentPool` implements this trait and is injected into m
 
 ### 3.1 Definition Sources (Trust Hierarchy)
 
-| Source | Trust Tier | Origin | Modifiable At Runtime |
-|--------|-----------|--------|----------------------|
-| **Built-in** | Highest | Compiled into binary or shipped as TOML in `config/agents/` | No (read-only) |
-| **User-defined** | Medium | User-created TOML in `~/.config/y-agent/agents/` | Yes (by user) |
-| **Dynamic** | Lowest | Created at runtime via `agent_create` meta-tool | Yes (by agents, with constraints) |
+| Source           | Trust Tier | Origin                                                      | Modifiable At Runtime             |
+| ---------------- | ---------- | ----------------------------------------------------------- | --------------------------------- |
+| **Built-in**     | Highest    | Compiled into binary or shipped as TOML in `config/agents/` | No (read-only)                    |
+| **User-defined** | Medium     | User-created TOML in `~/.config/y-agent/agents/`            | Yes (by user)                     |
+| **Dynamic**      | Lowest     | Created at runtime via `agent_create` meta-tool             | Yes (by agents, with constraints) |
 
 ### 3.2 Agent Definition Schema
 
@@ -119,7 +119,7 @@ temperature = 0.2
 
 [agent.tools]
 allowed = []                          # no tools needed for pure reasoning
-denied = ["shell_exec", "file_write"]
+denied = ["ShellExec", "FileWrite"]
 
 [agent.context]
 sharing = "none"                      # none | summary | filtered | full
@@ -144,21 +144,21 @@ Output the summary as plain text, not markdown.
 
 ### 3.3 Naming Convention
 
-| Category | Pattern | Examples |
-|----------|---------|---------|
-| System agents (compaction, enrichment) | `{function}-{role}` | `compaction-summarizer`, `context-summarizer` |
-| Autonomy agents | `{domain}-{role}` | `tool-engineer`, `agent-architect` |
-| User-facing agents | User-chosen | `researcher`, `code-reviewer` |
-| Dynamic agents | User/agent-chosen (prefixed internally with `dyn:`) | `dyn:pr-reviewer` |
+| Category                               | Pattern                                             | Examples                                      |
+| -------------------------------------- | --------------------------------------------------- | --------------------------------------------- |
+| System agents (compaction, enrichment) | `{function}-{role}`                                 | `compaction-summarizer`, `context-summarizer` |
+| Autonomy agents                        | `{domain}-{role}`                                   | `tool-engineer`, `agent-architect`            |
+| User-facing agents                     | User-chosen                                         | `researcher`, `code-reviewer`                 |
+| Dynamic agents                         | User/agent-chosen (prefixed internally with `dyn:`) | `dyn:pr-reviewer`                             |
 
 ### 3.4 Mode Selection Guidelines
 
-| Mode | Use When | Tool Access | Model Tier |
-|------|----------|------------|-----------|
-| **build** | Agent produces artifacts (code, tool definitions, files) | Full (allowed list) | High-capability |
-| **plan** | Agent analyzes and proposes without side effects | Read-only | High-capability |
-| **explore** | Agent gathers or synthesizes information quickly | Search + read | Fast/cheap |
-| **general** | Default balanced operation | Full (allowed list) | Default |
+| Mode        | Use When                                                 | Tool Access         | Model Tier      |
+| ----------- | -------------------------------------------------------- | ------------------- | --------------- |
+| **build**   | Agent produces artifacts (code, tool definitions, files) | Full (allowed list) | High-capability |
+| **plan**    | Agent analyzes and proposes without side effects         | Read-only           | High-capability |
+| **explore** | Agent gathers or synthesizes information quickly         | Search + read       | Fast/cheap      |
+| **general** | Default balanced operation                               | Full (allowed list) | Default         |
 
 System sub-agents that only do text transformation (summarization, analysis) SHOULD use `explore` mode with no tool access and a fast/cheap model.
 
@@ -168,11 +168,11 @@ System sub-agents that only do text transformation (summarization, analysis) SHO
 
 ### 4.1 Agent Creation Rights
 
-| Creator | Can Create | Delegation Depth | Constraints |
-|---------|-----------|-----------------|-------------|
-| System (startup) | Built-in agents | N/A | Hardcoded, immutable |
-| User | User-defined agents | Initial: 2 | None (full authority) |
-| Agent (runtime) | Dynamic agents | Parent depth - 1 | Permission inheritance (§4.2) |
+| Creator          | Can Create          | Delegation Depth | Constraints                   |
+| ---------------- | ------------------- | ---------------- | ----------------------------- |
+| System (startup) | Built-in agents     | N/A              | Hardcoded, immutable          |
+| User             | User-defined agents | Initial: 2       | None (full authority)         |
+| Agent (runtime)  | Dynamic agents      | Parent depth - 1 | Permission inheritance (§4.2) |
 
 ### 4.2 Permission Inheritance (Snapshot Model)
 
@@ -187,34 +187,34 @@ child.effective_permissions = intersection(
 
 Dimension-by-dimension:
 
-| Dimension | Rule |
-|-----------|------|
-| `tools.allowed` | Child's must be a **subset** of creator's |
-| `tools.denied` | Child's must be a **superset** of creator's |
-| `limits.max_iterations` | `min(child.declared, creator.actual)` |
-| `limits.max_tool_calls` | `min(child.declared, creator.actual)` |
-| `limits.timeout` | `min(child.declared, creator.actual)` |
-| `delegation_depth` | `creator.depth - 1`; at 0, `agent_create` is denied |
+| Dimension               | Rule                                                |
+| ----------------------- | --------------------------------------------------- |
+| `tools.allowed`         | Child's must be a **subset** of creator's           |
+| `tools.denied`          | Child's must be a **superset** of creator's         |
+| `limits.max_iterations` | `min(child.declared, creator.actual)`               |
+| `limits.max_tool_calls` | `min(child.declared, creator.actual)`               |
+| `limits.timeout`        | `min(child.declared, creator.actual)`               |
+| `delegation_depth`      | `creator.depth - 1`; at 0, `agent_create` is denied |
 
 ### 4.3 Lifecycle Operations
 
-| Operation | Tool | Constraints |
-|-----------|------|------------|
-| Create | `agent_create` | Validation pipeline (§4.4); permission inheritance |
-| Update | `agent_update` | Only dynamic agents; re-validates permissions |
-| Deactivate | `agent_deactivate` | Soft-delete; preserves experience records |
-| Search | `agent_search` | All trust tiers searchable; results tagged by source |
-| Reactivate | `agent_update` (status=active) | Requires original creator or higher trust tier |
+| Operation  | Tool                           | Constraints                                          |
+| ---------- | ------------------------------ | ---------------------------------------------------- |
+| Create     | `agent_create`                 | Validation pipeline (§4.4); permission inheritance   |
+| Update     | `agent_update`                 | Only dynamic agents; re-validates permissions        |
+| Deactivate | `agent_deactivate`             | Soft-delete; preserves experience records            |
+| Search     | `agent_search`                 | All trust tiers searchable; results tagged by source |
+| Reactivate | `agent_update` (status=active) | Requires original creator or higher trust tier       |
 
 ### 4.4 Validation Pipeline
 
 All agent definitions created at runtime go through three stages:
 
-| Stage | Checks | Failure Action |
-|-------|--------|---------------|
-| **Schema** | Valid TOML, required fields, mode enum, model names in provider pool | Reject with parse errors |
+| Stage          | Checks                                                                   | Failure Action                |
+| -------------- | ------------------------------------------------------------------------ | ----------------------------- |
+| **Schema**     | Valid TOML, required fields, mode enum, model names in provider pool     | Reject with parse errors      |
 | **Permission** | Permission inheritance rule, delegation depth > 0, tool allowlist subset | Reject with violation details |
-| **Safety** | System prompt injection patterns, dangerous tool combinations | Reject or escalate to HITL |
+| **Safety**     | System prompt injection patterns, dangerous tool combinations            | Reject or escalate to HITL    |
 
 ### 4.5 Resource Governance
 
@@ -233,12 +233,12 @@ All agent prompts MUST be externalized. No prompt text in Rust source files.
 
 ### 5.2 Prompt Locations
 
-| Prompt Type | Location | Format |
-|-------------|----------|--------|
-| System instructions | `AgentDefinition.instructions.system` (TOML) | Plain text |
+| Prompt Type             | Location                                               | Format                            |
+| ----------------------- | ------------------------------------------------------ | --------------------------------- |
+| System instructions     | `AgentDefinition.instructions.system` (TOML)           | Plain text                        |
 | Task-specific templates | `PromptSection` definitions in `y-prompt` SectionStore | TOML with `{{slot}}` placeholders |
-| Mode-specific overlays | `PromptTemplate.mode_overlays` | TOML |
-| Input data | Passed by caller via `DelegationRequest.input` | `serde_json::Value` |
+| Mode-specific overlays  | `PromptTemplate.mode_overlays`                         | TOML                              |
+| Input data              | Passed by caller via `DelegationRequest.input`         | `serde_json::Value`               |
 
 The agent's prompt template is responsible for formatting the input data into the final user message sent to the LLM. Callers never construct prompts — they only provide structured data.
 
@@ -256,13 +256,13 @@ The agent's prompt template is responsible for formatting the input data into th
 
 All agent delegations — including system sub-agents — pass through the standard middleware chains, providing:
 
-| Signal | Automatic |
-|--------|----------|
-| Trace spans | Each delegation creates a child span linked to parent |
-| Token usage | Tracked per agent instance (`agents.instance.tokens_used`) |
+| Signal             | Automatic                                                    |
+| ------------------ | ------------------------------------------------------------ |
+| Trace spans        | Each delegation creates a child span linked to parent        |
+| Token usage        | Tracked per agent instance (`agents.instance.tokens_used`)   |
 | Delegation metrics | `agents.delegations.total`, `agents.delegations.duration_ms` |
-| Cost tracking | Routed through Diagnostics (PostgreSQL) |
-| Guardrail checks | LLM middleware chain applies to all agents |
+| Cost tracking      | Routed through Diagnostics (PostgreSQL)                      |
+| Guardrail checks   | LLM middleware chain applies to all agents                   |
 
 This is a key advantage of the unified model: internal system agent calls (e.g., compaction summarization) get the same observability as user-facing agent calls at zero additional implementation cost.
 
@@ -272,14 +272,14 @@ This is a key advantage of the unified model: internal system agent calls (e.g.,
 
 The following existing implementations violate this standard and MUST be refactored:
 
-| Module | Current Pattern | Target State |
-|--------|----------------|-------------|
-| `y-context/compaction.rs` | `CompactionLlm` trait with `build_summarize_prompt()` | Replace with delegation to `compaction-summarizer` built-in agent |
-| `y-agent/context.rs` | `apply_summary()` with inline summary logic | Replace with delegation to `context-summarizer` built-in agent |
-| `y-session/manager.rs` | `generate_title()` with hardcoded system prompt and direct `ProviderPool::chat_completion()` call | Replace with delegation to `title-generator` built-in agent |
-| `y-context` (planned) | `TaskIntentAnalyzer` as inline sub-agent | Define as `task-intent-analyzer` built-in agent |
-| `y-skills/evolution.rs` (planned) | Pattern extraction LLM calls | Define as `pattern-extractor` built-in agent |
-| `y-hooks` (planned) | Capability mismatch assessment | Define as `capability-assessor` built-in agent |
+| Module                            | Current Pattern                                                                                   | Target State                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `y-context/compaction.rs`         | `CompactionLlm` trait with `build_summarize_prompt()`                                             | Replace with delegation to `compaction-summarizer` built-in agent |
+| `y-agent/context.rs`              | `apply_summary()` with inline summary logic                                                       | Replace with delegation to `context-summarizer` built-in agent    |
+| `y-session/manager.rs`            | `generate_title()` with hardcoded system prompt and direct `ProviderPool::chat_completion()` call | Replace with delegation to `title-generator` built-in agent       |
+| `y-context` (planned)             | `TaskIntentAnalyzer` as inline sub-agent                                                          | Define as `task-intent-analyzer` built-in agent                   |
+| `y-skills/evolution.rs` (planned) | Pattern extraction LLM calls                                                                      | Define as `pattern-extractor` built-in agent                      |
+| `y-hooks` (planned)               | Capability mismatch assessment                                                                    | Define as `capability-assessor` built-in agent                    |
 
 Refactoring priority: new implementations MUST follow this standard; existing implementations are migrated during their next modification cycle (boy scout rule).
 

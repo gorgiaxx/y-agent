@@ -485,7 +485,7 @@ trait CommandHandler: Send + Sync {
 | `path` | PathBuf | File or directory path |
 | `range` | Option<LineRange> | Single line, line range, or none (entire file) |
 | `symbol` | Option<String> | Function/struct name for symbol-based lookup |
-| `glob` | Option<String> | Glob pattern for directory references |
+| `Glob` | Option<String> | Glob pattern for directory references |
 
 ### Completion Context
 
@@ -532,7 +532,7 @@ The completion engine uses the current client state to provide context-aware sug
 | Metric | Target |
 |--------|--------|
 | Command parse time | < 1ms for any command |
-| File reference resolution | < 50ms for single file; < 200ms for glob with 20 files |
+| File reference resolution | < 50ms for single file; < 200ms for Glob with 20 files |
 | Tab completion response | < 100ms |
 | Session list retrieval | < 200ms for up to 1000 sessions |
 | Batch script throughput | > 10 commands/second |

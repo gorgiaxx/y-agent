@@ -451,7 +451,7 @@ NativeRuntime supports bubblewrap (`bwrap`) sandboxing:
 - **Warm container pool**: Pre-pull frequently used images; keep container templates ready.
 - **Parallel cleanup**: Container removal is asynchronous; does not block result return.
 - **Resource monitoring sampling**: Container stats collected at configurable intervals, not continuously.
-- **Native fast path**: Tools that do not require containers (file_read, memory operations) skip the container overhead entirely.
+- **Native fast path**: Tools that do not require containers (FileRead, memory operations) skip the container overhead entirely.
 
 ---
 

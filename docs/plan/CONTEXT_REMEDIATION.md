@@ -158,12 +158,12 @@ This avoids trait-level breakage.
 
 | File | Action | Detail |
 |------|--------|--------|
-| [NEW] `inject_tools.rs` | CREATE | Implements Tool Lazy Loading: injects `ToolIndex` (names only) + `tool_search` meta-tool definition. Does not inject full schemas. |
+| [NEW] `inject_tools.rs` | CREATE | Implements Tool Lazy Loading: injects `ToolIndex` (names only) + `ToolSearch` meta-tool definition. Does not inject full schemas. |
 
 **Behavior**:
 - Accept tool names list at construction
 - Produce compact tool index (<500 tokens)
-- Include `tool_search` tool definition
+- Include `ToolSearch` tool definition
 - Inject as `ContextCategory::Tools`
 
 #### 1.6 Implement `LoadHistory` Provider (priority 600)
@@ -188,7 +188,7 @@ This avoids trait-level breakage.
 | T-P1-04 | `inject_memory.rs` | Empty recall produces no items |
 | T-P1-05 | `inject_skills.rs` | Provider name/priority; injects skill descriptions |
 | T-P1-06 | `inject_tools.rs` | Provider name/priority; produces compact tool index |
-| T-P1-07 | `inject_tools.rs` | Tool index contains tool names and tool_search |
+| T-P1-07 | `inject_tools.rs` | Tool index contains tool names and ToolSearch |
 | T-P1-08 | `load_history.rs` | Provider name/priority; loads and repairs history |
 | T-P1-09 | `load_history.rs` | Applies repair to orphan tool results |
 | T-P1-10 | `pipeline.rs` | Full pipeline with all 8 stages executes in order |

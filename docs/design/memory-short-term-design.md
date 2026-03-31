@@ -22,7 +22,7 @@ The IndexedExperience mode is inspired by [Memex(RL)](../research/memex-rl.md). 
 
 ### Background
 
-Large language models have a fixed context window. In agentic workflows, context can explode quickly: a single `file_read` tool call may return megabytes of text, multi-step debugging accumulates thousands of lines of tool output, and batch operations (e.g., linting 100 files) produce output far exceeding any model's capacity. Naive truncation loses critical context; sliding-window approaches drop early decisions that later turns depend on. This engine solves the problem with a two-phase compression strategy inspired by:
+Large language models have a fixed context window. In agentic workflows, context can explode quickly: a single `FileRead` tool call may return megabytes of text, multi-step debugging accumulates thousands of lines of tool output, and batch operations (e.g., linting 100 files) produce output far exceeding any model's capacity. Naive truncation loses critical context; sliding-window approaches drop early decisions that later turns depend on. This engine solves the problem with a two-phase compression strategy inspired by:
 
 - **ReMe**: Compact (lossless disk offload) + Compress (LLM summarization) dual strategy.
 - **OpenClaw**: MEMORY.md compaction mechanism for simple file-based persistence.

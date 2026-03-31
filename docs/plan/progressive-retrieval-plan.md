@@ -21,7 +21,7 @@ OpenViking 的设计理念是**渐进式加载**：
 
 ```
 <knowledge_context>
-The following knowledge is relevant to your query. Use knowledge_search tool to get full details.
+The following knowledge is relevant to your query. Use KnowledgeSearch tool to get full details.
 
 --- Knowledge Item 1 (relevance: 92%) ---
 Source: Rust Error Handling Guide
@@ -45,7 +45,7 @@ Sections:
 **优势**：
 - 相同 token 预算下可以覆盖更多文档（L0 ~100 tokens vs L2 ~300 tokens）
 - LLM 能看到文档结构，知道哪些 section 有用
-- 配合 `knowledge_search` tool 按需获取 L2 细节
+- 配合 `KnowledgeSearch` tool 按需获取 L2 细节
 
 ### D2: 搜索结果携带 L0 摘要
 
@@ -108,11 +108,11 @@ pub struct EntryMetadata {
 修改 `format_knowledge_block()`:
 - 对于有 L0/L1 的结果：输出 L0 summary + L1 section titles 列表
 - 对于无 L0/L1 的结果（旧数据回退）：输出 L2 原文（保持现有行为）
-- 添加全局提示语：`"Use knowledge_search tool to get full details for specific sections."`
+- 添加全局提示语：`"Use KnowledgeSearch tool to get full details for specific sections."`
 
 ---
 
-### y-tools knowledge_search — L2 详情按需查询
+### y-tools KnowledgeSearch — L2 详情按需查询
 
 #### [MODIFY] [knowledge_search.rs](file:///Users/gorgias/Projects/y-agent/crates/y-tools/src/builtin/knowledge_search.rs)
 
@@ -157,4 +157,4 @@ cargo check --workspace
 1. 启动 y-gui, 导入一个含 Markdown headings 的文档到知识库
 2. 在 chat 中选择该知识库 collection, 提问相关内容
 3. 查看 terminal 日志中 `knowledge retrieval: injected context` 的 tokens 数量
-4. 确认 LLM 可以通过 `knowledge_search` 工具获取更多细节
+4. 确认 LLM 可以通过 `KnowledgeSearch` 工具获取更多细节

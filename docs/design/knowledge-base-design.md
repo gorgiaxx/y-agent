@@ -12,7 +12,7 @@
 
 ## TL;DR
 
-The Knowledge Base is a structured, searchable store for **externally sourced reference knowledge** -- documents, articles, checklists, API references, and curated content ingested from PDFs, web pages, APIs, and other external sources. Unlike Long-Term Memory (which extracts agent experience from conversations) and Skills (which provide LLM reasoning instructions), the Knowledge Base holds factual reference content that agents consult during planning and execution. Knowledge is ingested through **agent-driven ingestion pipelines** -- leveraging existing agent orchestration and tool infrastructure -- that fetch, parse, chunk, classify, embed, and store content. Each knowledge entry is stored at **three resolution levels** -- **L0** (abstract, ~100 tokens), **L1** (overview, ~500 tokens), and **L2** (full chunk content) -- enabling **progressive loading** that minimizes token waste: retrieval returns L0 summaries first, and agents load L1/L2 on demand. Retrieval operates through both explicit tools (`knowledge_search`, `knowledge_lookup`) and automatic context injection via a `ContextMiddleware` provider that triggers on domain-relevant queries. The system reuses the Memory Service infrastructure (vector store, embedding pipeline, gateway) but maintains a separate collection with its own domain-classification index, source provenance tracking, and freshness management.
+The Knowledge Base is a structured, searchable store for **externally sourced reference knowledge** -- documents, articles, checklists, API references, and curated content ingested from PDFs, web pages, APIs, and other external sources. Unlike Long-Term Memory (which extracts agent experience from conversations) and Skills (which provide LLM reasoning instructions), the Knowledge Base holds factual reference content that agents consult during planning and execution. Knowledge is ingested through **agent-driven ingestion pipelines** -- leveraging existing agent orchestration and tool infrastructure -- that fetch, parse, chunk, classify, embed, and store content. Each knowledge entry is stored at **three resolution levels** -- **L0** (abstract, ~100 tokens), **L1** (overview, ~500 tokens), and **L2** (full chunk content) -- enabling **progressive loading** that minimizes token waste: retrieval returns L0 summaries first, and agents load L1/L2 on demand. Retrieval operates through both explicit tools (`KnowledgeSearch`, `knowledge_lookup`) and automatic context injection via a `ContextMiddleware` provider that triggers on domain-relevant queries. The system reuses the Memory Service infrastructure (vector store, embedding pipeline, gateway) but maintains a separate collection with its own domain-classification index, source provenance tracking, and freshness management.
 
 ---
 
@@ -71,7 +71,7 @@ The Knowledge Base fills this gap as a persistent, workspace-scoped store for ex
 - Knowledge entry data model: chunks with domain tags, source provenance, quality scores, freshness metadata
 - Domain taxonomy: hierarchical domain classification with user-defined and auto-detected domains
 - Retrieval engine: semantic search, keyword matching, domain filtering, source filtering, freshness weighting
-- Built-in tools: `knowledge_search` (semantic + filtered retrieval), `knowledge_lookup` (exact entry retrieval)
+- Built-in tools: `KnowledgeSearch` (semantic + filtered retrieval), `knowledge_lookup` (exact entry retrieval)
 - Context integration: `InjectKnowledge` ContextMiddleware for automatic domain-triggered injection
 - Knowledge maintenance: update, refresh, expiry, deduplication, quality scoring
 - Integration with Skills (knowledge_bases references in skill manifests)
@@ -125,7 +125,7 @@ flowchart TB
     end
 
     subgraph Integration["Integration Points"]
-        KBTool["knowledge_search / knowledge_lookup Tools"]
+        KBTool["KnowledgeSearch / knowledge_lookup Tools"]
         KBMiddleware["InjectKnowledge ContextMiddleware"]
         SkillRef["Skill knowledge_bases References"]
     end
@@ -269,13 +269,13 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Agent
-    participant KBTool as knowledge_search Tool
+    participant KBTool as KnowledgeSearch Tool
     participant SE as Search Engine
     participant VI as Vector Index
     participant MI as Metadata Index
     participant FR as Fusion Reranker
 
-    Agent->>KBTool: knowledge_search(query, domain_filter, top_k)
+    Agent->>KBTool: KnowledgeSearch(query, domain_filter, top_k)
     KBTool->>SE: search(query, filters)
 
     par Parallel search paths
@@ -561,7 +561,7 @@ sequenceDiagram
     participant KB as Knowledge Base
     participant VS as Vector Store
 
-    A->>KB: knowledge_search(query, top_k=5)
+    A->>KB: KnowledgeSearch(query, top_k=5)
     KB->>VS: hybrid search (embeds L0 summaries)
     VS-->>KB: ranked chunk IDs + L0 summaries
     KB-->>A: results with L0 (title + summary per chunk)
@@ -591,7 +591,7 @@ sequenceDiagram
 
 **InjectKnowledge Integration**: The `InjectKnowledge` ContextMiddleware injects at **L0 resolution by default**. If the Knowledge token budget allows and fewer than 3 chunks are injected, it escalates to L1. This ensures automatic injection stays within budget while providing useful previews for the agent to decide whether to load more.
 
-**knowledge_search Tool Enhancement**: The `knowledge_search` tool returns L0 summaries by default. An optional `resolution` parameter (L0/L1/L2) allows the agent to request higher resolution in the initial search, though this consumes more tokens. The `knowledge_lookup` tool supports a `resolution` parameter for per-chunk escalation.
+**KnowledgeSearch Tool Enhancement**: The `KnowledgeSearch` tool returns L0 summaries by default. An optional `resolution` parameter (L0/L1/L2) allows the agent to request higher resolution in the initial search, though this consumes more tokens. The `knowledge_lookup` tool supports a `resolution` parameter for per-chunk escalation.
 
 ### Domain Classifier
 
@@ -806,13 +806,13 @@ The `InjectKnowledge` ContextMiddleware performs automatic domain matching on ea
 4. **Trigger decision**: If any domain scores above threshold (default 0.6), trigger a DomainScoped retrieval for the top-scoring domain(s).
 5. **Injection**: Top-k results (default 3) injected into context, respecting the knowledge token budget.
 
-This mechanism enables the user's scenario: "when an agent encounters a task in a relevant domain, it can quickly retrieve knowledge" -- without the agent needing to explicitly call `knowledge_search`.
+This mechanism enables the user's scenario: "when an agent encounters a task in a relevant domain, it can quickly retrieve knowledge" -- without the agent needing to explicitly call `KnowledgeSearch`.
 
 ---
 
 ## Built-in Tools
 
-### knowledge_search
+### KnowledgeSearch
 
 | Aspect | Detail |
 |--------|--------|
@@ -840,7 +840,7 @@ This mechanism enables the user's scenario: "when an agent encounters a task in 
 | **Parameters** | `source` (string, required): file path or URL; `source_type` (enum, required): PDF/Web/Text/Markdown; `collection` (string, required): target collection; `domain_hint` (string, optional): domain classification hint |
 | **Returns** | Ingestion report: `{chunks_created, chunks_rejected, source_hash, collection_name}` |
 | **Dangerous** | No (reads external content; does not execute it) |
-| **Runtime** | No isolation needed for local files; web fetching uses existing `web_fetch` tool pipeline |
+| **Runtime** | No isolation needed for local files; web fetching uses existing `WebFetch` tool pipeline |
 
 These tools are registered in the Tool Registry alongside existing built-in tools (see [tools-design.md](tools-design.md)).
 
@@ -929,7 +929,7 @@ The Context Window Guard's budget categories are extended with a Knowledge alloc
 
 | Concern | Approach |
 |---------|----------|
-| **Source trust** | Ingestion agents operate under the same guardrails as any agent. File system sources respect workspace path restrictions (see [tools-design.md](tools-design.md)). Web sources use existing `web_fetch` security model. |
+| **Source trust** | Ingestion agents operate under the same guardrails as any agent. File system sources respect workspace path restrictions (see [tools-design.md](tools-design.md)). Web sources use existing `WebFetch` security model. |
 | **Content filtering** | Quality Filter screens for minimum coherence. No automatic execution of ingested content (knowledge is text-only, never executed). |
 | **Workspace isolation** | All knowledge entries are partitioned by `workspace_id`. No cross-workspace knowledge access. |
 | **Collection access control** | Collections inherit workspace-level permissions. Fine-grained per-collection ACLs are deferred to Phase 2. |
@@ -952,8 +952,8 @@ The Context Window Guard's budget categories are extended with a Knowledge alloc
 | Domain classification (LLM-assisted, batch of 20 chunks) | < 10s |
 | Embedding (batch of 100 chunks) | < 5s |
 | Full ingestion pipeline (single PDF, 100 pages) | < 60s |
-| knowledge_search (Hybrid, single round) | < 100ms p99 |
-| knowledge_search (Deep, 2 rounds with sub-query) | < 500ms p99 (dominated by LLM sub-query generation) |
+| KnowledgeSearch (Hybrid, single round) | < 100ms p99 |
+| KnowledgeSearch (Deep, 2 rounds with sub-query) | < 500ms p99 (dominated by LLM sub-query generation) |
 | Vector ANN search (HNSW, 500K chunks) | < 20ms p99 |
 | BM25 keyword search (inverted index, 500K chunks) | < 30ms p99 |
 | RRF fusion (two result lists, 100 candidates) | < 1ms |
@@ -1009,7 +1009,7 @@ The Knowledge Base registers two lifecycle hooks in the y-hooks system (see [hoo
 
 | Phase | Scope | Duration |
 |-------|-------|----------|
-| **Phase 1** | Knowledge entry data model, Knowledge Store (vector + metadata), collection CRUD, `knowledge_search` / `knowledge_lookup` tools, PDF and Markdown source connectors, heading-based chunker, rule-based domain classifier | 3-4 weeks |
+| **Phase 1** | Knowledge entry data model, Knowledge Store (vector + metadata), collection CRUD, `KnowledgeSearch` / `knowledge_lookup` tools, PDF and Markdown source connectors, heading-based chunker, rule-based domain classifier | 3-4 weeks |
 | **Phase 2** | Web source connector, `knowledge_ingest` agent-facing tool, LLM-assisted domain classification, quality filter with deduplication, `InjectKnowledge` ContextMiddleware, domain taxonomy management | 3-4 weeks |
 | **Phase 3** | Freshness management (re-ingestion, staleness detection, expiry), collection-level config, fusion reranking with freshness weighting, skill-referenced knowledge resolution, observability metrics and hook points | 2-3 weeks |
 | **Phase 4** | API source connector interface, semantic chunker (LLM-assisted), advanced deduplication (cross-source), performance optimization, knowledge base CLI commands | 2-3 weeks |
@@ -1019,7 +1019,7 @@ The Knowledge Base registers two lifecycle hooks in the y-hooks system (see [hoo
 | Component | Rollback |
 |-----------|----------|
 | Knowledge Store | Feature flag `knowledge_base`; disabled = all KB tools return "feature disabled"; InjectKnowledge middleware becomes no-op |
-| InjectKnowledge middleware | Feature flag `kb_context_injection`; disabled = middleware skips injection; agents can still use explicit `knowledge_search` tool |
+| InjectKnowledge middleware | Feature flag `kb_context_injection`; disabled = middleware skips injection; agents can still use explicit `KnowledgeSearch` tool |
 | LLM-assisted classification | Feature flag `kb_llm_classification`; disabled = rule-based classification only |
 | Freshness management | Feature flag `kb_freshness`; disabled = no expiry or staleness detection; all indexed entries remain active |
 | Domain-triggered retrieval | Feature flag `kb_domain_trigger`; disabled = InjectKnowledge only activates on explicit skill references, not on domain matching |
@@ -1060,9 +1060,9 @@ The Knowledge Base registers two lifecycle hooks in the y-hooks system (see [hoo
 | **Precision** | High (explicit query) | High (domain matching + semantic search) |
 | **Recall for implicit needs** | Low (agent must know to search) | High (automatic injection on domain match) |
 | **Token cost** | Zero when not queried | Small cost for domain matching; injection only when matched |
-| **Agent burden** | Agent must explicitly call knowledge_search | Automatic for common cases; explicit tool still available |
+| **Agent burden** | Agent must explicitly call KnowledgeSearch | Automatic for common cases; explicit tool still available |
 
-**Decision**: Domain-triggered hybrid. The automatic injection ensures agents benefit from relevant knowledge even when they do not explicitly search. The explicit `knowledge_search` tool remains available for targeted queries.
+**Decision**: Domain-triggered hybrid. The automatic injection ensures agents benefit from relevant knowledge even when they do not explicitly search. The explicit `KnowledgeSearch` tool remains available for targeted queries.
 
 ### Hybrid Fusion: RRF vs Weighted Linear Combination
 

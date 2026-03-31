@@ -25,21 +25,21 @@
 
 ## Highlights
 
-| Capability | Description |
-|---|---|
-| **Multi-Provider LLM Pool** | Tag-based routing, automatic failover, provider freeze/thaw, enable/disable toggle |
-| **DAG Workflow Engine** | Typed channels, checkpointing, interrupt/resume protocol |
-| **Tool System** | JSON Schema validation, LRU activation, dynamic tool creation, multi-format parser (OpenAI, DeepSeek DSML, MiniMax, GLM4) |
-| **Three-Tier Memory** | Short-term, long-term (Qdrant), and working memory with semantic search |
-| **Multi-Agent Collaboration** | Session tree, parent/child delegation, TOML-defined agents with template expansion |
-| **Guardrails & Safety** | Content filtering, PII detection, loop detection, risk scoring middleware |
-| **Context Pipeline** | 7-stage middleware chain for token-budget-aware prompt assembly |
-| **Knowledge Base** | Multi-level chunking (L0/L1/L2), hybrid retrieval (BM25 + vector), semantic search |
-| **Skill Evolution** | Git-like versioning, experience capture, self-improvement with HITL approval |
-| **Browser Tool** | Web browsing via Chrome DevTools Protocol, headless or visible mode |
-| **Bot Adapters** | Discord, Feishu (Lark), and Telegram integration via `y-bot` |
-| **Full Observability** | Span-based tracing, cost intelligence, trace replay |
-| **Built-in Tools** | `shell_exec`, `file_read`, `file_write`, `web_fetch`, `knowledge_search`, `tool_search`, `task` (delegation) |
+| Capability                    | Description                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Multi-Provider LLM Pool**   | Tag-based routing, automatic failover, provider freeze/thaw, enable/disable toggle                                        |
+| **DAG Workflow Engine**       | Typed channels, checkpointing, interrupt/resume protocol                                                                  |
+| **Tool System**               | JSON Schema validation, LRU activation, dynamic tool creation, multi-format parser (OpenAI, DeepSeek DSML, MiniMax, GLM4) |
+| **Three-Tier Memory**         | Short-term, long-term (Qdrant), and working memory with semantic search                                                   |
+| **Multi-Agent Collaboration** | Session tree, parent/child delegation, TOML-defined agents with template expansion                                        |
+| **Guardrails & Safety**       | Content filtering, PII detection, loop detection, risk scoring middleware                                                 |
+| **Context Pipeline**          | 7-stage middleware chain for token-budget-aware prompt assembly                                                           |
+| **Knowledge Base**            | Multi-level chunking (L0/L1/L2), hybrid retrieval (BM25 + vector), semantic search                                        |
+| **Skill Evolution**           | Git-like versioning, experience capture, self-improvement with HITL approval                                              |
+| **Browser Tool**              | Web browsing via Chrome DevTools Protocol, headless or visible mode                                                       |
+| **Bot Adapters**              | Discord, Feishu (Lark), and Telegram integration via `y-bot`                                                              |
+| **Full Observability**        | Span-based tracing, cost intelligence, trace replay                                                                       |
+| **Built-in Tools**            | `ShellExec`, `FileRead`, `FileWrite`, `WebFetch`, `KnowledgeSearch`, `ToolSearch`, `Task` (delegation)                    |
 
 ---
 
@@ -47,14 +47,14 @@
 
 ### 1. Prerequisites
 
-| Dependency | Required? | Notes |
-|---|---|---|
-| **Rust 1.94+** | Yes | Pinned in `rust-toolchain.toml` |
-| **Node.js 18+** | Yes (GUI only) | [nodejs.org](https://nodejs.org) |
-| **SQLite 3.35+** | Embedded | Bundled, no action needed |
-| **Chrome / Chromium** | Optional | For the browser tool (auto-detected) |
-| PostgreSQL 14+ | Optional | For diagnostics / analytics |
-| Qdrant | Optional | For semantic vector search |
+| Dependency            | Required?      | Notes                                |
+| --------------------- | -------------- | ------------------------------------ |
+| **Rust 1.94+**        | Yes            | Pinned in `rust-toolchain.toml`      |
+| **Node.js 18+**       | Yes (GUI only) | [nodejs.org](https://nodejs.org)     |
+| **SQLite 3.35+**      | Embedded       | Bundled, no action needed            |
+| **Chrome / Chromium** | Optional       | For the browser tool (auto-detected) |
+| PostgreSQL 14+        | Optional       | For diagnostics / analytics          |
+| Qdrant                | Optional       | For semantic vector search           |
 
 ### 2. Build
 
@@ -127,17 +127,17 @@ enabled = true
 <details>
 <summary>Provider presets (click to expand)</summary>
 
-| Provider | `provider_type` | Model Example | API Key Env Var | Base URL |
-|---|---|---|---|---|
-| OpenAI | `openai` | `gpt-4o` | `OPENAI_API_KEY` | *(default)* |
-| Anthropic | `anthropic` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` | *(default)* |
-| Google Gemini | `gemini` | `gemini-2.5-flash` | `GEMINI_API_KEY` | *(default)* |
-| DeepSeek | `openai` | `deepseek-chat` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/v1` |
-| Groq | `openai` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` |
-| Together AI | `openai` | `meta-llama/Llama-3.3-70B` | `TOGETHER_API_KEY` | `https://api.together.xyz/v1` |
-| Ollama (local) | `ollama` | `llama3.1:8b` | *(none -- no key required)* | `http://localhost:11434` |
-| Azure OpenAI | `azure` | `gpt-4o` | *(your key)* | `https://your-resource.openai.azure.com/openai/deployments/gpt-4o` |
-| Any OpenAI-compat | `openai` | *(user-specified)* | *(user-specified)* | *(your endpoint /v1)* |
+| Provider          | `provider_type` | Model Example              | API Key Env Var             | Base URL                                                           |
+| ----------------- | --------------- | -------------------------- | --------------------------- | ------------------------------------------------------------------ |
+| OpenAI            | `openai`        | `gpt-4o`                   | `OPENAI_API_KEY`            | _(default)_                                                        |
+| Anthropic         | `anthropic`     | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY`         | _(default)_                                                        |
+| Google Gemini     | `gemini`        | `gemini-2.5-flash`         | `GEMINI_API_KEY`            | _(default)_                                                        |
+| DeepSeek          | `openai`        | `deepseek-chat`            | `DEEPSEEK_API_KEY`          | `https://api.deepseek.com/v1`                                      |
+| Groq              | `openai`        | `llama-3.3-70b-versatile`  | `GROQ_API_KEY`              | `https://api.groq.com/openai/v1`                                   |
+| Together AI       | `openai`        | `meta-llama/Llama-3.3-70B` | `TOGETHER_API_KEY`          | `https://api.together.xyz/v1`                                      |
+| Ollama (local)    | `ollama`        | `llama3.1:8b`              | _(none -- no key required)_ | `http://localhost:11434`                                           |
+| Azure OpenAI      | `azure`         | `gpt-4o`                   | _(your key)_                | `https://your-resource.openai.azure.com/openai/deployments/gpt-4o` |
+| Any OpenAI-compat | `openai`        | _(user-specified)_         | _(user-specified)_          | _(your endpoint /v1)_                                              |
 
 Multiple providers can coexist. y-agent routes requests by tags and automatically fails over when a provider is unavailable. Providers can be toggled on/off with the `enabled` field.
 
@@ -169,13 +169,13 @@ y-agent ships with a **Tauri v2 desktop GUI** built with React 19 and TypeScript
 
 The GUI follows a **VSCode-style layout** with a sidebar and main content area:
 
-| Sidebar Panel | Description |
-|---|---|
-| **Sessions** | Chat history, organized by workspaces |
-| **Automation** | Workflow automation (DAG editor) |
-| **Skills** | Installed skills -- search, import, enable/disable |
-| **Knowledge** | Knowledge base collections -- create, import, search |
-| **Agents** | Registered agents -- built-in, user-defined, dynamic |
+| Sidebar Panel  | Description                                          |
+| -------------- | ---------------------------------------------------- |
+| **Sessions**   | Chat history, organized by workspaces                |
+| **Automation** | Workflow automation (DAG editor)                     |
+| **Skills**     | Installed skills -- search, import, enable/disable   |
+| **Knowledge**  | Knowledge base collections -- create, import, search |
+| **Agents**     | Registered agents -- built-in, user-defined, dynamic |
 
 ### Chat Interface
 
@@ -199,22 +199,23 @@ The GUI follows a **VSCode-style layout** with a sidebar and main content area:
 
 Open via `/settings` or the gear icon:
 
-| Tab | Configures |
-|---|---|
-| **General** | Theme (dark / light), log level, output format |
-| **Providers** | Add / edit / delete / test / toggle LLM providers |
-| **Session** | Max tree depth, compaction threshold, auto-archive |
-| **Runtime** | Execution backend (Native / Docker / SSH), Python / Bun venvs |
-| **Browser** | Browser tool toggle, headless mode, Chrome path |
-| **Storage** | SQLite path, WAL mode, transcript directory |
-| **Tools** | Max active tools, MCP server configuration |
-| **Guardrails** | Permission model, loop detection, risk scoring |
-| **Knowledge** | Embedding model, chunking, retrieval strategy |
-| **Prompts** | View and edit system prompt templates |
+| Tab            | Configures                                                    |
+| -------------- | ------------------------------------------------------------- |
+| **General**    | Theme (dark / light), log level, output format                |
+| **Providers**  | Add / edit / delete / test / toggle LLM providers             |
+| **Session**    | Max tree depth, compaction threshold, auto-archive            |
+| **Runtime**    | Execution backend (Native / Docker / SSH), Python / Bun venvs |
+| **Browser**    | Browser tool toggle, headless mode, Chrome path               |
+| **Storage**    | SQLite path, WAL mode, transcript directory                   |
+| **Tools**      | Max active tools, MCP server configuration                    |
+| **Guardrails** | Permission model, loop detection, risk scoring                |
+| **Knowledge**  | Embedding model, chunking, retrieval strategy                 |
+| **Prompts**    | View and edit system prompt templates                         |
 
 ### Status Bar
 
 The bottom status bar displays:
+
 - Current session ID and turn count
 - Token usage progress relative to the context window
 - Active provider and model name
@@ -324,11 +325,11 @@ min_similarity_threshold = 0.65
 
 The `y-bot` crate provides platform adapters that expose y-agent as a messaging bot:
 
-| Platform | Transport | Status |
-|---|---|---|
-| **Discord** | Interactions Endpoint (Ed25519 signature verification) | Implemented |
-| **Feishu (Lark)** | Event webhook | Implemented |
-| **Telegram** | Bot API webhook | Implemented |
+| Platform          | Transport                                              | Status      |
+| ----------------- | ------------------------------------------------------ | ----------- |
+| **Discord**       | Interactions Endpoint (Ed25519 signature verification) | Implemented |
+| **Feishu (Lark)** | Event webhook                                          | Implemented |
+| **Telegram**      | Bot API webhook                                        | Implemented |
 
 Bot adapters are wired into `y-web` and share the same `ServiceContainer`. Configure them in `config/bots.toml`.
 
@@ -346,37 +347,37 @@ Bot adapters are wired into `y-web` and share the same `ServiceContainer`. Confi
 
 ### Config Files
 
-| File | Description | Must Configure? |
-|---|---|---|
-| `providers.toml` | LLM provider pool (API keys, models, routing tags, enable toggle) | **Yes** |
-| `y-agent.toml` | Global settings (log level, output format) | No |
-| `knowledge.toml` | Knowledge base embedding & retrieval | Only if using embedding |
-| `storage.toml` | SQLite database path, WAL mode, transcripts | No |
-| `session.toml` | Session tree depth, compaction, auto-archive | No |
-| `runtime.toml` | Execution backend (Docker / Native / SSH), sandboxing | No |
-| `browser.toml` | Browser tool (Chrome, headless mode, CDP) | Only if using browser |
-| `hooks.toml` | Middleware timeouts, event bus capacity | No |
-| `tools.toml` | Tool registry limits, MCP server connections | Only if using MCP |
-| `guardrails.toml` | Permission model, loop detection, risk scoring | No |
-| `bots.toml` | Bot adapter configuration (Discord, Feishu, Telegram) | Only if using bots |
+| File              | Description                                                       | Must Configure?         |
+| ----------------- | ----------------------------------------------------------------- | ----------------------- |
+| `providers.toml`  | LLM provider pool (API keys, models, routing tags, enable toggle) | **Yes**                 |
+| `y-agent.toml`    | Global settings (log level, output format)                        | No                      |
+| `knowledge.toml`  | Knowledge base embedding & retrieval                              | Only if using embedding |
+| `storage.toml`    | SQLite database path, WAL mode, transcripts                       | No                      |
+| `session.toml`    | Session tree depth, compaction, auto-archive                      | No                      |
+| `runtime.toml`    | Execution backend (Docker / Native / SSH), sandboxing             | No                      |
+| `browser.toml`    | Browser tool (Chrome, headless mode, CDP)                         | Only if using browser   |
+| `hooks.toml`      | Middleware timeouts, event bus capacity                           | No                      |
+| `tools.toml`      | Tool registry limits, MCP server connections                      | Only if using MCP       |
+| `guardrails.toml` | Permission model, loop detection, risk scoring                    | No                      |
+| `bots.toml`       | Bot adapter configuration (Discord, Feishu, Telegram)             | Only if using bots      |
 
 ### Agent Definitions
 
 Agent definitions live in `config/agents/` as TOML files. They support **template expansion** -- placeholders like `{{YAGENT_CONFIG_PATH}}` are resolved to system-specific paths at load time. Built-in agents include:
 
-| Agent | Purpose |
-|---|---|
-| `skill-ingestion` | Skill import and validation |
-| `skill-security-check` | Security audit for skill packages |
-| `agent-architect` | Agent design and configuration |
-| `tool-engineer` | Dynamic tool creation |
-| `title-generator` | Session title auto-generation |
-| `compaction-summarizer` | Context compaction |
-| `context-summarizer` | Context summary generation |
-| `pruning-summarizer` | Context pruning optimization |
-| `task-intent-analyzer` | Intent classification for delegation |
-| `pattern-extractor` | Pattern extraction from conversations |
-| `capability-assessor` | Capability assessment |
+| Agent                   | Purpose                               |
+| ----------------------- | ------------------------------------- |
+| `skill-ingestion`       | Skill import and validation           |
+| `skill-security-check`  | Security audit for skill packages     |
+| `agent-architect`       | Agent design and configuration        |
+| `tool-engineer`         | Dynamic tool creation                 |
+| `title-generator`       | Session title auto-generation         |
+| `compaction-summarizer` | Context compaction                    |
+| `context-summarizer`    | Context summary generation            |
+| `pruning-summarizer`    | Context pruning optimization          |
+| `task-intent-analyzer`  | Intent classification for delegation  |
+| `pattern-extractor`     | Pattern extraction from conversations |
+| `capability-assessor`   | Capability assessment                 |
 
 ### Proxy Configuration
 
@@ -524,15 +525,15 @@ flowchart TB
 
 ### Layer Responsibilities
 
-| Layer | Purpose |
-|---|---|
-| **Client** | User-facing entry points -- CLI, TUI, Tauri GUI, REST API, bot adapters -- all thin wrappers over the Service layer |
-| **Service** | Shared business logic (`ChatService`, `CostService`, `SystemService`, `ObservabilityService`, `WorkflowService`, `SkillService`, `AgentService`, `SchedulerService`, `BotService`) |
-| **Core** | Request routing, message scheduling, DAG-based orchestration with typed channels and checkpointing |
-| **Extensibility** | Three middleware chains (Context, Tool, LLM), async event bus, lifecycle hooks |
-| **Execution** | LLM provider pool with failover, tool registry (built-in + dynamic + MCP), agent delegation pool, sandboxed runtimes |
-| **State** | Session tree, three-tier memory (STM / LTM / WM), skill registry, knowledge base, file journal |
-| **Infrastructure** | SQLite (operational state), PostgreSQL (diagnostics / analytics), Qdrant (semantic vectors) |
+| Layer              | Purpose                                                                                                                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Client**         | User-facing entry points -- CLI, TUI, Tauri GUI, REST API, bot adapters -- all thin wrappers over the Service layer                                                                |
+| **Service**        | Shared business logic (`ChatService`, `CostService`, `SystemService`, `ObservabilityService`, `WorkflowService`, `SkillService`, `AgentService`, `SchedulerService`, `BotService`) |
+| **Core**           | Request routing, message scheduling, DAG-based orchestration with typed channels and checkpointing                                                                                 |
+| **Extensibility**  | Three middleware chains (Context, Tool, LLM), async event bus, lifecycle hooks                                                                                                     |
+| **Execution**      | LLM provider pool with failover, tool registry (built-in + dynamic + MCP), agent delegation pool, sandboxed runtimes                                                               |
+| **State**          | Session tree, three-tier memory (STM / LTM / WM), skill registry, knowledge base, file journal                                                                                     |
+| **Infrastructure** | SQLite (operational state), PostgreSQL (diagnostics / analytics), Qdrant (semantic vectors)                                                                                        |
 
 ---
 
@@ -542,66 +543,66 @@ The workspace contains **24 crates** organized by concern:
 
 ### Core
 
-| Crate | Description |
-|---|---|
+| Crate    | Description                                  |
+| -------- | -------------------------------------------- |
 | `y-core` | Trait definitions, shared types, error types |
 
 ### Infrastructure
 
-| Crate | Description |
-|---|---|
-| `y-provider` | LLM provider pool (OpenAI, Anthropic, Gemini, Azure, Ollama), tag routing, streaming |
-| `y-session` | Session tree, transcript, branching |
-| `y-context` | Context pipeline, token budget, memory integration |
-| `y-storage` | SQLite / PostgreSQL / Qdrant backends |
-| `y-knowledge` | Knowledge base chunking, indexing, hybrid retrieval |
-| `y-diagnostics` | Tracing, metrics, health checks |
+| Crate           | Description                                                                          |
+| --------------- | ------------------------------------------------------------------------------------ |
+| `y-provider`    | LLM provider pool (OpenAI, Anthropic, Gemini, Azure, Ollama), tag routing, streaming |
+| `y-session`     | Session tree, transcript, branching                                                  |
+| `y-context`     | Context pipeline, token budget, memory integration                                   |
+| `y-storage`     | SQLite / PostgreSQL / Qdrant backends                                                |
+| `y-knowledge`   | Knowledge base chunking, indexing, hybrid retrieval                                  |
+| `y-diagnostics` | Tracing, metrics, health checks                                                      |
 
 ### Middleware
 
-| Crate | Description |
-|---|---|
-| `y-hooks` | Middleware chains, event bus, plugin loading |
+| Crate          | Description                                         |
+| -------------- | --------------------------------------------------- |
+| `y-hooks`      | Middleware chains, event bus, plugin loading        |
 | `y-guardrails` | Content filtering, PII detection, safety middleware |
-| `y-prompt` | Prompt sections, templates, TOML store |
-| `y-mcp` | Model Context Protocol client / server |
+| `y-prompt`     | Prompt sections, templates, TOML store              |
+| `y-mcp`        | Model Context Protocol client / server              |
 
 ### Capabilities
 
-| Crate | Description |
-|---|---|
-| `y-tools` | Tool registry, JSON Schema validation, multi-format parser |
-| `y-skills` | Skill discovery, validation, manifest |
-| `y-runtime` | Native / Docker / SSH sandbox execution |
-| `y-scheduler` | Cron / interval scheduling, workflow triggers |
-| `y-browser` | Browser tool via Chrome DevTools Protocol |
-| `y-journal` | File change journal, rollback engine |
+| Crate         | Description                                                |
+| ------------- | ---------------------------------------------------------- |
+| `y-tools`     | Tool registry, JSON Schema validation, multi-format parser |
+| `y-skills`    | Skill discovery, validation, manifest                      |
+| `y-runtime`   | Native / Docker / SSH sandbox execution                    |
+| `y-scheduler` | Cron / interval scheduling, workflow triggers              |
+| `y-browser`   | Browser tool via Chrome DevTools Protocol                  |
+| `y-journal`   | File change journal, rollback engine                       |
 
 ### Orchestration
 
-| Crate | Description |
-|---|---|
+| Crate     | Description                                            |
+| --------- | ------------------------------------------------------ |
 | `y-agent` | Orchestrator, DAG engine, multi-agent pool, delegation |
-| `y-bot` | Bot adapters (Discord, Feishu, Telegram) |
+| `y-bot`   | Bot adapters (Discord, Feishu, Telegram)               |
 
 ### Service
 
-| Crate | Description |
-|---|---|
+| Crate       | Description                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------------- |
 | `y-service` | Business logic layer -- `ChatService`, `CostService`, `SystemService`, `ObservabilityService`, DI container |
 
 ### Presentation
 
-| Crate | Description |
-|---|---|
-| `y-cli` | CLI + TUI (clap + ratatui) |
+| Crate   | Description                                     |
+| ------- | ----------------------------------------------- |
+| `y-cli` | CLI + TUI (clap + ratatui)                      |
 | `y-web` | REST API server (axum) with bot adapter routing |
-| `y-gui` | Desktop GUI (Tauri v2 + React 19 + TypeScript) |
+| `y-gui` | Desktop GUI (Tauri v2 + React 19 + TypeScript)  |
 
 ### Testing
 
-| Crate | Description |
-|---|---|
+| Crate          | Description                        |
+| -------------- | ---------------------------------- |
 | `y-test-utils` | Mocks, fixtures, assertion helpers |
 
 ---
@@ -672,6 +673,7 @@ docker compose logs -f y-agent
 ```
 
 The `docker-compose.yml` provisions:
+
 - **y-agent** -- Main application (port 8080)
 - **PostgreSQL 16** -- Diagnostics & analytics
 - **Qdrant v1.8.4** -- Vector store for knowledge base & memory
@@ -696,18 +698,19 @@ git tag v0.2.0 && git push origin v0.2.0
 ```
 
 The CI pipeline (`.github/workflows/ci.yml`) runs:
+
 1. **Format** -- `cargo fmt --check`
 2. **Build & Test** -- clippy, check, test, doc (single runner with shared compilation cache)
 
 <details>
 <summary>Required GitHub Secrets for deployment</summary>
 
-| Secret | Description |
-|---|---|
-| `DEPLOY_HOST` | Target server address |
-| `DEPLOY_USER` | SSH username |
-| `DEPLOY_SSH_KEY` | SSH private key |
-| `DEPLOY_PATH` | Deployment directory on server |
+| Secret           | Description                    |
+| ---------------- | ------------------------------ |
+| `DEPLOY_HOST`    | Target server address          |
+| `DEPLOY_USER`    | SSH username                   |
+| `DEPLOY_SSH_KEY` | SSH private key                |
+| `DEPLOY_PATH`    | Deployment directory on server |
 
 </details>
 
@@ -717,24 +720,24 @@ The CI pipeline (`.github/workflows/ci.yml`) runs:
 
 Detailed documentation is organized under `docs/`:
 
-| Directory | Purpose |
-|---|---|
-| `docs/design/` | 30+ per-subsystem design documents |
+| Directory         | Purpose                                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `docs/design/`    | 30+ per-subsystem design documents                                                                                        |
 | `docs/standards/` | Engineering standards, test strategy, database schema, tool call protocol, skill standard, DSL spec, agent autonomy model |
-| `docs/plan/` | Project and per-module R&D plans |
-| `docs/api/` | API documentation |
-| `docs/guides/` | User and developer guides |
-| `docs/research/` | Research notes |
-| `docs/schema/` | Schema specifications |
+| `docs/plan/`      | Project and per-module R&D plans                                                                                          |
+| `docs/api/`       | API documentation                                                                                                         |
+| `docs/guides/`    | User and developer guides                                                                                                 |
+| `docs/research/`  | Research notes                                                                                                            |
+| `docs/schema/`    | Schema specifications                                                                                                     |
 
 Top-level references:
 
-| Document | Purpose |
-|---|---|
-| `DESIGN_OVERVIEW.md` | Authoritative cross-cutting alignment index |
-| `DESIGN_RULE.md` | Design document standards and validation checklist |
-| `VISION.md` | Project vision (Chinese) |
-| `CLAUDE.md` | Engineering protocol and contribution rules |
+| Document             | Purpose                                            |
+| -------------------- | -------------------------------------------------- |
+| `DESIGN_OVERVIEW.md` | Authoritative cross-cutting alignment index        |
+| `DESIGN_RULE.md`     | Design document standards and validation checklist |
+| `VISION.md`          | Project vision (Chinese)                           |
+| `CLAUDE.md`          | Engineering protocol and contribution rules        |
 
 ---
 

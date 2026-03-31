@@ -180,7 +180,7 @@ CREATE TABLE tool_activation_log (
     tool_name       TEXT NOT NULL,
     activated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     activation_source TEXT NOT NULL CHECK (activation_source IN (
-                        'tool_search', 'always_active', 'dependency', 'user_request'
+                        'ToolSearch', 'always_active', 'dependency', 'user_request'
                     ))
 );
 

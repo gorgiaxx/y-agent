@@ -11,7 +11,7 @@
 
 ## TL;DR
 
-Context and session management is the core infrastructure that governs y-agent's memory, multi-turn conversation quality, and cross-channel continuity. The design introduces a **Session Tree** structure supporting branching, child sessions, and cross-channel canonical sessions. Context is assembled via a multi-stage **Context Assembly Pipeline** -- an ordered sequence of **context providers** (system prompt, workspace bootstrap, memory recall, skills, tools, context status) implemented as a `ContextMiddleware` chain on top of the y-hooks middleware system (see [hooks-plugin-design.md](hooks-plugin-design.md)). The **InjectTools** stage uses **Tool Lazy Loading**: instead of injecting all tool schemas, it injects only a lightweight **ToolIndex** (tool names) and the **`tool_search`** meta-tool definition; full tool schemas are loaded on demand into a session-scoped **ToolActivationSet** (see [tools-design.md](tools-design.md)). A **Context Window Guard** monitors token usage and supports three trigger modes: **auto** (system-triggered compaction at threshold), **soft** (exposes context status to the agent as a learnable signal, enabling agent-initiated compression via indexed experience memory tools), and **hybrid** (soft warnings with hard fallback). **Session Repair** handles history corruption. Together, these mechanisms ensure the agent maintains coherent long-term memory within the finite context window of any LLM.
+Context and session management is the core infrastructure that governs y-agent's memory, multi-turn conversation quality, and cross-channel continuity. The design introduces a **Session Tree** structure supporting branching, child sessions, and cross-channel canonical sessions. Context is assembled via a multi-stage **Context Assembly Pipeline** -- an ordered sequence of **context providers** (system prompt, workspace bootstrap, memory recall, skills, tools, context status) implemented as a `ContextMiddleware` chain on top of the y-hooks middleware system (see [hooks-plugin-design.md](hooks-plugin-design.md)). The **InjectTools** stage uses **Tool Lazy Loading**: instead of injecting all tool schemas, it injects only a lightweight **ToolIndex** (tool names) and the **`ToolSearch`** meta-tool definition; full tool schemas are loaded on demand into a session-scoped **ToolActivationSet** (see [tools-design.md](tools-design.md)). A **Context Window Guard** monitors token usage and supports three trigger modes: **auto** (system-triggered compaction at threshold), **soft** (exposes context status to the agent as a learnable signal, enabling agent-initiated compression via indexed experience memory tools), and **hybrid** (soft warnings with hard fallback). **Session Repair** handles history corruption. Together, these mechanisms ensure the agent maintains coherent long-term memory within the finite context window of any LLM.
 
 ---
 
@@ -238,7 +238,7 @@ flowchart LR
 | `InjectBootstrap` | 200 | Add workspace context | README.md, AGENTS.md, project structure |
 | `InjectMemory` | 300 | Recall relevant memories | Vector search on user message via Memory system |
 | `InjectSkills` | 400 | Add active skill descriptions | Skill prompts and knowledge from Skill Registry |
-| `InjectTools` | 500 | Inject tool index and active tool schemas | ToolIndex (names only) + `tool_search` definition + ToolActivationSet members' full schemas (see [tools-design.md](tools-design.md) Tool Lazy Loading) |
+| `InjectTools` | 500 | Inject tool index and active tool schemas | ToolIndex (names only) + `ToolSearch` definition + ToolActivationSet members' full schemas (see [tools-design.md](tools-design.md) Tool Lazy Loading) |
 | `LoadHistory` | 600 | Load and filter message history | Session message loading with repair |
 | `InjectContextStatus` | 700 | Append context window status | Token counts, threshold, and utilization as a deterministic system message |
 
@@ -313,7 +313,7 @@ The guard enforces a token budget across five categories:
 | Budget Category | Default Allocation | Description |
 |----------------|-------------------|-------------|
 | System Prompt | 8,000 tokens | Agent persona, date/time, instructions |
-| Tools Schema | 16,000 tokens | Tool definitions and schemas. With Tool Lazy Loading enabled, initial usage is ~300-500 tokens (ToolIndex + tool_search); grows incrementally as tools are activated. Budget ceiling unchanged for safety. |
+| Tools Schema | 16,000 tokens | Tool definitions and schemas. With Tool Lazy Loading enabled, initial usage is ~300-500 tokens (ToolIndex + ToolSearch); grows incrementally as tools are activated. Budget ceiling unchanged for safety. |
 | History | 80,000 tokens | Conversation messages |
 | Bootstrap | 8,000 tokens | Workspace context, README, etc. |
 | Response Reserve | 16,000 tokens | Reserved for LLM output |

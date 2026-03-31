@@ -31,13 +31,13 @@ in Native mode, ensuring tool calls are never missed.
 
 ## 1. Design Principles
 
-| Principle | Rationale |
-|-----------|-----------|
-| **Two-layer system** | Native API tool calling for providers that support it; XML prompt-based fallback for the rest. Auto-detected from `provider_type`. |
-| **Two-tier visibility** | Core tools (Tier 1) are always available with schemas in the prompt. Extended tools (Tier 2) are loaded on demand via `tool_search`. |
-| **Explicit format** | XML tags are unambiguous, easy to parse, and well-understood by all major LLMs. |
+| Principle                | Rationale                                                                                                                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Two-layer system**     | Native API tool calling for providers that support it; XML prompt-based fallback for the rest. Auto-detected from `provider_type`.                                                        |
+| **Two-tier visibility**  | Core tools (Tier 1) are always available with schemas in the prompt. Extended tools (Tier 2) are loaded on demand via `ToolSearch`.                                                      |
+| **Explicit format**      | XML tags are unambiguous, easy to parse, and well-understood by all major LLMs.                                                                                                           |
 | **Native-first default** | `Native` is the default for first-party providers (openai, anthropic, azure, gemini, deepseek). `PromptBased` is the default for compatibility providers (openai-compat, custom, ollama). |
-| **Fail gracefully** | Malformed tool call tags are treated as regular text. Even in Native mode, a fallback XML parser catches tool calls emitted as text. |
+| **Fail gracefully**      | Malformed tool call tags are treated as regular text. Even in Native mode, a fallback XML parser catches tool calls emitted as text.                                                      |
 
 ---
 
@@ -51,7 +51,7 @@ When an LLM wants to invoke a tool, it outputs a `<tool_call>` block containing 
 I need to read that file to understand the code structure.
 
 <tool_call>
-<name>file_read</name>
+<name>FileRead</name>
 <arguments>{"path": "/src/main.rs"}</arguments>
 </tool_call>
 ```
@@ -64,12 +64,12 @@ Multiple `<tool_call>` blocks can appear in a single response. They are executed
 Let me check both files.
 
 <tool_call>
-<name>file_read</name>
+<name>FileRead</name>
 <arguments>{"path": "/src/lib.rs"}</arguments>
 </tool_call>
 
 <tool_call>
-<name>file_read</name>
+<name>FileRead</name>
 <arguments>{"path": "/src/main.rs"}</arguments>
 </tool_call>
 ```
@@ -80,8 +80,9 @@ The content inside `<tool_call>` uses XML tags for structure:
 - `<arguments>` — JSON object with tool-specific parameters
 
 The parser also accepts JSON format as a legacy fallback:
+
 ```json
-{"name": "tool_name", "arguments": {"param1": "value1"}}
+{ "name": "tool_name", "arguments": { "param1": "value1" } }
 ```
 
 ---
@@ -93,7 +94,7 @@ After executing a tool call, the result is fed back to the LLM as a `<tool_resul
 ### Success
 
 ```
-<tool_result name="file_read" success="true">
+<tool_result name="FileRead" success="true">
 {"content": "fn main() {\n    println!(\"Hello, world!\");\n}"}
 </tool_result>
 ```
@@ -101,17 +102,17 @@ After executing a tool call, the result is fed back to the LLM as a `<tool_resul
 ### Error
 
 ```
-<tool_result name="file_read" success="false">
+<tool_result name="FileRead" success="false">
 {"error": "file not found: /src/missing.rs"}
 </tool_result>
 ```
 
 ### Attributes
 
-| Attribute | Required | Description |
-|-----------|----------|-------------|
-| `name` | Yes | Tool name that was called |
-| `success` | Yes | `"true"` or `"false"` |
+| Attribute | Required | Description               |
+| --------- | -------- | ------------------------- |
+| `name`    | Yes      | Tool name that was called |
+| `success` | Yes      | `"true"` or `"false"`     |
 
 The body is always a JSON object. On success, the structure depends on the tool. On error, it contains an `error` field with a human-readable message.
 
@@ -122,13 +123,13 @@ The body is always a JSON object. On success, the structure depends on the tool.
 Tools use a **two-tier visibility model**:
 
 1. **Tier 1 (Core Tools)** -- Always available in the prompt with compact schemas. The LLM can call these directly without searching.
-2. **Tier 2 (Extended Tools)** -- Discovered via `tool_search`. The LLM sees a taxonomy root (~100 tokens) and must search before calling.
+2. **Tier 2 (Extended Tools)** -- Discovered via `ToolSearch`. The LLM sees a taxonomy root (~100 tokens) and must search before calling.
 
 ### Search by Category
 
 ```
 <tool_call>
-<name>tool_search</name>
+<name>ToolSearch</name>
 <arguments>{"category": "file"}</arguments>
 </tool_call>
 ```
@@ -139,7 +140,7 @@ Returns subcategories and tool summaries within that category.
 
 ```
 <tool_call>
-<name>tool_search</name>
+<name>ToolSearch</name>
 <arguments>{"query": "read file contents"}</arguments>
 </tool_call>
 ```
@@ -150,8 +151,8 @@ Returns matching tools across all categories.
 
 ```
 <tool_call>
-<name>tool_search</name>
-<arguments>{"tool": "file_read"}</arguments>
+<name>ToolSearch</name>
+<arguments>{"tool": "FileRead"}</arguments>
 </tool_call>
 ```
 
@@ -159,7 +160,7 @@ Returns the full tool definition including parameter schema, description, and ex
 
 ### After Search
 
-Once a tool is retrieved via `tool_search`, its full schema is added to the **ToolActivationSet** (session-scoped LRU cache, ceiling 20). The LLM can then call the tool directly in subsequent turns.
+Once a tool is retrieved via `ToolSearch`, its full schema is added to the **ToolActivationSet** (session-scoped LRU cache, ceiling 20). The LLM can then call the tool directly in subsequent turns.
 
 ---
 
@@ -169,15 +170,16 @@ Once a tool is retrieved via `tool_search`, its full schema is added to the **To
 
 The following core tools are always listed in the system prompt with compact schemas. This eliminates the common failure mode where LLMs guess familiar Unix command names (e.g., `ls`, `cat`, `grep`) instead of using registered tool names.
 
-| Tool | Description | Required Args |
-|------|-------------|---------------|
-| `file_read` | Read file contents | `{"path": "<filepath>"}` |
-| `file_write` | Write content to a file (creates dirs) | `{"path": "<filepath>", "content": "<text>"}` |
-| `file_list` | List directory contents | `{"path": "<dirpath>"}` |
-| `file_search` | Search for text pattern in files | `{"pattern": "<text>", "path": "<dirpath>"}` |
-| `shell_exec` | Execute a shell command | `{"command": "<cmd>"}` |
+| Tool          | Description                            | Required Args                                 |
+| ------------- | -------------------------------------- | --------------------------------------------- |
+| `FileRead`   | Read file contents                     | `{"path": "<filepath>"}`                      |
+| `FileWrite`  | Write content to a file (creates dirs) | `{"path": "<filepath>", "content": "<text>"}` |
+| `FileList`   | List directory contents                | `{"path": "<dirpath>"}`                       |
+| `FileSearch` | Search for text pattern in files       | `{"pattern": "<text>", "path": "<dirpath>"}`  |
+| `ShellExec`  | Execute a shell command                | `{"command": "<cmd>"}`                        |
 
 The prompt also includes an explicit instruction:
+
 > IMPORTANT: Use ONLY these exact tool names. Do NOT invent tool names like 'ls', 'cat', 'grep', or 'mkdir'. For shell operations not covered above, use shell_exec.
 
 ### 5.2 Tier 2: Taxonomy Root
@@ -187,7 +189,7 @@ For extended tools, the taxonomy root is injected to inform the LLM of available
 ```
 ## Tool Categories
 
-You have access to tools organized in the following categories. Use `tool_search` to discover and load specific tools before using them.
+You have access to tools organized in the following categories. Use `ToolSearch` to discover and load specific tools before using them.
 
 | Category | Description |
 |----------|-------------|
@@ -223,19 +225,20 @@ Flags: dotall (`.` matches newlines), non-greedy
 
 ### Edge Cases
 
-| Case | Behavior |
-|------|----------|
-| Malformed JSON inside tags | Treat entire `<tool_call>` block as regular text; emit warning |
-| Missing `name` field | Skip this tool call; emit warning |
-| Missing `arguments` field | Default to empty object `{}` |
-| Unclosed `<tool_call>` tag | Treat as regular text (no match) |
-| Nested angle brackets in JSON values | Handled by non-greedy regex matching `</tool_call>` end tag |
-| Empty `<tool_call></tool_call>` | Skip; no tool call emitted |
-| `<tool_call>` in code blocks | Parsed as tool call (LLMs should avoid this, but protocol is unambiguous) |
+| Case                                 | Behavior                                                                  |
+| ------------------------------------ | ------------------------------------------------------------------------- |
+| Malformed JSON inside tags           | Treat entire `<tool_call>` block as regular text; emit warning            |
+| Missing `name` field                 | Skip this tool call; emit warning                                         |
+| Missing `arguments` field            | Default to empty object `{}`                                              |
+| Unclosed `<tool_call>` tag           | Treat as regular text (no match)                                          |
+| Nested angle brackets in JSON values | Handled by non-greedy regex matching `</tool_call>` end tag               |
+| Empty `<tool_call></tool_call>`      | Skip; no tool call emitted                                                |
+| `<tool_call>` in code blocks         | Parsed as tool call (LLMs should avoid this, but protocol is unambiguous) |
 
 ### Validation
 
 After JSON parsing, validate:
+
 1. `name` is a non-empty string
 2. `arguments` is a JSON object (not array, not primitive)
 3. Tool name exists in registry or activation set (lookup, not schema validation at parse time)
@@ -297,6 +300,7 @@ mode = "prompt_based"  # "prompt_based" (default) | "native"
 ```
 
 Per-provider override is possible:
+
 ```toml
 [[providers]]
 id = "openai-gpt4"
@@ -307,28 +311,28 @@ tool_calling_mode = "native"  # Override for this provider only
 
 ## 9. Interaction with Existing Systems
 
-| System | Interaction |
-|--------|-------------|
-| **ToolIndex** | Still used internally for registry lookups; not directly exposed to LLM in PromptBased mode |
-| **ToolActivationSet** | Tools loaded via `tool_search` are activated here; full schemas cached for the session |
+| System                             | Interaction                                                                                                 |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **ToolIndex**                      | Still used internally for registry lookups; not directly exposed to LLM in PromptBased mode                 |
+| **ToolActivationSet**              | Tools loaded via `ToolSearch` are activated here; full schemas cached for the session                      |
 | **InjectTools** (context pipeline) | In PromptBased mode: injects taxonomy root + activated tool schemas. In Native mode: injects flat tool list |
-| **ToolExecutor** | Unchanged — executes tools regardless of how they were called |
-| **ParameterValidator** | Unchanged — validates parameters before execution |
-| **Guardrails** | Unchanged — permission checks still apply |
+| **ToolExecutor**                   | Unchanged — executes tools regardless of how they were called                                               |
+| **ParameterValidator**             | Unchanged — validates parameters before execution                                                           |
+| **Guardrails**                     | Unchanged — permission checks still apply                                                                   |
 
 ---
 
 ## 10. Token Budget Analysis
 
-| Component | PromptBased | Native |
-|-----------|------------|--------|
-| Tool protocol section | ~200 tokens | 0 |
-| Tier 1 core tool schemas | ~300 tokens | 0 |
-| Taxonomy root (Tier 2) | ~100 tokens | 0 |
-| Flat tool index (root agent) | 0 | ~50 tokens |
-| Sub-agent tools summary | ~200 tokens | 0 (via API field) |
-| Tool definitions in API | 0 | 5,000-25,000 tokens |
-| Activated tool schemas (per tool) | ~100-300 tokens | 0 (in API field) |
+| Component                          | PromptBased     | Native                   |
+| ---------------------------------- | --------------- | ------------------------ |
+| Tool protocol section              | ~200 tokens     | 0                        |
+| Tier 1 core tool schemas           | ~300 tokens     | 0                        |
+| Taxonomy root (Tier 2)             | ~100 tokens     | 0                        |
+| Flat tool index (root agent)       | 0               | ~50 tokens               |
+| Sub-agent tools summary            | ~200 tokens     | 0 (via API field)        |
+| Tool definitions in API            | 0               | 5,000-25,000 tokens      |
+| Activated tool schemas (per tool)  | ~100-300 tokens | 0 (in API field)         |
 | **Total (initial turn, 50 tools)** | **~600 tokens** | **~5,000-25,000 tokens** |
 
 Savings: **60-95%** on initial turns. The Tier 1 core tools add ~300 tokens vs. the original lazy-only approach, but eliminate the most common failure mode (LLMs guessing non-existent tool names). After tool activation, costs converge but prompt-based remains more efficient because only used tools are loaded.

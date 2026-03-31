@@ -93,7 +93,7 @@ This design extends and integrates with several existing y-agent modules:
 
 ### Out of Scope
 
-- General file system design (existing tools-design.md covers file_read/file_write)
+- General file system design (existing tools-design.md covers FileRead/file_write)
 - Distributed Working Memory across nodes
 - Binary file editing (deferred; initial focus on text files)
 - Visual pipeline editor
@@ -301,7 +301,7 @@ A pipeline template declares the step sequence, Working Memory slot schemas, and
 
 ### Atomic File Operations
 
-New built-in tools that operate at the line/region level instead of whole-file level. These replace the `file_read` (whole file) followed by `file_write` (whole file) pattern with surgical operations.
+New built-in tools that operate at the line/region level instead of whole-file level. These replace the `FileRead` (whole file) followed by `FileWrite` (whole file) pattern with surgical operations.
 
 | Tool | Description | Input | Output | Token Cost |
 |------|-------------|-------|--------|------------|
@@ -690,8 +690,8 @@ Each pipeline execution creates a parent span. Each step creates a child span wi
 | Component | Rollback |
 |-----------|----------|
 | Working Memory | Feature flag `working_memory`; disabled = pipeline steps use standard Sequential Pipeline context sharing |
-| Micro-Agent Pipeline | Feature flag `micro_agent_pipeline`; disabled = file operations use existing monolithic `file_read` + `file_write` |
-| Atomic file tools | Individual tool deregistration from ToolRegistry; existing `file_read`/`file_write` remain functional |
+| Micro-Agent Pipeline | Feature flag `micro_agent_pipeline`; disabled = file operations use existing monolithic `FileRead` + `FileWrite` |
+| Atomic file tools | Individual tool deregistration from ToolRegistry; existing `FileRead`/`FileWrite` remain functional |
 | Adaptive step merging | Feature flag `adaptive_merge`; disabled = always use full 4-step pipeline |
 | WorkingMemoryMiddleware | Deregister from ContextMiddleware chain; steps receive standard context only |
 
@@ -734,7 +734,7 @@ Each pipeline execution creates a parent span. Each step creates a child span wi
 | **Conflict risk** | Low (small ranges locked) | High (entire file locked) |
 | **Complexity** | Higher (range tracking, patch validation) | Simple (read all, write all) |
 
-**Decision**: Atomic operations as the primary pattern for the pipeline. Whole-file operations (`file_read`, `file_write`) remain available for cases where they are genuinely needed (new file creation, small files).
+**Decision**: Atomic operations as the primary pattern for the pipeline. Whole-file operations (`FileRead`, `FileWrite`) remain available for cases where they are genuinely needed (new file creation, small files).
 
 ### Working Memory Categories: Cognitive Model vs Flat Namespace
 

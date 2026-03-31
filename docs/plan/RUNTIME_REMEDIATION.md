@@ -297,7 +297,7 @@ cargo clippy -p y-runtime -- -D warnings
 
 Implement context-rich error messages per the design:
 ```
-Cannot execute tool 'shell_exec': Image 'ubuntu:latest' not in whitelist.
+Cannot execute tool 'ShellExec': Image 'ubuntu:latest' not in whitelist.
 Allowed: ubuntu:22.04, python:3.*, node:*-alpine. See /config/runtime.toml
 ```
 

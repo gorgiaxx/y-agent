@@ -36,15 +36,15 @@ Four of eight analyzed competitors implement multi-agent collaboration:
 
 ### Goals
 
-| Goal | Measurable Criteria |
-|------|-------------------|
-| **Declarative agent definition** | Agent configurable via TOML with role, model, tools, skills, mode; no code required for new agents |
-| **Three collaboration patterns** | Sequential, hierarchical, and peer-to-peer patterns supported through the same framework |
-| **Context isolation** | Agents share only declared context; no accidental leakage of full conversation history |
-| **Concurrency governance** | Configurable per-pool and global concurrency limits; default maximum 5 concurrent agents |
-| **Mode-based behavior** | Agent modes alter tool availability, system prompt, and model selection without changing agent definition |
-| **Orchestrator integration** | Agents usable as first-class executors in DAG workflows alongside LLM calls and tool executions |
-| **Delegation overhead** | Agent delegation adds < 50ms overhead beyond the delegated work itself |
+| Goal                             | Measurable Criteria                                                                                       |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **Declarative agent definition** | Agent configurable via TOML with role, model, tools, skills, mode; no code required for new agents        |
+| **Three collaboration patterns** | Sequential, hierarchical, and peer-to-peer patterns supported through the same framework                  |
+| **Context isolation**            | Agents share only declared context; no accidental leakage of full conversation history                    |
+| **Concurrency governance**       | Configurable per-pool and global concurrency limits; default maximum 5 concurrent agents                  |
+| **Mode-based behavior**          | Agent modes alter tool availability, system prompt, and model selection without changing agent definition |
+| **Orchestrator integration**     | Agents usable as first-class executors in DAG workflows alongside LLM calls and tool executions           |
+| **Delegation overhead**          | Agent delegation adds < 50ms overhead beyond the delegated work itself                                    |
 
 ### Assumptions
 
@@ -139,6 +139,7 @@ flowchart TB
 **Diagram type rationale**: Flowchart chosen to show module boundaries and relationships between agent definitions, collaboration patterns, execution, and integration with existing modules.
 
 **Legend**:
+
 - **Definition**: How agents are declared and registered.
 - **Collaboration**: Patterns governing how agents work together.
 - **Execution**: Runtime agent instances and their resource management.
@@ -158,8 +159,8 @@ fallback = ["gpt-4o-mini"]
 temperature = 0.3
 
 [agent.tools]
-allowed = ["web_search", "web_fetch", "file_read", "file_write"]
-denied = ["shell_exec"]
+allowed = ["WebSearch", "WebFetch", "FileRead", "FileWrite"]
+denied = ["ShellExec"]
 
 [agent.skills]
 activated = ["web-researcher"]
@@ -215,28 +216,29 @@ flowchart LR
 **Diagram type rationale**: Flowchart chosen to visually compare the four collaboration topologies side by side.
 
 **Legend**:
+
 - **Sequential**: Output of each agent becomes input to the next.
 - **Hierarchical**: Manager decomposes, delegates, and aggregates. Workers report back to the Manager.
 - **Peer-to-Peer**: Agents communicate through typed shared channels (from the Orchestrator's channel model).
 - **Micro-Agent Pipeline**: Stateless steps communicate through Working Memory (WM) cognitive categories. Sessions discarded after each step.
 
-| Pattern | Best For | Context Sharing | Coordination |
-|---------|----------|----------------|-------------|
-| **Sequential Pipeline** | Linear workflows (research -> analyze -> summarize) | Previous agent's output passed as input | Implicit (DAG ordering) |
-| **Hierarchical Delegation** | Complex tasks requiring decomposition | Manager provides filtered context per worker | Manager agent handles decomposition and aggregation |
-| **Peer-to-Peer** | Collaborative tasks with shared state | Typed channels with reducers | Channel-based (Orchestrator's channel model) |
-| **Micro-Agent Pipeline** | Token-sensitive operations (file editing, multi-step reasoning) | Structured Working Memory slots (typed, category-scoped) | Pipeline executor via Orchestrator DAG; each step's session discarded after completion |
+| Pattern                     | Best For                                                        | Context Sharing                                          | Coordination                                                                           |
+| --------------------------- | --------------------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **Sequential Pipeline**     | Linear workflows (research -> analyze -> summarize)             | Previous agent's output passed as input                  | Implicit (DAG ordering)                                                                |
+| **Hierarchical Delegation** | Complex tasks requiring decomposition                           | Manager provides filtered context per worker             | Manager agent handles decomposition and aggregation                                    |
+| **Peer-to-Peer**            | Collaborative tasks with shared state                           | Typed channels with reducers                             | Channel-based (Orchestrator's channel model)                                           |
+| **Micro-Agent Pipeline**    | Token-sensitive operations (file editing, multi-step reasoning) | Structured Working Memory slots (typed, category-scoped) | Pipeline executor via Orchestrator DAG; each step's session discarded after completion |
 
 The Micro-Agent Pipeline pattern is distinct from the Sequential Pipeline in two critical ways: (1) steps communicate through structured, typed Working Memory slots rather than unstructured text, and (2) each step's session context is discarded after completion (stateless execution), preventing token accumulation across steps. This enables weaker LLMs to handle individual steps reliably. Full design: [micro-agent-pipeline-design.md](micro-agent-pipeline-design.md).
 
 ### Agent Behavioral Modes
 
-| Mode | Description | Tool Availability | System Prompt Focus | Typical Model |
-|------|-------------|------------------|-------------------|--------------|
-| **build** | Implementation-focused execution | All allowed tools | "Execute the task, produce artifacts" | High-capability model |
-| **plan** | Read-only analysis and planning | Read-only tools only (no write, no shell) | "Analyze and propose a plan, do not execute" | High-capability model |
-| **explore** | Fast information gathering | Search and read tools | "Find relevant information quickly" | Fast/cheap model |
-| **general** | Balanced conversation and task execution | All allowed tools | Default instructions | Default model |
+| Mode        | Description                              | Tool Availability                         | System Prompt Focus                          | Typical Model         |
+| ----------- | ---------------------------------------- | ----------------------------------------- | -------------------------------------------- | --------------------- |
+| **build**   | Implementation-focused execution         | All allowed tools                         | "Execute the task, produce artifacts"        | High-capability model |
+| **plan**    | Read-only analysis and planning          | Read-only tools only (no write, no shell) | "Analyze and propose a plan, do not execute" | High-capability model |
+| **explore** | Fast information gathering               | Search and read tools                     | "Find relevant information quickly"          | Fast/cheap model      |
+| **general** | Balanced conversation and task execution | All allowed tools                         | Default instructions                         | Default model         |
 
 Modes are implemented as configuration overlays: when an agent runs in `plan` mode, the mode configuration filters the agent's tool list to read-only tools and prepends a mode-specific instruction to the system prompt. The agent definition specifies a default mode, but the delegator can override it per delegation.
 
@@ -244,14 +246,14 @@ Modes are implemented as configuration overlays: when an agent runs in `plan` mo
 
 The framework ships with specialized agent definitions for system-level tasks. These are registered in the `AgentRegistry` at startup alongside user-defined agents.
 
-| Agent | Mode | Purpose | Key Tools |
-|-------|------|---------|-----------|
-| **tool-engineer** | build | Create, modify, and refactor dynamic tools in response to tool capability gaps | `tool_create`, `tool_update`, `tool_search`, `file_read`, `file_write`, `shell_exec` |
-| **agent-architect** | plan | Design and create sub-agent definitions in response to agent capability gaps | `agent_create`, `agent_update`, `agent_deactivate`, `agent_search`, `tool_search`, `file_read` |
+| Agent               | Mode  | Purpose                                                                        | Key Tools                                                                                      |
+| ------------------- | ----- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| **tool-engineer**   | build | Create, modify, and refactor dynamic tools in response to tool capability gaps | `tool_create`, `tool_update`, `ToolSearch`, `FileRead`, `FileWrite`, `ShellExec`           |
+| **agent-architect** | plan  | Design and create sub-agent definitions in response to agent capability gaps   | `agent_create`, `agent_update`, `agent_deactivate`, `agent_search`, `ToolSearch`, `FileRead` |
 
 The `tool-engineer` agent is spawned by the CapabilityGapMiddleware (see [agent-autonomy-design.md](agent-autonomy-design.md)) when a tool capability gap is detected. It analyzes the gap (NotFound, ParameterMismatch, or HardcodedConstraint), designs or refactors the tool implementation, and registers the result via `tool_create` or `tool_update`.
 
-The `agent-architect` agent is spawned by the CapabilityGapMiddleware when an agent capability gap is detected (AgentNotFound, CapabilityMismatch, or ModeInappropriate). It searches existing agents to avoid duplication, designs a new agent definition with appropriate mode, tools, and instructions, and registers it via `agent_create`. It operates in `plan` mode with no write access (`shell_exec` and `file_write` denied) -- a deliberate security separation from `tool-engineer`.
+The `agent-architect` agent is spawned by the CapabilityGapMiddleware when an agent capability gap is detected (AgentNotFound, CapabilityMismatch, or ModeInappropriate). It searches existing agents to avoid duplication, designs a new agent definition with appropriate mode, tools, and instructions, and registers it via `agent_create`. It operates in `plan` mode with no write access (`ShellExec` and `FileWrite` denied) -- a deliberate security separation from `tool-engineer`.
 
 **Dynamic Agent Definitions**: In addition to static (TOML-defined) and built-in agents, the AgentRegistry supports runtime-created **DynamicAgentDefinition** entries. These are created via `agent_create`, validated through a three-stage pipeline (schema, permissions, safety screening), and stored in the `DynamicAgentStore`. Dynamic agents follow a trust hierarchy (`built-in` > `user-defined` > `dynamic`) and inherit permissions from their creator via a snapshot model. See [agent-autonomy-design.md](agent-autonomy-design.md) for full details.
 
@@ -268,6 +270,7 @@ Traditional agent frameworks treat sub-agents as a user-facing feature while int
 > **All LLM reasoning operations in y-agent are agent delegations through the AgentPool.** No module may bypass the multi-agent framework to call the ProviderPool directly.
 
 This ensures:
+
 - **Uniform observability**: Every LLM call — including a compaction summary — generates trace spans, token metrics, and cost records
 - **Uniform guardrails**: The LLM middleware chain (rate limiting, content filtering, taint tracking) applies to all reasoning
 - **Uniform resource management**: AgentPool concurrency limits manage all LLM usage, preventing internal operations from starving user-facing agents
@@ -309,6 +312,7 @@ flowchart TB
 **Diagram type rationale**: Flowchart chosen to show the trust hierarchy and autonomy relationships between agent categories.
 
 **Legend**:
+
 - **Built-in Agents**: Highest trust; compiled into binary or shipped as TOML. Divided into system sub-agents (internal operations) and autonomy agents (meta-capabilities).
 - **User-Defined Agents**: Medium trust; created by users via TOML configuration.
 - **Dynamic Agents**: Lowest trust; created at runtime by other agents via `agent_create`, subject to permission inheritance.
@@ -318,16 +322,16 @@ flowchart TB
 
 These agents handle internal LLM reasoning tasks that were historically implemented as ad-hoc LLM calls within individual modules. Moving them to the agent framework ensures they receive full observability, guardrails, and resource management.
 
-| Agent | Owner Module | Purpose | Mode | Tools | Model Tier |
-|-------|-------------|---------|------|-------|------------|
-| `compaction-summarizer` | y-context | Summarize conversation history during compaction overflow recovery | explore | None | Fast/cheap |
-| `context-summarizer` | y-agent | Summarize parent conversation context for `Summary` context strategy in delegation | explore | None | Fast/cheap |
-| `title-generator` | y-session | Generate a concise session title from conversation messages | explore | None | Fast/cheap |
-| `task-intent-analyzer` | y-context | Analyze user input for ambiguity/incompleteness; propose clarifications (EnrichInput middleware) | plan | None | Balanced |
-| `tool-engineer` | y-agent | Create, modify, and refactor dynamic tools in response to tool capability gaps | build | `tool_create`, `tool_update`, `tool_search`, `file_read`, `file_write`, `shell_exec` | High-capability |
-| `agent-architect` | y-agent | Design and create sub-agent definitions in response to agent capability gaps | plan | `agent_create`, `agent_update`, `agent_deactivate`, `agent_search`, `tool_search`, `file_read` | High-capability |
-| `pattern-extractor` | y-skills | Extract improvement patterns from experience records for skill self-evolution | plan | `file_read` | High-capability |
-| `capability-assessor` | y-hooks | Assess tool/agent capability mismatch (LLM-assisted gap detection for `CapabilityMismatch` and `HardcodedConstraint`) | plan | `tool_search`, `agent_search` | Balanced |
+| Agent                   | Owner Module | Purpose                                                                                                               | Mode    | Tools                                                                                          | Model Tier      |
+| ----------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------- | --------------- |
+| `compaction-summarizer` | y-context    | Summarize conversation history during compaction overflow recovery                                                    | explore | None                                                                                           | Fast/cheap      |
+| `context-summarizer`    | y-agent      | Summarize parent conversation context for `Summary` context strategy in delegation                                    | explore | None                                                                                           | Fast/cheap      |
+| `title-generator`       | y-session    | Generate a concise session title from conversation messages                                                           | explore | None                                                                                           | Fast/cheap      |
+| `task-intent-analyzer`  | y-context    | Analyze user input for ambiguity/incompleteness; propose clarifications (EnrichInput middleware)                      | plan    | None                                                                                           | Balanced        |
+| `tool-engineer`         | y-agent      | Create, modify, and refactor dynamic tools in response to tool capability gaps                                        | build   | `tool_create`, `tool_update`, `ToolSearch`, `FileRead`, `FileWrite`, `ShellExec`           | High-capability |
+| `agent-architect`       | y-agent      | Design and create sub-agent definitions in response to agent capability gaps                                          | plan    | `agent_create`, `agent_update`, `agent_deactivate`, `agent_search`, `ToolSearch`, `FileRead` | High-capability |
+| `pattern-extractor`     | y-skills     | Extract improvement patterns from experience records for skill self-evolution                                         | plan    | `FileRead`                                                                                    | High-capability |
+| `capability-assessor`   | y-hooks      | Assess tool/agent capability mismatch (LLM-assisted gap detection for `CapabilityMismatch` and `HardcodedConstraint`) | plan    | `ToolSearch`, `agent_search`                                                                  | Balanced        |
 
 **Design rationale**: System sub-agents (summarizers, analyzers) use `explore` or `plan` mode with no tool access and fast/cheap models. This keeps their token cost minimal while still routing through the full agent framework for observability. Autonomy agents (`tool-engineer`, `agent-architect`) require higher-capability models and tool access because they produce artifacts.
 
@@ -373,14 +377,14 @@ At startup, `y-cli` wires `AgentPool` (which implements `AgentDelegator`) into a
 
 #### Autonomy Invariants
 
-| Invariant | Enforcement |
-|-----------|------------|
-| No direct `ProviderPool` calls outside agent context | Code review checklist; lint rule (future) |
-| No hardcoded prompt strings in `.rs` files | Code review checklist; prompts in TOML |
-| All system sub-agents registered at startup | `AgentRegistry` initialization in `y-cli` |
-| Dynamic agents cannot exceed creator's permissions | `agent_create` validation pipeline |
-| Delegation depth prevents infinite recursion | Depth counter decremented per level; rejected at 0 |
-| All agent delegations emit trace spans | Guaranteed by `AgentPool.delegate()` implementation |
+| Invariant                                            | Enforcement                                         |
+| ---------------------------------------------------- | --------------------------------------------------- |
+| No direct `ProviderPool` calls outside agent context | Code review checklist; lint rule (future)           |
+| No hardcoded prompt strings in `.rs` files           | Code review checklist; prompts in TOML              |
+| All system sub-agents registered at startup          | `AgentRegistry` initialization in `y-cli`           |
+| Dynamic agents cannot exceed creator's permissions   | `agent_create` validation pipeline                  |
+| Delegation depth prevents infinite recursion         | Depth counter decremented per level; rejected at 0  |
+| All agent delegations emit trace spans               | Guaranteed by `AgentPool.delegate()` implementation |
 
 Full autonomy standard: [AGENT_AUTONOMY.md](../../docs/standards/AGENT_AUTONOMY.md).
 
@@ -451,6 +455,7 @@ sequenceDiagram
 **Diagram type rationale**: Sequence diagram chosen to show the temporal interaction between manager agent, pool, and parallel worker agents.
 
 **Legend**:
+
 - The Manager agent uses an LLM call to decompose the task.
 - Workers run in parallel, each with their own mode and context.
 - The Manager synthesizes results from all workers.
@@ -484,6 +489,7 @@ sequenceDiagram
 **Diagram type rationale**: Sequence diagram chosen to show how the built-in `task` tool enables mid-conversation agent delegation.
 
 **Legend**:
+
 - The primary agent invokes the `task` tool like any other tool.
 - The sub-agent runs with a summarized context (not the full conversation history).
 - The sub-agent's result is returned as a tool result.
@@ -507,6 +513,7 @@ stateDiagram-v2
 **Diagram type rationale**: State diagram chosen to show the lifecycle of an individual agent instance.
 
 **Legend**:
+
 - Agent instances are ephemeral: created per delegation, destroyed after completion.
 - Interrupted state enables HITL interaction through the orchestrator's interrupt/resume protocol.
 
@@ -551,18 +558,19 @@ erDiagram
 **Diagram type rationale**: ER diagram chosen to show the structural relationships between agent definitions, instances, delegations, and the existing session model.
 
 **Legend**:
+
 - An Agent Definition is a template; Agent Instances are ephemeral runtime entities.
 - Each instance gets its own session branch for context isolation.
 - Delegations link a delegator to an instance with a specific context strategy.
 
 ### Context Sharing Strategies
 
-| Strategy | Description | Token Cost | Privacy |
-|----------|-------------|-----------|---------|
-| **none** | Only the delegation prompt is provided | Minimal | Full isolation |
-| **summary** | LLM-generated summary of relevant conversation context | Low-medium | Filtered |
-| **filtered** | Specific messages matching a filter (by role, recency, keyword) | Medium | Controlled |
-| **full** | Complete conversation history up to token limit | High | None |
+| Strategy     | Description                                                     | Token Cost | Privacy        |
+| ------------ | --------------------------------------------------------------- | ---------- | -------------- |
+| **none**     | Only the delegation prompt is provided                          | Minimal    | Full isolation |
+| **summary**  | LLM-generated summary of relevant conversation context          | Low-medium | Filtered       |
+| **filtered** | Specific messages matching a filter (by role, recency, keyword) | Medium     | Controlled     |
+| **full**     | Complete conversation history up to token limit                 | High       | None           |
 
 The choice of strategy is declared in the delegation request and can be overridden by the agent definition's maximum context policy.
 
@@ -585,31 +593,31 @@ max_tokens_per_instance = 50000
 
 ## Failure Handling and Edge Cases
 
-| Scenario | Handling |
-|----------|---------|
-| Agent definition not found | Return `AgentNotFound` error with list of available agents |
-| Agent pool at capacity | Queue delegation with priority; reject if queue is full (configurable queue size) |
-| Worker agent timeout | Kill instance; return partial results if available; Manager decides whether to retry or proceed without |
-| Worker agent loop (excessive iterations) | Enforced by `max_iterations` in agent definition; exceeded = forced termination with `IterationLimitExceeded` |
-| Model unavailable for agent's preferred model | Fall back to agent definition's fallback model list; if all unavailable, delegation fails with `NoModelAvailable` |
-| Context strategy produces token overflow | Truncate context to agent's `max_tokens` limit; warn the delegator that context was truncated |
-| Circular delegation (Agent A delegates to Agent B which delegates to Agent A) | Delegation depth counter; reject at configurable max depth (default 3) |
-| Worker produces invalid output | Output validated against expected schema if declared; invalid output returns error to manager |
-| Manager agent fails mid-delegation | Running workers are cancelled; partial results are checkpointed for potential recovery |
-| Agent definition hot-reload during active instance | Running instances continue with their original definition; new delegations use updated definition |
+| Scenario                                                                      | Handling                                                                                                          |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Agent definition not found                                                    | Return `AgentNotFound` error with list of available agents                                                        |
+| Agent pool at capacity                                                        | Queue delegation with priority; reject if queue is full (configurable queue size)                                 |
+| Worker agent timeout                                                          | Kill instance; return partial results if available; Manager decides whether to retry or proceed without           |
+| Worker agent loop (excessive iterations)                                      | Enforced by `max_iterations` in agent definition; exceeded = forced termination with `IterationLimitExceeded`     |
+| Model unavailable for agent's preferred model                                 | Fall back to agent definition's fallback model list; if all unavailable, delegation fails with `NoModelAvailable` |
+| Context strategy produces token overflow                                      | Truncate context to agent's `max_tokens` limit; warn the delegator that context was truncated                     |
+| Circular delegation (Agent A delegates to Agent B which delegates to Agent A) | Delegation depth counter; reject at configurable max depth (default 3)                                            |
+| Worker produces invalid output                                                | Output validated against expected schema if declared; invalid output returns error to manager                     |
+| Manager agent fails mid-delegation                                            | Running workers are cancelled; partial results are checkpointed for potential recovery                            |
+| Agent definition hot-reload during active instance                            | Running instances continue with their original definition; new delegations use updated definition                 |
 
 ---
 
 ## Security and Permissions
 
-| Concern | Approach |
-|---------|----------|
-| **Tool access control** | Agent definition declares allowed and denied tools. The framework intersects this with the workspace-level tool permissions. An agent can never access tools not allowed at the workspace level. |
-| **Context isolation** | Each agent instance operates in its own session branch. Context sharing is explicit and governed by the delegation's `ContextStrategy`. No agent can access another agent's full session without explicit sharing. |
-| **Resource limits** | Per-instance limits on LLM calls, tool calls, tokens, and wall-clock time. These prevent a runaway agent from consuming unbounded resources. |
-| **Delegation depth** | Maximum delegation depth prevents infinite recursive delegation. Default 3, configurable. |
-| **Model access** | Agent definitions can restrict which models an agent may use. A cost-sensitive deployment can limit expensive models to the manager agent while workers use cheaper alternatives. |
-| **Skill isolation** | Agent skill bindings are validated against the Skill Registry. An agent cannot activate skills not installed in the workspace. |
+| Concern                 | Approach                                                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Tool access control** | Agent definition declares allowed and denied tools. The framework intersects this with the workspace-level tool permissions. An agent can never access tools not allowed at the workspace level.                   |
+| **Context isolation**   | Each agent instance operates in its own session branch. Context sharing is explicit and governed by the delegation's `ContextStrategy`. No agent can access another agent's full session without explicit sharing. |
+| **Resource limits**     | Per-instance limits on LLM calls, tool calls, tokens, and wall-clock time. These prevent a runaway agent from consuming unbounded resources.                                                                       |
+| **Delegation depth**    | Maximum delegation depth prevents infinite recursive delegation. Default 3, configurable.                                                                                                                          |
+| **Model access**        | Agent definitions can restrict which models an agent may use. A cost-sensitive deployment can limit expensive models to the manager agent while workers use cheaper alternatives.                                  |
+| **Skill isolation**     | Agent skill bindings are validated against the Skill Registry. An agent cannot activate skills not installed in the workspace.                                                                                     |
 
 ---
 
@@ -617,14 +625,14 @@ max_tokens_per_instance = 50000
 
 ### Performance Targets
 
-| Metric | Target |
-|--------|--------|
-| Delegation overhead (instance creation + context injection) | < 50ms |
-| Agent pool scheduling | < 1ms |
-| Context summary generation | < 5s (LLM call) |
-| Context filtering | < 10ms |
-| Concurrent agent instances | Up to 5 per delegation, 10 global |
-| Agent instance teardown | < 5ms |
+| Metric                                                      | Target                            |
+| ----------------------------------------------------------- | --------------------------------- |
+| Delegation overhead (instance creation + context injection) | < 50ms                            |
+| Agent pool scheduling                                       | < 1ms                             |
+| Context summary generation                                  | < 5s (LLM call)                   |
+| Context filtering                                           | < 10ms                            |
+| Concurrent agent instances                                  | Up to 5 per delegation, 10 global |
+| Agent instance teardown                                     | < 5ms                             |
 
 ### Optimization Strategies
 
@@ -637,14 +645,14 @@ max_tokens_per_instance = 50000
 
 ## Observability
 
-| Signal | Metrics / Events |
-|--------|-----------------|
-| **Delegation** | `agents.delegations.total`, `agents.delegations.duration_ms`, `agents.delegations.failed` (by agent name, mode) |
-| **Pool** | `agents.pool.active_instances`, `agents.pool.queued`, `agents.pool.rejected` |
-| **Instance** | `agents.instance.iterations`, `agents.instance.tool_calls`, `agents.instance.tokens_used` (by agent name) |
-| **Context** | `agents.context.strategy_used` (by strategy), `agents.context.tokens_shared` |
-| **Patterns** | `agents.pattern.used` (sequential, hierarchical, peer-to-peer) |
-| **Tracing** | Each delegation creates a child span linked to the parent task/agent span. Instance iterations create sub-spans. |
+| Signal         | Metrics / Events                                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Delegation** | `agents.delegations.total`, `agents.delegations.duration_ms`, `agents.delegations.failed` (by agent name, mode)  |
+| **Pool**       | `agents.pool.active_instances`, `agents.pool.queued`, `agents.pool.rejected`                                     |
+| **Instance**   | `agents.instance.iterations`, `agents.instance.tool_calls`, `agents.instance.tokens_used` (by agent name)        |
+| **Context**    | `agents.context.strategy_used` (by strategy), `agents.context.tokens_shared`                                     |
+| **Patterns**   | `agents.pattern.used` (sequential, hierarchical, peer-to-peer)                                                   |
+| **Tracing**    | Each delegation creates a child span linked to the parent task/agent span. Instance iterations create sub-spans. |
 
 ---
 
@@ -652,21 +660,21 @@ max_tokens_per_instance = 50000
 
 ### Phased Implementation
 
-| Phase | Scope | Duration |
-|-------|-------|----------|
+| Phase       | Scope                                                                                                                            | Duration  |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | **Phase 1** | AgentDefinition format, AgentRegistry, basic `task` tool for in-conversation delegation, `none` and `summary` context strategies | 2-3 weeks |
-| **Phase 2** | AgentPool with concurrency limits, Sequential Pipeline pattern, AgentExecutor integration with Orchestrator, agent modes | 2-3 weeks |
-| **Phase 3** | Hierarchical Delegation (Manager pattern), `filtered` and `full` context strategies, delegation depth limits | 2-3 weeks |
-| **Phase 4** | Peer-to-Peer pattern (shared channel communication), streaming partial results, performance optimization | 2-3 weeks |
+| **Phase 2** | AgentPool with concurrency limits, Sequential Pipeline pattern, AgentExecutor integration with Orchestrator, agent modes         | 2-3 weeks |
+| **Phase 3** | Hierarchical Delegation (Manager pattern), `filtered` and `full` context strategies, delegation depth limits                     | 2-3 weeks |
+| **Phase 4** | Peer-to-Peer pattern (shared channel communication), streaming partial results, performance optimization                         | 2-3 weeks |
 
 ### Rollback Plan
 
-| Component | Rollback |
-|-----------|----------|
+| Component             | Rollback                                                                                                          |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Multi-agent framework | Feature flag `multi_agent`; disabled = Orchestrator's SubAgent falls back to simple agent loop (current behavior) |
-| Agent modes | Feature flag `agent_modes`; disabled = all agents run in `general` mode |
-| Agent pool | Feature flag `agent_pool`; disabled = unlimited concurrent agents (original behavior) |
-| Task tool | Deregister from Tool Registry; agents lose in-conversation delegation capability |
+| Agent modes           | Feature flag `agent_modes`; disabled = all agents run in `general` mode                                           |
+| Agent pool            | Feature flag `agent_pool`; disabled = unlimited concurrent agents (original behavior)                             |
+| Task tool             | Deregister from Tool Registry; agents lose in-conversation delegation capability                                  |
 
 ---
 
@@ -674,44 +682,44 @@ max_tokens_per_instance = 50000
 
 ### Collaboration Model: CrewAI Crew vs Orchestrator-Integrated
 
-| | Standalone Crew (CrewAI-style) | Orchestrator-Integrated (chosen) |
-|-|---------------------------------|--------------------------------|
-| **Simplicity** | Self-contained; easy to reason about | Requires understanding Orchestrator concepts |
-| **Flexibility** | Limited to crew patterns | Full DAG power: agents mixed with tools, LLM calls, scripts |
-| **State management** | Custom crew state | Reuses Orchestrator's typed channels and checkpoints |
-| **Recovery** | Custom | Task-level checkpoint/resume from Orchestrator |
+|                      | Standalone Crew (CrewAI-style)       | Orchestrator-Integrated (chosen)                            |
+| -------------------- | ------------------------------------ | ----------------------------------------------------------- |
+| **Simplicity**       | Self-contained; easy to reason about | Requires understanding Orchestrator concepts                |
+| **Flexibility**      | Limited to crew patterns             | Full DAG power: agents mixed with tools, LLM calls, scripts |
+| **State management** | Custom crew state                    | Reuses Orchestrator's typed channels and checkpoints        |
+| **Recovery**         | Custom                               | Task-level checkpoint/resume from Orchestrator              |
 
 **Decision**: Orchestrator-integrated. Agents are first-class executors in the existing DAG engine. This avoids duplicating state management, checkpointing, and scheduling logic while enabling richer workflows that mix agents with other task types.
 
 ### Agent Instance Model: Ephemeral vs Persistent
 
-| | Ephemeral (chosen) | Persistent (daemon) |
-|-|-------------------|-------------------|
-| **Resource usage** | Zero when idle | Constant memory/connections |
-| **State management** | Simple (no long-lived state) | Complex (state persistence, reconnection) |
-| **Cold start** | Small overhead per delegation | None (always warm) |
-| **Use case** | Task-oriented delegation | Background monitoring, event-driven reactions |
+|                      | Ephemeral (chosen)            | Persistent (daemon)                           |
+| -------------------- | ----------------------------- | --------------------------------------------- |
+| **Resource usage**   | Zero when idle                | Constant memory/connections                   |
+| **State management** | Simple (no long-lived state)  | Complex (state persistence, reconnection)     |
+| **Cold start**       | Small overhead per delegation | None (always warm)                            |
+| **Use case**         | Task-oriented delegation      | Background monitoring, event-driven reactions |
 
 **Decision**: Ephemeral for v0. Agent instances are created per delegation and destroyed on completion. Persistent agents (for scheduled tasks, monitoring) are deferred to a future phase.
 
 ### Context Sharing: Explicit Strategies vs Automatic
 
-| | Explicit strategies (chosen) | Automatic context management |
-|-|------------------------------|------------------------------|
-| **Control** | Delegator chooses strategy | Framework decides |
-| **Predictability** | Deterministic token usage | Variable, depends on heuristics |
-| **Privacy** | Clear boundaries | Potential leakage |
-| **Complexity** | Delegator must choose | Simpler API |
+|                    | Explicit strategies (chosen) | Automatic context management    |
+| ------------------ | ---------------------------- | ------------------------------- |
+| **Control**        | Delegator chooses strategy   | Framework decides               |
+| **Predictability** | Deterministic token usage    | Variable, depends on heuristics |
+| **Privacy**        | Clear boundaries             | Potential leakage               |
+| **Complexity**     | Delegator must choose        | Simpler API                     |
 
 **Decision**: Explicit strategies. Context sharing is a critical decision affecting both quality and cost. The delegator (or agent definition) explicitly declares `none`, `summary`, `filtered`, or `full` to maintain control over what information crosses agent boundaries.
 
 ### Manager Pattern: Dedicated Manager Agent vs Any-Agent-as-Manager
 
-| | Dedicated Manager type | Any agent can manage (chosen) |
-|-|----------------------|------------------------------|
-| **Flexibility** | Fixed role | Any agent delegates via `task` tool |
-| **Configuration** | Special `manager` config | Standard agent definition |
-| **Reusability** | Manager-specific logic | All agents have delegation capability |
+|                   | Dedicated Manager type   | Any agent can manage (chosen)         |
+| ----------------- | ------------------------ | ------------------------------------- |
+| **Flexibility**   | Fixed role               | Any agent delegates via `task` tool   |
+| **Configuration** | Special `manager` config | Standard agent definition             |
+| **Reusability**   | Manager-specific logic   | All agents have delegation capability |
 
 **Decision**: Any agent can act as a manager by using the `task` tool. The "hierarchical" pattern is a collaboration topology, not a special agent type. This is more flexible than CrewAI's dedicated Manager agent and aligns with OpenCode's approach where any agent can spawn sub-agents.
 
@@ -719,11 +727,10 @@ max_tokens_per_instance = 50000
 
 ## Open Questions
 
-| # | Question | Owner | Due Date | Status |
-|---|----------|-------|----------|--------|
-| 1 | Should agents be able to negotiate capabilities (e.g., "I need web_search but it's denied -- can the delegator grant temporary access")? | Multi-agent team | 2026-03-27 | Open |
-| 2 | Should the framework support agent-to-agent streaming (worker streams tokens to manager in real-time)? | Multi-agent team | 2026-04-03 | Open |
-| 3 | What is the optimal default concurrency limit? DeerFlow uses 3; we propose 5. Needs benchmarking. | Multi-agent team | 2026-04-15 | Open |
-| 4 | Should agent definitions support conditional tool availability (tool X available only in mode Y)? | Multi-agent team | 2026-03-27 | Open |
-| 5 | How should agent memory work -- should worker agents persist memories to long-term storage, or only to their session branch? | Multi-agent team | 2026-04-03 | Open |
-
+| #   | Question                                                                                                                                 | Owner            | Due Date   | Status |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ---------- | ------ |
+| 1   | Should agents be able to negotiate capabilities (e.g., "I need web_search but it's denied -- can the delegator grant temporary access")? | Multi-agent team | 2026-03-27 | Open   |
+| 2   | Should the framework support agent-to-agent streaming (worker streams tokens to manager in real-time)?                                   | Multi-agent team | 2026-04-03 | Open   |
+| 3   | What is the optimal default concurrency limit? DeerFlow uses 3; we propose 5. Needs benchmarking.                                        | Multi-agent team | 2026-04-15 | Open   |
+| 4   | Should agent definitions support conditional tool availability (tool X available only in mode Y)?                                        | Multi-agent team | 2026-03-27 | Open   |
+| 5   | How should agent memory work -- should worker agents persist memories to long-term storage, or only to their session branch?             | Multi-agent team | 2026-04-03 | Open   |

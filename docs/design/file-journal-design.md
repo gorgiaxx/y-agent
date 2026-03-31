@@ -11,7 +11,7 @@
 
 ## TL;DR
 
-y-agent's Orchestrator provides task-level checkpointing and compensation for workflow state recovery, but it cannot restore files that tools have modified on the host filesystem. When an agent writes to `src/main.rs` via `file_write` or `file_patch`, and a subsequent step fails, the Orchestrator can rewind its internal state -- yet the file remains changed on disk. The File Journal closes this gap with a **ToolMiddleware** that intercepts file-mutating tool calls, captures the original file state before execution, and stores it in a local journal. On failure or explicit rollback, the journal replays entries in reverse to restore files to their pre-operation state. The journal operates at **scope** granularity (task, pipeline, or manual checkpoint), integrates with the Orchestrator's existing `CompensationTask` mechanism as a built-in strategy, and opportunistically leverages git when the workspace is a repository. Inspired by copy-on-write overlay patterns (AgentFS OverlayFS), but designed as a lightweight middleware rather than a virtual filesystem -- preserving direct host file access, cross-platform compatibility, and IDE transparency.
+y-agent's Orchestrator provides task-level checkpointing and compensation for workflow state recovery, but it cannot restore files that tools have modified on the host filesystem. When an agent writes to `src/main.rs` via `FileWrite` or `file_patch`, and a subsequent step fails, the Orchestrator can rewind its internal state -- yet the file remains changed on disk. The File Journal closes this gap with a **ToolMiddleware** that intercepts file-mutating tool calls, captures the original file state before execution, and stores it in a local journal. On failure or explicit rollback, the journal replays entries in reverse to restore files to their pre-operation state. The journal operates at **scope** granularity (task, pipeline, or manual checkpoint), integrates with the Orchestrator's existing `CompensationTask` mechanism as a built-in strategy, and opportunistically leverages git when the workspace is a repository. Inspired by copy-on-write overlay patterns (AgentFS OverlayFS), but designed as a lightweight middleware rather than a virtual filesystem -- preserving direct host file access, cross-platform compatibility, and IDE transparency.
 
 ---
 
@@ -19,7 +19,7 @@ y-agent's Orchestrator provides task-level checkpointing and compensation for wo
 
 ### Background
 
-y-agent's tool system includes file-mutating operations (file_write, file_patch, shell_exec) that modify the host filesystem directly. The current safety model provides several layers:
+y-agent's tool system includes file-mutating operations (FileWrite, file_patch, ShellExec) that modify the host filesystem directly. The current safety model provides several layers:
 
 | Layer | What It Protects | What It Cannot Protect |
 |-------|-----------------|----------------------|
@@ -61,10 +61,10 @@ The gap is clear: **no mechanism exists to automatically track and reverse host 
 
 ### Assumptions
 
-1. File-mutating built-in tools are identifiable by their `ToolManifest` metadata (category or capability declaration). The initial set is: `file_write`, `file_patch`, `shell_exec`.
+1. File-mutating built-in tools are identifiable by their `ToolManifest` metadata (category or capability declaration). The initial set is: `FileWrite`, `file_patch`, `ShellExec`.
 2. The workspace directory is writable and has sufficient disk space for journal storage.
 3. Files modified by agent tools are primarily text files under 10MB. Binary files and very large files receive degraded journal coverage (metadata only).
-4. `shell_exec` is a special case: it can modify any file, so its journal coverage depends on explicit tracking hooks or git integration.
+4. `ShellExec` is a special case: it can modify any file, so its journal coverage depends on explicit tracking hooks or git integration.
 
 ---
 
@@ -472,7 +472,7 @@ erDiagram
 | Edge Case | Handling |
 |-----------|---------|
 | Same file modified multiple times in one scope | Each modification creates a separate entry; only the first entry per path stores the original state. Rollback replays all entries in reverse but only restores content from the first entry for each unique path. |
-| shell_exec modifies files not declared in args | For shell_exec, journal captures workspace git status before execution and diffs afterward; newly modified files are retrospectively added to the journal. In non-git workspaces, shell_exec modifications are not tracked (documented limitation). |
+| ShellExec modifies files not declared in args | For ShellExec, journal captures workspace git status before execution and diffs afterward; newly modified files are retrospectively added to the journal. In non-git workspaces, ShellExec modifications are not tracked (documented limitation). |
 | File created and then deleted in same scope | Create entry followed by Delete entry. Rollback of Delete restores the file; rollback of Create deletes it. Net effect: file returns to pre-scope state (did not exist). |
 | Symbolic links | Journal stores the symlink target path, not the resolved content. Restore recreates the symlink. |
 | File permissions changed but content unchanged | Metadata-only changes are captured via `original_mode`; restore resets permissions. |
@@ -486,7 +486,7 @@ erDiagram
 | Concern | Approach |
 |---------|----------|
 | **Journal stores file content** | Journal may contain sensitive file content (API keys, credentials). The journal SQLite database inherits the same encryption-at-rest policy as the Orchestrator checkpoint database. |
-| **Rollback overwrites files** | Rollback is a privileged operation. In the permission model (guardrails-hitl-design.md), rollback requires the same permission level as the original tool that created the entry (e.g., if file_write requires `ask`, rollback of a file_write entry also requires `ask`). |
+| **Rollback overwrites files** | Rollback is a privileged operation. In the permission model (guardrails-hitl-design.md), rollback requires the same permission level as the original tool that created the entry (e.g., if FileWrite requires `ask`, rollback of a FileWrite entry also requires `ask`). |
 | **Blob directory access** | The blob directory is created inside the y-agent data directory with restrictive permissions (0o700). |
 | **Git ref access** | GitRef strategy only references commits; it does not modify the git repository. No git write operations are performed during capture. |
 | **Scope manipulation** | Only the Orchestrator and CLI can open/close/rollback scopes. Scopes are not exposed to LLM tool calls. |
@@ -520,7 +520,7 @@ erDiagram
 1. **Git-aware deduplication**: In git workspaces, if the file is tracked and clean (no uncommitted changes), store only the git commit ref. Content is recoverable via `git show <ref>:<path>`.
 2. **Deferred blob write**: For BlobFile strategy, use `rename` from a temp file to ensure atomicity without holding the middleware lock during I/O.
 3. **Hash-based deduplication**: If the same file content (by SHA-256) already exists in the journal from a previous scope, reference the existing blob instead of creating a duplicate.
-4. **Batch capture for shell_exec**: Instead of per-file capture, take a single git snapshot (via `git stash create` or `git diff`) before shell_exec and diff afterward.
+4. **Batch capture for ShellExec**: Instead of per-file capture, take a single git snapshot (via `git stash create` or `git diff`) before ShellExec and diff afterward.
 
 ---
 
@@ -566,9 +566,9 @@ Each journal entry stores an optional `observation_id` linking it to the Observa
 
 | Phase | Scope | Duration | Deliverables |
 |-------|-------|----------|-------------|
-| **Phase 1** | Core journal: FileJournalMiddleware, CaptureEngine (inline strategy only), JournalStore, basic rollback | 1 week | file_write and file_patch tracking; manual rollback via Rust API |
+| **Phase 1** | Core journal: FileJournalMiddleware, CaptureEngine (inline strategy only), JournalStore, basic rollback | 1 week | FileWrite and file_patch tracking; manual rollback via Rust API |
 | **Phase 2** | Git integration, BlobFile strategy, Orchestrator CompensationTask integration | 1 week | Git-aware capture, large file support, automatic rollback on workflow failure |
-| **Phase 3** | CLI commands, shell_exec tracking (git-based), observability integration | 1 week | `y-agent journal` CLI, event bus integration, trace linking |
+| **Phase 3** | CLI commands, ShellExec tracking (git-based), observability integration | 1 week | `y-agent journal` CLI, event bus integration, trace linking |
 | **Phase 4** | Retention policies, hash deduplication, performance optimization | 1 week | Configurable cleanup, storage optimization |
 
 ### Feature Flags
@@ -577,7 +577,7 @@ Each journal entry stores an optional `observation_id` linking it to the Observa
 |------|---------|---------------------|
 | `file_journal` | enabled | FileJournalMiddleware becomes a no-op pass-through |
 | `file_journal_git` | enabled (when git detected) | Disables git-aware optimization; all captures use inline/blob strategy |
-| `file_journal_shell_tracking` | disabled | Disables pre/post git diff for shell_exec |
+| `file_journal_shell_tracking` | disabled | Disables pre/post git diff for ShellExec |
 
 ### Rollback Plan
 
@@ -647,7 +647,7 @@ The File Journal is a pure addition with no modification to existing modules bey
 
 | Question | Owner | Due Date | Status |
 |----------|-------|----------|--------|
-| Should shell_exec tracking be enabled by default, or opt-in per workflow? | TBD | 2026-03-15 | Open |
+| Should ShellExec tracking be enabled by default, or opt-in per workflow? | TBD | 2026-03-15 | Open |
 | What is the appropriate default retention period for closed journal scopes? | TBD | 2026-03-15 | Open |
 | Should the journal support manual "named checkpoints" that users create via CLI before risky operations? | TBD | 2026-03-20 | Open |
 | How should concurrent agent sessions sharing a workspace coordinate journal scopes? | TBD | Future | Deferred |

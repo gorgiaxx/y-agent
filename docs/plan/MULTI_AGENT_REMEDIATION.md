@@ -93,7 +93,7 @@ Based on the design document's rollout stages and current progress, remediation 
 ##### [MODIFY] [dynamic_agent.rs](file:///Users/gorgias/Projects/y-agent/crates/y-multi-agent/src/dynamic_agent.rs)
 
 - Add Safety Screening stage:
-  - Detect dangerous tool combinations (e.g., `shell_exec` + no denied tools)
+  - Detect dangerous tool combinations (e.g., `ShellExec` + no denied tools)
   - Detect system prompt injection patterns
 - Add `ValidationError` variant: `SafetyViolation { reason }`
 - Update `validate_definition()` to three stages: Schema → Permission → Safety
@@ -173,7 +173,7 @@ Based on the design document's rollout stages and current progress, remediation 
 
 - `ModeOverlay` struct: filters tool lists based on `AgentMode`
   - `Build`: all allowed_tools available
-  - `Plan`: read-only tools only (`file_read`, `search_code`, etc.)
+  - `Plan`: read-only tools only (`FileRead`, `SearchCode`, etc.)
   - `Explore`: search + read tools only
   - `General`: all allowed_tools
 - `apply_mode_overlay(definition, mode_override) → FilteredDefinition`

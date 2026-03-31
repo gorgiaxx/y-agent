@@ -14,13 +14,13 @@ This document defines the standard for y-agent's dual-mode workflow definition l
 
 ### 1.1 Design Principles
 
-| Principle | Description |
-|-----------|-------------|
-| **Dual mode, single representation** | Expression DSL and TOML compile to the same `Workflow` / `TaskDag` — no semantic divergence |
-| **Expression DSL is syntactic sugar** | Purely additive; removal does not affect TOML workflows |
-| **Composability** | Complex workflows compose from primitive operations (sequential, parallel, conditional, loop) |
-| **Parse once, validate early** | All workflow definitions are parsed and validated at registration/load time, not at execution time |
-| **Token efficiency** | Expression DSL minimizes definition overhead for LLM-generated workflows |
+| Principle                             | Description                                                                                        |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **Dual mode, single representation**  | Expression DSL and TOML compile to the same `Workflow` / `TaskDag` — no semantic divergence        |
+| **Expression DSL is syntactic sugar** | Purely additive; removal does not affect TOML workflows                                            |
+| **Composability**                     | Complex workflows compose from primitive operations (sequential, parallel, conditional, loop)      |
+| **Parse once, validate early**        | All workflow definitions are parsed and validated at registration/load time, not at execution time |
+| **Token efficiency**                  | Expression DSL minimizes definition overhead for LLM-generated workflows                           |
 
 ---
 
@@ -40,14 +40,14 @@ This expression defines: run `search`, then run `analyze` and `score` in paralle
 
 #### Token Types
 
-| Token | Pattern | Description |
-|-------|---------|-------------|
-| `TASK_REF` | `[a-zA-Z0-9_-]+` | Task name reference |
-| `SEQUENTIAL` | `>>` | Sequential composition operator |
-| `PARALLEL` | `\|` | Parallel composition operator |
-| `LEFT_PAREN` | `(` | Grouping open |
-| `RIGHT_PAREN` | `)` | Grouping close |
-| Whitespace | `[ \t\n\r]+` | Ignored between tokens |
+| Token         | Pattern          | Description                     |
+| ------------- | ---------------- | ------------------------------- |
+| `TASK_REF`    | `[a-zA-Z0-9_-]+` | Task name reference             |
+| `SEQUENTIAL`  | `>>`             | Sequential composition operator |
+| `PARALLEL`    | `\|`             | Parallel composition operator   |
+| `LEFT_PAREN`  | `(`              | Grouping open                   |
+| `RIGHT_PAREN` | `)`              | Grouping close                  |
+| Whitespace    | `[ \t\n\r]+`     | Ignored between tokens          |
 
 #### Task Name Rules
 
@@ -70,6 +70,7 @@ a >> b >> c
 **Semantics**: Execute `a`, then `b` (after `a` completes), then `c` (after `b` completes).
 
 **DAG representation**:
+
 ```
 a → b → c
 ```
@@ -85,6 +86,7 @@ a | b | c
 **Semantics**: Execute `a`, `b`, and `c` concurrently. All three are immediately ready.
 
 **DAG representation**:
+
 ```
 a
 b   (no edges between them)
@@ -93,10 +95,10 @@ c
 
 #### Operator Precedence
 
-| Precedence | Operator | Associativity |
-|-----------|----------|---------------|
-| Higher | `\|` (parallel) | Left-to-right |
-| Lower | `>>` (sequential) | Left-to-right |
+| Precedence | Operator          | Associativity |
+| ---------- | ----------------- | ------------- |
+| Higher     | `\|` (parallel)   | Left-to-right |
+| Lower      | `>>` (sequential) | Left-to-right |
 
 Parentheses override default precedence.
 
@@ -118,6 +120,7 @@ a >> ((b | c) >> d) >> e
 ```
 
 **Rules**:
+
 - Parentheses must be balanced
 - Empty parentheses `()` are not allowed
 - Nesting depth is unlimited (parser is recursive descent)
@@ -144,6 +147,7 @@ search_{{query}} >> analyze >> summarize
 ```
 
 **Expansion rules**:
+
 - Variables are enclosed in double curly braces: `{{name}}`
 - Variables are expanded **before** tokenization
 - If a variable is not found in the provided map, the placeholder remains unexpanded
@@ -163,23 +167,23 @@ web_research("{{query}}")  →  search_{{query}} >> scrape >> summarize
 
 The parser produces a `DslWorkflow` AST that compiles to the internal `TaskDag`:
 
-| AST Node | TaskDag Result |
-|----------|---------------|
-| `Task(name)` | Single `TaskNode` with the given name as ID; dependencies from context |
+| AST Node                | TaskDag Result                                                              |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `Task(name)`            | Single `TaskNode` with the given name as ID; dependencies from context      |
 | `Sequential([a, b, c])` | Chain: `a`'s tail nodes become `b`'s dependencies, `b`'s tails become `c`'s |
-| `Parallel([a, b, c])` | All branches share the same upstream dependencies; all tails are returned |
+| `Parallel([a, b, c])`   | All branches share the same upstream dependencies; all tails are returned   |
 
 **Key invariant**: The compiled DAG is always acyclic. The Expression DSL grammar structurally prevents cycles — there is no way to express backward edges.
 
 ### 2.8 Error Handling
 
-| Error | Cause | Example |
-|-------|-------|---------|
-| `UnexpectedChar` | Invalid character in expression | `search # analyze` |
-| `UnexpectedEnd` | Expression ends prematurely | `search >>` |
-| `UnexpectedToken` | Token in wrong position | `>> search` |
-| `MismatchedParens` | Unbalanced parentheses | `(a >> b` |
-| `EmptyExpression` | Empty or whitespace-only input | `""` |
+| Error              | Cause                           | Example            |
+| ------------------ | ------------------------------- | ------------------ |
+| `UnexpectedChar`   | Invalid character in expression | `search # analyze` |
+| `UnexpectedEnd`    | Expression ends prematurely     | `search >>`        |
+| `UnexpectedToken`  | Token in wrong position         | `>> search`        |
+| `MismatchedParens` | Unbalanced parentheses          | `(a >> b`          |
+| `EmptyExpression`  | Empty or whitespace-only input  | `""`               |
 
 All errors include position information for diagnostics.
 
@@ -212,6 +216,7 @@ inspect >> locate >> analyze >> execute
 ### 3.1 Overview
 
 TOML workflow configuration is the primary format for complex workflows that require:
+
 - Conditional branching
 - Loop constructs
 - Detailed I/O mappings
@@ -261,11 +266,11 @@ conflict = "latest"                 # "latest" | "error" | "custom"
 type = "last_value"                 # Default if type is omitted
 ```
 
-| Channel Type | Behavior | Use Case |
-|-------------|----------|----------|
-| `last_value` | Last write wins (default) | Single-writer variables |
-| `append` | Accumulates values into a list | Multiple search sources writing results |
-| `merge` | Deep-merges maps with conflict resolution | Aggregating structured data from parallel tasks |
+| Channel Type | Behavior                                  | Use Case                                        |
+| ------------ | ----------------------------------------- | ----------------------------------------------- |
+| `last_value` | Last write wins (default)                 | Single-writer variables                         |
+| `append`     | Accumulates values into a list            | Multiple search sources writing results         |
+| `merge`      | Deep-merges maps with conflict resolution | Aggregating structured data from parallel tasks |
 
 ### 3.4 Input and Output Declarations
 
@@ -292,7 +297,7 @@ priority = "normal"                 # "critical" | "high" | "normal" | "low" | "
 timeout_ms = 30000
 
   [workflow.tasks.executor]
-  tool = "web_search"
+  tool = "WebSearch"
   # Executor-specific configuration varies by task type
 
   [[workflow.tasks.inputs]]
@@ -319,17 +324,17 @@ timeout_ms = 30000
 
 ### 3.6 Task Types
 
-| Type | Value | Description | Executor Config |
-|------|-------|-------------|----------------|
-| LLM Call | `llm_call` | Send prompt to LLM provider | `model`, `prompt_template`, `temperature`, `max_tokens` |
-| Tool Execution | `tool_execution` | Invoke a registered tool | `tool`, `parameters` |
-| Sub-Agent | `sub_agent` | Delegate to an agent instance | `agent_definition`, `input_template` |
-| Sub-Workflow | `sub_workflow` | Execute a nested workflow | `workflow_id` or inline definition |
-| Script | `script` | Run a sandboxed script | `runtime`, `command`, `args` |
-| Human Approval | `human_approval` | Request human decision | `prompt`, `options`, `timeout_ms` |
-| Branch | `branch` | Conditional routing | `conditions` with target task IDs |
-| Parallel Group | `parallel` | Explicit parallel group | `tasks`, `join` (`all`, `any`, `at_least(n)`) |
-| Loop | `loop` | Bounded iteration | `condition`, `max_iterations`, `body_tasks` |
+| Type           | Value            | Description                   | Executor Config                                         |
+| -------------- | ---------------- | ----------------------------- | ------------------------------------------------------- |
+| LLM Call       | `llm_call`       | Send prompt to LLM provider   | `model`, `prompt_template`, `temperature`, `max_tokens` |
+| Tool Execution | `tool_execution` | Invoke a registered tool      | `tool`, `parameters`                                    |
+| Sub-Agent      | `sub_agent`      | Delegate to an agent instance | `agent_definition`, `input_template`                    |
+| Sub-Workflow   | `sub_workflow`   | Execute a nested workflow     | `workflow_id` or inline definition                      |
+| Script         | `script`         | Run a sandboxed script        | `runtime`, `command`, `args`                            |
+| Human Approval | `human_approval` | Request human decision        | `prompt`, `options`, `timeout_ms`                       |
+| Branch         | `branch`         | Conditional routing           | `conditions` with target task IDs                       |
+| Parallel Group | `parallel`       | Explicit parallel group       | `tasks`, `join` (`all`, `any`, `at_least(n)`)           |
+| Loop           | `loop`           | Bounded iteration             | `condition`, `max_iterations`, `body_tasks`             |
 
 ### 3.7 Dependencies
 
@@ -347,20 +352,20 @@ dependencies = ["search", "enrich"]   # Runs after both search and enrich comple
 
 #### Input Sources
 
-| Source | Description | Example |
-|--------|-------------|---------|
-| `workflow_input` | Value from workflow invocation parameters | `{ source = "workflow_input", key = "query" }` |
-| `task_output` | Output from a predecessor task | `{ source = "task_output", task = "search", field = "results" }` |
-| `context` | Value from a typed channel | `{ source = "context", channel = "accumulated_results" }` |
-| `constant` | A static value | `{ source = "constant", value = "default text" }` |
-| `expression` | A computed expression | `{ source = "expression", expr = "..." }` |
+| Source           | Description                               | Example                                                          |
+| ---------------- | ----------------------------------------- | ---------------------------------------------------------------- |
+| `workflow_input` | Value from workflow invocation parameters | `{ source = "workflow_input", key = "query" }`                   |
+| `task_output`    | Output from a predecessor task            | `{ source = "task_output", task = "search", field = "results" }` |
+| `context`        | Value from a typed channel                | `{ source = "context", channel = "accumulated_results" }`        |
+| `constant`       | A static value                            | `{ source = "constant", value = "default text" }`                |
+| `expression`     | A computed expression                     | `{ source = "expression", expr = "..." }`                        |
 
 #### Output Targets
 
-| Target | Description | Example |
-|--------|-------------|---------|
-| `workflow_output` | Becomes part of the final workflow result | `{ target = "workflow_output", key = "summary" }` |
-| `context` | Write to a typed channel (reducer applies) | `{ target = "context", channel = "results" }` |
+| Target            | Description                                | Example                                                              |
+| ----------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| `workflow_output` | Becomes part of the final workflow result  | `{ target = "workflow_output", key = "summary" }`                    |
+| `context`         | Write to a typed channel (reducer applies) | `{ target = "context", channel = "results" }`                        |
 | `next_task_input` | Direct input to a specific downstream task | `{ target = "next_task_input", task = "summarize", input = "data" }` |
 
 #### Optional Transforms
@@ -376,12 +381,12 @@ field = "results"
 transform = { type = "jsonpath", path = "$[0].title" }
 ```
 
-| Transform | Description |
-|-----------|-------------|
+| Transform  | Description                             |
+| ---------- | --------------------------------------- |
 | `jsonpath` | Extract value using JSONPath expression |
-| `regex` | Extract or replace using regex pattern |
-| `cast` | Type conversion (string-to-int, etc.) |
-| `function` | Custom transform function reference |
+| `regex`    | Extract or replace using regex pattern  |
+| `cast`     | Type conversion (string-to-int, etc.)   |
+| `function` | Custom transform function reference     |
 
 ### 3.9 Conditional Execution
 
@@ -393,12 +398,12 @@ operator = "equals"                 # "equals" | "not_equals" | "exists" | "gt" 
 value = true
 ```
 
-| Condition Type | Description |
-|---------------|-------------|
-| `always` | Task always executes (default) |
-| `if_channel` | Execute if a channel value meets a condition |
+| Condition Type   | Description                                  |
+| ---------------- | -------------------------------------------- |
+| `always`         | Task always executes (default)               |
+| `if_channel`     | Execute if a channel value meets a condition |
 | `if_task_status` | Execute based on a predecessor task's status |
-| `expression` | Boolean expression over context values |
+| `expression`     | Boolean expression over context values       |
 
 ### 3.10 Failure and Compensation
 
@@ -444,14 +449,14 @@ summary = { source = "channel", channel = "final_summary" }
 
 # Task 1: Web search
 [[workflow.tasks]]
-id = "web_search"
+id = "WebSearch"
 name = "Web Search"
 type = "tool_execution"
 priority = "high"
 timeout_ms = 15000
 
   [workflow.tasks.executor]
-  tool = "web_search"
+  tool = "WebSearch"
 
   [[workflow.tasks.inputs]]
   name = "query"
@@ -477,7 +482,7 @@ priority = "normal"
 timeout_ms = 5000
 
   [workflow.tasks.executor]
-  tool = "knowledge_search"
+  tool = "KnowledgeSearch"
 
   [[workflow.tasks.inputs]]
   name = "query"
@@ -497,7 +502,7 @@ timeout_ms = 5000
 id = "analyze"
 name = "Analyze Results"
 type = "llm_call"
-dependencies = ["web_search", "db_search"]
+dependencies = ["WebSearch", "db_search"]
 priority = "normal"
 timeout_ms = 30000
 
@@ -546,26 +551,26 @@ priority = "high"
 
 The Expression DSL is syntactic sugar. Every expression compiles to the same internal representation as a TOML workflow. The following table shows equivalences:
 
-| Expression DSL | Equivalent TOML Structure |
-|---------------|--------------------------|
-| `a >> b >> c` | Three tasks: `b.dependencies = ["a"]`, `c.dependencies = ["b"]` |
-| `a \| b \| c` | Three tasks with no `dependencies` between them |
-| `a >> (b \| c) >> d` | `a` runs first; `b` and `c` depend on `a`; `d` depends on `b` and `c` |
-| `(a \| b) >> (c \| d)` | `a`, `b` have no deps; `c` and `d` both depend on `a` and `b` |
+| Expression DSL         | Equivalent TOML Structure                                             |
+| ---------------------- | --------------------------------------------------------------------- |
+| `a >> b >> c`          | Three tasks: `b.dependencies = ["a"]`, `c.dependencies = ["b"]`       |
+| `a \| b \| c`          | Three tasks with no `dependencies` between them                       |
+| `a >> (b \| c) >> d`   | `a` runs first; `b` and `c` depend on `a`; `d` depends on `b` and `c` |
+| `(a \| b) >> (c \| d)` | `a`, `b` have no deps; `c` and `d` both depend on `a` and `b`         |
 
 **Limitations of Expression DSL** (use TOML instead):
 
-| Feature | Expression DSL | TOML |
-|---------|---------------|------|
-| Conditional branches | Not supported | `condition` field on tasks |
-| Loops | Not supported | `loop` task type |
-| Custom retry | Not supported | `retry` configuration per task |
-| I/O mappings | Not supported (auto-wired) | Explicit `inputs`/`outputs` |
-| Channel types | Not supported (all `last_value`) | `channels` section |
-| Failure strategies | Not supported | `failure` configuration per task |
-| Task executor config | Not supported (default) | `executor` section per task |
-| Human approval tasks | Not supported | `human_approval` task type |
-| Priority levels | Not supported (all `normal`) | `priority` field per task |
+| Feature              | Expression DSL                   | TOML                             |
+| -------------------- | -------------------------------- | -------------------------------- |
+| Conditional branches | Not supported                    | `condition` field on tasks       |
+| Loops                | Not supported                    | `loop` task type                 |
+| Custom retry         | Not supported                    | `retry` configuration per task   |
+| I/O mappings         | Not supported (auto-wired)       | Explicit `inputs`/`outputs`      |
+| Channel types        | Not supported (all `last_value`) | `channels` section               |
+| Failure strategies   | Not supported                    | `failure` configuration per task |
+| Task executor config | Not supported (default)          | `executor` section per task      |
+| Human approval tasks | Not supported                    | `human_approval` task type       |
+| Priority levels      | Not supported (all `normal`)     | `priority` field per task        |
 
 ---
 
@@ -613,12 +618,12 @@ This expands to a registered template's definition with variable injection. Temp
 
 Templates are invoked via the Orchestrator API or via meta-tools:
 
-| Method | Description |
-|--------|-------------|
-| `orchestrator.execute(template_id, params)` | Programmatic invocation |
-| `workflow_create` meta-tool | Agent creates a new template |
-| `workflow_list` meta-tool | Agent queries available templates |
-| `workflow_get` meta-tool | Agent loads a template definition |
+| Method                                      | Description                       |
+| ------------------------------------------- | --------------------------------- |
+| `orchestrator.execute(template_id, params)` | Programmatic invocation           |
+| `WorkflowCreate` meta-tool                 | Agent creates a new template      |
+| `WorkflowList` meta-tool                   | Agent queries available templates |
+| `WorkflowGet` meta-tool                    | Agent loads a template definition |
 
 ---
 
@@ -675,28 +680,28 @@ Execution
 
 ## 7. Performance Requirements
 
-| Operation | Target |
-|-----------|--------|
-| Expression DSL parsing | < 1ms |
-| Template variable expansion | < 0.1ms |
-| TOML workflow deserialization | < 5ms |
-| DAG validation (100-task DAG) | < 5ms |
+| Operation                     | Target  |
+| ----------------------------- | ------- |
+| Expression DSL parsing        | < 1ms   |
+| Template variable expansion   | < 0.1ms |
+| TOML workflow deserialization | < 5ms   |
+| DAG validation (100-task DAG) | < 5ms   |
 
 ---
 
 ## 8. Open Questions
 
-| # | Question | Owner | Due Date | Status |
-|---|----------|-------|----------|--------|
-| 1 | Should Expression DSL support conditional routing (`if/else` syntax), or limit to sequential/parallel? | Orchestrator team | 2026-03-20 | Open |
-| 2 | Should Expression DSL support inline retry shorthand (e.g., `search[retry=3] >> analyze`)? | Orchestrator team | 2026-04-01 | Open |
-| 3 | Should TOML workflow support importing/inheriting from other workflow files? | Orchestrator team | 2026-04-15 | Open |
-| 4 | What is the maximum Expression DSL length for LLM-generated workflows before TOML is recommended? | Orchestrator team | 2026-04-01 | Open |
+| #   | Question                                                                                               | Owner             | Due Date   | Status |
+| --- | ------------------------------------------------------------------------------------------------------ | ----------------- | ---------- | ------ |
+| 1   | Should Expression DSL support conditional routing (`if/else` syntax), or limit to sequential/parallel? | Orchestrator team | 2026-03-20 | Open   |
+| 2   | Should Expression DSL support inline retry shorthand (e.g., `search[retry=3] >> analyze`)?             | Orchestrator team | 2026-04-01 | Open   |
+| 3   | Should TOML workflow support importing/inheriting from other workflow files?                           | Orchestrator team | 2026-04-15 | Open   |
+| 4   | What is the maximum Expression DSL length for LLM-generated workflows before TOML is recommended?      | Orchestrator team | 2026-04-01 | Open   |
 
 ---
 
 ## Changelog
 
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1 | 2026-03-10 | Initial DSL standard document |
+| Version | Date       | Changes                       |
+| ------- | ---------- | ----------------------------- |
+| v0.1    | 2026-03-10 | Initial DSL standard document |

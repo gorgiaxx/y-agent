@@ -244,7 +244,7 @@ struct WorkflowTemplate {
 
 Templates carry an optional `ParameterSchema` (JSON Schema) that defines required and optional parameters. When a template is executed, parameter values are validated against the schema before workflow instantiation. This enables the same workflow definition to be reused with different inputs -- critical for the Parameterized Scheduling feature (see [agent-autonomy-design.md](agent-autonomy-design.md)).
 
-Agents interact with the WorkflowStore through `workflow_create`, `workflow_list`, and `workflow_get` meta-tools (see [agent-autonomy-design.md](agent-autonomy-design.md)).
+Agents interact with the WorkflowStore through `WorkflowCreate`, `WorkflowList`, and `WorkflowGet` meta-tools (see [agent-autonomy-design.md](agent-autonomy-design.md)).
 
 ---
 

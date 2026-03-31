@@ -63,7 +63,7 @@ y-agent's memory and context design is comprehensive and well-structured:
 |--------|-------------------|-----------|------------|-----------|
 | **Pipeline architecture** | 7-stage ordered ContextMiddleware | ContextBuilder with fixed segments (identity, workspace, profile, memory, bootstrap, skills) | ContextBuilder with configurable count limits | Fixed prompt template (Role/Goal/Instructions/Context/Query) |
 | **Memory auto-injection** | InjectMemory stage (vector recall) | get_viking_memory_context at prompt build time | SessionStart Hook injects timeline + summaries | No memory injection (single-query RAG only) |
-| **Tool injection** | Lazy loading (ToolIndex + tool_search) | Full tool schema via get_definitions() | MCP tools registered statically | MCP tools external, not injected into prompt |
+| **Tool injection** | Lazy loading (ToolIndex + ToolSearch) | Full tool schema via get_definitions() | MCP tools registered statically | MCP tools external, not injected into prompt |
 | **Extensibility** | Plugin-based (y-hooks ContextMiddleware) | Code-level (modify ContextBuilder) | Config-driven (settings.json counts) | Code-level (modify build_prompt) |
 
 ### 3.4 Retrieval & RAG

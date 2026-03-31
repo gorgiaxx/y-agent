@@ -222,9 +222,9 @@ Messages within a session form a tree via `parent_message_id`. The active path (
 
 ```mermaid
 flowchart TD
-    A["A: User query"] --> B["B: tool_search FAILED"]
-    A --> C["C: tool_search empty"]
-    A --> D["D: tool_search found"]
+    A["A: User query"] --> B["B: ToolSearch FAILED"]
+    A --> C["C: ToolSearch empty"]
+    A --> D["D: ToolSearch found"]
     D --> E["E: browser FAILED"]
     D --> F["F: browser OK"]
     F --> G["G: Final answer"]
@@ -296,7 +296,7 @@ The `PruningDetector` uses three detection signals:
 | Signal | Detection Method | Example |
 |--------|-----------------|---------|
 | **Error status** (primary) | Tool result message contains error field or error-indicating status | `{"error": "parameter validation failed"}` |
-| **Repeated calls** (heuristic) | Same tool name with similar arguments called within N turns without state change | Three consecutive `tool_search` calls with different query variations |
+| **Repeated calls** (heuristic) | Same tool name with similar arguments called within N turns without state change | Three consecutive `ToolSearch` calls with different query variations |
 | **Empty results** (heuristic) | Tool result contains patterns indicating no useful output | `{"results": [], "count": 0}`, `"no results found"` |
 
 Detection is conservative: a message is only marked as failed if at least one signal fires. When uncertain, messages are kept (safe default).
@@ -398,10 +398,10 @@ sequenceDiagram
     participant ITP as IntraTurnPruner
     participant WH as working_history
 
-    Note over Loop: iteration 1: tool_search fails
+    Note over Loop: iteration 1: ToolSearch fails
     Loop->>WH: push assistant_1 + tool_result_1(error)
 
-    Note over Loop: iteration 2: tool_search empty
+    Note over Loop: iteration 2: ToolSearch empty
     Loop->>WH: push assistant_2 + tool_result_2(empty)
 
     Note over Loop: iteration 3 begins (>= min_iteration)

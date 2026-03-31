@@ -130,7 +130,7 @@ OpenSandbox 的性能数据：
 **缓解**：
 - 每次 exec 前重置工作目录内容（或使用 tmpfs 挂载）
 - 环境变量通过 `docker exec -e` 每次显式传入，不依赖容器级 env
-- 对安全要求高的工具（如 shell_exec），仍然走一次性容器模式（通过 ToolManifest 中的 `require_fresh_container: true` 声明）
+- 对安全要求高的工具（如 ShellExec），仍然走一次性容器模式（通过 ToolManifest 中的 `require_fresh_container: true` 声明）
 
 **机制 2：per-image 容器池**
 
@@ -168,7 +168,7 @@ PoolConfig {
 
 1. **性能目标的硬约束**：P95 < 100ms 与 Container create ~1.5s 之间存在结构性矛盾。没有池化，要么放弃这个目标（对容器化工具），要么所有工具都走 NativeRuntime（失去隔离保证）。池化是唯一同时满足性能和安全的方案。
 
-2. **Agent 调用模式的必然要求**：一个典型的 Agent 会话中，`shell_exec`、`python_exec` 这类需要容器的工具可能被调用几十次。每次 2s 的开销意味着 60 秒的会话中有 40 秒花在容器创建/销毁上。
+2. **Agent 调用模式的必然要求**：一个典型的 Agent 会话中，`ShellExec`、`python_exec` 这类需要容器的工具可能被调用几十次。每次 2s 的开销意味着 60 秒的会话中有 40 秒花在容器创建/销毁上。
 
 3. **实现成本可控**：核心是一个 `HashMap<String, VecDeque<String>>` 加一个后台补充 task。`docker exec` 是 Docker Engine 原生能力，不需要额外组件。
 

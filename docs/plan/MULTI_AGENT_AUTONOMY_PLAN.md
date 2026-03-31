@@ -58,7 +58,7 @@ y-agent
   ├── y-hooks (CapabilityGapMiddleware hook point, event bus)
   ├── y-provider (ProviderPool — indirect via AgentDelegator, for SummaryStrategy)
   ├── y-storage (SqliteDynamicAgentStore persistence)
-  ├── y-tools (Tool Registry for meta-tool registration, tool_search)
+  ├── y-tools (Tool Registry for meta-tool registration, ToolSearch)
   ├── y-guardrails (Permission Model for HITL escalation, risk scoring)
   ├── toml (agent definition parsing)
   ├── tokio (async, semaphore for concurrency, task spawning)
@@ -159,7 +159,7 @@ config/agents/          — [NEW] Built-in agent TOML definitions
 | T-MA-P1-07 | `test_reject_creation_at_depth_zero` | Creator depth `0` | `DelegationDepthExhausted` error |
 | T-MA-P1-08 | `test_validation_schema_stage` | Invalid TOML, missing required fields | Schema validation error |
 | T-MA-P1-09 | `test_validation_permission_stage` | Tool not in creator's allowlist | Permission violation error |
-| T-MA-P1-10 | `test_validation_safety_stage` | `shell_exec` + no denied tools | Safety violation warning |
+| T-MA-P1-10 | `test_validation_safety_stage` | `ShellExec` + no denied tools | Safety violation warning |
 | T-MA-P1-11 | `test_agent_status_replaces_bool` | `AgentStatus::Deactivated` | Backward-compatible behavior |
 | T-MA-P1-12 | `test_agent_source_serde_roundtrip` | `AgentSource::Dynamic { creator_agent_id }` | Roundtrip identity |
 
@@ -269,8 +269,8 @@ config/agents/          — [NEW] Built-in agent TOML definitions
 | I-MA-34 | Define `context-summarizer.toml` (explore, no tools, fast/cheap model) | `config/agents/context-summarizer.toml` [NEW] |
 | I-MA-34a | Define `title-generator.toml` (explore, no tools, fast/cheap model) | `config/agents/title-generator.toml` [NEW] |
 | I-MA-35 | Define `task-intent-analyzer.toml` (plan, no tools, balanced model) | `config/agents/task-intent-analyzer.toml` [NEW] |
-| I-MA-36 | Define `pattern-extractor.toml` (plan, file_read, high-capability) | `config/agents/pattern-extractor.toml` [NEW] |
-| I-MA-37 | Define `capability-assessor.toml` (plan, tool_search+agent_search, balanced) | `config/agents/capability-assessor.toml` [NEW] |
+| I-MA-36 | Define `pattern-extractor.toml` (plan, FileRead, high-capability) | `config/agents/pattern-extractor.toml` [NEW] |
+| I-MA-37 | Define `capability-assessor.toml` (plan, ToolSearch+agent_search, balanced) | `config/agents/capability-assessor.toml` [NEW] |
 | I-MA-38 | Define `tool-engineer.toml` (build, full tools, high-capability) | `config/agents/tool-engineer.toml` [NEW] |
 | I-MA-39 | Define `agent-architect.toml` (plan, agent meta-tools only, high-capability) | `config/agents/agent-architect.toml` [NEW] |
 | I-MA-40 | Register all built-in agents from TOML files in `AgentRegistry` at startup | `registry.rs` |
@@ -279,7 +279,7 @@ config/agents/          — [NEW] Built-in agent TOML definitions
 
 | Test ID | Test Name | Behavior | Assertion |
 |---------|-----------|----------|-----------|
-| T-MA-P4-01 | `test_plan_mode_retains_readonly` | `plan` mode overlay | Only `file_read`, `search_code` etc. retained |
+| T-MA-P4-01 | `test_plan_mode_retains_readonly` | `plan` mode overlay | Only `FileRead`, `SearchCode` etc. retained |
 | T-MA-P4-02 | `test_explore_mode_retains_search_read` | `explore` mode overlay | Only search + read tools |
 | T-MA-P4-03 | `test_build_mode_all_allowed` | `build` mode overlay | All allowed tools pass through |
 | T-MA-P4-04 | `test_mode_prompt_injection` | Mode overlay applies | System prompt prefix present |
@@ -290,7 +290,7 @@ config/agents/          — [NEW] Built-in agent TOML definitions
 | T-MA-P4-09 | `test_full_strategy_truncation` | 10K tokens input, 4K limit | Truncated to limit |
 | T-MA-P4-10 | `test_builtin_agent_compaction_summarizer` | Parse `compaction-summarizer.toml` | Valid definition, explore mode, no tools |
 | T-MA-P4-11 | `test_builtin_agent_tool_engineer` | Parse `tool-engineer.toml` | Valid definition, build mode, 6 tools |
-| T-MA-P4-12 | `test_builtin_agent_agent_architect` | Parse `agent-architect.toml` | Valid definition, plan mode, `shell_exec` denied |
+| T-MA-P4-12 | `test_builtin_agent_agent_architect` | Parse `agent-architect.toml` | Valid definition, plan mode, `ShellExec` denied |
 | T-MA-P4-13 | `test_registry_loads_all_builtin_agents` | Startup registration | 8 built-in agents registered |
 
 ---
@@ -324,7 +324,7 @@ config/agents/          — [NEW] Built-in agent TOML definitions
 |---------|-----------|----------|-----------|
 | T-MA-P5-01 | `test_agent_create_valid` | Create with valid definition | Registered, persisted |
 | T-MA-P5-02 | `test_agent_create_permission_escalation` | Child requests tool not in creator's list | Rejected with violation details |
-| T-MA-P5-03 | `test_agent_create_safety_violation` | `shell_exec` + no denied tools | Safety screening flags |
+| T-MA-P5-03 | `test_agent_create_safety_violation` | `ShellExec` + no denied tools | Safety screening flags |
 | T-MA-P5-04 | `test_agent_update_version_increment` | Update existing agent | Version incremented |
 | T-MA-P5-05 | `test_agent_update_re_validates` | Update with invalid change | Re-validation rejects |
 | T-MA-P5-06 | `test_agent_deactivate_soft_delete` | Deactivate agent | Status = `Deactivated`, `deactivated_at` set, not hard-deleted |
@@ -628,8 +628,8 @@ All features gate behind flags for independent rollback:
 | Item | Reason | Target Phase |
 |------|--------|--------------|
 | Dynamic Tool Lifecycle (`tool_create`, `tool_update`) | Part of agent-autonomy-design Phase 1-4; separate plan | Separate R&D plan |
-| Self-Orchestration Protocol (`workflow_create/list/get`) | Part of agent-autonomy-design Phase 2; separate plan | Separate R&D plan |
-| Parameterized Scheduling (`schedule_create/list`) | Part of agent-autonomy-design Phase 3; separate plan | Separate R&D plan |
+| Self-Orchestration Protocol (`WorkflowCreate/list/get`) | Part of agent-autonomy-design Phase 2; separate plan | Separate R&D plan |
+| Parameterized Scheduling (`ScheduleCreate/list`) | Part of agent-autonomy-design Phase 3; separate plan | Separate R&D plan |
 | Distributed multi-node agent pools | Out of scope per design | Future |
 | Persistent long-running (daemon) agents | Out of scope per design | Future |
 | Agent-to-agent streaming | Open Question #2 in design; pending benchmarking | Future |

@@ -202,7 +202,7 @@
 
 ##### [NEW] tools/mod.rs
 
-- `knowledge_search` Tool：语义 + 过滤检索，返回 L0 摘要，支持 `resolution` 参数
+- `KnowledgeSearch` Tool：语义 + 过滤检索，返回 L0 摘要，支持 `resolution` 参数
 - `knowledge_lookup` Tool：按 chunk ID 精确获取，支持 L0/L1/L2 分辨率
 - `knowledge_ingest` Tool：Agent 驱动的摄取入口
 
@@ -231,7 +231,7 @@
 
 | 测试 | 类型 | 命令 |
 |------|------|------|
-| knowledge_search Tool 测试 | Unit | `cargo test -p y-knowledge -- tools::search` |
+| KnowledgeSearch Tool 测试 | Unit | `cargo test -p y-knowledge -- tools::search` |
 | knowledge_lookup Tool 测试 | Unit | `cargo test -p y-knowledge -- tools::lookup` |
 | InjectKnowledge 中间件测试 | Unit | `cargo test -p y-knowledge -- middleware` |
 | KnowledgeService 集成测试 | Integration | `cargo test -p y-service -- knowledge_service --ignored` |

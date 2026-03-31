@@ -1148,10 +1148,10 @@ Learn more about the Messages API in our [user guide](https://docs.claude.com/en
 
         - `input: Dict[str, object]`
 
-        - `name: Literal["web_search", "web_fetch", "code_execution", 4 more]`
-          - `"web_search"`
+        - `name: Literal["WebSearch", "WebFetch", "code_execution", 4 more]`
+          - `"WebSearch"`
 
-          - `"web_fetch"`
+          - `"WebFetch"`
 
           - `"code_execution"`
 
@@ -2767,12 +2767,12 @@ Learn more about the Messages API in our [user guide](https://docs.claude.com/en
       When true, guarantees schema validation on tool names and inputs
 
   - `class WebSearchTool20250305: …`
-    - `name: Literal["web_search"]`
+    - `name: Literal["WebSearch"]`
 
       Name of the tool.
 
       This is how the tool will be called by the model and in `tool_use` blocks.
-      - `"web_search"`
+      - `"WebSearch"`
 
     - `type: Literal["web_search_20250305"]`
       - `"web_search_20250305"`
@@ -2846,12 +2846,12 @@ Learn more about the Messages API in our [user guide](https://docs.claude.com/en
         The [IANA timezone](https://nodatime.org/TimeZones) of the user.
 
   - `class WebFetchTool20250910: …`
-    - `name: Literal["web_fetch"]`
+    - `name: Literal["WebFetch"]`
 
       Name of the tool.
 
       This is how the tool will be called by the model and in `tool_use` blocks.
-      - `"web_fetch"`
+      - `"WebFetch"`
 
     - `type: Literal["web_fetch_20250910"]`
       - `"web_fetch_20250910"`
@@ -2912,12 +2912,12 @@ Learn more about the Messages API in our [user guide](https://docs.claude.com/en
       When true, guarantees schema validation on tool names and inputs
 
   - `class WebSearchTool20260209: …`
-    - `name: Literal["web_search"]`
+    - `name: Literal["WebSearch"]`
 
       Name of the tool.
 
       This is how the tool will be called by the model and in `tool_use` blocks.
-      - `"web_search"`
+      - `"WebSearch"`
 
     - `type: Literal["web_search_20260209"]`
       - `"web_search_20260209"`
@@ -2991,12 +2991,12 @@ Learn more about the Messages API in our [user guide](https://docs.claude.com/en
         The [IANA timezone](https://nodatime.org/TimeZones) of the user.
 
   - `class WebFetchTool20260209: …`
-    - `name: Literal["web_fetch"]`
+    - `name: Literal["WebFetch"]`
 
       Name of the tool.
 
       This is how the tool will be called by the model and in `tool_use` blocks.
-      - `"web_fetch"`
+      - `"WebFetch"`
 
     - `type: Literal["web_fetch_20260209"]`
       - `"web_fetch_20260209"`
@@ -3059,12 +3059,12 @@ Learn more about the Messages API in our [user guide](https://docs.claude.com/en
   - `class WebFetchTool20260309: …`
 
     Web fetch tool with use_cache parameter for bypassing cached content.
-    - `name: Literal["web_fetch"]`
+    - `name: Literal["WebFetch"]`
 
       Name of the tool.
 
       This is how the tool will be called by the model and in `tool_use` blocks.
-      - `"web_fetch"`
+      - `"WebFetch"`
 
     - `type: Literal["web_fetch_20260309"]`
       - `"web_fetch_20260309"`
@@ -3452,10 +3452,10 @@ Learn more about the Messages API in our [user guide](https://docs.claude.com/en
 
       - `input: Dict[str, object]`
 
-      - `name: Literal["web_search", "web_fetch", "code_execution", 4 more]`
-        - `"web_search"`
+      - `name: Literal["WebSearch", "WebFetch", "code_execution", 4 more]`
+        - `"WebSearch"`
 
-        - `"web_fetch"`
+        - `"WebFetch"`
 
         - `"code_execution"`
 

@@ -88,7 +88,7 @@
 
 | 设计项 | 状态 | 说明 |
 |--------|------|------|
-| `knowledge_search` Tool | 🔴 未实现 | 代码库中未找到任何此工具的注册 |
+| `KnowledgeSearch` Tool | 🔴 未实现 | 代码库中未找到任何此工具的注册 |
 | `knowledge_lookup` Tool | 🔴 未实现 | |
 | `knowledge_ingest` Tool | 🔴 未实现 | |
 
@@ -149,7 +149,7 @@
 
 | Phase | 设计范围 | 当前状态 | 工作量估计 |
 |-------|---------|---------|-----------|
-| **Phase 1** | 数据模型、Knowledge Store（向量+元数据）、Collection CRUD、`knowledge_search`/`knowledge_lookup` 工具、PDF/Markdown 连接器、heading-based chunker、规则域分类 | **~15% 完成**（只有简化数据模型和基础 chunking） | 3-4 周 |
+| **Phase 1** | 数据模型、Knowledge Store（向量+元数据）、Collection CRUD、`KnowledgeSearch`/`knowledge_lookup` 工具、PDF/Markdown 连接器、heading-based chunker、规则域分类 | **~15% 完成**（只有简化数据模型和基础 chunking） | 3-4 周 |
 | **Phase 2** | Web 连接器、`knowledge_ingest` 工具、LLM 辅助分类、质量过滤+去重、`InjectKnowledge` 中间件、域分类管理 | **0% 完成** | 3-4 周 |
 | **Phase 3** | 新鲜度管理（重摄取/过期检测/TTL）、集合配置、RRF 融合排序、Skill 引用知识解析、可观测性 | **0% 完成** | 2-3 周 |
 | **Phase 4** | API 连接器、语义分块（LLM 辅助）、高级去重、性能优化、CLI 命令 | **0% 完成** | 2-3 周 |
@@ -216,7 +216,7 @@
 7. **🆕 中文分词支持** — 引入 `jieba-rs` 实现中文关键词索引
 8. **🆕 Blend Search (加法融合)** — 先用 [(1-distance) + keyword_score](file:///Users/gorgias/Projects/MaxKB/apps/knowledge/models/knowledge.py#78-81) 作为 v1 hybrid retrieval，后续迭代到 RRF
 9. **🆕 检索结果段落级去重** — 子分片向量检索后按段落 DISTINCT，返回完整段落
-10. **实现 `knowledge_search` / `knowledge_lookup` 工具** — 让 Agent 能使用知识库
+10. **实现 `KnowledgeSearch` / `knowledge_lookup` 工具** — 让 Agent 能使用知识库
 11. **实现 `InjectKnowledge` ContextMiddleware** — 自动知识注入
 12. **Service 层集成** — 在 `y-service` 中创建 `KnowledgeService` 编排各组件
 13. **GUI / CLI 支持** — 用户界面和命令行管理

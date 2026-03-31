@@ -346,7 +346,7 @@ Schedules support a `ParameterSchema` (JSON Schema) that defines the parameters 
 | Component | Description |
 |-----------|-------------|
 | **ParameterSchema** | JSON Schema attached to the workflow template; defines required/optional parameters with types, constraints, and defaults |
-| **Parameter Validation** | When a schedule is created via `schedule_create`, the provided `parameter_values` are validated against the template's `ParameterSchema`; invalid parameters are rejected |
+| **Parameter Validation** | When a schedule is created via `ScheduleCreate`, the provided `parameter_values` are validated against the template's `ParameterSchema`; invalid parameters are rejected |
 | **Runtime Resolution** | At trigger time, parameter values are resolved through the expression engine; supports static values, trigger context (`{{ trigger.time }}`), event payloads (`{{ event.payload.field }}`), and computed expressions |
 | **Schedule Cloning** | A new schedule can reference an existing schedule as a template and override only the changed parameters, simplifying multi-instance creation |
 
@@ -366,8 +366,8 @@ Agents can create and manage schedules programmatically through meta-tools (see 
 
 | Tool | Description |
 |------|-------------|
-| `schedule_create` | Create a schedule binding a workflow template to a trigger with parameter values |
-| `schedule_list` | List active and paused schedules with optional filters |
+| `ScheduleCreate` | Create a schedule binding a workflow template to a trigger with parameter values |
+| `ScheduleList` | List active and paused schedules with optional filters |
 
 ### Context Injection
 

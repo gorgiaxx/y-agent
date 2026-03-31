@@ -9,14 +9,14 @@
 
 ## Current State
 
-| Metric | Orchestrator (`y-agent`) | Scheduler (`y-scheduler`) |
-|--------|--------------------------|---------------------------|
-| Source files | 8 | 14 |
-| Lines of code | ~2100 | ~4800 |
-| Unit tests | 54 passing | 64 passing |
-| Async execution | None | Trigger loop only |
-| SQLite persistence | None | None |
-| Service integration | None | None |
+| Metric              | Orchestrator (`y-agent`) | Scheduler (`y-scheduler`) |
+| ------------------- | ------------------------ | ------------------------- |
+| Source files        | 8                        | 14                        |
+| Lines of code       | ~2100                    | ~4800                     |
+| Unit tests          | 54 passing               | 64 passing                |
+| Async execution     | None                     | Trigger loop only         |
+| SQLite persistence  | None                     | None                      |
+| Service integration | None                     | None                      |
 
 **Key insight**: Both subsystems have well-structured data models and comprehensive unit tests for those models, but lack any real execution capability. The `CheckpointStorage` trait already exists in `y-core` with 7 async methods, ready for implementation.
 
@@ -217,6 +217,7 @@ Estimated effort: **3 days**
 #### [MODIFY] [executor.rs](file:///Users/gorgias/Projects/y-agent/crates/y-agent/src/orchestrator/executor.rs)
 
 Wrap task execution in a retry loop:
+
 - On task failure, check `task.retry` config
 - Apply backoff strategy (Fixed, Linear, Exponential)
 - On max retries exhausted, apply `task.failure_strategy`
@@ -224,6 +225,7 @@ Wrap task execution in a retry loop:
 ### 3.2 Failure Strategy Enforcement
 
 In the executor loop, when a task fails after retries:
+
 - `FailFast` -> abort workflow, set `Failed`
 - `ContinueOnError` -> mark task failed, continue scheduling non-dependent tasks
 - `Ignore` -> mark task as succeeded, continue
@@ -289,7 +291,7 @@ description = "Search, analyze, and summarize"
 id = "search"
 name = "Web Search"
 type = "tool_execution"
-tool_name = "web_search"
+tool_name = "WebSearch"
 [workflow.tasks.parameters]
 query = "{{ workflow.input.query }}"
 
@@ -365,6 +367,7 @@ Add `SqliteScheduleStore` implementing a `ScheduleRepository` trait. Replace `Ve
 #### [NEW] `migrations/sqlite/` migration files
 
 Create migration files for:
+
 - `workflow_checkpoints` table
 - `workflow_templates` table
 - `schedules` table
@@ -592,17 +595,17 @@ Legend: Red = Must-Have, Yellow = Should-Have, Green = Nice-to-Have
 
 ## Estimated Total Effort
 
-| Phase | Description | Priority | Effort |
-|-------|-------------|----------|--------|
-| Phase 1 | TaskNode + Executor Trait | Must-Have | 1.5 days |
-| Phase 2 | Async Executor + I/O Mapping | Must-Have | 3 days |
-| Phase 3 | Failure + Retry + Concurrency | Must-Have | 2 days |
-| Phase 4 | TOML Workflow Parser | Should-Have | 2 days |
-| Phase 5 | SQLite Persistence | Must-Have | 3 days |
-| Phase 6 | Public API + Scheduler Bridge | Must-Have | 3 days |
-| Phase 7 | Service Integration + Event Bus | Should-Have | 3 days |
-| Phase 8 | Polish | Nice-to-Have | 4 days |
-| **Total** | | | **~21.5 days** |
+| Phase     | Description                     | Priority     | Effort         |
+| --------- | ------------------------------- | ------------ | -------------- |
+| Phase 1   | TaskNode + Executor Trait       | Must-Have    | 1.5 days       |
+| Phase 2   | Async Executor + I/O Mapping    | Must-Have    | 3 days         |
+| Phase 3   | Failure + Retry + Concurrency   | Must-Have    | 2 days         |
+| Phase 4   | TOML Workflow Parser            | Should-Have  | 2 days         |
+| Phase 5   | SQLite Persistence              | Must-Have    | 3 days         |
+| Phase 6   | Public API + Scheduler Bridge   | Must-Have    | 3 days         |
+| Phase 7   | Service Integration + Event Bus | Should-Have  | 3 days         |
+| Phase 8   | Polish                          | Nice-to-Have | 4 days         |
+| **Total** |                                 |              | **~21.5 days** |
 
 ---
 
@@ -620,9 +623,9 @@ cargo fmt --all
 
 ## Open Questions
 
-| # | Question | Impact | Proposed Default |
-|---|----------|--------|-----------------|
-| 1 | Should task executors live in `y-agent` or `y-service`? | Separation of concerns | `y-agent` defines trait + Noop; `y-service` implements LLM/Tool executors |
-| 2 | Should the TOML parser support template inheritance? | Feature scope | Defer to Phase 8 |
-| 3 | Maximum checkpoint retention per workflow? | Storage cost | Keep last 10 checkpoints, prune older |
-| 4 | Should cron parser use `croner` or `cron` crate? | Dependency choice | `croner` (lighter, no-std compatible) |
+| #   | Question                                                | Impact                 | Proposed Default                                                          |
+| --- | ------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------- |
+| 1   | Should task executors live in `y-agent` or `y-service`? | Separation of concerns | `y-agent` defines trait + Noop; `y-service` implements LLM/Tool executors |
+| 2   | Should the TOML parser support template inheritance?    | Feature scope          | Defer to Phase 8                                                          |
+| 3   | Maximum checkpoint retention per workflow?              | Storage cost           | Keep last 10 checkpoints, prune older                                     |
+| 4   | Should cron parser use `croner` or `cron` crate?        | Dependency choice      | `croner` (lighter, no-std compatible)                                     |

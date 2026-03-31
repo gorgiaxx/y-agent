@@ -10,7 +10,7 @@
 
 ## 1. Module Purpose
 
-`y-tools` implements the tool registry supporting four tool types (Built-in, MCP, Custom, Dynamic). It provides lazy loading via `ToolIndex` + `tool_search`, JSON Schema parameter validation, session-scoped `ToolActivationSet` with LRU eviction, and integration with the Tool middleware chain in `y-hooks`.
+`y-tools` implements the tool registry supporting four tool types (Built-in, MCP, Custom, Dynamic). It provides lazy loading via `ToolIndex` + `ToolSearch`, JSON Schema parameter validation, session-scoped `ToolActivationSet` with LRU eviction, and integration with the Tool middleware chain in `y-hooks`.
 
 ---
 
@@ -43,7 +43,7 @@ y-tools/src/
   executor.rs         — ToolExecutor: middleware chain integration
   builtin/
     mod.rs            — Built-in tool registration
-    tool_search.rs    — tool_search meta-tool
+    tool_search.rs    — ToolSearch meta-tool
 ```
 
 ---
@@ -131,7 +131,7 @@ TEST_LOCATION: #[cfg(test)] in same file
 | T-TOOL-005-04 | `test_executor_returns_output_on_success` | Successful execution | `ToolOutput` with success=true |
 | T-TOOL-005-05 | `test_executor_captures_runtime_error` | Tool panics | `ToolError::RuntimeError` |
 
-#### Task: T-TOOL-006 — tool_search meta-tool
+#### Task: T-TOOL-006 — ToolSearch meta-tool
 
 ```
 FILE: crates/y-tools/src/builtin/tool_search.rs
@@ -153,7 +153,7 @@ FILE: crates/y-tools/tests/
 | Test ID | File | Test Name | Scenario |
 |---------|------|-----------|----------|
 | T-TOOL-INT-01 | `registry_integration_test.rs` | `test_register_search_execute_flow` | Register tool → search → validate → execute |
-| T-TOOL-INT-02 | `registry_integration_test.rs` | `test_lazy_loading_full_cycle` | Index injection → tool_search → activation → execution |
+| T-TOOL-INT-02 | `registry_integration_test.rs` | `test_lazy_loading_full_cycle` | Index injection → ToolSearch → activation → execution |
 | T-TOOL-INT-03 | `registry_integration_test.rs` | `test_lru_eviction_under_load` | Register 30 tools, activate all, verify LRU ceiling |
 | T-TOOL-INT-04 | `registry_integration_test.rs` | `test_dynamic_tool_registration` | Register dynamic tool at runtime, execute in sandbox |
 
@@ -168,7 +168,7 @@ FILE: crates/y-tools/tests/
 | I-TOOL-003 | `ToolActivationSet` | LRU cache with ceiling, always_active support | High |
 | I-TOOL-004 | `JsonSchemaValidator` | Compiled schema cache, Draft 7 validation | High |
 | I-TOOL-005 | `ToolExecutor` | Middleware chain integration, validation, execution | High |
-| I-TOOL-006 | `tool_search` built-in | Meta-tool for lazy loading, activates found tools | High |
+| I-TOOL-006 | `ToolSearch` built-in | Meta-tool for lazy loading, activates found tools | High |
 | I-TOOL-007 | Built-in tool skeleton | Registration framework for built-in tools | Medium |
 | I-TOOL-008 | Dynamic tool support | Agent-created tools with mandatory sandboxing | Medium |
 
@@ -186,7 +186,7 @@ FILE: crates/y-tools/benches/tool_bench.rs
 | JSON Schema validation | P95 < 1ms | `criterion` |
 | ToolIndex generation (100 tools) | P95 < 5ms | `criterion` |
 | ToolActivationSet LRU (20 tools) | P95 < 100us | `criterion` |
-| tool_search query | P95 < 10ms | `criterion` |
+| ToolSearch query | P95 < 10ms | `criterion` |
 
 ---
 
@@ -204,7 +204,7 @@ FILE: crates/y-tools/benches/tool_bench.rs
 ## 8. Acceptance Criteria
 
 - [ ] 4 tool types (Built-in, MCP, Custom, Dynamic) registerable
-- [ ] Lazy loading works: ToolIndex → tool_search → activate → execute
+- [ ] Lazy loading works: ToolIndex → ToolSearch → activate → execute
 - [ ] LRU eviction at ceiling 20, always_active tools exempt
 - [ ] JSON Schema validation rejects invalid parameters before execution
 - [ ] Middleware chain (Tool chain in y-hooks) invoked pre/post execution

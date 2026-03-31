@@ -23,21 +23,21 @@ The Tools module and Runtime module are designed as independent layers with a cl
 
 Three anti-patterns observed in reference projects motivate the design:
 
-| Anti-Pattern | Avoidance Strategy |
-|-------------|-------------------|
-| **Tight coupling** (tools implement isolation) | Tools only declare capabilities; Runtime enforces |
-| **Implicit permissions** (no capability declaration) | Every tool must declare capabilities in Manifest |
+| Anti-Pattern                                             | Avoidance Strategy                                      |
+| -------------------------------------------------------- | ------------------------------------------------------- |
+| **Tight coupling** (tools implement isolation)           | Tools only declare capabilities; Runtime enforces       |
+| **Implicit permissions** (no capability declaration)     | Every tool must declare capabilities in Manifest        |
 | **Runtime as business layer** (interpreting tool params) | Runtime only receives `Command`; no parameter awareness |
 
 ### Goals
 
-| Goal | Measurable Criteria |
-|------|-------------------|
-| **Clean boundary** | Zero imports from Tools in Runtime; zero imports from Runtime in Tool business logic |
+| Goal                        | Measurable Criteria                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| **Clean boundary**          | Zero imports from Tools in Runtime; zero imports from Runtime in Tool business logic  |
 | **Capability completeness** | Every tool with side effects declares capabilities; undeclared operations are blocked |
-| **Error traceability** | Errors carry full context (tool name, capability, runtime type, request_id) |
-| **Audit completeness** | Every execution path (local, container, remote) generates audit records |
-| **Degradation safety** | Capability denials never silently degrade to weaker isolation |
+| **Error traceability**      | Errors carry full context (tool name, capability, runtime type, request_id)           |
+| **Audit completeness**      | Every execution path (local, container, remote) generates audit records               |
+| **Degradation safety**      | Capability denials never silently degrade to weaker isolation                         |
 
 ### Assumptions
 
@@ -76,17 +76,17 @@ Three anti-patterns observed in reference projects motivate the design:
 
 ### Responsibility Matrix
 
-| Responsibility | Tools Module | Runtime Module |
-|---------------|-------------|---------------|
-| **Parameter validation** | Validates tool arguments | Only receives validated commands |
-| **Business logic** | Implements tool-specific behavior | No business logic |
-| **Capability declaration** | Declares in ToolManifest | Checks against whitelist |
-| **Container image selection** | Declares preferred image | Validates image against whitelist |
-| **Execution isolation** | Calls RuntimeManager | Provides Docker/Native/SSH environments |
-| **Resource limits** | Declares requirements in Manifest | Enforces via cgroups/Docker |
-| **Error handling** | Handles tool-level errors | Handles execution-level errors |
-| **Rate limiting** | Per-tool rate limits | Global concurrency limits |
-| **Audit logging** | Optional tool-specific logs | Records all execution events |
+| Responsibility                | Tools Module                      | Runtime Module                          |
+| ----------------------------- | --------------------------------- | --------------------------------------- |
+| **Parameter validation**      | Validates tool arguments          | Only receives validated commands        |
+| **Business logic**            | Implements tool-specific behavior | No business logic                       |
+| **Capability declaration**    | Declares in ToolManifest          | Checks against whitelist                |
+| **Container image selection** | Declares preferred image          | Validates image against whitelist       |
+| **Execution isolation**       | Calls RuntimeManager              | Provides Docker/Native/SSH environments |
+| **Resource limits**           | Declares requirements in Manifest | Enforces via cgroups/Docker             |
+| **Error handling**            | Handles tool-level errors         | Handles execution-level errors          |
+| **Rate limiting**             | Per-tool rate limits              | Global concurrency limits               |
+| **Audit logging**             | Optional tool-specific logs       | Records all execution events            |
 
 **Key principle**: Tools are the "smart" layer (understand user intent, process parameters, return structured results). Runtime is the "dumb" layer (execute commands safely, enforce limits, report results).
 
@@ -141,6 +141,7 @@ flowchart TB
 **Diagram rationale**: Flowchart chosen to show the cross-module flow from agent through tools, capability checks, and runtime to infrastructure.
 
 **Legend**:
+
 - **Tool Layer**: Handles business logic; constructs RuntimeContext and Command.
 - **Check Layer**: Gates execution with capability and image checks.
 - **Runtime Layer**: Manages adapter dispatch and security policy enforcement.
@@ -157,9 +158,9 @@ Tools that perform purely local, safe operations do not involve the Runtime at a
 sequenceDiagram
     participant Agent
     participant TE as ToolExecutor
-    participant Tool as file_read
+    participant Tool as FileRead
 
-    Agent->>TE: execute("file_read", {path: "data.txt"})
+    Agent->>TE: execute("FileRead", {path: "data.txt"})
     TE->>TE: validate parameters
     TE->>TE: check rate limit
     TE->>Tool: execute(validated_args, context)
@@ -183,14 +184,14 @@ Tools that execute arbitrary user-provided commands must use Runtime isolation.
 sequenceDiagram
     participant Agent
     participant TE as ToolExecutor
-    participant Tool as shell_exec
+    participant Tool as ShellExec
     participant RM as RuntimeManager
     participant CC as CapabilityChecker
     participant IW as ImageWhitelist
     participant DR as DockerRuntime
     participant Audit as AuditTrail
 
-    Agent->>TE: execute("shell_exec", {command: "ls -la"})
+    Agent->>TE: execute("ShellExec", {command: "ls -la"})
     TE->>TE: validate + rate limit
     TE->>Tool: execute(args, context)
 
@@ -218,6 +219,7 @@ sequenceDiagram
 **Diagram rationale**: Sequence diagram chosen to show the full integration path through both Tool and Runtime layers.
 
 **Legend**:
+
 - The tool constructs `RuntimeContext` directly from its Manifest (no ad-hoc capability requests).
 - Two security gates (CapabilityChecker, ImageWhitelist) must pass before execution proceeds.
 
@@ -277,6 +279,7 @@ flowchart TB
 **Diagram rationale**: Flowchart chosen to show the progressive narrowing of permissions through four layers.
 
 **Legend**:
+
 - **Layer 1**: Static declaration at tool registration time.
 - **Layer 2**: Checked against deployment-specific whitelist config.
 - **Layer 3**: Dynamic check at execution time.
@@ -284,14 +287,14 @@ flowchart TB
 
 ### Resource Limit Flow
 
-| Step | Layer | Action |
-|------|-------|--------|
-| 1 | Tool Manifest | Declares resource requirements (e.g., 2 CPU, 512MB RAM, 5 min timeout) |
-| 2 | ResourcePolicy | Validates against global policy (e.g., no single tool can request > 4 CPU) |
-| 3 | RuntimeManager | Allocates resources from global quota |
-| 4 | DockerRuntime | Applies as Docker cgroup limits (`--cpus`, `--memory`) |
-| 5 | ResourceMonitor | Collects actual usage from container stats |
-| 6 | AuditTrail | Records declared vs actual resource usage |
+| Step | Layer           | Action                                                                     |
+| ---- | --------------- | -------------------------------------------------------------------------- |
+| 1    | Tool Manifest   | Declares resource requirements (e.g., 2 CPU, 512MB RAM, 5 min timeout)     |
+| 2    | ResourcePolicy  | Validates against global policy (e.g., no single tool can request > 4 CPU) |
+| 3    | RuntimeManager  | Allocates resources from global quota                                      |
+| 4    | DockerRuntime   | Applies as Docker cgroup limits (`--cpus`, `--memory`)                     |
+| 5    | ResourceMonitor | Collects actual usage from container stats                                 |
+| 6    | AuditTrail      | Records declared vs actual resource usage                                  |
 
 ### Cross-Module Error Flow
 
@@ -318,22 +321,22 @@ flowchart LR
 
 ### Degradation Strategies
 
-| Error | Strategy | Example |
-|-------|----------|---------|
-| **ImageNotFound** | Try fallback images from ContainerPreference | `python:3.11-slim` -> `python:3.10-slim` |
-| **ResourceLimitExceeded** | Reduce resources and retry (if policy allows) | CPU 2.0 -> 1.0 |
-| **NetworkTimeout** | Retry 3 times with exponential backoff | 1s -> 2s -> 4s |
-| **RateLimited** | Return user-friendly message with retry-after hint | "Rate limited; retry in 30s" |
-| **CapabilityDenied** | Never degrade; always reject | Prevents security bypass |
-| **DockerDaemonDown** | Fall back to NativeRuntime only if tool allows it | Only if `require_container: false` |
+| Error                     | Strategy                                           | Example                                  |
+| ------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| **ImageNotFound**         | Try fallback images from ContainerPreference       | `python:3.11-slim` -> `python:3.10-slim` |
+| **ResourceLimitExceeded** | Reduce resources and retry (if policy allows)      | CPU 2.0 -> 1.0                           |
+| **NetworkTimeout**        | Retry 3 times with exponential backoff             | 1s -> 2s -> 4s                           |
+| **RateLimited**           | Return user-friendly message with retry-after hint | "Rate limited; retry in 30s"             |
+| **CapabilityDenied**      | Never degrade; always reject                       | Prevents security bypass                 |
+| **DockerDaemonDown**      | Fall back to NativeRuntime only if tool allows it  | Only if `require_container: false`       |
 
 ### Error Message Quality
 
 Errors from the integration boundary are formatted with full context:
 
-| Bad Error | Good Error |
-|-----------|-----------|
-| `Error: ImageNotWhitelisted` | `Cannot execute tool 'shell_exec': Image 'ubuntu:latest' not in whitelist. Allowed: ubuntu:22.04, python:3.*, node:*-alpine. See /config/runtime.toml` |
+| Bad Error                    | Good Error                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Error: ImageNotWhitelisted` | `Cannot execute tool 'ShellExec': Image 'ubuntu:latest' not in whitelist. Allowed: ubuntu:22.04, python:3.*, node:*-alpine. See /config/runtime.toml` |
 
 ---
 
@@ -343,23 +346,23 @@ Errors from the integration boundary are formatted with full context:
 
 The integration design prevents an AI agent from escalating privileges:
 
-| Attack Vector | Prevention |
-|--------------|-----------|
-| AI requests unauthorized image | Manifest limits + ImageWhitelist double-check |
-| AI modifies RuntimeContext | Context constructed from Manifest, not user input |
-| AI sends command to bypass container | RuntimeManager enforces container requirement from Manifest |
-| AI requests host network access | NetworkCapability::None in Manifest; Docker `--network none` |
-| AI attempts path traversal | Tool-level canonicalize + starts_with; container mount boundaries |
+| Attack Vector                        | Prevention                                                        |
+| ------------------------------------ | ----------------------------------------------------------------- |
+| AI requests unauthorized image       | Manifest limits + ImageWhitelist double-check                     |
+| AI modifies RuntimeContext           | Context constructed from Manifest, not user input                 |
+| AI sends command to bypass container | RuntimeManager enforces container requirement from Manifest       |
+| AI requests host network access      | NetworkCapability::None in Manifest; Docker `--network none`      |
+| AI attempts path traversal           | Tool-level canonicalize + starts_with; container mount boundaries |
 
 ### Audit Coverage
 
-| Execution Path | Audit Source |
-|---------------|-------------|
-| Local (file_read) | ToolExecutor audit log |
-| Container (shell_exec) | RuntimeManager + DockerRuntime audit |
-| Skill (analyze_csv) | RuntimeManager + DockerRuntime + Skill registry |
-| Capability denied | CapabilityChecker security event |
-| Image rejected | ImageWhitelist security event |
+| Execution Path         | Audit Source                                    |
+| ---------------------- | ----------------------------------------------- |
+| Local (FileRead)      | ToolExecutor audit log                          |
+| Container (ShellExec) | RuntimeManager + DockerRuntime audit            |
+| Skill (analyze_csv)    | RuntimeManager + DockerRuntime + Skill registry |
+| Capability denied      | CapabilityChecker security event                |
+| Image rejected         | ImageWhitelist security event                   |
 
 ---
 
@@ -367,18 +370,18 @@ The integration design prevents an AI agent from escalating privileges:
 
 ### Execution Overhead by Pattern
 
-| Pattern | Overhead | Dominated By |
-|---------|----------|-------------|
-| Local (no Runtime) | < 5ms | File I/O |
-| Container (warm image) | ~1.5s | Container create + start |
-| Container (cold pull) | ~30s | Image download |
-| Skill container (warm) | ~2s | Extended container config |
-| NativeRuntime (plain) | < 50ms | Process spawn |
-| NativeRuntime (sandboxed) | ~200ms | bubblewrap setup |
+| Pattern                   | Overhead | Dominated By              |
+| ------------------------- | -------- | ------------------------- |
+| Local (no Runtime)        | < 5ms    | File I/O                  |
+| Container (warm image)    | ~1.5s    | Container create + start  |
+| Container (cold pull)     | ~30s     | Image download            |
+| Skill container (warm)    | ~2s      | Extended container config |
+| NativeRuntime (plain)     | < 50ms   | Process spawn             |
+| NativeRuntime (sandboxed) | ~200ms   | bubblewrap setup          |
 
 ### Optimization Strategies
 
-- **Tool result caching**: Idempotent tools (file_read, web_search) cache results with configurable TTL; cache key is `hash(tool_name, args)`.
+- **Tool result caching**: Idempotent tools (FileRead, web_search) cache results with configurable TTL; cache key is `hash(tool_name, args)`.
 - **Container pool**: Frequently-used images keep pre-created containers; `get_or_create()` checks pool before `docker create`.
 - **Parallel audit**: Audit log writes are async and do not block the execution return path.
 - **Lazy capability checking**: Capability checks are skipped for tools that declare `required_capabilities: Default` (no special requirements).
@@ -389,28 +392,28 @@ The integration design prevents an AI agent from escalating privileges:
 
 ### Integrated Metrics
 
-| Metric | Source | Description |
-|--------|--------|-------------|
-| `integration.tool_runtime_calls` | ToolExecutor | Tools that invoked RuntimeManager |
-| `integration.local_executions` | ToolExecutor | Tools that executed locally (no Runtime) |
-| `integration.capability_denials` | CapabilityChecker | Cross-module capability check failures |
-| `integration.image_rejections` | ImageWhitelist | Image whitelist violations |
-| `integration.degradation_attempts` | RuntimeManager | Fallback/retry attempts |
-| `integration.degradation_successes` | RuntimeManager | Successful fallbacks |
+| Metric                              | Source            | Description                              |
+| ----------------------------------- | ----------------- | ---------------------------------------- |
+| `integration.tool_runtime_calls`    | ToolExecutor      | Tools that invoked RuntimeManager        |
+| `integration.local_executions`      | ToolExecutor      | Tools that executed locally (no Runtime) |
+| `integration.capability_denials`    | CapabilityChecker | Cross-module capability check failures   |
+| `integration.image_rejections`      | ImageWhitelist    | Image whitelist violations               |
+| `integration.degradation_attempts`  | RuntimeManager    | Fallback/retry attempts                  |
+| `integration.degradation_successes` | RuntimeManager    | Successful fallbacks                     |
 
 ### Integrated Audit Record
 
 A single audit record captures the full execution path:
 
-| Section | Fields |
-|---------|--------|
-| **Tool** | name, category, parameters (redacted) |
-| **Caller** | agent_id, session_id, request_id |
-| **Capability Check** | passed (bool), checked capabilities |
-| **Runtime** | type (docker/native/ssh), image, container_id, network_mode |
-| **Result** | success, exit_code, duration_ms |
-| **Resources** | cpu_time_ms, memory_peak_mb, disk_rw_mb, network_rxtx_mb |
-| **Security Events** | list of any security events triggered |
+| Section              | Fields                                                      |
+| -------------------- | ----------------------------------------------------------- |
+| **Tool**             | name, category, parameters (redacted)                       |
+| **Caller**           | agent_id, session_id, request_id                            |
+| **Capability Check** | passed (bool), checked capabilities                         |
+| **Runtime**          | type (docker/native/ssh), image, container_id, network_mode |
+| **Result**           | success, exit_code, duration_ms                             |
+| **Resources**        | cpu_time_ms, memory_peak_mb, disk_rw_mb, network_rxtx_mb    |
+| **Security Events**  | list of any security events triggered                       |
 
 ---
 
@@ -441,12 +444,12 @@ gantt
 
 ### Rollback Plan
 
-| Component | Rollback |
-|-----------|----------|
+| Component           | Rollback                                                   |
+| ------------------- | ---------------------------------------------------------- |
 | Capability checking | Feature flag; disable to allow all capabilities (dev only) |
-| Image whitelist | Feature flag; disable to allow all images (dev only) |
-| Container execution | Fall back to NativeRuntime for all tools |
-| Audit logging | Async and non-blocking; disable has no functional impact |
+| Image whitelist     | Feature flag; disable to allow all images (dev only)       |
+| Container execution | Fall back to NativeRuntime for all tools                   |
+| Audit logging       | Async and non-blocking; disable has no functional impact   |
 
 ---
 
@@ -454,32 +457,32 @@ gantt
 
 ### Integration Model: Direct Call vs Service Boundary
 
-| | Direct in-process call (chosen) | gRPC service boundary |
-|-|-------------------------------|---------------------|
-| **Latency** | Near-zero (function call) | Network overhead |
-| **Debugging** | Single process stack trace | Distributed tracing needed |
-| **Deployment** | Single binary | Two services |
-| **Isolation** | Shared memory space | Process isolation |
+|                | Direct in-process call (chosen) | gRPC service boundary      |
+| -------------- | ------------------------------- | -------------------------- |
+| **Latency**    | Near-zero (function call)       | Network overhead           |
+| **Debugging**  | Single process stack trace      | Distributed tracing needed |
+| **Deployment** | Single binary                   | Two services               |
+| **Isolation**  | Shared memory space             | Process isolation          |
 
 **Decision**: Direct in-process call. y-agent is a single-process application; adding a service boundary for Tools-Runtime communication adds complexity without benefit.
 
 ### Capability Model: Whitelist vs Blacklist vs Hybrid
 
-| | Whitelist (chosen) | Blacklist | Hybrid |
-|-|-------------------|-----------|--------|
+|                    | Whitelist (chosen)         | Blacklist                  | Hybrid              |
+| ------------------ | -------------------------- | -------------------------- | ------------------- |
 | **Default stance** | Deny all; explicitly allow | Allow all; explicitly deny | Depends on category |
-| **Security** | Strongest (fail-closed) | Weakest (fail-open) | Medium |
-| **Maintenance** | Must add new capabilities | Must track new threats | Complex rules |
+| **Security**       | Strongest (fail-closed)    | Weakest (fail-open)        | Medium              |
+| **Maintenance**    | Must add new capabilities  | Must track new threats     | Complex rules       |
 
 **Decision**: Whitelist-only. Fail-closed is essential for an AI agent that may attempt unexpected operations. Every capability must be explicitly granted.
 
 ### Error Attribution: Unified vs Typed
 
-| | Typed errors per layer (chosen) | Single unified error type |
-|-|-------------------------------|-------------------------|
-| **Attribution** | Clear: ToolError vs RuntimeError | Ambiguous origin |
-| **Handling** | Layer-specific recovery | Generic recovery |
-| **Complexity** | Two error hierarchies | One error type |
+|                 | Typed errors per layer (chosen)  | Single unified error type |
+| --------------- | -------------------------------- | ------------------------- |
+| **Attribution** | Clear: ToolError vs RuntimeError | Ambiguous origin          |
+| **Handling**    | Layer-specific recovery          | Generic recovery          |
+| **Complexity**  | Two error hierarchies            | One error type            |
 
 **Decision**: Typed errors per layer (`ToolError` and `RuntimeError` as distinct types). Clear attribution enables targeted error handling and meaningful user messages.
 
@@ -487,10 +490,9 @@ gantt
 
 ## Open Questions
 
-| # | Question | Owner | Due Date | Status |
-|---|----------|-------|----------|--------|
-| 1 | Should tools be able to request runtime upgrades (e.g., more CPU) mid-execution? | Integration team | 2026-03-27 | Open |
-| 2 | Should the container pool be shared across tools or per-tool? | Integration team | 2026-03-20 | Open |
-| 3 | How should the audit trail handle high-frequency tool calls (e.g., 100 file_reads/second)? Sampling? | Integration team | 2026-04-03 | Open |
-| 4 | Should tools be able to opt out of audit logging for performance-sensitive operations? | Integration team | 2026-03-27 | Open |
-
+| #   | Question                                                                                             | Owner            | Due Date   | Status |
+| --- | ---------------------------------------------------------------------------------------------------- | ---------------- | ---------- | ------ |
+| 1   | Should tools be able to request runtime upgrades (e.g., more CPU) mid-execution?                     | Integration team | 2026-03-27 | Open   |
+| 2   | Should the container pool be shared across tools or per-tool?                                        | Integration team | 2026-03-20 | Open   |
+| 3   | How should the audit trail handle high-frequency tool calls (e.g., 100 file_reads/second)? Sampling? | Integration team | 2026-04-03 | Open   |
+| 4   | Should tools be able to opt out of audit logging for performance-sensitive operations?               | Integration team | 2026-03-27 | Open   |
