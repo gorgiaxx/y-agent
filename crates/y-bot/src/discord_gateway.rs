@@ -362,7 +362,10 @@ fn handle_event(
         }
     };
 
-    let opcode = payload.get("op").and_then(serde_json::Value::as_u64).unwrap_or(99);
+    let opcode = payload
+        .get("op")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(99);
 
     // Update sequence number for heartbeat and resume.
     if let Some(seq) = payload.get("s").and_then(serde_json::Value::as_u64) {
@@ -422,7 +425,10 @@ fn handle_event(
         }
         op::RECONNECT => EventAction::Reconnect,
         op::INVALID_SESSION => {
-            let resumable = payload.get("d").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            let resumable = payload
+                .get("d")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
             EventAction::InvalidSession(resumable)
         }
         _ => {

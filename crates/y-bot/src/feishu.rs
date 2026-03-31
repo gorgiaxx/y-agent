@@ -186,7 +186,13 @@ impl FeishuBot {
 
         let status = resp.status();
         let json: serde_json::Value = resp.json().await?;
-        if !status.is_success() || json.get("code").and_then(serde_json::Value::as_u64).unwrap_or(1) != 0 {
+        if !status.is_success()
+            || json
+                .get("code")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1)
+                != 0
+        {
             let api_msg = json
                 .get("msg")
                 .and_then(|m| m.as_str())
