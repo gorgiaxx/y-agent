@@ -153,7 +153,7 @@ pub struct ServiceContainer {
     pub skill_search: RwLock<SkillSearch>,
 
     /// Dynamic text listing user-callable agents for prompt injection.
-    /// Populated from the AgentRegistry and injected into the orchestration prompt
+    /// Populated from the `AgentRegistry` and injected into the orchestration prompt
     /// via `BuildSystemPromptProvider::callable_agents_text`.
     pub callable_agents_text: Arc<RwLock<String>>,
 
