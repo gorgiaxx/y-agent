@@ -416,14 +416,41 @@ fn build_dag_visualization(dag: &TaskDag) -> DagVisualization {
     let mut edges = Vec::new();
 
     for task in &all_tasks {
+        let task_type_str = match task.task_type {
+            y_agent::orchestrator::dag::TaskType::LlmCall { .. } => "llm_call",
+            y_agent::orchestrator::dag::TaskType::ToolExecution { .. } => "tool_execution",
+            y_agent::orchestrator::dag::TaskType::SubAgent { .. } => "sub_agent",
+            y_agent::orchestrator::dag::TaskType::SubWorkflow { .. } => "sub_workflow",
+            y_agent::orchestrator::dag::TaskType::Script { .. } => "script",
+            y_agent::orchestrator::dag::TaskType::HumanApproval => "human_approval",
+            y_agent::orchestrator::dag::TaskType::Noop => "noop",
+        };
+
+        let priority_str = match task.priority {
+            y_agent::orchestrator::dag::TaskPriority::Critical => "critical",
+            y_agent::orchestrator::dag::TaskPriority::High => "high",
+            y_agent::orchestrator::dag::TaskPriority::Normal => "normal",
+            y_agent::orchestrator::dag::TaskPriority::Low => "low",
+            y_agent::orchestrator::dag::TaskPriority::Background => "background",
+        };
+
+        let strategy_str = match task.failure_strategy {
+            y_agent::orchestrator::failure::FailureStrategy::FailFast => "fail_fast",
+            y_agent::orchestrator::failure::FailureStrategy::ContinueOnError => "continue_on_error",
+            y_agent::orchestrator::failure::FailureStrategy::Retry => "retry",
+            y_agent::orchestrator::failure::FailureStrategy::Rollback => "rollback",
+            y_agent::orchestrator::failure::FailureStrategy::Ignore => "ignore",
+            y_agent::orchestrator::failure::FailureStrategy::Compensation { .. } => "compensation",
+        };
+
         nodes.push(DagNode {
             id: task.id.clone(),
             name: task.name.clone(),
-            task_type: format!("{:?}", task.task_type),
-            priority: format!("{:?}", task.priority),
+            task_type: task_type_str.to_string(),
+            priority: priority_str.to_string(),
             dependencies: task.dependencies.clone(),
             has_retry: task.retry.is_some(),
-            failure_strategy: format!("{:?}", task.failure_strategy),
+            failure_strategy: strategy_str.to_string(),
         });
 
         for dep in &task.dependencies {
