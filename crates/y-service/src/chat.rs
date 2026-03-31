@@ -913,7 +913,7 @@ impl ChatService {
     /// Build tool definitions in `OpenAI` function-calling JSON format.
     ///
     /// Returns definitions for ALL registered tools. Prefer
-    /// [`build_essential_tool_definitions`] for root agent turns to enforce
+    /// [`Self::build_essential_tool_definitions`] for root agent turns to enforce
     /// lazy loading.
     pub async fn build_tool_definitions(container: &ServiceContainer) -> Vec<serde_json::Value> {
         let defs = container.tool_registry.get_all_definitions().await;

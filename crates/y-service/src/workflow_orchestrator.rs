@@ -6,17 +6,17 @@
 //!
 //! | Tool | Handler |
 //! |------|---------|
-//! | `WorkflowCreate` | [`handle_create`] |
-//! | `WorkflowList` | [`handle_list`] |
-//! | `WorkflowGet` | [`handle_get`] |
-//! | `WorkflowUpdate` | [`handle_update`] |
-//! | `WorkflowDelete` | [`handle_delete`] |
-//! | `WorkflowValidate` | [`handle_validate`] |
-//! | `ScheduleCreate` | [`handle_schedule_create`] |
-//! | `ScheduleList` | [`handle_schedule_list`] |
-//! | `SchedulePause` | [`handle_schedule_pause`] |
-//! | `ScheduleResume` | [`handle_schedule_resume`] |
-//! | `ScheduleDelete` | [`handle_schedule_delete`] |
+//! | `WorkflowCreate` | [`WorkflowOrchestrator::handle_create`] |
+//! | `WorkflowList` | [`WorkflowOrchestrator::handle_list`] |
+//! | `WorkflowGet` | [`WorkflowOrchestrator::handle_get`] |
+//! | `WorkflowUpdate` | [`WorkflowOrchestrator::handle_update`] |
+//! | `WorkflowDelete` | [`WorkflowOrchestrator::handle_delete`] |
+//! | `WorkflowValidate` | [`WorkflowOrchestrator::handle_validate`] |
+//! | `ScheduleCreate` | [`WorkflowOrchestrator::handle_schedule_create`] |
+//! | `ScheduleList` | [`WorkflowOrchestrator::handle_schedule_list`] |
+//! | `SchedulePause` | [`WorkflowOrchestrator::handle_schedule_pause`] |
+//! | `ScheduleResume` | [`WorkflowOrchestrator::handle_schedule_resume`] |
+//! | `ScheduleDelete` | [`WorkflowOrchestrator::handle_schedule_delete`] |
 //!
 //! This mirrors the pattern established by `ToolSearchOrchestrator` and
 //! `TaskDelegationOrchestrator`.
