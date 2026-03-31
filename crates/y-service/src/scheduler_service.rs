@@ -711,11 +711,20 @@ fn schedule_to_row(schedule: &Schedule) -> y_storage::ScheduleRow {
 
     let tags_json = serde_json::to_string(&schedule.tags).unwrap_or_else(|_| "[]".to_string());
 
-    let missed_policy = format!("{:?}", schedule.policies.missed_policy).to_lowercase();
-    let concurrency_policy = serde_json::to_value(&schedule.policies.concurrency_policy)
-        .ok()
-        .and_then(|v| v.as_str().map(String::from))
-        .unwrap_or_else(|| "skip_if_running".to_string());
+    let missed_policy = match schedule.policies.missed_policy {
+        y_scheduler::MissedPolicy::Skip => "skip",
+        y_scheduler::MissedPolicy::CatchUp => "catch_up",
+        y_scheduler::MissedPolicy::Backfill => "backfill",
+    }
+    .to_string();
+    let concurrency_policy = match schedule.policies.concurrency_policy {
+        y_scheduler::ConcurrencyPolicy::SkipIfRunning => "skip",
+        y_scheduler::ConcurrencyPolicy::Queue => "queue",
+        y_scheduler::ConcurrencyPolicy::CancelPrevious | y_scheduler::ConcurrencyPolicy::Allow => {
+            "replace"
+        }
+    }
+    .to_string();
 
     y_storage::ScheduleRow {
         id: schedule.id.clone(),
