@@ -55,6 +55,7 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
 
   useEffect(() => {
     if (!agentId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDetail(null);
       setEditing(false);
       return;

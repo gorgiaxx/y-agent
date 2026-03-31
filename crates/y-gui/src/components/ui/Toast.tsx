@@ -1,23 +1,11 @@
 import * as ToastPrimitive from '@radix-ui/react-toast'
-import { useState, useCallback, createContext, useContext, type ReactNode } from 'react'
-
-/* ---- Types ---- */
-type ToastType = 'success' | 'error' | 'info'
+import { useState, useCallback, type ReactNode } from 'react'
+import { ToastContext, type ToastType } from '../../hooks/useToast'
 
 interface ToastData {
   id: number
   message: string
   type: ToastType
-}
-
-interface ToastContextValue {
-  toast: (message: string, type?: ToastType) => void
-}
-
-const ToastContext = createContext<ToastContextValue>({ toast: () => {} })
-
-export function useToast() {
-  return useContext(ToastContext)
 }
 
 /* ---- Viewport (renders at bottom-center) ---- */
@@ -27,13 +15,14 @@ const typeStyles: Record<ToastType, string> = {
   info: 'bg-[var(--surface-tertiary)] border-[var(--border)] text-[var(--text-primary)]',
 }
 
+let processWideNextId = 0
+
 /* ---- Provider ---- */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastData[]>([])
-  let nextId = 0
 
   const addToast = useCallback((message: string, type: ToastType = 'success') => {
-    const id = ++nextId
+    const id = ++processWideNextId
     setToasts((prev) => [...prev, { id, message, type }])
     // Auto-dismiss
     setTimeout(() => {

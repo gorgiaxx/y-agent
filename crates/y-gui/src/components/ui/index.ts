@@ -19,7 +19,8 @@ export {
   TooltipTrigger,
   TooltipContent,
 } from './Tooltip'
-export { ToastProvider, useToast } from './Toast'
+export { ToastProvider } from './Toast'
+export { useToast } from '../../hooks/useToast'
 export { Badge } from './Badge'
 export {
   Select,

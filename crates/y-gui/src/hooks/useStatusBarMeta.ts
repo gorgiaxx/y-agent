@@ -81,7 +81,9 @@ export function useStatusBarMeta({
   // This is the authoritative source -- fires once per turn completion with
   // all fields already resolved.
   const activeSessionIdRef = useRef(activeSessionId);
-  activeSessionIdRef.current = activeSessionId;
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen<ChatCompletePayload>('chat:complete', (e) => {
@@ -159,6 +161,7 @@ export function useStatusBarMeta({
     const contextTokensUsed = (msgMeta?.context_tokens_used as number | undefined);
 
     if (model || tokens || cost != null || contextWindow != null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMeta((prev) => ({
         provider: model || undefined,
         providerId: providerId || prev.providerId,

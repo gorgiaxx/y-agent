@@ -416,6 +416,7 @@ export function InputArea({
   useEffect(() => {
     if (pendingEdit && editableRef.current) {
       editableRef.current.textContent = pendingEdit.content;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       exitCommandMode();
       editableRef.current.focus();
       placeCursorAtEnd(editableRef.current);

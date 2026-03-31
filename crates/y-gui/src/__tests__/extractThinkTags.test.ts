@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest';
-import { extractThinkTags, escapeThinkTags } from '../components/chat-panel/chat-box/MessageShared';
+import { extractThinkTags, escapeThinkTags } from '../components/chat-panel/chat-box/messageUtils';
 
 // ---------------------------------------------------------------------------
 // extractThinkTags

@@ -70,7 +70,6 @@ export function KnowledgePanel({
   collections,
   entries,
   selectedCollection,
-  onSelectCollection: _onSelectCollection,
   onCreateCollection,
   onDeleteCollection,
   onRenameCollection,

@@ -25,8 +25,8 @@ import type { ToolResultRecord } from '../../../hooks/useChat';
 import { ToolCallCard } from './ToolCallCard';
 import {
   AssistantMessageShell,
-  extractThinkTags,
 } from './MessageShared';
+import { extractThinkTags } from './messageUtils';
 import { type ContentSegment } from '../../../hooks/useStreamContent';
 import { ActionCard } from './ActionCard';
 import { useAssistantBubble } from './useAssistantBubble';

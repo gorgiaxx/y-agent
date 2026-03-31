@@ -354,73 +354,68 @@ export function providersToToml(providers: ProviderFormData[]): string {
   return lines.join('\n');
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToProviders(json: any): ProviderFormData[] {
+export function jsonToProviders(json: unknown): ProviderFormData[] {
   // config_get nests each section's parsed TOML under the section name.
   // providers.toml parses to { providers: [...], ...meta }, then gets stored as
   // merged["providers"], so the actual array lives at json.providers.providers.
   // Fall back to json.providers directly for forward-compatibility.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let list: any = null;
-  if (Array.isArray(json?.providers)) {
-    list = json.providers;
-  } else if (Array.isArray(json?.providers?.providers)) {
-    list = json.providers.providers;
+  const jsonObj = json as Record<string, unknown> | null;
+  let list: unknown = null;
+  if (jsonObj && Array.isArray(jsonObj.providers)) {
+    list = jsonObj.providers;
+  } else if (jsonObj && jsonObj.providers && typeof jsonObj.providers === 'object' && Array.isArray((jsonObj.providers as Record<string, unknown>).providers)) {
+    list = (jsonObj.providers as Record<string, unknown>).providers;
   }
-  if (!list) return [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return list.map((p: any) => ({
-    id: p.id ?? '',
-    provider_type: p.provider_type ?? 'openai',
-    model: p.model ?? '',
+  if (!list || !Array.isArray(list)) return [];
+  return list.map((p: Record<string, unknown>) => ({
+    id: (p.id as string) ?? '',
+    provider_type: (p.provider_type as string) ?? 'openai',
+    model: (p.model as string) ?? '',
     enabled: p.enabled !== false,
-    tags: Array.isArray(p.tags) ? p.tags : [],
-    max_concurrency: p.max_concurrency ?? 5,
-    context_window: p.context_window ?? 128000,
-    cost_per_1k_input: p.cost_per_1k_input ?? 0,
-    cost_per_1k_output: p.cost_per_1k_output ?? 0,
-    api_key: p.api_key ?? null,
-    api_key_env: p.api_key_env ?? null,
-    base_url: p.base_url ?? null,
-    temperature: p.temperature ?? null,
-    top_p: p.top_p ?? null,
-    tool_calling_mode: p.tool_calling_mode ?? null,
-    icon: p.icon ?? null,
+    tags: Array.isArray(p.tags) ? (p.tags as string[]) : [],
+    max_concurrency: (p.max_concurrency as number) ?? 5,
+    context_window: (p.context_window as number) ?? 128000,
+    cost_per_1k_input: (p.cost_per_1k_input as number) ?? 0,
+    cost_per_1k_output: (p.cost_per_1k_output as number) ?? 0,
+    api_key: (p.api_key as string) ?? null,
+    api_key_env: (p.api_key_env as string) ?? null,
+    base_url: (p.base_url as string) ?? null,
+    temperature: (p.temperature as number) ?? null,
+    top_p: (p.top_p as number) ?? null,
+    tool_calling_mode: (p.tool_calling_mode as string) ?? null,
+    icon: (p.icon as string) ?? null,
   }));
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToSession(json: any): SessionFormData {
+export function jsonToSession(json: unknown): SessionFormData {
   return deserializeFromJson(json, SESSION_SCHEMA) as unknown as SessionFormData;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToRuntime(json: any): RuntimeFormData {
+export function jsonToRuntime(json: unknown): RuntimeFormData {
   return deserializeFromJson(json, RUNTIME_SCHEMA) as unknown as RuntimeFormData;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToBrowser(json: any): BrowserFormData {
+export function jsonToBrowser(json: unknown): BrowserFormData {
   return deserializeFromJson(json, BROWSER_SCHEMA, browserPostProcess) as unknown as BrowserFormData;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToMcpServers(json: any): McpServerFormData[] {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const servers = json?.mcpServers ?? {};
-  return Object.entries(servers).map(([name, cfg]: [string, any]) => {
+export function jsonToMcpServers(json: unknown): McpServerFormData[] {
+  const jsonObj = json as Record<string, unknown> | null;
+  const servers = (jsonObj?.mcpServers as Record<string, unknown>) ?? {};
+  return Object.entries(servers).map(([name, cfgRaw]: [string, unknown]) => {
+    const cfg = cfgRaw as Record<string, unknown> | null;
     // Detect transport type: if 'url' field exists, it's SSE; otherwise STDIO.
     const isSSE = !!cfg?.url;
     return {
       name,
       transport: isSSE ? 'sse' as const : 'stdio' as const,
-      command: cfg?.command ?? '',
-      args: Array.isArray(cfg?.args) ? cfg.args : [],
-      env: cfg?.env ?? {},
-      url: cfg?.url ?? '',
-      headers: cfg?.headers ?? {},
-      alwaysAllow: Array.isArray(cfg?.alwaysAllow) ? cfg.alwaysAllow : [],
-      disabled: cfg?.disabled ?? false,
+      command: (cfg?.command as string) ?? '',
+      args: Array.isArray(cfg?.args) ? (cfg.args as string[]) : [],
+      env: (cfg?.env as Record<string, string>) ?? {},
+      url: (cfg?.url as string) ?? '',
+      headers: (cfg?.headers as Record<string, string>) ?? {},
+      alwaysAllow: Array.isArray(cfg?.alwaysAllow) ? (cfg.alwaysAllow as string[]) : [],
+      disabled: (cfg?.disabled as boolean) ?? false,
     };
   });
 }
@@ -430,8 +425,7 @@ export function mcpServersToJson(servers: McpServerFormData[]): Record<string, u
   for (const s of servers) {
     const name = s.name || `server-${Object.keys(mcpServers).length + 1}`;
     if (s.transport === 'stdio') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const entry: Record<string, any> = {
+      const entry: Record<string, unknown> = {
         command: s.command,
         args: s.args,
       };
@@ -440,8 +434,7 @@ export function mcpServersToJson(servers: McpServerFormData[]): Record<string, u
       entry.disabled = s.disabled;
       mcpServers[name] = entry;
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const entry: Record<string, any> = {
+      const entry: Record<string, unknown> = {
         url: s.url,
       };
       if (Object.keys(s.headers).length > 0) entry.headers = s.headers;
@@ -465,8 +458,7 @@ export function browserToToml(form: BrowserFormData, rawToml: string | undefined
   return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, BROWSER_SCHEMA);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToStorage(json: any): StorageFormData {
+export function jsonToStorage(json: unknown): StorageFormData {
   return deserializeFromJson(json, STORAGE_SCHEMA) as unknown as StorageFormData;
 }
 
@@ -474,8 +466,7 @@ export function storageToToml(form: StorageFormData, rawToml: string | undefined
   return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, STORAGE_SCHEMA);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToHooks(json: any): HooksFormData {
+export function jsonToHooks(json: unknown): HooksFormData {
   return deserializeFromJson(json, HOOKS_SCHEMA) as unknown as HooksFormData;
 }
 
@@ -483,8 +474,7 @@ export function hooksToToml(form: HooksFormData, rawToml: string | undefined): s
   return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, HOOKS_SCHEMA);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToTools(json: any): ToolsFormData {
+export function jsonToTools(json: unknown): ToolsFormData {
   return deserializeFromJson(json, TOOLS_SCHEMA) as unknown as ToolsFormData;
 }
 
@@ -492,8 +482,7 @@ export function toolsToToml(form: ToolsFormData, rawToml: string | undefined): s
   return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, TOOLS_SCHEMA);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToGuardrails(json: any): GuardrailsFormData {
+export function jsonToGuardrails(json: unknown): GuardrailsFormData {
   return deserializeFromJson(json, GUARDRAILS_SCHEMA) as unknown as GuardrailsFormData;
 }
 
@@ -501,8 +490,7 @@ export function guardrailsToToml(form: GuardrailsFormData, rawToml: string | und
   return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, GUARDRAILS_SCHEMA);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonToKnowledge(json: any): KnowledgeFormData {
+export function jsonToKnowledge(json: unknown): KnowledgeFormData {
   return deserializeFromJson(json, KNOWLEDGE_SCHEMA) as unknown as KnowledgeFormData;
 }
 

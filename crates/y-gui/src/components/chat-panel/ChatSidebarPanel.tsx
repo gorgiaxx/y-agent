@@ -288,6 +288,7 @@ export function ChatSidebarPanel({
   // Prune stale selected IDs when sessions list changes.
   useEffect(() => {
     const currentIds = new Set(sessions.map((s) => s.id));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedIds((prev) => {
       const next = new Set([...prev].filter((id) => currentIds.has(id)));
       if (next.size === prev.size) return prev;

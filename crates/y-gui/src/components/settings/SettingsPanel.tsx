@@ -259,7 +259,6 @@ export function SettingsPanel({
 
     onSave(localConfig);
     setToast({ message: 'Settings saved', type: 'success' });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser, dirtyMcp,
     dirtyStorage, dirtyHooks, dirtyTools, dirtyGuardrails, dirtyKnowledge,

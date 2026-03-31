@@ -692,7 +692,7 @@ function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: 
   );
 }
 
-export function DiagnosticsPanel({ entries, summary: _summary, isActive, isGlobal, sessionId, expanded, onToggleExpand, onClear, onClose }: DiagnosticsPanelProps) {
+export function DiagnosticsPanel({ entries, isActive, isGlobal, sessionId, expanded, onToggleExpand, onClear, onClose }: DiagnosticsPanelProps) {
   const [sessionIdCopied, setSessionIdCopied] = useState(false);
   const handleCopySessionId = () => {
     if (!sessionId) return;

@@ -9,7 +9,8 @@
 // Used by both StaticBubble and StreamingBubble in multiple rendering paths.
 // ---------------------------------------------------------------------------
 
-import { extractThinkTags, MarkdownSegment } from './MessageShared';
+import { MarkdownSegment } from './MessageShared';
+import { extractThinkTags } from './messageUtils';
 import { ThinkingCard } from './ThinkingCard';
 
 interface ThinkContentBlockProps {

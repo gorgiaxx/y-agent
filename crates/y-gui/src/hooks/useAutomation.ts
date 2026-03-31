@@ -129,12 +129,14 @@ export function useAutomation(active = true) {
 
   // Auto-fetch on mount.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshAll();
   }, [refreshAll]);
 
   // Refresh when the automation tab becomes active (false -> true transition).
   useEffect(() => {
     if (active && !prevActive.current) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       refreshAll();
     }
     prevActive.current = active;

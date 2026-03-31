@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { Sparkles, AlertTriangle } from 'lucide-react';
 import type { Message } from '../../types';
@@ -105,7 +105,7 @@ function buildDisplayItems(
   return items;
 }
 
-export function ChatPanel({
+function ChatPanelInner({
   messages,
   isStreaming,
   isLoading,
@@ -142,7 +142,7 @@ export function ChatPanel({
         align: 'end',
       });
     }
-  }, [messages, isStreaming, contextResetPoints, displayItems.length]);
+  }, [messages.length, displayItems.length]);
 
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
     isAtBottomRef.current = atBottom;
@@ -217,17 +217,23 @@ export function ChatPanel({
 
   return (
     <div className="chat-panel">
-      <div className="chat-messages">
+      <div className="chat-messages" style={{ position: 'relative' }}>
         <Virtuoso
           ref={virtuosoRef}
           data={displayItems}
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+          computeItemKey={(_index, item) => {
+            if (item.kind === 'message') return item.msg.id;
+            if (item.kind === 'restore-divider') return `restore-${item.segment.checkpointId}`;
+            return `reset-${item.pointIndex}`;
+          }}
           itemContent={renderItem}
           atBottomStateChange={handleAtBottomStateChange}
           atBottomThreshold={150}
           overscan={600}
           increaseViewportBy={{ top: 400, bottom: 400 }}
-          initialTopMostItemIndex={displayItems.length - 1}
-          style={{ height: '100%' }}
+          initialTopMostItemIndex={Math.max(0, displayItems.length - 1)}
+          style={{ height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         />
 
         {isStreaming && !messages.some((m) => m.id.startsWith('streaming-')) && (
@@ -253,3 +259,5 @@ export function ChatPanel({
     </div>
   );
 }
+
+export const ChatPanel = memo(ChatPanelInner);

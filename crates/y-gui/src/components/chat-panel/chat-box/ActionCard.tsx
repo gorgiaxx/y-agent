@@ -15,7 +15,8 @@ import type { ToolResultRecord } from '../../../hooks/useChat';
 import { CollapsibleCard } from './CollapsibleCard';
 import { ToolCallCard } from './ToolCallCard';
 import { ThinkingCard } from './ThinkingCard';
-import { MarkdownSegment, extractThinkTags } from './MessageShared';
+import { MarkdownSegment } from './MessageShared';
+import { extractThinkTags } from './messageUtils';
 import './ActionCard.css';
 
 interface ActionCardProps {

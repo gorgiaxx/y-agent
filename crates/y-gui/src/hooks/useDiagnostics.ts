@@ -111,7 +111,7 @@ function broadcastUpdate(updater: (prev: DiagnosticsState) => DiagnosticsState) 
   }
 }
 
-let unlistenFns: UnlistenFn[] = [];
+const unlistenFns: UnlistenFn[] = [];
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -370,6 +370,7 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
   // Subscribe to the module-level bus on mount, unsubscribe on unmount.
   useEffect(() => {
     // Sync immediately in case sharedState was updated before mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalState(sharedState);
 
     const update: StateUpdate = (updater) => {

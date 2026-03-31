@@ -12,7 +12,7 @@ import { useMemo } from 'react';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { ToolResultRecord } from '../../../hooks/useChat';
-import { makeMarkdownComponents } from './MessageShared';
+import { makeMarkdownComponents } from './messageUtils';
 import { processStreamContent, synthesizeNativeStreamResult, type StreamContentResult } from '../../../hooks/useStreamContent';
 import { segmentActions, type ActionSegmentResult } from '../../../hooks/useActionSegment';
 import { useResolvedTheme } from '../../../hooks/useTheme';
@@ -21,8 +21,7 @@ export interface AssistantBubbleData {
   /** Resolved theme for syntax highlighting. */
   resolvedTheme: 'light' | 'dark';
   /** Memoised markdown renderer components. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  markdownComponents: any;
+  markdownComponents: Record<string, unknown>;
   /** Parsed XML segments and tool calls, or null if no tool tags found. */
   streamResult: StreamContentResult | null;
   /** Tool results keyed by segment index. */

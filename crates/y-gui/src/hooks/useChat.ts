@@ -337,7 +337,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                   // Merge streaming reasoning metadata (timing info is
                   // client-only and not persisted by the backend).
                   const streamMeta = streamingMsg?.metadata;
-                  let mergedMeta = { ...(lastMsg.metadata || {}) };
+                  const mergedMeta = { ...(lastMsg.metadata || {}) };
                   if (streamMeta) {
                     if (streamMeta._reasoningDurationMs) {
                       mergedMeta._reasoningDurationMs = streamMeta._reasoningDurationMs;

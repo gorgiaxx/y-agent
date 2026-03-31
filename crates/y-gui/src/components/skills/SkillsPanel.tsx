@@ -100,6 +100,7 @@ export function SkillsPanel({
   // Load skill detail and files when skill changes.
   useEffect(() => {
     if (!skillName) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDetail(null);
       setFiles([]);
       setSelectedFilePath(null);

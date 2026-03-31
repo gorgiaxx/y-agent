@@ -239,6 +239,7 @@ function WorkflowDetail({
   }, [id, getWorkflow, getWorkflowDag, loadHistory]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
     setEditing(false);
     setLastResult(null);
@@ -556,6 +557,7 @@ function WorkflowEditor({
     if (tab === 'structured' && isToml) {
       const parsed = parseTomlTasks(editDef);
       if (parsed) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setTasks(parsed);
         setParseError(null);
       } else {
@@ -823,6 +825,7 @@ function ScheduleDetail({
     setExecHistory(history);
   }, [id, getSchedule, getExecutionHistory]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); setEditingTrigger(false); }, [load]);
 
   const handleTriggerNow = async () => {
