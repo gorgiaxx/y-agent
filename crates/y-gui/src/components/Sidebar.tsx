@@ -10,10 +10,12 @@ import {
 import type { SessionInfo, WorkspaceInfo, SkillInfo, KnowledgeCollectionInfo } from '../types';
 import type { ImportStatus } from '../hooks/useSkills';
 import type { KbIngestStatus, KbBatchProgress } from '../hooks/useKnowledge';
+import type { WorkflowInfo, ScheduleInfo } from '../hooks/useAutomation';
 import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
 import { SkillsSidebarPanel } from './skills/SkillsSidebarPanel';
 import { KnowledgeSidebarPanel } from './knowledge/KnowledgeSidebarPanel';
 import { AgentsSidebarPanel } from './agents/AgentsSidebarPanel';
+import { AutomationSidebarPanel } from './automation/AutomationSidebarPanel';
 import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
 import './Sidebar.css';
 
@@ -72,6 +74,18 @@ export interface AgentsSidebarPropsGroup {
   onSelectAgent: (id: string) => void;
 }
 
+/** Automation domain props. */
+export interface AutomationSidebarPropsGroup {
+  workflows: WorkflowInfo[];
+  schedules: ScheduleInfo[];
+  selectedType: 'workflow' | 'schedule' | null;
+  selectedId: string | null;
+  onSelectWorkflow: (id: string) => void;
+  onSelectSchedule: (id: string) => void;
+  onCreateWorkflow: () => void;
+  onCreateSchedule: () => void;
+}
+
 /** Navigation / settings props. */
 export interface NavSidebarPropsGroup {
   activeView: ViewType;
@@ -89,10 +103,11 @@ interface SidebarProps {
   skills: SkillsSidebarPropsGroup;
   knowledge: KnowledgeSidebarPropsGroup;
   agents: AgentsSidebarPropsGroup;
+  automation: AutomationSidebarPropsGroup;
   nav: NavSidebarPropsGroup;
 }
 
-export function Sidebar({ chat, skills, knowledge, agents, nav }: SidebarProps) {
+export function Sidebar({ chat, skills, knowledge, agents, automation, nav }: SidebarProps) {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
   // Handle icon bar clicks: toggle panel collapse when clicking the active view,
@@ -181,12 +196,18 @@ export function Sidebar({ chat, skills, knowledge, agents, nav }: SidebarProps) 
         />
       )}
 
-      {/* Automation placeholder */}
+      {/* Automation sidebar */}
       {nav.activeView === 'automation' && (
-        <div className="sidebar-placeholder">
-          <Zap size={32} className="sidebar-placeholder-icon" />
-          <p className="sidebar-placeholder-text">Coming soon</p>
-        </div>
+        <AutomationSidebarPanel
+          workflows={automation.workflows}
+          schedules={automation.schedules}
+          selectedType={automation.selectedType}
+          selectedId={automation.selectedId}
+          onSelectWorkflow={automation.onSelectWorkflow}
+          onSelectSchedule={automation.onSelectSchedule}
+          onCreateWorkflow={automation.onCreateWorkflow}
+          onCreateSchedule={automation.onCreateSchedule}
+        />
       )}
 
       {/* Agents view -- agent list */}

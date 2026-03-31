@@ -3,6 +3,7 @@ import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, 
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
+import { AskUserDialog } from './AskUserDialog';
 import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
@@ -27,6 +28,19 @@ interface InputAreaProps {
   onAddContextReset?: () => void;
   /** Map from provider ID to icon identifier. */
   providerIcons?: Record<string, string>;
+  /** Pending AskUser interaction data. */
+  askUserData?: {
+    interactionId: string;
+    questions: Array<{
+      question: string;
+      options: string[];
+      multi_select?: boolean;
+    }>;
+  } | null;
+  /** Callback when user submits answers to AskUser. */
+  onAskUserSubmit?: (interactionId: string, answers: Record<string, string>) => void;
+  /** Callback when user dismisses AskUser dialog. */
+  onAskUserDismiss?: (interactionId: string) => void;
 }
 
 /** Data attribute used to identify skill mention tokens in the contenteditable. */
@@ -151,6 +165,9 @@ export function InputArea({
   onClearSession,
   onAddContextReset,
   providerIcons,
+  askUserData,
+  onAskUserSubmit,
+  onAskUserDismiss,
 }: InputAreaProps) {
   const [commandMode, setCommandMode] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
@@ -433,6 +450,15 @@ export function InputArea({
               exitCommandMode();
               resetInput();
             }}
+          />
+        )}
+
+        {askUserData && onAskUserSubmit && onAskUserDismiss && (
+          <AskUserDialog
+            interactionId={askUserData.interactionId}
+            questions={askUserData.questions}
+            onSubmit={onAskUserSubmit}
+            onDismiss={onAskUserDismiss}
           />
         )}
 

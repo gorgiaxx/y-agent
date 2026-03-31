@@ -1,0 +1,318 @@
+/* ---- AskUser Dialog: floating interaction panel above InputArea ---- */
+
+.ask-user-dialog {
+  position: absolute;
+  bottom: calc(100% + var(--space-sm));
+  left: 0;
+  right: 0;
+  background: var(--surface-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  z-index: 60;
+  animation: askUserSlideUp 0.18s ease-out;
+  overflow: hidden;
+}
+
+@keyframes askUserSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---- Header ---- */
+
+.ask-user-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ask-user-header-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ask-user-header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ask-user-header-step {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Progress bar ---- */
+
+.ask-user-progress-track {
+  height: 2px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.ask-user-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: width 0.25s ease;
+}
+
+/* ---- Question body ---- */
+
+.ask-user-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* Card slide animations */
+.ask-user-card {
+  animation: askUserCardIn 0.2s ease-out;
+}
+
+.ask-user-card--forward {
+  animation-name: askUserCardSlideForward;
+}
+
+.ask-user-card--back {
+  animation-name: askUserCardSlideBack;
+}
+
+@keyframes askUserCardSlideForward {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes askUserCardSlideBack {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.ask-user-question-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.ask-user-question-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+/* ---- Option list ---- */
+
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ask-user-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px var(--space-md);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.ask-user-option:hover {
+  background: var(--surface-hover);
+}
+
+.ask-user-option.focused {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.ask-user-option.selected {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: var(--accent);
+}
+
+.ask-user-option-indicator {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.1s ease, background 0.1s ease;
+}
+
+.ask-user-option.selected .ask-user-option-indicator {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.ask-user-option-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface-primary);
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.ask-user-option.selected .ask-user-option-indicator-dot {
+  opacity: 1;
+}
+
+/* Multi-select: square indicator */
+.ask-user-option--multi .ask-user-option-indicator {
+  border-radius: 3px;
+}
+
+.ask-user-option--multi .ask-user-option-indicator-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.ask-user-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ask-user-option-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* ---- "Other" free-text option ---- */
+
+.ask-user-other-input {
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.ask-user-other-input:focus {
+  border-color: var(--accent);
+}
+
+.ask-user-other-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ---- Footer ---- */
+
+.ask-user-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ask-user-footer-left {
+  display: flex;
+  align-items: center;
+}
+
+.ask-user-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ask-user-footer-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.ask-user-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+.ask-user-btn--skip {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ask-user-btn--skip:hover {
+  background: var(--surface-hover);
+}
+
+.ask-user-btn--nav {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ask-user-btn--nav:hover {
+  background: var(--surface-hover);
+}
+
+.ask-user-btn--confirm {
+  background: var(--accent);
+  color: var(--surface-primary);
+  border-color: var(--accent);
+}
+
+.ask-user-btn--confirm:hover {
+  filter: brightness(1.1);
+}
+
+.ask-user-btn--confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

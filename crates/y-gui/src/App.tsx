@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Activity, Eye } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import type { ViewType } from './components/Sidebar';
@@ -14,6 +15,7 @@ import { ObservabilityPanel } from './components/observation/ObservabilityPanel'
 import { SkillsPanel } from './components/skills/SkillsPanel';
 import { KnowledgePanel } from './components/knowledge/KnowledgePanel';
 import { AgentsPanel } from './components/agents/AgentsPanel';
+import { AutomationPanel } from './components/automation/AutomationPanel';
 import { SkillImportDialog } from './components/skills/SkillImportDialog';
 import { WorkspaceDialog } from './components/chat-panel/WorkspaceDialog';
 import { useChat } from './hooks/useChat';
@@ -26,6 +28,7 @@ import { useWorkspaces } from './hooks/useWorkspaces';
 import { useSkills } from './hooks/useSkills';
 import { useKnowledge } from './hooks/useKnowledge';
 import { useAgents } from './hooks/useAgents';
+import { useAutomation } from './hooks/useAutomation';
 import { useThemeProvider, ThemeContext } from './hooks/useTheme';
 import { useProviders } from './hooks/useProviders';
 import { useStatusBarMeta } from './hooks/useStatusBarMeta';
@@ -90,6 +93,16 @@ function App() {
   const [inputExpanded, setInputExpanded] = useState(false);
   const [welcomeWorkspaceId, setWelcomeWorkspaceId] = useState<string | null>(null);
 
+  // AskUser interaction state.
+  const [askUserData, setAskUserData] = useState<{
+    interactionId: string;
+    questions: Array<{
+      question: string;
+      options: string[];
+      multi_select?: boolean;
+    }>;
+  } | null>(null);
+
   // Default welcome workspace to first workspace (alphabetically).
   useEffect(() => {
     if (workspaces.length > 0 && !welcomeWorkspaceId) {
@@ -103,6 +116,44 @@ function App() {
   // Show the window once the React tree is mounted to avoid white-flash.
   useEffect(() => {
     invoke('show_window').catch(() => {});
+  }, []);
+
+  // Listen for AskUser events from the backend.
+  useEffect(() => {
+    const unlisten = listen<{
+      run_id: string;
+      interaction_id: string;
+      questions: unknown;
+    }>('chat:AskUser', (event) => {
+      const { interaction_id, questions } = event.payload;
+      setAskUserData({
+        interactionId: interaction_id,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        questions: questions as any,
+      });
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // Callbacks for AskUserDialog.
+  const handleAskUserSubmit = useCallback((
+    interactionId: string,
+    answers: Record<string, string>,
+  ) => {
+    setAskUserData(null);
+    invoke('chat_answer_question', {
+      interactionId,
+      answers: { answers },
+    }).catch(console.error);
+  }, []);
+
+  const handleAskUserDismiss = useCallback((interactionId: string) => {
+    setAskUserData(null);
+    // Send an empty answer to unblock the orchestrator (it will treat as declined).
+    invoke('chat_answer_question', {
+      interactionId,
+      answers: { answers: {} },
+    }).catch(console.error);
   }, []);
 
   // ------------------------------------------------------------------
@@ -184,6 +235,34 @@ function App() {
   // ------------------------------------------------------------------
 
   const { agents, getAgentDetail, saveAgent, resetAgent, reloadAgents } = useAgents();
+
+  // ------------------------------------------------------------------
+  // Automation
+  // ------------------------------------------------------------------
+
+  const {
+    workflows: automationWorkflows,
+    schedules: automationSchedules,
+    getWorkflow: getAutomationWorkflow,
+    createWorkflow: createAutomationWorkflow,
+    updateWorkflow: updateAutomationWorkflow,
+    deleteWorkflow: deleteAutomationWorkflow,
+    validateWorkflow: validateAutomationWorkflow,
+    getWorkflowDag: getAutomationDag,
+    getSchedule: getAutomationSchedule,
+    createSchedule: createAutomationSchedule,
+    updateSchedule: updateAutomationSchedule,
+    deleteSchedule: deleteAutomationSchedule,
+    pauseSchedule: pauseAutomationSchedule,
+    resumeSchedule: resumeAutomationSchedule,
+    getExecutionHistory: getAutomationExecutionHistory,
+    triggerScheduleNow: triggerAutomationScheduleNow,
+    executeWorkflow: executeAutomationWorkflow,
+  } = useAutomation(activeView === 'automation');
+
+  const [automationSelectedType, setAutomationSelectedType] = useState<'workflow' | 'schedule' | null>(null);
+  const [automationSelectedId, setAutomationSelectedId] = useState<string | null>(null);
+  const [automationCreating, setAutomationCreating] = useState<'workflow' | 'schedule' | null>(null);
 
   // ------------------------------------------------------------------
   // Providers & System Status (extracted hook)
@@ -333,6 +412,34 @@ function App() {
           activeAgentId,
           onSelectAgent: (id) => { setActiveView('agents'); setActiveAgentId(id); },
         }}
+        automation={{
+          workflows: automationWorkflows,
+          schedules: automationSchedules,
+          selectedType: automationSelectedType,
+          selectedId: automationSelectedId,
+          onSelectWorkflow: (id) => {
+            setActiveView('automation');
+            setAutomationSelectedType('workflow');
+            setAutomationSelectedId(id);
+            setAutomationCreating(null);
+          },
+          onSelectSchedule: (id) => {
+            setActiveView('automation');
+            setAutomationSelectedType('schedule');
+            setAutomationSelectedId(id);
+            setAutomationCreating(null);
+          },
+          onCreateWorkflow: () => {
+            setAutomationCreating('workflow');
+            setAutomationSelectedType(null);
+            setAutomationSelectedId(null);
+          },
+          onCreateSchedule: () => {
+            setAutomationCreating('schedule');
+            setAutomationSelectedType(null);
+            setAutomationSelectedId(null);
+          },
+        }}
         nav={{
           activeView,
           onSelectView: setActiveView,
@@ -351,6 +458,8 @@ function App() {
                 ? 'Knowledge'
               : activeView === 'agents'
               ? 'Agents'
+              : activeView === 'automation'
+              ? 'Automation'
               : activeSessionId
                 ? sessions.find((s) => s.id === activeSessionId)?.title || 'Untitled'
                 : 'y-agent'}
@@ -408,6 +517,9 @@ function App() {
               onClearSession={handleClearSession}
               onAddContextReset={addContextReset}
               providerIcons={providerIconMap}
+              askUserData={askUserData}
+              onAskUserSubmit={handleAskUserSubmit}
+              onAskUserDismiss={handleAskUserDismiss}
             />
             <StatusBar
               providerCount={systemStatus?.provider_count ?? 0}
@@ -469,6 +581,32 @@ function App() {
             onSave={saveAgent}
             onReset={resetAgent}
             onReload={reloadAgents}
+          />
+        )}
+
+        {activeView === 'automation' && (
+          <AutomationPanel
+            selectedType={automationSelectedType}
+            selectedId={automationSelectedId}
+            getWorkflow={getAutomationWorkflow}
+            createWorkflow={createAutomationWorkflow}
+            updateWorkflow={updateAutomationWorkflow}
+            deleteWorkflow={deleteAutomationWorkflow}
+            validateWorkflow={validateAutomationWorkflow}
+            getWorkflowDag={getAutomationDag}
+            schedules={automationSchedules}
+            workflows={automationWorkflows}
+            getSchedule={getAutomationSchedule}
+            createSchedule={createAutomationSchedule}
+            updateSchedule={updateAutomationSchedule}
+            deleteSchedule={deleteAutomationSchedule}
+            pauseSchedule={pauseAutomationSchedule}
+            resumeSchedule={resumeAutomationSchedule}
+            getExecutionHistory={getAutomationExecutionHistory}
+            triggerScheduleNow={triggerAutomationScheduleNow}
+            executeWorkflow={executeAutomationWorkflow}
+            isCreating={automationCreating}
+            onCancelCreate={() => setAutomationCreating(null)}
           />
         )}
 

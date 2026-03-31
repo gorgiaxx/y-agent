@@ -25,7 +25,7 @@ impl KnowledgeState {
     /// Create from a shared `KnowledgeService` (used when wiring with `ServiceContainer`).
     ///
     /// This is the preferred constructor for production use — it ensures the GUI
-    /// knowledge panel, context pipeline, and `knowledge_search` tool all operate
+    /// knowledge panel, context pipeline, and `KnowledgeSearch` tool all operate
     /// on the same `KnowledgeService` instance (with embedding if configured).
     pub fn from_shared(service: Arc<Mutex<KnowledgeService>>) -> Self {
         Self { service }
@@ -48,7 +48,7 @@ impl KnowledgeState {
 
     /// Get a shared handle to the knowledge injection middleware.
     ///
-    /// Used to share the retriever with `knowledge_search` tool and
+    /// Used to share the retriever with `KnowledgeSearch` tool and
     /// `KnowledgeContextProvider` for chat integration.
     #[allow(dead_code)]
     pub async fn knowledge_handle(

@@ -236,9 +236,17 @@ pub async fn config_reload(state: State<'_, AppState>) -> Result<String, String>
         results.push("hooks".to_string());
     }
 
-    // 9. Prompts — always reload from disk (no TOML config, just .txt files).
+    // 9. Prompts -- always reload from disk (no TOML config, just .txt files).
     y_service::SystemService::reload_prompts(&state.container).await;
     results.push("prompts".to_string());
+
+    // 10. Agents -- always reload from disk (TOML files in agents/ directory).
+    let (loaded, errored) = y_service::SystemService::reload_agents(&state.container).await;
+    if errored > 0 {
+        results.push(format!("{loaded} agent(s), {errored} error(s)"));
+    } else {
+        results.push(format!("{loaded} agent(s)"));
+    }
 
     // NOTE: Storage (connection pool, WAL mode) is not hot-reloadable;
     // changes to storage.toml require an application restart.

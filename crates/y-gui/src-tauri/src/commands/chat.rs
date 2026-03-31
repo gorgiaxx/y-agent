@@ -266,6 +266,23 @@ fn spawn_llm_worker(
             let run_id_progress = run_id_clone.clone();
             let progress_task = tokio::spawn(async move {
                 while let Some(event) = rx.recv().await {
+                    // Intercept AskUser events and emit a dedicated event
+                    // so the frontend can render the AskUserDialog.
+                    if let TurnEvent::UserInteractionRequest {
+                        ref interaction_id,
+                        ref questions,
+                    } = event
+                    {
+                        let _ = app_progress.emit(
+                            "chat:AskUser",
+                            AskUserPayload {
+                                run_id: run_id_progress.clone(),
+                                interaction_id: interaction_id.clone(),
+                                questions: questions.clone(),
+                            },
+                        );
+                    }
+
                     let _ = app_progress.emit(
                         "chat:progress",
                         ProgressPayload {
@@ -929,4 +946,44 @@ pub async fn context_compact(
         messages_compacted: report.messages_compacted,
         tokens_saved: report.pruning_tokens_saved + report.compaction_tokens_saved,
     })
+}
+
+// ---------------------------------------------------------------------------
+// User interaction (AskUser) commands
+// ---------------------------------------------------------------------------
+
+/// Payload emitted on `chat:AskUser` when the LLM needs user input.
+#[derive(Debug, Serialize, Clone)]
+pub struct AskUserPayload {
+    pub run_id: String,
+    pub interaction_id: String,
+    pub questions: serde_json::Value,
+}
+
+/// Deliver the user's answer to a pending `AskUser` interaction.
+///
+/// Called by the frontend after the user selects options in the `AskUserDialog`.
+/// The `interaction_id` must match the one from the `chat:AskUser` event.
+#[tauri::command]
+pub async fn chat_answer_question(
+    state: State<'_, AppState>,
+    interaction_id: String,
+    answers: serde_json::Value,
+) -> Result<bool, String> {
+    let delivered =
+        y_service::user_interaction_orchestrator::UserInteractionOrchestrator::deliver_answer(
+            &interaction_id,
+            answers,
+            &state.container.pending_interactions,
+        )
+        .await;
+
+    if !delivered {
+        tracing::warn!(
+            interaction_id = %interaction_id,
+            "chat_answer_question: failed to deliver answer (interaction may have timed out)"
+        );
+    }
+
+    Ok(delivered)
 }

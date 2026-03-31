@@ -99,7 +99,7 @@ pub fn run() {
 
             // Create KnowledgeState wrapping the container's shared knowledge
             // service. This ensures the GUI knowledge panel, context pipeline,
-            // and knowledge_search tool all operate on the same KnowledgeService
+            // and `KnowledgeSearch` tool all operate on the same KnowledgeService
             // instance (with embedding provider if configured).
             let knowledge_state = commands::knowledge::KnowledgeState::from_shared(Arc::clone(
                 &container.knowledge_service,
@@ -116,6 +116,7 @@ pub fn run() {
             // ServiceAgentRunner so delegated agents (skill-ingestion, etc.)
             // get the full execution loop with multi-turn tool calling.
             rt.block_on(container.init_agent_runner());
+            rt.block_on(container.init_callable_agents_text());
 
             let app_state = AppState::new(Arc::clone(&container), config_path.clone());
             app.manage(app_state);
@@ -135,6 +136,7 @@ pub fn run() {
             commands::chat::chat_resend,
             commands::chat::chat_find_checkpoint_for_resend,
             commands::chat::context_compact,
+            commands::chat::chat_answer_question,
             // Sessions
             commands::session::session_list,
             commands::session::session_create,
@@ -210,6 +212,27 @@ pub fn run() {
             commands::agents::agent_save,
             commands::agents::agent_reset,
             commands::agents::agent_reload,
+            // Automation: Workflows
+            commands::automation::workflow_list,
+            commands::automation::workflow_get,
+            commands::automation::workflow_create,
+            commands::automation::workflow_update,
+            commands::automation::workflow_delete,
+            commands::automation::workflow_validate,
+            commands::automation::workflow_dag,
+            // Automation: Schedules
+            commands::automation::schedule_list,
+            commands::automation::schedule_get,
+            commands::automation::schedule_create,
+            commands::automation::schedule_update,
+            commands::automation::schedule_delete,
+            commands::automation::schedule_pause,
+            commands::automation::schedule_resume,
+            // Automation: Execution History
+            commands::automation::schedule_execution_history,
+            commands::automation::schedule_execution_get,
+            commands::automation::schedule_trigger_now,
+            commands::automation::workflow_execute,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

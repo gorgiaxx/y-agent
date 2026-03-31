@@ -1,6 +1,7 @@
 //! Tauri command modules for the y-agent GUI.
 
 pub mod agents;
+pub mod automation;
 pub mod chat;
 pub mod config;
 pub mod diagnostics;
