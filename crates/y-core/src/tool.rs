@@ -3,7 +3,7 @@
 //! Design reference: tools-design.md
 //!
 //! The tool system supports four types: built-in, MCP, custom, and dynamic.
-//! Tools are lazily loaded via `ToolIndex` + `tool_search` to minimize
+//! Tools are lazily loaded via `ToolIndex` + `ToolSearch` to minimize
 //! context window consumption (60-90% token reduction).
 
 use std::sync::Arc;
@@ -26,7 +26,7 @@ pub struct ToolDefinition {
     /// Human-readable description (injected into LLM context).
     pub description: String,
     /// Detailed usage instructions for the LLM. Returned only on direct
-    /// tool lookup (`tool_search(tool: "name")`), not in search/browse results.
+    /// tool lookup (`ToolSearch(tool: "name")`), not in search/browse results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
     /// JSON Schema (Draft 7) for input parameters.
@@ -58,6 +58,7 @@ pub enum ToolCategory {
     Agent,
     Workflow,
     Schedule,
+    Interaction,
     Custom,
 }
 
@@ -77,7 +78,7 @@ pub enum ToolType {
 
 /// Compact tool entry for the `ToolIndex` (lazy loading).
 /// Contains only name and description -- enough for LLM to decide
-/// whether to invoke `tool_search` for the full definition.
+/// whether to invoke `ToolSearch` for the full definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolIndexEntry {
     pub name: ToolName,
@@ -101,8 +102,8 @@ pub struct ToolInput {
     /// Session context for the execution.
     pub session_id: SessionId,
     /// Runtime command runner, injected by the executor.
-    /// `None` for tools that don't execute shell commands (`file_read`, etc.).
-    /// When `Some`, tools like `shell_exec` delegate execution through this
+    /// `None` for tools that don't execute shell commands (`FileRead`, etc.).
+    /// When `Some`, tools like `ShellExec` delegate execution through this
     /// runner instead of spawning local processes directly.
     pub command_runner: Option<Arc<dyn CommandRunner>>,
 }
@@ -208,7 +209,7 @@ pub trait Tool: Send + Sync {
 ///
 /// At session start, only the `ToolIndex` (name + description) is injected
 /// into the LLM context. Full definitions are loaded on demand via
-/// `tool_search`, and active tools are tracked in a session-scoped
+/// `ToolSearch`, and active tools are tracked in a session-scoped
 /// `ToolActivationSet` with LRU eviction.
 #[async_trait]
 pub trait ToolRegistry: Send + Sync {

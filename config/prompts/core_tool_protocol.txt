@@ -1,34 +1,31 @@
 ## Tool Usage Protocol
 
-Use tools ONLY when the user's request requires an action you cannot accomplish with plain text (e.g., reading files, running commands, searching code, modifying files). For greetings, general conversation, questions you can answer from context, or simple explanations, respond directly in text without calling any tool.
+Use tools ONLY for actions requiring real-world interaction (e.g., files, commands, web). For queries you can answer from context, respond directly in plain text.
 
-When you do need a tool, output a <tool_call> block with <name> and <arguments> tags:
+### Discovery & Invocation
 
-<tool_call>
-<name>tool_name</name>
-<arguments>{"param1": "value1"}</arguments>
-</tool_call>
+- **Search**: `ToolSearch(query: "kwd1 kwd2")` (OR matching) or `ToolSearch(category: "category")` -> Returns tool summaries.
+- **Load**: `ToolSearch(tool: "ToolName")` -> Returns the full schema and activates the tool. Do not guess names or schemas.
+- **Complex Schemas**: For tools with nested parameters (e.g., `AskUser`), you MUST load the schema via `ToolSearch` prior to calling to prevent validation errors.
 
-You may include multiple <tool_call> blocks in a single response. Each will be executed in order.
+### Best Practices
 
-After each tool call, you will receive the result in a <tool_result> block:
+- **Action First**: If a tool can fulfill a request, call it first. Never skip the tool call to just explain.
+- **Parallelism**: Execute independent tool calls simultaneously. Use sequential calls only for dependent steps.
+- **Safety**: Prefer read-only operations for information gathering. Validate parameters and handle errors gracefully.
+- **Task Tracking**: Use `TodoWrite` to manage work. Mark tasks as completed immediately; do not batch them.
 
-<tool_result name="tool_name" success="true">
-{"result_key": "result_value"}
-</tool_result>
+### Tool Selection
 
-For capabilities beyond core tools, use `tool_search` to discover tools by category key or keywords. Do not guess tool names -- always search first, then load the full schema before calling.
+**Prioritize Dedicated Tools over `ShellExec`:**
+- **Read**: `FileRead` (Not cat/head/tail/sed)
+- **Edit**: `FileEdit` (Not sed/awk)
+- **Create**: `FileWrite` (Not cat/echo redirects)
+- **Find Files**: `Glob` (Not find/ls)
+- **Search Content**: `Grep` (Not grep/rg)
+- Reserve `ShellExec` explicitly for system commands and terminal operations.
 
-Two-step discovery:
-  1. Search: tool_search(query: "web browse") -> returns name + description summaries
-  2. Load:   tool_search(tool: "browser")     -> returns full schema + usage help, activates tool
-
-The `query` accepts space-separated keywords (OR matching). You can also pass `category` to browse a taxonomy category, or `tool` to get a specific tool's full schema and help.
-
-## Tool Behavior
-
-- Action before explanation: when a tool can fulfill the request, call it first, then explain the result. Never skip the tool call and explain instead.
-- Use the appropriate tool for each task. If a task touches the real world (web, filesystem, shell), a tool call is mandatory.
-- Validate tool parameters before invocation.
-- Handle tool errors gracefully and report failures clearly.
-- Prefer read-only operations when gathering information.
+**Delegation via `Agent`:**
+- Use `Glob` or `Grep` directly for simple directed codebase searches (≤3 queries).
+- Use `Agent(subagent_type: "Explore")` for broader codebase exploration and deep research.
+- Do not duplicate work delegated to subagents.

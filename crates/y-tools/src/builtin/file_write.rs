@@ -1,4 +1,4 @@
-//! `file_write` built-in tool: write content to a file.
+//! `FileWrite` built-in tool: write content to a file.
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -23,7 +23,7 @@ impl FileWriteTool {
 
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
-            name: ToolName::from_string("file_write"),
+            name: ToolName::from_string("FileWrite"),
             description: "Write content to a file, creating parent directories as needed.".into(),
             help: None,
             parameters: serde_json::json!({
@@ -116,7 +116,7 @@ mod tests {
     fn make_input(args: serde_json::Value) -> ToolInput {
         ToolInput {
             call_id: "call_001".into(),
-            name: ToolName::from_string("file_write"),
+            name: ToolName::from_string("FileWrite"),
             arguments: args,
             session_id: SessionId::new(),
             command_runner: None,
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn test_file_write_definition() {
         let def = FileWriteTool::tool_definition();
-        assert_eq!(def.name.as_str(), "file_write");
+        assert_eq!(def.name.as_str(), "FileWrite");
         assert!(def.is_dangerous);
     }
 }

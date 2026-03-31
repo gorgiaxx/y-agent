@@ -202,7 +202,7 @@ mod tests {
     async fn test_tool_guard_dangerous_triggers_hitl() {
         let config = GuardrailConfig::default();
         let mw = ToolGuardMiddleware::new(config);
-        let mut ctx = make_tool_context("shell_exec", true);
+        let mut ctx = make_tool_context("ShellExec", true);
 
         let result = mw.execute(&mut ctx).await.unwrap();
         assert!(matches!(result, MiddlewareResult::Continue));

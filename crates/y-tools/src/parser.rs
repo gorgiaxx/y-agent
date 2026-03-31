@@ -16,6 +16,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The default XML-based tool calling syntax prompt for `PromptBased` models.
+pub const PROMPT_TOOL_CALL_SYNTAX: &str = r#"When you do need a tool, output a <tool_call> block with <name> and <arguments> tags:
+
+<tool_call>
+<name>tool_name</name>
+<arguments>{"param1": "value1"}</arguments>
+</tool_call>
+
+You may include multiple <tool_call> blocks in a single response. Each will be executed in order.
+
+After each tool call, you will receive the result in a <tool_result> block:
+
+<tool_result name="tool_name" success="true">
+{"result_key": "result_value"}
+</tool_result>"#;
+
 /// A tool call extracted from LLM text output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedToolCall {
@@ -302,7 +318,7 @@ fn try_parse_xml_tool_call(inner: &str) -> Result<ParsedToolCall, String> {
 ///
 /// Handles formats commonly produced by Llama/Qwen-family models:
 /// ```xml
-/// <function=browser>
+/// <function=Browser>
 /// <parameter=url>https://example.com</parameter>
 /// <parameter=query>hello</parameter>
 /// </function>
@@ -402,7 +418,7 @@ fn try_parse_function_format(inner: &str) -> Result<ParsedToolCall, String> {
 ///
 /// Handles:
 /// ```xml
-/// <|DSML|invoke name="get_weather">
+/// <|DSML|invoke name="GetWeather">
 /// <|DSML|parameter name="location" string="true">value</|DSML|parameter>
 /// </|DSML|invoke>
 /// ```
@@ -535,7 +551,7 @@ fn try_parse_minimax_invokes(inner: &str) -> Result<Vec<ParsedToolCall>, String>
 
         // Extract function name from the segment after `name=`. Since
         // INVOKE_OPEN already consumed `name=`, the segment starts with
-        // the quoted value (e.g. `"file_read">`).
+        // the quoted value (e.g. `"FileRead">`).
         let tag_rest = &inner[after_prefix..];
         let tag_close = tag_rest.find('>').ok_or("unclosed invoke tag")?;
         let name_segment = tag_rest[..tag_close].trim();
@@ -707,8 +723,8 @@ fn try_parse_glm_arg_format(inner: &str) -> Result<ParsedToolCall, String> {
 
 /// Extract a quoted attribute value from a tag fragment.
 ///
-/// e.g. `extract_quoted_attr("name=\"get_weather\" string=\"true\">", "name")`
-/// returns `Some("get_weather")`.
+/// e.g. `extract_quoted_attr("name=\"GetWeather\" string=\"true\">", "name")`
+/// returns `Some("GetWeather")`.
 fn extract_quoted_attr<'a>(tag_fragment: &'a str, attr: &str) -> Option<&'a str> {
     let prefix = format!("{attr}=\"");
     let start = tag_fragment.find(&prefix)? + prefix.len();
@@ -818,12 +834,12 @@ mod tests {
         let input = r#"I need to read that file.
 
 <tool_call>
-{"name": "file_read", "arguments": {"path": "/src/main.rs"}}
+{"name": "FileRead", "arguments": {"path": "/src/main.rs"}}
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[0].name, "FileRead");
         assert_eq!(result.tool_calls[0].arguments["path"], "/src/main.rs");
         assert!(result.text.contains("I need to read that file."));
         assert!(!result.text.contains("tool_call"));
@@ -835,11 +851,11 @@ mod tests {
         let input = r#"Let me check both files.
 
 <tool_call>
-{"name": "file_read", "arguments": {"path": "/src/lib.rs"}}
+{"name": "FileRead", "arguments": {"path": "/src/lib.rs"}}
 </tool_call>
 
 <tool_call>
-{"name": "file_read", "arguments": {"path": "/src/main.rs"}}
+{"name": "FileRead", "arguments": {"path": "/src/main.rs"}}
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
@@ -863,13 +879,13 @@ mod tests {
         let input = r#"First some text.
 
 <tool_call>
-{"name": "file_read", "arguments": {"path": "/a.rs"}}
+{"name": "FileRead", "arguments": {"path": "/a.rs"}}
 </tool_call>
 
 Middle text.
 
 <tool_call>
-{"name": "shell_exec", "arguments": {"command": "ls"}}
+{"name": "ShellExec", "arguments": {"command": "ls"}}
 </tool_call>
 
 End text."#;
@@ -922,12 +938,12 @@ not valid json or xml
     #[test]
     fn test_parse_missing_arguments_defaults_to_empty_object() {
         let input = r#"<tool_call>
-{"name": "tool_search"}
+{"name": "ToolSearch"}
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "tool_search");
+        assert_eq!(result.tool_calls[0].name, "ToolSearch");
         assert!(result.tool_calls[0].arguments.is_object());
         assert!(result.tool_calls[0]
             .arguments
@@ -939,7 +955,7 @@ not valid json or xml
     #[test]
     fn test_parse_arguments_not_object() {
         let input = r#"<tool_call>
-{"name": "test", "arguments": [1, 2, 3]}
+{"name": "Test", "arguments": [1, 2, 3]}
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
@@ -968,12 +984,12 @@ not valid json or xml
     #[test]
     fn test_parse_json_with_angle_brackets() {
         let input = r#"<tool_call>
-{"name": "shell_exec", "arguments": {"command": "echo '<div>hello</div>'"}}
+{"name": "ShellExec", "arguments": {"command": "echo '<div>hello</div>'"}}
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].name, "ShellExec");
         assert_eq!(
             result.tool_calls[0].arguments["command"],
             "echo '<div>hello</div>'"
@@ -982,17 +998,17 @@ not valid json or xml
 
     #[test]
     fn test_parse_whitespace_around_json() {
-        let input = "<tool_call>   \n  {\"name\": \"test\", \"arguments\": {}}  \n  </tool_call>";
+        let input = "<tool_call>   \n  {\"name\": \"Test\", \"arguments\": {}}  \n  </tool_call>";
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "test");
+        assert_eq!(result.tool_calls[0].name, "Test");
     }
 
     #[test]
     fn test_format_tool_result_success() {
         let content = serde_json::json!({"data": "hello"});
-        let formatted = format_tool_result("file_read", true, &content);
-        assert!(formatted.starts_with("<tool_result name=\"file_read\" success=\"true\">"));
+        let formatted = format_tool_result("FileRead", true, &content);
+        assert!(formatted.starts_with("<tool_result name=\"FileRead\" success=\"true\">"));
         assert!(formatted.ends_with("</tool_result>"));
         assert!(formatted.contains("hello"));
     }
@@ -1000,7 +1016,7 @@ not valid json or xml
     #[test]
     fn test_format_tool_result_error() {
         let content = serde_json::json!({"error": "file not found"});
-        let formatted = format_tool_result("file_read", false, &content);
+        let formatted = format_tool_result("FileRead", false, &content);
         assert!(formatted.contains("success=\"false\""));
         assert!(formatted.contains("file not found"));
     }
@@ -1026,7 +1042,7 @@ not valid json or xml
 
     #[test]
     fn test_parse_tool_call_inline_json() {
-        let input = r#"<tool_call>{"name": "test", "arguments": {"key": "value"}}</tool_call>"#;
+        let input = r#"<tool_call>{"name": "Test", "arguments": {"key": "value"}}</tool_call>"#;
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].arguments["key"], "value");
@@ -1049,13 +1065,13 @@ not valid json or xml
         let input = r#"I need to read that file.
 
 <tool_call>
-<name>file_read</name>
+<name>FileRead</name>
 <arguments>{"path": "/src/main.rs"}</arguments>
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[0].name, "FileRead");
         assert_eq!(result.tool_calls[0].arguments["path"], "/src/main.rs");
         assert!(result.text.contains("I need to read that file."));
         assert!(!result.text.contains("tool_call"));
@@ -1066,18 +1082,18 @@ not valid json or xml
         let input = r#"Let me search for tools.
 
 <tool_call>
-<name>tool_search</name>
+<name>ToolSearch</name>
 <arguments>{"query": "list directory"}</arguments>
 </tool_call>
 
 <tool_call>
-<name>tool_search</name>
+<name>ToolSearch</name>
 <arguments>{"category": "file"}</arguments>
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 2);
-        assert_eq!(result.tool_calls[0].name, "tool_search");
+        assert_eq!(result.tool_calls[0].name, "ToolSearch");
         assert_eq!(result.tool_calls[0].arguments["query"], "list directory");
         assert_eq!(result.tool_calls[1].arguments["category"], "file");
     }
@@ -1085,12 +1101,12 @@ not valid json or xml
     #[test]
     fn test_parse_xml_without_arguments() {
         let input = r"<tool_call>
-<name>tool_search</name>
+<name>ToolSearch</name>
 </tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "tool_search");
+        assert_eq!(result.tool_calls[0].name, "ToolSearch");
         assert!(result.tool_calls[0].arguments.is_object());
         assert!(result.tool_calls[0]
             .arguments
@@ -1113,28 +1129,28 @@ not valid json or xml
 
     #[test]
     fn test_parse_xml_with_whitespace() {
-        let input = "<tool_call>\n  <name>  file_read  </name>\n  <arguments>  {\"path\": \"/a\"}  </arguments>\n</tool_call>";
+        let input = "<tool_call>\n  <name>  FileRead  </name>\n  <arguments>  {\"path\": \"/a\"}  </arguments>\n</tool_call>";
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[0].name, "FileRead");
         assert_eq!(result.tool_calls[0].arguments["path"], "/a");
     }
 
     #[test]
     fn test_parse_mixed_xml_and_json_formats() {
         let input = r#"<tool_call>
-<name>file_read</name>
+<name>FileRead</name>
 <arguments>{"path": "/a.rs"}</arguments>
 </tool_call>
 
 <tool_call>
-{"name": "shell_exec", "arguments": {"command": "ls"}}
+{"name": "ShellExec", "arguments": {"command": "ls"}}
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 2);
-        assert_eq!(result.tool_calls[0].name, "file_read");
-        assert_eq!(result.tool_calls[1].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].name, "FileRead");
+        assert_eq!(result.tool_calls[1].name, "ShellExec");
     }
 
     #[test]
@@ -1165,7 +1181,7 @@ not valid json or xml
     #[test]
     fn test_parse_function_format_with_parameters() {
         let input = r#"<tool_call>
-<function=browser>
+<function=Browser>
 <action>navigate</action>
 <parameter=url>https://www.google.com/search?q=weather</parameter>
 </function>
@@ -1173,7 +1189,7 @@ not valid json or xml
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "browser");
+        assert_eq!(result.tool_calls[0].name, "Browser");
         assert_eq!(
             result.tool_calls[0].arguments["url"],
             "https://www.google.com/search?q=weather"
@@ -1185,7 +1201,7 @@ not valid json or xml
     #[test]
     fn test_parse_function_format_multiple_params() {
         let input = r#"<tool_call>
-<function=file_write>
+<function=FileWrite>
 <parameter=path>/src/main.rs</parameter>
 <parameter=content>fn main() {}</parameter>
 </function>
@@ -1193,7 +1209,7 @@ not valid json or xml
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "file_write");
+        assert_eq!(result.tool_calls[0].name, "FileWrite");
         assert_eq!(result.tool_calls[0].arguments["path"], "/src/main.rs");
         assert_eq!(result.tool_calls[0].arguments["content"], "fn main() {}");
     }
@@ -1201,25 +1217,25 @@ not valid json or xml
     #[test]
     fn test_parse_function_format_with_json_body() {
         let input = r#"<tool_call>
-<function=shell_exec>{"command": "ls -la"}</function>
+<function=ShellExec>{"command": "ls -la"}</function>
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].name, "ShellExec");
         assert_eq!(result.tool_calls[0].arguments["command"], "ls -la");
     }
 
     #[test]
     fn test_parse_function_format_no_closing_function_tag() {
         let input = r#"<tool_call>
-<function=browser>
+<function=Browser>
 <parameter=url>https://example.com</parameter>
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "browser");
+        assert_eq!(result.tool_calls[0].name, "Browser");
         assert_eq!(result.tool_calls[0].arguments["url"], "https://example.com");
     }
 
@@ -1239,25 +1255,25 @@ not valid json or xml
     #[test]
     fn test_parse_mixed_all_three_formats() {
         let input = r#"<tool_call>
-<name>file_read</name>
+<name>FileRead</name>
 <arguments>{"path": "/a.rs"}</arguments>
 </tool_call>
 
 <tool_call>
-<function=browser>
+<function=Browser>
 <parameter=url>https://example.com</parameter>
 </function>
 </tool_call>
 
 <tool_call>
-{"name": "shell_exec", "arguments": {"command": "ls"}}
+{"name": "ShellExec", "arguments": {"command": "ls"}}
 </tool_call>"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 3);
-        assert_eq!(result.tool_calls[0].name, "file_read");
-        assert_eq!(result.tool_calls[1].name, "browser");
-        assert_eq!(result.tool_calls[2].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].name, "FileRead");
+        assert_eq!(result.tool_calls[1].name, "Browser");
+        assert_eq!(result.tool_calls[2].name, "ShellExec");
         assert!(result.warnings.is_empty());
     }
 
@@ -1269,7 +1285,7 @@ not valid json or xml
     fn test_parse_xml_multiline_git_commit_message() {
         // Reproduces: LLM returns a multiline git commit message inside
         // <arguments> JSON, with raw newline characters inside the string.
-        let input = "<tool_call>\n<name>shell_exec</name>\n<arguments>{\"command\": \"git commit -m \\\"feat(gui): copy button\n\n- Add copyContent prop\n- Update ActionBar\\\"\"}</arguments>\n</tool_call>";
+        let input = "<tool_call>\n<name>ShellExec</name>\n<arguments>{\"command\": \"git commit -m \\\"feat(gui): copy button\n\n- Add copyContent prop\n- Update ActionBar\\\"\"}</arguments>\n</tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(
@@ -1278,7 +1294,7 @@ not valid json or xml
             "warnings: {:?}",
             result.warnings
         );
-        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].name, "ShellExec");
         let cmd = result.tool_calls[0].arguments["command"]
             .as_str()
             .expect("command should be a string");
@@ -1289,7 +1305,7 @@ not valid json or xml
     #[test]
     fn test_parse_json_multiline_git_commit_message() {
         // Same scenario but using JSON format inside <tool_call>.
-        let input = "<tool_call>\n{\"name\": \"shell_exec\", \"arguments\": {\"command\": \"git commit -m \\\"fix: improve handling\n\n- Track composition end time\n- Replace keyCode check\\\"\"}}\n</tool_call>";
+        let input = "<tool_call>\n{\"name\": \"ShellExec\", \"arguments\": {\"command\": \"git commit -m \\\"fix: improve handling\n\n- Track composition end time\n- Replace keyCode check\\\"\"}}\n</tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(
@@ -1298,7 +1314,7 @@ not valid json or xml
             "warnings: {:?}",
             result.warnings
         );
-        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].name, "ShellExec");
         let cmd = result.tool_calls[0].arguments["command"]
             .as_str()
             .expect("command should be a string");
@@ -1341,7 +1357,7 @@ line2"}"#;
     fn test_parse_dsml_single_invoke() {
         let input = "Let me check the weather.\n\n\
             <\u{ff5c}DSML\u{ff5c}function_calls>\n\
-            <\u{ff5c}DSML\u{ff5c}invoke name=\"get_weather\">\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"GetWeather\">\n\
             <\u{ff5c}DSML\u{ff5c}parameter name=\"location\" string=\"true\">\
             Beijing</\u{ff5c}DSML\u{ff5c}parameter>\n\
             </\u{ff5c}DSML\u{ff5c}invoke>\n\
@@ -1349,7 +1365,7 @@ line2"}"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "get_weather");
+        assert_eq!(result.tool_calls[0].name, "GetWeather");
         assert_eq!(result.tool_calls[0].arguments["location"], "Beijing");
         assert!(result.text.contains("Let me check the weather."));
         assert!(result.warnings.is_empty());
@@ -1359,13 +1375,13 @@ line2"}"#;
     fn test_parse_dsml_multiple_invokes() {
         let input = "\
             <\u{ff5c}DSML\u{ff5c}function_calls>\n\
-            <\u{ff5c}DSML\u{ff5c}invoke name=\"get_weather\">\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"GetWeather\">\n\
             <\u{ff5c}DSML\u{ff5c}parameter name=\"location\" string=\"true\">\
             Hangzhou</\u{ff5c}DSML\u{ff5c}parameter>\n\
             <\u{ff5c}DSML\u{ff5c}parameter name=\"date\" string=\"true\">\
             2024-01-16</\u{ff5c}DSML\u{ff5c}parameter>\n\
             </\u{ff5c}DSML\u{ff5c}invoke>\n\
-            <\u{ff5c}DSML\u{ff5c}invoke name=\"get_weather\">\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"GetWeather\">\n\
             <\u{ff5c}DSML\u{ff5c}parameter name=\"location\" string=\"true\">\
             Beijing</\u{ff5c}DSML\u{ff5c}parameter>\n\
             <\u{ff5c}DSML\u{ff5c}parameter name=\"date\" string=\"true\">\
@@ -1385,13 +1401,13 @@ line2"}"#;
     fn test_parse_dsml_no_params() {
         let input = "\
             <\u{ff5c}DSML\u{ff5c}function_calls>\n\
-            <\u{ff5c}DSML\u{ff5c}invoke name=\"file_list\">\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"FileList\">\n\
             </\u{ff5c}DSML\u{ff5c}invoke>\n\
             </\u{ff5c}DSML\u{ff5c}function_calls>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "file_list");
+        assert_eq!(result.tool_calls[0].name, "FileList");
         assert!(result.tool_calls[0]
             .arguments
             .as_object()
@@ -1414,13 +1430,13 @@ line2"}"#;
         let input = "\
             I will create an agent for you. Let me check existing files.\n\n\
             <\u{ff5c}DSML\u{ff5c}function_calls>\n\
-            <\u{ff5c}DSML\u{ff5c}invoke name=\"file_list\">\n\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"FileList\">\n\n\
             </\u{ff5c}DSML\u{ff5c}invoke>\n\
             </\u{ff5c}DSML\u{ff5c}function_calls>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "file_list");
+        assert_eq!(result.tool_calls[0].name, "FileList");
         assert!(result.text.contains("I will create an agent for you."));
     }
 
@@ -1432,14 +1448,14 @@ line2"}"#;
     fn test_parse_minimax_single_invoke() {
         let input = "Searching for info.\n\n\
             <minimax:tool_call>\n\
-            <invoke name=\"web_search\">\n\
+            <invoke name=\"WebSearch\">\n\
             <parameter name=\"query\">rust programming</parameter>\n\
             </invoke>\n\
             </minimax:tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "web_search");
+        assert_eq!(result.tool_calls[0].name, "WebSearch");
         assert_eq!(result.tool_calls[0].arguments["query"], "rust programming");
         assert!(result.text.contains("Searching for info."));
         assert!(result.warnings.is_empty());
@@ -1449,10 +1465,10 @@ line2"}"#;
     fn test_parse_minimax_multiple_invokes() {
         let input = "\
             <minimax:tool_call>\n\
-            <invoke name=\"file_read\">\n\
+            <invoke name=\"FileRead\">\n\
             <parameter name=\"path\">/src/main.rs</parameter>\n\
             </invoke>\n\
-            <invoke name=\"file_read\">\n\
+            <invoke name=\"FileRead\">\n\
             <parameter name=\"path\">/src/lib.rs</parameter>\n\
             </invoke>\n\
             </minimax:tool_call>";
@@ -1467,7 +1483,7 @@ line2"}"#;
     fn test_parse_minimax_quoted_names() {
         let input = "\
             <minimax:tool_call>\n\
-            <invoke name=\"shell_exec\">\n\
+            <invoke name=\"ShellExec\">\n\
             <parameter name=\"command\">ls -la</parameter>\n\
             <parameter name=\"timeout\">30</parameter>\n\
             </invoke>\n\
@@ -1475,7 +1491,7 @@ line2"}"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "shell_exec");
+        assert_eq!(result.tool_calls[0].name, "ShellExec");
         assert_eq!(result.tool_calls[0].arguments["command"], "ls -la");
         assert_eq!(result.tool_calls[0].arguments["timeout"], "30");
     }
@@ -1488,7 +1504,7 @@ line2"}"#;
     fn test_parse_glm_arg_format_with_args() {
         let input = "\
             <tool_call>\n\
-            get_weather\n\
+            GetWeather\n\
             <arg_key>location</arg_key>\n\
             <arg_value>Beijing</arg_value>\n\
             <arg_key>unit</arg_key>\n\
@@ -1497,7 +1513,7 @@ line2"}"#;
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "get_weather");
+        assert_eq!(result.tool_calls[0].name, "GetWeather");
         assert_eq!(result.tool_calls[0].arguments["location"], "Beijing");
         assert_eq!(result.tool_calls[0].arguments["unit"], "celsius");
         assert!(result.warnings.is_empty());
@@ -1506,10 +1522,10 @@ line2"}"#;
     #[test]
     fn test_parse_glm_arg_format_zero_args() {
         // GLM-4.7 zero-arg format: bare function name inside <tool_call>.
-        let input = "<tool_call>list_files</tool_call>";
+        let input = "<tool_call>ListFiles</tool_call>";
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "list_files");
+        assert_eq!(result.tool_calls[0].name, "ListFiles");
         assert!(result.tool_calls[0]
             .arguments
             .as_object()
@@ -1522,14 +1538,14 @@ line2"}"#;
         // GLM format with a JSON-parseable value (number).
         let input = "\
             <tool_call>\n\
-            calculator\n\
+            Calculator\n\
             <arg_key>expression</arg_key>\n\
             <arg_value>42</arg_value>\n\
             </tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "calculator");
+        assert_eq!(result.tool_calls[0].name, "Calculator");
         // 42 is parsed as a JSON number.
         assert_eq!(result.tool_calls[0].arguments["expression"], 42);
     }
@@ -1538,12 +1554,12 @@ line2"}"#;
     fn test_parse_glm_inline_arg_key() {
         // GLM-4.7 style: function name directly before <arg_key> without newline.
         let input = "\
-            <tool_call>get_weather<arg_key>city</arg_key>\
+            <tool_call>GetWeather<arg_key>city</arg_key>\
             <arg_value>Tokyo</arg_value></tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "get_weather");
+        assert_eq!(result.tool_calls[0].name, "GetWeather");
         assert_eq!(result.tool_calls[0].arguments["city"], "Tokyo");
     }
 
@@ -1556,25 +1572,25 @@ line2"}"#;
         // Different envelope types in the same output.
         let input = "\
             <tool_call>\n\
-            {\"name\": \"file_read\", \"arguments\": {\"path\": \"/a.rs\"}}\n\
+            {\"name\": \"FileRead\", \"arguments\": {\"path\": \"/a.rs\"}}\n\
             </tool_call>\n\n\
             <minimax:tool_call>\n\
-            <invoke name=\"web_search\">\n\
+            <invoke name=\"WebSearch\">\n\
             <parameter name=\"query\">test</parameter>\n\
             </invoke>\n\
             </minimax:tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 2);
-        assert_eq!(result.tool_calls[0].name, "file_read");
-        assert_eq!(result.tool_calls[1].name, "web_search");
+        assert_eq!(result.tool_calls[0].name, "FileRead");
+        assert_eq!(result.tool_calls[1].name, "WebSearch");
     }
 
     #[test]
     fn test_strip_tool_call_blocks_dsml() {
         let input = "Hello\n\
             <\u{ff5c}DSML\u{ff5c}function_calls>\n\
-            <\u{ff5c}DSML\u{ff5c}invoke name=\"test\">\n\
+            <\u{ff5c}DSML\u{ff5c}invoke name=\"Test\">\n\
             </\u{ff5c}DSML\u{ff5c}invoke>\n\
             </\u{ff5c}DSML\u{ff5c}function_calls>\n\
             World";
@@ -1589,7 +1605,7 @@ line2"}"#;
     fn test_strip_tool_call_blocks_minimax() {
         let input = "Before\n\
             <minimax:tool_call>\n\
-            <invoke name=\"test\">\n\
+            <invoke name=\"Test\">\n\
             <parameter name=\"key\">val</parameter>\n\
             </invoke>\n\
             </minimax:tool_call>\n\
@@ -1605,7 +1621,7 @@ line2"}"#;
     fn test_parse_function_calls_envelope() {
         let input = r#"Here is the result.
 <function_calls>
-<invoke name="file_read">
+<invoke name="FileRead">
 <parameter name="path" string="true">.</parameter>
 </invoke>
 </function_calls>"#;
@@ -1617,7 +1633,7 @@ line2"}"#;
             "warnings: {:?}",
             result.warnings
         );
-        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[0].name, "FileRead");
         assert_eq!(result.tool_calls[0].arguments["path"], ".");
         assert!(result.text.contains("Here is the result."));
         assert!(!result.text.contains("function_calls"));
@@ -1626,10 +1642,10 @@ line2"}"#;
     #[test]
     fn test_parse_function_calls_multiple_invokes() {
         let input = r#"<function_calls>
-<invoke name="file_read">
+<invoke name="FileRead">
 <parameter name="path">/src/main.rs</parameter>
 </invoke>
-<invoke name="shell_exec">
+<invoke name="ShellExec">
 <parameter name="command">ls -la</parameter>
 </invoke>
 </function_calls>"#;
@@ -1641,9 +1657,9 @@ line2"}"#;
             "warnings: {:?}",
             result.warnings
         );
-        assert_eq!(result.tool_calls[0].name, "file_read");
+        assert_eq!(result.tool_calls[0].name, "FileRead");
         assert_eq!(result.tool_calls[0].arguments["path"], "/src/main.rs");
-        assert_eq!(result.tool_calls[1].name, "shell_exec");
+        assert_eq!(result.tool_calls[1].name, "ShellExec");
         assert_eq!(result.tool_calls[1].arguments["command"], "ls -la");
     }
 
@@ -1651,7 +1667,7 @@ line2"}"#;
     fn test_strip_tool_call_blocks_function_calls() {
         let input = "Before\n\
             <function_calls>\n\
-            <invoke name=\"test\">\n\
+            <invoke name=\"Test\">\n\
             <parameter name=\"key\">val</parameter>\n\
             </invoke>\n\
             </function_calls>\n\

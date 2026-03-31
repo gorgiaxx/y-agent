@@ -2,13 +2,18 @@
 //!
 //! These are core tools implemented in Rust, registered at startup.
 
+pub mod file_edit;
 pub mod file_read;
 pub mod file_write;
+pub mod glob;
+pub mod grep;
 pub mod knowledge_search;
 pub mod shell_exec;
 pub mod task;
 pub mod tool_search;
+pub mod user_interaction;
 pub mod web_fetch;
+pub mod workflow;
 
 use std::sync::{Arc, Mutex};
 use y_knowledge::middleware::InjectKnowledge;
@@ -24,13 +29,13 @@ pub type KnowledgeHandle = Option<Arc<Mutex<InjectKnowledge<SimpleTokenizer>>>>;
 /// Called during service wiring to populate the tool registry with
 /// the standard set of tools the agent can use.
 ///
-/// If `knowledge` is `Some`, the `knowledge_search` tool is also registered.
+/// If `knowledge` is `Some`, the `KnowledgeSearch` tool is also registered.
 pub async fn register_builtin_tools(
     registry: &ToolRegistryImpl,
     browser_config: y_browser::BrowserConfig,
     knowledge: KnowledgeHandle,
 ) {
-    // Browser tool is shared between `browser` and `web_fetch` via Arc
+    // Browser tool is shared between `Browser` and `WebFetch` via Arc
     // so both use the same Chrome session.
     let browser_tool = Arc::new(y_browser::BrowserTool::new(browser_config));
 
@@ -44,6 +49,10 @@ pub async fn register_builtin_tools(
             file_write::FileWriteTool::tool_definition(),
         ),
         (
+            Arc::new(file_edit::FileEditTool::new()),
+            file_edit::FileEditTool::tool_definition(),
+        ),
+        (
             Arc::new(shell_exec::ShellExecTool::new()),
             shell_exec::ShellExecTool::tool_definition(),
         ),
@@ -52,8 +61,20 @@ pub async fn register_builtin_tools(
             task::TaskTool::tool_definition(),
         ),
         (
+            Arc::new(user_interaction::AskUserTool::new()),
+            user_interaction::AskUserTool::tool_definition(),
+        ),
+        (
             Arc::new(tool_search::ToolSearchTool::new()),
             tool_search::ToolSearchTool::tool_definition(),
+        ),
+        (
+            Arc::new(glob::GlobTool::new()),
+            glob::GlobTool::tool_definition(),
+        ),
+        (
+            Arc::new(grep::GrepTool::new()),
+            grep::GrepTool::tool_definition(),
         ),
         (
             Arc::clone(&browser_tool) as Arc<dyn y_core::tool::Tool>,
@@ -62,6 +83,50 @@ pub async fn register_builtin_tools(
         (
             Arc::new(web_fetch::WebFetchTool::new(Arc::clone(&browser_tool))),
             web_fetch::WebFetchTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::WorkflowCreateTool::new()),
+            workflow::WorkflowCreateTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::WorkflowListTool::new()),
+            workflow::WorkflowListTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::ScheduleCreateTool::new()),
+            workflow::ScheduleCreateTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::WorkflowGetTool::new()),
+            workflow::WorkflowGetTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::WorkflowUpdateTool::new()),
+            workflow::WorkflowUpdateTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::WorkflowDeleteTool::new()),
+            workflow::WorkflowDeleteTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::WorkflowValidateTool::new()),
+            workflow::WorkflowValidateTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::ScheduleListTool::new()),
+            workflow::ScheduleListTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::SchedulePauseTool::new()),
+            workflow::SchedulePauseTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::ScheduleResumeTool::new()),
+            workflow::ScheduleResumeTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::ScheduleDeleteTool::new()),
+            workflow::ScheduleDeleteTool::tool_definition(),
         ),
     ];
 
@@ -90,8 +155,8 @@ mod tests {
     async fn test_register_builtin_tools_populates_registry() {
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None).await;
-        // 3 core tools + task + tool_search + browser + web_fetch = 7
-        assert_eq!(registry.len().await, 7);
+        // 3 core + file_edit + Task + ToolSearch + Glob + Grep + AskUser + Browser + WebFetch + 11 workflow/schedule = 22
+        assert_eq!(registry.len().await, 22);
     }
 
     #[tokio::test]
@@ -108,8 +173,8 @@ mod tests {
             Some(knowledge),
         )
         .await;
-        // 7 + knowledge_search = 8
-        assert_eq!(registry.len().await, 8);
+        // 22 + KnowledgeSearch = 23
+        assert_eq!(registry.len().await, 23);
     }
 
     #[tokio::test]
@@ -118,11 +183,14 @@ mod tests {
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None).await;
         let index = registry.tool_index().await;
         let names: Vec<&str> = index.iter().map(|e| e.name.as_str()).collect();
-        assert!(names.contains(&"file_read"));
-        assert!(names.contains(&"file_write"));
-        assert!(names.contains(&"shell_exec"));
-        assert!(names.contains(&"tool_search"));
-        assert!(names.contains(&"web_fetch"));
-        assert!(names.contains(&"task"));
+        assert!(names.contains(&"FileRead"));
+        assert!(names.contains(&"FileWrite"));
+        assert!(names.contains(&"FileEdit"));
+        assert!(names.contains(&"ShellExec"));
+        assert!(names.contains(&"ToolSearch"));
+        assert!(names.contains(&"WebFetch"));
+        assert!(names.contains(&"Glob"));
+        assert!(names.contains(&"Grep"));
+        assert!(names.contains(&"Task"));
     }
 }

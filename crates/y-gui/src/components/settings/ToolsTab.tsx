@@ -122,7 +122,7 @@ export function ToolsTab({
               value={toolsForm.search_limit}
               onChange={(e) => { setToolsForm({ ...toolsForm, search_limit: Number(e.target.value) || 10 }); setDirtyTools(true); }}
             />
-            <span className="pf-hint">Max results for tool_search.</span>
+            <span className="pf-hint">Max results for ToolSearch.</span>
           </div>
         </div>
         <div className="pf-row">

@@ -2,7 +2,7 @@
 //!
 //! Provides a tree-structured taxonomy of tool categories loaded from TOML.
 //! The LLM sees only the compact root summary (~100 tokens) and uses
-//! `tool_search` to drill into categories or find specific tools.
+//! `ToolSearch` to drill into categories or find specific tools.
 //!
 //! Design reference: `docs/design/tool-search-design.md`,
 //!                    `docs/standards/TOOL_CALL_PROTOCOL.md`
@@ -38,7 +38,7 @@ impl std::error::Error for TaxonomyError {}
 /// Hierarchical tool taxonomy.
 ///
 /// Loaded from a TOML configuration. Provides compact summaries for prompt
-/// injection and drill-down navigation for the `tool_search` meta-tool.
+/// injection and drill-down navigation for the `ToolSearch` meta-tool.
 #[derive(Debug, Clone)]
 pub struct ToolTaxonomy {
     categories: HashMap<String, TaxonomyCategory>,
@@ -151,7 +151,7 @@ impl ToolTaxonomy {
     pub fn root_summary(&self) -> String {
         let mut lines = vec![
             "## Tool Categories\n".to_string(),
-            "Use `tool_search` with a category key or keywords to discover tools.\n".to_string(),
+            "Use `ToolSearch` with a category key or keywords to discover tools.\n".to_string(),
             "| Category | Description |".to_string(),
             "|----------|-------------|".to_string(),
         ];
@@ -304,22 +304,22 @@ description = "Read, write, and manage files"
 [categories.file.subcategories.read]
 label = "File Reading"
 description = "Read file contents"
-tools = ["file_read"]
+tools = ["FileRead"]
 
 [categories.file.subcategories.write]
 label = "File Writing"
 description = "Create or modify files"
-tools = ["file_write"]
+tools = ["FileWrite"]
 
 [categories.shell]
 label = "Shell"
 description = "Execute shell commands"
-tools = ["shell_exec"]
+tools = ["ShellExec"]
 
 [categories.meta]
 label = "Meta Tools"
 description = "Tool management tools"
-tools = ["tool_search"]
+tools = ["ToolSearch"]
 "#;
 
     #[test]
@@ -351,7 +351,7 @@ tools = ["tool_search"]
         assert!(summary.contains("shell"));
         assert!(summary.contains("meta"));
         assert!(summary.contains("Tool Categories"));
-        assert!(summary.contains("tool_search"));
+        assert!(summary.contains("ToolSearch"));
     }
 
     #[test]
@@ -372,15 +372,15 @@ tools = ["tool_search"]
         let detail = taxonomy.category_detail("file").unwrap();
         assert!(detail.contains("File Management"));
         assert!(detail.contains("File Reading"));
-        assert!(detail.contains("file_read"));
-        assert!(detail.contains("file_write"));
+        assert!(detail.contains("FileRead"));
+        assert!(detail.contains("FileWrite"));
     }
 
     #[test]
     fn test_category_detail_with_direct_tools() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let detail = taxonomy.category_detail("shell").unwrap();
-        assert!(detail.contains("shell_exec"));
+        assert!(detail.contains("ShellExec"));
     }
 
     #[test]
@@ -392,39 +392,39 @@ tools = ["tool_search"]
     #[test]
     fn test_search_by_tool_name() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
-        let results = taxonomy.search("file_read");
-        assert!(results.contains(&"file_read".to_string()));
+        let results = taxonomy.search("FileRead");
+        assert!(results.contains(&"FileRead".to_string()));
     }
 
     #[test]
     fn test_search_by_category_description() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let results = taxonomy.search("shell commands");
-        assert!(results.contains(&"shell_exec".to_string()));
+        assert!(results.contains(&"ShellExec".to_string()));
     }
 
     #[test]
     fn test_search_multi_keyword_space_separated() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
-        // "tool search" should match "tool_search" via the "search" keyword
+        // "tool search" should match "ToolSearch" via the "search" keyword
         let results = taxonomy.search("tool search");
-        assert!(results.contains(&"tool_search".to_string()));
+        assert!(results.contains(&"ToolSearch".to_string()));
     }
 
     #[test]
     fn test_search_multi_keyword_comma_separated() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let results = taxonomy.search("shell,file");
-        assert!(results.contains(&"shell_exec".to_string()));
-        assert!(results.contains(&"file_read".to_string()));
+        assert!(results.contains(&"ShellExec".to_string()));
+        assert!(results.contains(&"FileRead".to_string()));
     }
 
     #[test]
     fn test_search_multi_keyword_semicolon_separated() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let results = taxonomy.search("shell; file");
-        assert!(results.contains(&"shell_exec".to_string()));
-        assert!(results.contains(&"file_read".to_string()));
+        assert!(results.contains(&"ShellExec".to_string()));
+        assert!(results.contains(&"FileRead".to_string()));
     }
 
     #[test]
@@ -441,7 +441,7 @@ tools = ["tool_search"]
     fn test_search_by_subcategory_description() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let results = taxonomy.search("Read file contents");
-        assert!(results.contains(&"file_read".to_string()));
+        assert!(results.contains(&"FileRead".to_string()));
     }
 
     #[test]
@@ -470,8 +470,8 @@ tools = ["tool_search"]
     fn test_tools_in_category() {
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let tools = taxonomy.tools_in_category("file");
-        assert!(tools.contains(&"file_read".to_string()));
-        assert!(tools.contains(&"file_write".to_string()));
+        assert!(tools.contains(&"FileRead".to_string()));
+        assert!(tools.contains(&"FileWrite".to_string()));
     }
 
     #[test]

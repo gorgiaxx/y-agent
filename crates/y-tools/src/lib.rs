@@ -16,7 +16,7 @@
 //! # Lazy Loading Design
 //!
 //! Tools are not loaded into context until the LLM needs them. The compact
-//! index is always present, and the LLM calls `tool_search` to activate
+//! index is always present, and the LLM calls `ToolSearch` to activate
 //! specific tools' full definitions. This saves 60-90% of token usage.
 
 pub mod activation;

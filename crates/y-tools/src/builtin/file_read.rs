@@ -1,4 +1,4 @@
-//! `file_read` built-in tool: read file contents from the filesystem.
+//! `FileRead` built-in tool: read file contents from the filesystem.
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -23,7 +23,7 @@ impl FileReadTool {
 
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
-            name: ToolName::from_string("file_read"),
+            name: ToolName::from_string("FileRead"),
             description: "Read file contents at a given path.".into(),
             help: None,
             parameters: serde_json::json!({
@@ -32,6 +32,14 @@ impl FileReadTool {
                     "path": {
                         "type": "string",
                         "description": "Absolute or relative path to the file to read"
+                    },
+                    "line_offset": {
+                        "type": "integer",
+                        "description": "Optional line number to start reading from (0-indexed). Defaults to 0."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Optional maximum number of lines to read. Defaults to reading the entire file."
                     }
                 },
                 "required": ["path"]
@@ -68,22 +76,46 @@ impl Tool for FileReadTool {
             message: format!("cannot resolve path '{path_str}': {e}"),
         })?;
 
-        // Read file content.
-        let content =
-            tokio::fs::read_to_string(&canonical)
+        // Read file content with encoding support natively.
+        let (content, encoding) =
+            read_file_as_utf8_impl(&canonical)
                 .await
                 .map_err(|e| ToolError::Other {
                     message: format!("failed to read '{}': {}", canonical.display(), e),
                 })?;
 
-        let line_count = content.lines().count();
+        let lines: Vec<&str> = content.lines().collect();
+        let total_lines = lines.len();
+
+        let offset = input
+            .arguments
+            .get("line_offset")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        let limit = input
+            .arguments
+            .get("limit")
+            .and_then(serde_json::Value::as_u64)
+            .map(|v| v as usize);
+
+        let start = std::cmp::min(offset, total_lines);
+        let end = if let Some(l) = limit {
+            std::cmp::min(start + l, total_lines)
+        } else {
+            total_lines
+        };
+
+        let sliced_content = lines[start..end].join("\n");
+        let line_count = end - start;
 
         Ok(ToolOutput {
             success: true,
             content: serde_json::json!({
                 "path": canonical.display().to_string(),
-                "content": content,
+                "content": sliced_content,
                 "lines": line_count,
+                "total_lines": total_lines,
+                "encoding": encoding,
             }),
             warnings: vec![],
             metadata: serde_json::json!({}),
@@ -104,7 +136,7 @@ mod tests {
     fn make_input(args: serde_json::Value) -> ToolInput {
         ToolInput {
             call_id: "call_001".into(),
-            name: ToolName::from_string("file_read"),
+            name: ToolName::from_string("FileRead"),
             arguments: args,
             session_id: SessionId::new(),
             command_runner: None,
@@ -130,6 +162,36 @@ mod tests {
             .unwrap()
             .contains("line 1"));
         assert_eq!(output.content["lines"], 2);
+        assert_eq!(output.content["total_lines"], 2);
+        assert_eq!(output.content["encoding"], "UTF-8");
+    }
+
+    #[tokio::test]
+    async fn test_file_read_with_offset_and_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test2.txt");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "line 1").unwrap();
+        writeln!(f, "line 2").unwrap();
+        writeln!(f, "line 3").unwrap();
+        writeln!(f, "line 4").unwrap();
+
+        let tool = FileReadTool::new();
+        let input = make_input(serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "line_offset": 1,
+            "limit": 2
+        }));
+        let output = tool.execute(input).await.unwrap();
+        assert!(output.success);
+        let content_obj = &output.content;
+        assert_eq!(content_obj["lines"].as_u64().unwrap(), 2);
+        assert_eq!(content_obj["total_lines"].as_u64().unwrap(), 4);
+        let text = content_obj["content"].as_str().unwrap();
+        assert!(text.contains("line 2"));
+        assert!(text.contains("line 3"));
+        assert!(!text.contains("line 1"));
+        assert!(!text.contains("line 4"));
     }
 
     #[tokio::test]
@@ -153,8 +215,43 @@ mod tests {
     #[test]
     fn test_file_read_definition() {
         let def = FileReadTool::tool_definition();
-        assert_eq!(def.name.as_str(), "file_read");
+        assert_eq!(def.name.as_str(), "FileRead");
         assert_eq!(def.category, ToolCategory::FileSystem);
         assert!(!def.is_dangerous);
     }
+}
+
+/// Internal helper to read a file and decode to UTF-8 using `chardetng` if necessary.
+async fn read_file_as_utf8_impl(
+    path: &std::path::Path,
+) -> Result<(String, &'static str), std::io::Error> {
+    let bytes = tokio::fs::read(path).await?;
+
+    // Fast path: if it's already valid UTF-8, return directly.
+    if let Ok(s) = std::str::from_utf8(&bytes) {
+        return Ok((s.to_string(), "UTF-8"));
+    }
+
+    // Detect encoding using chardetng.
+    let mut detector = chardetng::EncodingDetector::new();
+    detector.feed(&bytes, true);
+    let encoding = detector.guess(None, true);
+
+    let (cow, actual_encoding, had_errors) = encoding.decode(&bytes);
+
+    if had_errors {
+        tracing::warn!(
+            path = %path.display(),
+            encoding = actual_encoding.name(),
+            "encoding conversion had replacement characters"
+        );
+    }
+
+    tracing::debug!(
+        path = %path.display(),
+        encoding = actual_encoding.name(),
+        "converted file to UTF-8"
+    );
+
+    Ok((cow.into_owned(), actual_encoding.name()))
 }

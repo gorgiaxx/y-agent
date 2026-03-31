@@ -1,4 +1,4 @@
-//! `knowledge_search` built-in tool: search the knowledge base.
+//! `KnowledgeSearch` built-in tool: search the knowledge base.
 //!
 //! Allows the LLM to actively query the knowledge base for relevant
 //! information when it needs deeper context than auto-injection provides.
@@ -30,7 +30,7 @@ impl KnowledgeSearchTool {
 
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
-            name: ToolName::from_string("knowledge_search"),
+            name: ToolName::from_string("KnowledgeSearch"),
             description: "Search the knowledge base for relevant information.".into(),
             help: None,
             parameters: serde_json::json!({
@@ -175,7 +175,7 @@ mod tests {
     fn make_input(args: serde_json::Value) -> ToolInput {
         ToolInput {
             call_id: "call_001".into(),
-            name: ToolName::from_string("knowledge_search"),
+            name: ToolName::from_string("KnowledgeSearch"),
             arguments: args,
             session_id: SessionId::new(),
             command_runner: None,
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn test_definition() {
         let def = KnowledgeSearchTool::tool_definition();
-        assert_eq!(def.name.as_str(), "knowledge_search");
+        assert_eq!(def.name.as_str(), "KnowledgeSearch");
         assert_eq!(def.category, ToolCategory::Knowledge);
         assert!(!def.is_dangerous);
     }

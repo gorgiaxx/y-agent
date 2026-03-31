@@ -273,10 +273,10 @@ mod tests {
     #[tokio::test]
     async fn test_registry_register_and_get() {
         let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
-        let (tool, def) = make_tool("file_read");
+        let (tool, def) = make_tool("FileRead");
         reg.register_tool(tool, def).await.unwrap();
         assert!(reg
-            .get_tool(&ToolName::from_string("file_read"))
+            .get_tool(&ToolName::from_string("FileRead"))
             .await
             .is_some());
         assert_eq!(reg.len().await, 1);
@@ -285,8 +285,8 @@ mod tests {
     #[tokio::test]
     async fn test_registry_duplicate_name_rejected() {
         let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
-        let (tool1, def1) = make_tool("file_read");
-        let (tool2, def2) = make_tool("file_read");
+        let (tool1, def1) = make_tool("FileRead");
+        let (tool2, def2) = make_tool("FileRead");
         reg.register_tool(tool1, def1).await.unwrap();
         let err = reg.register_tool(tool2, def2).await.unwrap_err();
         assert!(matches!(err, ToolRegistryError::DuplicateName { .. }));
@@ -295,13 +295,13 @@ mod tests {
     #[tokio::test]
     async fn test_registry_unregister() {
         let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
-        let (tool, def) = make_tool("file_read");
+        let (tool, def) = make_tool("FileRead");
         reg.register_tool(tool, def).await.unwrap();
-        ToolRegistry::unregister(&reg, &ToolName::from_string("file_read"))
+        ToolRegistry::unregister(&reg, &ToolName::from_string("FileRead"))
             .await
             .unwrap();
         assert!(reg
-            .get_tool(&ToolName::from_string("file_read"))
+            .get_tool(&ToolName::from_string("FileRead"))
             .await
             .is_none());
         assert_eq!(reg.len().await, 0);
@@ -310,7 +310,7 @@ mod tests {
     #[tokio::test]
     async fn test_registry_search_by_keyword() {
         let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
-        for name in &["file_read", "file_write", "web_search", "code_exec"] {
+        for name in &["FileRead", "FileWrite", "WebSearch", "code_exec"] {
             let (tool, def) = make_tool(name);
             reg.register_tool(tool, def).await.unwrap();
         }
@@ -320,8 +320,8 @@ mod tests {
             .iter()
             .map(|r| r.name.as_str().to_string())
             .collect();
-        assert!(names.contains(&"file_read".to_string()));
-        assert!(names.contains(&"file_write".to_string()));
+        assert!(names.contains(&"FileRead".to_string()));
+        assert!(names.contains(&"FileWrite".to_string()));
     }
 
     #[tokio::test]
@@ -342,11 +342,11 @@ mod tests {
     #[tokio::test]
     async fn test_registry_trait_tool_index() {
         let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
-        let (tool, def) = make_tool("file_read");
+        let (tool, def) = make_tool("FileRead");
         reg.register_tool(tool, def).await.unwrap();
 
         let index = ToolRegistry::tool_index(&reg).await;
         assert_eq!(index.len(), 1);
-        assert_eq!(index[0].name.as_str(), "file_read");
+        assert_eq!(index[0].name.as_str(), "FileRead");
     }
 }

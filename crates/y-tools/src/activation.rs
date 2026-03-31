@@ -82,6 +82,14 @@ impl ToolActivationSet {
         }
     }
 
+    /// Get a reference to an active tool's definition WITHOUT refreshing LRU.
+    ///
+    /// Use for read-only lookups where LRU order should not change
+    /// (e.g., building `ChatRequest.tools` from the active set).
+    pub fn peek(&self, name: &ToolName) -> Option<&ToolDefinition> {
+        self.active.get(name)
+    }
+
     /// Get all active tool definitions.
     pub fn active_definitions(&self) -> Vec<&ToolDefinition> {
         self.active.values().collect()
@@ -155,8 +163,8 @@ mod tests {
     #[test]
     fn test_activation_add_tool() {
         let mut set = ToolActivationSet::new(20);
-        set.activate(sample_definition("file_read"));
-        assert!(set.contains(&ToolName::from_string("file_read")));
+        set.activate(sample_definition("FileRead"));
+        assert!(set.contains(&ToolName::from_string("FileRead")));
         assert_eq!(set.len(), 1);
     }
 
@@ -213,9 +221,9 @@ mod tests {
     #[test]
     fn test_activation_deactivate() {
         let mut set = ToolActivationSet::new(20);
-        set.activate(sample_definition("file_read"));
-        assert!(set.deactivate(&ToolName::from_string("file_read")));
-        assert!(!set.contains(&ToolName::from_string("file_read")));
+        set.activate(sample_definition("FileRead"));
+        assert!(set.deactivate(&ToolName::from_string("FileRead")));
+        assert!(!set.contains(&ToolName::from_string("FileRead")));
         assert_eq!(set.len(), 0);
     }
 }

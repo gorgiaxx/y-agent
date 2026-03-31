@@ -1,6 +1,6 @@
 # Default tool taxonomy for y-agent.
 #
-# Hierarchical categories for lazy tool discovery via the `tool_search`
+# Hierarchical categories for lazy tool discovery via the `ToolSearch`
 # meta-tool. Only category names and descriptions are injected into the
 # system prompt (~100 tokens). Full tool schemas are loaded on demand.
 #
@@ -16,22 +16,22 @@ description = "Read, write, and manage files"
 [categories.file.subcategories.read]
 label = "File Reading"
 description = "Read file contents"
-tools = ["file_read"]
+tools = ["FileRead"]
 
 [categories.file.subcategories.write]
 label = "File Writing"
 description = "Create or modify files"
-tools = ["file_write"]
+tools = ["FileWrite"]
 
 [categories.shell]
 label = "Shell"
 description = "Execute shell commands"
-tools = ["shell_exec"]
+tools = ["ShellExec"]
 
 [categories.network]
 label = "Network"
 description = "HTTP requests, DNS, connectivity, browser automation, web browsing, internet access, fetch web pages, online search, weather, news"
-tools = ["browser"]
+tools = ["Browser"]
 
 [categories.memory]
 label = "Memory & Knowledge"
@@ -44,10 +44,9 @@ description = "Search and retrieve information from knowledge base and documents
 [categories.agent]
 label = "Agent & Workflow"
 description = "Delegate to sub-agents, manage workflows. Agents are also discoverable via keyword search."
-tools = ["task"]
+tools = ["Task"]
 
 [categories.meta]
 label = "Meta Tools"
 description = "Tool management and unified capability discovery (tools, skills, agents)"
-tools = ["tool_search"]
-
+tools = ["ToolSearch"]

@@ -1,13 +1,13 @@
-//! `web_fetch` built-in tool: fetch web pages or search the web.
+//! `WebFetch` built-in tool: fetch web pages or search the web.
 //!
-//! Wraps the browser tool's CDP-based navigation to provide a simplified
+//! Wraps the Browser tool's CDP-based navigation to provide a simplified
 //! interface for the LLM.  Two actions are supported:
 //!
 //! - **fetch** (default): navigate to a URL and return the page text.
 //! - **search**: query a search engine and return the results page text.
 //!
-//! The tool shares the Chrome session with the `browser` tool via
-//! `Arc<BrowserTool>`, so no extra browser process is spawned.
+//! The tool shares the Chrome session with the `Browser` tool via
+//! `Arc<BrowserTool>`, so no extra Browser process is spawned.
 
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ pub struct WebFetchTool {
 }
 
 impl WebFetchTool {
-    /// Create a new web fetch tool backed by a shared browser instance.
+    /// Create a new web fetch tool backed by a shared Browser instance.
     pub fn new(browser: Arc<BrowserTool>) -> Self {
         Self {
             def: Self::tool_definition(),
@@ -37,8 +37,8 @@ impl WebFetchTool {
 
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
-            name: ToolName::from_string("web_fetch"),
-            description: "Fetch web page content or search the web via a real browser engine."
+            name: ToolName::from_string("WebFetch"),
+            description: "Fetch web page content or search the web via a real Browser engine."
                 .into(),
             help: Some(
                 concat!(
@@ -95,7 +95,7 @@ impl WebFetchTool {
         // Explicit action parameter takes priority.
         if let Some(action_str) = input.arguments.get("action").and_then(|v| v.as_str()) {
             return match action_str {
-                "search" | "web_search" => WebFetchAction::Search,
+                "search" | "WebSearch" => WebFetchAction::Search,
                 _ => WebFetchAction::Fetch,
             };
         }
@@ -199,7 +199,7 @@ mod tests {
     fn make_input(args: serde_json::Value) -> ToolInput {
         ToolInput {
             call_id: "call_001".into(),
-            name: ToolName::from_string("web_fetch"),
+            name: ToolName::from_string("WebFetch"),
             arguments: args,
             session_id: SessionId::new(),
             command_runner: None,
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_definition() {
         let def = WebFetchTool::tool_definition();
-        assert_eq!(def.name.as_str(), "web_fetch");
+        assert_eq!(def.name.as_str(), "WebFetch");
         assert_eq!(def.category, ToolCategory::Network);
         assert!(def.is_dangerous);
     }

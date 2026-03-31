@@ -1,7 +1,7 @@
-//! `tool_search` meta-tool: unified capability discovery.
+//! `ToolSearch` meta-tool: unified capability discovery.
 //!
 //! This is the primary mechanism for lazy tool loading and capability
-//! discovery. The LLM sees a compact taxonomy root and calls `tool_search`
+//! discovery. The LLM sees a compact taxonomy root and calls `ToolSearch`
 //! to retrieve definitions for the capabilities it needs.
 //!
 //! Supports three discovery modes:
@@ -17,7 +17,7 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
-/// The `tool_search` meta-tool.
+/// The `ToolSearch` meta-tool.
 ///
 /// When invoked by the LLM, it returns matching tool definitions from
 /// the registry, which are then added to the active set.
@@ -26,17 +26,17 @@ pub struct ToolSearchTool {
 }
 
 impl ToolSearchTool {
-    /// Create a new `tool_search` tool.
+    /// Create a new `ToolSearch` tool.
     pub fn new() -> Self {
         Self {
             def: Self::tool_definition(),
         }
     }
 
-    /// The tool definition for `tool_search`.
+    /// The tool definition for `ToolSearch`.
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
-            name: ToolName::from_string("tool_search"),
+            name: ToolName::from_string("ToolSearch"),
             description: "Discover capabilities (tools, skills, agents) by keyword, \
                 category, or name."
                 .into(),
@@ -127,7 +127,7 @@ mod tests {
     fn make_input(args: serde_json::Value) -> ToolInput {
         ToolInput {
             call_id: "call_001".into(),
-            name: ToolName::from_string("tool_search"),
+            name: ToolName::from_string("ToolSearch"),
             arguments: args,
             session_id: SessionId::new(),
             command_runner: None,
@@ -155,10 +155,10 @@ mod tests {
     #[tokio::test]
     async fn test_tool_search_with_tool_name() {
         let tool = ToolSearchTool::new();
-        let input = make_input(serde_json::json!({"tool": "file_read"}));
+        let input = make_input(serde_json::json!({"tool": "FileRead"}));
         let output = tool.execute(input).await.unwrap();
         assert_eq!(output.content["action"], "get_tool");
-        assert_eq!(output.content["tool"], "file_read");
+        assert_eq!(output.content["tool"], "FileRead");
     }
 
     #[tokio::test]
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn test_tool_search_definition() {
         let def = ToolSearchTool::tool_definition();
-        assert_eq!(def.name.as_str(), "tool_search");
+        assert_eq!(def.name.as_str(), "ToolSearch");
         assert_eq!(def.category, ToolCategory::Custom);
         assert_eq!(def.tool_type, ToolType::BuiltIn);
         assert!(!def.is_dangerous);

@@ -55,7 +55,7 @@ impl BrowserAction {
                 Some(Self::Navigate)
             }
             // Search via search engine
-            "search" | "web_search" | "google" | "find" | "lookup" | "query" => Some(Self::Search),
+            "search" | "WebSearch" | "google" | "find" | "lookup" | "query" => Some(Self::Search),
             // Screenshot
             "screenshot" | "capture" | "screen" | "take_screenshot" | "capture_screenshot" => {
                 Some(Self::Screenshot)
@@ -145,7 +145,7 @@ impl BrowserTool {
     /// Get the tool definition.
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
-            name: ToolName::from_string("browser"),
+            name: ToolName::from_string("Browser"),
             description: "Control a web browser for navigation, interaction, and page inspection."
                 .into(),
             help: Some(
@@ -270,7 +270,7 @@ impl BrowserTool {
     ) -> Result<String, ToolError> {
         if !self.session.config().enabled {
             return Err(ToolError::PermissionDenied {
-                name: "web_fetch".into(),
+                name: "WebFetch".into(),
                 reason: "browser tool is disabled in configuration".into(),
             });
         }
@@ -279,7 +279,7 @@ impl BrowserTool {
             .security()
             .validate_url(url)
             .map_err(|e| ToolError::PermissionDenied {
-                name: "web_fetch".into(),
+                name: "WebFetch".into(),
                 reason: e.to_string(),
             })?;
 
@@ -317,7 +317,7 @@ impl BrowserTool {
     ) -> Result<String, ToolError> {
         if !self.session.config().enabled {
             return Err(ToolError::PermissionDenied {
-                name: "web_fetch".into(),
+                name: "WebFetch".into(),
                 reason: "browser tool is disabled in configuration".into(),
             });
         }
@@ -333,7 +333,7 @@ impl BrowserTool {
             .security()
             .validate_url(&search_url)
             .map_err(|e| ToolError::PermissionDenied {
-                name: "web_fetch".into(),
+                name: "WebFetch".into(),
                 reason: e.to_string(),
             })?;
 

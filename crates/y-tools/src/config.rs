@@ -9,7 +9,7 @@ pub struct ToolRegistryConfig {
     #[serde(default = "default_max_active")]
     pub max_active: usize,
 
-    /// Maximum number of search results returned by `tool_search`.
+    /// Maximum number of search results returned by `ToolSearch`.
     #[serde(default = "default_search_limit")]
     pub search_limit: usize,
 

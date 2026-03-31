@@ -5,7 +5,7 @@
 # Maximum number of active (fully-loaded) tools per session.
 max_active = 20
 
-# Maximum search results for tool_search.
+# Maximum search results for ToolSearch.
 search_limit = 10
 
 # Whether agents can create tools dynamically at runtime.

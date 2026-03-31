@@ -31,8 +31,8 @@ function formatArguments(name: string, raw: string): string {
   const obj = tryParseJson(raw);
   if (!obj) return raw;
 
-  // shell_exec: show only the command
-  if (name === 'shell_exec' && typeof obj.command === 'string') {
+  // ShellExec: show only the command
+  if (name === 'ShellExec' && typeof obj.command === 'string') {
     return obj.command;
   }
 
@@ -49,8 +49,8 @@ function formatResult(name: string, raw: string): FormattedResult | null {
   if (!raw) return null;
   const obj = tryParseJson(raw);
 
-  // shell_exec: show stderr (red) + stdout, only if non-empty
-  if (obj && name === 'shell_exec') {
+  // ShellExec: show stderr (red) + stdout, only if non-empty
+  if (obj && name === 'ShellExec') {
     const parts: FormattedResult['parts'] = [];
     const stderr = typeof obj.stderr === 'string' ? obj.stderr : '';
     const stdout = typeof obj.stdout === 'string' ? obj.stdout : '';

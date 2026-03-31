@@ -1,7 +1,7 @@
 //! `ToolIndex`: compact tool entries for LLM context injection.
 //!
 //! The index contains only name, description, and category — enough for the
-//! LLM to decide whether to call `tool_search` for the full definition.
+//! LLM to decide whether to call `ToolSearch` for the full definition.
 //! This design reduces context window consumption by 60-90%.
 
 use std::collections::HashMap;
@@ -91,19 +91,19 @@ mod tests {
     #[test]
     fn test_index_returns_compact_entries() {
         let mut index = ToolIndex::new();
-        index.add(&sample_definition("file_read"));
+        index.add(&sample_definition("FileRead"));
         let entries = index.entries();
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
-        assert_eq!(entry.name.as_str(), "file_read");
-        assert_eq!(entry.description, "file_read description");
+        assert_eq!(entry.name.as_str(), "FileRead");
+        assert_eq!(entry.description, "FileRead description");
         assert_eq!(entry.category, ToolCategory::FileSystem);
     }
 
     #[test]
     fn test_index_excludes_full_schema() {
         let mut index = ToolIndex::new();
-        let mut def = sample_definition("file_write");
+        let mut def = sample_definition("FileWrite");
         def.parameters = serde_json::json!({
             "type": "object",
             "properties": { "path": { "type": "string" } }
@@ -127,25 +127,25 @@ mod tests {
     #[test]
     fn test_index_updates_on_register() {
         let mut index = ToolIndex::new();
-        index.add(&sample_definition("file_read"));
+        index.add(&sample_definition("FileRead"));
         assert_eq!(index.len(), 1);
-        index.add(&sample_definition("file_write"));
+        index.add(&sample_definition("FileWrite"));
         assert_eq!(index.len(), 2);
     }
 
     #[test]
     fn test_index_updates_on_unregister() {
         let mut index = ToolIndex::new();
-        index.add(&sample_definition("file_read"));
-        index.add(&sample_definition("file_write"));
+        index.add(&sample_definition("FileRead"));
+        index.add(&sample_definition("FileWrite"));
         assert_eq!(index.len(), 2);
-        assert!(index.remove(&ToolName::from_string("file_read")));
+        assert!(index.remove(&ToolName::from_string("FileRead")));
         assert_eq!(index.len(), 1);
         let names: Vec<_> = index
             .entries()
             .iter()
             .map(|e| e.name.as_str().to_string())
             .collect();
-        assert!(!names.contains(&"file_read".to_string()));
+        assert!(!names.contains(&"FileRead".to_string()));
     }
 }

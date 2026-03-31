@@ -1,13 +1,13 @@
-//! `task` tool: delegate work to a sub-agent.
+//! `Task` tool: delegate work to a sub-agent.
 //!
 //! This tool allows the LLM to invoke agent delegation within a conversation.
-//! The LLM discovers available agents via `tool_search` and then uses `task`
+//! The LLM discovers available agents via `ToolSearch` and then uses `Task`
 //! to delegate work to a specific agent.
 //!
 //! The `execute()` method validates input and returns a pending descriptor.
 //! Actual delegation is performed by the `TaskDelegationOrchestrator` in
-//! `y-service`, which intercepts `task` calls and routes them through the
-//! `AgentDelegator` (same pattern as `tool_search` / `ToolSearchOrchestrator`).
+//! `y-service`, which intercepts `Task` calls and routes them through the
+//! `AgentDelegator` (same pattern as `ToolSearch` / `ToolSearchOrchestrator`).
 
 use async_trait::async_trait;
 
@@ -17,36 +17,36 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
-/// The `task` tool for agent delegation.
+/// The `Task` tool for agent delegation.
 ///
-/// When invoked by the LLM, it delegates a task to a named sub-agent.
+/// When invoked by the LLM, it delegates a Task to a named sub-agent.
 /// The actual execution is handled by the orchestrator in `y-service`.
 pub struct TaskTool {
     def: ToolDefinition,
 }
 
 impl TaskTool {
-    /// Create a new `task` tool.
+    /// Create a new `Task` tool.
     pub fn new() -> Self {
         Self {
             def: Self::tool_definition(),
         }
     }
 
-    /// The tool definition for `task`.
+    /// The tool definition for `Task`.
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
-            name: ToolName::from_string("task"),
-            description: "Delegate a task to a sub-agent. \
-                Use tool_search to discover available agents first, \
+            name: ToolName::from_string("Task"),
+            description: "Delegate a Task to a sub-agent. \
+                Use ToolSearch to discover available agents first, \
                 then call this tool with the agent's id and a prompt."
                 .into(),
             help: Some(
-                "Delegates a task to a registered sub-agent and returns the agent's output.\n\
+                "Delegates a Task to a registered sub-agent and returns the agent's output.\n\
                  \n\
                  Usage:\n\
-                 1. Search for agents: tool_search({\"query\": \"agent-architect\"})\n\
-                 2. Delegate: task({\"agent_name\": \"agent-architect\", \"prompt\": \"...\"})\n\
+                 1. Search for agents: ToolSearch({\"query\": \"agent-architect\"})\n\
+                 2. Delegate: Task({\"agent_name\": \"agent-architect\", \"prompt\": \"...\"})\n\
                  \n\
                  Optional parameters:\n\
                  - mode: Override the agent's default mode (build/plan/explore/general)\n\
@@ -146,7 +146,7 @@ mod tests {
     fn make_input(args: serde_json::Value) -> ToolInput {
         ToolInput {
             call_id: "call_001".into(),
-            name: ToolName::from_string("task"),
+            name: ToolName::from_string("Task"),
             arguments: args,
             session_id: SessionId::new(),
             command_runner: None,
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn test_task_definition() {
         let def = TaskTool::tool_definition();
-        assert_eq!(def.name.as_str(), "task");
+        assert_eq!(def.name.as_str(), "Task");
         assert_eq!(def.category, ToolCategory::Agent);
         assert_eq!(def.tool_type, ToolType::BuiltIn);
         assert!(!def.is_dangerous);

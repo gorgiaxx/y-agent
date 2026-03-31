@@ -1,4 +1,4 @@
-//! `shell_exec` built-in tool: execute shell commands.
+//! `ShellExec` built-in tool: execute shell commands.
 
 use async_trait::async_trait;
 use std::time::Duration;
@@ -29,7 +29,7 @@ impl ShellExecTool {
 
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
-            name: ToolName::from_string("shell_exec"),
+            name: ToolName::from_string("ShellExec"),
             description: "Execute a shell command and return stdout/stderr.".into(),
             help: None,
             parameters: serde_json::json!({
@@ -114,7 +114,7 @@ impl Tool for ShellExecTool {
                 .run_command(command, working_dir, timeout)
                 .await
                 .map_err(|e| ToolError::RuntimeError {
-                    name: "shell_exec".into(),
+                    name: "ShellExec".into(),
                     message: format!("{e}"),
                 })?;
 
@@ -170,7 +170,7 @@ impl Tool for ShellExecTool {
                 })
             }
             Ok(Err(e)) => Err(ToolError::RuntimeError {
-                name: "shell_exec".into(),
+                name: "ShellExec".into(),
                 message: format!("failed to execute command: {e}"),
             }),
             Err(_) => Err(ToolError::Timeout { timeout_secs }),
@@ -190,7 +190,7 @@ mod tests {
     fn make_input(args: serde_json::Value) -> ToolInput {
         ToolInput {
             call_id: "call_001".into(),
-            name: ToolName::from_string("shell_exec"),
+            name: ToolName::from_string("ShellExec"),
             arguments: args,
             session_id: SessionId::new(),
             command_runner: None,
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn test_shell_exec_definition() {
         let def = ShellExecTool::tool_definition();
-        assert_eq!(def.name.as_str(), "shell_exec");
+        assert_eq!(def.name.as_str(), "ShellExec");
         assert!(def.is_dangerous);
         assert!(def.capabilities.process.shell);
     }
