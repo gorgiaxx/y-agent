@@ -68,14 +68,19 @@ export function GlobalProviders({ children }: { children: ReactNode }) {
     }
   }, [workspaceHooks.workspaces, welcomeWorkspaceId]);
 
-  // Load messages when active session changes
+  // Load messages when active session changes.
+  // IMPORTANT: depend on specific values, not entire hook objects.
+  // Using [sessionHooks, chatHooks] causes infinite re-renders because
+  // hook return objects get new references on every render.
+  const { activeSessionId } = sessionHooks;
+  const { loadMessages, clearMessages } = chatHooks;
   useEffect(() => {
-    if (sessionHooks.activeSessionId) {
-      chatHooks.loadMessages(sessionHooks.activeSessionId);
+    if (activeSessionId) {
+      loadMessages(activeSessionId);
     } else {
-      chatHooks.clearMessages();
+      clearMessages();
     }
-  }, [sessionHooks, chatHooks]);
+  }, [activeSessionId, loadMessages, clearMessages]);
 
   const navState = {
     activeView, setActiveView,
