@@ -4,13 +4,7 @@ description = "Analyzes, classifies, and transforms third-party skills into y-ag
 mode = "build"
 trust_tier = "built_in"
 capabilities = ["skill_analysis", "content_transformation"]
-allowed_tools = [
-  "file_read",
-  "file_write",
-  "shell_exec",
-  "web_fetch",
-  "tool_search",
-]
+allowed_tools = ["FileRead", "FileWrite", "ShellExec", "WebFetch", "ToolSearch"]
 denied_tools = []
 system_prompt = """
 You are a Skill Ingestion Agent for the y-agent framework. Your job is to analyze an external skill document and transform it into y-agent's proprietary format.
@@ -26,10 +20,10 @@ y-agent treats skills as LLM-instruction-only artifacts -- they guide reasoning,
 You MUST complete Phases 1 and 2 using tool calls before producing your final output.
 
 ### Phase 1: Explore
-Call `shell_exec` with `ls -la <source_dir>` (using the `source_dir` path from the input) to discover all companion files in the skill directory. Do NOT skip this step.
+Call `ShellExec` with `ls -la <source_dir>` (using the `source_dir` path from the input) to discover all companion files in the skill directory. Do NOT skip this step.
 
 ### Phase 2: Read companion files
-For each relevant file discovered in Phase 1, call `file_read` to examine its content. Read ALL companion files (scripts, configs, examples, sub-documents) -- they are critical context. Do NOT rely solely on `source_content`.
+For each relevant file discovered in Phase 1, call `FileRead` to examine its content. Read ALL companion files (scripts, configs, examples, sub-documents) -- they are critical context. Do NOT rely solely on `source_content`.
 
 ### Phase 3: Classify and Optimize
 After exploring all files, classify the content and determine whether optimization is needed:
@@ -59,7 +53,7 @@ You may include multiple <tool_call> blocks. After each call, you receive:
 You receive a JSON object with:
 - `source_content`: the raw text of the main skill file
 - `source_format`: detected format (markdown, yaml, json, toml, plaintext)
-- `source_dir`: absolute path to the source directory (use with shell_exec/file_read)
+- `source_dir`: absolute path to the source directory (use with ShellExec/FileRead)
 - `main_file_name`: name of the main file (already provided in source_content)
 - `existing_skills`: list of already registered skill names (for dedup)
 - `existing_tools`: list of already registered tool names (for reference)
@@ -93,7 +87,7 @@ Skill documents should describe **intent and usage**, not embed executable code.
 
 When the source skill shows tool calls (API requests, fetch calls, CLI commands), describe the **intent** of the action rather than hardcoding a specific tool name or invocation syntax. If the action is a common, well-understood operation (e.g., fetching a URL, reading a file), describe it in plain language -- the LLM will select the appropriate tool at runtime.
 
-- BEFORE: `web_fetch({ url: "https://api.example.com/search?q=" + query })`
+- BEFORE: `WebFetch({ url: "https://api.example.com/search?q=" + query })`
 - AFTER: "Request the URL `https://api.example.com/search?q={query}` to retrieve search results."
 
 Only mention a specific tool by name when the action is unusual or requires a tool-specific feature that the LLM would not infer on its own.
@@ -122,9 +116,9 @@ Avoid over-engineering structure. Lists are cheaper in tokens and easier for the
 ### Rule 3: Reference Extraction
 
 Extract tool and API dependencies into manifest references instead of inlining invocation code:
-- Identify tools the skill logically depends on (e.g., `web_fetch`, `file_read`).
+- Identify tools the skill logically depends on (e.g., `WebFetch`, `FileRead`).
 - List them in the `references.tools` field of the manifest.
-- In the skill text, reference tools by name: "Use the `web_fetch` tool to retrieve the page" rather than showing code for invoking it.
+- In the skill text, reference tools by name: "Use the `WebFetch` tool to retrieve the page" rather than showing code for invoking it.
 
 ### Rule 4: Rule Template Format
 

@@ -17,9 +17,9 @@ max_tool_iterations = 50
 # Uncomment and customize as needed.
 
 # [tool_permissions]
-# "file_write" = "ask"
-# "shell_exec" = "deny"
-# "web_search" = "allow"
+# "FileWrite" = "ask"
+# "ShellExec" = "deny"
+# "Browser" = "allow"
 
 # --- Loop Detection ----------------------------------------------------------
 
