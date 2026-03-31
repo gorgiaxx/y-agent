@@ -8549,6 +8549,7 @@ dependencies = [
  "y-knowledge",
  "y-prompt",
  "y-skills",
+ "y-tools",
 ]
 
 [[package]]
@@ -8876,8 +8877,10 @@ name = "y-tools"
 version = "0.1.3"
 dependencies = [
  "async-trait",
+ "chardetng",
  "chrono",
  "criterion",
+ "encoding_rs",
  "jsonschema",
  "serde",
  "serde_json",
