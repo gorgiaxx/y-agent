@@ -122,15 +122,12 @@ impl UserInteractionOrchestrator {
             map.remove(interaction_id)
         };
 
-        match sender {
-            Some(tx) => tx.send(answer).is_ok(),
-            None => {
-                tracing::warn!(
-                    interaction_id = %interaction_id,
-                    "deliver_answer: no pending interaction found (may have timed out)"
-                );
-                false
-            }
+        if let Some(tx) = sender { tx.send(answer).is_ok() } else {
+            tracing::warn!(
+                interaction_id = %interaction_id,
+                "deliver_answer: no pending interaction found (may have timed out)"
+            );
+            false
         }
     }
 
@@ -214,7 +211,7 @@ impl UserInteractionOrchestrator {
                 .unwrap_or("(question)");
             let multi = q
                 .get("multi_select")
-                .and_then(|v| v.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
 
             let _ = writeln!(
