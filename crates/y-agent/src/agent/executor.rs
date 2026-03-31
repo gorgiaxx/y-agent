@@ -248,7 +248,7 @@ mod tests {
             &registry,
             &mut pool,
             "tool-engineer",
-            "Create a new web_fetch tool",
+            "Create a new WebFetch tool",
             &[], // no conversation history
             None,
             ContextStrategy::None,
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(prepared.context_messages.len(), 1); // None strategy: just the prompt
         assert_eq!(
             prepared.context_messages[0].content,
-            "Create a new web_fetch tool"
+            "Create a new WebFetch tool"
         );
 
         // Execute
@@ -349,15 +349,15 @@ mod tests {
         assert!(!prepared
             .filtered
             .allowed_tools
-            .contains(&"file_write".to_string()));
+            .contains(&"FileWrite".to_string()));
         assert!(!prepared
             .filtered
             .allowed_tools
-            .contains(&"shell_exec".to_string()));
+            .contains(&"ShellExec".to_string()));
         assert!(prepared
             .filtered
             .allowed_tools
-            .contains(&"file_read".to_string()));
+            .contains(&"FileRead".to_string()));
     }
 
     /// T-MA-P6-03: Context injection with summary strategy.

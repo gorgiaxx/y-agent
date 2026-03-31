@@ -178,7 +178,7 @@ mod tests {
             mode: AgentMode::Plan,
             trust_tier: TrustTier::UserDefined,
             capabilities: vec!["code_review".to_string(), "static_analysis".to_string()],
-            allowed_tools: vec!["file_read".to_string(), "search_code".to_string()],
+            allowed_tools: vec!["FileRead".to_string(), "SearchCode".to_string()],
             denied_tools: vec![],
             system_prompt: "Review code.".to_string(),
             skills: vec![],
@@ -192,6 +192,7 @@ mod tests {
             timeout_secs: 300,
             context_sharing: ContextStrategy::Summary,
             max_context_tokens: 4096,
+            user_callable: false,
         };
         registry.register(def).unwrap();
         registry

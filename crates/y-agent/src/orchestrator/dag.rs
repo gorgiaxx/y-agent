@@ -363,7 +363,7 @@ mod tests {
             id: "tool-1".into(),
             name: "Search".into(),
             task_type: TaskType::ToolExecution {
-                tool_name: "web_search".into(),
+                tool_name: "WebSearch".into(),
                 parameters: serde_json::json!({"query": "rust async"}),
             },
             ..TaskNode::default()
@@ -372,7 +372,7 @@ mod tests {
         let deserialized: TaskNode = serde_json::from_str(&json).unwrap();
         assert!(matches!(
             deserialized.task_type,
-            TaskType::ToolExecution { ref tool_name, .. } if tool_name == "web_search"
+            TaskType::ToolExecution { ref tool_name, .. } if tool_name == "WebSearch"
         ));
     }
 
@@ -384,7 +384,7 @@ mod tests {
             id: "search".into(),
             name: "Search".into(),
             task_type: TaskType::ToolExecution {
-                tool_name: "web_search".into(),
+                tool_name: "WebSearch".into(),
                 parameters: serde_json::Value::Null,
             },
             ..TaskNode::default()

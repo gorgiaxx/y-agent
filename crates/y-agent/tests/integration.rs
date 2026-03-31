@@ -87,8 +87,8 @@ fn test_gap_detection_and_resolution() {
 fn test_permission_inheritance_e2e() {
     let store = DynamicAgentStore::new();
     let creator = CreatorPermissionSnapshot {
-        tools_allowed: vec!["file_read".to_string(), "search_code".to_string()],
-        tools_denied: vec!["shell_exec".to_string()],
+        tools_allowed: vec!["FileRead".to_string(), "SearchCode".to_string()],
+        tools_denied: vec!["ShellExec".to_string()],
         max_iterations: 50,
         max_tool_calls: 100,
         max_tokens: 8192,
@@ -100,7 +100,7 @@ fn test_permission_inheritance_e2e() {
         "parent-agent",
         "A parent agent",
         "root",
-        &["file_read".to_string()],
+        &["FileRead".to_string()],
         &creator,
     );
     let parent = store.create(parent).unwrap();
@@ -108,7 +108,7 @@ fn test_permission_inheritance_e2e() {
     assert!(parent
         .effective_permissions
         .tools_allowed
-        .contains(&"file_read".to_string()));
+        .contains(&"FileRead".to_string()));
 
     // Create child using parent's permissions (depth 2 → effective depth 1)
     let child_creator = CreatorPermissionSnapshot {
@@ -124,7 +124,7 @@ fn test_permission_inheritance_e2e() {
         "child-agent",
         "A child agent",
         &parent.id,
-        &["file_read".to_string()],
+        &["FileRead".to_string()],
         &child_creator,
     );
     let child = store.create(child).unwrap();
@@ -144,7 +144,7 @@ fn test_permission_inheritance_e2e() {
         "grandchild-agent",
         "A grandchild agent",
         &child.id,
-        &["file_read".to_string()],
+        &["FileRead".to_string()],
         &grandchild_creator,
     );
     // Grandchild has delegation_depth 0 → validation rejects dynamic agents at depth 0

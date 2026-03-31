@@ -16,26 +16,26 @@ use crate::agent::definition::{AgentDefinition, AgentMode};
 
 /// Tools considered read-only (permitted in Plan and Explore modes).
 const READ_ONLY_TOOLS: &[&str] = &[
-    "file_read",
-    "search_code",
-    "search_files",
-    "list_directory",
-    "view_file",
-    "grep",
-    "tree",
-    "git_log",
-    "git_diff",
-    "git_status",
-    "git_show",
+    "FileRead",
+    "SearchCode",
+    "SearchFiles",
+    "ListDirectory",
+    "ViewFile",
+    "Grep",
+    "Tree",
+    "GitLog",
+    "GitDiff",
+    "GitStatus",
+    "GitShow",
 ];
 
 /// Tools classified as search-oriented (permitted in Explore mode).
 const SEARCH_TOOLS: &[&str] = &[
-    "search_code",
-    "search_files",
-    "grep",
-    "web_search",
-    "search_docs",
+    "SearchCode",
+    "SearchFiles",
+    "Grep",
+    "WebSearch",
+    "SearchDocs",
 ];
 
 /// Combined set of tools permitted in Explore mode (search + read).
@@ -162,12 +162,12 @@ mod tests {
             trust_tier: TrustTier::UserDefined,
             capabilities: vec![],
             allowed_tools: vec![
-                "file_read".to_string(),
-                "file_write".to_string(),
-                "search_code".to_string(),
-                "shell_exec".to_string(),
-                "grep".to_string(),
-                "web_search".to_string(),
+                "FileRead".to_string(),
+                "FileWrite".to_string(),
+                "SearchCode".to_string(),
+                "ShellExec".to_string(),
+                "Grep".to_string(),
+                "WebSearch".to_string(),
             ],
             denied_tools: vec!["dangerous_tool".to_string()],
             system_prompt: "You are a helpful agent.".to_string(),
@@ -182,6 +182,7 @@ mod tests {
             timeout_secs: 300,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 4096,
+            user_callable: false,
         }
     }
 
@@ -192,12 +193,12 @@ mod tests {
         let filtered = apply_mode_overlay(&def, Some(AgentMode::Plan));
 
         assert_eq!(filtered.mode, AgentMode::Plan);
-        // file_read, search_code, grep are read-only; file_write, shell_exec, web_search are not
-        assert!(filtered.allowed_tools.contains(&"file_read".to_string()));
-        assert!(filtered.allowed_tools.contains(&"search_code".to_string()));
-        assert!(filtered.allowed_tools.contains(&"grep".to_string()));
-        assert!(!filtered.allowed_tools.contains(&"file_write".to_string()));
-        assert!(!filtered.allowed_tools.contains(&"shell_exec".to_string()));
+        // FileRead, SearchCode, Grep are read-only; FileWrite, ShellExec, WebSearch are not
+        assert!(filtered.allowed_tools.contains(&"FileRead".to_string()));
+        assert!(filtered.allowed_tools.contains(&"SearchCode".to_string()));
+        assert!(filtered.allowed_tools.contains(&"Grep".to_string()));
+        assert!(!filtered.allowed_tools.contains(&"FileWrite".to_string()));
+        assert!(!filtered.allowed_tools.contains(&"ShellExec".to_string()));
     }
 
     /// T-MA-R3-02: Explore mode retains only search + read tools.
@@ -207,14 +208,14 @@ mod tests {
         let filtered = apply_mode_overlay(&def, Some(AgentMode::Explore));
 
         assert_eq!(filtered.mode, AgentMode::Explore);
-        // file_read, search_code, grep, web_search are explore-allowed
-        assert!(filtered.allowed_tools.contains(&"file_read".to_string()));
-        assert!(filtered.allowed_tools.contains(&"search_code".to_string()));
-        assert!(filtered.allowed_tools.contains(&"grep".to_string()));
-        assert!(filtered.allowed_tools.contains(&"web_search".to_string()));
-        // file_write and shell_exec are not explore-allowed
-        assert!(!filtered.allowed_tools.contains(&"file_write".to_string()));
-        assert!(!filtered.allowed_tools.contains(&"shell_exec".to_string()));
+        // FileRead, SearchCode, Grep, WebSearch are explore-allowed
+        assert!(filtered.allowed_tools.contains(&"FileRead".to_string()));
+        assert!(filtered.allowed_tools.contains(&"SearchCode".to_string()));
+        assert!(filtered.allowed_tools.contains(&"Grep".to_string()));
+        assert!(filtered.allowed_tools.contains(&"WebSearch".to_string()));
+        // FileWrite and ShellExec are not explore-allowed
+        assert!(!filtered.allowed_tools.contains(&"FileWrite".to_string()));
+        assert!(!filtered.allowed_tools.contains(&"ShellExec".to_string()));
     }
 
     /// T-MA-R3-03: Mode-specific system prompt correctly injected.
@@ -259,7 +260,7 @@ mod tests {
         let filtered = apply_mode_overlay(&def, None);
         assert_eq!(filtered.mode, AgentMode::Plan);
         // Should apply Plan filtering
-        assert!(!filtered.allowed_tools.contains(&"file_write".to_string()));
+        assert!(!filtered.allowed_tools.contains(&"FileWrite".to_string()));
     }
 
     /// Empty system prompt gets only the mode prefix.

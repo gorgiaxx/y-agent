@@ -108,6 +108,12 @@ pub struct AgentDefinition {
     /// Maximum tokens for context shared with this agent.
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
+
+    // -- Visibility --
+    /// Whether this agent can be directly invoked by users for task delegation.
+    /// `false` (default) = internal system agent; `true` = user-callable.
+    #[serde(default)]
+    pub user_callable: bool,
 }
 
 const fn default_max_iterations() -> usize {
@@ -159,8 +165,8 @@ description = "Reviews code for bugs and style"
 mode = "plan"
 trust_tier = "user_defined"
 capabilities = ["code_review", "static_analysis"]
-allowed_tools = ["file_read", "search_code"]
-denied_tools = ["shell_exec"]
+allowed_tools = ["FileRead", "SearchCode"]
+denied_tools = ["ShellExec"]
 system_prompt = "You are a code reviewer."
 skills = ["code-analysis"]
 preferred_models = ["gpt-4o"]
@@ -182,7 +188,7 @@ max_context_tokens = 8192
         assert_eq!(def.mode, AgentMode::Plan);
         assert_eq!(def.trust_tier, TrustTier::UserDefined);
         assert_eq!(def.capabilities.len(), 2);
-        assert_eq!(def.denied_tools, vec!["shell_exec"]);
+        assert_eq!(def.denied_tools, vec!["ShellExec"]);
         assert_eq!(def.skills, vec!["code-analysis"]);
         assert_eq!(def.preferred_models, vec!["gpt-4o"]);
         assert_eq!(def.temperature, Some(0.3));
@@ -250,6 +256,7 @@ system_prompt = ""
             timeout_secs: 300,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 4096,
+            user_callable: false,
         };
         assert!(def.validate().is_err());
     }

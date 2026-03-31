@@ -328,7 +328,7 @@ name = "parallel"
 id = "search"
 name = "Search"
 type = "tool_execution"
-tool_name = "web_search"
+tool_name = "WebSearch"
 
 [[workflow.tasks]]
 id = "analyze"
@@ -369,7 +369,7 @@ name = "mapped"
 id = "search"
 name = "Search"
 type = "tool_execution"
-tool_name = "web_search"
+tool_name = "WebSearch"
 
 [workflow.tasks.inputs]
 query = { source = "workflow_input", field = "user_query" }

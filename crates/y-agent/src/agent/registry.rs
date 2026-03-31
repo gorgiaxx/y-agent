@@ -590,7 +590,7 @@ mod tests {
             mode: AgentMode::General,
             trust_tier: TrustTier::UserDefined,
             capabilities: vec!["code_review".to_string()],
-            allowed_tools: vec!["file_read".to_string()],
+            allowed_tools: vec!["FileRead".to_string()],
             denied_tools: vec![],
             system_prompt: "You are a test agent.".to_string(),
             skills: vec![],
@@ -604,6 +604,7 @@ mod tests {
             timeout_secs: 300,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 4096,
+            user_callable: false,
         }
     }
 
@@ -629,7 +630,7 @@ mod tests {
             mode: AgentMode::Explore,
             trust_tier: TrustTier::Dynamic,
             capabilities: vec![],
-            allowed_tools: vec!["file_read".to_string()],
+            allowed_tools: vec!["FileRead".to_string()],
             denied_tools: vec![],
             system_prompt: String::new(),
             skills: vec![],
@@ -643,6 +644,7 @@ mod tests {
             timeout_secs: 120,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 2048,
+            user_callable: false,
         };
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
@@ -838,6 +840,7 @@ mod tests {
             timeout_secs: 120,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 2048,
+            user_callable: false,
         };
         registry.register_dynamic(dyn_def).unwrap();
         assert_eq!(registry.count(), 2);
@@ -940,18 +943,18 @@ mod tests {
         let def = registry.get("tool-engineer").unwrap();
         assert_eq!(def.mode, AgentMode::Build);
         assert_eq!(def.trust_tier, TrustTier::BuiltIn);
-        assert!(def.allowed_tools.contains(&"file_read".to_string()));
-        assert!(def.allowed_tools.contains(&"shell_exec".to_string()));
+        assert!(def.allowed_tools.contains(&"FileRead".to_string()));
+        assert!(def.allowed_tools.contains(&"ShellExec".to_string()));
     }
 
-    /// T-MA-P4-12: Agent architect parses from TOML with `shell_exec` denied.
+    /// T-MA-P4-12: Agent architect parses from TOML with `ShellExec` denied.
     #[test]
     fn test_builtin_agent_agent_architect() {
         let registry = AgentRegistry::new();
         let def = registry.get("agent-architect").unwrap();
         assert_eq!(def.mode, AgentMode::Build);
-        assert!(def.denied_tools.contains(&"shell_exec".to_string()));
-        assert!(def.allowed_tools.contains(&"file_write".to_string()));
+        assert!(def.denied_tools.contains(&"ShellExec".to_string()));
+        assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
     }
 
     /// T-MA-P4-13: Registry loads all 8 built-in agents at startup.

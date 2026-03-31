@@ -511,6 +511,7 @@ mod tests {
             timeout_secs: 300,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 4096,
+            user_callable: false,
         }
     }
 
