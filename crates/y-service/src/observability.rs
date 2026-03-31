@@ -318,7 +318,7 @@ mod tests {
     #[tokio::test]
     async fn test_snapshot_returns_valid_structure() {
         let mut config = ServiceConfig::default();
-        config.storage.db_path = ":memory:".to_string();
+        config.storage = y_storage::StorageConfig::in_memory();
 
         let container = ServiceContainer::from_config(&config)
             .await
