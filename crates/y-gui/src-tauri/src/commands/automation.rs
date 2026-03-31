@@ -156,9 +156,13 @@ pub async fn schedule_create(
         description: request.description,
         tags: request.tags,
     };
-    SchedulerService::create(&state.container.scheduler_manager, &req)
-        .await
-        .map_err(|e| e.to_string())
+    SchedulerService::create(
+        &state.container.scheduler_manager,
+        &req,
+        Some(&state.container.schedule_store),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// `schedule_update` -- update an existing schedule.
@@ -168,33 +172,50 @@ pub async fn schedule_update(
     id: String,
     request: UpdateScheduleRequest,
 ) -> Result<ScheduleSummary, String> {
-    SchedulerService::update(&state.container.scheduler_manager, &id, &request)
-        .await
-        .map_err(|e| e.to_string())
+    SchedulerService::update(
+        &state.container.scheduler_manager,
+        &id,
+        &request,
+        Some(&state.container.schedule_store),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// `schedule_delete` -- delete a schedule.
 #[tauri::command]
 pub async fn schedule_delete(state: State<'_, AppState>, id: String) -> Result<bool, String> {
-    SchedulerService::delete(&state.container.scheduler_manager, &id)
-        .await
-        .map_err(|e| e.to_string())
+    SchedulerService::delete(
+        &state.container.scheduler_manager,
+        &id,
+        Some(&state.container.schedule_store),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// `schedule_pause` -- pause a schedule.
 #[tauri::command]
 pub async fn schedule_pause(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    SchedulerService::pause(&state.container.scheduler_manager, &id)
-        .await
-        .map_err(|e| e.to_string())
+    SchedulerService::pause(
+        &state.container.scheduler_manager,
+        &id,
+        Some(&state.container.schedule_store),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// `schedule_resume` -- resume a paused schedule.
 #[tauri::command]
 pub async fn schedule_resume(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    SchedulerService::resume(&state.container.scheduler_manager, &id)
-        .await
-        .map_err(|e| e.to_string())
+    SchedulerService::resume(
+        &state.container.scheduler_manager,
+        &id,
+        Some(&state.container.schedule_store),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------

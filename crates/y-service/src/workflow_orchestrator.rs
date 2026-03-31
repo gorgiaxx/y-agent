@@ -317,11 +317,15 @@ impl WorkflowOrchestrator {
             tags: vec![],
         };
 
-        let summary = SchedulerService::create(&container.scheduler_manager, &req)
-            .await
-            .map_err(|e| ToolError::Other {
-                message: format!("Failed to create schedule: {e}"),
-            })?;
+        let summary = SchedulerService::create(
+            &container.scheduler_manager,
+            &req,
+            Some(&container.schedule_store),
+        )
+        .await
+        .map_err(|e| ToolError::Other {
+            message: format!("Failed to create schedule: {e}"),
+        })?;
 
         Ok(ToolOutput {
             success: true,
@@ -384,11 +388,15 @@ impl WorkflowOrchestrator {
     ) -> Result<ToolOutput, ToolError> {
         let id = require_arg(arguments, "id")?;
 
-        SchedulerService::pause(&container.scheduler_manager, id)
-            .await
-            .map_err(|e| ToolError::Other {
-                message: format!("Failed to pause schedule: {e}"),
-            })?;
+        SchedulerService::pause(
+            &container.scheduler_manager,
+            id,
+            Some(&container.schedule_store),
+        )
+        .await
+        .map_err(|e| ToolError::Other {
+            message: format!("Failed to pause schedule: {e}"),
+        })?;
 
         Ok(ToolOutput {
             success: true,
@@ -409,11 +417,15 @@ impl WorkflowOrchestrator {
     ) -> Result<ToolOutput, ToolError> {
         let id = require_arg(arguments, "id")?;
 
-        SchedulerService::resume(&container.scheduler_manager, id)
-            .await
-            .map_err(|e| ToolError::Other {
-                message: format!("Failed to resume schedule: {e}"),
-            })?;
+        SchedulerService::resume(
+            &container.scheduler_manager,
+            id,
+            Some(&container.schedule_store),
+        )
+        .await
+        .map_err(|e| ToolError::Other {
+            message: format!("Failed to resume schedule: {e}"),
+        })?;
 
         Ok(ToolOutput {
             success: true,
@@ -434,11 +446,15 @@ impl WorkflowOrchestrator {
     ) -> Result<ToolOutput, ToolError> {
         let id = require_arg(arguments, "id")?;
 
-        SchedulerService::delete(&container.scheduler_manager, id)
-            .await
-            .map_err(|e| ToolError::Other {
-                message: format!("Failed to delete schedule: {e}"),
-            })?;
+        SchedulerService::delete(
+            &container.scheduler_manager,
+            id,
+            Some(&container.schedule_store),
+        )
+        .await
+        .map_err(|e| ToolError::Other {
+            message: format!("Failed to delete schedule: {e}"),
+        })?;
 
         Ok(ToolOutput {
             success: true,

@@ -35,7 +35,7 @@ pub use pool::create_pool;
 pub use provider_metrics_store::{
     AggregatedProviderMetrics, ProviderMetricsEvent, SqliteProviderMetricsStore,
 };
-pub use schedule_store::SqliteScheduleStore;
+pub use schedule_store::{ScheduleRow, SqliteScheduleStore};
 pub use session_store::SqliteSessionStore;
 pub use sqlx::SqlitePool;
 pub use transcript::JsonlTranscriptStore;

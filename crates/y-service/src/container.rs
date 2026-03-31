@@ -35,7 +35,7 @@ use y_session::{ChatCheckpointManager, SessionManager};
 use y_skills::{SkillRegistryImpl, SkillSearch};
 use y_storage::{
     SqliteChatCheckpointStore, SqliteChatMessageStore, SqliteProviderMetricsStore,
-    SqliteSessionStore, SqliteWorkflowStore,
+    SqliteScheduleStore, SqliteSessionStore, SqliteWorkflowStore,
 };
 use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
@@ -98,6 +98,9 @@ pub struct ServiceContainer {
 
     /// Workflow store for persistent workflow templates.
     pub workflow_store: SqliteWorkflowStore,
+
+    /// Schedule store for persistent schedule definitions (SQLite-backed).
+    pub schedule_store: SqliteScheduleStore,
 
     /// Scheduler manager for scheduled task management.
     pub scheduler_manager: y_scheduler::SchedulerManager,
@@ -401,8 +404,21 @@ tools = ["ToolSearch"]
         // 11. Workflow store.
         let workflow_store = SqliteWorkflowStore::new(pool.clone());
 
-        // 11b. Scheduler manager.
+        // 11b. Schedule store (SQLite-backed persistence for schedule definitions).
+        let schedule_store = SqliteScheduleStore::new(pool.clone());
+
+        // 11c. Scheduler manager.
         let scheduler_manager = crate::scheduler_service::SchedulerService::create_manager();
+
+        // 11d. Hydrate in-memory scheduler from SQLite.
+        if let Err(e) = crate::scheduler_service::SchedulerService::load_schedules_from_db(
+            &scheduler_manager,
+            &schedule_store,
+        )
+        .await
+        {
+            warn!(error = %e, "Failed to load persisted schedules; starting with empty store");
+        }
 
         // 12. Diagnostics -- SQLite-backed for persistence.
         let sqlite_trace_store = y_diagnostics::SqliteTraceStore::new(pool.clone());
@@ -449,6 +465,7 @@ tools = ["ToolSearch"]
             agent_delegator,
             delegation_tracker,
             workflow_store,
+            schedule_store,
             scheduler_manager,
             prompt_context,
             diagnostics,

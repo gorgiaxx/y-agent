@@ -2,10 +2,18 @@
 //!
 //! Wraps `y-scheduler::SchedulerManager` with a service-layer API for
 //! GUI / REST consumption. Provides CRUD, pause/resume, and schedule listing.
+//!
+//! All mutations are written-through to `SqliteScheduleStore` so that
+//! schedules survive application restarts. On startup,
+//! [`SchedulerService::load_schedules_from_db`] hydrates the in-memory
+//! store from `SQLite`.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 
 use y_scheduler::{Schedule, SchedulePolicies, SchedulerConfig, SchedulerManager, TriggerConfig};
+use y_storage::SqliteScheduleStore;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -137,6 +145,42 @@ impl SchedulerService {
         SchedulerManager::new(SchedulerConfig::default())
     }
 
+    /// Hydrate the in-memory `SchedulerManager` from persisted `SQLite` rows.
+    ///
+    /// Called once during `ServiceContainer::from_config()` after both
+    /// the manager and store are created. Converts each `ScheduleRow`
+    /// back into a `Schedule` and registers it.
+    pub async fn load_schedules_from_db(
+        manager: &SchedulerManager,
+        store: &SqliteScheduleStore,
+    ) -> Result<usize, SchedulerServiceError> {
+        let rows = store
+            .list()
+            .await
+            .map_err(|e| SchedulerServiceError::Internal(format!("load schedules from DB: {e}")))?;
+
+        let count = rows.len();
+        for row in rows {
+            match schedule_from_row(&row) {
+                Ok(schedule) => {
+                    manager.register(schedule).await;
+                }
+                Err(e) => {
+                    warn!(
+                        schedule_id = %row.id,
+                        error = %e,
+                        "Skipping corrupted schedule row"
+                    );
+                }
+            }
+        }
+
+        if count > 0 {
+            info!(count, "Hydrated in-memory scheduler from SQLite");
+        }
+        Ok(count)
+    }
+
     /// List all schedules.
     pub async fn list(manager: &SchedulerManager) -> Vec<ScheduleSummary> {
         manager
@@ -160,9 +204,12 @@ impl SchedulerService {
     }
 
     /// Create a new schedule.
+    ///
+    /// Registers in the in-memory manager AND persists to `SQLite`.
     pub async fn create(
         manager: &SchedulerManager,
         req: &CreateScheduleRequest,
+        db_store: Option<&SqliteScheduleStore>,
     ) -> Result<ScheduleSummary, SchedulerServiceError> {
         if req.name.is_empty() {
             return Err(SchedulerServiceError::Validation {
@@ -187,16 +234,28 @@ impl SchedulerService {
         .with_description(req.description.clone())
         .with_tags(req.tags.clone());
 
+        // Persist to SQLite first (fail fast on DB errors).
+        if let Some(store) = db_store {
+            let row = schedule_to_row(&schedule);
+            store
+                .save(&row)
+                .await
+                .map_err(|e| SchedulerServiceError::Internal(format!("persist schedule: {e}")))?;
+        }
+
         manager.register(schedule).await;
 
         Self::get(manager, &id).await
     }
 
     /// Update an existing schedule.
+    ///
+    /// Updates the in-memory manager AND persists to `SQLite`.
     pub async fn update(
         manager: &SchedulerManager,
         id: &str,
         req: &UpdateScheduleRequest,
+        db_store: Option<&SqliteScheduleStore>,
     ) -> Result<ScheduleSummary, SchedulerServiceError> {
         let existing = manager
             .get_schedule(id)
@@ -218,7 +277,15 @@ impl SchedulerService {
         .with_description(req.description.clone().unwrap_or(existing.description))
         .with_tags(req.tags.clone().unwrap_or(existing.tags));
 
-        // Remove + re-register to replace.
+        // Persist to SQLite.
+        if let Some(store) = db_store {
+            let row = schedule_to_row(&updated);
+            store.update(&row).await.map_err(|e| {
+                SchedulerServiceError::Internal(format!("update schedule in DB: {e}"))
+            })?;
+        }
+
+        // Remove + re-register to replace in-memory.
         manager.remove(id).await;
         manager.register(updated).await;
 
@@ -226,16 +293,34 @@ impl SchedulerService {
     }
 
     /// Delete a schedule.
+    ///
+    /// Removes from the in-memory manager AND deletes from `SQLite`.
     pub async fn delete(
         manager: &SchedulerManager,
         id: &str,
+        db_store: Option<&SqliteScheduleStore>,
     ) -> Result<bool, SchedulerServiceError> {
+        // Delete from SQLite first.
+        if let Some(store) = db_store {
+            store.delete(id).await.map_err(|e| {
+                SchedulerServiceError::Internal(format!("delete schedule from DB: {e}"))
+            })?;
+        }
         Ok(manager.remove(id).await)
     }
 
     /// Pause a schedule (disable without removing).
-    pub async fn pause(manager: &SchedulerManager, id: &str) -> Result<(), SchedulerServiceError> {
+    ///
+    /// Updates the in-memory manager AND persists enabled=false to `SQLite`.
+    pub async fn pause(
+        manager: &SchedulerManager,
+        id: &str,
+        db_store: Option<&SqliteScheduleStore>,
+    ) -> Result<(), SchedulerServiceError> {
         if manager.pause(id).await {
+            if let Some(store) = db_store {
+                let _ = store.set_enabled(id, false).await;
+            }
             Ok(())
         } else {
             Err(SchedulerServiceError::NotFound { id: id.to_string() })
@@ -243,8 +328,17 @@ impl SchedulerService {
     }
 
     /// Resume a paused schedule.
-    pub async fn resume(manager: &SchedulerManager, id: &str) -> Result<(), SchedulerServiceError> {
+    ///
+    /// Updates the in-memory manager AND persists enabled=true to `SQLite`.
+    pub async fn resume(
+        manager: &SchedulerManager,
+        id: &str,
+        db_store: Option<&SqliteScheduleStore>,
+    ) -> Result<(), SchedulerServiceError> {
         if manager.resume(id).await {
+            if let Some(store) = db_store {
+                let _ = store.set_enabled(id, true).await;
+            }
             Ok(())
         } else {
             Err(SchedulerServiceError::NotFound { id: id.to_string() })
@@ -533,15 +627,7 @@ impl SchedulerService {
 // ---------------------------------------------------------------------------
 
 fn schedule_to_summary(schedule: &Schedule) -> ScheduleSummary {
-    let (trigger_type, trigger_value) = match &schedule.trigger {
-        TriggerConfig::Cron {
-            expression,
-            timezone,
-        } => ("cron", format!("{expression} ({timezone})")),
-        TriggerConfig::Interval { interval_secs } => ("interval", format!("{interval_secs}s")),
-        TriggerConfig::Event { event_type, .. } => ("event", event_type.clone()),
-        TriggerConfig::OneTime { at } => ("onetime", at.to_rfc3339()),
-    };
+    let (trigger_type, trigger_value) = trigger_type_and_value(&schedule.trigger);
 
     ScheduleSummary {
         id: schedule.id.clone(),
@@ -554,6 +640,19 @@ fn schedule_to_summary(schedule: &Schedule) -> ScheduleSummary {
         tags: schedule.tags.clone(),
         created_at: schedule.created_at.to_rfc3339(),
         last_fire: schedule.last_fire.map(|t| t.to_rfc3339()),
+    }
+}
+
+/// Extract trigger type label and expression value from a `TriggerConfig`.
+fn trigger_type_and_value(trigger: &TriggerConfig) -> (&'static str, String) {
+    match trigger {
+        TriggerConfig::Cron {
+            expression,
+            timezone,
+        } => ("cron", format!("{expression} ({timezone})")),
+        TriggerConfig::Interval { interval_secs } => ("interval", format!("{interval_secs}s")),
+        TriggerConfig::Event { event_type, .. } => ("event", event_type.clone()),
+        TriggerConfig::OneTime { at } => ("onetime", at.to_rfc3339()),
     }
 }
 
@@ -582,6 +681,177 @@ fn execution_to_summary(exec: &y_scheduler::ScheduleExecution) -> ExecutionSumma
 }
 
 // ---------------------------------------------------------------------------
+// Schedule <-> ScheduleRow conversion
+// ---------------------------------------------------------------------------
+
+/// Convert an in-memory `Schedule` to a `SQLite` `ScheduleRow` for persistence.
+fn schedule_to_row(schedule: &Schedule) -> y_storage::ScheduleRow {
+    let (schedule_type, schedule_expr) = match &schedule.trigger {
+        TriggerConfig::Cron {
+            expression,
+            timezone,
+        } => ("cron".to_string(), format!("{expression}|{timezone}")),
+        TriggerConfig::Interval { interval_secs } => {
+            ("interval".to_string(), interval_secs.to_string())
+        }
+        TriggerConfig::Event {
+            event_type,
+            debounce_secs,
+        } => ("event".to_string(), format!("{event_type}|{debounce_secs}")),
+        TriggerConfig::OneTime { at } => ("onetime".to_string(), at.to_rfc3339()),
+    };
+
+    let parameter_bindings = if schedule.parameter_values.is_null()
+        || schedule.parameter_values == serde_json::json!({})
+    {
+        None
+    } else {
+        Some(schedule.parameter_values.to_string())
+    };
+
+    let tags_json = serde_json::to_string(&schedule.tags).unwrap_or_else(|_| "[]".to_string());
+
+    let missed_policy = format!("{:?}", schedule.policies.missed_policy).to_lowercase();
+    let concurrency_policy = serde_json::to_value(&schedule.policies.concurrency_policy)
+        .ok()
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_else(|| "skip_if_running".to_string());
+
+    y_storage::ScheduleRow {
+        id: schedule.id.clone(),
+        name: schedule.name.clone(),
+        description: if schedule.description.is_empty() {
+            None
+        } else {
+            Some(schedule.description.clone())
+        },
+        schedule_type,
+        schedule_expr,
+        workflow_id: schedule.workflow_id.clone(),
+        parameter_bindings,
+        parameter_schema: None,
+        enabled: schedule.enabled,
+        creator: "user".to_string(),
+        missed_policy,
+        concurrency_policy,
+        max_executions_per_hour: i64::from(schedule.policies.max_executions_per_hour),
+        tags: tags_json,
+        last_fire: schedule.last_fire.map(|t| t.to_rfc3339()),
+        created_at: schedule.created_at.to_rfc3339(),
+        updated_at: schedule.updated_at.to_rfc3339(),
+    }
+}
+
+/// Convert a `SQLite` `ScheduleRow` back to an in-memory `Schedule`.
+///
+/// Returns `Err` if the trigger configuration or timestamps cannot be parsed.
+fn schedule_from_row(row: &y_storage::ScheduleRow) -> Result<Schedule, SchedulerServiceError> {
+    let trigger = match row.schedule_type.as_str() {
+        "cron" => {
+            let parts: Vec<&str> = row.schedule_expr.splitn(2, '|').collect();
+            let expression = parts.first().unwrap_or(&"").to_string();
+            let timezone = parts.get(1).unwrap_or(&"UTC").to_string();
+            TriggerConfig::Cron {
+                expression,
+                timezone,
+            }
+        }
+        "interval" => {
+            let interval_secs = row.schedule_expr.parse::<u64>().map_err(|e| {
+                SchedulerServiceError::Internal(format!(
+                    "invalid interval '{}': {e}",
+                    row.schedule_expr
+                ))
+            })?;
+            TriggerConfig::Interval { interval_secs }
+        }
+        "event" => {
+            let parts: Vec<&str> = row.schedule_expr.splitn(2, '|').collect();
+            let event_type = parts.first().unwrap_or(&"").to_string();
+            let debounce_secs = parts
+                .get(1)
+                .copied()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            TriggerConfig::Event {
+                event_type,
+                debounce_secs,
+            }
+        }
+        "onetime" => {
+            let at = row.schedule_expr.parse::<DateTime<Utc>>().map_err(|e| {
+                SchedulerServiceError::Internal(format!(
+                    "invalid onetime timestamp '{}': {e}",
+                    row.schedule_expr
+                ))
+            })?;
+            TriggerConfig::OneTime { at }
+        }
+        other => {
+            return Err(SchedulerServiceError::Internal(format!(
+                "unknown schedule type: {other}"
+            )));
+        }
+    };
+
+    let parameter_values = row
+        .parameter_bindings
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or(serde_json::json!({}));
+
+    let missed_policy = match row.missed_policy.as_str() {
+        "catch_up" | "catchup" => y_scheduler::MissedPolicy::CatchUp,
+        "backfill" => y_scheduler::MissedPolicy::Backfill,
+        _ => y_scheduler::MissedPolicy::Skip,
+    };
+
+    let concurrency_policy = match row.concurrency_policy.as_str() {
+        "allow" => y_scheduler::ConcurrencyPolicy::Allow,
+        "queue" => y_scheduler::ConcurrencyPolicy::Queue,
+        "cancel_previous" => y_scheduler::ConcurrencyPolicy::CancelPrevious,
+        _ => y_scheduler::ConcurrencyPolicy::SkipIfRunning,
+    };
+
+    let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
+
+    let created_at = row
+        .created_at
+        .parse::<DateTime<Utc>>()
+        .unwrap_or_else(|_| Utc::now());
+    let updated_at = row
+        .updated_at
+        .parse::<DateTime<Utc>>()
+        .unwrap_or_else(|_| Utc::now());
+    let last_fire = row
+        .last_fire
+        .as_deref()
+        .and_then(|s: &str| s.parse::<DateTime<Utc>>().ok());
+
+    let mut schedule = Schedule::new(
+        row.id.clone(),
+        row.name.clone(),
+        trigger,
+        row.workflow_id.clone(),
+    )
+    .with_params(parameter_values)
+    .with_policies(SchedulePolicies {
+        missed_policy,
+        concurrency_policy,
+        max_executions_per_hour: u32::try_from(row.max_executions_per_hour).unwrap_or(0),
+    })
+    .with_description(row.description.clone().unwrap_or_default())
+    .with_tags(tags);
+
+    schedule.enabled = row.enabled;
+    schedule.created_at = created_at;
+    schedule.updated_at = updated_at;
+    schedule.last_fire = last_fire;
+
+    Ok(schedule)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -607,7 +877,9 @@ mod tests {
     async fn test_create_schedule() {
         let manager = SchedulerService::create_manager();
         let req = make_create_req();
-        let result = SchedulerService::create(&manager, &req).await.unwrap();
+        let result = SchedulerService::create(&manager, &req, None)
+            .await
+            .unwrap();
         assert_eq!(result.name, "test-schedule");
         assert_eq!(result.trigger_type, "interval");
         assert_eq!(result.workflow_id, "wf-123");
@@ -618,7 +890,9 @@ mod tests {
     async fn test_list_schedules() {
         let manager = SchedulerService::create_manager();
         let req = make_create_req();
-        SchedulerService::create(&manager, &req).await.unwrap();
+        SchedulerService::create(&manager, &req, None)
+            .await
+            .unwrap();
         let list = SchedulerService::list(&manager).await;
         assert_eq!(list.len(), 1);
     }
@@ -634,8 +908,10 @@ mod tests {
     async fn test_delete_schedule() {
         let manager = SchedulerService::create_manager();
         let req = make_create_req();
-        let created = SchedulerService::create(&manager, &req).await.unwrap();
-        let deleted = SchedulerService::delete(&manager, &created.id)
+        let created = SchedulerService::create(&manager, &req, None)
+            .await
+            .unwrap();
+        let deleted = SchedulerService::delete(&manager, &created.id, None)
             .await
             .unwrap();
         assert!(deleted);
@@ -646,15 +922,17 @@ mod tests {
     async fn test_pause_resume_schedule() {
         let manager = SchedulerService::create_manager();
         let req = make_create_req();
-        let created = SchedulerService::create(&manager, &req).await.unwrap();
+        let created = SchedulerService::create(&manager, &req, None)
+            .await
+            .unwrap();
 
-        SchedulerService::pause(&manager, &created.id)
+        SchedulerService::pause(&manager, &created.id, None)
             .await
             .unwrap();
         let paused = SchedulerService::get(&manager, &created.id).await.unwrap();
         assert!(!paused.enabled);
 
-        SchedulerService::resume(&manager, &created.id)
+        SchedulerService::resume(&manager, &created.id, None)
             .await
             .unwrap();
         let resumed = SchedulerService::get(&manager, &created.id).await.unwrap();
@@ -666,7 +944,7 @@ mod tests {
         let manager = SchedulerService::create_manager();
         let mut req = make_create_req();
         req.name = String::new();
-        let result = SchedulerService::create(&manager, &req).await;
+        let result = SchedulerService::create(&manager, &req, None).await;
         assert!(result.is_err());
     }
 
@@ -674,7 +952,9 @@ mod tests {
     async fn test_update_schedule() {
         let manager = SchedulerService::create_manager();
         let req = make_create_req();
-        let created = SchedulerService::create(&manager, &req).await.unwrap();
+        let created = SchedulerService::create(&manager, &req, None)
+            .await
+            .unwrap();
 
         let update = UpdateScheduleRequest {
             name: Some("updated-name".to_string()),
@@ -685,10 +965,113 @@ mod tests {
             description: Some("updated desc".to_string()),
             tags: None,
         };
-        let updated = SchedulerService::update(&manager, &created.id, &update)
+        let updated = SchedulerService::update(&manager, &created.id, &update, None)
             .await
             .unwrap();
         assert_eq!(updated.name, "updated-name");
         assert_eq!(updated.description, "updated desc");
+    }
+
+    // -----------------------------------------------------------------------
+    // Conversion round-trip tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_schedule_row_roundtrip_interval() {
+        let schedule = Schedule::new(
+            "s1",
+            "Interval Test",
+            TriggerConfig::Interval { interval_secs: 300 },
+            "wf-1",
+        )
+        .with_description("round-trip test")
+        .with_tags(vec!["tag1".into(), "tag2".into()])
+        .with_params(serde_json::json!({"key": "value"}));
+
+        let row = schedule_to_row(&schedule);
+        assert_eq!(row.schedule_type, "interval");
+        assert_eq!(row.schedule_expr, "300");
+
+        let restored = schedule_from_row(&row).unwrap();
+        assert_eq!(restored.id, schedule.id);
+        assert_eq!(restored.name, schedule.name);
+        assert_eq!(restored.workflow_id, schedule.workflow_id);
+        assert_eq!(restored.description, schedule.description);
+        assert_eq!(restored.tags, schedule.tags);
+        assert_eq!(restored.parameter_values, schedule.parameter_values);
+        assert!(matches!(
+            restored.trigger,
+            TriggerConfig::Interval { interval_secs: 300 }
+        ));
+    }
+
+    #[test]
+    fn test_schedule_row_roundtrip_cron() {
+        let schedule = Schedule::new(
+            "s2",
+            "Cron Test",
+            TriggerConfig::Cron {
+                expression: "0 2 * * *".into(),
+                timezone: "Asia/Shanghai".into(),
+            },
+            "wf-2",
+        );
+
+        let row = schedule_to_row(&schedule);
+        assert_eq!(row.schedule_type, "cron");
+        assert_eq!(row.schedule_expr, "0 2 * * *|Asia/Shanghai");
+
+        let restored = schedule_from_row(&row).unwrap();
+        match &restored.trigger {
+            TriggerConfig::Cron {
+                expression,
+                timezone,
+            } => {
+                assert_eq!(expression, "0 2 * * *");
+                assert_eq!(timezone, "Asia/Shanghai");
+            }
+            other => panic!("expected Cron, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_schedule_row_roundtrip_event() {
+        let schedule = Schedule::new(
+            "s3",
+            "Event Test",
+            TriggerConfig::Event {
+                event_type: "file_changed".into(),
+                debounce_secs: 5,
+            },
+            "wf-3",
+        );
+
+        let row = schedule_to_row(&schedule);
+        let restored = schedule_from_row(&row).unwrap();
+        match &restored.trigger {
+            TriggerConfig::Event {
+                event_type,
+                debounce_secs,
+            } => {
+                assert_eq!(event_type, "file_changed");
+                assert_eq!(*debounce_secs, 5);
+            }
+            other => panic!("expected Event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_schedule_row_roundtrip_disabled() {
+        let mut schedule = Schedule::new(
+            "s4",
+            "Disabled Test",
+            TriggerConfig::Interval { interval_secs: 60 },
+            "wf-4",
+        );
+        schedule.enabled = false;
+
+        let row = schedule_to_row(&schedule);
+        let restored = schedule_from_row(&row).unwrap();
+        assert!(!restored.enabled);
     }
 }

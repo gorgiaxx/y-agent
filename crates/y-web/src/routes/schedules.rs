@@ -51,7 +51,12 @@ async fn create_schedule(
     State(state): State<AppState>,
     Json(body): Json<CreateScheduleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let schedule = SchedulerService::create(&state.container.scheduler_manager, &body).await?;
+    let schedule = SchedulerService::create(
+        &state.container.scheduler_manager,
+        &body,
+        Some(&state.container.schedule_store),
+    )
+    .await?;
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(schedule).unwrap_or_default()),
@@ -64,7 +69,13 @@ async fn update_schedule(
     Path(id): Path<String>,
     Json(body): Json<UpdateScheduleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let schedule = SchedulerService::update(&state.container.scheduler_manager, &id, &body).await?;
+    let schedule = SchedulerService::update(
+        &state.container.scheduler_manager,
+        &id,
+        &body,
+        Some(&state.container.schedule_store),
+    )
+    .await?;
     Ok(Json(serde_json::to_value(schedule).unwrap_or_default()))
 }
 
@@ -73,7 +84,12 @@ async fn delete_schedule(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let deleted = SchedulerService::delete(&state.container.scheduler_manager, &id).await?;
+    let deleted = SchedulerService::delete(
+        &state.container.scheduler_manager,
+        &id,
+        Some(&state.container.schedule_store),
+    )
+    .await?;
     if deleted {
         Ok(Json(serde_json::json!({"message": "deleted"})))
     } else {
@@ -86,7 +102,12 @@ async fn pause_schedule(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    SchedulerService::pause(&state.container.scheduler_manager, &id).await?;
+    SchedulerService::pause(
+        &state.container.scheduler_manager,
+        &id,
+        Some(&state.container.schedule_store),
+    )
+    .await?;
     Ok(Json(serde_json::json!({"message": "paused"})))
 }
 
@@ -95,7 +116,12 @@ async fn resume_schedule(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    SchedulerService::resume(&state.container.scheduler_manager, &id).await?;
+    SchedulerService::resume(
+        &state.container.scheduler_manager,
+        &id,
+        Some(&state.container.schedule_store),
+    )
+    .await?;
     Ok(Json(serde_json::json!({"message": "resumed"})))
 }
 
