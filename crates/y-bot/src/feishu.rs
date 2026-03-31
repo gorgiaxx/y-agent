@@ -180,21 +180,20 @@ impl FeishuBot {
         let resp = self
             .http
             .get(&url)
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", format!("Bearer {token}"))
             .send()
             .await?;
 
         let status = resp.status();
         let json: serde_json::Value = resp.json().await?;
-        if !status.is_success() || json.get("code").and_then(|v| v.as_u64()).unwrap_or(1) != 0 {
+        if !status.is_success() || json.get("code").and_then(serde_json::Value::as_u64).unwrap_or(1) != 0 {
             let api_msg = json
                 .get("msg")
                 .and_then(|m| m.as_str())
                 .unwrap_or("unknown error");
             warn!(status = %status, msg = api_msg, "Feishu get_message failed");
             return Err(BotError::ApiError(format!(
-                "Feishu get_message failed: {}",
-                api_msg
+                "Feishu get_message failed: {api_msg}"
             )));
         }
 
@@ -219,7 +218,7 @@ impl FeishuBot {
         let resp = self
             .http
             .get(&url)
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", format!("Bearer {token}"))
             .send()
             .await?;
 
@@ -344,7 +343,7 @@ impl BotPlatform for FeishuBot {
                 if key == "@_user_1" && content.starts_with("@_user_1 ") {
                     content = content.replace("@_user_1 ", "");
                 } else if !key.is_empty() && !open_id.is_empty() {
-                    let formatted = format!("<at user_id=\"{}\">{}</at>", open_id, name);
+                    let formatted = format!("<at user_id=\"{open_id}\">{name}</at>");
                     content = content.replace(key, &formatted);
                 }
             }
@@ -365,7 +364,7 @@ impl BotPlatform for FeishuBot {
                             .and_then(|v| v.as_str())
                             .unwrap_or("text");
                         let sub_text = parse_feishu_content(body_content, msg_t);
-                        lines.push(format!("- {}", sub_text));
+                        lines.push(format!("- {sub_text}"));
                     }
                     if items.len() > limit {
                         lines.push(format!("... and {} more messages", items.len() - limit));
@@ -391,7 +390,7 @@ impl BotPlatform for FeishuBot {
                 if safe_name.is_empty() {
                     safe_name = format!("{}.{}", res.file_key, ext);
                 }
-                let path = temp_dir.join(format!("{}_{}", message_id, safe_name));
+                let path = temp_dir.join(format!("{message_id}_{safe_name}"));
                 let _ = std::fs::write(&path, &bytes);
 
                 attachments.push(crate::BotAttachment {
@@ -630,15 +629,15 @@ fn parse_post_content(raw: &str) -> String {
                             .and_then(|n| n.as_str())
                             .unwrap_or("User");
                         let uid = elem.get("user_id").and_then(|n| n.as_str()).unwrap_or("");
-                        if !uid.is_empty() {
-                            texts.push(format!("<at user_id=\"{}\">{}</at>", uid, name));
+                        if uid.is_empty() {
+                            texts.push(format!("@{name}"));
                         } else {
-                            texts.push(format!("@{}", name));
+                            texts.push(format!("<at user_id=\"{uid}\">{name}</at>"));
                         }
                     }
                     "img" | "media" => {
                         let img_type = if tag == "img" { "Image" } else { "Media" };
-                        texts.push(format!("[{}]", img_type));
+                        texts.push(format!("[{img_type}]"));
                     }
                     "md" => {
                         if let Some(text) = elem.get("text").and_then(|t| t.as_str()) {
@@ -681,16 +680,7 @@ fn extract_feishu_media_keys(raw: &str, message_type: &str) -> Vec<FeishuMediaRe
                     });
                 }
             }
-            "file" | "audio" | "sticker" => {
-                if let Some(key) = file_key {
-                    keys.push(FeishuMediaRef {
-                        file_key: key.to_string(),
-                        resource_type: "file".to_string(),
-                        file_name,
-                    });
-                }
-            }
-            "media" | "video" => {
+            "file" | "audio" | "sticker" | "media" | "video" => {
                 if let Some(key) = file_key {
                     keys.push(FeishuMediaRef {
                         file_key: key.to_string(),
@@ -790,7 +780,7 @@ mod tests {
         assert_eq!(msg.message_id, "om_xyz");
         assert_eq!(msg.sender_id, "ou_abc123");
         assert_eq!(msg.chat_type, ChatType::Group);
-        assert_eq!(msg.content, "@_user_1 Hello bot");
+        assert_eq!(msg.content, "Hello bot");
     }
 
     #[tokio::test]

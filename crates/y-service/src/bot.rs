@@ -62,12 +62,39 @@ impl BotService {
             "Bot: handling inbound message"
         );
 
+        // Append attachment info to the prompt if any exist
+        let mut user_input = message.content.clone();
+        if !message.attachments.is_empty() {
+            use std::fmt::Write;
+            let _ = write!(
+                &mut user_input,
+                "\n\n[System: The user sent the following attachments:]\n"
+            );
+            for att in &message.attachments {
+                if let Some(ref p) = att.path {
+                    let _ = writeln!(
+                        &mut user_input,
+                        "- {} ({}) saved at: {}",
+                        att.file_name, att.content_type, p
+                    );
+                } else {
+                    let _ = writeln!(
+                        &mut user_input,
+                        "- {} ({}): {} bytes",
+                        att.file_name,
+                        att.content_type,
+                        att.data.len()
+                    );
+                }
+            }
+        }
+
         // Prepare the chat turn (resolve/create session, persist user message).
         let prepared = ChatService::prepare_turn(
             container,
             crate::chat::PrepareTurnRequest {
                 session_id: Some(session_id.clone()),
-                user_input: message.content.clone(),
+                user_input: user_input.clone(),
                 provider_id: None,
                 skills: None,
                 knowledge_collections: None,
@@ -85,7 +112,7 @@ impl BotService {
                     container,
                     crate::chat::PrepareTurnRequest {
                         session_id: None,
-                        user_input: message.content.clone(),
+                        user_input,
                         provider_id: None,
                         skills: None,
                         knowledge_collections: None,

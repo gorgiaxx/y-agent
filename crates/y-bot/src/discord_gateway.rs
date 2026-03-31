@@ -31,9 +31,9 @@ const GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
 
 /// Gateway intents (bitfield):
 /// - GUILDS            (1 << 0)  = 1
-/// - GUILD_MESSAGES    (1 << 9)  = 512
-/// - DIRECT_MESSAGES   (1 << 12) = 4096
-/// - MESSAGE_CONTENT   (1 << 15) = 32768  (privileged)
+/// - `GUILD_MESSAGES`    (1 << 9)  = 512
+/// - `DIRECT_MESSAGES`   (1 << 12) = 4096
+/// - `MESSAGE_CONTENT`   (1 << 15) = 32768  (privileged)
 const GATEWAY_INTENTS: u64 = 1 | 512 | 4096 | 32768;
 
 /// Gateway opcodes.
@@ -259,7 +259,7 @@ type WsStream = futures_util::stream::SplitStream<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 >;
 
-/// Wait for the Hello event and extract heartbeat_interval.
+/// Wait for the Hello event and extract `heartbeat_interval`.
 async fn recv_hello(stream: &mut WsStream) -> Result<u64, GatewayError> {
     // Read up to 5 messages looking for Hello.
     for _ in 0..5 {
@@ -270,11 +270,11 @@ async fn recv_hello(stream: &mut WsStream) -> Result<u64, GatewayError> {
 
         if let WsMessage::Text(ref text) = msg {
             if let Ok(payload) = serde_json::from_str::<serde_json::Value>(text) {
-                if payload.get("op").and_then(|v| v.as_u64()) == Some(op::HELLO) {
+                if payload.get("op").and_then(serde_json::Value::as_u64) == Some(op::HELLO) {
                     let interval = payload
                         .get("d")
                         .and_then(|d| d.get("heartbeat_interval"))
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .unwrap_or(41250);
                     return Ok(interval);
                 }
@@ -362,10 +362,10 @@ fn handle_event(
         }
     };
 
-    let opcode = payload.get("op").and_then(|v| v.as_u64()).unwrap_or(99);
+    let opcode = payload.get("op").and_then(serde_json::Value::as_u64).unwrap_or(99);
 
     // Update sequence number for heartbeat and resume.
-    if let Some(seq) = payload.get("s").and_then(|v| v.as_u64()) {
+    if let Some(seq) = payload.get("s").and_then(serde_json::Value::as_u64) {
         state.sequence = Some(seq);
     }
 
@@ -422,7 +422,7 @@ fn handle_event(
         }
         op::RECONNECT => EventAction::Reconnect,
         op::INVALID_SESSION => {
-            let resumable = payload.get("d").and_then(|v| v.as_bool()).unwrap_or(false);
+            let resumable = payload.get("d").and_then(serde_json::Value::as_bool).unwrap_or(false);
             EventAction::InvalidSession(resumable)
         }
         _ => {
@@ -432,13 +432,13 @@ fn handle_event(
     }
 }
 
-/// Parse a MESSAGE_CREATE dispatch event and forward as InboundMessage.
+/// Parse a `MESSAGE_CREATE` dispatch event and forward as `InboundMessage`.
 fn handle_message_create(data: &serde_json::Value, tx: &mpsc::UnboundedSender<InboundMessage>) {
     // Skip messages from bots (including ourselves).
     let is_bot = data
         .get("author")
         .and_then(|a| a.get("bot"))
-        .and_then(|v| v.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     if is_bot {
         return;
