@@ -92,6 +92,7 @@ impl OpenAiProvider {
                             .iter()
                             .map(|tc| OpenAiToolCall {
                                 id: tc.id.clone(),
+                                r#type: "function".to_string(),
                                 function: OpenAiToolCallFunction {
                                     name: tc.name.clone(),
                                     arguments: match &tc.arguments {
@@ -716,7 +717,13 @@ struct OpenAiUsage {
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenAiToolCall {
     id: String,
+    #[serde(default = "default_tool_call_type")]
+    r#type: String,
     function: OpenAiToolCallFunction,
+}
+
+fn default_tool_call_type() -> String {
+    "function".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize)]

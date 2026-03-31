@@ -285,7 +285,7 @@ impl<T: Tokenizer> InjectKnowledge<T> {
     /// Format a retrieval result using structured L0/L1 metadata.
     ///
     /// Produces a compact representation: L0 summary + L1 section titles,
-    /// guiding the LLM to use `knowledge_search` for full content.
+    /// guiding the LLM to use `KnowledgeSearch` for full content.
     fn format_structured(result: &RetrievalResult, meta: &EntryMetadata) -> String {
         use std::fmt::Write;
         let mut out = format!(

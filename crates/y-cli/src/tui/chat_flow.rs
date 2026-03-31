@@ -519,7 +519,7 @@ mod tests {
 
         apply_chat_event(
             ChatEvent::ToolCallExecuted {
-                name: "web_search".into(),
+                name: "WebSearch".into(),
                 success: true,
                 duration_ms: 120,
             },
@@ -527,7 +527,7 @@ mod tests {
         );
 
         let last = state.messages.last().unwrap();
-        assert!(last.content.contains("web_search"));
+        assert!(last.content.contains("WebSearch"));
         assert!(last.content.contains("✓"));
         assert!(last.content.contains("120ms"));
     }

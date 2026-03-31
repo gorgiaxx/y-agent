@@ -188,7 +188,7 @@ mod tests {
                 provenance: EvidenceProvenance::UserStated,
             }],
             tool_calls: vec![ToolCallRecord {
-                name: "file_read".to_string(),
+                name: "FileRead".to_string(),
                 success: true,
                 duration_ms: 50,
             }],
@@ -203,7 +203,7 @@ mod tests {
     fn test_experience_with_tool_calls() {
         let record = sample_record(Some("skill-1"), ExperienceOutcome::Success);
         assert_eq!(record.tool_calls.len(), 1);
-        assert_eq!(record.tool_calls[0].name, "file_read");
+        assert_eq!(record.tool_calls[0].name, "FileRead");
         assert!(record.tool_calls[0].success);
         assert_eq!(record.token_usage.prompt, 1000);
         assert_eq!(record.token_usage.completion, 500);

@@ -8,8 +8,8 @@ use tokio::sync::Mutex;
 use crate::error::JournalError;
 use crate::storage::{FileOperation, JournalEntry, JournalStore, ScopeType, StorageStrategy};
 
-/// Tool names that are known to mutate files.
-const FILE_MUTATING_TOOLS: &[&str] = &["file_write", "file_patch", "file_delete"];
+/// List of core tools known to mutate the filesystem.
+const FILE_MUTATING_TOOLS: &[&str] = &["FileWrite", "FilePatch", "FileDelete"];
 
 /// Maximum file size for inline storage (256KB).
 const _INLINE_THRESHOLD: u64 = 256 * 1024;
@@ -159,10 +159,10 @@ mod tests {
     #[test]
     fn test_middleware_identifies_file_mutating_tools() {
         let mw = FileJournalMiddleware::new(make_store());
-        assert!(mw.is_file_mutating("file_write"));
-        assert!(mw.is_file_mutating("file_patch"));
-        assert!(mw.is_file_mutating("file_delete"));
-        assert!(!mw.is_file_mutating("file_read"));
+        assert!(mw.is_file_mutating("FileWrite"));
+        assert!(mw.is_file_mutating("FilePatch"));
+        assert!(mw.is_file_mutating("FileDelete"));
+        assert!(!mw.is_file_mutating("FileRead"));
         assert!(!mw.is_file_mutating("web_search"));
     }
 
@@ -170,7 +170,7 @@ mod tests {
     async fn test_middleware_skips_non_mutating_tools() {
         let mw = FileJournalMiddleware::new(make_store());
         let result = mw
-            .capture_before("scope1", ScopeType::Task, "file_read", "/tmp/test.txt")
+            .capture_before("scope1", ScopeType::Task, "FileRead", "/tmp/test.txt")
             .await
             .unwrap();
         assert!(result.is_none());
@@ -184,7 +184,7 @@ mod tests {
             .capture_before(
                 "scope1",
                 ScopeType::Task,
-                "file_write",
+                "FileWrite",
                 "/tmp/nonexistent_y_journal_test_file.txt",
             )
             .await
@@ -211,7 +211,7 @@ mod tests {
             .capture_before(
                 "scope1",
                 ScopeType::Pipeline,
-                "file_write",
+                "FileWrite",
                 path.to_str().unwrap(),
             )
             .await

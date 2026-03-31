@@ -108,7 +108,7 @@ mod tests {
     fn test_request() -> HitlRequest {
         HitlRequest {
             request_id: "req-1".to_string(),
-            tool_name: "shell_exec".to_string(),
+            tool_name: "ShellExec".to_string(),
             reason: "dangerous tool".to_string(),
             risk_score: Some(0.9),
             context: "executing `rm -rf /tmp/test`".to_string(),
@@ -130,7 +130,7 @@ mod tests {
             .await
             .expect("should receive request");
 
-        assert_eq!(request.tool_name, "shell_exec");
+        assert_eq!(request.tool_name, "ShellExec");
 
         // Approve so the task completes
         response_tx.send(HitlResponse::Approve).ok();

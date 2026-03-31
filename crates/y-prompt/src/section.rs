@@ -114,7 +114,7 @@ mod tests {
         PromptContext {
             agent_mode: "build".into(),
             active_skills: vec!["code_review".into()],
-            available_tools: vec!["file_read".into(), "file_write".into()],
+            available_tools: vec!["FileRead".into(), "FileWrite".into()],
             config_flags: {
                 let mut m = std::collections::HashMap::new();
                 m.insert("persona.enabled".into(), true);
@@ -154,8 +154,8 @@ mod tests {
     #[test]
     fn test_condition_has_tool() {
         let ctx = build_ctx();
-        assert!(SectionCondition::HasTool("file_read".into()).evaluate(&ctx));
-        assert!(!SectionCondition::HasTool("web_search".into()).evaluate(&ctx));
+        assert!(SectionCondition::HasTool("FileRead".into()).evaluate(&ctx));
+        assert!(!SectionCondition::HasTool("WebSearch".into()).evaluate(&ctx));
     }
 
     #[test]
@@ -170,13 +170,13 @@ mod tests {
         let ctx = build_ctx();
         let cond = SectionCondition::And(vec![
             SectionCondition::ModeIs("build".into()),
-            SectionCondition::HasTool("file_read".into()),
+            SectionCondition::HasTool("FileRead".into()),
         ]);
         assert!(cond.evaluate(&ctx));
 
         let cond_fail = SectionCondition::And(vec![
             SectionCondition::ModeIs("build".into()),
-            SectionCondition::HasTool("web_search".into()),
+            SectionCondition::HasTool("WebSearch".into()),
         ]);
         assert!(!cond_fail.evaluate(&ctx));
     }
@@ -186,20 +186,20 @@ mod tests {
         let ctx = build_ctx();
         let cond = SectionCondition::Or(vec![
             SectionCondition::ModeIs("plan".into()),
-            SectionCondition::HasTool("file_read".into()),
+            SectionCondition::HasTool("FileRead".into()),
         ]);
         assert!(cond.evaluate(&ctx));
 
         let cond_fail = SectionCondition::Or(vec![
             SectionCondition::ModeIs("plan".into()),
-            SectionCondition::HasTool("web_search".into()),
+            SectionCondition::HasTool("WebSearch".into()),
         ]);
         assert!(!cond_fail.evaluate(&ctx));
     }
 
     #[test]
     fn test_condition_has_tool_wildcard_true() {
-        let ctx = build_ctx(); // has file_read, file_write
+        let ctx = build_ctx(); // has FileRead, FileWrite
         assert!(SectionCondition::HasTool("*".into()).evaluate(&ctx));
     }
 

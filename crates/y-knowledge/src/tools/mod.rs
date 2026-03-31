@@ -1,17 +1,17 @@
 //! Knowledge base tools for Agent use.
 //!
 //! Provides three built-in tools:
-//! - `knowledge_search` — semantic + keyword search with resolution control
+//! - `KnowledgeSearch` — semantic + keyword search with resolution control
 //! - `knowledge_lookup` — exact chunk lookup by ID
 //! - `knowledge_ingest` — agent-driven content ingestion
 
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// knowledge_search
+// KnowledgeSearch
 // ---------------------------------------------------------------------------
 
-/// Input parameters for `knowledge_search`.
+/// Input parameters for `KnowledgeSearch`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeSearchParams {
     /// Search query string.
@@ -55,7 +55,7 @@ pub struct SearchResultItem {
     pub title: String,
 }
 
-/// Output from `knowledge_search`.
+/// Output from `KnowledgeSearch`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeSearchResult {
     /// Matching results.
@@ -146,7 +146,7 @@ pub struct KnowledgeIngestResult {
 // Tool JSON Schemas
 // ---------------------------------------------------------------------------
 
-/// Generate the JSON Schema for `knowledge_search` parameters.
+/// Generate the JSON Schema for `KnowledgeSearch` parameters.
 pub fn knowledge_search_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",

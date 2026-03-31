@@ -200,7 +200,7 @@ mod tests {
     async fn test_audit_log_and_retrieve() {
         let audit = AuditTrail::new();
         audit
-            .log_tool_execution("agent-1", "web_search", AuditOutcome::Success, None)
+            .log_tool_execution("agent-1", "WebSearch", AuditOutcome::Success, None)
             .await;
 
         assert_eq!(audit.current_count().await, 1);
@@ -209,7 +209,7 @@ mod tests {
         let recent = audit.recent(10).await;
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].actor, "agent-1");
-        assert_eq!(recent[0].target, "web_search");
+        assert_eq!(recent[0].target, "WebSearch");
     }
 
     #[tokio::test]
@@ -307,7 +307,7 @@ mod tests {
             timestamp: Utc::now(),
             event_type: AuditEventType::ToolExecution,
             actor: "agent-1".into(),
-            target: "web_search".into(),
+            target: "WebSearch".into(),
             outcome: AuditOutcome::Success,
             metadata: serde_json::json!({"query": "rust async"}),
         };

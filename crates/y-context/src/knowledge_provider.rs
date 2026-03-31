@@ -53,7 +53,7 @@ impl KnowledgeContextProvider {
     ///
     /// When L0/L1 metadata is available, items use structured format
     /// (summary + section titles). The LLM is guided to use the
-    /// `knowledge_search` tool for full content when needed.
+    /// `KnowledgeSearch` tool for full content when needed.
     fn format_knowledge_block(items: &[KnowledgeContextItem]) -> String {
         if items.is_empty() {
             return String::new();
@@ -63,7 +63,7 @@ impl KnowledgeContextProvider {
 
         let mut block = String::from("<knowledge_context>\n");
         if has_structured {
-            block.push_str("The following knowledge is relevant to your query. Use knowledge_search tool to get full details for specific sections.\n\n");
+            block.push_str("The following knowledge is relevant to your query. Use KnowledgeSearch tool to get full details for specific sections.\n\n");
         } else {
             block.push_str("The following knowledge items are relevant to the user's query:\n\n");
         }

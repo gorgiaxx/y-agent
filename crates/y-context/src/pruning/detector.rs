@@ -202,9 +202,9 @@ mod tests {
     fn test_detect_error_status() {
         let messages = vec![
             make_msg("m1", "user", "search for X"),
-            make_msg("m2", "assistant", "calling tool_search"),
+            make_msg("m2", "assistant", "calling ToolSearch"),
             make_msg("m3", "tool", "{\"error\": \"parameter validation failed\"}"),
-            make_msg("m4", "assistant", "calling tool_search again"),
+            make_msg("m4", "assistant", "calling ToolSearch again"),
             make_msg("m5", "tool", "{\"results\": [\"found\"]}"),
         ];
 
@@ -225,7 +225,7 @@ mod tests {
     fn test_detect_empty_results() {
         let messages = vec![
             make_msg("m1", "user", "find files"),
-            make_msg("m2", "assistant", "calling file_search"),
+            make_msg("m2", "assistant", "calling FileSearch"),
             make_msg("m3", "tool", "{\"results\": [], \"count\": 0}"),
         ];
 
@@ -242,9 +242,9 @@ mod tests {
     fn test_detect_repeated_calls() {
         let messages = vec![
             make_msg("m1", "user", "search for X"),
-            make_msg("m2", "assistant", "calling tool_search(query='X')"),
+            make_msg("m2", "assistant", "calling ToolSearch(query='X')"),
             make_msg("m3", "tool", "no results found"),
-            make_msg("m4", "assistant", "calling tool_search(query='X')"),
+            make_msg("m4", "assistant", "calling ToolSearch(query='X')"),
             make_msg("m5", "tool", "{\"results\": [\"found\"]}"),
         ];
 

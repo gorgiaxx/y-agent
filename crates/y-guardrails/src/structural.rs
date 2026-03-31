@@ -294,8 +294,8 @@ mod tests {
     #[test]
     fn test_validate_tool_references_all_present() {
         let validator = StructuralValidator::new();
-        let used = vec!["web_search".into(), "file_read".into()];
-        let available: HashSet<String> = ["web_search", "file_read", "calculator"]
+        let used = vec!["WebSearch".into(), "FileRead".into()];
+        let available: HashSet<String> = ["WebSearch", "FileRead", "calculator"]
             .iter()
             .map(|s| (*s).to_string())
             .collect();
@@ -307,8 +307,8 @@ mod tests {
     #[test]
     fn test_validate_tool_references_missing() {
         let validator = StructuralValidator::new();
-        let used = vec!["web_search".into(), "nonexistent_tool".into()];
-        let available: HashSet<String> = ["web_search"].iter().map(|s| (*s).to_string()).collect();
+        let used = vec!["WebSearch".into(), "nonexistent_tool".into()];
+        let available: HashSet<String> = ["WebSearch"].iter().map(|s| (*s).to_string()).collect();
 
         let result = validator.validate_tool_references(&used, &available);
         assert!(!result.is_valid());
@@ -319,14 +319,13 @@ mod tests {
     #[test]
     fn test_validate_permission_coverage() {
         let validator = StructuralValidator::new();
-        let used = vec!["web_search".into(), "file_write".into()];
-        let permissions: HashSet<String> =
-            ["web_search"].iter().map(|s| (*s).to_string()).collect();
+        let used = vec!["WebSearch".into(), "FileWrite".into()];
+        let permissions: HashSet<String> = ["WebSearch"].iter().map(|s| (*s).to_string()).collect();
 
         let result = validator.validate_permission_coverage(&used, &permissions);
         assert!(result.is_valid()); // Warnings don't block.
         assert_eq!(result.warning_count(), 1);
-        assert!(result.violations[0].message.contains("file_write"));
+        assert!(result.violations[0].message.contains("FileWrite"));
     }
 
     #[test]

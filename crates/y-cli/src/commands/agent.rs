@@ -96,6 +96,7 @@ pub async fn run(action: &AgentAction, services: &AppServices, mode: OutputMode)
                 timeout_secs: 300,
                 context_sharing: ContextStrategy::None,
                 max_context_tokens: 4096,
+                user_callable: false,
             };
 
             let mut registry = services.agent_registry.lock().await;

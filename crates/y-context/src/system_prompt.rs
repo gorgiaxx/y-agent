@@ -100,6 +100,9 @@ pub struct BuildSystemPromptProvider {
     venv_info: VenvPromptInfo,
     /// Path to the user prompts override directory (for hot-reload).
     prompts_dir: Option<PathBuf>,
+    /// Dynamic text listing user-callable agents. Injected from `ServiceContainer`
+    /// and replaced into the `{{CALLABLE_AGENTS}}` placeholder in core.orchestration.
+    callable_agents_text: Arc<RwLock<String>>,
 }
 
 impl BuildSystemPromptProvider {
@@ -117,6 +120,7 @@ impl BuildSystemPromptProvider {
             config,
             venv_info: VenvPromptInfo::default(),
             prompts_dir: None,
+            callable_agents_text: Arc::new(RwLock::new(String::new())),
         }
     }
 
@@ -135,6 +139,7 @@ impl BuildSystemPromptProvider {
             config,
             venv_info,
             prompts_dir: None,
+            callable_agents_text: Arc::new(RwLock::new(String::new())),
         }
     }
 
@@ -153,6 +158,13 @@ impl BuildSystemPromptProvider {
         let mut guard = self.store.write().await;
         *guard = new_store;
         tracing::info!("Prompt section store hot-reloaded");
+    }
+
+    /// Get a reference to the callable agents text handle.
+    ///
+    /// The `ServiceContainer` uses this to inject the dynamic agent list.
+    pub fn callable_agents_handle(&self) -> Arc<RwLock<String>> {
+        Arc::clone(&self.callable_agents_text)
     }
 
     /// Generate dynamic content for `core.datetime`.
@@ -288,6 +300,10 @@ impl ContextProvider for BuildSystemPromptProvider {
                     prompt_ctx.working_directory.as_deref(),
                     &self.venv_info,
                 ),
+                "core.orchestration" => {
+                    let agents = self.callable_agents_text.read().await;
+                    content.replace("{{CALLABLE_AGENTS}}", &agents)
+                }
                 _ => content,
             };
 
@@ -357,7 +373,7 @@ mod tests {
         PromptContext {
             agent_mode: "general".into(),
             active_skills: vec![],
-            available_tools: vec!["file_read".into()],
+            available_tools: vec!["FileRead".into()],
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
         }
@@ -385,9 +401,8 @@ mod tests {
         assert!(item.content.contains("Guidelines"));
         // Should contain security.
         assert!(item.content.contains("Security rules"));
-        // core.tool_protocol requires ConfigFlag("tool_calling.prompt_based")
-        // which is not set in general_ctx(), so it should be excluded.
-        assert!(!item.content.contains("Tool Behavior"));
+        // core.tool_protocol is now always included
+        assert!(item.content.contains("Tool Behavior"));
         // Token estimate should be reasonable.
         assert!(item.token_estimate > 0);
     }
@@ -398,7 +413,7 @@ mod tests {
         let plan_ctx = PromptContext {
             agent_mode: "plan".into(),
             active_skills: vec![],
-            available_tools: vec!["file_read".into()],
+            available_tools: vec!["FileRead".into()],
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
         };
@@ -581,7 +596,7 @@ mod tests {
         let explore_ctx = PromptContext {
             agent_mode: "explore".into(),
             active_skills: vec![],
-            available_tools: vec!["file_read".into()],
+            available_tools: vec!["FileRead".into()],
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
         };

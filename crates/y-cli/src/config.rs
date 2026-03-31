@@ -384,6 +384,7 @@ pub fn validate_config(config: &YAgentConfig) -> Result<()> {
 }
 
 /// Resolve relative storage paths against the XDG state data directory.
+/// Also expands `~` to the user's home directory.
 ///
 /// When `db_path` or `transcript_dir` is a relative path (e.g., `data/y-agent.db`),
 /// it is resolved against the state data directory (`~/.local/state/y-agent/`) so that
@@ -397,15 +398,54 @@ pub fn resolve_storage_paths(config: &mut YAgentConfig) {
 
     // Resolve db_path.
     if config.storage.db_path != ":memory:" {
-        let db = PathBuf::from(&config.storage.db_path);
+        let db_path = expand_tilde(&config.storage.db_path);
+        let db = PathBuf::from(&db_path);
         if db.is_relative() {
             config.storage.db_path = base_dir.join(&db).to_string_lossy().to_string();
+        } else {
+            config.storage.db_path = db_path;
         }
     }
 
     // Resolve transcript_dir.
-    if config.storage.transcript_dir.is_relative() {
-        config.storage.transcript_dir = base_dir.join(&config.storage.transcript_dir);
+    let transcript_str = expand_tilde(&config.storage.transcript_dir.to_string_lossy());
+    let transcript_dir = PathBuf::from(&transcript_str);
+    if transcript_dir.is_relative() {
+        config.storage.transcript_dir = base_dir.join(&transcript_dir);
+    } else {
+        config.storage.transcript_dir = transcript_dir;
+    }
+
+    // Resolve runtime paths.
+    config.runtime.ssh.private_key_path = config
+        .runtime
+        .ssh
+        .private_key_path
+        .as_deref()
+        .map(expand_tilde);
+    config.runtime.ssh.known_hosts_path = config
+        .runtime
+        .ssh
+        .known_hosts_path
+        .as_deref()
+        .map(expand_tilde);
+    config.runtime.python_venv.working_dir = expand_tilde(&config.runtime.python_venv.working_dir);
+    config.runtime.bun_venv.working_dir = expand_tilde(&config.runtime.bun_venv.working_dir);
+}
+
+/// Expand `~` to the user's home directory.
+fn expand_tilde(path: &str) -> String {
+    if let Some(stripped) = path.strip_prefix("~/") {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        format!("{home}/{stripped}")
+    } else if path == "~" {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string())
+    } else {
+        path.to_string()
     }
 }
 

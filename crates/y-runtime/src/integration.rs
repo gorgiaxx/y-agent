@@ -102,13 +102,12 @@ pub enum CapabilityCheckResult {
 /// 4. Structural Rules — config-time structural guardrails
 pub fn check_capabilities(ctx: &RuntimeContext) -> CapabilityCheckResult {
     // Layer 1: Permission model (stub — in production, checks user permissions).
-    // For now, "shell_exec" requires explicit allowance.
-    if ctx.capabilities.contains(&"shell_exec".to_string())
-        && ctx.pattern == ExecutionPattern::Local
+    // For now, "ShellExec" requires explicit allowance.
+    if ctx.capabilities.contains(&"ShellExec".to_string()) && ctx.pattern == ExecutionPattern::Local
     {
         return CapabilityCheckResult::Denied {
             layer: "permission_model".to_string(),
-            reason: "shell_exec requires container isolation".to_string(),
+            reason: "ShellExec requires container isolation".to_string(),
         };
     }
 
@@ -235,11 +234,11 @@ mod tests {
     fn test_build_context() {
         let mgr = IntegrationManager::new();
         let ctx = mgr.build_context(
-            "file_read",
+            "FileRead",
             vec!["file_system".to_string()],
             ExecutionPattern::Local,
         );
-        assert_eq!(ctx.caller_tool_name, "file_read");
+        assert_eq!(ctx.caller_tool_name, "FileRead");
         assert_eq!(ctx.pattern, ExecutionPattern::Local);
     }
 
@@ -247,7 +246,7 @@ mod tests {
     #[test]
     fn test_capability_check_allowed() {
         let ctx = RuntimeContext {
-            caller_tool_name: "file_read".into(),
+            caller_tool_name: "FileRead".into(),
             capabilities: vec!["file_system".into()],
             preferred_image: None,
             resource_limits: ResourceLimits::default(),
@@ -257,12 +256,12 @@ mod tests {
         assert_eq!(check_capabilities(&ctx), CapabilityCheckResult::Allowed);
     }
 
-    /// T-P3-40-03: `shell_exec` on local is denied (requires container).
+    /// T-P3-40-03: `ShellExec` on local is denied (requires container).
     #[test]
     fn test_capability_check_shell_exec_local_denied() {
         let ctx = RuntimeContext {
             caller_tool_name: "run_script".into(),
-            capabilities: vec!["shell_exec".into()],
+            capabilities: vec!["ShellExec".into()],
             preferred_image: None,
             resource_limits: ResourceLimits::default(),
             mounts: vec![],
@@ -297,7 +296,7 @@ mod tests {
         let mgr = IntegrationManager::new();
         let ctx = RuntimeContext {
             caller_tool_name: "python_script".into(),
-            capabilities: vec!["shell_exec".into()],
+            capabilities: vec!["ShellExec".into()],
             preferred_image: Some("python:3.12".into()),
             resource_limits: ResourceLimits::default(),
             mounts: vec![],
@@ -319,7 +318,7 @@ mod tests {
         let mgr = IntegrationManager::new();
         let ctx = RuntimeContext {
             caller_tool_name: "danger".into(),
-            capabilities: vec!["shell_exec".into()],
+            capabilities: vec!["ShellExec".into()],
             preferred_image: None,
             resource_limits: ResourceLimits::default(),
             mounts: vec![],

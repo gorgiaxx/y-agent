@@ -144,7 +144,7 @@ mod tests {
     fn test_permission_dangerous_tool_requires_ask() {
         let config = config_with_defaults();
         let model = PermissionModel::new(config);
-        let decision = model.evaluate("shell_exec", true);
+        let decision = model.evaluate("ShellExec", true);
 
         assert_eq!(decision.action, PermissionAction::Ask);
         assert!(decision.reason.contains("dangerous"));

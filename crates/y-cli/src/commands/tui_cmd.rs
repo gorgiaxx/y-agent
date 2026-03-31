@@ -21,6 +21,7 @@ pub async fn run(
 ) -> Result<()> {
     let services = Arc::new(services);
     services.init_agent_runner().await;
+    services.init_callable_agents_text().await;
     let mut app = TuiApp::new(services, toast_rx)?;
     app.run().await
 }

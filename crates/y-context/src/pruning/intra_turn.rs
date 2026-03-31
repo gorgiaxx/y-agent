@@ -451,7 +451,7 @@ mod tests {
         let mut history = vec![
             make_msg("s1", Role::System, "system prompt"),
             make_msg("u1", Role::User, "search for X"),
-            make_msg("a1", Role::Assistant, "calling tool_search"),
+            make_msg("a1", Role::Assistant, "calling ToolSearch"),
             make_msg(
                 "t1",
                 Role::Tool,
@@ -498,9 +498,9 @@ mod tests {
         let pruner = IntraTurnPruner::from_config(&default_config());
         let mut history = vec![
             make_msg("u1", Role::User, "search for X"),
-            make_msg("a1", Role::Assistant, "calling tool_search(query='X')"),
+            make_msg("a1", Role::Assistant, "calling ToolSearch(query='X')"),
             make_msg("t1", Role::Tool, "some result"),
-            make_msg("a2", Role::Assistant, "calling tool_search(query='X')"),
+            make_msg("a2", Role::Assistant, "calling ToolSearch(query='X')"),
             make_msg("t2", Role::Tool, "better result"),
         ];
 
@@ -517,7 +517,7 @@ mod tests {
         let pruner = IntraTurnPruner::from_config(&default_config());
         let mut history = vec![
             make_msg("u1", Role::User, "find files"),
-            make_msg("a1", Role::Assistant, "calling file_search"),
+            make_msg("a1", Role::Assistant, "calling FileSearch"),
             make_msg("t1", Role::Tool, "{\"results\": [], \"count\": 0}"),
             make_msg("a2", Role::Assistant, "trying broader search"),
             make_msg("t2", Role::Tool, "{\"results\": [\"file.rs\"]}"),

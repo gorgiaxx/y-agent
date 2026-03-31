@@ -10,7 +10,7 @@
 //! # Design
 //!
 //! The file journal operates as a `ToolMiddleware` that captures file state
-//! before file-mutating tool calls (`file_write`, `file_patch`, `file_delete`).
+//! before file-mutating tool calls (`FileWrite`).
 //! On failure or explicit rollback, entries are replayed in reverse to
 //! restore files to their pre-operation state.
 

@@ -30,6 +30,7 @@ pub const PROMPT_TOOL_PROTOCOL: &str =
 const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.txt");
 const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_planning.txt");
 const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
+const PROMPT_ORCHESTRATION: &str = include_str!("../../../config/prompts/core_orchestration.txt");
 
 /// Mapping from section ID to (compiled default content, override filename,
 /// `token_budget`, priority, condition, category).
@@ -83,10 +84,10 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         "core.tool_protocol",
         PROMPT_TOOL_PROTOCOL,
         "core_tool_protocol.txt",
-        800,
+        400,
         450,
         SectionCategoryTag::Behavioral,
-        ConditionTag::ToolProtocolEnabled,
+        ConditionTag::Always,
     ),
     (
         "core.persona",
@@ -114,6 +115,15 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         350,
         SectionCategoryTag::Behavioral,
         ConditionTag::ModeExplore,
+    ),
+    (
+        "core.orchestration",
+        PROMPT_ORCHESTRATION,
+        "core_orchestration.txt",
+        400,
+        425,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::OrchestrationEnabled,
     ),
 ];
 
@@ -144,11 +154,11 @@ enum ConditionTag {
     PersonaEnabled,
     ModePlan,
     ModeExplore,
-    /// Include `core.tool_protocol` only when `PromptBased` tool calling is active.
+    /// Include `core.orchestration` only when workflow/schedule tools are active.
     ///
-    /// In Native mode, the LLM uses API-level tool definitions and does not
-    /// need the XML-based tool calling instructions (~800 tokens saved).
-    ToolProtocolEnabled,
+    /// Set by `sync_dynamic_tool_defs` in `agent_service.rs` when `ToolSearch`
+    /// activates workflow or schedule tools (~400 tokens saved otherwise).
+    OrchestrationEnabled,
 }
 
 impl ConditionTag {
@@ -158,8 +168,8 @@ impl ConditionTag {
             Self::PersonaEnabled => SectionCondition::ConfigFlag("persona.enabled".into()),
             Self::ModePlan => SectionCondition::ModeIs("plan".into()),
             Self::ModeExplore => SectionCondition::ModeIs("explore".into()),
-            Self::ToolProtocolEnabled => {
-                SectionCondition::ConfigFlag("tool_calling.prompt_based".into())
+            Self::OrchestrationEnabled => {
+                SectionCondition::ConfigFlag("orchestration.enabled".into())
             }
         }
     }
@@ -216,6 +226,7 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
     ("core_persona.txt", PROMPT_PERSONA),
     ("core_planning.txt", PROMPT_PLANNING),
     ("core_exploration.txt", PROMPT_EXPLORATION),
+    ("core_orchestration.txt", PROMPT_ORCHESTRATION),
 ];
 
 /// Create the default `PromptTemplate` referencing the built-in sections.
@@ -233,6 +244,7 @@ pub fn default_template() -> PromptTemplate {
         section_ref("core.tool_protocol"),
         section_ref("core.planning"),
         section_ref("core.exploration"),
+        section_ref("core.orchestration"),
     ];
 
     let mut mode_overlays = HashMap::new();
@@ -279,9 +291,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_store_has_9_sections() {
+    fn test_builtin_store_has_10_sections() {
         let store = builtin_section_store();
-        assert_eq!(store.len(), 9);
+        assert_eq!(store.len(), 10);
     }
 
     #[test]
@@ -297,6 +309,7 @@ mod tests {
             "core.persona",
             "core.planning",
             "core.exploration",
+            "core.orchestration",
         ];
         for id in &ids {
             let content = store.load_content(id);
@@ -335,9 +348,9 @@ mod tests {
     fn test_default_template_general_mode() {
         let template = default_template();
         let sections = template.effective_sections("general");
-        // general mode: all 9 sections in template, no overlay excludes any
+        // general mode: all 10 sections in template, no overlay excludes any
         // (conditions are evaluated later by the provider, not by effective_sections)
-        assert_eq!(sections.len(), 9);
+        assert_eq!(sections.len(), 10);
     }
 
     #[test]

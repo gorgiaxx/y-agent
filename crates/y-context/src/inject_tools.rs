@@ -5,11 +5,11 @@
 //! Implements Tool Lazy Loading with dual-mode support:
 //!
 //! - **`PromptBased`** (default): Injects a compact taxonomy root summary
-//!   (~100 tokens). The agent uses `tool_search` to load specific tool
+//!   (~100 tokens). The agent uses `ToolSearch` to load specific tool
 //!   schemas on demand; full schemas appear in conversation history from
-//!   the `tool_search` result and are NOT re-injected into the context.
+//!   the `ToolSearch` result and are NOT re-injected into the context.
 //!
-//! - **Native**: Injects a flat list of tool names plus a `tool_search`
+//! - **Native**: Injects a flat list of tool names plus a `ToolSearch`
 //!   meta-tool definition (backward compatibility).
 //!
 //! ## Dynamic mode selection
@@ -43,7 +43,7 @@ fn estimate_tokens(text: &str) -> u32 {
 pub struct InjectTools {
     /// Available tool names (used in Native mode).
     tool_names: Vec<String>,
-    /// Whether to include the `tool_search` meta-tool definition.
+    /// Whether to include the `ToolSearch` meta-tool definition.
     include_tool_search: bool,
     /// Static tool calling mode (used when `prompt_context` is `None`).
     mode: ToolCallingMode,
@@ -72,7 +72,7 @@ impl InjectTools {
         }
     }
 
-    /// Create without the `tool_search` meta-tool (Native mode).
+    /// Create without the `ToolSearch` meta-tool (Native mode).
     pub fn without_tool_search(tool_names: Vec<String>) -> Self {
         Self {
             tool_names,
@@ -190,13 +190,30 @@ impl ContextProvider for InjectTools {
 impl InjectTools {
     /// `PromptBased` mode: inject taxonomy summary only.
     ///
-    /// Full tool schemas are loaded lazily via `tool_search` and appear
+    /// Full tool schemas are loaded lazily via `ToolSearch` and appear
     /// in the conversation history; they are NOT re-injected here.
     fn provide_prompt_based(&self, ctx: &mut AssembledContext) {
-        let mut content = match self.taxonomy_summary {
-            Some(ref summary) if !summary.is_empty() => summary.clone(),
-            _ => return,
-        };
+        let has_taxonomy = self
+            .taxonomy_summary
+            .as_ref()
+            .is_some_and(|s| !s.is_empty());
+        let has_core = self
+            .core_tools_summary
+            .as_ref()
+            .is_some_and(|s| !s.is_empty());
+
+        if !has_taxonomy && !has_core {
+            return;
+        }
+
+        let mut content = y_tools::parser::PROMPT_TOOL_CALL_SYNTAX.to_string();
+
+        if let Some(ref summary) = self.taxonomy_summary {
+            if !summary.is_empty() {
+                content.push_str("\n\n");
+                content.push_str(summary);
+            }
+        }
 
         // Append core-tools summary (always-active tools).
         if let Some(ref core) = self.core_tools_summary {
@@ -223,7 +240,7 @@ impl InjectTools {
         );
     }
 
-    /// Native mode: inject flat tool name list + `tool_search`.
+    /// Native mode: inject flat tool name list + `ToolSearch`.
     fn provide_native(&self, ctx: &mut AssembledContext) {
         if self.tool_names.is_empty() {
             return;
@@ -236,9 +253,12 @@ impl InjectTools {
 
         if self.include_tool_search {
             index.push_str(
-                "\n### Meta-Tool: tool_search\n\
-                 Use `tool_search(query)` to find and load the full schema \
-                 of a specific tool before invoking it.\n",
+                "\n### Meta-Tool: ToolSearch\n\
+                 Use `ToolSearch(query)` to find and load the full schema \
+                 of a specific tool before invoking it.\n\n\
+                 Only tools with schemas in the API are directly callable. \
+                 For all other tools listed above, call ToolSearch first \
+                 to load their schema.\n",
             );
         }
 
@@ -288,7 +308,7 @@ mod tests {
         assert_eq!(ctx.items[0].category, ContextCategory::Tools);
     }
 
-    /// T-P1-07: Tool index contains tool names and tool_search.
+    /// T-P1-07: Tool index contains tool names and ToolSearch.
     #[tokio::test]
     async fn test_tool_index_contains_names_and_search() {
         let provider = InjectTools::new(vec!["read_file".into(), "write_file".into()]);
@@ -299,10 +319,10 @@ mod tests {
         let content = &ctx.items[0].content;
         assert!(content.contains("read_file"));
         assert!(content.contains("write_file"));
-        assert!(content.contains("tool_search"));
+        assert!(content.contains("ToolSearch"));
     }
 
-    /// Tool index without tool_search meta-tool.
+    /// Tool index without ToolSearch meta-tool.
     #[tokio::test]
     async fn test_without_tool_search() {
         let provider = InjectTools::without_tool_search(vec!["read_file".into()]);
@@ -312,7 +332,7 @@ mod tests {
 
         let content = &ctx.items[0].content;
         assert!(content.contains("read_file"));
-        assert!(!content.contains("tool_search"));
+        assert!(!content.contains("ToolSearch"));
     }
 
     /// Empty tools produce no items.
@@ -376,7 +396,7 @@ mod tests {
     async fn test_prompt_based_with_core_tools() {
         let provider = InjectTools::with_taxonomy_and_core_tools(
             "## Tool Categories\n| file | File ops |".to_string(),
-            "## Core Tools\n- file_read: Read a file\n- shell_exec: Run a command".to_string(),
+            "## Core Tools\n- FileRead: Read a file\n- ShellExec: Run a command".to_string(),
         );
 
         let mut ctx = AssembledContext::default();
@@ -386,8 +406,8 @@ mod tests {
         let content = &ctx.items[0].content;
         assert!(content.contains("Tool Categories"));
         assert!(content.contains("Core Tools"));
-        assert!(content.contains("file_read"));
-        assert!(content.contains("shell_exec"));
+        assert!(content.contains("FileRead"));
+        assert!(content.contains("ShellExec"));
     }
 
     #[tokio::test]

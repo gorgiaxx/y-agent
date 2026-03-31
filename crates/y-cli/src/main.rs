@@ -201,6 +201,7 @@ async fn main() -> Result<()> {
             let services = wire::wire(&config).await?;
             let services = std::sync::Arc::new(services);
             services.init_agent_runner().await;
+            services.init_callable_agents_text().await;
             commands::serve::run(services, args).await?;
         }
         None => {
