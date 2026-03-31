@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::config::SchedulerConfig;
-use crate::executor::ScheduleExecutor;
+use crate::executor::{ExecutionStore, ScheduleExecution, ScheduleExecutor};
 use crate::queue::{trigger_queue, TriggerReceiver, TriggerSender};
 use crate::recovery;
 use crate::store::{Schedule, ScheduleStore};
@@ -22,6 +22,8 @@ use crate::trigger::{evaluate_all, FiredTrigger};
 pub struct SchedulerManager {
     store: Arc<Mutex<ScheduleStore>>,
     executor: Arc<Mutex<ScheduleExecutor>>,
+    /// Execution history store.
+    execution_store: Arc<Mutex<ExecutionStore>>,
     config: SchedulerConfig,
     /// Handle to the trigger evaluation loop task.
     eval_handle: Option<JoinHandle<()>>,
@@ -39,6 +41,7 @@ impl SchedulerManager {
         Self {
             store: Arc::new(Mutex::new(ScheduleStore::new())),
             executor: Arc::new(Mutex::new(ScheduleExecutor::new())),
+            execution_store: Arc::new(Mutex::new(ExecutionStore::new())),
             config,
             eval_handle: None,
             exec_handle: None,
@@ -92,8 +95,29 @@ impl SchedulerManager {
 
     /// Get total execution count.
     pub async fn execution_count(&self) -> usize {
-        let executor = self.executor.lock().await;
-        executor.execution_count()
+        let exec_store = self.execution_store.lock().await;
+        exec_store.len()
+    }
+
+    /// Get execution history for a schedule (most recent first).
+    pub async fn execution_history(&self, schedule_id: &str) -> Vec<ScheduleExecution> {
+        let exec_store = self.execution_store.lock().await;
+        exec_store
+            .get_history(schedule_id)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Get a single execution record by ID.
+    pub async fn get_execution(&self, execution_id: &str) -> Option<ScheduleExecution> {
+        let exec_store = self.execution_store.lock().await;
+        exec_store.get(execution_id).cloned()
+    }
+
+    /// Get a reference to the execution store for direct access.
+    pub fn execution_store(&self) -> &Arc<Mutex<ExecutionStore>> {
+        &self.execution_store
     }
 
     /// Get a reference to the trigger sender for external event injection.
@@ -175,8 +199,16 @@ impl SchedulerManager {
         let exec_shutdown = self.shutdown.clone();
         let exec_store = self.store.clone();
         let exec_executor = self.executor.clone();
+        let exec_execution_store = self.execution_store.clone();
         let exec_handle = tokio::spawn(async move {
-            Self::executor_loop(rx, exec_store, exec_executor, exec_shutdown).await;
+            Self::executor_loop(
+                rx,
+                exec_store,
+                exec_executor,
+                exec_execution_store,
+                exec_shutdown,
+            )
+            .await;
         });
 
         self.eval_handle = Some(eval_handle);
@@ -188,6 +220,7 @@ impl SchedulerManager {
         mut rx: TriggerReceiver,
         store: Arc<Mutex<ScheduleStore>>,
         executor: Arc<Mutex<ScheduleExecutor>>,
+        execution_store: Arc<Mutex<ExecutionStore>>,
         shutdown: Arc<Notify>,
     ) {
         loop {
@@ -198,7 +231,12 @@ impl SchedulerManager {
                 }
                 trigger = rx.recv() => {
                     if let Some(fired) = trigger {
-                        Self::handle_fired_trigger(fired, &store, &executor).await;
+                        Self::handle_fired_trigger(
+                            fired,
+                            &store,
+                            &executor,
+                            &execution_store,
+                        ).await;
                     } else {
                         info!("Trigger queue closed, executor stopping");
                         break;
@@ -213,6 +251,7 @@ impl SchedulerManager {
         fired: FiredTrigger,
         store: &Arc<Mutex<ScheduleStore>>,
         executor: &Arc<Mutex<ScheduleExecutor>>,
+        execution_store: &Arc<Mutex<ExecutionStore>>,
     ) {
         let mut store_guard = store.lock().await;
         let schedule = if let Some(s) = store_guard.get(&fired.schedule_id) {
@@ -223,7 +262,9 @@ impl SchedulerManager {
         };
 
         let mut exec_guard = executor.lock().await;
-        let execution_id = exec_guard.trigger_execution(&schedule, &mut store_guard);
+        let mut exec_store_guard = execution_store.lock().await;
+        let execution_id =
+            exec_guard.trigger_execution(&schedule, &mut store_guard, &mut exec_store_guard);
         debug!(execution_id = %execution_id, "Execution triggered");
     }
 

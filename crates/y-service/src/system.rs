@@ -214,6 +214,25 @@ impl SystemService {
         container.reload_prompts().await;
     }
 
+    /// Hot-reload agent definitions from the agents directory.
+    ///
+    /// Re-scans all `*.toml` files from the user agents directory and
+    /// updates the in-memory registry. Returns `(loaded, errored)` counts.
+    pub async fn reload_agents(container: &ServiceContainer) -> (usize, usize) {
+        container.reload_agents().await
+    }
+
+    /// Register a single agent from raw TOML content at runtime.
+    ///
+    /// Useful when `agent-architect` creates a new definition that should
+    /// take effect immediately. Returns the registered agent's ID.
+    pub async fn register_agent_from_toml(
+        container: &ServiceContainer,
+        toml_content: &str,
+    ) -> Result<String, String> {
+        container.register_agent_from_toml(toml_content).await
+    }
+
     /// Hot-reload the knowledge config from a TOML config string.
     ///
     /// Parses the TOML into `KnowledgeConfig` and delegates to

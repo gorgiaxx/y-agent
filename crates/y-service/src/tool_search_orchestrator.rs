@@ -1,9 +1,9 @@
 //! Tool search orchestrator — performs actual taxonomy/registry lookups
-//! and tool activation when `tool_search` is called.
+//! and tool activation when `ToolSearch` is called.
 //!
-//! The `ToolSearchOrchestrator` is the bridge between the `tool_search` meta-tool
+//! The `ToolSearchOrchestrator` is the bridge between the `ToolSearch` meta-tool
 //! and the real `ToolRegistryImpl` + `ToolTaxonomy` + `ToolActivationSet`.
-//! It intercepts `tool_search` calls from the `ChatService` tool loop and
+//! It intercepts `ToolSearch` calls from the `ChatService` tool loop and
 //! returns real results instead of `{"status": "pending"}`.
 //!
 //! Since v0.4, keyword search also queries `SkillSearch` and `AgentRegistry`
@@ -49,7 +49,7 @@ impl CapabilitySearchSources<'_> {
 pub struct ToolSearchOrchestrator;
 
 impl ToolSearchOrchestrator {
-    /// Handle a `tool_search` call by performing actual lookups.
+    /// Handle a `ToolSearch` call by performing actual lookups.
     ///
     /// Examines the `arguments` JSON and dispatches to the appropriate mode:
     /// - `tool` -> get full definition + activate
@@ -73,7 +73,7 @@ impl ToolSearchOrchestrator {
         .await
     }
 
-    /// Handle a `tool_search` call with optional skill/agent sources.
+    /// Handle a `ToolSearch` call with optional skill/agent sources.
     ///
     /// This is the full-featured entry point. Keyword search queries all
     /// three registries (tools, skills, agents) when sources are provided.
@@ -325,22 +325,22 @@ description = "Read, write, and manage files"
 [categories.file.subcategories.read]
 label = "File Reading"
 description = "Read file contents"
-tools = ["file_read"]
+tools = ["FileRead"]
 
 [categories.file.subcategories.write]
 label = "File Writing"
 description = "Create or modify files"
-tools = ["file_write"]
+tools = ["FileWrite"]
 
 [categories.shell]
 label = "Shell"
 description = "Execute shell commands"
-tools = ["shell_exec"]
+tools = ["ShellExec"]
 
 [categories.meta]
 label = "Meta Tools"
 description = "Tool management tools"
-tools = ["tool_search"]
+tools = ["ToolSearch"]
 "#;
 
     fn sample_def(name: &str, desc: &str) -> ToolDefinition {
@@ -366,10 +366,10 @@ tools = ["tool_search"]
 
         // Register sample tools via the trait.
         for (name, desc) in &[
-            ("file_read", "Read file contents"),
-            ("file_write", "Write file contents"),
-            ("shell_exec", "Execute shell commands"),
-            ("tool_search", "Search for tools"),
+            ("FileRead", "Read file contents"),
+            ("FileWrite", "Write file contents"),
+            ("ShellExec", "Execute shell commands"),
+            ("ToolSearch", "Search for tools"),
         ] {
             let def = sample_def(name, desc);
             use y_core::tool::ToolRegistry;
@@ -386,18 +386,18 @@ tools = ["tool_search"]
     async fn test_get_tool_returns_definition_and_activates() {
         let (registry, taxonomy, activation_set) = setup().await;
 
-        let args = serde_json::json!({"tool": "file_read"});
+        let args = serde_json::json!({"tool": "FileRead"});
         let result = ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
             .await
             .unwrap();
 
         assert!(result.success);
-        assert_eq!(result.content["name"], "file_read");
+        assert_eq!(result.content["name"], "FileRead");
         assert!(result.content["parameters"].is_object());
 
         // Verify activation.
         let set = activation_set.read().await;
-        assert!(set.contains(&ToolName::from_string("file_read")));
+        assert!(set.contains(&ToolName::from_string("FileRead")));
     }
 
     #[tokio::test]
@@ -423,22 +423,22 @@ tools = ["tool_search"]
         assert!(result.success);
         assert_eq!(result.content["category"], "file");
         let tools = result.content["tools"].as_array().unwrap();
-        assert!(tools.iter().any(|t| t == "file_read"));
-        assert!(tools.iter().any(|t| t == "file_write"));
+        assert!(tools.iter().any(|t| t == "FileRead"));
+        assert!(tools.iter().any(|t| t == "FileWrite"));
 
         // Verify tool definitions are returned.
         let defs = result.content["tool_definitions"].as_array().unwrap();
         assert!(!defs.is_empty());
-        assert!(defs.iter().any(|d| d["name"] == "file_read"));
+        assert!(defs.iter().any(|d| d["name"] == "FileRead"));
 
         // Verify activated list is returned.
         let activated = result.content["activated"].as_array().unwrap();
-        assert!(activated.iter().any(|a| a == "file_read"));
+        assert!(activated.iter().any(|a| a == "FileRead"));
 
         // Verify tools are activated in the activation set.
         let set = activation_set.read().await;
-        assert!(set.contains(&ToolName::from_string("file_read")));
-        assert!(set.contains(&ToolName::from_string("file_write")));
+        assert!(set.contains(&ToolName::from_string("FileRead")));
+        assert!(set.contains(&ToolName::from_string("FileWrite")));
     }
 
     #[tokio::test]
@@ -465,11 +465,11 @@ tools = ["tool_search"]
         let tools = &result.content["tools"];
         let activated = tools["activated"].as_array().unwrap();
         assert!(!activated.is_empty());
-        assert!(activated.iter().any(|v| v == "file_read"));
+        assert!(activated.iter().any(|v| v == "FileRead"));
 
         // Verify activation set.
         let set = activation_set.read().await;
-        assert!(set.contains(&ToolName::from_string("file_read")));
+        assert!(set.contains(&ToolName::from_string("FileRead")));
     }
 
     #[tokio::test]
@@ -488,12 +488,12 @@ tools = ["tool_search"]
         let (registry, taxonomy, activation_set) = setup().await;
 
         // Both `tool` and `category` provided -- `tool` should take precedence.
-        let args = serde_json::json!({"tool": "shell_exec", "category": "file"});
+        let args = serde_json::json!({"tool": "ShellExec", "category": "file"});
         let result = ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
             .await
             .unwrap();
 
-        assert_eq!(result.content["name"], "shell_exec");
+        assert_eq!(result.content["name"], "ShellExec");
     }
 
     #[tokio::test]

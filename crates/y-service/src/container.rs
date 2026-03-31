@@ -146,11 +146,23 @@ pub struct ServiceContainer {
     /// Provider metrics event log store for persistence across restarts.
     pub provider_metrics_store: SqliteProviderMetricsStore,
 
-    /// Skill search index for unified `tool_search` capability discovery.
+    /// Skill search index for unified `ToolSearch` capability discovery.
     ///
     /// Pre-loaded from the skills directory at startup. Wrapped in `RwLock`
     /// so it can be refreshed when skills are added/removed.
     pub skill_search: RwLock<SkillSearch>,
+
+    /// Dynamic text listing user-callable agents for prompt injection.
+    /// Populated from the AgentRegistry and injected into the orchestration prompt
+    /// via `BuildSystemPromptProvider::callable_agents_text`.
+    pub callable_agents_text: Arc<RwLock<String>>,
+
+    /// Pending user-interaction answer channels for `AskUser` tool calls.
+    ///
+    /// Shared between the agent execution loop (which registers oneshot senders)
+    /// and the presentation layer (which delivers answers). Global to the
+    /// container so multiple concurrent sessions can be served.
+    pub pending_interactions: crate::chat::PendingInteractions,
 }
 
 impl ServiceContainer {
@@ -233,13 +245,13 @@ impl ServiceContainer {
         let guardrail_manager = GuardrailManager::new(config.guardrails.clone());
 
         // 7b. Knowledge service + embedding provider (initialised early so the
-        //     knowledge_search tool can be registered as part of step 8).
+        //     KnowledgeSearch tool can be registered as part of step 8).
         let (knowledge_service, embedding_provider) = Self::init_knowledge_service(config);
 
         // 8. Tool registry.
         let tool_registry = ToolRegistryImpl::new(config.tools.clone());
 
-        // Knowledge handle for the knowledge_search tool.
+        // Knowledge handle for the KnowledgeSearch tool.
         // Built here so the tool is registered in the service layer (not each
         // presentation layer). The same handle is shared with
         // KnowledgeContextProvider below.
@@ -263,7 +275,7 @@ impl ServiceContainer {
 [categories.meta]
 label = "Meta"
 description = "Tool management"
-tools = ["tool_search"]
+tools = ["ToolSearch"]
 "#,
                 )
                 .expect("fallback taxonomy")
@@ -319,6 +331,7 @@ tools = ["tool_search"]
         // actually selected for that turn (see agent_service.rs).
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
         let mut context_pipeline = ContextPipeline::new();
+        let callable_agents_text;
         {
             let mut sys_prompt_provider = BuildSystemPromptProvider::with_venv_info(
                 default_template(),
@@ -328,6 +341,7 @@ tools = ["tool_search"]
                 venv_info,
             );
             sys_prompt_provider.set_prompts_dir(config.prompts_dir.clone());
+            callable_agents_text = sys_prompt_provider.callable_agents_handle();
             context_pipeline.register(Box::new(sys_prompt_provider));
         }
         context_pipeline.register(Box::new(InjectContextStatus::new(4096)));
@@ -359,7 +373,7 @@ tools = ["tool_search"]
         )));
 
         // 10c. Register InjectSkills (dynamic -- reads active_skills from PromptContext).
-        //      Also build the SkillSearch index for tool_search.
+        //      Also build the SkillSearch index for ToolSearch.
         let skill_search = Self::build_skill_search_index(config.skills_dir.as_deref());
         if let Some(ref skills_dir) = config.skills_dir {
             context_pipeline.register(Box::new(InjectSkills::new(
@@ -449,6 +463,8 @@ tools = ["tool_search"]
             pruning_watermarks: RwLock::new(HashMap::new()),
             provider_metrics_store,
             skill_search: RwLock::new(skill_search),
+            callable_agents_text,
+            pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -721,6 +737,76 @@ impl ServiceContainer {
         hs.reload_config(new_config);
     }
 
+    /// Hot-reload agent definitions from the agents directory.
+    ///
+    /// Re-scans all `*.toml` files in the user agents directory and
+    /// registers (or overrides) definitions. Built-in agents are preserved.
+    /// Newly created agent files take effect immediately without restart.
+    ///
+    /// Returns `(loaded, errored)` counts.
+    pub async fn reload_agents(&self) -> (usize, usize) {
+        let mut registry = self.agent_registry.lock().await;
+        let (loaded, errored) = registry.reload_user_agents_from_dir();
+        info!(loaded, errored, "Agent definitions hot-reloaded");
+        // Refresh the callable agents text injected into the orchestration prompt.
+        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
+        (loaded, errored)
+    }
+
+    /// Register a single agent from raw TOML content at runtime.
+    ///
+    /// Useful when `agent-architect` creates a new agent definition and
+    /// wants it to take effect immediately without a full directory scan.
+    ///
+    /// Returns the registered agent's ID on success.
+    pub async fn register_agent_from_toml(&self, toml_content: &str) -> Result<String, String> {
+        let mut registry = self.agent_registry.lock().await;
+        let id = registry.register_agent_from_toml(toml_content)?;
+        info!(agent_id = %id, "Agent definition registered at runtime");
+        // Refresh callable agents text after registering a new agent.
+        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
+        Ok(id)
+    }
+
+    /// Refresh the callable agents text injected into the orchestration prompt.
+    ///
+    /// Reads all definitions from the registry where `user_callable == true`
+    /// and writes a markdown-formatted summary into the shared handle.
+    async fn refresh_callable_agents_text(registry: &AgentRegistry, handle: &Arc<RwLock<String>>) {
+        let callable: Vec<_> = registry
+            .list()
+            .into_iter()
+            .filter(|d| d.user_callable)
+            .collect();
+
+        let text = if callable.is_empty() {
+            String::from("### User-Callable Agents\n\n(none currently registered)")
+        } else {
+            let mut buf = String::from("### User-Callable Agents\n\n");
+            for agent in &callable {
+                buf.push_str(&format!(
+                    "- **{}**: {} (mode: {:?}, capabilities: [{}])\n",
+                    agent.id,
+                    agent.description,
+                    agent.mode,
+                    agent.capabilities.join(", "),
+                ));
+            }
+            buf
+        };
+
+        let mut guard = handle.write().await;
+        *guard = text;
+    }
+
+    /// Populate the callable agents text at startup.
+    ///
+    /// Called once after construction so the first prompt assembly has the list.
+    pub async fn init_callable_agents_text(&self) {
+        let registry = self.agent_registry.lock().await;
+        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
+    }
+
     /// Hot-reload prompt section files from disk.
     ///
     /// Looks up the `BuildSystemPromptProvider` in the context pipeline
@@ -826,24 +912,37 @@ impl ServiceContainer {
 // Core-tools pre-activation and summary generation
 // ---------------------------------------------------------------------------
 
-/// Built-in tools that are always active and don't need `tool_search` to use.
-const CORE_TOOL_NAMES: &[&str] = &[
-    "tool_search",
-    "file_read",
-    "file_write",
-    "shell_exec",
-    "browser",
-    "web_fetch",
-    "task",
+/// Tools always included in `ChatRequest.tools` -- every LLM call has these schemas.
+///
+/// These are the most frequently used tools; including them avoids an extra
+/// `ToolSearch` round-trip for common operations.
+pub(crate) const ESSENTIAL_TOOL_NAMES: &[&str] = &[
+    "ToolSearch",
+    "FileRead",
+    "FileWrite",
+    "ShellExec",
+    "Task",
+    "WebFetch",
+    "AskUser",
 ];
 
-/// Pre-activate all built-in tools as always-active in the activation set.
+/// Tools pre-activated as always-active (never LRU-evicted) but NOT in
+/// `ChatRequest.tools` by default. The LLM sees them in "Available Tools"
+/// and can use `ToolSearch` to load full schemas on demand.
+const DISCOVERABLE_TOOL_NAMES: &[&str] = &["browser"];
+
+/// Pre-activate essential and discoverable tools as always-active in the
+/// activation set. Both groups are never LRU-evicted; the difference is
+/// that only `ESSENTIAL_TOOL_NAMES` have schemas sent in every API call.
 async fn pre_activate_core_tools(
     registry: &ToolRegistryImpl,
     activation_set: &Arc<RwLock<ToolActivationSet>>,
 ) {
     let mut set = activation_set.write().await;
-    for &name in CORE_TOOL_NAMES {
+    for &name in ESSENTIAL_TOOL_NAMES
+        .iter()
+        .chain(DISCOVERABLE_TOOL_NAMES.iter())
+    {
         if let Some(def) = registry.get_definition(&ToolName::from_string(name)).await {
             set.activate(def);
             set.set_always_active(&ToolName::from_string(name));
@@ -851,13 +950,19 @@ async fn pre_activate_core_tools(
     }
 }
 
-/// Generate a compact summary of always-active tools for prompt injection.
+/// Generate a compact summary of essential tools for prompt injection.
 ///
 /// Produces a Markdown table with tool name, first-sentence description,
 /// and a usage hint (required args or available params), followed by a
-/// usage reminder. Called once at startup.
+/// usage reminder. Only includes `ESSENTIAL_TOOL_NAMES` -- the tools whose
+/// full schemas are always sent in the API call. Called once at startup.
 fn build_core_tools_summary(set: &ToolActivationSet) -> String {
-    let mut defs = set.always_active_definitions();
+    let essential: std::collections::HashSet<&str> = ESSENTIAL_TOOL_NAMES.iter().copied().collect();
+    let mut defs: Vec<&y_core::tool::ToolDefinition> = set
+        .always_active_definitions()
+        .into_iter()
+        .filter(|d| essential.contains(d.name.as_str()))
+        .collect();
     defs.sort_by_key(|d| d.name.as_str().to_string());
     let mut lines = vec![
         "## Core Tools (always available)\n".to_string(),
@@ -880,7 +985,7 @@ fn build_core_tools_summary(set: &ToolActivationSet) -> String {
     lines.push(
         "IMPORTANT: Use ONLY these exact tool names. \
          Do NOT invent tool names like 'ls', 'cat', 'grep', or 'mkdir'. \
-         For shell operations not covered above, use shell_exec."
+         For shell operations not covered above, use ShellExec."
             .to_string(),
     );
     lines.join("\n")
@@ -924,7 +1029,7 @@ pub(crate) fn build_agent_tools_summary(defs: &[y_core::tool::ToolDefinition]) -
 /// `{"path": "<File_path_to>"}`.
 ///
 /// When no required params exist (common for multi-mode tools like
-/// `tool_search` and `web_fetch`), the hint falls back to listing all
+/// `ToolSearch` and `WebFetch`), the hint falls back to listing all
 /// available properties so the LLM still knows what it can pass, e.g.
 /// `Pass one of: query, category, tool`.
 fn extract_usage_hint(params: &serde_json::Value) -> String {
@@ -1320,7 +1425,7 @@ mod tests {
     #[test]
     fn test_build_agent_tools_summary_single_tool() {
         let defs = vec![make_tool_def(
-            "shell_exec",
+            "ShellExec",
             "Execute a shell command. Runs in sandbox.",
             serde_json::json!({
                 "type": "object",
@@ -1332,7 +1437,7 @@ mod tests {
         )];
         let summary = super::build_agent_tools_summary(&defs);
         assert!(summary.contains("## Available Tools"));
-        assert!(summary.contains("| shell_exec |"));
+        assert!(summary.contains("| ShellExec |"));
         assert!(summary.contains("Execute a shell command"));
         assert!(summary.contains("Use ONLY these tool names"));
     }
@@ -1340,14 +1445,14 @@ mod tests {
     #[test]
     fn test_build_agent_tools_summary_sorted() {
         let defs = vec![
-            make_tool_def("file_write", "Write a file.", serde_json::json!({})),
+            make_tool_def("FileWrite", "Write a file.", serde_json::json!({})),
             make_tool_def("browser", "Open a browser.", serde_json::json!({})),
-            make_tool_def("shell_exec", "Execute shell.", serde_json::json!({})),
+            make_tool_def("ShellExec", "Execute shell.", serde_json::json!({})),
         ];
         let summary = super::build_agent_tools_summary(&defs);
         let browser_pos = summary.find("browser").unwrap();
-        let file_write_pos = summary.find("file_write").unwrap();
-        let shell_exec_pos = summary.find("shell_exec").unwrap();
+        let file_write_pos = summary.find("FileWrite").unwrap();
+        let shell_exec_pos = summary.find("ShellExec").unwrap();
         assert!(browser_pos < file_write_pos);
         assert!(file_write_pos < shell_exec_pos);
     }

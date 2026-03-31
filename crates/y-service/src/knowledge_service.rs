@@ -213,7 +213,7 @@ impl KnowledgeService {
 
     /// Get a cloneable handle to the knowledge injection middleware.
     ///
-    /// Used to share the retriever with the `knowledge_search` tool and
+    /// Used to share the retriever with the `KnowledgeSearch` tool and
     /// `KnowledgeContextProvider` for chat integration.
     pub fn knowledge_handle(&self) -> Arc<StdMutex<InjectKnowledge<SimpleTokenizer>>> {
         Arc::clone(&self.inject_knowledge)

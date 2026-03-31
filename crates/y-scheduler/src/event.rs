@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct EventSchedule {
     /// Event type to match (e.g., "file.changed").
     pub event_type: String,
-    /// Optional payload filter (glob pattern on a field).
+    /// Optional payload filter (Glob pattern on a field).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<EventFilter>,
     /// Debounce window in seconds (collapse rapid events).

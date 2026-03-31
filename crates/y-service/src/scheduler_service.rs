@@ -81,6 +81,8 @@ pub struct ScheduleSummary {
     pub enabled: bool,
     /// Trigger type label (cron, interval, event, onetime).
     pub trigger_type: String,
+    /// Human-readable trigger value (cron expression, interval seconds, etc.).
+    pub trigger_value: String,
     /// Workflow to execute.
     pub workflow_id: String,
     /// Human-readable description.
@@ -91,6 +93,33 @@ pub struct ScheduleSummary {
     pub created_at: String,
     /// Last fire timestamp (RFC 3339), if ever fired.
     pub last_fire: Option<String>,
+}
+
+/// Summary of an execution record for the frontend.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecutionSummary {
+    /// Unique execution ID.
+    pub execution_id: String,
+    /// Originating schedule ID.
+    pub schedule_id: String,
+    /// Execution status (pending, running, completed, failed, skipped).
+    pub status: String,
+    /// When the trigger fired (RFC 3339).
+    pub triggered_at: String,
+    /// When execution started (RFC 3339).
+    pub started_at: Option<String>,
+    /// When execution completed (RFC 3339).
+    pub completed_at: Option<String>,
+    /// Duration in milliseconds (if completed).
+    pub duration_ms: Option<u64>,
+    /// Linked workflow execution ID.
+    pub workflow_execution_id: Option<String>,
+    /// Request/input summary (JSON): parameters, trigger context, workflow info.
+    pub request_summary: serde_json::Value,
+    /// Response/output summary (JSON): execution result, output content.
+    pub response_summary: serde_json::Value,
+    /// Human-readable error message when status is `failed`.
+    pub error_message: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +250,138 @@ impl SchedulerService {
             Err(SchedulerServiceError::NotFound { id: id.to_string() })
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Execution history
+    // -----------------------------------------------------------------------
+
+    /// Get execution history for a schedule.
+    pub async fn execution_history(
+        manager: &SchedulerManager,
+        schedule_id: &str,
+    ) -> Vec<ExecutionSummary> {
+        manager
+            .execution_history(schedule_id)
+            .await
+            .into_iter()
+            .map(|e| execution_to_summary(&e))
+            .collect()
+    }
+
+    /// Get a single execution record by ID.
+    pub async fn get_execution(
+        manager: &SchedulerManager,
+        execution_id: &str,
+    ) -> Result<ExecutionSummary, SchedulerServiceError> {
+        manager
+            .get_execution(execution_id)
+            .await
+            .map(|e| execution_to_summary(&e))
+            .ok_or_else(|| SchedulerServiceError::NotFound {
+                id: execution_id.to_string(),
+            })
+    }
+
+    /// Manually trigger a schedule execution (for "Trigger Now" / replay).
+    ///
+    /// Creates a new execution record as if the trigger had fired.
+    pub async fn trigger_now(
+        manager: &SchedulerManager,
+        schedule_id: &str,
+    ) -> Result<ExecutionSummary, SchedulerServiceError> {
+        // Verify schedule exists.
+        let schedule = manager.get_schedule(schedule_id).await.ok_or_else(|| {
+            SchedulerServiceError::NotFound {
+                id: schedule_id.to_string(),
+            }
+        })?;
+
+        // Create execution record via the executor.
+        let exec_store = manager.execution_store();
+        let mut exec_store_guard = exec_store.lock().await;
+
+        let now = chrono::Utc::now();
+        let execution_id = format!("exec-manual-{}", uuid::Uuid::new_v4());
+
+        let request_summary = serde_json::json!({
+            "schedule_id": schedule.id,
+            "schedule_name": schedule.name,
+            "workflow_id": schedule.workflow_id,
+            "trigger": "manual",
+            "parameter_values": schedule.parameter_values,
+            "trigger_time": now.to_rfc3339(),
+        });
+
+        // Placeholder response (instant completion for now).
+        let response_summary = serde_json::json!({
+            "status": "completed",
+            "message": "Manual trigger executed (placeholder)",
+            "workflow_execution_id": format!("workflow-{execution_id}"),
+        });
+
+        let execution = y_scheduler::ScheduleExecution {
+            execution_id: execution_id.clone(),
+            schedule_id: schedule_id.to_string(),
+            triggered_at: now,
+            started_at: Some(now),
+            completed_at: Some(now),
+            status: y_scheduler::ExecutionStatus::Completed,
+            workflow_execution_id: Some(format!("workflow-{execution_id}")),
+            request_summary,
+            response_summary,
+            error_message: None,
+        };
+
+        exec_store_guard.record(execution);
+        drop(exec_store_guard);
+
+        Self::get_execution(manager, &execution_id).await
+    }
+
+    /// Manually execute a workflow (for replay / manual run).
+    ///
+    /// Creates a new execution record for the workflow without requiring a schedule.
+    pub async fn execute_workflow(
+        manager: &SchedulerManager,
+        workflow_id: &str,
+        workflow_name: &str,
+    ) -> Result<ExecutionSummary, SchedulerServiceError> {
+        let exec_store = manager.execution_store();
+        let mut exec_store_guard = exec_store.lock().await;
+
+        let now = chrono::Utc::now();
+        let execution_id = format!("exec-wf-{}", uuid::Uuid::new_v4());
+
+        let request_summary = serde_json::json!({
+            "workflow_id": workflow_id,
+            "workflow_name": workflow_name,
+            "trigger": "manual_execute",
+            "trigger_time": now.to_rfc3339(),
+        });
+
+        let response_summary = serde_json::json!({
+            "status": "completed",
+            "message": "Workflow executed manually (placeholder)",
+        });
+
+        let execution = y_scheduler::ScheduleExecution {
+            execution_id: execution_id.clone(),
+            schedule_id: format!("workflow-{workflow_id}"),
+            triggered_at: now,
+            started_at: Some(now),
+            completed_at: Some(now),
+            status: y_scheduler::ExecutionStatus::Completed,
+            workflow_execution_id: Some(execution_id.clone()),
+            request_summary,
+            response_summary,
+            error_message: None,
+        };
+
+        exec_store_guard.record(execution);
+        drop(exec_store_guard);
+
+        Self::get_execution(manager, &execution_id).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,11 +389,14 @@ impl SchedulerService {
 // ---------------------------------------------------------------------------
 
 fn schedule_to_summary(schedule: &Schedule) -> ScheduleSummary {
-    let trigger_type = match &schedule.trigger {
-        TriggerConfig::Cron { .. } => "cron",
-        TriggerConfig::Interval { .. } => "interval",
-        TriggerConfig::Event { .. } => "event",
-        TriggerConfig::OneTime { .. } => "onetime",
+    let (trigger_type, trigger_value) = match &schedule.trigger {
+        TriggerConfig::Cron {
+            expression,
+            timezone,
+        } => ("cron", format!("{expression} ({timezone})")),
+        TriggerConfig::Interval { interval_secs } => ("interval", format!("{interval_secs}s")),
+        TriggerConfig::Event { event_type, .. } => ("event", event_type.clone()),
+        TriggerConfig::OneTime { at } => ("onetime", at.to_rfc3339()),
     };
 
     ScheduleSummary {
@@ -240,11 +404,36 @@ fn schedule_to_summary(schedule: &Schedule) -> ScheduleSummary {
         name: schedule.name.clone(),
         enabled: schedule.enabled,
         trigger_type: trigger_type.to_string(),
+        trigger_value,
         workflow_id: schedule.workflow_id.clone(),
         description: schedule.description.clone(),
         tags: schedule.tags.clone(),
         created_at: schedule.created_at.to_rfc3339(),
         last_fire: schedule.last_fire.map(|t| t.to_rfc3339()),
+    }
+}
+
+fn execution_to_summary(exec: &y_scheduler::ScheduleExecution) -> ExecutionSummary {
+    let duration_ms = match (exec.started_at, exec.completed_at) {
+        (Some(start), Some(end)) => {
+            let dur = end - start;
+            Some(u64::try_from(dur.num_milliseconds()).unwrap_or(0))
+        }
+        _ => None,
+    };
+
+    ExecutionSummary {
+        execution_id: exec.execution_id.clone(),
+        schedule_id: exec.schedule_id.clone(),
+        status: exec.status.to_string(),
+        triggered_at: exec.triggered_at.to_rfc3339(),
+        started_at: exec.started_at.map(|t| t.to_rfc3339()),
+        completed_at: exec.completed_at.map(|t| t.to_rfc3339()),
+        duration_ms,
+        workflow_execution_id: exec.workflow_execution_id.clone(),
+        request_summary: exec.request_summary.clone(),
+        response_summary: exec.response_summary.clone(),
+        error_message: exec.error_message.clone(),
     }
 }
 

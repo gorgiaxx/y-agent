@@ -141,10 +141,34 @@ pub enum TurnEvent {
         /// Name of the agent where the error occurred.
         agent_name: String,
     },
+    /// Emitted when the LLM calls `AskUser` and user input is needed.
+    ///
+    /// The presentation layer should render the questions and deliver answers
+    /// back via [`PendingInteractions`] (GUI: `chat_answer_question` command;
+    /// CLI: inline text selection).
+    ///
+    /// The tool execution loop is blocked while waiting for the answer.
+    UserInteractionRequest {
+        /// Unique interaction ID for correlating the answer.
+        interaction_id: String,
+        /// The structured questions from the `AskUser` tool call (JSON array).
+        questions: serde_json::Value,
+    },
 }
 
 /// Channel sender for turn progress events.
 pub type TurnEventSender = mpsc::UnboundedSender<TurnEvent>;
+
+/// Shared map of pending user-interaction answer channels.
+///
+/// When `AskUser` is intercepted, the orchestrator inserts a `oneshot::Sender`
+/// keyed by `interaction_id`. The presentation layer calls `chat_answer_question`,
+/// which removes the sender and delivers the answer.
+pub type PendingInteractions = std::sync::Arc<
+    tokio::sync::Mutex<
+        std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>,
+    >,
+>;
 
 /// Successful result of [`ChatService::execute_turn`].
 #[derive(Debug, Clone)]
@@ -663,7 +687,7 @@ impl ChatService {
                     .map_or(ToolCallingMode::default(), |m| m.tool_calling_mode)
             }
         };
-        let tool_defs = Self::build_tool_definitions(container).await;
+        let tool_defs = Self::build_essential_tool_definitions(container).await;
 
         // 2. Construct execution config for the root agent.
         let max_tool_iterations = container.guardrail_manager.config().max_tool_iterations;
@@ -887,6 +911,10 @@ impl ChatService {
     }
 
     /// Build tool definitions in `OpenAI` function-calling JSON format.
+    ///
+    /// Returns definitions for ALL registered tools. Prefer
+    /// [`build_essential_tool_definitions`] for root agent turns to enforce
+    /// lazy loading.
     pub async fn build_tool_definitions(container: &ServiceContainer) -> Vec<serde_json::Value> {
         let defs = container.tool_registry.get_all_definitions().await;
         defs.iter()
@@ -901,6 +929,36 @@ impl ChatService {
                 })
             })
             .collect()
+    }
+
+    /// Build tool definitions for essential tools only (lazy loading).
+    ///
+    /// Returns definitions for `ESSENTIAL_TOOL_NAMES` -- the minimal set
+    /// required for every LLM call. Additional tools are injected
+    /// dynamically after `ToolSearch` activates them.
+    pub async fn build_essential_tool_definitions(
+        container: &ServiceContainer,
+    ) -> Vec<serde_json::Value> {
+        use crate::container::ESSENTIAL_TOOL_NAMES;
+
+        let mut defs = Vec::with_capacity(ESSENTIAL_TOOL_NAMES.len());
+        for &name in ESSENTIAL_TOOL_NAMES {
+            if let Some(def) = container
+                .tool_registry
+                .get_definition(&y_core::types::ToolName::from_string(name))
+                .await
+            {
+                defs.push(serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": def.name.as_str(),
+                        "description": def.description,
+                        "parameters": def.parameters,
+                    }
+                }));
+            }
+        }
+        defs
     }
 
     /// Determine whether title generation should be triggered for this turn.

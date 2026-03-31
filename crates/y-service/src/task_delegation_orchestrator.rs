@@ -2,7 +2,7 @@
 //! `task` tool is called by the LLM.
 //!
 //! Intercepts `task` tool calls in `AgentService::execute_tool_call()` and
-//! routes them through the `AgentDelegator` (same pattern as `tool_search`
+//! routes them through the `AgentDelegator` (same pattern as `ToolSearch`
 //! / `ToolSearchOrchestrator`).
 
 use y_core::agent::{ContextStrategyHint, DelegationError};

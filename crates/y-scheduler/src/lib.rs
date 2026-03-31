@@ -31,7 +31,9 @@ pub mod trigger;
 pub use config::{ConcurrencyPolicy, MissedPolicy, SchedulerConfig};
 pub use cron::CronSchedule;
 pub use event::EventSchedule;
-pub use executor::{ExecutionStatus, ScheduleContext, ScheduleExecution, ScheduleExecutor};
+pub use executor::{
+    ExecutionStatus, ExecutionStore, ScheduleContext, ScheduleExecution, ScheduleExecutor,
+};
 pub use interval::IntervalSchedule;
 pub use manager::SchedulerManager;
 pub use onetime::OneTimeSchedule;

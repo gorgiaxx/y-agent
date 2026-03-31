@@ -33,6 +33,8 @@ pub mod skill_service;
 pub mod system;
 pub mod task_delegation_orchestrator;
 pub mod tool_search_orchestrator;
+pub mod user_interaction_orchestrator;
+pub mod workflow_orchestrator;
 pub mod workflow_service;
 pub mod workspace;
 
@@ -43,9 +45,9 @@ pub use agent_service::{
 };
 pub use bot::{BotService, BotServiceError};
 pub use chat::{
-    ChatService, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError,
-    ResendTurnRequest, ToolCallRecord, TurnError, TurnEvent, TurnEventSender, TurnInput,
-    TurnMetaSummary, TurnResult,
+    ChatService, PendingInteractions, PrepareTurnError, PrepareTurnRequest, PreparedTurn,
+    ResendTurnError, ResendTurnRequest, ToolCallRecord, TurnError, TurnEvent, TurnEventSender,
+    TurnInput, TurnMetaSummary, TurnResult,
 };
 pub use config::ServiceConfig;
 pub use container::ServiceContainer;
@@ -56,8 +58,8 @@ pub use observability::{
     SchedulerQueueSnapshot, SystemSnapshot,
 };
 pub use scheduler_service::{
-    CreateScheduleRequest, ScheduleSummary, SchedulerService, SchedulerServiceError,
-    UpdateScheduleRequest,
+    CreateScheduleRequest, ExecutionSummary, ScheduleSummary, SchedulerService,
+    SchedulerServiceError, UpdateScheduleRequest,
 };
 pub use skill_evolution::{
     CapturedExperience, ExperienceCaptureSubscriber, SkillInjectionTracker,
@@ -129,4 +131,6 @@ pub mod migration {
 pub use y_storage::workflow_store::WorkflowRow;
 
 // Re-export scheduler types (used by scheduler service and REST routes).
-pub use y_scheduler::{Schedule, SchedulerConfig, SchedulerManager, TriggerConfig};
+pub use y_scheduler::{
+    Schedule, SchedulePolicies, SchedulerConfig, SchedulerManager, TriggerConfig,
+};

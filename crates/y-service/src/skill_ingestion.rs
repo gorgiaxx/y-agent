@@ -232,7 +232,7 @@ impl SkillIngestionService {
         let existing_skills: Vec<String> = self.registry.read().await.list_names().await;
 
         // 4. Delegate to skill-ingestion agent
-        //    The agent now has file_read + shell_exec tools to explore the directory.
+        //    The agent now has FileRead + ShellExec tools to explore the directory.
         let input = serde_json::json!({
             "source_content": source_content,
             "source_format": format_str,
@@ -551,7 +551,7 @@ fn format_to_str(format: IngestionFormat) -> &'static str {
 /// Extract a JSON object from a response that may contain surrounding text.
 ///
 /// Multi-turn agent execution accumulates intermediate assistant content
-/// (from tool-calling iterations like `shell_exec` / `file_read`) before the
+/// (from tool-calling iterations like `ShellExec` / `FileRead`) before the
 /// final JSON output. This finds the first `{` and last `}` to extract the
 /// JSON object, discarding any prefix or suffix.
 fn extract_json_from_response(text: &str) -> &str {
@@ -804,7 +804,7 @@ mod tests {
         serde_json::json!({
             "decision": "optimized",
             "classification": "api_call",
-            "optimization_notes": "Transformed URL templates into natural-language rule tables. Decomposed into root + 2 sub-documents for lazy loading. Extracted web_fetch as tool reference.",
+            "optimization_notes": "Transformed URL templates into natural-language rule tables. Decomposed into root + 2 sub-documents for lazy loading. Extracted WebFetch as tool reference.",
             "manifest": {
                 "name": "multi-search-engine",
                 "version": "1.0.0",
@@ -820,7 +820,7 @@ mod tests {
                     "max_output_tokens": 4000
                 }
             },
-            "root_content": "# Multi-Search-Engine\n\nGuide for constructing search queries across multiple engines.\n\n## Core Rules\n\n1. Identify the user's search intent.\n2. Select the appropriate engine from the sub-document index.\n3. Construct the URL using the engine's pattern.\n4. Use the `web_fetch` tool to retrieve results.\n\n## Sub-Document Index\n\n| Document | Load Condition |\n|----------|----------------|\n| details/general-engines.md | When searching Google, Bing, or DuckDuckGo |\n| details/academic-engines.md | When searching academic sources |",
+            "root_content": "# Multi-Search-Engine\n\nGuide for constructing search queries across multiple engines.\n\n## Core Rules\n\n1. Identify the user's search intent.\n2. Select the appropriate engine from the sub-document index.\n3. Construct the URL using the engine's pattern.\n4. Use the `WebFetch` tool to retrieve results.\n\n## Sub-Document Index\n\n| Document | Load Condition |\n|----------|----------------|\n| details/general-engines.md | When searching Google, Bing, or DuckDuckGo |\n| details/academic-engines.md | When searching academic sources |",
             "sub_documents": [
                 {
                     "path": "details/general-engines.md",

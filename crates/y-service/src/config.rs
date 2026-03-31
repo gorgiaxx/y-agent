@@ -192,19 +192,59 @@ impl ServiceConfig {
     }
 
     /// Resolve relative `db_path` and `transcript_dir` against a base directory.
+    /// Also expands `~` to the user's home directory.
     ///
     /// Leaves absolute paths and the `:memory:` sentinel unchanged.
     pub fn resolve_storage_paths(&mut self, base_dir: &Path) {
         if self.storage.db_path != ":memory:" {
-            let db = PathBuf::from(&self.storage.db_path);
+            let db_path = expand_tilde(&self.storage.db_path);
+            let db = PathBuf::from(&db_path);
             if db.is_relative() {
                 self.storage.db_path = base_dir.join(&db).to_string_lossy().to_string();
+            } else {
+                self.storage.db_path = db_path;
             }
         }
 
-        if self.storage.transcript_dir.is_relative() {
-            self.storage.transcript_dir = base_dir.join(&self.storage.transcript_dir);
+        let transcript_str = expand_tilde(&self.storage.transcript_dir.to_string_lossy());
+        let transcript_dir = PathBuf::from(&transcript_str);
+        if transcript_dir.is_relative() {
+            self.storage.transcript_dir = base_dir.join(&transcript_dir);
+        } else {
+            self.storage.transcript_dir = transcript_dir;
         }
+
+        // Resolve runtime paths
+        self.runtime.ssh.private_key_path = self
+            .runtime
+            .ssh
+            .private_key_path
+            .as_deref()
+            .map(expand_tilde);
+        self.runtime.ssh.known_hosts_path = self
+            .runtime
+            .ssh
+            .known_hosts_path
+            .as_deref()
+            .map(expand_tilde);
+        self.runtime.python_venv.working_dir = expand_tilde(&self.runtime.python_venv.working_dir);
+        self.runtime.bun_venv.working_dir = expand_tilde(&self.runtime.bun_venv.working_dir);
+    }
+}
+
+/// Expand `~` to the user's home directory.
+fn expand_tilde(path: &str) -> String {
+    if let Some(stripped) = path.strip_prefix("~/") {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        format!("{home}/{stripped}")
+    } else if path == "~" {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string())
+    } else {
+        path.to_string()
     }
 }
 

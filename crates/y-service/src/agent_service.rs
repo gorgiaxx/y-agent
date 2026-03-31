@@ -177,6 +177,11 @@ struct ToolExecContext {
     session_id: SessionId,
     working_history: Vec<Message>,
     accumulated_content: String,
+    /// Tool definitions dynamically activated via `ToolSearch` during this turn.
+    /// Merged with `config.tool_definitions` when building each `ChatRequest`.
+    dynamic_tool_defs: Vec<serde_json::Value>,
+    /// Pending user-interaction answer channels for `AskUser` tool calls.
+    pending_interactions: crate::chat::PendingInteractions,
 }
 
 /// Per-iteration LLM response data bundle.
@@ -258,6 +263,8 @@ impl AgentService {
             session_id,
             working_history,
             accumulated_content: String::new(),
+            dynamic_tool_defs: Vec::new(),
+            pending_interactions: container.pending_interactions.clone(),
         };
         #[allow(unused_assignments)]
         let mut final_model = String::new();
@@ -527,13 +534,38 @@ impl AgentService {
     }
 
     fn build_chat_request(config: &AgentExecutionConfig, ctx: &ToolExecContext) -> ChatRequest {
+        // Merge essential (static) + dynamically activated tool definitions.
+        let tools = if ctx.dynamic_tool_defs.is_empty() {
+            config.tool_definitions.clone()
+        } else {
+            let mut merged = config.tool_definitions.clone();
+            for dyn_def in &ctx.dynamic_tool_defs {
+                let dyn_name = dyn_def
+                    .get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str());
+                if let Some(name) = dyn_name {
+                    let already_present = merged.iter().any(|t| {
+                        t.get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            == Some(name)
+                    });
+                    if !already_present {
+                        merged.push(dyn_def.clone());
+                    }
+                }
+            }
+            merged
+        };
+
         ChatRequest {
             messages: ctx.working_history.clone(),
             model: None,
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             top_p: None,
-            tools: config.tool_definitions.clone(),
+            tools,
             tool_calling_mode: config.tool_calling_mode,
             stop: vec![],
             extra: serde_json::Value::Null,
@@ -758,7 +790,20 @@ impl AgentService {
         ctx: &mut ToolExecContext,
     ) -> (bool, String) {
         let tool_start = std::time::Instant::now();
-        let tool_result = Self::execute_tool_call(container, tc, &ctx.session_id).await;
+
+        // Intercept AskUser calls -- route through the user interaction
+        // orchestrator which emits a TurnEvent and awaits the user's answer.
+        let tool_result = if tc.name == "AskUser" {
+            crate::user_interaction_orchestrator::UserInteractionOrchestrator::handle(
+                &tc.arguments,
+                &ctx.pending_interactions,
+                progress,
+            )
+            .await
+        } else {
+            Self::execute_tool_call(container, tc, &ctx.session_id).await
+        };
+
         let tool_elapsed_ms = u64::try_from(tool_start.elapsed().as_millis()).unwrap_or(0);
 
         let (tool_success, result_content) = match &tool_result {
@@ -808,6 +853,13 @@ impl AgentService {
                     tool_success,
                 )
                 .await;
+        }
+
+        // Auto-register agent definitions when FileWrite creates a .toml
+        // in an agents/ directory. This lets agent-architect's output take
+        // effect immediately without a restart or manual reload.
+        if tool_success && tc.name == "FileWrite" {
+            Self::maybe_auto_register_agent(container, &tc.arguments).await;
         }
 
         (tool_success, result_content)
@@ -890,7 +942,18 @@ impl AgentService {
         // Track new messages added in this iteration for mid-loop persistence.
         let msgs_before = ctx.new_messages.len();
 
-        let iter_content = response.content.clone().unwrap_or_default();
+        // Even with Native tool calling, some providers/models embed XML tool
+        // call blocks in the text content alongside structured tool_calls.
+        // Strip them so raw protocol XML never leaks into the conversation.
+        let iter_content = {
+            let raw = response.content.clone().unwrap_or_default();
+            let stripped = strip_tool_call_blocks(&raw);
+            if stripped.is_empty() {
+                raw
+            } else {
+                stripped
+            }
+        };
 
         // Accumulate this iteration's text so the final persisted message
         // includes all iterations' content (think blocks, intermediate text).
@@ -917,6 +980,12 @@ impl AgentService {
             };
             ctx.working_history.push(tool_msg.clone());
             ctx.new_messages.push(tool_msg);
+        }
+
+        // If ToolSearch was called this iteration, sync newly activated
+        // tool definitions so they appear in the next ChatRequest.tools.
+        if response.tool_calls.iter().any(|tc| tc.name == "ToolSearch") {
+            Self::sync_dynamic_tool_defs(container, ctx).await;
         }
 
         // Mid-loop pruning: truncate large tool results from previous
@@ -996,6 +1065,16 @@ impl AgentService {
         ctx.working_history.push(user_msg.clone());
         ctx.new_messages.push(user_msg);
 
+        // If ToolSearch was called this iteration, sync newly activated
+        // tool definitions so they appear in the next ChatRequest.tools.
+        if parse_result
+            .tool_calls
+            .iter()
+            .any(|ptc| ptc.name == "ToolSearch")
+        {
+            Self::sync_dynamic_tool_defs(container, ctx).await;
+        }
+
         // Mid-loop pruning: truncate large tool results from previous
         // iterations so context is managed at tool-call granularity.
         if config.use_context_pipeline {
@@ -1035,15 +1114,17 @@ impl AgentService {
             &config.agent_name,
         );
 
-        let content = if config.tool_calling_mode == ToolCallingMode::PromptBased {
+        // Always strip XML tool call blocks regardless of tool calling mode.
+        // Even Native-mode providers may embed provider-specific XML tags in
+        // the text content (e.g. MiniMax, DeepSeek, GLM), and these must
+        // never leak into the user-visible output.
+        let content = {
             let stripped = strip_tool_call_blocks(&raw_content);
             if stripped.is_empty() {
                 raw_content
             } else {
                 stripped
             }
-        } else {
-            raw_content
         };
 
         if owns_trace {
@@ -1076,6 +1157,54 @@ impl AgentService {
             reasoning_content: response.reasoning_content.clone(),
             reasoning_duration_ms,
         })
+    }
+
+    /// Sync dynamically activated tool definitions from the `ToolActivationSet`
+    /// into `ctx.dynamic_tool_defs` so they appear in subsequent `ChatRequest.tools`.
+    ///
+    /// Called after a `ToolSearch` call activates new tools. Also sets the
+    /// `orchestration.enabled` prompt flag when workflow/schedule tools are active.
+    async fn sync_dynamic_tool_defs(container: &ServiceContainer, ctx: &mut ToolExecContext) {
+        use crate::container::ESSENTIAL_TOOL_NAMES;
+
+        let essential: std::collections::HashSet<&str> =
+            ESSENTIAL_TOOL_NAMES.iter().copied().collect();
+
+        let set = container.tool_activation_set.read().await;
+        let active = set.active_definitions();
+
+        ctx.dynamic_tool_defs = active
+            .iter()
+            .filter(|def| !essential.contains(def.name.as_str()))
+            .map(|def| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": def.name.as_str(),
+                        "description": def.description,
+                        "parameters": def.parameters,
+                    }
+                })
+            })
+            .collect();
+
+        // If workflow/schedule tools were activated, set the orchestration
+        // flag so the system prompt includes orchestration instructions on
+        // subsequent turns.
+        let has_orchestration = active.iter().any(|d| {
+            let n = d.name.as_str();
+            n.starts_with("workflow_") || n.starts_with("schedule_")
+        });
+        if has_orchestration {
+            let mut pctx = container.prompt_context.write().await;
+            pctx.config_flags
+                .insert("orchestration.enabled".into(), true);
+        }
+
+        tracing::debug!(
+            dynamic_count = ctx.dynamic_tool_defs.len(),
+            "synced dynamic tool definitions from activation set"
+        );
     }
 
     /// Mid-loop context pruning: truncates large tool result messages from
@@ -1320,9 +1449,70 @@ impl AgentService {
             .collect()
     }
 
-    /// Execute a tool call — delegates to the tool registry.
+    /// Check if a successful `FileWrite` just created an agent TOML and, if
+    /// so, auto-register it so it takes effect immediately.
     ///
-    /// Special handling for `tool_search` and `task`: these meta-tools are
+    /// Detection heuristic: the `path` argument ends with `.toml` and contains
+    /// an `agents/` directory segment. Errors are logged but never propagated
+    /// (auto-registration is best-effort).
+    async fn maybe_auto_register_agent(
+        container: &ServiceContainer,
+        arguments: &serde_json::Value,
+    ) {
+        let path_str = arguments.get("path").and_then(|v| v.as_str()).unwrap_or("");
+
+        if path_str.is_empty() {
+            return;
+        }
+
+        let path = std::path::Path::new(path_str);
+
+        // Only consider .toml files in an agents/ directory.
+        let is_toml = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
+        let in_agents_dir = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name == "agents");
+
+        if !is_toml || !in_agents_dir {
+            return;
+        }
+
+        // Read the file from disk and attempt registration.
+        match std::fs::read_to_string(path) {
+            Ok(content) => match container.register_agent_from_toml(&content).await {
+                Ok(id) => {
+                    tracing::info!(
+                        agent_id = %id,
+                        path = %path_str,
+                        "Auto-registered new agent definition from FileWrite"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path_str,
+                        error = %e,
+                        "Failed to auto-register agent from written file"
+                    );
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    path = %path_str,
+                    error = %e,
+                    "Failed to read agent file for auto-registration"
+                );
+            }
+        }
+    }
+
+    /// Execute a tool call -- delegates to the tool registry.
+    ///
+    /// Special handling for `ToolSearch` and `task`: these meta-tools are
     /// intercepted and routed to their respective orchestrators which have
     /// access to the full `ServiceContainer`.
     async fn execute_tool_call(
@@ -1330,8 +1520,8 @@ impl AgentService {
         tc: &ToolCallRequest,
         session_id: &SessionId,
     ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
-        // Intercept tool_search calls — unified search across tools, skills, and agents.
-        if tc.name == "tool_search" {
+        // Intercept ToolSearch calls — unified search across tools, skills, and agents.
+        if tc.name == "ToolSearch" {
             let sources = crate::tool_search_orchestrator::CapabilitySearchSources {
                 skill_search: Some(&container.skill_search),
                 agent_registry: Some(&*container.agent_registry),
@@ -1350,7 +1540,7 @@ impl AgentService {
         }
 
         // Intercept task calls — delegate to a sub-agent via AgentDelegator.
-        if tc.name == "task" {
+        if tc.name == "Task" {
             let session_uuid =
                 uuid::Uuid::parse_str(session_id.as_str()).unwrap_or_else(|_| uuid::Uuid::new_v4());
             return crate::task_delegation_orchestrator::TaskDelegationOrchestrator::handle(
@@ -1359,6 +1549,26 @@ impl AgentService {
                 Some(session_uuid),
             )
             .await;
+        }
+
+        // Intercept workflow/schedule meta-tools -- route through orchestrator.
+        {
+            use crate::workflow_orchestrator::WorkflowOrchestrator as WO;
+            let args = &tc.arguments;
+            match tc.name.as_str() {
+                "WorkflowCreate" => return WO::handle_create(args, container).await,
+                "WorkflowList" => return WO::handle_list(args, container).await,
+                "WorkflowGet" => return WO::handle_get(args, container).await,
+                "WorkflowUpdate" => return WO::handle_update(args, container).await,
+                "WorkflowDelete" => return WO::handle_delete(args, container).await,
+                "WorkflowValidate" => return WO::handle_validate(args, container),
+                "ScheduleCreate" => return WO::handle_schedule_create(args, container).await,
+                "ScheduleList" => return WO::handle_schedule_list(args, container).await,
+                "SchedulePause" => return WO::handle_schedule_pause(args, container).await,
+                "ScheduleResume" => return WO::handle_schedule_resume(args, container).await,
+                "ScheduleDelete" => return WO::handle_schedule_delete(args, container).await,
+                _ => {} // fall through to normal tool dispatch
+            }
         }
 
         let tool_name = ToolName::from_string(&tc.name);
@@ -1575,16 +1785,18 @@ fn build_subagent_system_prompt(
         return base_prompt.to_string();
     }
 
+    let tool_protocol = y_prompt::PROMPT_TOOL_PROTOCOL;
+
     match tool_calling_mode {
         ToolCallingMode::Native => {
             // Native mode: tools are sent via the API `tools` field.
-            // No prompt injection needed -- avoids redundant token usage.
-            base_prompt.to_string()
+            // Still provide universal tool protocol rules, but no XML syntax.
+            format!("{base_prompt}\n\n{tool_protocol}")
         }
         ToolCallingMode::PromptBased => {
             let tools_summary = crate::container::build_agent_tools_summary(filtered_defs);
-            let tool_protocol = y_prompt::PROMPT_TOOL_PROTOCOL;
-            format!("{base_prompt}\n\n{tool_protocol}\n\n{tools_summary}")
+            let syntax = y_tools::parser::PROMPT_TOOL_CALL_SYNTAX;
+            format!("{base_prompt}\n\n{tool_protocol}\n\n{syntax}\n\n{tools_summary}")
         }
     }
 }
@@ -1849,34 +2061,35 @@ mod tests {
     #[test]
     fn test_subagent_prompt_includes_protocol_and_summary() {
         let base = "You are a test agent.";
-        let defs = vec![make_test_tool_def("shell_exec")];
+        let defs = vec![make_test_tool_def("ShellExec")];
         let result = super::build_subagent_system_prompt(base, &defs, ToolCallingMode::PromptBased);
 
         assert!(result.starts_with(base));
         assert!(result.contains("Tool Usage Protocol"));
         assert!(result.contains("## Available Tools"));
-        assert!(result.contains("| shell_exec |"));
+        assert!(result.contains("| ShellExec |"));
     }
 
     #[test]
-    fn test_subagent_prompt_native_mode_returns_base_only() {
+    fn test_subagent_prompt_native_mode_returns_base_and_rules() {
         let base = "You are a test agent.";
-        let defs = vec![make_test_tool_def("shell_exec")];
+        let defs = vec![make_test_tool_def("ShellExec")];
         let result = super::build_subagent_system_prompt(base, &defs, ToolCallingMode::Native);
 
-        // Native mode: tools are sent via API field, prompt is unchanged.
-        assert_eq!(result, base);
+        // Native mode: tools are sent via API field, prompt includes rules but no XML/summary.
+        assert!(result.starts_with(base));
+        assert!(result.contains("Tool Usage Protocol"));
         assert!(!result.contains("Available Tools"));
-        assert!(!result.contains("Tool Usage Protocol"));
+        assert!(!result.contains("<tool_call>"));
     }
 
     #[test]
     fn test_subagent_prompt_preserves_base() {
         let base = "Custom system prompt with specific instructions.";
-        let defs = vec![make_test_tool_def("file_read")];
+        let defs = vec![make_test_tool_def("FileRead")];
         let result = super::build_subagent_system_prompt(base, &defs, ToolCallingMode::PromptBased);
 
         assert!(result.starts_with(base));
-        assert!(result.contains("file_read"));
+        assert!(result.contains("FileRead"));
     }
 }
