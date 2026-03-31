@@ -122,7 +122,9 @@ impl UserInteractionOrchestrator {
             map.remove(interaction_id)
         };
 
-        if let Some(tx) = sender { tx.send(answer).is_ok() } else {
+        if let Some(tx) = sender {
+            tx.send(answer).is_ok()
+        } else {
             tracing::warn!(
                 interaction_id = %interaction_id,
                 "deliver_answer: no pending interaction found (may have timed out)"

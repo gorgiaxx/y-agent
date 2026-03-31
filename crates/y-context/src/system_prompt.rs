@@ -402,7 +402,7 @@ mod tests {
         // Should contain security.
         assert!(item.content.contains("Security rules"));
         // core.tool_protocol is now always included
-        assert!(item.content.contains("Tool Behavior"));
+        assert!(item.content.contains("Tool Usage Protocol"));
         // Token estimate should be reasonable.
         assert!(item.token_estimate > 0);
     }

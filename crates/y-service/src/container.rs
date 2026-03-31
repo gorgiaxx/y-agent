@@ -784,13 +784,15 @@ impl ServiceContainer {
         } else {
             let mut buf = String::from("### User-Callable Agents\n\n");
             for agent in &callable {
-                buf.push_str(&format!(
-                    "- **{}**: {} (mode: {:?}, capabilities: [{}])\n",
+                use std::fmt::Write;
+                let _ = writeln!(
+                    buf,
+                    "- **{}**: {} (mode: {:?}, capabilities: [{}])",
                     agent.id,
                     agent.description,
                     agent.mode,
                     agent.capabilities.join(", "),
-                ));
+                );
             }
             buf
         };

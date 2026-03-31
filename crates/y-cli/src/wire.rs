@@ -51,7 +51,7 @@ mod tests {
     #[tokio::test]
     async fn test_wire_creates_all_services() {
         let mut config = YAgentConfig::default();
-        config.storage.db_path = ":memory:".to_string();
+        config.storage = y_service::StorageConfig::in_memory();
 
         let result = wire(&config).await;
         assert!(result.is_ok(), "wiring with default config should succeed");
@@ -72,7 +72,7 @@ mod tests {
     #[tokio::test]
     async fn test_wire_registers_middleware() {
         let mut config = YAgentConfig::default();
-        config.storage.db_path = ":memory:".to_string();
+        config.storage = y_service::StorageConfig::in_memory();
 
         let services = wire(&config).await.unwrap();
         let _tool_guard = services.guardrail_manager.tool_guard();
@@ -144,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn test_wire_registers_context_providers() {
         let mut config = YAgentConfig::default();
-        config.storage.db_path = ":memory:".to_string();
+        config.storage = y_service::StorageConfig::in_memory();
 
         let services = wire(&config).await.unwrap();
         assert_eq!(services.context_pipeline.provider_count(), 5);
