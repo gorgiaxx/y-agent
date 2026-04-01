@@ -137,6 +137,10 @@ impl Tool for FileEditTool {
     fn definition(&self) -> &ToolDefinition {
         &self.def
     }
+
+    fn is_destructive(&self) -> bool {
+        true
+    }
 }
 
 impl FileEditTool {

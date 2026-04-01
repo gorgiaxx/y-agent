@@ -106,6 +106,10 @@ impl Tool for FileWriteTool {
     fn definition(&self) -> &ToolDefinition {
         &self.def
     }
+
+    fn is_destructive(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

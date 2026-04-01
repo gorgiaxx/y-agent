@@ -276,6 +276,10 @@ impl Tool for WorkflowListTool {
     fn definition(&self) -> &ToolDefinition {
         &self.def
     }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +354,10 @@ impl Tool for WorkflowGetTool {
 
     fn definition(&self) -> &ToolDefinition {
         &self.def
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
     }
 }
 
@@ -530,6 +538,10 @@ impl Tool for WorkflowDeleteTool {
     fn definition(&self) -> &ToolDefinition {
         &self.def
     }
+
+    fn is_destructive(&self) -> bool {
+        true
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -619,6 +631,10 @@ impl Tool for WorkflowValidateTool {
 
     fn definition(&self) -> &ToolDefinition {
         &self.def
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
     }
 }
 
@@ -806,6 +822,10 @@ impl Tool for ScheduleListTool {
 
     fn definition(&self) -> &ToolDefinition {
         &self.def
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
     }
 }
 
@@ -1029,6 +1049,10 @@ impl Tool for ScheduleDeleteTool {
 
     fn definition(&self) -> &ToolDefinition {
         &self.def
+    }
+
+    fn is_destructive(&self) -> bool {
+        true
     }
 }
 
