@@ -58,6 +58,10 @@ pub struct ScheduleExecutionRow {
     pub schedule_id: String,
     pub session_id: Option<String>,
     pub status: String,
+    pub triggered_at: Option<String>,
+    pub workflow_execution_id: Option<String>,
+    pub request_summary: Option<String>,
+    pub response_summary: Option<String>,
     pub resolved_params: Option<String>,
     pub error_message: Option<String>,
     pub started_at: String,
@@ -297,13 +301,18 @@ impl SqliteScheduleStore {
     pub async fn record_execution(&self, row: &ScheduleExecutionRow) -> Result<(), StorageError> {
         sqlx::query(
             r"INSERT INTO schedule_executions
-              (id, schedule_id, session_id, status, resolved_params, error_message, started_at, completed_at)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+              (id, schedule_id, session_id, status, triggered_at, workflow_execution_id,
+               request_summary, response_summary, resolved_params, error_message, started_at, completed_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )
         .bind(&row.id)
         .bind(&row.schedule_id)
         .bind(&row.session_id)
         .bind(&row.status)
+        .bind(&row.triggered_at)
+        .bind(&row.workflow_execution_id)
+        .bind(&row.request_summary)
+        .bind(&row.response_summary)
         .bind(&row.resolved_params)
         .bind(&row.error_message)
         .bind(&row.started_at)
@@ -325,7 +334,8 @@ impl SqliteScheduleStore {
         limit: i64,
     ) -> Result<Vec<ScheduleExecutionRow>, StorageError> {
         let rows: Vec<DbExecutionRow> = sqlx::query_as(
-            r"SELECT id, schedule_id, session_id, status, resolved_params,
+            r"SELECT id, schedule_id, session_id, status, triggered_at, workflow_execution_id,
+                     request_summary, response_summary, resolved_params,
                      error_message, started_at, completed_at
               FROM schedule_executions
               WHERE schedule_id = ?1
@@ -343,28 +353,73 @@ impl SqliteScheduleStore {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    /// Update execution status.
+    /// Get a single execution by ID.
     #[instrument(skip(self))]
-    pub async fn update_execution_status(
+    pub async fn get_execution(
         &self,
         execution_id: &str,
-        status: &str,
-        error_message: Option<&str>,
-        completed_at: Option<&str>,
-    ) -> Result<bool, StorageError> {
+    ) -> Result<Option<ScheduleExecutionRow>, StorageError> {
+        let row: Option<DbExecutionRow> = sqlx::query_as(
+            r"SELECT id, schedule_id, session_id, status, triggered_at, workflow_execution_id,
+                     request_summary, response_summary, resolved_params,
+                     error_message, started_at, completed_at
+              FROM schedule_executions
+              WHERE id = ?1",
+        )
+        .bind(execution_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database {
+            message: format!("get execution '{execution_id}': {e}"),
+        })?;
+
+        Ok(row.map(Into::into))
+    }
+
+    /// List all execution rows in ascending start time order.
+    #[instrument(skip(self))]
+    pub async fn list_executions(&self) -> Result<Vec<ScheduleExecutionRow>, StorageError> {
+        let rows: Vec<DbExecutionRow> = sqlx::query_as(
+            r"SELECT id, schedule_id, session_id, status, triggered_at, workflow_execution_id,
+                     request_summary, response_summary, resolved_params,
+                     error_message, started_at, completed_at
+              FROM schedule_executions
+              ORDER BY started_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database {
+            message: format!("list executions: {e}"),
+        })?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Update an execution row with the latest status and summaries.
+    #[instrument(skip(self))]
+    pub async fn update_execution(&self, row: &ScheduleExecutionRow) -> Result<bool, StorageError> {
         let result = sqlx::query(
             r"UPDATE schedule_executions SET
-                status = ?1, error_message = ?2, completed_at = ?3
-              WHERE id = ?4",
+                session_id = ?1, status = ?2, triggered_at = ?3, workflow_execution_id = ?4,
+                request_summary = ?5, response_summary = ?6, resolved_params = ?7,
+                error_message = ?8, started_at = ?9, completed_at = ?10
+              WHERE id = ?11",
         )
-        .bind(status)
-        .bind(error_message)
-        .bind(completed_at)
-        .bind(execution_id)
+        .bind(&row.session_id)
+        .bind(&row.status)
+        .bind(&row.triggered_at)
+        .bind(&row.workflow_execution_id)
+        .bind(&row.request_summary)
+        .bind(&row.response_summary)
+        .bind(&row.resolved_params)
+        .bind(&row.error_message)
+        .bind(&row.started_at)
+        .bind(&row.completed_at)
+        .bind(&row.id)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Database {
-            message: format!("update execution '{execution_id}': {e}"),
+            message: format!("update execution '{}': {e}", row.id),
         })?;
 
         Ok(result.rows_affected() > 0)
@@ -426,6 +481,10 @@ struct DbExecutionRow {
     schedule_id: String,
     session_id: Option<String>,
     status: String,
+    triggered_at: Option<String>,
+    workflow_execution_id: Option<String>,
+    request_summary: Option<String>,
+    response_summary: Option<String>,
     resolved_params: Option<String>,
     error_message: Option<String>,
     started_at: String,
@@ -439,6 +498,10 @@ impl From<DbExecutionRow> for ScheduleExecutionRow {
             schedule_id: r.schedule_id,
             session_id: r.session_id,
             status: r.status,
+            triggered_at: r.triggered_at,
+            workflow_execution_id: r.workflow_execution_id,
+            request_summary: r.request_summary,
+            response_summary: r.response_summary,
             resolved_params: r.resolved_params,
             error_message: r.error_message,
             started_at: r.started_at,
@@ -609,6 +672,10 @@ mod tests {
             schedule_id: "s1".into(),
             session_id: None,
             status: "completed".into(),
+            triggered_at: Some("2026-03-11T09:00:00Z".into()),
+            workflow_execution_id: Some("wf-exec-1".into()),
+            request_summary: Some(r#"{"trigger":"manual"}"#.into()),
+            response_summary: Some(r#"{"status":"completed"}"#.into()),
             resolved_params: Some(r#"{"key":"value"}"#.into()),
             error_message: None,
             started_at: "2026-03-11T09:00:00Z".into(),
@@ -619,10 +686,14 @@ mod tests {
         let history = store.get_executions("s1", 10).await.unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].status, "completed");
+        assert_eq!(
+            history[0].workflow_execution_id.as_deref(),
+            Some("wf-exec-1")
+        );
     }
 
     #[tokio::test]
-    async fn test_update_execution_status() {
+    async fn test_update_execution() {
         let (_pool, store) = setup().await;
         store.save(&sample_row("s1", "status-test")).await.unwrap();
 
@@ -630,7 +701,11 @@ mod tests {
             id: "exec-2".into(),
             schedule_id: "s1".into(),
             session_id: None,
-            status: "triggered".into(),
+            status: "running".into(),
+            triggered_at: Some("2026-03-11T09:00:00Z".into()),
+            workflow_execution_id: None,
+            request_summary: Some(r#"{"trigger":"interval"}"#.into()),
+            response_summary: Some("{}".into()),
             resolved_params: None,
             error_message: None,
             started_at: "2026-03-11T09:00:00Z".into(),
@@ -638,18 +713,20 @@ mod tests {
         };
         store.record_execution(&exec).await.unwrap();
 
-        store
-            .update_execution_status(
-                "exec-2",
-                "failed",
-                Some("timeout"),
-                Some("2026-03-11T09:05:00Z"),
-            )
-            .await
-            .unwrap();
+        let mut updated = store.get_execution("exec-2").await.unwrap().unwrap();
+        updated.status = "failed".into();
+        updated.workflow_execution_id = Some("wf-exec-2".into());
+        updated.response_summary = Some(r#"{"status":"failed"}"#.into());
+        updated.error_message = Some("timeout".into());
+        updated.completed_at = Some("2026-03-11T09:05:00Z".into());
+        store.update_execution(&updated).await.unwrap();
 
         let history = store.get_executions("s1", 10).await.unwrap();
         assert_eq!(history[0].status, "failed");
         assert_eq!(history[0].error_message.as_deref(), Some("timeout"));
+        assert_eq!(
+            history[0].workflow_execution_id.as_deref(),
+            Some("wf-exec-2")
+        );
     }
 }

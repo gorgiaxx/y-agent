@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 import { Sidebar } from '../components/Sidebar';
@@ -17,6 +17,7 @@ import { type SettingsTab } from '../components/settings/SettingsPanel';
 import { useNavigationContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useKnowledgeContext, useAutomationContext, useChatContext } from '../providers/AppContexts';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useObservability, type TimeRange } from '../hooks/useObservability';
+import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
 
 export function MainLayout() {
   const navProps = useNavigationContext();
@@ -28,16 +29,13 @@ export function MainLayout() {
   const autoHooks = useAutomationContext();
   const chatHooks = useChatContext();
 
-  const handleGlobalClear = useCallback(() => {
-    invoke('diagnostics_clear_all').catch(console.error);
-  }, []);
-
+  const diagnosticsScope = resolveDiagnosticsScope(navProps.activeView, sessionHooks.activeSessionId);
   const {
     entries: diagEntries,
     summary: diagSummary,
     isActive: diagActive,
     clear: clearDiagnostics,
-  } = useDiagnostics(null);
+  } = useDiagnostics(diagnosticsScope.sessionId);
 
   const [obsTimeRange, setObsTimeRange] = useState<TimeRange>('all');
   const {
@@ -206,14 +204,11 @@ export function MainLayout() {
           entries={diagEntries}
           summary={diagSummary}
           isActive={diagActive}
-          isGlobal={true}
+          isGlobal={diagnosticsScope.isGlobal}
           expanded={navProps.diagExpanded}
-          sessionId={null}
+          sessionId={diagnosticsScope.sessionId}
           onToggleExpand={() => navProps.setDiagExpanded(!navProps.diagExpanded)}
-          onClear={() => {
-            handleGlobalClear();
-            clearDiagnostics();
-          }}
+          onClear={clearDiagnostics}
           onClose={() => navProps.setDiagOpen(false)}
         />
       )}

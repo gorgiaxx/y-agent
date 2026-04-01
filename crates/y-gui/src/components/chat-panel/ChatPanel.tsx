@@ -221,7 +221,6 @@ function ChatPanelInner({
         <Virtuoso
           ref={virtuosoRef}
           data={displayItems}
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
           computeItemKey={(_index, item) => {
             if (item.kind === 'message') return item.msg.id;
             if (item.kind === 'restore-divider') return `restore-${item.segment.checkpointId}`;

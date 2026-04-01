@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::sync::{Mutex, RwLock};
@@ -50,6 +51,8 @@ const DEFAULT_TAXONOMY_TOML: &str = include_str!("../../../config/tool_taxonomy.
 
 /// Default `ToolActivationSet` ceiling.
 const ACTIVATION_SET_CEILING: usize = 20;
+/// Background scheduler poll interval for long-lived presentation layers.
+const BACKGROUND_SCHEDULER_TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 /// All wired application services, constructed from [`ServiceConfig`].
 ///
@@ -423,6 +426,11 @@ tools = ["ToolSearch"]
 
         // 11c. Scheduler manager.
         let scheduler_manager = crate::scheduler_service::SchedulerService::create_manager();
+        crate::scheduler_service::SchedulerService::attach_persistence(
+            &scheduler_manager,
+            schedule_store.clone(),
+        )
+        .await;
 
         // 11d. Hydrate in-memory scheduler from SQLite.
         if let Err(e) = crate::scheduler_service::SchedulerService::load_schedules_from_db(
@@ -432,6 +440,14 @@ tools = ["ToolSearch"]
         .await
         {
             warn!(error = %e, "Failed to load persisted schedules; starting with empty store");
+        }
+        if let Err(e) = crate::scheduler_service::SchedulerService::load_executions_from_db(
+            &scheduler_manager,
+            &schedule_store,
+        )
+        .await
+        {
+            warn!(error = %e, "Failed to load persisted schedule executions; starting with empty history");
         }
 
         // 12. Diagnostics -- SQLite-backed for persistence.
@@ -911,6 +927,32 @@ impl ServiceContainer {
         ));
         self.scheduler_manager.set_dispatcher(dispatcher).await;
         tracing::info!("WorkflowDispatcher initialised for real workflow execution");
+    }
+
+    /// Start the background scheduler loop used by GUI/TUI/server runtimes.
+    ///
+    /// This is intentionally separate from [`from_config`](Self::from_config)
+    /// because short-lived commands should not keep background tasks alive.
+    pub async fn init_scheduler(self: &Arc<Self>) {
+        self.scheduler_manager
+            .start(BACKGROUND_SCHEDULER_TICK_INTERVAL)
+            .await;
+        tracing::info!(
+            tick_interval_ms = BACKGROUND_SCHEDULER_TICK_INTERVAL.as_millis(),
+            "SchedulerManager started for background automation"
+        );
+    }
+
+    /// Start all background services required by long-lived frontends.
+    ///
+    /// GUI, TUI, and the embedded HTTP server share the same lifecycle:
+    /// upgrade the agent runner, inject the workflow dispatcher, start the
+    /// scheduler loop, then refresh callable-agent prompt text.
+    pub async fn start_background_services(self: &Arc<Self>) {
+        self.init_agent_runner().await;
+        self.init_workflow_dispatcher().await;
+        self.init_scheduler().await;
+        self.init_callable_agents_text().await;
     }
 
     /// Spawn per-provider tasks that drain metrics events and persist them.
@@ -1443,6 +1485,21 @@ mod tests {
         let registry = Arc::new(RwLock::new(y_skills::SkillRegistryImpl::new()));
         let _service = sc.skill_ingestion_service(registry);
         // Construction succeeds -- delegator is correctly wired.
+    }
+
+    #[tokio::test]
+    async fn test_start_background_services_starts_scheduler() {
+        let mut config = ServiceConfig::default();
+        config.storage = y_storage::StorageConfig::in_memory();
+
+        let sc = Arc::new(ServiceContainer::from_config(&config).await.unwrap());
+        assert!(!sc.scheduler_manager.is_running());
+
+        sc.start_background_services().await;
+        assert!(sc.scheduler_manager.is_running());
+
+        sc.scheduler_manager.stop().await;
+        assert!(!sc.scheduler_manager.is_running());
     }
 
     // -- build_agent_tools_summary tests --

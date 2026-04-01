@@ -197,8 +197,12 @@ CREATE TABLE IF NOT EXISTS schedule_executions (
     schedule_id     TEXT NOT NULL REFERENCES schedule_definitions(id),
     session_id      TEXT REFERENCES session_metadata(id),
     status          TEXT NOT NULL CHECK (status IN (
-                        'triggered', 'running', 'completed', 'failed', 'skipped'
+                        'pending', 'triggered', 'running', 'completed', 'failed', 'skipped'
                     )),
+    triggered_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    workflow_execution_id TEXT,
+    request_summary TEXT,
+    response_summary TEXT,
     resolved_params TEXT,
     error_message   TEXT,
     started_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

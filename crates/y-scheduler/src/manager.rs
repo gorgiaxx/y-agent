@@ -1,6 +1,6 @@
 //! `SchedulerManager`: top-level entry point that owns the async trigger loop.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -16,6 +16,62 @@ use crate::recovery;
 use crate::store::{Schedule, ScheduleStore};
 use crate::trigger::{evaluate_all, FiredTrigger};
 
+/// Persistence errors emitted by scheduler state adapters.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("scheduler persistence error: {message}")]
+pub struct PersistenceError {
+    message: String,
+}
+
+impl PersistenceError {
+    /// Create a new persistence error from a message.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+/// Persistence adapter for schedule state and execution history.
+#[async_trait::async_trait]
+pub trait SchedulerPersistence: Send + Sync {
+    /// Persist a newly created execution record.
+    async fn record_execution(&self, execution: &ScheduleExecution)
+        -> Result<(), PersistenceError>;
+
+    /// Persist an updated execution record.
+    async fn update_execution(&self, execution: &ScheduleExecution)
+        -> Result<(), PersistenceError>;
+
+    /// Persist the latest fire timestamp for a schedule.
+    async fn update_last_fire(
+        &self,
+        schedule_id: &str,
+        last_fire: chrono::DateTime<Utc>,
+    ) -> Result<(), PersistenceError>;
+}
+
+/// Runtime-owned scheduler state that changes when the trigger loop starts/stops.
+struct RuntimeState {
+    eval_handle: Option<JoinHandle<()>>,
+    exec_handle: Option<JoinHandle<()>>,
+    shutdown: Arc<Notify>,
+    trigger_tx: Option<TriggerSender>,
+    starting: bool,
+}
+
+impl RuntimeState {
+    fn new() -> Self {
+        Self {
+            eval_handle: None,
+            exec_handle: None,
+            shutdown: Arc::new(Notify::new()),
+            trigger_tx: None,
+            starting: false,
+        }
+    }
+}
+
 /// The top-level scheduler service.
 ///
 /// Owns the `ScheduleStore`, `ScheduleExecutor`, and runs an async trigger loop
@@ -26,20 +82,16 @@ pub struct SchedulerManager {
     /// Execution history store.
     execution_store: Arc<Mutex<ExecutionStore>>,
     config: SchedulerConfig,
-    /// Handle to the trigger evaluation loop task.
-    eval_handle: Option<JoinHandle<()>>,
-    /// Handle to the executor consumer loop task.
-    exec_handle: Option<JoinHandle<()>>,
-    /// Notification for shutdown.
-    shutdown: Arc<Notify>,
-    /// Sender for the trigger queue (kept to clone for external event injection).
-    trigger_tx: Option<TriggerSender>,
+    /// Runtime lifecycle state for the trigger and executor loops.
+    runtime: StdMutex<RuntimeState>,
     /// Optional workflow dispatcher injected after construction.
     ///
     /// When `Some`, fired triggers are dispatched through the real orchestrator
     /// instead of the placeholder `ScheduleExecutor`. Injected via
     /// `set_dispatcher()` (same pattern as `AgentRunner` in `ServiceContainer`).
     dispatcher: Arc<Mutex<Option<Arc<dyn WorkflowDispatcher>>>>,
+    /// Optional persistence adapter injected after construction.
+    persistence: Arc<Mutex<Option<Arc<dyn SchedulerPersistence>>>>,
 }
 
 impl SchedulerManager {
@@ -50,11 +102,9 @@ impl SchedulerManager {
             executor: Arc::new(Mutex::new(ScheduleExecutor::new())),
             execution_store: Arc::new(Mutex::new(ExecutionStore::new())),
             config,
-            eval_handle: None,
-            exec_handle: None,
-            shutdown: Arc::new(Notify::new()),
-            trigger_tx: None,
+            runtime: StdMutex::new(RuntimeState::new()),
             dispatcher: Arc::new(Mutex::new(None)),
+            persistence: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -129,8 +179,16 @@ impl SchedulerManager {
     }
 
     /// Get a reference to the trigger sender for external event injection.
-    pub fn trigger_sender(&self) -> Option<&TriggerSender> {
-        self.trigger_tx.as_ref()
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal scheduler runtime mutex is poisoned.
+    pub fn trigger_sender(&self) -> Option<TriggerSender> {
+        self.runtime
+            .lock()
+            .expect("scheduler runtime lock poisoned")
+            .trigger_tx
+            .clone()
     }
 
     /// Inject the workflow dispatcher used to run real executions.
@@ -149,20 +207,43 @@ impl SchedulerManager {
         self.dispatcher.lock().await.clone()
     }
 
+    /// Inject the persistence adapter used to mirror runtime state to storage.
+    pub async fn set_persistence(&self, persistence: Arc<dyn SchedulerPersistence>) {
+        let mut guard = self.persistence.lock().await;
+        *guard = Some(persistence);
+        info!("Scheduler persistence injected into SchedulerManager");
+    }
+
+    /// Return a clone of the persistence adapter, if one has been injected.
+    pub async fn persistence(&self) -> Option<Arc<dyn SchedulerPersistence>> {
+        self.persistence.lock().await.clone()
+    }
+
     /// Start the scheduler — spawns the trigger evaluation loop and executor loop.
-    pub async fn start(&mut self, tick_interval: Duration) {
-        if self.eval_handle.is_some() {
-            warn!("Scheduler already running");
-            return;
-        }
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal scheduler runtime mutex is poisoned.
+    pub async fn start(&self, tick_interval: Duration) {
+        let (tx, rx) = trigger_queue();
+        let shutdown = {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .expect("scheduler runtime lock poisoned");
+            if runtime.eval_handle.is_some() || runtime.starting {
+                warn!("Scheduler already running");
+                return;
+            }
+            runtime.starting = true;
+            runtime.trigger_tx = Some(tx.clone());
+            Arc::clone(&runtime.shutdown)
+        };
 
         info!(
             "Starting scheduler with tick interval {:?}, max_concurrent={}",
             tick_interval, self.config.max_concurrent_executions
         );
-
-        let (tx, rx) = trigger_queue();
-        self.trigger_tx = Some(tx.clone());
 
         // Run missed-schedule recovery before starting the loop.
         {
@@ -184,15 +265,15 @@ impl SchedulerManager {
             }
         }
 
-        let shutdown = self.shutdown.clone();
         let store = self.store.clone();
 
         // Trigger evaluation loop.
+        let eval_shutdown = shutdown.clone();
         let eval_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick_interval);
             loop {
                 tokio::select! {
-                    () = shutdown.notified() => {
+                    () = eval_shutdown.notified() => {
                         info!("Trigger evaluation loop shutting down");
                         break;
                     }
@@ -220,11 +301,12 @@ impl SchedulerManager {
         });
 
         // Executor consumer loop.
-        let exec_shutdown = self.shutdown.clone();
+        let exec_shutdown = shutdown.clone();
         let exec_store = self.store.clone();
         let exec_executor = self.executor.clone();
         let exec_execution_store = self.execution_store.clone();
         let exec_dispatcher = self.dispatcher.clone();
+        let exec_persistence = self.persistence.clone();
         let exec_handle = tokio::spawn(async move {
             // Snapshot the dispatcher once when the loop starts; if a
             // dispatcher is injected later it will be picked up only on
@@ -236,13 +318,19 @@ impl SchedulerManager {
                 exec_executor,
                 exec_execution_store,
                 exec_dispatcher,
+                exec_persistence,
                 exec_shutdown,
             )
             .await;
         });
 
-        self.eval_handle = Some(eval_handle);
-        self.exec_handle = Some(exec_handle);
+        let mut runtime = self
+            .runtime
+            .lock()
+            .expect("scheduler runtime lock poisoned");
+        runtime.eval_handle = Some(eval_handle);
+        runtime.exec_handle = Some(exec_handle);
+        runtime.starting = false;
     }
 
     /// Internal executor consumer loop.
@@ -252,6 +340,7 @@ impl SchedulerManager {
         executor: Arc<Mutex<ScheduleExecutor>>,
         execution_store: Arc<Mutex<ExecutionStore>>,
         dispatcher: Arc<Mutex<Option<Arc<dyn WorkflowDispatcher>>>>,
+        persistence: Arc<Mutex<Option<Arc<dyn SchedulerPersistence>>>>,
         shutdown: Arc<Notify>,
     ) {
         loop {
@@ -271,6 +360,7 @@ impl SchedulerManager {
                             &executor,
                             &execution_store,
                             current_dispatcher,
+                            persistence.lock().await.clone(),
                         ).await;
                     } else {
                         info!("Trigger queue closed, executor stopping");
@@ -295,6 +385,7 @@ impl SchedulerManager {
         executor: &Arc<Mutex<ScheduleExecutor>>,
         execution_store: &Arc<Mutex<ExecutionStore>>,
         dispatcher: Option<Arc<dyn WorkflowDispatcher>>,
+        persistence: Option<Arc<dyn SchedulerPersistence>>,
     ) {
         let mut store_guard = store.lock().await;
         let schedule = if let Some(s) = store_guard.get(&fired.schedule_id) {
@@ -333,18 +424,21 @@ impl SchedulerManager {
 
             {
                 let mut exec_store_guard = execution_store.lock().await;
-                exec_store_guard.record(running_record);
+                exec_store_guard.record(running_record.clone());
             }
 
             // Update last-fire timestamp immediately.
             store_guard.update_last_fire(&schedule.id, now);
             drop(store_guard);
+            Self::persist_last_fire(persistence.as_ref(), &schedule.id, now).await;
+            Self::persist_record(persistence.as_ref(), &running_record).await;
 
             // Spawn real execution without blocking the trigger loop.
             let workflow_id = schedule.workflow_id.clone();
             let parameter_values = schedule.parameter_values.clone();
             let exec_store_clone = Arc::clone(execution_store);
             let exec_id_clone = execution_id.clone();
+            let persistence_clone = persistence.clone();
 
             tokio::spawn(async move {
                 let dispatch_start = std::time::Instant::now();
@@ -370,6 +464,11 @@ impl SchedulerManager {
                                 rec.error_message = result.error;
                             }
                         });
+                        let updated = store.get(&exec_id_clone).cloned();
+                        drop(store);
+                        if let Some(updated) = updated {
+                            Self::persist_update(persistence_clone.as_ref(), &updated).await;
+                        }
                         debug!(execution_id = %exec_id_clone, "Dispatched workflow completed");
                     }
                     Err(e) => {
@@ -383,6 +482,11 @@ impl SchedulerManager {
                             });
                             rec.error_message = Some(e.to_string());
                         });
+                        let updated = store.get(&exec_id_clone).cloned();
+                        drop(store);
+                        if let Some(updated) = updated {
+                            Self::persist_update(persistence_clone.as_ref(), &updated).await;
+                        }
                         warn!(execution_id = %exec_id_clone, error = %e, "Workflow dispatch error");
                     }
                 }
@@ -393,40 +497,120 @@ impl SchedulerManager {
             let mut exec_store_guard = execution_store.lock().await;
             let execution_id =
                 exec_guard.trigger_execution(&schedule, &mut store_guard, &mut exec_store_guard);
+            let persisted = exec_store_guard.get(&execution_id).cloned();
+            let last_fire = store_guard
+                .get(&schedule.id)
+                .and_then(|updated_schedule| updated_schedule.last_fire)
+                .unwrap_or_else(Utc::now);
             debug!(execution_id = %execution_id, "Placeholder execution triggered");
+            drop(exec_store_guard);
+            drop(exec_guard);
+            drop(store_guard);
+            Self::persist_last_fire(persistence.as_ref(), &schedule.id, last_fire).await;
+            if let Some(persisted) = persisted {
+                Self::persist_record(persistence.as_ref(), &persisted).await;
+            }
+        }
+    }
+
+    async fn persist_record(
+        persistence: Option<&Arc<dyn SchedulerPersistence>>,
+        execution: &ScheduleExecution,
+    ) {
+        if let Some(persistence) = persistence {
+            if let Err(error) = persistence.record_execution(execution).await {
+                warn!(
+                    execution_id = %execution.execution_id,
+                    error = %error,
+                    "Failed to persist schedule execution"
+                );
+            }
+        }
+    }
+
+    async fn persist_update(
+        persistence: Option<&Arc<dyn SchedulerPersistence>>,
+        execution: &ScheduleExecution,
+    ) {
+        if let Some(persistence) = persistence {
+            if let Err(error) = persistence.update_execution(execution).await {
+                warn!(
+                    execution_id = %execution.execution_id,
+                    error = %error,
+                    "Failed to update persisted schedule execution"
+                );
+            }
+        }
+    }
+
+    async fn persist_last_fire(
+        persistence: Option<&Arc<dyn SchedulerPersistence>>,
+        schedule_id: &str,
+        last_fire: chrono::DateTime<Utc>,
+    ) {
+        if let Some(persistence) = persistence {
+            if let Err(error) = persistence.update_last_fire(schedule_id, last_fire).await {
+                warn!(
+                    schedule_id = %schedule_id,
+                    error = %error,
+                    "Failed to persist schedule last_fire"
+                );
+            }
         }
     }
 
     /// Stop the scheduler gracefully.
-    pub async fn stop(&mut self) {
-        if self.eval_handle.is_none() {
-            return;
-        }
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal scheduler runtime mutex is poisoned.
+    pub async fn stop(&self) {
+        let (eval_handle, exec_handle, shutdown) = {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .expect("scheduler runtime lock poisoned");
+            if runtime.eval_handle.is_none() && runtime.exec_handle.is_none() && !runtime.starting {
+                return;
+            }
+
+            let shutdown = Arc::clone(&runtime.shutdown);
+            let eval_handle = runtime.eval_handle.take();
+            let exec_handle = runtime.exec_handle.take();
+            runtime.trigger_tx = None;
+            runtime.starting = false;
+            runtime.shutdown = Arc::new(Notify::new());
+            (eval_handle, exec_handle, shutdown)
+        };
 
         info!("Stopping scheduler");
 
         // Notify both loops twice (once for each notified() call).
-        self.shutdown.notify_waiters();
+        shutdown.notify_waiters();
 
-        if let Some(handle) = self.eval_handle.take() {
+        if let Some(handle) = eval_handle {
             handle.abort();
             let _ = handle.await;
         }
-        if let Some(handle) = self.exec_handle.take() {
+        if let Some(handle) = exec_handle {
             handle.abort();
             let _ = handle.await;
         }
-
-        self.trigger_tx = None;
-        // Reset shutdown for potential restart.
-        self.shutdown = Arc::new(Notify::new());
 
         info!("Scheduler stopped");
     }
 
     /// Whether the scheduler is currently running.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal scheduler runtime mutex is poisoned.
     pub fn is_running(&self) -> bool {
-        self.eval_handle.is_some()
+        self.runtime
+            .lock()
+            .expect("scheduler runtime lock poisoned")
+            .eval_handle
+            .is_some()
     }
 }
 
@@ -441,6 +625,8 @@ mod tests {
     use super::*;
     use crate::dispatcher::{DispatchError, DispatchResult};
     use crate::store::TriggerConfig;
+    use chrono::{DateTime, Utc};
+    use tokio::sync::Mutex as AsyncMutex;
 
     #[tokio::test]
     async fn test_manager_register_and_get() {
@@ -493,7 +679,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_manager_start_stop() {
-        let mut mgr = SchedulerManager::with_defaults();
+        let mgr = SchedulerManager::with_defaults();
         assert!(!mgr.is_running());
 
         mgr.start(Duration::from_millis(50)).await;
@@ -505,7 +691,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_manager_executes_interval_schedule() {
-        let mut mgr = SchedulerManager::with_defaults();
+        let mgr = SchedulerManager::with_defaults();
 
         // Register a schedule with a very short interval.
         let schedule = Schedule::new(
@@ -558,6 +744,43 @@ mod tests {
     /// Minimal stub dispatcher for testing injection.
     struct AlwaysOkDispatcher;
 
+    #[derive(Default)]
+    struct RecordingPersistence {
+        recorded: AsyncMutex<Vec<ScheduleExecution>>,
+        last_fire_updates: AsyncMutex<Vec<(String, DateTime<Utc>)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl SchedulerPersistence for RecordingPersistence {
+        async fn record_execution(
+            &self,
+            execution: &ScheduleExecution,
+        ) -> Result<(), PersistenceError> {
+            self.recorded.lock().await.push(execution.clone());
+            Ok(())
+        }
+
+        async fn update_execution(
+            &self,
+            execution: &ScheduleExecution,
+        ) -> Result<(), PersistenceError> {
+            self.recorded.lock().await.push(execution.clone());
+            Ok(())
+        }
+
+        async fn update_last_fire(
+            &self,
+            schedule_id: &str,
+            last_fire: DateTime<Utc>,
+        ) -> Result<(), PersistenceError> {
+            self.last_fire_updates
+                .lock()
+                .await
+                .push((schedule_id.to_string(), last_fire));
+            Ok(())
+        }
+    }
+
     #[async_trait::async_trait]
     impl WorkflowDispatcher for AlwaysOkDispatcher {
         async fn dispatch(
@@ -588,5 +811,46 @@ mod tests {
 
         mgr.set_dispatcher(Arc::new(AlwaysOkDispatcher)).await;
         assert!(mgr.dispatcher().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_manager_persists_interval_execution() {
+        let mgr = SchedulerManager::with_defaults();
+        let persistence = Arc::new(RecordingPersistence::default());
+        let persistence_trait: Arc<dyn SchedulerPersistence> = persistence.clone();
+        mgr.set_persistence(persistence_trait).await;
+
+        mgr.register(Schedule::new(
+            "persisted-interval",
+            "Persisted Interval",
+            TriggerConfig::Interval { interval_secs: 0 },
+            "wf",
+        ))
+        .await;
+
+        mgr.start(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        mgr.stop().await;
+
+        let recorded = persistence.recorded.lock().await;
+        assert!(
+            !recorded.is_empty(),
+            "expected interval execution to be persisted"
+        );
+        assert!(
+            recorded
+                .iter()
+                .any(|execution| execution.schedule_id == "persisted-interval"),
+            "expected a persisted execution for the interval schedule"
+        );
+        drop(recorded);
+
+        let last_fire_updates = persistence.last_fire_updates.lock().await;
+        assert!(
+            last_fire_updates
+                .iter()
+                .any(|(schedule_id, _)| schedule_id == "persisted-interval"),
+            "expected last_fire to be persisted for the interval schedule"
+        );
     }
 }

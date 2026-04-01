@@ -214,8 +214,12 @@ CREATE TABLE schedule_executions (
     schedule_id     TEXT NOT NULL REFERENCES schedule_definitions(id),
     session_id      TEXT REFERENCES session_metadata(id),
     status          TEXT NOT NULL CHECK (status IN (
-                        'triggered', 'running', 'completed', 'failed', 'skipped'
+                        'pending', 'triggered', 'running', 'completed', 'failed', 'skipped'
                     )),
+    triggered_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    workflow_execution_id TEXT,                 -- Linked workflow run ID when available
+    request_summary TEXT,                       -- JSON: trigger/workflow/request context
+    response_summary TEXT,                      -- JSON: output/summary/duration context
     resolved_params TEXT,                       -- JSON: actual parameter values used
     error_message   TEXT,
     started_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -616,4 +620,3 @@ migrations/
 - PostgreSQL: standard `pg_dump` or streaming replication
 - Qdrant: collection snapshots via REST API
 - JSONL transcripts: included in filesystem backup
-

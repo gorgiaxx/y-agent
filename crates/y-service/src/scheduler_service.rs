@@ -5,15 +5,21 @@
 //!
 //! All mutations are written-through to `SqliteScheduleStore` so that
 //! schedules survive application restarts. On startup,
-//! [`SchedulerService::load_schedules_from_db`] hydrates the in-memory
-//! store from `SQLite`.
+//! [`SchedulerService::load_schedules_from_db`] and
+//! [`SchedulerService::load_executions_from_db`] hydrate the in-memory
+//! scheduler state from `SQLite`.
+
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use y_scheduler::{Schedule, SchedulePolicies, SchedulerConfig, SchedulerManager, TriggerConfig};
-use y_storage::SqliteScheduleStore;
+use y_scheduler::{
+    PersistenceError, Schedule, ScheduleExecution, SchedulePolicies, SchedulerConfig,
+    SchedulerManager, SchedulerPersistence, TriggerConfig,
+};
+use y_storage::{ScheduleExecutionRow, SqliteScheduleStore};
 
 // ---------------------------------------------------------------------------
 // Error
@@ -137,12 +143,60 @@ pub struct ExecutionSummary {
 /// Scheduler service: CRUD + pause/resume for scheduled tasks.
 pub struct SchedulerService;
 
+#[derive(Clone)]
+struct SqliteSchedulerPersistence {
+    store: SqliteScheduleStore,
+}
+
+#[async_trait::async_trait]
+impl SchedulerPersistence for SqliteSchedulerPersistence {
+    async fn record_execution(
+        &self,
+        execution: &ScheduleExecution,
+    ) -> Result<(), PersistenceError> {
+        self.store
+            .record_execution(&execution_to_row(execution))
+            .await
+            .map_err(|error| PersistenceError::new(error.to_string()))
+    }
+
+    async fn update_execution(
+        &self,
+        execution: &ScheduleExecution,
+    ) -> Result<(), PersistenceError> {
+        self.store
+            .update_execution(&execution_to_row(execution))
+            .await
+            .map(|_| ())
+            .map_err(|error| PersistenceError::new(error.to_string()))
+    }
+
+    async fn update_last_fire(
+        &self,
+        schedule_id: &str,
+        last_fire: DateTime<Utc>,
+    ) -> Result<(), PersistenceError> {
+        self.store
+            .update_last_fire(schedule_id, &last_fire.to_rfc3339())
+            .await
+            .map(|_| ())
+            .map_err(|error| PersistenceError::new(error.to_string()))
+    }
+}
+
 impl SchedulerService {
     /// Create a new `SchedulerManager` with default config.
     ///
     /// This is a convenience for wiring in the `ServiceContainer`.
     pub fn create_manager() -> SchedulerManager {
         SchedulerManager::new(SchedulerConfig::default())
+    }
+
+    /// Attach the `SQLite` persistence adapter to a scheduler manager.
+    pub async fn attach_persistence(manager: &SchedulerManager, store: SqliteScheduleStore) {
+        manager
+            .set_persistence(Arc::new(SqliteSchedulerPersistence { store }))
+            .await;
     }
 
     /// Hydrate the in-memory `SchedulerManager` from persisted `SQLite` rows.
@@ -178,6 +232,40 @@ impl SchedulerService {
         if count > 0 {
             info!(count, "Hydrated in-memory scheduler from SQLite");
         }
+        Ok(count)
+    }
+
+    /// Hydrate in-memory execution history from persisted `SQLite` rows.
+    pub async fn load_executions_from_db(
+        manager: &SchedulerManager,
+        store: &SqliteScheduleStore,
+    ) -> Result<usize, SchedulerServiceError> {
+        let rows = store.list_executions().await.map_err(|e| {
+            SchedulerServiceError::Internal(format!("load executions from DB: {e}"))
+        })?;
+
+        let count = rows.len();
+        if count == 0 {
+            return Ok(0);
+        }
+
+        let exec_store = manager.execution_store();
+        let mut guard = exec_store.lock().await;
+        for row in rows {
+            match execution_from_row(&row) {
+                Ok(execution) => guard.record(execution),
+                Err(error) => {
+                    warn!(
+                        execution_id = %row.id,
+                        error = %error,
+                        "Skipping corrupted schedule execution row"
+                    );
+                }
+            }
+        }
+        drop(guard);
+
+        info!(count, "Hydrated scheduler execution history from SQLite");
         Ok(count)
     }
 
@@ -427,14 +515,16 @@ impl SchedulerService {
             {
                 let exec_store = manager.execution_store();
                 let mut guard = exec_store.lock().await;
-                guard.record(execution);
+                guard.record(execution.clone());
             }
+            persist_execution_via_manager(manager, &execution).await;
 
             // Spawn real execution without blocking.
             let workflow_id = schedule.workflow_id.clone();
             let parameter_values = schedule.parameter_values.clone();
             let exec_store = std::sync::Arc::clone(manager.execution_store());
             let exec_id = execution_id.clone();
+            let persistence = manager.persistence().await;
 
             tokio::spawn(async move {
                 let dispatch_start = std::time::Instant::now();
@@ -460,6 +550,11 @@ impl SchedulerService {
                                 rec.error_message = result.error;
                             }
                         });
+                        let updated = store.get(&exec_id).cloned();
+                        drop(store);
+                        if let Some(updated) = updated {
+                            update_execution_with_persistence(persistence.as_ref(), &updated).await;
+                        }
                     }
                     Err(e) => {
                         let mut store = exec_store.lock().await;
@@ -472,6 +567,11 @@ impl SchedulerService {
                             });
                             rec.error_message = Some(e.to_string());
                         });
+                        let updated = store.get(&exec_id).cloned();
+                        drop(store);
+                        if let Some(updated) = updated {
+                            update_execution_with_persistence(persistence.as_ref(), &updated).await;
+                        }
                     }
                 }
             });
@@ -498,7 +598,9 @@ impl SchedulerService {
 
             let exec_store = manager.execution_store();
             let mut guard = exec_store.lock().await;
-            guard.record(execution);
+            guard.record(execution.clone());
+            drop(guard);
+            persist_execution_via_manager(manager, &execution).await;
         }
 
         Self::get_execution(manager, &execution_id).await
@@ -544,12 +646,14 @@ impl SchedulerService {
             {
                 let exec_store = manager.execution_store();
                 let mut guard = exec_store.lock().await;
-                guard.record(execution);
+                guard.record(execution.clone());
             }
+            persist_execution_via_manager(manager, &execution).await;
 
             let wf_id = workflow_id.to_string();
             let exec_store = std::sync::Arc::clone(manager.execution_store());
             let exec_id = execution_id.clone();
+            let persistence = manager.persistence().await;
 
             tokio::spawn(async move {
                 let dispatch_start = std::time::Instant::now();
@@ -578,6 +682,11 @@ impl SchedulerService {
                                 rec.error_message = result.error;
                             }
                         });
+                        let updated = store.get(&exec_id).cloned();
+                        drop(store);
+                        if let Some(updated) = updated {
+                            update_execution_with_persistence(persistence.as_ref(), &updated).await;
+                        }
                     }
                     Err(e) => {
                         let mut store = exec_store.lock().await;
@@ -590,6 +699,11 @@ impl SchedulerService {
                             });
                             rec.error_message = Some(e.to_string());
                         });
+                        let updated = store.get(&exec_id).cloned();
+                        drop(store);
+                        if let Some(updated) = updated {
+                            update_execution_with_persistence(persistence.as_ref(), &updated).await;
+                        }
                     }
                 }
             });
@@ -615,7 +729,9 @@ impl SchedulerService {
 
             let exec_store = manager.execution_store();
             let mut guard = exec_store.lock().await;
-            guard.record(execution);
+            guard.record(execution.clone());
+            drop(guard);
+            persist_execution_via_manager(manager, &execution).await;
         }
 
         Self::get_execution(manager, &execution_id).await
@@ -656,6 +772,94 @@ fn trigger_type_and_value(trigger: &TriggerConfig) -> (&'static str, String) {
     }
 }
 
+fn execution_to_row(execution: &ScheduleExecution) -> ScheduleExecutionRow {
+    let resolved_params = execution
+        .request_summary
+        .get("parameter_values")
+        .and_then(|value| {
+            if value.is_null() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        });
+
+    ScheduleExecutionRow {
+        id: execution.execution_id.clone(),
+        schedule_id: execution.schedule_id.clone(),
+        session_id: None,
+        status: execution.status.to_string(),
+        triggered_at: Some(execution.triggered_at.to_rfc3339()),
+        workflow_execution_id: execution.workflow_execution_id.clone(),
+        request_summary: Some(execution.request_summary.to_string()),
+        response_summary: Some(execution.response_summary.to_string()),
+        resolved_params,
+        error_message: execution.error_message.clone(),
+        started_at: execution
+            .started_at
+            .unwrap_or(execution.triggered_at)
+            .to_rfc3339(),
+        completed_at: execution.completed_at.map(|value| value.to_rfc3339()),
+    }
+}
+
+fn execution_from_row(
+    row: &ScheduleExecutionRow,
+) -> Result<ScheduleExecution, SchedulerServiceError> {
+    let triggered_at = row
+        .triggered_at
+        .as_deref()
+        .unwrap_or(&row.started_at)
+        .parse::<DateTime<Utc>>()
+        .map_err(|e| {
+            SchedulerServiceError::Internal(format!(
+                "invalid execution triggered_at '{}': {e}",
+                row.triggered_at.as_deref().unwrap_or(&row.started_at)
+            ))
+        })?;
+
+    let started_at = row.started_at.parse::<DateTime<Utc>>().ok();
+    let completed_at = row
+        .completed_at
+        .as_deref()
+        .and_then(|value| value.parse::<DateTime<Utc>>().ok());
+    let request_summary = row
+        .request_summary
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let response_summary = row
+        .response_summary
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let status = match row.status.as_str() {
+        "pending" | "triggered" => y_scheduler::ExecutionStatus::Pending,
+        "running" => y_scheduler::ExecutionStatus::Running,
+        "completed" => y_scheduler::ExecutionStatus::Completed,
+        "failed" => y_scheduler::ExecutionStatus::Failed,
+        "skipped" => y_scheduler::ExecutionStatus::Skipped,
+        other => {
+            return Err(SchedulerServiceError::Internal(format!(
+                "unknown execution status: {other}"
+            )));
+        }
+    };
+
+    Ok(ScheduleExecution {
+        execution_id: row.id.clone(),
+        schedule_id: row.schedule_id.clone(),
+        triggered_at,
+        started_at,
+        completed_at,
+        status,
+        workflow_execution_id: row.workflow_execution_id.clone(),
+        request_summary,
+        response_summary,
+        error_message: row.error_message.clone(),
+    })
+}
+
 fn execution_to_summary(exec: &y_scheduler::ScheduleExecution) -> ExecutionSummary {
     let duration_ms = match (exec.started_at, exec.completed_at) {
         (Some(start), Some(end)) => {
@@ -677,6 +881,41 @@ fn execution_to_summary(exec: &y_scheduler::ScheduleExecution) -> ExecutionSumma
         request_summary: exec.request_summary.clone(),
         response_summary: exec.response_summary.clone(),
         error_message: exec.error_message.clone(),
+    }
+}
+
+async fn persist_execution_via_manager(manager: &SchedulerManager, execution: &ScheduleExecution) {
+    let persistence = manager.persistence().await;
+    persist_execution_with_persistence(persistence.as_ref(), execution).await;
+}
+
+async fn persist_execution_with_persistence(
+    persistence: Option<&Arc<dyn SchedulerPersistence>>,
+    execution: &ScheduleExecution,
+) {
+    if let Some(persistence) = persistence {
+        if let Err(error) = persistence.record_execution(execution).await {
+            warn!(
+                execution_id = %execution.execution_id,
+                error = %error,
+                "Failed to persist schedule execution from service layer"
+            );
+        }
+    }
+}
+
+async fn update_execution_with_persistence(
+    persistence: Option<&Arc<dyn SchedulerPersistence>>,
+    execution: &ScheduleExecution,
+) {
+    if let Some(persistence) = persistence {
+        if let Err(error) = persistence.update_execution(execution).await {
+            warn!(
+                execution_id = %execution.execution_id,
+                error = %error,
+                "Failed to update persisted schedule execution from service layer"
+            );
+        }
     }
 }
 
@@ -867,6 +1106,7 @@ fn schedule_from_row(row: &y_storage::ScheduleRow) -> Result<Schedule, Scheduler
 #[cfg(test)]
 mod tests {
     use super::*;
+    use y_storage::migration::run_embedded_migrations;
 
     fn make_create_req() -> CreateScheduleRequest {
         CreateScheduleRequest {
@@ -880,6 +1120,27 @@ mod tests {
             description: "A test schedule".to_string(),
             tags: vec!["test".to_string()],
         }
+    }
+
+    async fn setup_db_store() -> (y_storage::SqliteScheduleStore, String) {
+        let pool = y_storage::create_pool(&y_storage::StorageConfig::in_memory())
+            .await
+            .unwrap();
+        run_embedded_migrations(&pool).await.unwrap();
+        let workflow_store = y_storage::SqliteWorkflowStore::new(pool.clone());
+        let workflow = crate::workflow_service::WorkflowService::create(
+            &workflow_store,
+            &crate::workflow_service::CreateWorkflowRequest {
+                name: "test-wf".to_string(),
+                definition: "noop".to_string(),
+                format: "expression_dsl".to_string(),
+                description: None,
+                tags: None,
+            },
+        )
+        .await
+        .unwrap();
+        (y_storage::SqliteScheduleStore::new(pool), workflow.id)
     }
 
     #[tokio::test]
@@ -979,6 +1240,39 @@ mod tests {
             .unwrap();
         assert_eq!(updated.name, "updated-name");
         assert_eq!(updated.description, "updated desc");
+    }
+
+    #[tokio::test]
+    async fn test_execution_history_survives_restart_when_persisted() {
+        let (store, workflow_id) = setup_db_store().await;
+        let manager = SchedulerService::create_manager();
+        SchedulerService::attach_persistence(&manager, store.clone()).await;
+
+        let mut request = make_create_req();
+        request.workflow_id = workflow_id;
+        let created = SchedulerService::create(&manager, &request, Some(&store))
+            .await
+            .unwrap();
+        let execution = SchedulerService::trigger_now(&manager, &created.id)
+            .await
+            .unwrap();
+
+        let restarted = SchedulerService::create_manager();
+        SchedulerService::load_schedules_from_db(&restarted, &store)
+            .await
+            .unwrap();
+        SchedulerService::load_executions_from_db(&restarted, &store)
+            .await
+            .unwrap();
+
+        let history = SchedulerService::execution_history(&restarted, &created.id).await;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].execution_id, execution.execution_id);
+
+        let loaded = SchedulerService::get_execution(&restarted, &execution.execution_id)
+            .await
+            .unwrap();
+        assert_eq!(loaded.schedule_id, created.id);
     }
 
     // -----------------------------------------------------------------------

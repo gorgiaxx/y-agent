@@ -37,7 +37,7 @@ pub use executor::{
     ExecutionStatus, ExecutionStore, ScheduleContext, ScheduleExecution, ScheduleExecutor,
 };
 pub use interval::IntervalSchedule;
-pub use manager::SchedulerManager;
+pub use manager::{PersistenceError, SchedulerManager, SchedulerPersistence};
 pub use onetime::OneTimeSchedule;
 pub use store::{Schedule, SchedulePolicies, ScheduleStore, TriggerConfig};
 pub use trigger::{FiredTrigger, TriggerType};

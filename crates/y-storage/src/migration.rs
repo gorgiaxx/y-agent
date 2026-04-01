@@ -29,6 +29,10 @@ pub async fn run_embedded_migrations(pool: &SqlitePool) -> Result<(), StorageErr
     // new columns were added to schema.sql. SQLite lacks ADD COLUMN IF NOT
     // EXISTS, so we check PRAGMA table_info first.
     add_column_if_missing(pool, "session_metadata", "context_reset_index", "INTEGER").await?;
+    add_column_if_missing(pool, "schedule_executions", "triggered_at", "TEXT").await?;
+    add_column_if_missing(pool, "schedule_executions", "workflow_execution_id", "TEXT").await?;
+    add_column_if_missing(pool, "schedule_executions", "request_summary", "TEXT").await?;
+    add_column_if_missing(pool, "schedule_executions", "response_summary", "TEXT").await?;
 
     info!("SQLite schema initialized");
 

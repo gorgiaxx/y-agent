@@ -828,6 +828,13 @@ function ScheduleDetail({
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); setEditingTrigger(false); }, [load]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void load();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
   const handleTriggerNow = async () => {
     setTriggering(true);
     await triggerScheduleNow(id);

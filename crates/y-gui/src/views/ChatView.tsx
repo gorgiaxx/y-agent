@@ -11,6 +11,7 @@ import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsCont
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
+import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
 
 export function ChatView() {
   const chatHooks = useChatContext();
@@ -123,8 +124,8 @@ export function ChatView() {
     }).catch(console.error);
   }, []);
 
-  const diagnosticSessionId = navProps.activeView === 'chat' ? sessionHooks.activeSessionId : null;
-  const { entries, isActive, addUserMessage } = useDiagnostics(diagnosticSessionId);
+  const diagnosticsScope = resolveDiagnosticsScope(navProps.activeView, sessionHooks.activeSessionId);
+  const { entries, isActive, addUserMessage } = useDiagnostics(diagnosticsScope.sessionId);
 
   const {
     handleSend,
