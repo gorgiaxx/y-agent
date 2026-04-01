@@ -16,6 +16,11 @@ Thumbs.db
 *.rej
 
 ### Docs
+docs/anthropic_api
+docs/openai
+docs/plan
+docs/research
+docs/design
 *.pdf
 
 ### Rust / Cargo
@@ -65,3 +70,8 @@ coverage/
 migrations/postgres
 migrations/sqlite
 
+### Runtime Data
+data/
+*.db
+*.db-shm
+*.db-wal
