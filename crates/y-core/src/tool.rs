@@ -189,6 +189,11 @@ impl ToolError {
 /// Implementations handle the business logic of the tool. Security
 /// enforcement (capability checks, sandboxing) is handled by the
 /// `RuntimeAdapter`, not by the tool itself.
+///
+/// Tools participate in the permission pipeline via three hooks:
+/// - [`check_permissions`](Tool::check_permissions) -- input-specific permission check
+/// - [`is_read_only`](Tool::is_read_only) -- declares no side effects
+/// - [`is_destructive`](Tool::is_destructive) -- declares irreversible side effects
 #[async_trait]
 pub trait Tool: Send + Sync {
     /// Execute the tool with validated input.
@@ -196,6 +201,46 @@ pub trait Tool: Send + Sync {
 
     /// Return the tool's definition (schema, capabilities, metadata).
     fn definition(&self) -> &ToolDefinition;
+
+    /// Tool-specific permission check.
+    ///
+    /// Called after global deny/ask rules but before mode-based overrides.
+    /// The tool can inspect the input to make content-specific decisions:
+    /// - `ShellExec` can check the command against subcommand rules
+    /// - `FileWrite` can check the target path against path safety rules
+    ///
+    /// Return `Passthrough` to defer to the general permission system.
+    ///
+    /// Default implementation: read-only tools return `Allow`,
+    /// all others return `Passthrough`.
+    fn check_permissions(
+        &self,
+        _input: &ToolInput,
+        _context: &crate::permission_types::PermissionContext,
+    ) -> crate::permission_types::PermissionResult {
+        if self.is_read_only() {
+            crate::permission_types::PermissionResult::allow("read-only tool")
+        } else {
+            crate::permission_types::PermissionResult::passthrough()
+        }
+    }
+
+    /// Whether this tool is read-only (no side effects).
+    ///
+    /// Read-only tools default to `Allow` in the permission pipeline.
+    /// Override to `true` for tools like `FileRead`, `Glob`, `Grep`.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    /// Whether executing this tool can cause irreversible changes.
+    ///
+    /// Destructive tools may receive additional scrutiny in the
+    /// permission pipeline (e.g., auto-escalate to Ask even if
+    /// a general Allow rule exists).
+    fn is_destructive(&self) -> bool {
+        false
+    }
 
     /// Downcast support for concrete type access (e.g. hot-reload).
     fn as_any(&self) -> &dyn std::any::Any {

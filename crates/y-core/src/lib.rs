@@ -19,6 +19,7 @@
 //! | [`hook`] | `Middleware`, `HookHandler`, `EventSubscriber` | hooks-plugin-design.md |
 //! | [`skill`] | `SkillRegistry` | skills-knowledge-design.md |
 //! | [`embedding`] | `EmbeddingProvider` | memory-architecture-design.md |
+//! | [`permission_types`] | `PermissionBehavior`, `PermissionRule`, `PermissionMode` | guardrails-hitl-design.md |
 
 pub mod agent;
 pub mod checkpoint;
@@ -26,6 +27,7 @@ pub mod embedding;
 pub mod error;
 pub mod hook;
 pub mod memory;
+pub mod permission_types;
 pub mod provider;
 pub mod runtime;
 pub mod session;
