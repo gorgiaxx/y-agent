@@ -32,6 +32,15 @@ export function ChatView() {
     }>;
   } | null>(null);
 
+  // PermissionRequest interaction state.
+  const [permissionData, setPermissionData] = useState<{
+    requestId: string;
+    toolName: string;
+    actionDescription: string;
+    reason: string;
+    contentPreview?: string | null;
+  } | null>(null);
+
   // Listen for AskUser events from the backend.
   useEffect(() => {
     const unlisten = listen<{
@@ -65,6 +74,52 @@ export function ChatView() {
     invoke('chat_answer_question', {
       interactionId,
       answers: { answers: {} },
+    }).catch(console.error);
+  }, []);
+
+  // Listen for PermissionRequest events from the backend.
+  useEffect(() => {
+    const unlisten = listen<{
+      run_id: string;
+      request_id: string;
+      tool_name: string;
+      action_description: string;
+      reason: string;
+      content_preview: string | null;
+    }>('chat:PermissionRequest', (event) => {
+      const { request_id, tool_name, action_description, reason, content_preview } = event.payload;
+      setPermissionData({
+        requestId: request_id,
+        toolName: tool_name,
+        actionDescription: action_description,
+        reason,
+        contentPreview: content_preview,
+      });
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  const handlePermissionApprove = useCallback((requestId: string) => {
+    setPermissionData(null);
+    invoke('chat_answer_permission', {
+      requestId,
+      decision: 'approve',
+    }).catch(console.error);
+  }, []);
+
+  const handlePermissionDeny = useCallback((requestId: string) => {
+    setPermissionData(null);
+    invoke('chat_answer_permission', {
+      requestId,
+      decision: 'deny',
+    }).catch(console.error);
+  }, []);
+
+  const handlePermissionAllowAllForSession = useCallback((requestId: string) => {
+    setPermissionData(null);
+    invoke('chat_answer_permission', {
+      requestId,
+      decision: 'allow_all_for_session',
     }).catch(console.error);
   }, []);
 
@@ -165,6 +220,10 @@ export function ChatView() {
         askUserData={askUserData}
         onAskUserSubmit={handleAskUserSubmit}
         onAskUserDismiss={handleAskUserDismiss}
+        permissionData={permissionData}
+        onPermissionApprove={handlePermissionApprove}
+        onPermissionDeny={handlePermissionDeny}
+        onPermissionAllowAllForSession={handlePermissionAllowAllForSession}
       />
       <StatusBar
         providerCount={providerHooks.systemStatus?.provider_count ?? 0}

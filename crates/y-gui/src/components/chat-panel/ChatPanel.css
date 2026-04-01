@@ -118,22 +118,8 @@
   word-break: break-word;
 }
 
-/* ---- Streaming cursor (blinking caret during generation) ---- */
-.streaming-cursor {
-  display: inline-block;
-  width: 8px;
-  height: 16px;
-  margin-left: var(--space-lg);
-  margin-bottom: var(--space-sm);
-  background: var(--accent);
-  border-radius: 2px;
-  animation: blink-cursor 1s step-end infinite;
-}
 
-@keyframes blink-cursor {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
+
 
 /* ---- Loading skeleton ---- */
 .chat-skeleton {

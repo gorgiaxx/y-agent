@@ -8,7 +8,10 @@ use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use y_core::types::SessionId;
-use y_service::{ChatService, PrepareTurnRequest, PreparedTurn, ResendTurnRequest, TurnEvent};
+use y_service::{
+    ChatService, PermissionPromptResponse, PrepareTurnRequest, PreparedTurn, ResendTurnRequest,
+    TurnEvent,
+};
 
 use crate::state::{AppState, TurnMeta};
 
@@ -279,6 +282,29 @@ fn spawn_llm_worker(
                                 run_id: run_id_progress.clone(),
                                 interaction_id: interaction_id.clone(),
                                 questions: questions.clone(),
+                            },
+                        );
+                    }
+
+                    // Intercept PermissionRequest events and emit a dedicated
+                    // event so the frontend can render the permission prompt.
+                    if let TurnEvent::PermissionRequest {
+                        ref request_id,
+                        ref tool_name,
+                        ref action_description,
+                        ref reason,
+                        ref content_preview,
+                    } = event
+                    {
+                        let _ = app_progress.emit(
+                            "chat:PermissionRequest",
+                            PermissionRequestPayload {
+                                run_id: run_id_progress.clone(),
+                                request_id: request_id.clone(),
+                                tool_name: tool_name.clone(),
+                                action_description: action_description.clone(),
+                                reason: reason.clone(),
+                                content_preview: content_preview.clone(),
                             },
                         );
                     }
@@ -982,6 +1008,51 @@ pub async fn chat_answer_question(
         tracing::warn!(
             interaction_id = %interaction_id,
             "chat_answer_question: failed to deliver answer (interaction may have timed out)"
+        );
+    }
+
+    Ok(delivered)
+}
+
+// ---------------------------------------------------------------------------
+// Permission approval commands
+// ---------------------------------------------------------------------------
+
+/// Payload emitted on `chat:PermissionRequest` when a tool needs user approval.
+#[derive(Debug, Serialize, Clone)]
+pub struct PermissionRequestPayload {
+    pub run_id: String,
+    pub request_id: String,
+    pub tool_name: String,
+    pub action_description: String,
+    pub reason: String,
+    pub content_preview: Option<String>,
+}
+
+/// Deliver the user's permission decision (approve/deny) to a pending tool.
+///
+/// Called by the frontend after the user clicks Allow/Deny in the
+/// permission prompt. The `request_id` must match the one from the
+/// `chat:PermissionRequest` event.
+#[tauri::command]
+pub async fn chat_answer_permission(
+    state: State<'_, AppState>,
+    request_id: String,
+    decision: PermissionPromptResponse,
+) -> Result<bool, String> {
+    let delivered = {
+        let mut map = state.container.pending_permissions.lock().await;
+        if let Some(sender) = map.remove(&request_id) {
+            sender.send(decision).is_ok()
+        } else {
+            false
+        }
+    };
+
+    if !delivered {
+        tracing::warn!(
+            request_id = %request_id,
+            "chat_answer_permission: failed to deliver decision (request may have timed out)"
         );
     }
 

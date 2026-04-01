@@ -138,6 +138,7 @@ pub fn run() {
             commands::chat::chat_find_checkpoint_for_resend,
             commands::chat::context_compact,
             commands::chat::chat_answer_question,
+            commands::chat::chat_answer_permission,
             // Sessions
             commands::session::session_list,
             commands::session::session_create,

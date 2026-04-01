@@ -245,9 +245,8 @@ function ChatPanelInner({
           </div>
         )}
 
-        {isStreaming && messages.some((m) => m.id.startsWith('streaming-')) && (
-          <div className="streaming-cursor" />
-        )}
+
+
 
         {error && (
           <div className="chat-error">

@@ -4,6 +4,7 @@ import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
+import { PermissionDialog } from './PermissionDialog';
 import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
@@ -41,6 +42,20 @@ interface InputAreaProps {
   onAskUserSubmit?: (interactionId: string, answers: Record<string, string>) => void;
   /** Callback when user dismisses AskUser dialog. */
   onAskUserDismiss?: (interactionId: string) => void;
+  /** Pending permission request data. */
+  permissionData?: {
+    requestId: string;
+    toolName: string;
+    actionDescription: string;
+    reason: string;
+    contentPreview?: string | null;
+  } | null;
+  /** Callback when user approves a permission request. */
+  onPermissionApprove?: (requestId: string) => void;
+  /** Callback when user denies a permission request. */
+  onPermissionDeny?: (requestId: string) => void;
+  /** Callback when user allows all future tool calls for this session. */
+  onPermissionAllowAllForSession?: (requestId: string) => void;
 }
 
 /** Data attribute used to identify skill mention tokens in the contenteditable. */
@@ -168,6 +183,10 @@ export function InputArea({
   askUserData,
   onAskUserSubmit,
   onAskUserDismiss,
+  permissionData,
+  onPermissionApprove,
+  onPermissionDeny,
+  onPermissionAllowAllForSession,
 }: InputAreaProps) {
   const [commandMode, setCommandMode] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
@@ -460,6 +479,19 @@ export function InputArea({
             questions={askUserData.questions}
             onSubmit={onAskUserSubmit}
             onDismiss={onAskUserDismiss}
+          />
+        )}
+
+        {permissionData && onPermissionApprove && onPermissionDeny && onPermissionAllowAllForSession && (
+          <PermissionDialog
+            requestId={permissionData.requestId}
+            toolName={permissionData.toolName}
+            actionDescription={permissionData.actionDescription}
+            reason={permissionData.reason}
+            contentPreview={permissionData.contentPreview}
+            onApprove={onPermissionApprove}
+            onDeny={onPermissionDeny}
+            onAllowAllForSession={onPermissionAllowAllForSession}
           />
         )}
 
