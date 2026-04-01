@@ -30,7 +30,6 @@ y-agent/
   docs/
     design/            — detailed design documents
     standards/         —
-    plan/              — project & per-module plans and remediation docs
     guides/            —
     api/               —
     research/          — just for research
@@ -92,7 +91,7 @@ When uncertain -> High.
 
 ### 4.4 R&D Planning
 
-- **Before any R&D action**: write a plan to `docs/plan/` covering scope, steps, dependencies, and verification criteria. No implementation until the plan exists.
+- **Before any R&D action**: write a plan to `.claude/plans` covering scope, steps, dependencies, and verification criteria. No implementation until the plan exists.
 
 ### 4.5 Commit Discipline
 
