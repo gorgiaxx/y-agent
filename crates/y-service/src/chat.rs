@@ -154,10 +154,42 @@ pub enum TurnEvent {
         /// The structured questions from the `AskUser` tool call (JSON array).
         questions: serde_json::Value,
     },
+    /// Emitted when a tool requires permission approval before execution.
+    ///
+    /// The presentation layer should render a permission prompt (inline card
+    /// in GUI, terminal prompt in CLI) and deliver the response via
+    /// [`PendingPermissions`].
+    ///
+    /// The tool execution loop is blocked while waiting for approval.
+    PermissionRequest {
+        /// Unique request ID for correlating the response.
+        request_id: String,
+        /// Tool name requesting permission.
+        tool_name: String,
+        /// Human-readable description of the action.
+        action_description: String,
+        /// Why permission is required (rule, dangerous, etc.).
+        reason: String,
+        /// Optional content preview (e.g., shell command, file path).
+        content_preview: Option<String>,
+    },
 }
 
 /// Channel sender for turn progress events.
 pub type TurnEventSender = mpsc::UnboundedSender<TurnEvent>;
+
+/// User decision from the permission prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionPromptResponse {
+    /// Approve only the current tool call.
+    Approve,
+    /// Deny only the current tool call.
+    Deny,
+    /// Approve the current tool call and bypass future permission prompts
+    /// for the rest of the session.
+    AllowAllForSession,
+}
 
 /// Shared map of pending user-interaction answer channels.
 ///
@@ -167,6 +199,17 @@ pub type TurnEventSender = mpsc::UnboundedSender<TurnEvent>;
 pub type PendingInteractions = std::sync::Arc<
     tokio::sync::Mutex<
         std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>,
+    >,
+>;
+
+/// Shared map of pending permission-approval channels.
+///
+/// When a tool requires HITL permission, the executor inserts a `oneshot::Sender`
+/// keyed by `request_id`. The presentation layer calls `chat_answer_permission`,
+/// which removes the sender and delivers the user's decision.
+pub type PendingPermissions = std::sync::Arc<
+    tokio::sync::Mutex<
+        std::collections::HashMap<String, tokio::sync::oneshot::Sender<PermissionPromptResponse>>,
     >,
 >;
 

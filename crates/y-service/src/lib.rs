@@ -47,9 +47,9 @@ pub use agent_service::{
 };
 pub use bot::{BotService, BotServiceError};
 pub use chat::{
-    ChatService, PendingInteractions, PrepareTurnError, PrepareTurnRequest, PreparedTurn,
-    ResendTurnError, ResendTurnRequest, ToolCallRecord, TurnError, TurnEvent, TurnEventSender,
-    TurnInput, TurnMetaSummary, TurnResult,
+    ChatService, PendingInteractions, PendingPermissions, PermissionPromptResponse,
+    PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError, ResendTurnRequest,
+    ToolCallRecord, TurnError, TurnEvent, TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
 };
 pub use config::ServiceConfig;
 pub use container::ServiceContainer;

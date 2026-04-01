@@ -18,6 +18,7 @@ use uuid::Uuid;
 use y_context::pruning::IntraTurnPruner;
 use y_context::{AssembledContext, ContextCategory, ContextRequest};
 use y_core::agent::{AgentRunConfig, AgentRunOutput, AgentRunner, DelegationError};
+use y_core::permission_types::PermissionMode;
 use y_core::provider::{ChatRequest, ProviderPool, RouteRequest, ToolCallingMode};
 use y_core::runtime::CommandRunner;
 use y_core::tool::ToolInput;
@@ -182,6 +183,8 @@ struct ToolExecContext {
     dynamic_tool_defs: Vec<serde_json::Value>,
     /// Pending user-interaction answer channels for `AskUser` tool calls.
     pending_interactions: crate::chat::PendingInteractions,
+    /// Pending permission-approval channels for HITL permission requests.
+    pending_permissions: crate::chat::PendingPermissions,
 }
 
 /// Per-iteration LLM response data bundle.
@@ -265,6 +268,7 @@ impl AgentService {
             accumulated_content: String::new(),
             dynamic_tool_defs: Vec::new(),
             pending_interactions: container.pending_interactions.clone(),
+            pending_permissions: container.pending_permissions.clone(),
         };
         #[allow(unused_assignments)]
         let mut final_model = String::new();
@@ -779,6 +783,43 @@ impl AgentService {
         );
     }
 
+    fn resolve_permission_decision_for_session(
+        decision: y_guardrails::PermissionDecision,
+        session_mode: Option<PermissionMode>,
+    ) -> y_guardrails::PermissionDecision {
+        match session_mode {
+            Some(PermissionMode::BypassPermissions)
+                if decision.action != y_guardrails::PermissionAction::Deny =>
+            {
+                y_guardrails::PermissionDecision {
+                    action: y_guardrails::PermissionAction::Allow,
+                    reason: format!(
+                        "session permission override ({})",
+                        PermissionMode::BypassPermissions
+                    ),
+                }
+            }
+            _ => decision,
+        }
+    }
+
+    async fn session_permission_mode(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Option<PermissionMode> {
+        let modes = container.session_permission_modes.read().await;
+        modes.get(session_id).copied()
+    }
+
+    async fn set_session_permission_mode(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        mode: PermissionMode,
+    ) {
+        let mut modes = container.session_permission_modes.write().await;
+        modes.insert(session_id.clone(), mode);
+    }
+
     /// Execute a single tool call, record it, and emit progress events.
     ///
     /// Returns `(success, result_content)`.
@@ -790,6 +831,212 @@ impl AgentService {
         ctx: &mut ToolExecContext,
     ) -> (bool, String) {
         let tool_start = std::time::Instant::now();
+
+        // ---------------------------------------------------------------
+        // Permission gatekeeper: evaluate guardrail permission BEFORE
+        // executing the tool. Reads `default_permission`, per-tool overrides,
+        // and `dangerous_auto_ask` from the hot-reloadable GuardrailConfig.
+        // ---------------------------------------------------------------
+        let guardrail_config = container.guardrail_manager.config();
+        let is_dangerous = {
+            let tool_name_key = ToolName::from_string(&tc.name);
+            container
+                .tool_registry
+                .get_definition(&tool_name_key)
+                .await
+                .is_some_and(|def| def.is_dangerous)
+        };
+
+        let permission_model = y_guardrails::PermissionModel::new(guardrail_config);
+        let session_mode = Self::session_permission_mode(container, &ctx.session_id).await;
+        let decision = Self::resolve_permission_decision_for_session(
+            permission_model.evaluate(&tc.name, is_dangerous),
+            session_mode,
+        );
+
+        match decision.action {
+            y_guardrails::PermissionAction::Deny => {
+                // Denied by policy -- do NOT execute the tool.
+                tracing::warn!(
+                    tool = %tc.name,
+                    reason = %decision.reason,
+                    "tool execution denied by permission policy"
+                );
+                let error_content = format!(
+                    "[SYSTEM] Tool '{}' is blocked by security policy ({}). \
+                     Do NOT ask the user for permission or retry this tool. \
+                     Use an alternative approach or skip this action.",
+                    tc.name, decision.reason
+                );
+
+                ctx.tool_calls_executed.push(ToolCallRecord {
+                    name: tc.name.clone(),
+                    arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                    success: false,
+                    duration_ms: 0,
+                    result_content: error_content.clone(),
+                });
+
+                if let Some(tx) = progress {
+                    let _ = tx.send(TurnEvent::ToolResult {
+                        name: tc.name.clone(),
+                        success: false,
+                        duration_ms: 0,
+                        input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                        result_preview: error_content.clone(),
+                        agent_name: config.agent_name.clone(),
+                    });
+                }
+
+                return (false, error_content);
+            }
+            y_guardrails::PermissionAction::Ask => {
+                // Pause and ask the user for approval via HITL.
+                let request_id = uuid::Uuid::new_v4().to_string();
+
+                // Extract content preview (command for ShellExec, path for
+                // file tools, etc.) for the permission prompt.
+                let content_preview = tc
+                    .arguments
+                    .get("command")
+                    .or_else(|| tc.arguments.get("path"))
+                    .or_else(|| tc.arguments.get("url"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                let action_desc = if let Some(ref preview) = content_preview {
+                    format!("{} wants to execute: {}", tc.name, preview)
+                } else {
+                    format!("{} wants to execute", tc.name)
+                };
+
+                tracing::info!(
+                    tool = %tc.name,
+                    request_id = %request_id,
+                    reason = %decision.reason,
+                    "permission escalation: asking user for approval"
+                );
+
+                // Register a oneshot channel for the response.
+                let (resp_tx, resp_rx) =
+                    tokio::sync::oneshot::channel::<crate::chat::PermissionPromptResponse>();
+                {
+                    let mut map = ctx.pending_permissions.lock().await;
+                    map.insert(request_id.clone(), resp_tx);
+                }
+
+                // Emit the permission request event to the presentation layer.
+                if let Some(tx) = progress {
+                    let _ = tx.send(TurnEvent::PermissionRequest {
+                        request_id: request_id.clone(),
+                        tool_name: tc.name.clone(),
+                        action_description: action_desc,
+                        reason: decision.reason.clone(),
+                        content_preview,
+                    });
+                }
+
+                // Wait for user response (with timeout).
+                let timeout_ms = container.guardrail_manager.config().hitl.timeout_ms;
+                let response = match tokio::time::timeout(
+                    std::time::Duration::from_millis(timeout_ms),
+                    resp_rx,
+                )
+                .await
+                {
+                    Ok(Ok(response)) => response,
+                    Ok(Err(_)) => {
+                        // Channel dropped (UI closed) -- deny.
+                        tracing::warn!(
+                            tool = %tc.name,
+                            "permission channel dropped -- denying"
+                        );
+                        crate::chat::PermissionPromptResponse::Deny
+                    }
+                    Err(_) => {
+                        // Timeout -- deny.
+                        tracing::warn!(
+                            tool = %tc.name,
+                            timeout_ms,
+                            "permission timeout -- denying"
+                        );
+                        // Clean up the pending entry.
+                        let mut map = ctx.pending_permissions.lock().await;
+                        map.remove(&request_id);
+                        crate::chat::PermissionPromptResponse::Deny
+                    }
+                };
+
+                let approved = match response {
+                    crate::chat::PermissionPromptResponse::Approve => true,
+                    crate::chat::PermissionPromptResponse::Deny => false,
+                    crate::chat::PermissionPromptResponse::AllowAllForSession => {
+                        Self::set_session_permission_mode(
+                            container,
+                            &ctx.session_id,
+                            PermissionMode::BypassPermissions,
+                        )
+                        .await;
+                        tracing::info!(
+                            tool = %tc.name,
+                            session_id = %ctx.session_id,
+                            "permission approved and bypass enabled for session"
+                        );
+                        true
+                    }
+                };
+
+                if !approved {
+                    let error_content = format!(
+                        "[SYSTEM] Tool '{}' was denied by the user via the permission dialog. \
+                         Do NOT ask the user for permission or retry this tool. \
+                         Use an alternative approach or skip this action.",
+                        tc.name
+                    );
+
+                    ctx.tool_calls_executed.push(ToolCallRecord {
+                        name: tc.name.clone(),
+                        arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                        success: false,
+                        duration_ms: 0,
+                        result_content: error_content.clone(),
+                    });
+
+                    if let Some(tx) = progress {
+                        let _ = tx.send(TurnEvent::ToolResult {
+                            name: tc.name.clone(),
+                            success: false,
+                            duration_ms: 0,
+                            input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                            result_preview: error_content.clone(),
+                            agent_name: config.agent_name.clone(),
+                        });
+                    }
+
+                    return (false, error_content);
+                }
+
+                tracing::info!(
+                    tool = %tc.name,
+                    "permission approved by user"
+                );
+            }
+            y_guardrails::PermissionAction::Notify => {
+                // Execute but log for auditing.
+                tracing::info!(
+                    tool = %tc.name,
+                    reason = %decision.reason,
+                    "tool execution permitted with notification"
+                );
+            }
+            y_guardrails::PermissionAction::Allow => {
+                // No action needed -- proceed silently.
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Permission check passed -- execute the tool.
+        // ---------------------------------------------------------------
 
         // Intercept AskUser calls -- route through the user interaction
         // orchestrator which emits a TurnEvent and awaits the user's answer.
@@ -1967,6 +2214,8 @@ impl AgentRunner for ServiceAgentRunner {
 mod tests {
     use super::*;
     use y_context::{ContextCategory, ContextItem};
+    use y_core::permission_types::PermissionMode;
+    use y_guardrails::{PermissionAction, PermissionDecision};
 
     #[test]
     fn test_build_chat_messages_prepends_system() {
@@ -2091,5 +2340,37 @@ mod tests {
 
         assert!(result.starts_with(base));
         assert!(result.contains("FileRead"));
+    }
+
+    #[test]
+    fn test_session_allow_all_converts_ask_to_allow() {
+        let decision = PermissionDecision {
+            action: PermissionAction::Ask,
+            reason: "global default policy".to_string(),
+        };
+
+        let resolved = AgentService::resolve_permission_decision_for_session(
+            decision,
+            Some(PermissionMode::BypassPermissions),
+        );
+
+        assert_eq!(resolved.action, PermissionAction::Allow);
+        assert!(resolved.reason.contains("session"));
+    }
+
+    #[test]
+    fn test_session_allow_all_does_not_override_deny() {
+        let decision = PermissionDecision {
+            action: PermissionAction::Deny,
+            reason: "per-tool override for `ShellExec`".to_string(),
+        };
+
+        let resolved = AgentService::resolve_permission_decision_for_session(
+            decision.clone(),
+            Some(PermissionMode::BypassPermissions),
+        );
+
+        assert_eq!(resolved.action, PermissionAction::Deny);
+        assert_eq!(resolved.reason, decision.reason);
     }
 }

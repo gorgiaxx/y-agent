@@ -17,6 +17,7 @@ use y_context::{
     PythonVenvPromptInfo, SystemPromptConfig, VenvPromptInfo,
 };
 use y_core::agent::AgentDelegator;
+use y_core::permission_types::PermissionMode;
 use y_core::provider::LlmProvider;
 use y_core::types::{SessionId, ToolName};
 use y_diagnostics::{DiagnosticsSubscriber, TraceStore};
@@ -166,6 +167,19 @@ pub struct ServiceContainer {
     /// and the presentation layer (which delivers answers). Global to the
     /// container so multiple concurrent sessions can be served.
     pub pending_interactions: crate::chat::PendingInteractions,
+
+    /// Pending permission-approval channels for HITL permission requests.
+    ///
+    /// Shared between the agent execution loop (which registers oneshot senders
+    /// when a tool requires HITL approval) and the presentation layer (which
+    /// delivers the user's allow/deny decision).
+    pub pending_permissions: crate::chat::PendingPermissions,
+
+    /// Session-scoped permission overrides.
+    ///
+    /// Used for temporary session-level modes such as "allow all for this
+    /// session" without mutating the global guardrail configuration.
+    pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
 }
 
 impl ServiceContainer {
@@ -482,6 +496,8 @@ tools = ["ToolSearch"]
             skill_search: RwLock::new(skill_search),
             callable_agents_text,
             pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
