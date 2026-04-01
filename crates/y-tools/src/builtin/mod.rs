@@ -16,6 +16,7 @@ pub mod web_fetch;
 pub mod workflow;
 
 use std::sync::{Arc, Mutex};
+use y_core::embedding::EmbeddingProvider;
 use y_knowledge::middleware::InjectKnowledge;
 use y_knowledge::tokenizer::SimpleTokenizer;
 
@@ -24,16 +25,22 @@ use crate::registry::ToolRegistryImpl;
 /// Optional knowledge handle for the knowledge search tool.
 pub type KnowledgeHandle = Option<Arc<Mutex<InjectKnowledge<SimpleTokenizer>>>>;
 
+/// Optional embedding provider for the knowledge search tool.
+pub type EmbeddingHandle = Option<Arc<dyn EmbeddingProvider>>;
+
 /// Register all built-in tools into the given registry.
 ///
 /// Called during service wiring to populate the tool registry with
 /// the standard set of tools the agent can use.
 ///
 /// If `knowledge` is `Some`, the `KnowledgeSearch` tool is also registered.
+/// When `embedding` is also `Some`, the tool uses cosine similarity for
+/// query matching instead of text-based fallback.
 pub async fn register_builtin_tools(
     registry: &ToolRegistryImpl,
     browser_config: y_browser::BrowserConfig,
     knowledge: KnowledgeHandle,
+    embedding: EmbeddingHandle,
 ) {
     // Browser tool is shared between `Browser` and `WebFetch` via Arc
     // so both use the same Chrome session.
@@ -132,8 +139,13 @@ pub async fn register_builtin_tools(
 
     // Register knowledge search tool if knowledge base is available.
     if let Some(kb) = knowledge {
+        let tool = if let Some(emb) = embedding {
+            knowledge_search::KnowledgeSearchTool::with_embedding(kb, emb)
+        } else {
+            knowledge_search::KnowledgeSearchTool::new(kb)
+        };
         tools.push((
-            Arc::new(knowledge_search::KnowledgeSearchTool::new(kb)),
+            Arc::new(tool),
             knowledge_search::KnowledgeSearchTool::tool_definition(),
         ));
     }
@@ -154,7 +166,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_builtin_tools_populates_registry() {
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
-        register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None).await;
+        register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None, None).await;
         // 3 core + file_edit + Task + ToolSearch + Glob + Grep + AskUser + Browser + WebFetch + 11 workflow/schedule = 22
         assert_eq!(registry.len().await, 22);
     }
@@ -171,6 +183,7 @@ mod tests {
             &registry,
             y_browser::BrowserConfig::default(),
             Some(knowledge),
+            None,
         )
         .await;
         // 22 + KnowledgeSearch = 23
@@ -180,7 +193,7 @@ mod tests {
     #[tokio::test]
     async fn test_registered_tools_appear_in_index() {
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
-        register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None).await;
+        register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None, None).await;
         let index = registry.tool_index().await;
         let names: Vec<&str> = index.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"FileRead"));

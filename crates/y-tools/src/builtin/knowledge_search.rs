@@ -2,9 +2,14 @@
 //!
 //! Allows the LLM to actively query the knowledge base for relevant
 //! information when it needs deeper context than auto-injection provides.
+//!
+//! When an `EmbeddingProvider` is available, the query is embedded before
+//! retrieval so that cosine similarity is used instead of text matching.
 
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
+
+use y_core::embedding::EmbeddingProvider;
 
 use y_core::tool::{
     Tool, ToolCategory, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolType,
@@ -17,6 +22,7 @@ use y_knowledge::tokenizer::SimpleTokenizer;
 pub struct KnowledgeSearchTool {
     def: ToolDefinition,
     knowledge: Arc<Mutex<InjectKnowledge<SimpleTokenizer>>>,
+    embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
 impl KnowledgeSearchTool {
@@ -25,6 +31,20 @@ impl KnowledgeSearchTool {
         Self {
             def: Self::tool_definition(),
             knowledge,
+            embedding_provider: None,
+        }
+    }
+
+    /// Create a knowledge search tool with an embedding provider for
+    /// vector-based semantic search.
+    pub fn with_embedding(
+        knowledge: Arc<Mutex<InjectKnowledge<SimpleTokenizer>>>,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+    ) -> Self {
+        Self {
+            def: Self::tool_definition(),
+            knowledge,
+            embedding_provider: Some(embedding_provider),
         }
     }
 
@@ -105,11 +125,24 @@ impl Tool for KnowledgeSearchTool {
             .unwrap_or(5)
             .min(20) as usize;
 
+        // Embed the query for cosine similarity when a provider is available.
+        let query_embedding = if let Some(ref provider) = self.embedding_provider {
+            match provider.embed(query).await {
+                Ok(result) => Some(result.vector),
+                Err(e) => {
+                    tracing::warn!("Failed to embed query, falling back to keyword search: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let knowledge = self
             .knowledge
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let items = knowledge.retrieve_for_context(query, None, domain);
+        let items = knowledge.retrieve_for_context(query, query_embedding.as_deref(), domain);
 
         if items.is_empty() {
             return Ok(ToolOutput {
@@ -147,9 +180,31 @@ impl Tool for KnowledgeSearchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use y_core::embedding::{EmbeddingError, EmbeddingResult};
     use y_core::types::SessionId;
     use y_knowledge::chunking::{Chunk, ChunkLevel, ChunkMetadata};
     use y_knowledge::retrieval::{HybridRetriever, RetrievalConfig};
+
+    /// Mock embedding provider that returns a fixed 3-dimensional vector.
+    struct MockEmbeddingProvider;
+
+    #[async_trait]
+    impl EmbeddingProvider for MockEmbeddingProvider {
+        async fn embed(&self, _text: &str) -> Result<EmbeddingResult, EmbeddingError> {
+            Ok(EmbeddingResult {
+                vector: vec![0.1, 0.2, 0.3],
+                dimensions: 3,
+                model: "mock".into(),
+                token_count: 5,
+            })
+        }
+        fn dimensions(&self) -> usize {
+            3
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+    }
 
     fn make_tool() -> KnowledgeSearchTool {
         let config = RetrievalConfig {
@@ -174,6 +229,37 @@ mod tests {
 
         let knowledge = InjectKnowledge::new(retriever);
         KnowledgeSearchTool::new(Arc::new(Mutex::new(knowledge)))
+    }
+
+    fn make_tool_with_embedding() -> KnowledgeSearchTool {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        // Index a chunk WITH an embedding vector so cosine similarity works.
+        retriever.index_with_embedding(
+            Chunk {
+                id: "c1".to_string(),
+                document_id: "doc-1".to_string(),
+                level: ChunkLevel::L2,
+                content: "Rust error handling uses Result type.".to_string(),
+                token_estimate: 10,
+                metadata: ChunkMetadata {
+                    source: "test.md".to_string(),
+                    domain: "programming".to_string(),
+                    title: "Rust Basics".to_string(),
+                    section_index: 0,
+                },
+            },
+            vec![0.1, 0.2, 0.3],
+            0.9,
+        );
+
+        let knowledge = InjectKnowledge::new(retriever);
+        let provider: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+        KnowledgeSearchTool::with_embedding(Arc::new(Mutex::new(knowledge)), provider)
     }
 
     fn make_input(args: serde_json::Value) -> ToolInput {
@@ -218,5 +304,27 @@ mod tests {
         assert_eq!(def.name.as_str(), "KnowledgeSearch");
         assert_eq!(def.category, ToolCategory::Knowledge);
         assert!(!def.is_dangerous);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_embedding_finds_results() {
+        let tool = make_tool_with_embedding();
+        let input = make_input(serde_json::json!({ "query": "Rust error" }));
+        let output = tool.execute(input).await.unwrap();
+        assert!(output.success);
+        assert!(
+            output.content["count"].as_u64().unwrap() > 0,
+            "should find results using cosine similarity"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_with_embedding_constructor() {
+        let config = RetrievalConfig::default();
+        let retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        let knowledge = InjectKnowledge::new(retriever);
+        let provider: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+        let tool = KnowledgeSearchTool::with_embedding(Arc::new(Mutex::new(knowledge)), provider);
+        assert!(tool.embedding_provider.is_some());
     }
 }

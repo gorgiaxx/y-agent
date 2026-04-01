@@ -283,6 +283,7 @@ impl ServiceContainer {
             &tool_registry,
             config.browser.clone(),
             Some(kb_handle),
+            embedding_provider.clone(),
         )
         .await;
 
@@ -1474,6 +1475,23 @@ mod tests {
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
         assert_eq!(sc.context_pipeline.provider_count(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_container_initializes_embedding_enabled_knowledge_wiring() {
+        let mut config = ServiceConfig::default();
+        config.storage = y_storage::StorageConfig::in_memory();
+        config.knowledge.embedding_enabled = true;
+        config.knowledge.embedding_api_key = "test-key".to_string();
+
+        let sc = ServiceContainer::from_config(&config).await.unwrap();
+        let definitions = sc.tool_registry.get_all_definitions().await;
+        assert!(definitions
+            .iter()
+            .any(|def| def.name.as_str() == "KnowledgeSearch"));
+
+        let knowledge_service = sc.knowledge_service.lock().await;
+        assert!(knowledge_service.embedding_provider().is_some());
     }
 
     #[tokio::test]
