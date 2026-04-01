@@ -56,7 +56,7 @@ interface KnowledgePanelProps {
   collections: KnowledgeCollectionInfo[];
   entries: KnowledgeEntryInfo[];
   selectedCollection: string | null;
-  onSelectCollection: (name: string) => void;
+  onSelectCollection: (name: string | null) => void;
   onCreateCollection: (name: string, description: string) => void;
   onDeleteCollection: (name: string) => Promise<void>;
   onRenameCollection: (oldName: string, newName: string) => Promise<void>;
@@ -70,6 +70,7 @@ export function KnowledgePanel({
   collections,
   entries,
   selectedCollection,
+  onSelectCollection,
   onCreateCollection,
   onDeleteCollection,
   onRenameCollection,
@@ -599,6 +600,9 @@ export function KnowledgePanel({
             setDeletingCollection(true);
             try {
               await onDeleteCollection(deleteTarget.id);
+              if (selectedCollection === deleteTarget.id) {
+                onSelectCollection(null);
+              }
             } finally {
               setDeletingCollection(false);
               setDeleteTarget(null);
