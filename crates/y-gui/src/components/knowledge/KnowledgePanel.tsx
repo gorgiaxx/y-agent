@@ -107,11 +107,12 @@ export function KnowledgePanel({
     }
     try {
       await onRenameCollection(selectedCollection, trimmed);
+      onSelectCollection(trimmed);
     } catch {
       // error is logged by the hook
     }
     setEditingName(false);
-  }, [editNameValue, selectedCollection, onRenameCollection]);
+  }, [editNameValue, selectedCollection, onRenameCollection, onSelectCollection]);
 
   const handleCancelRename = useCallback(() => {
     setEditingName(false);
