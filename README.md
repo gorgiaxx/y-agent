@@ -722,12 +722,9 @@ Detailed documentation is organized under `docs/`:
 
 | Directory         | Purpose                                                                                                                   |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `docs/design/`    | 30+ per-subsystem design documents                                                                                        |
 | `docs/standards/` | Engineering standards, test strategy, database schema, tool call protocol, skill standard, DSL spec, agent autonomy model |
-| `docs/plan/`      | Project and per-module R&D plans                                                                                          |
 | `docs/api/`       | API documentation                                                                                                         |
 | `docs/guides/`    | User and developer guides                                                                                                 |
-| `docs/research/`  | Research notes                                                                                                            |
 | `docs/schema/`    | Schema specifications                                                                                                     |
 
 Top-level references:
