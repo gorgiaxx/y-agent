@@ -68,21 +68,24 @@ impl Middleware for ToolGuardMiddleware {
         match decision.action {
             PermissionAction::Deny => {
                 ctx.abort(format!(
-                    "Permission denied for tool `{tool_name}`: {}",
-                    decision.reason
+                    "[SYSTEM] Tool '{}' is blocked by security policy ({}). \
+                     Do NOT ask the user for permission or retry this tool. \
+                     Use an alternative approach or skip this action.",
+                    tool_name, decision.reason
                 ));
                 return Ok(MiddlewareResult::ShortCircuit);
             }
             PermissionAction::Ask => {
-                // In a real implementation, this would trigger HITL.
-                // For now, we record the need for escalation in metadata.
-                if let Some(meta) = ctx.metadata.as_object_mut() {
-                    meta.insert("hitl_required".to_string(), serde_json::Value::Bool(true));
-                    meta.insert(
-                        "hitl_reason".to_string(),
-                        serde_json::Value::String(decision.reason),
-                    );
-                }
+                // HITL is handled by agent_service::execute_and_record_tool
+                // before the middleware chain runs. If this branch is reached,
+                // it means the middleware is running in a context without HITL
+                // support -- abort to be safe.
+                ctx.abort(format!(
+                    "[SYSTEM] Tool '{tool_name}' requires permission approval (ask) but was run in a context without HITL support. \
+                     Do NOT ask the user for permission or retry this tool. \
+                     Use an alternative approach or skip this action."
+                ));
+                return Ok(MiddlewareResult::ShortCircuit);
             }
             PermissionAction::Notify => {
                 // Record notification in metadata for event emission.
@@ -195,23 +198,20 @@ mod tests {
             .abort_reason
             .as_ref()
             .unwrap()
-            .contains("Permission denied"));
+            .contains("blocked by security policy"));
     }
 
     #[tokio::test]
-    async fn test_tool_guard_dangerous_triggers_hitl() {
+    async fn test_tool_guard_dangerous_triggers_short_circuit() {
         let config = GuardrailConfig::default();
         let mw = ToolGuardMiddleware::new(config);
         let mut ctx = make_tool_context("ShellExec", true);
 
         let result = mw.execute(&mut ctx).await.unwrap();
-        assert!(matches!(result, MiddlewareResult::Continue));
         assert!(
-            ctx.metadata
-                .get("hitl_required")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            "dangerous tool should require HITL"
+            matches!(result, MiddlewareResult::ShortCircuit),
+            "dangerous tool with default ask should short-circuit"
         );
+        assert!(ctx.aborted);
     }
 }

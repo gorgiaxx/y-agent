@@ -27,8 +27,11 @@ pub mod error;
 pub mod hitl;
 pub mod loop_guard;
 pub mod middleware;
+pub mod mode_manager;
 pub mod permission;
+pub mod permission_pipeline;
 pub mod risk;
+pub mod rule_store;
 pub mod structural;
 pub mod taint;
 
@@ -40,8 +43,11 @@ pub use loop_guard::{ActionRecord, LoopDetection, LoopGuard};
 pub use middleware::llm_guard::LlmGuardMiddleware;
 pub use middleware::loop_detector::LoopDetectorMiddleware;
 pub use middleware::tool_guard::ToolGuardMiddleware;
+pub use mode_manager::PermissionModeManager;
 pub use permission::{PermissionAction, PermissionDecision, PermissionModel};
+pub use permission_pipeline::evaluate_pipeline;
 pub use risk::{RiskAssessment, RiskFactors, RiskScorer};
+pub use rule_store::PermissionRuleStore;
 pub use structural::{
     Severity, StructuralValidator, StructuralViolation, TokenBudget, ValidationResult,
 };

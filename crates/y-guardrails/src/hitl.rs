@@ -3,9 +3,15 @@
 //! When a guardrail requires human approval (permission=Ask, risk threshold
 //! exceeded), the HITL protocol pauses execution, sends a prompt to the user,
 //! and waits for a response within a configurable timeout.
+//!
+//! Extended in Phase 3 to support:
+//! - `ApproveAlways` / `DenyAlways` responses that persist rules
+//! - Permission suggestions attached to the request
 
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration};
+
+use y_core::permission_types::PermissionRuleSource;
 
 use crate::config::HitlConfig;
 use crate::error::GuardrailError;
@@ -23,15 +29,50 @@ pub struct HitlRequest {
     pub risk_score: Option<f32>,
     /// Human-readable context for the user.
     pub context: String,
+    /// Suggested "always" options the UI can present to the user.
+    ///
+    /// For example: "Always allow `FileRead`", "Always deny `ShellExec`(rm -rf:*)".
+    /// Each suggestion maps to a `PermissionUpdate` that can be persisted.
+    pub suggestions: Vec<String>,
 }
 
 /// User's response to an HITL request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HitlResponse {
-    /// User approves the action.
+    /// User approves the action (this time only).
     Approve,
+    /// User approves the action and persists an "always allow" rule.
+    ApproveAlways {
+        /// Where to persist the rule (global or project).
+        destination: PermissionRuleSource,
+    },
     /// User denies the action, with optional reason.
     Deny { reason: String },
+    /// User denies the action and persists an "always deny" rule.
+    DenyAlways {
+        /// Where to persist the rule (global or project).
+        destination: PermissionRuleSource,
+        /// Reason for denial.
+        reason: String,
+    },
+}
+
+impl HitlResponse {
+    /// Whether this response approves the action.
+    pub fn is_approved(&self) -> bool {
+        matches!(
+            self,
+            HitlResponse::Approve | HitlResponse::ApproveAlways { .. }
+        )
+    }
+
+    /// Whether this response requests rule persistence.
+    pub fn is_always(&self) -> bool {
+        matches!(
+            self,
+            HitlResponse::ApproveAlways { .. } | HitlResponse::DenyAlways { .. }
+        )
+    }
 }
 
 /// The HITL protocol handles escalation between the agent and a human.
@@ -69,11 +110,14 @@ impl HitlProtocol {
 
     /// Escalate an action for human approval.
     ///
-    /// Returns `Ok(())` if approved, `Err(GuardrailError)` if denied or timed out.
-    pub async fn escalate(&self, request: HitlRequest) -> Result<(), GuardrailError> {
+    /// Returns the full `HitlResponse` so the caller can handle
+    /// `ApproveAlways`/`DenyAlways` rule persistence.
+    pub async fn escalate_full(
+        &self,
+        request: HitlRequest,
+    ) -> Result<HitlResponse, GuardrailError> {
         let (response_tx, response_rx) = oneshot::channel();
 
-        // Send request to the handler
         self.request_tx
             .send((request, response_tx))
             .await
@@ -81,18 +125,34 @@ impl HitlProtocol {
                 message: "HITL handler disconnected".to_string(),
             })?;
 
-        // Wait for response with timeout
         let duration = Duration::from_millis(self.config.timeout_ms);
 
         match timeout(duration, response_rx).await {
-            Ok(Ok(HitlResponse::Approve)) => Ok(()),
-            Ok(Ok(HitlResponse::Deny { reason })) => Err(GuardrailError::HitlDenied { reason }),
+            Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(GuardrailError::Other {
                 message: "HITL response channel dropped".to_string(),
             }),
             Err(_) => Err(GuardrailError::HitlTimeout {
                 timeout_ms: self.config.timeout_ms,
             }),
+        }
+    }
+
+    /// Escalate an action for human approval (simplified API).
+    ///
+    /// Returns `Ok(())` if approved, `Err(GuardrailError)` if denied or timed out.
+    /// Use `escalate_full()` to get the full response for rule persistence.
+    pub async fn escalate(&self, request: HitlRequest) -> Result<(), GuardrailError> {
+        let response = self.escalate_full(request).await?;
+
+        if response.is_approved() {
+            Ok(())
+        } else {
+            let reason = match response {
+                HitlResponse::Deny { reason } | HitlResponse::DenyAlways { reason, .. } => reason,
+                _ => "denied".to_string(),
+            };
+            Err(GuardrailError::HitlDenied { reason })
         }
     }
 }
@@ -112,6 +172,7 @@ mod tests {
             reason: "dangerous tool".to_string(),
             risk_score: Some(0.9),
             context: "executing `rm -rf /tmp/test`".to_string(),
+            suggestions: vec!["Always allow ShellExec".to_string()],
         }
     }
 

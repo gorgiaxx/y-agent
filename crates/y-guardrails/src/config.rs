@@ -111,14 +111,16 @@ impl Default for RiskConfig {
 /// HITL (Human-in-the-Loop) configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HitlConfig {
-    /// Timeout in milliseconds for user response (default: 30 seconds).
+    /// Timeout in milliseconds for user response (default: 120 seconds).
     #[serde(default = "default_hitl_timeout_ms")]
     pub timeout_ms: u64,
 }
 
 impl Default for HitlConfig {
     fn default() -> Self {
-        Self { timeout_ms: 30_000 }
+        Self {
+            timeout_ms: 120_000,
+        }
     }
 }
 
@@ -156,5 +158,5 @@ const fn default_risk_threshold() -> f32 {
 }
 
 const fn default_hitl_timeout_ms() -> u64 {
-    30_000
+    120_000
 }
