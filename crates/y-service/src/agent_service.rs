@@ -1203,11 +1203,20 @@ impl AgentService {
         };
 
         // Accumulate this iteration's text so the final persisted message
-        // includes all iterations' content (think blocks, intermediate text).
-        ctx.accumulated_content.push_str(&iter_content);
+        // includes all iterations' content. If the response doesn't already
+        // contain <think> tags, wrap it so the frontend can properly interleave
+        // and group it inside the ActionCard's collapsible section.
+        let out_content = if iter_content.trim().is_empty() {
+            String::new()
+        } else if iter_content.contains("<think>") {
+            iter_content.clone()
+        } else {
+            format!("<think>\n{}\n</think>\n", iter_content.trim())
+        };
+        ctx.accumulated_content.push_str(&out_content);
 
         let assistant_msg =
-            Self::build_assistant_msg(response, iter_content, response.tool_calls.clone());
+            Self::build_assistant_msg(response, out_content, response.tool_calls.clone());
 
         ctx.working_history.push(assistant_msg.clone());
         ctx.new_messages.push(assistant_msg);
@@ -1274,11 +1283,20 @@ impl AgentService {
         let msgs_before = ctx.new_messages.len();
 
         // Accumulate this iteration's text so the final persisted message
-        // includes all iterations' content (think blocks, tool call XML,
-        // intermediate text).
-        ctx.accumulated_content.push_str(text);
+        // includes all iterations' content. If the response doesn't already
+        // contain <think> tags, wrap it so the frontend can properly interleave
+        // and group it inside the ActionCard's collapsible section.
+        let out_content = if text.trim().is_empty() {
+            String::new()
+        } else if text.contains("<think>") {
+            text.to_string()
+        } else {
+            format!("<think>\n{}\n</think>\n", text.trim())
+        };
 
-        let assistant_msg = Self::build_assistant_msg(response, text.to_string(), vec![]);
+        ctx.accumulated_content.push_str(&out_content);
+
+        let assistant_msg = Self::build_assistant_msg(response, out_content, vec![]);
 
         ctx.working_history.push(assistant_msg.clone());
         ctx.new_messages.push(assistant_msg);

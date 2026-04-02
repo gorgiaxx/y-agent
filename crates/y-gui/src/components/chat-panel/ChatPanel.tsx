@@ -38,7 +38,9 @@ interface ChatPanelProps {
 type DisplayItem =
   | { kind: 'message'; msg: Message; toolResults?: ToolResultRecord[] }
   | { kind: 'restore-divider'; segment: TombstonedSegment }
-  | { kind: 'context-reset'; pointIndex: number };
+  | { kind: 'context-reset'; pointIndex: number }
+  | { kind: 'streaming-indicator' }
+  | { kind: 'error'; error: string };
 
 /**
  * Build a flat display-item list by interleaving messages with restore
@@ -50,6 +52,8 @@ function buildDisplayItems(
   tombstonedSegments: TombstonedSegment[] | undefined,
   contextResetPoints: number[] | undefined,
   toolResults: ToolResultRecord[] | undefined,
+  isStreaming: boolean,
+  error: string | null,
 ): DisplayItem[] {
   const items: DisplayItem[] = [];
 
@@ -102,6 +106,14 @@ function buildDisplayItems(
     }
   }
 
+  if (isStreaming && !messages.some((m) => m.id.startsWith('streaming-'))) {
+    items.push({ kind: 'streaming-indicator' });
+  }
+
+  if (error) {
+    items.push({ kind: 'error', error });
+  }
+
   return items;
 }
 
@@ -126,8 +138,8 @@ function ChatPanelInner({
 
   // Pre-compute the flat display item list.
   const displayItems = useMemo(
-    () => buildDisplayItems(messages, tombstonedSegments, contextResetPoints, toolResults),
-    [messages, tombstonedSegments, contextResetPoints, toolResults],
+    () => buildDisplayItems(messages, tombstonedSegments, contextResetPoints, toolResults, isStreaming, error),
+    [messages, tombstonedSegments, contextResetPoints, toolResults, isStreaming, error],
   );
 
   // Auto-scroll on new messages (count changes) or streaming updates (if near bottom).
@@ -162,6 +174,24 @@ function ChatPanelInner({
 
       case 'context-reset':
         return <ContextResetDivider />;
+
+      case 'streaming-indicator':
+        return (
+          <div className="streaming-indicator">
+            <div className="typing-dots">
+              <span /><span /><span />
+            </div>
+            <span className="streaming-text">Thinking...</span>
+          </div>
+        );
+
+      case 'error':
+        return (
+          <div className="chat-error">
+            <span className="error-icon"><AlertTriangle size={14} /></span>
+            <span className="error-text">{item.error}</span>
+          </div>
+        );
 
       case 'message':
         if (item.msg.role === 'user') {
@@ -224,7 +254,10 @@ function ChatPanelInner({
           computeItemKey={(_index, item) => {
             if (item.kind === 'message') return item.msg.id;
             if (item.kind === 'restore-divider') return `restore-${item.segment.checkpointId}`;
-            return `reset-${item.pointIndex}`;
+            if (item.kind === 'context-reset') return `reset-${item.pointIndex}`;
+            if (item.kind === 'streaming-indicator') return 'streaming-indicator';
+            if (item.kind === 'error') return 'error';
+            return 'unknown';
           }}
           itemContent={renderItem}
           atBottomStateChange={handleAtBottomStateChange}
@@ -234,25 +267,6 @@ function ChatPanelInner({
           initialTopMostItemIndex={Math.max(0, displayItems.length - 1)}
           style={{ height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         />
-
-        {isStreaming && !messages.some((m) => m.id.startsWith('streaming-')) && (
-          <div className="streaming-indicator">
-            <div className="typing-dots">
-              <span /><span /><span />
-            </div>
-            <span className="streaming-text">Thinking...</span>
-          </div>
-        )}
-
-
-
-
-        {error && (
-          <div className="chat-error">
-            <span className="error-icon"><AlertTriangle size={14} /></span>
-            <span className="error-text">{error}</span>
-          </div>
-        )}
       </div>
     </div>
   );
