@@ -350,19 +350,24 @@ function isPartialToolCallPrefix(s: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Native Mode Synethsis
+// Native Mode Synthesis
 // ---------------------------------------------------------------------------
 
 /**
  * Synthesize a StreamContentResult for Native mode tool calls.
- * 
- * In Native mode, the LLM does NOT emit `<tool_call>` XML tags. Instead, it natively outputs
- * tool parameters, which the backend provides as separate objects.
- * However, the backend still accumulates `<think>...</think>` multi-iteration markers in `content`.
- * 
- * This function artificially splits the `content` at each `<think>` tag boundary and interleaves
- * the native tool calls right before the final conclusion block so `ActionCard` can chronologically
- * group them exactly as it does for Prompt-Based models.
+ *
+ * In Native mode, the LLM does NOT emit `<tool_call>` XML tags. Instead, it
+ * natively outputs tool parameters, which the backend provides as separate
+ * objects. The backend wraps each intermediate iteration's text in
+ * `<think>...</think>` tags so the frontend can distinguish iteration
+ * boundaries from the final conclusion text.
+ *
+ * This function finds all **paired** `<think>...</think>` blocks, creates one
+ * text segment per block, interleaves tool calls chronologically (one per
+ * iteration), and leaves the post-think trailing text as the conclusion.
+ *
+ * Using paired matching instead of positional `<think>` splitting avoids
+ * false positives from inline mentions such as `` `<think>` `` in markdown.
  */
 export function synthesizeNativeStreamResult(
   content: string,
@@ -376,58 +381,83 @@ export function synthesizeNativeStreamResult(
     startIndex: 0,
   }));
 
-  const segments: ContentSegment[] = [];
-  const thinkIndices: number[] = [];
-  let searchIdx = 0;
-
-  while (true) {
-    const idx = content.indexOf('<think>', searchIdx);
-    if (idx < 0) break;
-    thinkIndices.push(idx);
-    searchIdx = idx + '<think>'.length;
+  // Find all paired <think>...</think> blocks.
+  // Paired matching correctly ignores inline mentions like `<think>` that
+  // have no corresponding closing tag.
+  const THINK_OPEN = '<think>';
+  const THINK_CLOSE = '</think>';
+  const thinkBlocks: { start: number; end: number }[] = [];
+  let searchStart = 0;
+  while (searchStart < content.length) {
+    const openIdx = content.indexOf(THINK_OPEN, searchStart);
+    if (openIdx < 0) break;
+    const closeIdx = content.indexOf(THINK_CLOSE, openIdx + THINK_OPEN.length);
+    if (closeIdx < 0) break; // unclosed tag -- stop
+    const blockEnd = closeIdx + THINK_CLOSE.length;
+    thinkBlocks.push({ start: openIdx, end: blockEnd });
+    searchStart = blockEnd;
   }
 
-  // No multiple iterations detected. Just group text then all tools.
-  if (thinkIndices.length === 0) {
+  const segments: ContentSegment[] = [];
+
+  // No paired think blocks found -- simple: text + tool calls.
+  if (thinkBlocks.length === 0) {
     if (content.trim()) segments.push({ type: 'text', text: content });
     toolCalls.forEach((tc) => segments.push({ type: 'tool_call', toolCall: tc }));
     return { segments, displayText: content, toolCalls, hasPendingToolCall: false };
   }
 
-  // Pre-think text (if any) goes into its own segment to become Preamble
-  if (thinkIndices[0] > 0) {
-    const preText = content.slice(0, thinkIndices[0]);
+  let toolIdx = 0;
+
+  // Pre-think text (text before the first <think> block).
+  // In old-format data this is iteration-1 reasoning without <think> wrapper.
+  if (thinkBlocks[0].start > 0) {
+    const preText = content.slice(0, thinkBlocks[0].start);
     if (preText.trim()) {
       segments.push({ type: 'text', text: preText });
+      // This text represents an iteration's reasoning -- pair with a tool call.
+      if (toolIdx < toolCalls.length) {
+        segments.push({ type: 'tool_call', toolCall: toolCalls[toolIdx++] });
+      }
     }
   }
 
-  // Split into chunks based on `<think>` tag offsets
-  const chunks: string[] = [];
-  for (let i = 0; i < thinkIndices.length; i++) {
-    const start = thinkIndices[i];
-    const end = i < thinkIndices.length - 1 ? thinkIndices[i + 1] : content.length;
-    chunks.push(content.slice(start, end));
+  // Each <think>...</think> block represents one LLM iteration's reasoning.
+  for (let i = 0; i < thinkBlocks.length; i++) {
+    const block = thinkBlocks[i];
+
+    // Text between consecutive blocks (rare but handle gracefully).
+    if (i > 0) {
+      const gap = content.slice(thinkBlocks[i - 1].end, block.start);
+      if (gap.trim()) {
+        segments.push({ type: 'text', text: gap });
+      }
+    }
+
+    // The think block text (including tags, for extractThinkTags to process).
+    segments.push({ type: 'text', text: content.slice(block.start, block.end) });
+
+    // Pair with a tool call.
+    if (toolIdx < toolCalls.length) {
+      segments.push({ type: 'tool_call', toolCall: toolCalls[toolIdx++] });
+    }
   }
 
-  // Distribute chunks and tools.
-  // We place ALL remaining tools right before the final chunk (the conclusion).
-  let toolsPlaced = 0;
-  for (let i = 0; i < chunks.length; i++) {
-    segments.push({ type: 'text', text: chunks[i] });
-
-    if (i === chunks.length - 1) {
-      // Last chunk: pop it, insert all tools, then put it back
-      const lastChunk = segments.pop()!;
-      while (toolsPlaced < toolCalls.length) {
-        segments.push({ type: 'tool_call', toolCall: toolCalls[toolsPlaced++] });
-      }
-      segments.push(lastChunk);
-    } else {
-      // Intermediate turn: put exactly one tool call if available
-      if (toolsPlaced < toolCalls.length) {
-        segments.push({ type: 'tool_call', toolCall: toolCalls[toolsPlaced++] });
-      }
+  // Post-think text (after the last </think> block) -- conclusion / final answer.
+  const lastEnd = thinkBlocks[thinkBlocks.length - 1].end;
+  if (lastEnd < content.length) {
+    const postText = content.slice(lastEnd);
+    // Place any remaining tool calls before the conclusion.
+    while (toolIdx < toolCalls.length) {
+      segments.push({ type: 'tool_call', toolCall: toolCalls[toolIdx++] });
+    }
+    if (postText.trim()) {
+      segments.push({ type: 'text', text: postText });
+    }
+  } else {
+    // No text after last think block -- place remaining tool calls at the end.
+    while (toolIdx < toolCalls.length) {
+      segments.push({ type: 'tool_call', toolCall: toolCalls[toolIdx++] });
     }
   }
 
