@@ -402,6 +402,17 @@ pub fn extract_section_title(content: &str, index: usize) -> String {
     format!("Section {}", index + 1)
 }
 
+/// Check whether a section title is a generic fallback (e.g. `"Section 1"`).
+///
+/// Generic titles carry no information and waste tokens when injected into
+/// LLM context. Callers should skip rendering titles that match this pattern.
+pub fn is_generic_section_title(title: &str) -> bool {
+    let trimmed = title.trim();
+    trimmed
+        .strip_prefix("Section ")
+        .is_some_and(|rest| rest.parse::<u32>().is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,5 +625,28 @@ mod tests {
     fn test_extract_section_title_blank_heading() {
         // A line that is just "##" with no title text
         assert_eq!(extract_section_title("##\ncontent", 0), "Section 1");
+    }
+
+    // --- is_generic_section_title tests ---
+
+    #[test]
+    fn test_is_generic_section_title_matches() {
+        assert!(is_generic_section_title("Section 1"));
+        assert!(is_generic_section_title("Section 16"));
+        assert!(is_generic_section_title("Section 100"));
+        // Whitespace tolerance.
+        assert!(is_generic_section_title("  Section 3  "));
+    }
+
+    #[test]
+    fn test_is_generic_section_title_rejects_real_titles() {
+        assert!(!is_generic_section_title("Introduction"));
+        assert!(!is_generic_section_title("Result Type"));
+        assert!(!is_generic_section_title("The ? Operator"));
+        // Not just "Section N" pattern.
+        assert!(!is_generic_section_title("Section Overview"));
+        assert!(!is_generic_section_title("Section"));
+        assert!(!is_generic_section_title("Section 1.1"));
+        assert!(!is_generic_section_title(""));
     }
 }

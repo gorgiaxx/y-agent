@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use std::fmt::Write;
 use y_core::embedding::EmbeddingProvider;
+use y_knowledge::chunking::is_generic_section_title;
 use y_knowledge::middleware::{InjectKnowledge, KnowledgeContextItem};
 use y_knowledge::tokenizer::SimpleTokenizer;
 
@@ -82,9 +83,16 @@ impl KnowledgeContextProvider {
             if let Some(ref summary) = item.summary {
                 let _ = writeln!(&mut block, "Summary: {summary}");
             }
-            if !item.section_titles.is_empty() {
+            // Skip generic fallback titles ("Section 1", "Section 2", ...)
+            // that carry no information and waste tokens.
+            let meaningful: Vec<_> = item
+                .section_titles
+                .iter()
+                .filter(|t| !is_generic_section_title(t))
+                .collect();
+            if !meaningful.is_empty() {
                 block.push_str("Sections:\n");
-                for (j, title) in item.section_titles.iter().enumerate() {
+                for (j, title) in meaningful.iter().enumerate() {
                     let _ = writeln!(&mut block, "  {}. {}", j + 1, title);
                 }
             }

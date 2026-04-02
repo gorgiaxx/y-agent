@@ -287,6 +287,7 @@ impl<T: Tokenizer> InjectKnowledge<T> {
     /// Produces a compact representation: L0 summary + L1 section titles,
     /// guiding the LLM to use `KnowledgeSearch` for full content.
     fn format_structured(result: &RetrievalResult, meta: &EntryMetadata) -> String {
+        use crate::chunking::is_generic_section_title;
         use std::fmt::Write;
         let mut out = format!(
             "[Knowledge: {} (relevance: {:.2})]",
@@ -298,10 +299,16 @@ impl<T: Tokenizer> InjectKnowledge<T> {
             write!(&mut out, "\nSummary: {summary}").unwrap();
         }
 
-        // L1 section titles
-        if !meta.section_titles.is_empty() {
+        // L1 section titles — skip generic fallbacks ("Section 1", "Section 2", ...)
+        // that carry no information and waste tokens.
+        let meaningful: Vec<_> = meta
+            .section_titles
+            .iter()
+            .filter(|t| !is_generic_section_title(t))
+            .collect();
+        if !meaningful.is_empty() {
             out.push_str("\nSections:");
-            for (i, title) in meta.section_titles.iter().enumerate() {
+            for (i, title) in meaningful.iter().enumerate() {
                 write!(&mut out, "\n  {}. {}", i + 1, title).unwrap();
             }
         }

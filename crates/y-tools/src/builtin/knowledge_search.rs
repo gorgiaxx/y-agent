@@ -94,7 +94,14 @@ impl KnowledgeSearchTool {
                     obj["summary"] = serde_json::json!(summary);
                 }
                 if !item.section_titles.is_empty() {
-                    obj["sections"] = serde_json::json!(item.section_titles);
+                    let meaningful: Vec<_> = item
+                        .section_titles
+                        .iter()
+                        .filter(|t| !y_knowledge::chunking::is_generic_section_title(t))
+                        .collect();
+                    if !meaningful.is_empty() {
+                        obj["sections"] = serde_json::json!(meaningful);
+                    }
                 }
                 obj
             })
