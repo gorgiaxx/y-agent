@@ -1208,7 +1208,7 @@ impl AgentService {
         // and group it inside the ActionCard's collapsible section.
         let out_content = if iter_content.trim().is_empty() {
             String::new()
-        } else if iter_content.contains("<think>") {
+        } else if iter_content.trim().starts_with("<think>") {
             iter_content.clone()
         } else {
             format!("<think>\n{}\n</think>\n", iter_content.trim())
@@ -1288,7 +1288,7 @@ impl AgentService {
         // and group it inside the ActionCard's collapsible section.
         let out_content = if text.trim().is_empty() {
             String::new()
-        } else if text.contains("<think>") {
+        } else if text.trim().starts_with("<think>") {
             text.to_string()
         } else {
             format!("<think>\n{}\n</think>\n", text.trim())
