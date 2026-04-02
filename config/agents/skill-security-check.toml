@@ -4,7 +4,7 @@ description = "Screens third-party skills for security risks: prompt injection, 
 mode = "explore"
 trust_tier = "built_in"
 capabilities = ["security_screening", "content_analysis"]
-allowed_tools = []
+allowed_tools = ["FileRead", "FileWrite", "ShellExec"]
 denied_tools = []
 system_prompt = """
 You are a Skill Security Screening Agent for the y-agent framework. Your sole job is to analyze a skill document for security risks and produce a security verdict.
