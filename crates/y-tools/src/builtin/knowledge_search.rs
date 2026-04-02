@@ -51,18 +51,37 @@ impl KnowledgeSearchTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("KnowledgeSearch"),
-            description: "Search the knowledge base for relevant information.".into(),
+            description: concat!(
+                "Search the knowledge base for relevant information. ",
+                "The engine combines semantic similarity with keyword matching ",
+                "for best results. Formulate your query as a natural question ",
+                "or descriptive phrase about what you need -- avoid ",
+                "concatenating raw keywords.",
+            )
+            .into(),
             help: None,
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search query describing what knowledge you need"
+                        "description": concat!(
+                            "A natural-language description of the information you need. ",
+                            "Write a complete sentence or phrase that captures the MEANING ",
+                            "of what you are looking for. The search engine uses both ",
+                            "semantic understanding and keyword matching -- descriptive ",
+                            "queries perform significantly better than keyword lists. ",
+                            "Describe WHAT you want to know, not a list of terms you ",
+                            "expect to find in the text.",
+                        )
                     },
                     "domain": {
                         "type": "string",
-                        "description": "Optional domain filter (e.g. 'programming', 'science')"
+                        "description": concat!(
+                            "Optional domain filter to narrow results. ",
+                            "Use this to scope the search when you know the ",
+                            "relevant domain.",
+                        )
                     },
                     "limit": {
                         "type": "integer",

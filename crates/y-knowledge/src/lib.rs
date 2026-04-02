@@ -20,6 +20,7 @@
 //! - [`progressive::ProgressiveLoader`] — on-demand resolution escalation
 //! - [`quality`] — Quality filtering and deduplication
 //! - [`retrieval::HybridRetriever`] — blend search (vector + BM25) with dedup
+//! - [`tagger`] — LLM-driven tag generation via `knowledge-tagger` sub-agent
 //! - [`tools`] — Built-in knowledge tools for Agent use
 //! - [`indexer::VectorIndexer`] — Qdrant collection management (feature-gated)
 //! - [`tokenizer`] — English/Chinese text segmentation
@@ -40,6 +41,7 @@ pub mod progressive;
 pub mod quality;
 pub mod retrieval;
 pub mod supported_formats;
+pub mod tagger;
 pub mod tokenizer;
 pub mod tools;
 
@@ -58,4 +60,5 @@ pub use observability::{KnowledgeEvent, KnowledgeMetrics, MetricsCollector};
 pub use progressive::ProgressiveLoader;
 pub use quality::QualityFilter;
 pub use retrieval::{HybridRetriever, SearchStrategy, SummaryGenerator};
+pub use tagger::{ContentPreparator, TagGenerator, TagMerger};
 pub use tokenizer::{AutoTokenizer, ChineseTokenizer, SimpleTokenizer, Tokenizer};

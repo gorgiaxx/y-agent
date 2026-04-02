@@ -166,7 +166,7 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
                 collection: None,
             };
 
-            let result = service.search(&params);
+            let result = service.search(&params).await;
 
             if result.results.is_empty() {
                 output::print_info("No results found");

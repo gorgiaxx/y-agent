@@ -48,7 +48,6 @@ export function GlobalProviders({ children }: { children: ReactNode }) {
 
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [selectedKbCollection, setSelectedKbCollection] = useState<string | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [automationSelectedType, setAutomationSelectedType] = useState<'workflow' | 'schedule' | null>(null);
   const [automationSelectedId, setAutomationSelectedId] = useState<string | null>(null);
@@ -93,7 +92,8 @@ export function GlobalProviders({ children }: { children: ReactNode }) {
     obsExpanded, setObsExpanded,
     activeSkillName, setActiveSkillName,
     importDialogOpen, setImportDialogOpen,
-    selectedKbCollection, setSelectedKbCollection,
+    selectedKbCollection: knowledgeHooks.selectedCollection,
+    setSelectedKbCollection: knowledgeHooks.setSelectedCollection,
     activeAgentId, setActiveAgentId,
     automationSelectedType, setAutomationSelectedType,
     automationSelectedId, setAutomationSelectedId,

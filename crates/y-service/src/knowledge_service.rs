@@ -37,6 +37,7 @@ struct ReindexEntryData {
     quality_score: f32,
     summary: Option<String>,
     section_titles: Vec<String>,
+    tags: Vec<String>,
 }
 
 /// Knowledge service error.
@@ -86,6 +87,8 @@ pub struct KnowledgeService {
     data_dir: Option<PathBuf>,
     /// Optional embedding provider for vector-based semantic search.
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    /// Optional tag generator for LLM-driven auto-tagging.
+    tag_generator: Option<Arc<dyn TagGenerator>>,
 }
 
 impl KnowledgeService {
@@ -108,6 +111,7 @@ impl KnowledgeService {
             quality_filter,
             data_dir: None,
             embedding_provider: None,
+            tag_generator: None,
         };
 
         // Create default collection.
@@ -137,6 +141,7 @@ impl KnowledgeService {
             quality_filter,
             data_dir: Some(data_dir),
             embedding_provider: None,
+            tag_generator: None,
         };
 
         // Try to load persisted data.
@@ -180,6 +185,7 @@ impl KnowledgeService {
             quality_filter,
             data_dir: None,
             embedding_provider: None,
+            tag_generator: None,
         };
 
         service.create_collection("default", "Default knowledge collection");
@@ -204,6 +210,14 @@ impl KnowledgeService {
     /// and store them for cosine similarity retrieval.
     pub fn set_embedding_provider(&mut self, provider: Arc<dyn EmbeddingProvider>) {
         self.embedding_provider = Some(provider);
+    }
+
+    /// Set the tag generator for LLM-driven auto-tagging.
+    ///
+    /// When set, document ingestion will generate semantic tags for each
+    /// entry using the `knowledge-tagger` sub-agent.
+    pub fn set_tag_generator(&mut self, generator: Arc<dyn TagGenerator>) {
+        self.tag_generator = Some(generator);
     }
 
     /// Get a reference to the embedding provider (if configured).
@@ -376,6 +390,32 @@ impl KnowledgeService {
         let entry_id = entry.id.to_string();
         let content_size: u64 = entry.chunks.iter().map(|c| c.len() as u64).sum();
 
+        // Generate LLM-driven tags if a tag generator is configured.
+        let mut entry = entry;
+        if let Some(ref tag_gen) = self.tag_generator {
+            let section_titles: Vec<String> =
+                entry.l1_sections.iter().map(|s| s.title.clone()).collect();
+            match tag_gen
+                .generate_tags(&entry.content, entry.summary.as_deref(), &section_titles)
+                .await
+            {
+                Ok(tags) => {
+                    tracing::info!(
+                        entry_id = %entry_id,
+                        tag_count = tags.len(),
+                        "Generated LLM tags for entry"
+                    );
+                    entry.tags = tags;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        entry_id = %entry_id,
+                        "Failed to generate tags, continuing without: {e}"
+                    );
+                }
+            }
+        }
+
         // Generate embeddings if an embedding provider is configured.
         let chunk_embeddings = if let Some(ref provider) = self.embedding_provider {
             // Truncate chunk text to fit the embedding model's context window.
@@ -473,6 +513,7 @@ impl KnowledgeService {
                     title: entry.source.title.clone(),
                     summary: entry.summary.clone(),
                     section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
+                    tags: entry.tags.clone(),
                 },
             );
         }
@@ -512,13 +553,31 @@ impl KnowledgeService {
     // -------------------------------------------------------------------
 
     /// Search the knowledge base.
-    pub fn search(&self, params: &KnowledgeSearchParams) -> KnowledgeSearchResult {
+    ///
+    /// When an `EmbeddingProvider` is configured, the query is embedded
+    /// before retrieval so that cosine similarity is used for the semantic
+    /// component of the blend search.
+    pub async fn search(&self, params: &KnowledgeSearchParams) -> KnowledgeSearchResult {
+        // Embed the query for cosine similarity when a provider is available.
+        let query_embedding = if let Some(ref provider) = self.embedding_provider {
+            match provider.embed(&params.query).await {
+                Ok(result) => Some(result.vector),
+                Err(e) => {
+                    tracing::warn!("Failed to embed search query: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let domain = params.domain.as_deref();
         let knowledge = self
             .inject_knowledge
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let items = knowledge.retrieve_for_context(&params.query, None, domain);
+        let items =
+            knowledge.retrieve_for_context(&params.query, query_embedding.as_deref(), domain);
 
         let results: Vec<SearchResultItem> = items
             .iter()
@@ -667,6 +726,7 @@ impl KnowledgeService {
                 quality_score: entry.quality_score,
                 summary: entry.summary.clone(),
                 section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
+                tags: entry.tags.clone(),
             })
             .collect();
 
@@ -739,6 +799,7 @@ impl KnowledgeService {
                     title: entry.title.clone(),
                     summary: entry.summary.clone(),
                     section_titles: entry.section_titles.clone(),
+                    tags: entry.tags.clone(),
                 },
             );
         }
@@ -971,6 +1032,210 @@ impl KnowledgeService {
     }
 }
 
+// ---------------------------------------------------------------------------
+// AgentTagGenerator — LLM-backed tag generation via delegation
+// ---------------------------------------------------------------------------
+
+use y_core::agent::{AgentDelegator, ContextStrategyHint};
+use y_knowledge::tagger::{ContentPreparator, PreparedContent, TagGenerator, TagMerger};
+
+/// LLM-backed tag generator using the `knowledge-tagger` sub-agent.
+///
+/// Delegates to the built-in `knowledge-tagger` agent via [`AgentDelegator`].
+/// Handles large documents by preparing content through [`ContentPreparator`]
+/// (summary + excerpts for medium docs, map-reduce for large docs).
+pub struct AgentTagGenerator {
+    delegator: Arc<dyn AgentDelegator>,
+    preparator: ContentPreparator,
+}
+
+impl AgentTagGenerator {
+    /// Create a new tag generator with an agent delegator.
+    pub fn new(delegator: Arc<dyn AgentDelegator>) -> Self {
+        Self {
+            delegator,
+            preparator: ContentPreparator::new(),
+        }
+    }
+
+    /// Delegate a tagging request to the `knowledge-tagger` agent.
+    async fn call_tagger(&self, content: &str) -> Result<Vec<String>, KnowledgeServiceError> {
+        let input = serde_json::json!({
+            "content": content,
+        });
+
+        let result = self
+            .delegator
+            .delegate("knowledge-tagger", input, ContextStrategyHint::None, None)
+            .await
+            .map_err(|e| {
+                KnowledgeServiceError::Knowledge(y_knowledge::KnowledgeError::IngestionError {
+                    message: format!("tag generation delegation failed: {e}"),
+                })
+            })?;
+
+        Ok(TagMerger::parse_tags(&result.text))
+    }
+}
+
+#[async_trait::async_trait]
+impl TagGenerator for AgentTagGenerator {
+    async fn generate_tags(
+        &self,
+        content: &str,
+        l0_summary: Option<&str>,
+        l1_section_titles: &[String],
+    ) -> Result<Vec<String>, y_knowledge::KnowledgeError> {
+        let prepared = self
+            .preparator
+            .prepare(content, l0_summary, l1_section_titles);
+
+        let tag_sets = match prepared {
+            PreparedContent::Full(text) => {
+                let tags = self.call_tagger(&text).await.map_err(|e| {
+                    y_knowledge::KnowledgeError::IngestionError {
+                        message: format!("tag generation failed: {e}"),
+                    }
+                })?;
+                vec![tags]
+            }
+            PreparedContent::Summarized(text) => {
+                let tags = self.call_tagger(&text).await.map_err(|e| {
+                    y_knowledge::KnowledgeError::IngestionError {
+                        message: format!("tag generation failed: {e}"),
+                    }
+                })?;
+                vec![tags]
+            }
+            PreparedContent::MapReduce(windows) => {
+                // Tag each window independently, then merge.
+                let mut all_tags = Vec::new();
+                for window in &windows {
+                    match self.call_tagger(window).await {
+                        Ok(tags) => all_tags.push(tags),
+                        Err(e) => {
+                            tracing::warn!("Tag generation for window failed: {e}");
+                        }
+                    }
+                }
+                all_tags
+            }
+        };
+
+        Ok(TagMerger::merge(&tag_sets))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tag management methods on KnowledgeService
+// ---------------------------------------------------------------------------
+
+impl KnowledgeService {
+    /// Update tags for a specific entry (manual editing).
+    ///
+    /// Replaces the entry's tags with the provided list and persists the change.
+    /// Also updates the in-memory `EntryMetadata` so context injection reflects
+    /// the new tags immediately.
+    pub fn update_entry_tags(&mut self, entry_id: &str, tags: &[String]) -> bool {
+        let Some(entry) = self.entries.get_mut(entry_id) else {
+            return false;
+        };
+
+        // Normalize tags.
+        entry.tags = tags
+            .iter()
+            .map(|t| TagMerger::normalize_tag(t))
+            .filter(|t| !t.is_empty())
+            .collect();
+
+        let new_tags = entry.tags.clone();
+
+        // Update in-memory metadata for context injection.
+        {
+            let mut knowledge = self
+                .inject_knowledge
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+            // Re-read existing metadata from the middleware to preserve
+            // other fields (summary, section_titles).
+            if let Some(entry) = self.entries.get(entry_id) {
+                knowledge.register_entry_metadata(
+                    entry_id,
+                    EntryMetadata {
+                        title: entry.source.title.clone(),
+                        summary: entry.summary.clone(),
+                        section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
+                        tags: new_tags,
+                    },
+                );
+            }
+        }
+
+        self.save_entries();
+        true
+    }
+
+    /// Re-tag all entries that have empty tags using the given tag generator.
+    ///
+    /// This is a batch operation for retroactive tagging of existing entries.
+    /// Entries that already have tags are skipped.
+    /// Returns the number of entries that were successfully re-tagged.
+    pub async fn retag_all_entries(&mut self, tag_generator: &dyn TagGenerator) -> usize {
+        // Collect entry IDs that need tagging.
+        let entries_to_tag: Vec<(String, String, Option<String>, Vec<String>)> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.tags.is_empty())
+            .map(|(id, entry)| {
+                (
+                    id.clone(),
+                    entry.content.clone(),
+                    entry.summary.clone(),
+                    entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
+                )
+            })
+            .collect();
+
+        if entries_to_tag.is_empty() {
+            tracing::info!("No entries need re-tagging");
+            return 0;
+        }
+
+        tracing::info!(
+            count = entries_to_tag.len(),
+            "Starting batch re-tagging of entries"
+        );
+
+        let mut tagged_count = 0usize;
+
+        for (entry_id, content, summary, section_titles) in &entries_to_tag {
+            match tag_generator
+                .generate_tags(content, summary.as_deref(), section_titles)
+                .await
+            {
+                Ok(tags) => {
+                    if !tags.is_empty() {
+                        self.update_entry_tags(entry_id, &tags);
+                        tagged_count += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(entry_id, "Failed to generate tags for entry: {e}");
+                }
+            }
+        }
+
+        tracing::info!(
+            tagged_count,
+            total = entries_to_tag.len(),
+            "Batch re-tagging complete"
+        );
+
+        tagged_count
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -994,8 +1259,8 @@ mod tests {
         assert!(!service.has_collection("test"));
     }
 
-    #[test]
-    fn test_search_empty() {
+    #[tokio::test]
+    async fn test_search_empty() {
         let service = KnowledgeService::new(KnowledgeConfig::default());
         let params = KnowledgeSearchParams {
             query: "anything".to_string(),
@@ -1004,7 +1269,7 @@ mod tests {
             limit: 5,
             collection: None,
         };
-        let result = service.search(&params);
+        let result = service.search(&params).await;
         assert!(result.results.is_empty());
     }
 }

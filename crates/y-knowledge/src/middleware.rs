@@ -61,8 +61,8 @@ impl Default for InjectKnowledgeConfig {
 
 /// Lightweight metadata for progressive context injection.
 ///
-/// Stored per `document_id` to provide L0 summary and L1 section titles
-/// when formatting retrieval results for LLM context.
+/// Stored per `document_id` to provide L0 summary, L1 section titles,
+/// and LLM-generated tags when formatting retrieval results for LLM context.
 #[derive(Debug, Clone)]
 pub struct EntryMetadata {
     /// Document title.
@@ -71,6 +71,8 @@ pub struct EntryMetadata {
     pub summary: Option<String>,
     /// L1: section titles only (not full content, to save memory).
     pub section_titles: Vec<String>,
+    /// LLM-generated semantic tags for topic identification.
+    pub tags: Vec<String>,
 }
 
 /// Knowledge item ready for context injection.
@@ -299,7 +301,7 @@ impl<T: Tokenizer> InjectKnowledge<T> {
             write!(&mut out, "\nSummary: {summary}").unwrap();
         }
 
-        // L1 section titles — skip generic fallbacks ("Section 1", "Section 2", ...)
+        // L1 section titles -- skip generic fallbacks ("Section 1", "Section 2", ...)
         // that carry no information and waste tokens.
         let meaningful: Vec<_> = meta
             .section_titles
@@ -311,6 +313,13 @@ impl<T: Tokenizer> InjectKnowledge<T> {
             for (i, title) in meaningful.iter().enumerate() {
                 write!(&mut out, "\n  {}. {}", i + 1, title).unwrap();
             }
+        }
+
+        // Tags -- show LLM-generated semantic tags so the main LLM can
+        // understand entry topics and refine search queries.
+        if !meta.tags.is_empty() {
+            let tags_str = meta.tags.join(", ");
+            write!(&mut out, "\nTags: {tags_str}").unwrap();
         }
 
         out
@@ -485,6 +494,7 @@ mod tests {
                     "The ? Operator".to_string(),
                     "Custom Errors".to_string(),
                 ],
+                tags: vec![],
             },
         );
 
@@ -549,6 +559,7 @@ mod tests {
                 title: "Test".to_string(),
                 summary: Some("Test summary".to_string()),
                 section_titles: vec![],
+                tags: vec![],
             },
         );
 

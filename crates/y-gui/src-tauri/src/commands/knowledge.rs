@@ -346,7 +346,7 @@ pub async fn kb_search(
         limit,
         collection: None,
     };
-    let result = service.search(&params);
+    let result = service.search(&params).await;
 
     Ok(result
         .results
