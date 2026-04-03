@@ -276,9 +276,9 @@ pub struct TurnInput<'a> {
     pub provider_id: Option<String>,
     /// Knowledge collection names selected by the user via slash command.
     pub knowledge_collections: Vec<String>,
+    /// Thinking/reasoning configuration (`None` = use model defaults).
+    pub thinking: Option<y_core::provider::ThinkingConfig>,
 }
-
-/// Token passed to `execute_turn_with_progress` to support mid-turn cancellation.
 pub type TurnCancellationToken = CancellationToken;
 
 // ---------------------------------------------------------------------------
@@ -302,9 +302,11 @@ pub struct PrepareTurnRequest {
     /// semantic search against these collections.  When empty, knowledge
     /// retrieval is skipped entirely.
     pub knowledge_collections: Option<Vec<String>>,
+    /// Thinking/reasoning configuration (`None` = use model defaults).
+    pub thinking: Option<y_core::provider::ThinkingConfig>,
 }
 
-/// A fully prepared turn, ready for `execute_turn()` or
+/// Fully resolved turn data, ready for `execute_turn()` or
 /// `execute_turn_with_progress()`.
 ///
 /// Owns all data needed for turn execution so callers do not need to
@@ -327,6 +329,8 @@ pub struct PreparedTurn {
     pub session_created: bool,
     /// Knowledge collection names selected by the user.
     pub knowledge_collections: Vec<String>,
+    /// Thinking/reasoning configuration.
+    pub thinking: Option<y_core::provider::ThinkingConfig>,
 }
 
 impl PreparedTurn {
@@ -340,6 +344,7 @@ impl PreparedTurn {
             turn_number: self.turn_number,
             provider_id: self.provider_id.clone(),
             knowledge_collections: self.knowledge_collections.clone(),
+            thinking: self.thinking.clone(),
         }
     }
 }
@@ -377,6 +382,8 @@ pub struct ResendTurnRequest {
     pub provider_id: Option<String>,
     /// Knowledge collection names selected by the user.
     pub knowledge_collections: Option<Vec<String>>,
+    /// Thinking/reasoning configuration (`None` = use model defaults).
+    pub thinking: Option<y_core::provider::ThinkingConfig>,
 }
 
 /// Errors that can occur during resend-turn preparation.
@@ -554,6 +561,7 @@ impl ChatService {
             provider_id: request.provider_id,
             session_created,
             knowledge_collections: request.knowledge_collections.unwrap_or_default(),
+            thinking: request.thinking,
         })
     }
 
@@ -638,6 +646,7 @@ impl ChatService {
             provider_id: request.provider_id,
             session_created: false,
             knowledge_collections: request.knowledge_collections.unwrap_or_default(),
+            thinking: request.thinking,
         })
     }
 
@@ -746,12 +755,15 @@ impl ChatService {
             provider_tags: vec![],
             temperature: Some(0.7),
             max_tokens: None,
+            thinking: input.thinking.clone(),
             session_id: Some(input.session_id.clone()),
             session_uuid: input.session_uuid,
             knowledge_collections: input.knowledge_collections.clone(),
             use_context_pipeline: true,
             user_query: input.user_input.to_string(),
             external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
         };
 
         // 3. Delegate to AgentService.
@@ -1228,6 +1240,7 @@ mod tests {
             provider_id: None,
             skills: None,
             knowledge_collections: None,
+            thinking: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1259,6 +1272,7 @@ mod tests {
             provider_id: None,
             skills: None,
             knowledge_collections: None,
+            thinking: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1276,6 +1290,7 @@ mod tests {
             provider_id: None,
             skills: None,
             knowledge_collections: None,
+            thinking: None,
         };
         let err = ChatService::prepare_turn(&container, request)
             .await
@@ -1292,6 +1307,7 @@ mod tests {
             provider_id: None,
             skills: None,
             knowledge_collections: None,
+            thinking: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1315,6 +1331,7 @@ mod tests {
             provider_id: Some("test-provider".into()),
             skills: None,
             knowledge_collections: None,
+            thinking: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1336,6 +1353,7 @@ mod tests {
             provider_id: None,
             skills: None,
             knowledge_collections: None,
+            thinking: None,
         };
         let p1 = ChatService::prepare_turn(&container, request)
             .await
@@ -1349,6 +1367,7 @@ mod tests {
             provider_id: None,
             skills: None,
             knowledge_collections: None,
+            thinking: None,
         };
         let p2 = ChatService::prepare_turn(&container, request2)
             .await

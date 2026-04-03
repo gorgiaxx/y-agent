@@ -73,6 +73,7 @@ impl TaskExecutor for FallbackLlmExecutor {
             tool_calling_mode: ToolCallingMode::Native,
             stop: vec![],
             extra: serde_json::Value::Null,
+            thinking: None,
         };
 
         let route = RouteRequest::default();

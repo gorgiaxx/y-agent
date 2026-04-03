@@ -22,6 +22,7 @@ use y_core::permission_types::PermissionMode;
 use y_core::provider::{ChatRequest, ProviderPool, RouteRequest, ToolCallingMode};
 use y_core::runtime::CommandRunner;
 use y_core::tool::ToolInput;
+use y_core::trust::TrustTier;
 use y_core::types::{Message, ProviderId, Role, SessionId, ToolCallRequest, ToolName};
 use y_tools::{format_tool_result, parse_tool_calls, strip_tool_call_blocks, ParseResult};
 
@@ -64,6 +65,8 @@ pub struct AgentExecutionConfig {
     pub temperature: Option<f64>,
     /// Max tokens to generate.
     pub max_tokens: Option<u32>,
+    /// Thinking/reasoning configuration (`None` = use model defaults).
+    pub thinking: Option<y_core::provider::ThinkingConfig>,
     /// Session ID for diagnostics tracing.
     pub session_id: Option<SessionId>,
     /// Session UUID for diagnostics tracing.
@@ -81,6 +84,17 @@ pub struct AgentExecutionConfig {
     /// observations instead of creating its own trace. The caller is
     /// responsible for calling `on_trace_start` / `on_trace_end`.
     pub external_trace_id: Option<Uuid>,
+    /// Trust tier of the executing agent.
+    ///
+    /// When `Some(TrustTier::BuiltIn)`, tools listed in `agent_allowed_tools`
+    /// are auto-allowed without consulting the global permission policy.
+    /// `None` for the root chat agent (uses global policy as-is).
+    pub trust_tier: Option<TrustTier>,
+    /// Tools declared in the agent definition's `allowed_tools` list.
+    ///
+    /// Used together with `trust_tier` to auto-allow built-in agent tools.
+    /// Empty for the root chat agent.
+    pub agent_allowed_tools: Vec<String>,
 }
 
 /// Result of agent execution.
@@ -240,6 +254,45 @@ impl AgentService {
         let (assembled, trace_id, owns_trace) =
             Self::init_context_and_trace(container, config).await;
 
+        // Set up DIAGNOSTICS_CTX so gateways can record observations
+        // automatically. If no trace_id, we still run without a context.
+        let diag_ctx = trace_id.map(|tid| {
+            y_diagnostics::DiagnosticsContext::new(
+                tid,
+                Some(config.session_uuid),
+                config.agent_name.clone(),
+            )
+        });
+
+        // Delegate to the inner execute logic, optionally scoped with
+        // the diagnostics context task-local.
+        if let Some(ctx) = diag_ctx {
+            y_diagnostics::DIAGNOSTICS_CTX
+                .scope(
+                    ctx,
+                    Self::execute_inner(
+                        container, config, progress, cancel, assembled, trace_id, owns_trace,
+                    ),
+                )
+                .await
+        } else {
+            Self::execute_inner(
+                container, config, progress, cancel, assembled, trace_id, owns_trace,
+            )
+            .await
+        }
+    }
+
+    /// Inner execution loop, optionally running inside a `DIAGNOSTICS_CTX` scope.
+    async fn execute_inner(
+        container: &ServiceContainer,
+        config: &AgentExecutionConfig,
+        progress: Option<TurnEventSender>,
+        cancel: Option<CancellationToken>,
+        assembled: AssembledContext,
+        trace_id: Option<Uuid>,
+        owns_trace: bool,
+    ) -> Result<AgentExecutionResult, AgentExecutionError> {
         // 3. Build initial working history.
         let working_history = if config.use_context_pipeline {
             Self::build_chat_messages(&assembled, &config.messages)
@@ -298,7 +351,17 @@ impl AgentService {
 
             // Intra-turn pruning: remove failed tool call branches from
             // working_history before building the next LLM request.
-            if ctx.iteration > 0 {
+            //
+            // Only enabled when use_context_pipeline is true (root agent session
+            // loop). Sub-agents (e.g. knowledge-summarizer) use progressive
+            // multi-chunk tool call patterns where assistant messages intentionally
+            // have empty text content (native function calling). Without this
+            // guard the pruner would incorrectly classify the empty-content
+            // assistant messages as "repeated calls" (similarity = 1.0 for two
+            // empty strings) and delete prior FileRead results from
+            // working_history, causing the LLM to lose context and terminate
+            // the loop prematurely after the first tool call.
+            if ctx.iteration > 0 && config.use_context_pipeline {
                 let prune_report = intra_turn_pruner
                     .prune_working_history(&mut ctx.working_history, ctx.iteration);
                 if !prune_report.skipped && prune_report.messages_removed > 0 {
@@ -330,10 +393,25 @@ impl AgentService {
             let fallback = serde_json::to_string(&request.messages).unwrap_or_default();
 
             let llm_start = std::time::Instant::now();
-            let pool = container.provider_pool().await;
+            let raw_pool = container.provider_pool().await;
 
-            let llm_result =
-                Self::call_llm(&*pool, &request, &route, progress.as_ref(), cancel.as_ref()).await;
+            // Wrap the pool with the diagnostics gateway so non-streaming
+            // LLM calls are automatically recorded. Streaming calls pass
+            // through (the assembled response is recorded after consumption).
+            let diag_pool = crate::diagnostics::DiagnosticsProviderPool::new(
+                Arc::clone(&raw_pool) as Arc<dyn ProviderPool>,
+                Arc::clone(&container.diagnostics),
+                container.diagnostics_broadcast.clone(),
+            );
+
+            let llm_result = Self::call_llm(
+                &diag_pool,
+                &request,
+                &route,
+                progress.as_ref(),
+                cancel.as_ref(),
+            )
+            .await;
 
             match llm_result {
                 Ok((response, iter_reasoning_duration_ms)) => {
@@ -342,7 +420,7 @@ impl AgentService {
                     // stream is fully consumed, record the actual token usage.
                     if progress.is_some() {
                         if let Some(ref pid) = response.provider_id {
-                            pool.record_stream_completion(
+                            raw_pool.record_stream_completion(
                                 pid,
                                 response.usage.input_tokens,
                                 response.usage.output_tokens,
@@ -365,7 +443,7 @@ impl AgentService {
                     // Resolve context_window from the provider pool so
                     // real-time progress events carry it (status bar).
                     let iter_ctx_window = {
-                        let metadata_list = pool.list_metadata();
+                        let metadata_list = raw_pool.list_metadata();
                         if let Some(ref pid) = final_provider_id {
                             metadata_list
                                 .iter()
@@ -376,16 +454,22 @@ impl AgentService {
                         }
                     };
 
-                    Self::record_generation_diagnostics(
-                        container,
-                        config,
-                        &response,
-                        &fallback,
-                        &iter_data,
-                        &mut ctx.last_gen_id,
-                        ctx.trace_id,
-                    )
-                    .await;
+                    // Diagnostics recording for non-streaming (non-progress)
+                    // calls is handled by DiagnosticsProviderPool. For streaming
+                    // calls (progress.is_some()), the gateway cannot intercept
+                    // the assembled response, so we record here.
+                    if progress.is_some() {
+                        Self::record_generation_diagnostics(
+                            container,
+                            config,
+                            &response,
+                            &fallback,
+                            &iter_data,
+                            &mut ctx.last_gen_id,
+                            ctx.trace_id,
+                        )
+                        .await;
+                    }
 
                     if !response.tool_calls.is_empty() {
                         Self::handle_native_tool_calls(
@@ -573,6 +657,7 @@ impl AgentService {
             tool_calling_mode: config.tool_calling_mode,
             stop: vec![],
             extra: serde_json::Value::Null,
+            thinking: config.thinking.clone(),
         }
     }
 
@@ -849,10 +934,29 @@ impl AgentService {
 
         let permission_model = y_guardrails::PermissionModel::new(guardrail_config);
         let session_mode = Self::session_permission_mode(container, &ctx.session_id).await;
-        let decision = Self::resolve_permission_decision_for_session(
-            permission_model.evaluate(&tc.name, is_dangerous),
-            session_mode,
-        );
+
+        // Built-in agents auto-allow their declared tools without consulting
+        // global permission policy. This prevents background subagents from
+        // being blocked when the user sets a global "ask" mode.
+        let builtin_auto_allow = config.trust_tier == Some(TrustTier::BuiltIn)
+            && config.agent_allowed_tools.iter().any(|t| t == &tc.name);
+
+        let decision = if builtin_auto_allow {
+            tracing::debug!(
+                tool = %tc.name,
+                agent = %config.agent_name,
+                "auto-allowed: built-in agent declared tool"
+            );
+            y_guardrails::PermissionDecision {
+                action: y_guardrails::PermissionAction::Allow,
+                reason: format!("built-in agent '{}' declared tool", config.agent_name),
+            }
+        } else {
+            Self::resolve_permission_decision_for_session(
+                permission_model.evaluate(&tc.name, is_dangerous),
+                session_mode,
+            )
+        };
 
         match decision.action {
             y_guardrails::PermissionAction::Deny => {
@@ -1084,23 +1188,17 @@ impl AgentService {
             });
         }
 
-        if let Some(tid) = ctx.trace_id {
-            let tool_output_json: serde_json::Value = serde_json::from_str(&result_content)
-                .unwrap_or(serde_json::Value::String(result_content.clone()));
-            let _ = container
-                .diagnostics
-                .on_tool_call(
-                    tid,
-                    ctx.last_gen_id,
-                    Some(config.session_uuid),
-                    &tc.name,
-                    tc.arguments.clone(),
-                    tool_output_json,
-                    tool_elapsed_ms,
-                    tool_success,
-                )
-                .await;
-        }
+        // Record via the tool gateway (reads DIAGNOSTICS_CTX automatically).
+        container
+            .tool_gateway
+            .record_from_str(
+                &tc.name,
+                &tc.arguments,
+                &result_content,
+                tool_elapsed_ms,
+                tool_success,
+            )
+            .await;
 
         // Auto-register agent definitions when FileWrite creates a .toml
         // in an agents/ directory. This lets agent-architect's output take
@@ -2162,10 +2260,10 @@ impl AgentRunner for ServiceAgentRunner {
             metadata: serde_json::Value::Null,
         });
 
-        // Pick up a pre-created trace_id from the diagnostics delegator
-        // (set via SUBAGENT_TRACE_ID task-local).
-        let external_trace_id = crate::diagnostics::SUBAGENT_TRACE_ID
-            .try_with(|id| *id)
+        // Pick up a pre-created trace_id from the diagnostics context
+        // (set via DIAGNOSTICS_CTX task-local by DiagnosticsAgentDelegator).
+        let external_trace_id = y_diagnostics::DIAGNOSTICS_CTX
+            .try_with(|ctx| ctx.trace_id)
             .ok();
 
         let exec_config = AgentExecutionConfig {
@@ -2180,22 +2278,18 @@ impl AgentRunner for ServiceAgentRunner {
             provider_tags: config.provider_tags.clone(),
             temperature: config.temperature,
             max_tokens: config.max_tokens,
+            thinking: None,
             session_id: None,
             session_uuid: Uuid::nil(),
             knowledge_collections: vec![],
             use_context_pipeline: false,
             user_query: user_content,
             external_trace_id,
+            trust_tier: config.trust_tier,
+            agent_allowed_tools: config.allowed_tools.clone(),
         };
 
-        // Pick up a progress sender from the task-local (if the caller injected
-        // one via SUBAGENT_PROGRESS) so that real-time LLM/tool events are
-        // forwarded during subagent execution.
-        let progress = crate::diagnostics::SUBAGENT_PROGRESS
-            .try_with(std::clone::Clone::clone)
-            .ok();
-
-        let result = AgentService::execute(&self.container, &exec_config, progress, None)
+        let result = AgentService::execute(&self.container, &exec_config, None, None)
             .await
             .map_err(|e| DelegationError::DelegationFailed {
                 message: format!(

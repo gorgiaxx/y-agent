@@ -28,6 +28,8 @@ use y_knowledge::{
     ingestion::{markdown::MarkdownConnector, text::TextConnector, SourceConnector},
 };
 
+use y_knowledge::metadata::DocumentMetadata;
+
 /// Snapshot of entry data used during re-indexing to avoid borrow conflicts.
 struct ReindexEntryData {
     entry_id: String,
@@ -38,6 +40,7 @@ struct ReindexEntryData {
     summary: Option<String>,
     section_titles: Vec<String>,
     tags: Vec<String>,
+    metadata: DocumentMetadata,
 }
 
 /// Knowledge service error.
@@ -89,6 +92,10 @@ pub struct KnowledgeService {
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// Optional tag generator for LLM-driven auto-tagging.
     tag_generator: Option<Arc<dyn TagGenerator>>,
+    /// Optional metadata extractor for multi-dimensional LLM classification.
+    metadata_extractor: Option<Arc<dyn MetadataExtractor>>,
+    /// Optional summary generator for LLM-driven L0/L1 summarization.
+    summary_generator: Option<Arc<dyn y_knowledge::tagger::SummaryGenerator>>,
 }
 
 impl KnowledgeService {
@@ -112,6 +119,8 @@ impl KnowledgeService {
             data_dir: None,
             embedding_provider: None,
             tag_generator: None,
+            metadata_extractor: None,
+            summary_generator: None,
         };
 
         // Create default collection.
@@ -142,6 +151,8 @@ impl KnowledgeService {
             data_dir: Some(data_dir),
             embedding_provider: None,
             tag_generator: None,
+            metadata_extractor: None,
+            summary_generator: None,
         };
 
         // Try to load persisted data.
@@ -186,6 +197,8 @@ impl KnowledgeService {
             data_dir: None,
             embedding_provider: None,
             tag_generator: None,
+            metadata_extractor: None,
+            summary_generator: None,
         };
 
         service.create_collection("default", "Default knowledge collection");
@@ -215,9 +228,29 @@ impl KnowledgeService {
     /// Set the tag generator for LLM-driven auto-tagging.
     ///
     /// When set, document ingestion will generate semantic tags for each
-    /// entry using the `knowledge-tagger` sub-agent.
+    /// entry using the `knowledge-metadata` sub-agent (legacy path).
+    /// Prefer `set_metadata_extractor` for full metadata extraction.
     pub fn set_tag_generator(&mut self, generator: Arc<dyn TagGenerator>) {
         self.tag_generator = Some(generator);
+    }
+
+    /// Set the metadata extractor for multi-dimensional LLM classification.
+    ///
+    /// When set, ingestion with `extract_metadata = true` will extract
+    /// document type, industry, sub-category, and interpreted title.
+    pub fn set_metadata_extractor(&mut self, extractor: Arc<dyn MetadataExtractor>) {
+        self.metadata_extractor = Some(extractor);
+    }
+
+    /// Set the summary generator for LLM-driven L0/L1 summarization.
+    ///
+    /// When set, ingestion with `use_llm_summary = true` will generate
+    /// high-quality L0 summary and L1 section overviews via LLM.
+    pub fn set_summary_generator(
+        &mut self,
+        generator: Arc<dyn y_knowledge::tagger::SummaryGenerator>,
+    ) {
+        self.summary_generator = Some(generator);
     }
 
     /// Get a reference to the embedding provider (if configured).
@@ -390,29 +423,115 @@ impl KnowledgeService {
         let entry_id = entry.id.to_string();
         let content_size: u64 = entry.chunks.iter().map(|c| c.len() as u64).sum();
 
-        // Generate LLM-driven tags if a tag generator is configured.
+        // Generate LLM-driven L0/L1 summaries first so that the metadata
+        // extractor can use them as input (it expects l0_summary + l1 sections).
         let mut entry = entry;
-        if let Some(ref tag_gen) = self.tag_generator {
-            let section_titles: Vec<String> =
-                entry.l1_sections.iter().map(|s| s.title.clone()).collect();
-            match tag_gen
-                .generate_tags(&entry.content, entry.summary.as_deref(), &section_titles)
-                .await
-            {
-                Ok(tags) => {
-                    tracing::info!(
-                        entry_id = %entry_id,
-                        tag_count = tags.len(),
-                        "Generated LLM tags for entry"
-                    );
-                    entry.tags = tags;
+        let mut llm_summary_status: Option<&str> = None;
+        if params.use_llm_summary {
+            let has_gen = self.summary_generator.is_some();
+            tracing::info!(
+                use_llm_summary = params.use_llm_summary,
+                summary_generator_configured = has_gen,
+                "LLM summarization requested"
+            );
+            if let Some(ref summary_gen) = self.summary_generator {
+                let original_filename = std::path::Path::new(&params.source)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                let total_lines = entry.content.lines().count();
+                match summary_gen
+                    .generate_summary(&params.source, total_lines, original_filename)
+                    .await
+                {
+                    Ok(llm_summary) => {
+                        tracing::info!(
+                            entry_id = %entry_id,
+                            l1_count = llm_summary.l1_sections.len(),
+                            "LLM-generated L0/L1 summaries for entry"
+                        );
+                        entry.summary = Some(llm_summary.l0_summary);
+                        entry.l1_sections = llm_summary
+                            .l1_sections
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, s)| y_knowledge::models::L1Section {
+                                index: i,
+                                title: s.title,
+                                content: s.summary,
+                            })
+                            .collect();
+                        // Sync overview field.
+                        entry.overview = if entry.l1_sections.is_empty() {
+                            None
+                        } else {
+                            Some(
+                                entry
+                                    .l1_sections
+                                    .iter()
+                                    .map(|s| s.title.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(" | "),
+                            )
+                        };
+                        llm_summary_status = Some("ok");
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            entry_id = %entry_id,
+                            error = %e,
+                            "Failed to generate LLM summary, degraded to text-based truncation"
+                        );
+                        llm_summary_status = Some("failed");
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        entry_id = %entry_id,
-                        "Failed to generate tags, continuing without: {e}"
-                    );
+            } else {
+                tracing::debug!("use_llm_summary requested but no summary_generator configured");
+                llm_summary_status = Some("not_configured");
+            }
+        }
+
+        // Extract multi-dimensional metadata via LLM. Runs after the summarizer
+        // so that entry.summary and entry.l1_sections contain the LLM-generated
+        // content, giving the metadata agent higher-quality input.
+        if params.extract_metadata {
+            if let Some(ref extractor) = self.metadata_extractor {
+                let section_titles: Vec<String> =
+                    entry.l1_sections.iter().map(|s| s.title.clone()).collect();
+                let original_filename = std::path::Path::new(&params.source)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(String::from);
+                match extractor
+                    .extract_metadata(
+                        &entry.content,
+                        entry.summary.as_deref(),
+                        &section_titles,
+                        original_filename.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(mut meta) => {
+                        meta.original_filename = original_filename;
+                        tracing::info!(
+                            entry_id = %entry_id,
+                            doc_type = ?meta.document_type,
+                            industry = ?meta.industry,
+                            "Extracted metadata for entry"
+                        );
+                        // Sync topics -> tags for backward compat.
+                        entry.tags = meta.topics.clone();
+                        entry.metadata = meta;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            entry_id = %entry_id,
+                            "Failed to extract metadata, continuing without: {e}"
+                        );
+                    }
                 }
+            } else {
+                tracing::debug!("extract_metadata requested but no metadata_extractor configured");
             }
         }
 
@@ -466,7 +585,7 @@ impl KnowledgeService {
             None
         };
 
-        // Index chunks for retrieval (batch — much faster than per-chunk).
+        // Index chunks for retrieval (batch -- much faster than per-chunk).
         {
             use y_knowledge::chunking::{Chunk, ChunkLevel, ChunkMetadata};
             let mut knowledge = self
@@ -514,6 +633,9 @@ impl KnowledgeService {
                     summary: entry.summary.clone(),
                     section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
                     tags: entry.tags.clone(),
+                    document_type: entry.metadata.document_type.clone(),
+                    industry: entry.metadata.industry.clone(),
+                    subcategory: entry.metadata.subcategory.clone(),
                 },
             );
         }
@@ -538,13 +660,22 @@ impl KnowledgeService {
             self.save_embeddings();
         }
 
+        // Build result message with LLM pipeline status.
+        let mut msg = format!("Ingested successfully: {chunk_count} chunks");
+        match llm_summary_status {
+            Some("ok") => msg.push_str(" [LLM summary: ok]"),
+            Some("failed") => msg.push_str(" [LLM summary: FAILED, using text-based fallback]"),
+            Some("not_configured") => msg.push_str(" [LLM summary: not configured]"),
+            _ => {}
+        }
+
         Ok(KnowledgeIngestResult {
             success: true,
             entry_id: Some(entry_id),
             chunk_count,
             domains,
             quality_score,
-            message: format!("Ingested successfully: {chunk_count} chunks"),
+            message: msg,
         })
     }
 
@@ -620,6 +751,18 @@ impl KnowledgeService {
     /// Get a single entry by ID.
     pub fn get_entry(&self, entry_id: &str) -> Option<&KnowledgeEntry> {
         self.entries.get(entry_id)
+    }
+
+    /// Get mutable reference to a specific entry by ID.
+    pub fn get_entry_mut(&mut self, entry_id: &str) -> Option<&mut KnowledgeEntry> {
+        self.entries.get_mut(entry_id)
+    }
+
+    /// Public wrapper for persisting entry changes.
+    ///
+    /// Used by GUI commands after editing entry metadata fields.
+    pub fn save_entries_public(&self) {
+        self.save_entries();
     }
 
     /// Delete an entry by ID. Returns `true` if found and removed.
@@ -727,6 +870,7 @@ impl KnowledgeService {
                 summary: entry.summary.clone(),
                 section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
                 tags: entry.tags.clone(),
+                metadata: entry.metadata.clone(),
             })
             .collect();
 
@@ -800,6 +944,9 @@ impl KnowledgeService {
                     summary: entry.summary.clone(),
                     section_titles: entry.section_titles.clone(),
                     tags: entry.tags.clone(),
+                    document_type: entry.metadata.document_type.clone(),
+                    industry: entry.metadata.industry.clone(),
+                    subcategory: entry.metadata.subcategory.clone(),
                 },
             );
         }
@@ -1037,11 +1184,14 @@ impl KnowledgeService {
 // ---------------------------------------------------------------------------
 
 use y_core::agent::{AgentDelegator, ContextStrategyHint};
-use y_knowledge::tagger::{ContentPreparator, PreparedContent, TagGenerator, TagMerger};
+use y_knowledge::tagger::{
+    ContentPreparator, MetadataExtractor, MetadataParser, PreparedContent, TagGenerator, TagMerger,
+};
 
-/// LLM-backed tag generator using the `knowledge-tagger` sub-agent.
+/// LLM-backed tag generator using the `knowledge-metadata` sub-agent.
 ///
-/// Delegates to the built-in `knowledge-tagger` agent via [`AgentDelegator`].
+/// Delegates to the built-in `knowledge-metadata` agent via [`AgentDelegator`].
+/// Extracts topic tags from the metadata response for backward compatibility.
 /// Handles large documents by preparing content through [`ContentPreparator`]
 /// (summary + excerpts for medium docs, map-reduce for large docs).
 pub struct AgentTagGenerator {
@@ -1058,15 +1208,20 @@ impl AgentTagGenerator {
         }
     }
 
-    /// Delegate a tagging request to the `knowledge-tagger` agent.
+    /// Delegate a tagging request to the `knowledge-metadata` agent.
+    ///
+    /// Extracts topic tags from the structured metadata response.
     async fn call_tagger(&self, content: &str) -> Result<Vec<String>, KnowledgeServiceError> {
         let input = serde_json::json!({
-            "content": content,
+            "l0_summary": "",
+            "l1_overview": "",
+            "content_excerpt": content,
+            "original_filename": "unknown",
         });
 
         let result = self
             .delegator
-            .delegate("knowledge-tagger", input, ContextStrategyHint::None, None)
+            .delegate("knowledge-metadata", input, ContextStrategyHint::None, None)
             .await
             .map_err(|e| {
                 KnowledgeServiceError::Knowledge(y_knowledge::KnowledgeError::IngestionError {
@@ -1074,6 +1229,14 @@ impl AgentTagGenerator {
                 })
             })?;
 
+        // Try to parse as structured metadata and extract topics.
+        if let Ok(meta) = MetadataParser::parse(&result.text) {
+            if !meta.topics.is_empty() {
+                return Ok(meta.topics);
+            }
+        }
+
+        // Fallback: parse as flat tag array.
         Ok(TagMerger::parse_tags(&result.text))
     }
 }
@@ -1127,6 +1290,129 @@ impl TagGenerator for AgentTagGenerator {
 }
 
 // ---------------------------------------------------------------------------
+// AgentMetadataExtractor -- LLM-backed metadata extraction via delegation
+// ---------------------------------------------------------------------------
+
+use y_knowledge::tagger::SummaryParser;
+
+/// LLM-backed metadata extractor using the `knowledge-metadata` sub-agent.
+///
+/// Delegates to the built-in `knowledge-metadata` agent via [`AgentDelegator`].
+/// Parses structured JSON output into [`DocumentMetadata`].
+pub struct AgentMetadataExtractor {
+    delegator: Arc<dyn AgentDelegator>,
+}
+
+impl AgentMetadataExtractor {
+    /// Create a new metadata extractor with an agent delegator.
+    pub fn new(delegator: Arc<dyn AgentDelegator>) -> Self {
+        Self { delegator }
+    }
+}
+
+#[async_trait::async_trait]
+impl MetadataExtractor for AgentMetadataExtractor {
+    async fn extract_metadata(
+        &self,
+        content: &str,
+        l0_summary: Option<&str>,
+        l1_section_titles: &[String],
+        original_filename: Option<&str>,
+    ) -> Result<y_knowledge::metadata::DocumentMetadata, y_knowledge::KnowledgeError> {
+        // Prepare input from L0/L1 content (not raw content to save tokens).
+        let preparator = ContentPreparator::new();
+        let prepared = preparator.prepare(content, l0_summary, l1_section_titles);
+        let input_text = match prepared {
+            PreparedContent::Full(text) | PreparedContent::Summarized(text) => text,
+            PreparedContent::MapReduce(windows) => {
+                // For very large docs, use first + last windows.
+                let mut combined = String::new();
+                if let Some(first) = windows.first() {
+                    combined.push_str(first);
+                }
+                if windows.len() > 1 {
+                    if let Some(last) = windows.last() {
+                        combined.push_str("\n\n[...]\n\n");
+                        combined.push_str(last);
+                    }
+                }
+                combined
+            }
+        };
+
+        let input = serde_json::json!({
+            "l0_summary": l0_summary.unwrap_or(""),
+            "l1_overview": l1_section_titles.join("\n"),
+            "content_excerpt": input_text,
+            "original_filename": original_filename.unwrap_or("unknown"),
+        });
+
+        let result = self
+            .delegator
+            .delegate("knowledge-metadata", input, ContextStrategyHint::None, None)
+            .await
+            .map_err(|e| y_knowledge::KnowledgeError::IngestionError {
+                message: format!("metadata extraction delegation failed: {e}"),
+            })?;
+
+        MetadataParser::parse(&result.text)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AgentSummaryGenerator -- LLM-backed summarization via delegation
+// ---------------------------------------------------------------------------
+
+/// LLM-backed summary generator using the `knowledge-summarizer` sub-agent.
+///
+/// The summarizer agent is tool-enabled: it uses `FileRead` with
+/// `line_offset`/`limit` parameters to progressively read large files
+/// without overflowing the context window. Between reads, the system
+/// prunes previous tool results, and the agent detects truncation at
+/// chunk boundaries to overlap reads.
+pub struct AgentSummaryGenerator {
+    delegator: Arc<dyn AgentDelegator>,
+}
+
+impl AgentSummaryGenerator {
+    /// Create a new summary generator with an agent delegator.
+    pub fn new(delegator: Arc<dyn AgentDelegator>) -> Self {
+        Self { delegator }
+    }
+}
+
+#[async_trait::async_trait]
+impl y_knowledge::tagger::SummaryGenerator for AgentSummaryGenerator {
+    async fn generate_summary(
+        &self,
+        file_path: &str,
+        total_lines: usize,
+        original_filename: &str,
+    ) -> Result<y_knowledge::tagger::LlmSummary, y_knowledge::KnowledgeError> {
+        let input = serde_json::json!({
+            "file_path": file_path,
+            "total_lines": total_lines,
+            "original_filename": original_filename,
+        });
+
+        let result = self
+            .delegator
+            .delegate(
+                "knowledge-summarizer",
+                input,
+                ContextStrategyHint::None,
+                None,
+            )
+            .await
+            .map_err(|e| y_knowledge::KnowledgeError::IngestionError {
+                message: format!("summary generation delegation failed: {e}"),
+            })?;
+
+        SummaryParser::parse(&result.text)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tag management methods on KnowledgeService
 // ---------------------------------------------------------------------------
 
@@ -1167,6 +1453,9 @@ impl KnowledgeService {
                         summary: entry.summary.clone(),
                         section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
                         tags: new_tags,
+                        document_type: entry.metadata.document_type.clone(),
+                        industry: entry.metadata.industry.clone(),
+                        subcategory: entry.metadata.subcategory.clone(),
                     },
                 );
             }
@@ -1239,7 +1528,76 @@ impl KnowledgeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tempfile::TempDir;
     use y_knowledge::config::KnowledgeConfig;
+    use y_knowledge::metadata::DocumentMetadata;
+    use y_knowledge::tagger::{LlmL1Section, LlmSummary, SummaryGenerator};
+
+    struct CountingTagGenerator {
+        calls: Arc<AtomicUsize>,
+        tags: Vec<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl TagGenerator for CountingTagGenerator {
+        async fn generate_tags(
+            &self,
+            _content: &str,
+            _l0_summary: Option<&str>,
+            _l1_section_titles: &[String],
+        ) -> Result<Vec<String>, y_knowledge::KnowledgeError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.tags.clone())
+        }
+    }
+
+    struct StaticMetadataExtractor {
+        metadata: DocumentMetadata,
+    }
+
+    #[async_trait::async_trait]
+    impl MetadataExtractor for StaticMetadataExtractor {
+        async fn extract_metadata(
+            &self,
+            _content: &str,
+            _l0_summary: Option<&str>,
+            _l1_section_titles: &[String],
+            _original_filename: Option<&str>,
+        ) -> Result<DocumentMetadata, y_knowledge::KnowledgeError> {
+            Ok(self.metadata.clone())
+        }
+    }
+
+    struct CountingSummaryGenerator {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl SummaryGenerator for CountingSummaryGenerator {
+        async fn generate_summary(
+            &self,
+            _file_path: &str,
+            _total_lines: usize,
+            _original_filename: &str,
+        ) -> Result<LlmSummary, y_knowledge::KnowledgeError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(LlmSummary {
+                l0_summary: "LLM summary".to_string(),
+                l1_sections: vec![LlmL1Section {
+                    title: "Overview".to_string(),
+                    summary: "Generated by summary generator.".to_string(),
+                }],
+            })
+        }
+    }
+
+    fn write_test_doc(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, content).expect("write test doc");
+        path
+    }
 
     #[test]
     fn test_service_creation() {
@@ -1271,5 +1629,162 @@ mod tests {
         };
         let result = service.search(&params).await;
         assert!(result.results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ingest_without_metadata_flag_does_not_call_legacy_tagger() {
+        let dir = TempDir::new().expect("temp dir");
+        let content = [
+            "# Safety Doc",
+            "",
+            "Functional safety guidance for automotive systems with hazard analysis,",
+            "technical safety concepts, validation planning, and verification evidence.",
+            "",
+            "## Scope",
+            "This document describes assumptions, safety goals, failure handling,",
+            "and work products required for ISO 26262 aligned system development.",
+            "",
+            "## Requirements",
+            "Teams shall define ASIL decomposition, safety mechanisms, traceability,",
+            "change impact analysis, confirmation reviews, and production handoff notes.",
+            "",
+            "## Verification",
+            "Evidence includes system tests, interface checks, design inspections,",
+            "fault injection results, and safety case updates for every release.",
+        ]
+        .join("\n");
+        let path = write_test_doc(&dir, "doc.md", &content);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut service = KnowledgeService::new(KnowledgeConfig::default());
+        service.set_tag_generator(Arc::new(CountingTagGenerator {
+            calls: Arc::clone(&calls),
+            tags: vec!["functional-safety".to_string()],
+        }));
+
+        let params = KnowledgeIngestParams {
+            source: path.display().to_string(),
+            domain: None,
+            collection: "default".to_string(),
+            use_llm_summary: false,
+            extract_metadata: false,
+        };
+
+        let result = service.ingest(&params, "default").await.expect("ingest");
+        let entry_id = result.entry_id.expect("entry id");
+        let entry = service.get_entry(&entry_id).expect("stored entry");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(entry.tags.is_empty());
+        assert!(entry.metadata.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ingest_with_metadata_flag_persists_structured_metadata() {
+        let dir = TempDir::new().expect("temp dir");
+        let content = [
+            "# ISO 26262-4",
+            "",
+            "Road vehicles functional safety part 4 covers product development",
+            "at the system level, technical safety concepts, interface definitions,",
+            "requirements allocation, verification strategy, and integration planning.",
+            "",
+            "## Product Development at the System Level",
+            "System design shall refine functional safety requirements into",
+            "technical safety requirements and define architectural assumptions.",
+            "",
+            "## Verification and Validation",
+            "Development teams verify system requirements, analyze dependent failures,",
+            "and validate the item against safety goals before release.",
+        ]
+        .join("\n");
+        let path = write_test_doc(&dir, "iso-26262-part4.md", &content);
+        let mut service = KnowledgeService::new(KnowledgeConfig::default());
+        service.set_metadata_extractor(Arc::new(StaticMetadataExtractor {
+            metadata: DocumentMetadata {
+                document_type: Some("standards".to_string()),
+                industry: Some("automotive".to_string()),
+                subcategory: Some("functional_safety".to_string()),
+                interpreted_title: Some(
+                    "ISO 26262-4:2018 Road vehicles — Functional safety — Part 4".to_string(),
+                ),
+                title_language: Some("en".to_string()),
+                original_filename: None,
+                topics: vec!["functional-safety".to_string(), "iso-26262".to_string()],
+            },
+        }));
+
+        let params = KnowledgeIngestParams {
+            source: path.display().to_string(),
+            domain: None,
+            collection: "default".to_string(),
+            use_llm_summary: false,
+            extract_metadata: true,
+        };
+
+        let result = service.ingest(&params, "default").await.expect("ingest");
+        let entry_id = result.entry_id.expect("entry id");
+        let entry = service.get_entry(&entry_id).expect("stored entry");
+
+        assert_eq!(entry.metadata.document_type.as_deref(), Some("standards"));
+        assert_eq!(entry.metadata.industry.as_deref(), Some("automotive"));
+        assert_eq!(
+            entry.metadata.subcategory.as_deref(),
+            Some("functional_safety")
+        );
+        assert_eq!(
+            entry.metadata.interpreted_title.as_deref(),
+            Some("ISO 26262-4:2018 Road vehicles — Functional safety — Part 4")
+        );
+        assert_eq!(
+            entry.metadata.original_filename.as_deref(),
+            Some("iso-26262-part4.md")
+        );
+        assert_eq!(
+            entry.tags,
+            vec!["functional-safety".to_string(), "iso-26262".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ingest_with_llm_summary_flag_uses_summary_generator() {
+        let dir = TempDir::new().expect("temp dir");
+        let content = [
+            "# Summary Target",
+            "",
+            "This document contains enough structure and detail to survive",
+            "knowledge quality filtering during ingestion.",
+            "",
+            "## Overview",
+            "The first section introduces the target system, expected behaviour,",
+            "operational assumptions, and external interfaces.",
+            "",
+            "## Details",
+            "The second section records failure modes, mitigations, verification",
+            "activities, rollout notes, and follow-up actions for maintainers.",
+        ]
+        .join("\n");
+        let path = write_test_doc(&dir, "summary-target.md", &content);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut service = KnowledgeService::new(KnowledgeConfig::default());
+        service.set_summary_generator(Arc::new(CountingSummaryGenerator {
+            calls: Arc::clone(&calls),
+        }));
+
+        let params = KnowledgeIngestParams {
+            source: path.display().to_string(),
+            domain: None,
+            collection: "default".to_string(),
+            use_llm_summary: true,
+            extract_metadata: false,
+        };
+
+        let result = service.ingest(&params, "default").await.expect("ingest");
+        let entry_id = result.entry_id.expect("entry id");
+        let entry = service.get_entry(&entry_id).expect("stored entry");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(entry.summary.as_deref(), Some("LLM summary"));
+        assert_eq!(entry.l1_sections.len(), 1);
+        assert_eq!(entry.l1_sections[0].title, "Overview");
     }
 }

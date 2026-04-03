@@ -71,6 +71,7 @@ impl TaskExecutor for LlmCallExecutor {
             tool_calling_mode: ToolCallingMode::Native,
             stop: vec![],
             extra: serde_json::Value::Null,
+            thinking: None,
         };
 
         // Route to provider by tag or use default.

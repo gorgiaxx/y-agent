@@ -21,7 +21,7 @@ use y_core::agent::AgentDelegator;
 use y_core::permission_types::PermissionMode;
 use y_core::provider::LlmProvider;
 use y_core::types::{SessionId, ToolName};
-use y_diagnostics::{DiagnosticsSubscriber, TraceStore};
+use y_diagnostics::{DiagnosticsEvent, DiagnosticsSubscriber, TraceStore};
 use y_guardrails::GuardrailManager;
 use y_hooks::HookSystem;
 use y_prompt::{builtin_section_store_with_overrides, default_template, PromptContext};
@@ -114,6 +114,18 @@ pub struct ServiceContainer {
 
     /// Diagnostics subscriber for trace recording.
     pub diagnostics: Arc<DiagnosticsSubscriber<dyn TraceStore>>,
+
+    /// Broadcast channel for real-time diagnostics events.
+    ///
+    /// Gateways emit events here; GUI, CLI, and web SSE can subscribe.
+    /// Capacity 256 with 5-second poll fallback for missed events.
+    pub diagnostics_broadcast: tokio::sync::broadcast::Sender<DiagnosticsEvent>,
+
+    /// Tool call diagnostics gateway.
+    ///
+    /// Records tool call observations and emits broadcast events
+    /// automatically when called from within a `DIAGNOSTICS_CTX` scope.
+    pub tool_gateway: Arc<crate::diagnostics::DiagnosticsToolGateway>,
 
     /// Chat checkpoint manager for turn-level rollback.
     pub chat_checkpoint_manager: ChatCheckpointManager,
@@ -456,10 +468,24 @@ tools = ["ToolSearch"]
         let trace_store_dyn: Arc<dyn TraceStore> = Arc::new(sqlite_trace_store);
         let diagnostics = Arc::new(DiagnosticsSubscriber::new(trace_store_dyn));
 
+        // 12b. Broadcast channel for real-time diagnostics push.
+        let (diagnostics_broadcast, _) = tokio::sync::broadcast::channel::<DiagnosticsEvent>(256);
+
+        // 12c. Tool call diagnostics gateway.
+        let tool_gateway = Arc::new(crate::diagnostics::DiagnosticsToolGateway::new(
+            Arc::clone(&diagnostics),
+            diagnostics_broadcast.clone(),
+        ));
+
         // 13. Agent infrastructure.
         let config_dir = config.prompts_dir.as_ref().and_then(|p| p.parent());
         let (agent_registry, agent_pool_for_services, agent_delegator, delegation_tracker) =
-            Self::init_agent_and_diagnostics(config_dir, &provider_pool, &diagnostics);
+            Self::init_agent_and_diagnostics(
+                config_dir,
+                &provider_pool,
+                &diagnostics,
+                diagnostics_broadcast.clone(),
+            );
 
         // 14. Pruning engine -- wired with agent_delegator for progressive pruning.
         let pruning_engine =
@@ -500,6 +526,8 @@ tools = ["ToolSearch"]
             scheduler_manager,
             prompt_context,
             diagnostics,
+            diagnostics_broadcast,
+            tool_gateway,
             chat_checkpoint_manager,
             tool_activation_set,
             tool_taxonomy,
@@ -665,6 +693,7 @@ impl ServiceContainer {
         config_dir: Option<&std::path::Path>,
         provider_pool: &Arc<ProviderPoolImpl>,
         diagnostics: &Arc<DiagnosticsSubscriber<dyn TraceStore>>,
+        broadcast_tx: tokio::sync::broadcast::Sender<DiagnosticsEvent>,
     ) -> AgentInitResult {
         let agents_dir = config_dir.map(|p| p.join("agents"));
         let agent_registry = Arc::new(Mutex::new(AgentRegistry::new_with_user_agents(
@@ -680,7 +709,7 @@ impl ServiceContainer {
 
         let delegation_tracker = Arc::clone(agent_pool.delegation_tracker());
 
-        // Wrap the pool in Arc<Mutex<...>> so both self.agent_pool and the
+        // Wrap the pool in Arc<Mutex<..>> so both self.agent_pool and the
         // delegator share the same pool instance.
         let shared_pool = Arc::new(Mutex::new(agent_pool));
 
@@ -690,6 +719,7 @@ impl ServiceContainer {
             Arc::new(crate::diagnostics::DiagnosticsAgentDelegator::new(
                 agent_delegator,
                 Arc::clone(diagnostics),
+                broadcast_tx,
             ));
 
         (
@@ -954,6 +984,35 @@ impl ServiceContainer {
         self.init_workflow_dispatcher().await;
         self.init_scheduler().await;
         self.init_callable_agents_text().await;
+        self.init_knowledge_llm_services().await;
+    }
+
+    /// Wire LLM-backed knowledge services (tag generator, metadata
+    /// extractor, summary generator) into the `KnowledgeService`.
+    ///
+    /// Must be called **after** `init_agent_runner` so that the delegator
+    /// uses the full `ServiceAgentRunner` (required for the summarizer
+    /// agent which uses multi-turn `FileRead` tool calling).
+    async fn init_knowledge_llm_services(self: &Arc<Self>) {
+        use crate::knowledge_service::{
+            AgentMetadataExtractor, AgentSummaryGenerator, AgentTagGenerator,
+        };
+
+        let delegator = Arc::clone(&self.agent_delegator);
+
+        let tag_gen: Arc<dyn y_knowledge::tagger::TagGenerator> =
+            Arc::new(AgentTagGenerator::new(Arc::clone(&delegator)));
+        let meta_ext: Arc<dyn y_knowledge::tagger::MetadataExtractor> =
+            Arc::new(AgentMetadataExtractor::new(Arc::clone(&delegator)));
+        let summary_gen: Arc<dyn y_knowledge::tagger::SummaryGenerator> =
+            Arc::new(AgentSummaryGenerator::new(delegator));
+
+        let mut ks = self.knowledge_service.lock().await;
+        ks.set_tag_generator(tag_gen);
+        ks.set_metadata_extractor(meta_ext);
+        ks.set_summary_generator(summary_gen);
+
+        tracing::info!("Knowledge LLM services wired (tagger, metadata, summarizer)");
     }
 
     /// Spawn per-provider tasks that drain metrics events and persist them.
