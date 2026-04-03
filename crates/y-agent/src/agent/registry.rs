@@ -604,6 +604,7 @@ mod tests {
             timeout_secs: 300,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 4096,
+            max_completion_tokens: None,
             user_callable: false,
         }
     }
@@ -644,6 +645,7 @@ mod tests {
             timeout_secs: 120,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 2048,
+            max_completion_tokens: None,
             user_callable: false,
         };
         registry.register(dynamic_def).unwrap();
@@ -840,6 +842,7 @@ mod tests {
             timeout_secs: 120,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 2048,
+            max_completion_tokens: None,
             user_callable: false,
         };
         registry.register_dynamic(dyn_def).unwrap();

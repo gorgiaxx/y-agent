@@ -105,9 +105,21 @@ pub struct AgentDefinition {
     /// Default context sharing strategy when this agent is delegated to.
     #[serde(default)]
     pub context_sharing: ContextStrategy,
-    /// Maximum tokens for context shared with this agent.
+    /// Maximum tokens available for the agent's combined input context window.
+    ///
+    /// Used by context management (`IntraTurnPruner`, context injection) to decide
+    /// how much history to retain. This is a budget for the *input* side and does
+    /// NOT map directly to the provider's `max_tokens` API parameter.
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
+    /// Maximum tokens the provider may generate in a single completion call.
+    ///
+    /// Maps directly to the provider's `max_tokens` (or `max_completion_tokens`)
+    /// API parameter. When `None` (the default), the provider's own default is
+    /// used. Set this only when the agent's output is bounded and you need to
+    /// avoid exhausting the model's total context window.
+    #[serde(default)]
+    pub max_completion_tokens: Option<usize>,
 
     // -- Visibility --
     /// Whether this agent can be directly invoked by users for task delegation.
@@ -256,6 +268,7 @@ system_prompt = ""
             timeout_secs: 300,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 4096,
+            max_completion_tokens: None,
             user_callable: false,
         };
         assert!(def.validate().is_err());
@@ -283,6 +296,7 @@ system_prompt = "Hello"
         assert_eq!(def.timeout_secs, 300);
         assert_eq!(def.context_sharing, ContextStrategy::None);
         assert_eq!(def.max_context_tokens, 4096);
+        assert_eq!(def.max_completion_tokens, None);
     }
 
     /// T-MA-001-06: Context strategies parse correctly.

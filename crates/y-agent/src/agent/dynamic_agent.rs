@@ -116,8 +116,9 @@ impl EffectivePermissions {
             max_tool_calls: u32::try_from(declared.max_tool_calls)
                 .unwrap_or(u32::MAX)
                 .min(creator.max_tool_calls),
-            max_tokens: u64::try_from(declared.max_context_tokens)
-                .unwrap_or(u64::MAX)
+            max_tokens: declared
+                .max_completion_tokens
+                .map_or(u64::MAX, |t| u64::try_from(t).unwrap_or(u64::MAX))
                 .min(creator.max_tokens),
             delegation_depth: creator.delegation_depth.saturating_sub(1),
         }
@@ -480,6 +481,7 @@ pub fn make_dynamic_agent(
         timeout_secs: 300,
         context_sharing: ContextStrategy::None,
         max_context_tokens: 4096,
+        max_completion_tokens: None,
         user_callable: false,
     };
 
@@ -559,6 +561,7 @@ mod tests {
             timeout_secs: 300,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 16384,
+            max_completion_tokens: None,
             user_callable: false,
         };
 

@@ -453,11 +453,14 @@ impl AgentDelegator for AgentPool {
             fallback_models: definition.fallback_models.clone(),
             provider_tags: definition.provider_tags.clone(),
             temperature: definition.temperature,
-            max_tokens: Some(u32::try_from(definition.max_context_tokens).unwrap_or(u32::MAX)),
+            max_tokens: definition
+                .max_completion_tokens
+                .map(|t| u32::try_from(t).unwrap_or(u32::MAX)),
             timeout_secs: definition.timeout_secs,
             allowed_tools: definition.allowed_tools.clone(),
             denied_tools: definition.denied_tools.clone(),
             max_iterations: definition.max_iterations,
+            trust_tier: Some(definition.trust_tier),
             trace_id: None,
         };
 
@@ -511,6 +514,7 @@ mod tests {
             timeout_secs: 300,
             context_sharing: ContextStrategy::None,
             max_context_tokens: 4096,
+            max_completion_tokens: None,
             user_callable: false,
         }
     }

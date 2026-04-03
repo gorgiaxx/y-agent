@@ -192,6 +192,7 @@ mod tests {
             timeout_secs: 300,
             context_sharing: ContextStrategy::Summary,
             max_context_tokens: 4096,
+            max_completion_tokens: None,
             user_callable: false,
         };
         registry.register(def).unwrap();
