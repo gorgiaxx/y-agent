@@ -58,6 +58,7 @@ async fn e2e_single_turn_chat() {
         tools: vec![],
         tool_calling_mode: ToolCallingMode::default(),
         extra: serde_json::Value::Null,
+        thinking: None,
     };
 
     // 4. Get provider response
@@ -110,6 +111,7 @@ async fn e2e_multi_turn_conversation() {
         tools: vec![],
         tool_calling_mode: ToolCallingMode::default(),
         extra: serde_json::Value::Null,
+        thinking: None,
     };
     let resp = provider.chat_completion(&req).await.unwrap();
     let reply1 = make_msg(Role::Assistant, resp.content.as_deref().unwrap_or(""));
@@ -132,6 +134,7 @@ async fn e2e_multi_turn_conversation() {
         tools: vec![],
         tool_calling_mode: ToolCallingMode::default(),
         extra: serde_json::Value::Null,
+        thinking: None,
     };
     let resp2 = provider.chat_completion(&req2).await.unwrap();
     assert_eq!(resp2.content.as_deref(), Some("echo: Tell me more"));
@@ -155,6 +158,7 @@ async fn e2e_provider_failure_propagation() {
         tools: vec![],
         tool_calling_mode: ToolCallingMode::default(),
         extra: serde_json::Value::Null,
+        thinking: None,
     };
 
     let err = provider.chat_completion(&req).await.unwrap_err();

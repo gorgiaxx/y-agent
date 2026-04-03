@@ -150,6 +150,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 turn_number,
                 provider_id: None,
                 knowledge_collections: vec![],
+                thinking: None,
             };
 
             match orchestrator::execute_turn(services, &turn_input).await {

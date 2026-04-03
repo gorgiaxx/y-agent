@@ -91,6 +91,8 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
                 source: source.clone(),
                 domain: domain.clone(),
                 collection: collection.clone(),
+                use_llm_summary: false,
+                extract_metadata: false,
             };
 
             output::print_info(&format!("Ingesting from '{source}'..."));

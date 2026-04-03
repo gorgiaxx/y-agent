@@ -186,6 +186,7 @@ pub fn submit_message(
             turn_number: user_msg_count,
             provider_id: None,
             knowledge_collections: vec![],
+            thinking: None,
         };
 
         // Set up a progress channel to receive streaming deltas.
