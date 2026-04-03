@@ -13,6 +13,8 @@ use std::fmt;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::trust::TrustTier;
+
 // ---------------------------------------------------------------------------
 // Context strategy hint
 // ---------------------------------------------------------------------------
@@ -165,6 +167,12 @@ pub struct AgentRunConfig {
     pub denied_tools: Vec<String>,
     /// Maximum agent loop iterations (tool-call loop limit).
     pub max_iterations: usize,
+    /// Trust tier of the agent (for permission bypass decisions).
+    ///
+    /// When `Some(TrustTier::BuiltIn)`, the runner may auto-allow tools
+    /// listed in `allowed_tools` without consulting the global permission
+    /// policy.
+    pub trust_tier: Option<TrustTier>,
     /// Optional pre-created trace ID from the diagnostics delegator.
     ///
     /// When set, the runner should forward this to the execution engine so
@@ -332,6 +340,7 @@ mod tests {
             allowed_tools: vec![],
             denied_tools: vec![],
             max_iterations: 1,
+            trust_tier: None,
             trace_id: None,
         };
         assert_eq!(config.agent_name, "title-generator");

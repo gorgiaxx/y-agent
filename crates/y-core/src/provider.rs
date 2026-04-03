@@ -57,6 +57,33 @@ pub enum ToolCallingMode {
 }
 
 // ---------------------------------------------------------------------------
+// Thinking / Reasoning
+// ---------------------------------------------------------------------------
+
+/// Unified thinking/reasoning effort level.
+///
+/// Maps to provider-specific parameters:
+/// - Anthropic: `output_config.effort` (`"low"` | `"medium"` | `"high"` | `"max"`)
+/// - `OpenAI`: `reasoning.effort` (`"low"` | `"medium"` | `"high"`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingEffort {
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+/// Thinking/reasoning configuration for an LLM request.
+///
+/// When `None` on [`ChatRequest`], the provider uses model defaults.
+/// When `Some`, the provider translates to its native API format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingConfig {
+    pub effort: ThinkingEffort,
+}
+
+// ---------------------------------------------------------------------------
 // Request / Response
 // ---------------------------------------------------------------------------
 
@@ -79,6 +106,8 @@ pub struct ChatRequest {
     pub stop: Vec<String>,
     /// Arbitrary provider-specific parameters.
     pub extra: serde_json::Value,
+    /// Thinking/reasoning configuration (`None` = use model defaults).
+    pub thinking: Option<ThinkingConfig>,
 }
 
 /// Response from an LLM provider.
