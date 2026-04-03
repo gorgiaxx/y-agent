@@ -182,6 +182,7 @@
 
 .knowledge-entry-tags {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
@@ -266,6 +267,42 @@
 .knowledge-l1-item p {
   margin: 4px 0 0;
   color: var(--text-secondary);
+}
+
+/* Metadata grid */
+.knowledge-metadata-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.knowledge-metadata-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.knowledge-metadata-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.knowledge-metadata-value {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.knowledge-metadata-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
 }
 
 .knowledge-l2-chunk {
@@ -499,6 +536,33 @@
 .kb-tag--sm {
   font-size: 10px;
   padding: 0 5px;
+}
+
+.kb-tag--type {
+  background: var(--surface-tertiary);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.kb-tag--industry {
+  background: hsla(200, 60%, 50%, 0.15);
+  color: hsl(200, 60%, 55%);
+}
+
+.kb-tag--sub {
+  background: hsla(260, 50%, 55%, 0.15);
+  color: hsl(260, 50%, 60%);
+}
+
+.kb-tag--topic {
+  background: hsla(140, 40%, 45%, 0.15);
+  color: hsl(140, 40%, 50%);
+}
+
+.kb-tag--more {
+  background: var(--surface-secondary);
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .kb-badge {

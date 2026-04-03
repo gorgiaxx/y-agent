@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { ArrowLeft, BookOpen, Trash2, Search, Upload, ChevronDown, ChevronRight, FileText, Database, BarChart3, File, Clock, HardDrive, Globe, Plug, FolderOpen, Pencil, Check, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, Trash2, Search, Upload, ChevronDown, ChevronRight, FileText, Database, BarChart3, File, Clock, HardDrive, Globe, Plug, FolderOpen, Pencil, Check, X, Tag, Layers } from 'lucide-react';
 import type { KnowledgeCollectionInfo, KnowledgeEntryInfo, KnowledgeEntryDetail, KnowledgeSearchResult } from '../../types';
 import { KnowledgeIngestDialog } from './KnowledgeIngestDialog';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -63,7 +63,7 @@ interface KnowledgePanelProps {
   onGetEntryDetail: (entryId: string, resolution?: string) => Promise<KnowledgeEntryDetail | null>;
   onDeleteEntry: (entryId: string) => void;
   onSearch: (query: string, domain?: string, limit?: number) => Promise<KnowledgeSearchResult[]>;
-  onIngestBatch: (sources: string[], domain: string | undefined, collection: string) => void;
+  onIngestBatch: (sources: string[], domain: string | undefined, collection: string, options?: { useLlmSummary?: boolean; extractMetadata?: boolean }) => void;
 }
 
 export function KnowledgePanel({
@@ -277,6 +277,52 @@ export function KnowledgePanel({
             <span key={d} className="kb-tag">{d}</span>
           ))}
         </div>
+
+        {/* Document Metadata */}
+        {(selectedEntry.document_type || selectedEntry.industry || selectedEntry.subcategory || selectedEntry.interpreted_title || (selectedEntry.tags && selectedEntry.tags.length > 0)) && (
+          <div className="knowledge-section">
+            <div
+              className="knowledge-section-header"
+              onClick={() => toggleSection('metadata')}
+            >
+              {expandedSections.has('metadata') ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              <Layers size={14} />
+              <span>Document Metadata</span>
+            </div>
+            {!expandedSections.has('metadata') && (
+              <div className="knowledge-section-content" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {selectedEntry.interpreted_title && (
+                  <div style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: '1.4' }}>
+                    {selectedEntry.interpreted_title}
+                  </div>
+                )}
+                
+                {(selectedEntry.document_type || selectedEntry.industry || selectedEntry.subcategory) && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                    {selectedEntry.document_type && (
+                      <span className="kb-tag kb-tag--type">{selectedEntry.document_type}</span>
+                    )}
+                    {selectedEntry.industry && (
+                      <span className="kb-tag kb-tag--industry">{selectedEntry.industry}</span>
+                    )}
+                    {selectedEntry.subcategory && (
+                      <span className="kb-tag kb-tag--sub">{selectedEntry.subcategory}</span>
+                    )}
+                  </div>
+                )}
+
+                {selectedEntry.tags && selectedEntry.tags.length > 0 && (
+                  <div className="knowledge-metadata-tags" style={{ borderTop: 'none', paddingTop: 0 }}>
+                    <Tag size={12} />
+                    {selectedEntry.tags.map(t => (
+                      <span key={t} className="kb-tag">{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* L0 Summary */}
         <div className="knowledge-section">
@@ -508,18 +554,35 @@ export function KnowledgePanel({
               className="knowledge-entry-row"
               onClick={() => handleViewEntry(entry.id)}
             >
-              <div className="knowledge-entry-main">
-                <span className="knowledge-entry-type-icon">
+              <div className="knowledge-entry-main" style={{ alignItems: 'flex-start' }}>
+                <span className="knowledge-entry-type-icon" style={{ marginTop: '2px' }}>
                   {fileTypeIcon(entry.source_type || 'file', entry.source_uri)}
                 </span>
-                <div className="knowledge-entry-info">
-                  <span className="knowledge-entry-title">{entry.title || extractFilename(entry.source_uri)}</span>
-                  <span className="knowledge-entry-source">{extractFilename(entry.source_uri)}</span>
-                </div>
-                <div className="knowledge-entry-tags">
-                  {entry.domains.map(d => (
-                    <span key={d} className="kb-tag kb-tag--sm">{d}</span>
-                  ))}
+                <div className="knowledge-entry-info" style={{ gap: '6px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span className="knowledge-entry-title">{entry.title || extractFilename(entry.source_uri)}</span>
+                    <span className="knowledge-entry-source">{extractFilename(entry.source_uri)}</span>
+                  </div>
+                  <div className="knowledge-entry-tags">
+                    {entry.document_type && (
+                      <span className="kb-tag kb-tag--sm kb-tag--type">{entry.document_type}</span>
+                    )}
+                    {entry.industry && (
+                      <span className="kb-tag kb-tag--sm kb-tag--industry">{entry.industry}</span>
+                    )}
+                    {entry.subcategory && (
+                      <span className="kb-tag kb-tag--sm kb-tag--sub">{entry.subcategory}</span>
+                    )}
+                    {entry.domains.map(d => (
+                      <span key={d} className="kb-tag kb-tag--sm">{d}</span>
+                    ))}
+                    {entry.tags && entry.tags.slice(0, 4).map(t => (
+                      <span key={t} className="kb-tag kb-tag--sm kb-tag--topic">{t}</span>
+                    ))}
+                    {entry.tags && entry.tags.length > 4 && (
+                      <span className="kb-tag kb-tag--sm kb-tag--more">+{entry.tags.length - 4}</span>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="knowledge-entry-meta-row">

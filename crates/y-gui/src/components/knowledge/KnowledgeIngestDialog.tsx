@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Upload, FolderOpen, FilePlus, Plus } from 'lucide-react';
+import { Upload, FolderOpen, FilePlus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import type { KnowledgeCollectionInfo } from '../../types';
@@ -20,7 +20,12 @@ import {
 interface KnowledgeIngestDialogProps {
   collections: KnowledgeCollectionInfo[];
   defaultCollection: string;
-  onIngestBatch: (sources: string[], domain: string | undefined, collection: string) => void;
+  onIngestBatch: (
+    sources: string[],
+    domain: string | undefined,
+    collection: string,
+    options?: { useLlmSummary?: boolean; extractMetadata?: boolean },
+  ) => void;
   onClose: () => void;
 }
 
@@ -31,10 +36,11 @@ export function KnowledgeIngestDialog({
   onClose,
 }: KnowledgeIngestDialogProps) {
   const [files, setFiles] = useState<string[]>([]);
-  const [manualPath, setManualPath] = useState('');
   const [domain, setDomain] = useState('');
   const [collection, setCollection] = useState(defaultCollection);
   const [expanding, setExpanding] = useState(false);
+  const [useLlmSummary, setUseLlmSummary] = useState(false);
+  const [extractMetadata, setExtractMetadata] = useState(false);
 
   const addFiles = useCallback((paths: string[]) => {
     setFiles(prev => {
@@ -96,16 +102,12 @@ export function KnowledgeIngestDialog({
     }
   };
 
-  const handleManualAdd = () => {
-    const trimmed = manualPath.trim();
-    if (!trimmed) return;
-    addFiles([trimmed]);
-    setManualPath('');
-  };
-
   const handleSubmit = () => {
     if (files.length === 0) return;
-    onIngestBatch(files, domain.trim() || undefined, collection);
+    onIngestBatch(files, domain.trim() || undefined, collection, {
+      useLlmSummary,
+      extractMetadata,
+    });
     onClose();
   };
 
@@ -118,35 +120,24 @@ export function KnowledgeIngestDialog({
         </DialogTitle>
 
         <div className="flex flex-col gap-3 mt-2">
-          {/* Add buttons row */}
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleAddFiles}>
+          {/* Unified Add actions */}
+          <div className="flex border border-solid border-[var(--border)] rounded-[var(--radius-md)] overflow-hidden w-max bg-[var(--surface-primary)]">
+            <button
+              onClick={handleAddFiles}
+              className="flex items-center gap-1.5 px-3 h-8 text-12px font-500 font-sans text-[var(--text-secondary)] bg-transparent hover:(bg-[var(--surface-hover)] text-[var(--text-primary)]) transition-all cursor-pointer border-none outline-none m-0"
+            >
               <FilePlus size={14} />
               Add Files
-            </Button>
-            <Button variant="outline" onClick={handleAddFolder} disabled={expanding}>
+            </button>
+            <div className="w-[1px] bg-[var(--border)] my-1.5 mx-[-1px] z-10" />
+            <button
+              onClick={handleAddFolder}
+              disabled={expanding}
+              className="flex items-center gap-1.5 px-3 h-8 text-12px font-500 font-sans text-[var(--text-secondary)] bg-transparent hover:(bg-[var(--surface-hover)] text-[var(--text-primary)]) transition-all cursor-pointer border-none outline-none m-0 disabled:(op-50 cursor-not-allowed pointer-events-none)"
+            >
               <FolderOpen size={14} />
               {expanding ? 'Scanning...' : 'Add Folder'}
-            </Button>
-          </div>
-
-          {/* Manual path input */}
-          <div className="flex gap-2">
-            <Input
-              className="flex-1"
-              placeholder="Or type a path and press Enter..."
-              value={manualPath}
-              onChange={e => setManualPath(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleManualAdd(); }}
-            />
-            <Button
-              variant="icon"
-              onClick={handleManualAdd}
-              disabled={!manualPath.trim()}
-              title="Add path"
-            >
-              <Plus size={14} />
-            </Button>
+            </button>
           </div>
 
           {/* File list */}
@@ -158,10 +149,11 @@ export function KnowledgeIngestDialog({
                 </span>
                 <button
                   className={[
-                    'border-none bg-none',
-                    'text-11px font-500 text-[var(--error)]',
-                    'cursor-pointer font-sans',
-                    'hover:underline',
+                    'border-transparent bg-transparent',
+                    'px-1.5 py-0.5 rounded-[var(--radius-sm)]',
+                    'text-11px font-500 text-[var(--text-secondary)]',
+                    'cursor-pointer font-sans transition-all duration-150',
+                    'hover:(text-[var(--error)] bg-[var(--error-subtle)])',
                   ].join(' ')}
                   onClick={() => setFiles([])}
                 >
@@ -212,6 +204,49 @@ export function KnowledgeIngestDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* LLM Processing Options */}
+          <div className="flex flex-col gap-2 pt-2 border-t border-[var(--border)]">
+            <span className="text-10px font-500 text-[var(--text-muted)] uppercase tracking-[0.06em]">
+              AI Processing
+            </span>
+            <label
+              className="flex items-center gap-2 cursor-pointer select-none"
+              htmlFor="toggle-llm-summary"
+            >
+              <input
+                id="toggle-llm-summary"
+                type="checkbox"
+                className="accent-[var(--accent)] w-3.5 h-3.5"
+                checked={useLlmSummary}
+                onChange={e => setUseLlmSummary(e.target.checked)}
+              />
+              <span className="text-12px text-[var(--text-primary)]">
+                LLM Summarization
+              </span>
+              <span className="text-10px text-[var(--text-muted)] ml-auto">
+                AI-generated L0/L1 summaries
+              </span>
+            </label>
+            <label
+              className="flex items-center gap-2 cursor-pointer select-none"
+              htmlFor="toggle-extract-metadata"
+            >
+              <input
+                id="toggle-extract-metadata"
+                type="checkbox"
+                className="accent-[var(--accent)] w-3.5 h-3.5"
+                checked={extractMetadata}
+                onChange={e => setExtractMetadata(e.target.checked)}
+              />
+              <span className="text-12px text-[var(--text-primary)]">
+                Metadata Extraction
+              </span>
+              <span className="text-10px text-[var(--text-muted)] ml-auto">
+                Document type, industry, sub-category
+              </span>
+            </label>
           </div>
         </div>
 

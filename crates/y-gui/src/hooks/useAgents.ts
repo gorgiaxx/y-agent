@@ -32,6 +32,7 @@ export interface AgentDetail {
   timeout_secs: number;
   context_sharing: string;
   max_context_tokens: number;
+  max_completion_tokens: number | null;
   is_overridden: boolean;
 }
 

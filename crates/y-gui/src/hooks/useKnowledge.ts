@@ -8,6 +8,10 @@ import type {
   KnowledgeIngestResult,
   KnowledgeStats,
 } from '../types';
+import {
+  buildKnowledgeIngestBatchPayload,
+  buildKnowledgeIngestPayload,
+} from './knowledgeInvokePayload';
 
 export type KbIngestStatus = 'idle' | 'ingesting' | 'success' | 'error';
 export type KbBatchProgress = { current: number; total: number };
@@ -155,16 +159,21 @@ export function useKnowledge() {
     source: string,
     domain: string | undefined,
     collection: string,
+    options?: { useLlmSummary?: boolean; extractMetadata?: boolean },
   ) => {
     setIngestStatus('ingesting');
     setIngestError(null);
     ingestCancelledRef.current = false;
     try {
-      const result = await invoke<KnowledgeIngestResult>('kb_ingest', {
-        source,
-        domain: domain || null,
-        collection,
-      });
+      const result = await invoke<KnowledgeIngestResult>(
+        'kb_ingest',
+        buildKnowledgeIngestPayload({
+          source,
+          domain,
+          collection,
+          options,
+        }),
+      );
       if (ingestCancelledRef.current) {
         setIngestStatus('idle');
         return;
@@ -192,6 +201,7 @@ export function useKnowledge() {
     sources: string[],
     domain: string | undefined,
     collection: string,
+    options?: { useLlmSummary?: boolean; extractMetadata?: boolean },
   ) => {
     if (sources.length === 0) return;
     setIngestStatus('ingesting');
@@ -211,7 +221,12 @@ export function useKnowledge() {
     try {
       const result = await invoke<{ succeeded: number; failed: number; errors: string[] }>(
         'kb_ingest_batch',
-        { sources, domain: domain || null, collection },
+        buildKnowledgeIngestBatchPayload({
+          sources,
+          domain,
+          collection,
+          options,
+        }),
       );
 
       if (ingestCancelledRef.current) {

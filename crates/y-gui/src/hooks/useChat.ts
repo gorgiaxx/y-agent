@@ -13,6 +13,7 @@ import type {
   ChatStarted,
   UndoResult,
   RestoreResult,
+  ThinkingEffort,
 } from '../types';
 import {
   chatBusState,
@@ -73,7 +74,7 @@ interface UseChatReturn {
   pendingEdit: PendingEdit | null;
   /** Tool results from the current streaming run (for inline cards). */
   toolResults: ToolResultRecord[];
-  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[]) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
@@ -766,7 +767,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const sendingRef = useRef(false);
 
   const sendMessage = useCallback(
-    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[]): Promise<ChatStarted | null> => {
+    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null): Promise<ChatStarted | null> => {
       // Guard: block if any operation is already in progress, including a
       // prior send.  The previous guard also allowed 'sending' through,
       // which could cause duplicate LLM calls when rapid double-fires
@@ -813,6 +814,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           skills: skills && skills.length > 0 ? skills : null,
           knowledgeCollections: knowledgeCollections && knowledgeCollections.length > 0 ? knowledgeCollections : null,
           contextStartIndex: resetIdx,
+          thinkingEffort: thinkingEffort ?? null,
         });
         return result;
       } catch (e) {

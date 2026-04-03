@@ -15,6 +15,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import type {
   DiagnosticsEntry,
+  DiagnosticsGatewayEvent,
   ProgressPayload,
   ChatCompletePayload,
   ChatErrorPayload,
@@ -307,46 +308,90 @@ async function initialiseBus() {
   });
   unlistenFns.push(u3);
 
-  // Real-time progress events from subagent execution (e.g. skill import).
-  // Each event is appended immediately to the Global (nil-UUID) view so the
-  // user sees LLM calls and tool executions as they happen.
-  const u4 = await listen<ProgressPayload>('diagnostics:subagent_progress', (event) => {
-    const { event: turnEvent } = event.payload;
-    // Only process LLM response and tool result events for diagnostics.
-    if (turnEvent.type !== 'llm_response' && turnEvent.type !== 'tool_result') return;
-    broadcastUpdate((prev) => {
-      const counter = prev.counter + 1;
-      const entry: DiagnosticsEntry = {
-        id: `subagent-live-${counter}`,
+  // Gateway broadcast events (from DiagnosticsProviderPool / DiagnosticsToolGateway
+  // / DiagnosticsAgentDelegator). These provide real-time LLM call, tool call,
+  // and subagent completion visibility for ALL agent executions without
+  // per-caller wiring. LLM/tool events are routed to the Global (nil-UUID)
+  // view; subagent_completed triggers a DB history reload.
+  const u4 = await listen<DiagnosticsGatewayEvent>('diagnostics:event', (event) => {
+    const ev = event.payload;
+
+    // SubagentCompleted: trigger DB history reload so the diagnostics panel
+    // shows persisted entries (survives app restart).
+    if (ev.type === 'subagent_completed') {
+      loadSubagentHistory();
+      if (ev.session_id) {
+        reloadSessionHistory(ev.session_id);
+      }
+      return;
+    }
+
+    let diagEntry: DiagnosticsEntry | null = null;
+
+    if (ev.type === 'llm_call_completed') {
+      diagEntry = {
+        id: `broadcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: new Date().toISOString(),
-        event: turnEvent,
-      };
-      return {
-        ...prev,
-        counter,
-        sessionEntries: {
-          ...prev.sessionEntries,
-          [NIL_UUID]: [...(prev.sessionEntries[NIL_UUID] ?? []), entry],
+        event: {
+          type: 'llm_response',
+          iteration: ev.iteration,
+          model: ev.model,
+          input_tokens: ev.input_tokens,
+          output_tokens: ev.output_tokens,
+          duration_ms: ev.duration_ms,
+          cost_usd: ev.cost_usd,
+          tool_calls_requested: ev.tool_calls_requested,
+          prompt_preview: ev.prompt_preview,
+          response_text: ev.response_text,
+          context_window: ev.context_window,
+          agent_name: ev.agent_name,
         },
       };
-    });
+    } else if (ev.type === 'llm_call_failed') {
+      diagEntry = {
+        id: `broadcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        event: {
+          type: 'llm_error',
+          iteration: ev.iteration,
+          model: ev.model,
+          error: ev.error,
+          duration_ms: ev.duration_ms,
+          prompt_preview: '',
+          context_window: 0,
+          agent_name: ev.agent_name,
+        },
+      };
+    } else if (ev.type === 'tool_call_completed') {
+      diagEntry = {
+        id: `broadcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        event: {
+          type: 'tool_result',
+          name: ev.tool_name,
+          success: ev.success,
+          duration_ms: ev.duration_ms,
+          input_preview: ev.input_preview,
+          result_preview: ev.result_preview,
+          agent_name: ev.agent_name,
+        },
+      };
+    }
+
+    if (!diagEntry) return;
+
+    // Always route to Global view. Session-bound events are already
+    // covered by chat:progress, so we avoid inserting duplicates.
+    broadcastUpdate((prev) => ({
+      ...prev,
+      counter: prev.counter + 1,
+      sessionEntries: {
+        ...prev.sessionEntries,
+        [NIL_UUID]: [...(prev.sessionEntries[NIL_UUID] ?? []), diagEntry!],
+      },
+    }));
   });
   unlistenFns.push(u4);
-
-  // When a subagent (title-generator, skill-ingestion, etc.) completes,
-  // the backend emits this event.  Re-fetch subagent history so the
-  // Global diagnostics view picks up the new entries.
-  // If the event includes a session_id, also reload that session's
-  // history so subagent entries appear in the session-level view.
-  const u5 = await listen<{ session_id?: string }>('diagnostics:subagent_completed', (event) => {
-    loadSubagentHistory();
-
-    const sid = event.payload?.session_id;
-    if (sid) {
-      reloadSessionHistory(sid);
-    }
-  });
-  unlistenFns.push(u5);
 
   // Seed subagent history on first load.
   loadSubagentHistory();

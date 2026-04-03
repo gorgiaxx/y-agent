@@ -11,7 +11,7 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 
 const variantStyles: Record<BadgeVariant, string> = {
   default:
-    'bg-[rgba(255,255,255,0.06)] text-[var(--text-primary)] border-[var(--border)]',
+    'bg-[var(--surface-hover)] text-[var(--text-primary)] border-[var(--border)]',
   accent:
     'bg-[var(--accent-subtle)] text-[var(--accent)] border-[rgba(200,181,96,0.25)]',
   success:
@@ -19,7 +19,7 @@ const variantStyles: Record<BadgeVariant, string> = {
   error:
     'bg-[var(--error-subtle)] text-[var(--error)] border-[rgba(229,115,115,0.2)]',
   outline:
-    'bg-transparent text-[var(--text-muted)] border-[var(--border)]',
+    'bg-transparent text-[var(--text-secondary)] border-[var(--border)]',
 }
 
 export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(

@@ -12,6 +12,7 @@ import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
+import type { ThinkingEffort } from '../types';
 
 export function ChatView() {
   const chatHooks = useChatContext();
@@ -24,6 +25,7 @@ export function ChatView() {
   const navProps = useNavigationContext();
 
   // AskUser interaction state.
+  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
   const [askUserData, setAskUserData] = useState<{
     interactionId: string;
     questions: Array<{
@@ -218,6 +220,8 @@ export function ChatView() {
         onClearSession={handleClearSession}
         onAddContextReset={chatHooks.addContextReset}
         providerIcons={providerHooks.providerIconMap}
+        thinkingEffort={thinkingEffort}
+        onThinkingEffortChange={setThinkingEffort}
         askUserData={askUserData}
         onAskUserSubmit={handleAskUserSubmit}
         onAskUserDismiss={handleAskUserDismiss}

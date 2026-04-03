@@ -393,6 +393,47 @@
   flex-shrink: 0;
 }
 
+/* Thinking effort dropdown */
+.toolbar-thinking-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  min-width: 140px;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 200;
+  padding: 4px;
+  animation: toolbarDropdownIn 0.1s ease-out;
+}
+
+.toolbar-thinking-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.toolbar-thinking-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-thinking-item.selected {
+  color: var(--accent);
+}
+
 /* ---- Expanded mode ---- */
 
 .input-area--expanded {

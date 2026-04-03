@@ -1,17 +1,17 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb } from 'lucide-react';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
 import './InputArea.css';
 
 interface InputAreaProps {
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[]) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -29,6 +29,10 @@ interface InputAreaProps {
   onAddContextReset?: () => void;
   /** Map from provider ID to icon identifier. */
   providerIcons?: Record<string, string>;
+  /** Current thinking effort level (null = model default). */
+  thinkingEffort?: ThinkingEffort | null;
+  /** Callback when user changes thinking effort. */
+  onThinkingEffortChange?: (effort: ThinkingEffort | null) => void;
   /** Pending AskUser interaction data. */
   askUserData?: {
     interactionId: string;
@@ -180,6 +184,8 @@ export function InputArea({
   onClearSession,
   onAddContextReset,
   providerIcons,
+  thinkingEffort,
+  onThinkingEffortChange,
   askUserData,
   onAskUserSubmit,
   onAskUserDismiss,
@@ -193,9 +199,11 @@ export function InputArea({
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const editableRef = useRef<HTMLDivElement>(null);
   const providerDropdownRef = useRef<HTMLDivElement>(null);
   const kbPickerRef = useRef<HTMLDivElement>(null);
+  const thinkingDropdownRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
   const lastCompEndRef = useRef<number>(0);
 
@@ -222,6 +230,18 @@ export function InputArea({
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [kbPickerOpen]);
+
+  // Close thinking dropdown on outside click.
+  useEffect(() => {
+    if (!thinkingDropdownOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (thinkingDropdownRef.current && !thinkingDropdownRef.current.contains(e.target as Node)) {
+        setThinkingDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [thinkingDropdownOpen]);
 
   // Derive display label for selected provider.
   const selectedProviderLabel = selectedProviderId === 'auto'
@@ -368,17 +388,18 @@ export function InputArea({
     }
 
     sendingRef.current = true;
-    console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, selectedKbCollections });
+    console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, selectedKbCollections, thinkingEffort });
     onSend(
       trimmed,
       extractedSkills.length > 0 ? extractedSkills : undefined,
       selectedKbCollections.length > 0 ? selectedKbCollections : undefined,
+      thinkingEffort,
     );
     resetInput();
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections]);
+  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     e.preventDefault();
@@ -593,7 +614,38 @@ export function InputArea({
             <Eraser size={14} />
           </button>
 
-          {/* (e) Knowledge base picker */}
+          {/* (e) Thinking effort selector */}
+          <div className="toolbar-btn-group" ref={thinkingDropdownRef}>
+            <button
+              className={`toolbar-btn has-tooltip ${thinkingEffort ? 'toolbar-btn--active' : ''}`}
+              onClick={() => setThinkingDropdownOpen(!thinkingDropdownOpen)}
+              data-tooltip="Thinking effort"
+              disabled={disabled}
+            >
+              <Lightbulb size={14} />
+              {thinkingEffort && (
+                <span className="toolbar-btn-label">{thinkingEffort}</span>
+              )}
+            </button>
+            {thinkingDropdownOpen && (
+              <div className="toolbar-thinking-dropdown">
+                {([null, 'low', 'medium', 'high', 'max'] as const).map((level) => (
+                  <button
+                    key={level ?? 'default'}
+                    className={`toolbar-thinking-item ${(thinkingEffort ?? null) === level ? 'selected' : ''}`}
+                    onClick={() => {
+                      onThinkingEffortChange?.(level);
+                      setThinkingDropdownOpen(false);
+                    }}
+                  >
+                    {level === null ? 'Default' : level.charAt(0).toUpperCase() + level.slice(1)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* (f) Knowledge base picker */}
           {knowledgeCollections.length > 0 && (
             <div className="toolbar-btn-group" ref={kbPickerRef}>
               <button

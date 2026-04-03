@@ -177,6 +177,69 @@ export interface DiagnosticsEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Gateway broadcast events (from DiagnosticsProviderPool / DiagnosticsToolGateway)
+//
+// These mirror the Rust `DiagnosticsEvent` enum with
+// #[serde(tag = "type", rename_all = "snake_case")].
+// ---------------------------------------------------------------------------
+
+export interface DiagLlmCallCompleted {
+  type: 'llm_call_completed';
+  trace_id: string;
+  observation_id: string;
+  session_id: string | null;
+  agent_name: string;
+  iteration: number;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  cost_usd: number;
+  tool_calls_requested: string[];
+  prompt_preview: string;
+  response_text: string;
+  context_window: number;
+}
+
+export interface DiagLlmCallFailed {
+  type: 'llm_call_failed';
+  trace_id: string;
+  observation_id: string | null;
+  session_id: string | null;
+  agent_name: string;
+  iteration: number;
+  model: string;
+  error: string;
+  duration_ms: number;
+}
+
+export interface DiagToolCallCompleted {
+  type: 'tool_call_completed';
+  trace_id: string;
+  session_id: string | null;
+  agent_name: string;
+  tool_name: string;
+  success: boolean;
+  duration_ms: number;
+  input_preview: string;
+  result_preview: string;
+}
+
+export interface DiagSubagentCompleted {
+  type: 'subagent_completed';
+  trace_id: string;
+  session_id: string | null;
+  agent_name: string;
+  success: boolean;
+}
+
+export type DiagnosticsGatewayEvent =
+  | DiagLlmCallCompleted
+  | DiagLlmCallFailed
+  | DiagToolCallCompleted
+  | DiagSubagentCompleted;
+
+// ---------------------------------------------------------------------------
 // System
 // ---------------------------------------------------------------------------
 
@@ -193,6 +256,12 @@ export interface ProviderInfo {
   model: string;
   provider_type: string;
 }
+
+// ---------------------------------------------------------------------------
+// Thinking / Reasoning
+// ---------------------------------------------------------------------------
+
+export type ThinkingEffort = 'low' | 'medium' | 'high' | 'max';
 
 /** Last-turn metadata cached per session by the backend (from `session_last_turn_meta`). */
 export interface TurnMeta {
@@ -390,6 +459,12 @@ export interface KnowledgeEntryInfo {
   state: 'active' | 'inactive' | 'processing';
   hit_count: number;
   updated_at: string;
+  /** Multi-dimensional metadata fields. */
+  document_type: string | null;
+  industry: string | null;
+  subcategory: string | null;
+  interpreted_title: string | null;
+  tags: string[];
 }
 
 /** Entry detail with L0/L1/L2 content (from `kb_entry_detail`). */
@@ -405,6 +480,12 @@ export interface KnowledgeEntryDetail {
   l0_summary: string;
   l1_sections: KnowledgeSection[];
   l2_chunks: KnowledgeChunk[];
+  /** Multi-dimensional metadata fields. */
+  document_type: string | null;
+  industry: string | null;
+  subcategory: string | null;
+  interpreted_title: string | null;
+  tags: string[];
 }
 
 /** A section header+summary (L1 resolution). */

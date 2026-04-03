@@ -34,6 +34,7 @@ function detailToToml(d: AgentDetail): string {
   lines.push(`timeout_secs = ${d.timeout_secs}`);
   lines.push(`context_sharing = ${JSON.stringify(d.context_sharing)}`);
   lines.push(`max_context_tokens = ${d.max_context_tokens}`);
+  if (d.max_completion_tokens !== null) lines.push(`max_completion_tokens = ${d.max_completion_tokens}`);
   return lines.join('\n') + '\n';
 }
 
@@ -262,6 +263,12 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
             <span className="agent-detail-field-label">Max Context Tokens</span>
             <span className="agent-detail-field-value">{detail.max_context_tokens.toLocaleString()}</span>
           </div>
+          {detail.max_completion_tokens !== null && (
+            <div className="agent-detail-field">
+              <span className="agent-detail-field-label">Max Completion Tokens</span>
+              <span className="agent-detail-field-value">{detail.max_completion_tokens.toLocaleString()}</span>
+            </div>
+          )}
         </div>
 
         {/* Allowed Tools */}
