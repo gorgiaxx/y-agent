@@ -182,18 +182,14 @@ export function ChatSidebarPanel({
   /** Called by React onMouseMove on each session item while dragging is active. */
   const handleItemHover = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
-      if (!draggedSessionId || draggedSessionId === sessionId) {
-        if (dragOverSessionId) setDragOverSessionId(null);
-        dropTargetRef.current = null;
-        return;
-      }
+      if (!draggedSessionId || draggedSessionId === sessionId) return;
       const rect = e.currentTarget.getBoundingClientRect();
       const pos: 'above' | 'below' = e.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
       setDragOverSessionId(sessionId);
       setDragOverPosition(pos);
       dropTargetRef.current = { targetId: sessionId, position: pos };
     },
-    [draggedSessionId, dragOverSessionId],
+    [draggedSessionId],
   );
 
   /** Initiate drag on mousedown with a 4px threshold to distinguish from clicks. */
@@ -353,6 +349,26 @@ export function ChatSidebarPanel({
     lastClickedIdRef.current = null;
   }, []);
 
+  const getPreviewList = useCallback(
+    (list: SessionInfo[]) => {
+      if (!draggedSessionId || !dragOverSessionId || draggedSessionId === dragOverSessionId) {
+        return list;
+      }
+      const sourceIdx = list.findIndex((s) => s.id === draggedSessionId);
+      const targetIdx = list.findIndex((s) => s.id === dragOverSessionId);
+
+      if (sourceIdx === -1 || targetIdx === -1) return list;
+
+      const result = [...list];
+      const [sourceItem] = result.splice(sourceIdx, 1);
+      const newTargetIdx = result.findIndex((s) => s.id === dragOverSessionId);
+      const insertIdx = dragOverPosition === 'below' ? newTargetIdx + 1 : newTargetIdx;
+      result.splice(insertIdx, 0, sourceItem);
+      return result;
+    },
+    [draggedSessionId, dragOverSessionId, dragOverPosition]
+  );
+
   const renderSessionItem = (session: SessionInfo, groupSessionIds: string[]) => {
     const isStreaming = streamingSessionIds.has(session.id);
     const isActive = session.id === activeSessionId;
@@ -360,7 +376,6 @@ export function ChatSidebarPanel({
     const timeLabel = formatRelativeTime(session.updated_at, isStreaming);
     const assignedWs = workspaces.find((w) => w.id === sessionWorkspaceMap[session.id]);
     const isDragging = draggedSessionId === session.id;
-    const isDragOver = dragOverSessionId === session.id && draggedSessionId !== session.id;
 
     return (
       <div
@@ -372,7 +387,6 @@ export function ChatSidebarPanel({
           + (isStreaming ? ' streaming' : '')
           + (isSelected ? ' session-item--selected' : '')
           + (isDragging ? ' session-item--dragging' : '')
-          + (isDragOver ? ` session-item--drag-over-${dragOverPosition}` : '')
         }
         onClick={(e) => handleSessionClick(e, session.id)}
         onMouseDown={(e) => handleMouseDown(e, session.id, groupSessionIds)}
@@ -489,9 +503,10 @@ export function ChatSidebarPanel({
       {/* Session list grouped by workspace */}
       <div className="session-list">
         {/* Workspace sections */}
-        {groups.map(({ workspace, sessions: wsSessions }) => {
+        {groups.map(({ workspace, sessions: originalWsSessions }) => {
           if (!workspace) return null;
           const isCollapsed = collapsedIds.has(workspace.id);
+          const wsSessions = getPreviewList(originalWsSessions);
           return (
             <div key={workspace.id} className="workspace-section">
               <div
@@ -563,7 +578,7 @@ export function ChatSidebarPanel({
                   </div>
                 )}
               </div>
-              {!isCollapsed && wsSessions.map((s) => renderSessionItem(s, wsSessions.map((x) => x.id)))}
+              {!isCollapsed && wsSessions.map((s) => renderSessionItem(s, originalWsSessions.map((x) => x.id)))}
             </div>
           );
         })}
@@ -576,7 +591,7 @@ export function ChatSidebarPanel({
                 <span className="workspace-name">General</span>
               </div>
             )}
-            {ungrouped.map((s) => renderSessionItem(s, ungrouped.map((x) => x.id)))}
+            {getPreviewList(ungrouped).map((s) => renderSessionItem(s, ungrouped.map((x) => x.id)))}
           </div>
         )}
 
