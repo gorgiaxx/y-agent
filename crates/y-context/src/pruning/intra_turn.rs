@@ -203,6 +203,13 @@ impl IntraTurnPruner {
     }
 
     /// Signal 2: Find repeated similar assistant messages.
+    ///
+    /// Skips comparisons when both messages have empty content. In native
+    /// function-calling mode the assistant carries all call information in the
+    /// `tool_calls` field and the text content is empty. Two empty strings have
+    /// `content_similarity` of 1.0, which would incorrectly classify legitimate
+    /// progressive tool call sequences (e.g. consecutive `FileRead` calls with
+    /// increasing `line_offset`) as duplicates and delete earlier results.
     fn detect_repeated_calls(
         messages: &[Message],
         last_boundary: Option<usize>,
@@ -222,7 +229,7 @@ impl IntraTurnPruner {
         let mut j = 0;
         while j < assistant_msgs.len() - 1 {
             let (idx_a, msg_a) = assistant_msgs[j];
-            let (idx_b, _msg_b) = assistant_msgs[j + 1];
+            let (idx_b, msg_b) = assistant_msgs[j + 1];
 
             if idx_b - idx_a > MAX_ADJACENT_DISTANCE {
                 j += 1;
@@ -234,7 +241,18 @@ impl IntraTurnPruner {
                 continue;
             }
 
-            let similarity = content_similarity(&msg_a.content, &assistant_msgs[j + 1].1.content);
+            // Skip the similarity check when both messages have empty text
+            // content. This happens in native function-calling mode where the
+            // assistant embeds all call information in `tool_calls` and the
+            // text content field is intentionally empty. Comparing two empty
+            // strings yields similarity = 1.0, triggering false-positive
+            // removal of valid progressive tool call chains.
+            if msg_a.content.trim().is_empty() && msg_b.content.trim().is_empty() {
+                j += 1;
+                continue;
+            }
+
+            let similarity = content_similarity(&msg_a.content, &msg_b.content);
             if similarity > SIMILARITY_THRESHOLD {
                 // Mark the earlier one for removal.
                 let tokens = estimate_tokens(&msg_a.content);
@@ -634,5 +652,61 @@ mod tests {
         assert!(ids.contains(&"u1"));
         assert!(ids.contains(&"a4"));
         assert!(ids.contains(&"t4"));
+    }
+
+    /// Regression: native tool-calling produces empty assistant message content
+    /// (all info is in `tool_calls`). Two consecutive empty-content assistant
+    /// messages must NOT be classified as "repeated calls" regardless of
+    /// iteration count, because `content_similarity("", "") == 1.0` would
+    /// otherwise delete the earlier FileRead result and break the loop.
+    #[test]
+    fn test_no_pruning_for_empty_content_native_tool_calls() {
+        let pruner = IntraTurnPruner::from_config(&default_config());
+
+        // Simulate knowledge-summarizer: two consecutive FileRead tool calls
+        // where the assistant messages have empty text content (native mode).
+        let mut history = vec![
+            make_msg("s1", Role::System, "system prompt"),
+            make_msg("u1", Role::User, "summarize /path/to/file.md (1000 lines)"),
+            // Iteration 1: empty assistant + FileRead result (chunk 1)
+            make_assistant_with_tool_calls("a1", "", &["tc1"]),
+            make_tool_msg(
+                "t1",
+                "{\"content\": \"chunk 1 content\", \"lines_read\": 500}",
+                "tc1",
+            ),
+            // Iteration 2: empty assistant + FileRead result (chunk 2)
+            make_assistant_with_tool_calls("a2", "", &["tc2"]),
+            make_tool_msg(
+                "t2",
+                "{\"content\": \"chunk 2 content\", \"lines_read\": 500}",
+                "tc2",
+            ),
+        ];
+
+        // Iteration 3 fires pruning (min_iteration = 3). The two empty assistant
+        // messages must NOT be identified as repeats -- all history must survive.
+        let report = pruner.prune_working_history(&mut history, 3);
+        assert!(
+            report.skipped || report.messages_removed == 0,
+            "progressive FileRead chain was incorrectly pruned: {} messages removed",
+            report.messages_removed
+        );
+        assert_eq!(history.len(), 6, "all messages must be preserved");
+
+        let ids: Vec<&str> = history.iter().map(|m| m.message_id.as_str()).collect();
+        assert!(ids.contains(&"a1"), "first FileRead call must be preserved");
+        assert!(
+            ids.contains(&"t1"),
+            "first FileRead result must be preserved"
+        );
+        assert!(
+            ids.contains(&"a2"),
+            "second FileRead call must be preserved"
+        );
+        assert!(
+            ids.contains(&"t2"),
+            "second FileRead result must be preserved"
+        );
     }
 }
