@@ -17,3 +17,4 @@ max_tool_calls = 0
 timeout_secs = 30
 context_sharing = "none"
 max_context_tokens = 163840
+max_completion_tokens = 20480

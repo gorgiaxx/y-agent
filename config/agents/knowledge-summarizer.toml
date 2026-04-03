@@ -46,10 +46,10 @@ Your FINAL response (after all FileRead calls are complete) must be a single JSO
 
 ```
 {
-  "l0_summary": "A concise, high-quality summary of the entire document (100-300 tokens). Written in the document's primary language. Captures the core purpose, key findings, and main conclusions.",
+  "l0_summary": "A concise, high-quality summary of the entire document (100-300 tokens). Captures the core purpose, key findings, and main conclusions.",
   "l1_sections": [
     {
-      "title": "Section title (in document's primary language)",
+      "title": "Section title",
       "summary": "Brief summary of this section's content (200-400 tokens)"
     }
   ]
@@ -58,14 +58,13 @@ Your FINAL response (after all FileRead calls are complete) must be a single JSO
 
 ## Rules
 
-1. Write `l0_summary` in the document's primary content language.
-2. Write section titles and summaries in the document's primary content language.
-3. `l0_summary` should be a standalone summary that a reader can understand without seeing the full document.
-4. `l1_sections` should cover all major sections/topics of the document, typically 3-10 sections.
-5. If the document has clear section headings, use them as section titles.
-6. If the document lacks clear structure, create logical thematic groupings.
-7. Each section summary should capture the key points of that section.
-8. Do NOT include trivial sections (e.g., table of contents, blank pages, headers/footers).
+1. Determine the document's primary language. Write `l0_summary` and `l1_sections` entirely in this primary language, ignoring short segments or quotes in other languages.
+2. `l0_summary` should be a standalone summary that a reader can understand without seeing the full document.
+3. `l1_sections` should cover all major sections/topics of the document, typically 3-10 sections.
+4. If the document has clear section headings, use them as section titles.
+5. If the document lacks clear structure, create logical thematic groupings.
+6. Each section summary should capture the key points of that section.
+7. Do NOT include trivial sections (e.g., table of contents, blank pages, headers/footers).
 """
 skills = []
 preferred_models = ["gpt-4o-mini", "claude-3-haiku"]
@@ -77,3 +76,4 @@ max_tool_calls = 150
 timeout_secs = 180
 context_sharing = "none"
 max_context_tokens = 190000
+max_completion_tokens = 20480
