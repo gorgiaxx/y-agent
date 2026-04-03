@@ -163,6 +163,16 @@ impl OpenAiProvider {
             } else {
                 Some(request.stop.clone())
             },
+            reasoning: request.thinking.as_ref().map(|tc| {
+                use y_core::provider::ThinkingEffort;
+                OpenAiReasoning {
+                    effort: match tc.effort {
+                        ThinkingEffort::Low => "low".to_string(),
+                        ThinkingEffort::Medium => "medium".to_string(),
+                        ThinkingEffort::High | ThinkingEffort::Max => "high".to_string(),
+                    },
+                }
+            }),
         }
     }
 }
@@ -653,6 +663,13 @@ struct OpenAiRequest {
     tools: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<OpenAiReasoning>,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiReasoning {
+    effort: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -863,6 +880,7 @@ mod tests {
             stream_options: None,
             tools: None,
             stop: None,
+            reasoning: None,
         };
 
         let json = serde_json::to_value(&req).unwrap();
@@ -889,6 +907,7 @@ mod tests {
             }),
             tools: None,
             stop: None,
+            reasoning: None,
         };
 
         let json = serde_json::to_value(&req).unwrap();

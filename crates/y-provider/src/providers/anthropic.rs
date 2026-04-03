@@ -123,7 +123,7 @@ impl AnthropicProvider {
 
     /// Build the Anthropic request body.
     fn build_request_body(&self, request: &ChatRequest, stream: bool) -> AnthropicRequest {
-        use y_core::provider::ToolCallingMode;
+        use y_core::provider::{ThinkingEffort, ToolCallingMode};
 
         let model = request.model.as_deref().unwrap_or(&self.metadata.model);
         let system = Self::extract_system(request);
@@ -162,12 +162,35 @@ impl AnthropicProvider {
             }
         };
 
+        // Map unified thinking config to Anthropic adaptive thinking.
+        let (thinking, output_config, temperature) = if let Some(ref tc) = request.thinking {
+            let effort_str = match tc.effort {
+                ThinkingEffort::Low => "low",
+                ThinkingEffort::Medium => "medium",
+                ThinkingEffort::High => "high",
+                ThinkingEffort::Max => "max",
+            };
+            (
+                Some(AnthropicThinking {
+                    thinking_type: "adaptive".to_string(),
+                }),
+                Some(AnthropicOutputConfig {
+                    effort: effort_str.to_string(),
+                }),
+                // Anthropic requires temperature to be unset (or 1.0) when
+                // thinking is enabled.
+                None,
+            )
+        } else {
+            (None, None, request.temperature)
+        };
+
         AnthropicRequest {
             model: model.to_string(),
             messages,
             system,
             max_tokens: request.max_tokens.unwrap_or(4096),
-            temperature: request.temperature,
+            temperature,
             top_p: request.top_p,
             stream,
             tools,
@@ -176,6 +199,8 @@ impl AnthropicProvider {
             } else {
                 Some(request.stop.clone())
             },
+            thinking,
+            output_config,
         }
     }
 }
@@ -847,6 +872,21 @@ struct AnthropicRequest {
     tools: Option<Vec<AnthropicToolDef>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<AnthropicThinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<AnthropicOutputConfig>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicThinking {
+    #[serde(rename = "type")]
+    thinking_type: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicOutputConfig {
+    effort: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -994,6 +1034,8 @@ mod tests {
             stream: false,
             tools: None,
             stop_sequences: None,
+            thinking: None,
+            output_config: None,
         };
 
         let json = serde_json::to_value(&req).unwrap();
@@ -1097,6 +1139,7 @@ mod tests {
             tool_calling_mode: ToolCallingMode::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
+            thinking: None,
         };
 
         let system = AnthropicProvider::extract_system(&request);

@@ -47,6 +47,7 @@ impl HealthChecker {
             tool_calling_mode: ToolCallingMode::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
+            thinking: None,
         };
 
         let result = tokio::time::timeout(self.timeout, provider.chat_completion(&request)).await;

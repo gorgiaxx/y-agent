@@ -80,6 +80,7 @@ impl SingleTurnRunner {
             tool_calling_mode: ToolCallingMode::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
+            thinking: None,
         }
     }
 
@@ -151,6 +152,7 @@ mod tests {
             allowed_tools: vec![],
             denied_tools: vec![],
             max_iterations: 1,
+            trust_tier: None,
             trace_id: None,
         };
 
@@ -184,6 +186,7 @@ mod tests {
             allowed_tools: vec![],
             denied_tools: vec![],
             max_iterations: 1,
+            trust_tier: None,
             trace_id: None,
         };
 
@@ -209,6 +212,7 @@ mod tests {
             allowed_tools: vec![],
             denied_tools: vec![],
             max_iterations: 1,
+            trust_tier: None,
             trace_id: None,
         };
 

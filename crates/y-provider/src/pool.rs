@@ -654,6 +654,7 @@ mod tests {
             tool_calling_mode: ToolCallingMode::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
+            thinking: None,
         }
     }
 
