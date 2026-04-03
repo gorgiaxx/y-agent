@@ -62,7 +62,7 @@ impl Default for InjectKnowledgeConfig {
 /// Lightweight metadata for progressive context injection.
 ///
 /// Stored per `document_id` to provide L0 summary, L1 section titles,
-/// and LLM-generated tags when formatting retrieval results for LLM context.
+/// and structured metadata when formatting retrieval results for LLM context.
 #[derive(Debug, Clone)]
 pub struct EntryMetadata {
     /// Document title.
@@ -73,6 +73,12 @@ pub struct EntryMetadata {
     pub section_titles: Vec<String>,
     /// LLM-generated semantic tags for topic identification.
     pub tags: Vec<String>,
+    /// Document type classification (e.g., "standards", "paper", "manual").
+    pub document_type: Option<String>,
+    /// Industry classification (e.g., "cybersecurity", "finance").
+    pub industry: Option<String>,
+    /// Sub-category within the industry (e.g., "cryptography", "fuzzing").
+    pub subcategory: Option<String>,
 }
 
 /// Knowledge item ready for context injection.
@@ -286,8 +292,9 @@ impl<T: Tokenizer> InjectKnowledge<T> {
 
     /// Format a retrieval result using structured L0/L1 metadata.
     ///
-    /// Produces a compact representation: L0 summary + L1 section titles,
-    /// guiding the LLM to use `KnowledgeSearch` for full content.
+    /// Produces a compact representation: metadata dimensions + L0 summary +
+    /// L1 section titles, guiding the LLM to use `KnowledgeSearch` for full
+    /// content.
     fn format_structured(result: &RetrievalResult, meta: &EntryMetadata) -> String {
         use crate::chunking::is_generic_section_title;
         use std::fmt::Write;
@@ -295,6 +302,21 @@ impl<T: Tokenizer> InjectKnowledge<T> {
             "[Knowledge: {} (relevance: {:.2})]",
             result.chunk.metadata.title, result.relevance,
         );
+
+        // Metadata dimensions (if available).
+        let mut dims = Vec::new();
+        if let Some(ref dt) = meta.document_type {
+            dims.push(format!("Type: {dt}"));
+        }
+        if let Some(ref ind) = meta.industry {
+            dims.push(format!("Industry: {ind}"));
+        }
+        if let Some(ref sub) = meta.subcategory {
+            dims.push(format!("Sub: {sub}"));
+        }
+        if !dims.is_empty() {
+            write!(&mut out, "\n{}", dims.join(" | ")).unwrap();
+        }
 
         // L0 summary
         if let Some(ref summary) = meta.summary {
@@ -319,7 +341,7 @@ impl<T: Tokenizer> InjectKnowledge<T> {
         // understand entry topics and refine search queries.
         if !meta.tags.is_empty() {
             let tags_str = meta.tags.join(", ");
-            write!(&mut out, "\nTags: {tags_str}").unwrap();
+            write!(&mut out, "\nTopics: {tags_str}").unwrap();
         }
 
         out
@@ -495,6 +517,9 @@ mod tests {
                     "Custom Errors".to_string(),
                 ],
                 tags: vec![],
+                document_type: None,
+                industry: None,
+                subcategory: None,
             },
         );
 
@@ -560,6 +585,9 @@ mod tests {
                 summary: Some("Test summary".to_string()),
                 section_titles: vec![],
                 tags: vec![],
+                document_type: None,
+                industry: None,
+                subcategory: None,
             },
         );
 

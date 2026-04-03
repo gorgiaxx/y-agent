@@ -7,6 +7,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::metadata::DocumentMetadata;
+
 // ---------------------------------------------------------------------------
 // Entry State Machine
 // ---------------------------------------------------------------------------
@@ -175,8 +177,11 @@ pub struct KnowledgeEntry {
     // -- Classification --
     /// Domain classifications (e.g., `["rust", "async"]`).
     pub domains: Vec<String>,
-    /// Free-form tags.
+    /// Free-form tags (populated from `metadata.topics` for backward compat).
     pub tags: Vec<String>,
+    /// Multi-dimensional metadata extracted by LLM.
+    #[serde(default)]
+    pub metadata: DocumentMetadata,
 
     // -- Source --
     /// Source provenance.
@@ -229,6 +234,7 @@ impl KnowledgeEntry {
             l1_sections: Vec::new(),
             domains: Vec::new(),
             tags: Vec::new(),
+            metadata: DocumentMetadata::default(),
             source,
             quality_score: 0.0,
             state: EntryState::Fetched,

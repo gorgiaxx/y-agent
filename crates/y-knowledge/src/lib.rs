@@ -20,7 +20,8 @@
 //! - [`progressive::ProgressiveLoader`] — on-demand resolution escalation
 //! - [`quality`] — Quality filtering and deduplication
 //! - [`retrieval::HybridRetriever`] — blend search (vector + BM25) with dedup
-//! - [`tagger`] — LLM-driven tag generation via `knowledge-tagger` sub-agent
+//! - [`metadata`] — Multi-dimensional document metadata (`DocumentMetadata`)
+//! - [`tagger`] — LLM-driven metadata extraction and tag generation
 //! - [`tools`] — Built-in knowledge tools for Agent use
 //! - [`indexer::VectorIndexer`] — Qdrant collection management (feature-gated)
 //! - [`tokenizer`] — English/Chinese text segmentation
@@ -33,6 +34,7 @@ pub mod error;
 pub mod indexer;
 pub mod ingestion;
 pub mod maintenance;
+pub mod metadata;
 pub mod middleware;
 pub mod models;
 pub mod normalize;
@@ -53,6 +55,7 @@ pub use config::KnowledgeConfig;
 pub use error::KnowledgeError;
 pub use ingestion::{IngestionPipeline, RawDocument, SourceConnector};
 pub use maintenance::{HitTracker, MaintenanceManager};
+pub use metadata::DocumentMetadata;
 pub use middleware::{EntryMetadata, InjectKnowledge};
 pub use models::{EntryState, KnowledgeCollection, KnowledgeEntry, L1Section, SourceRef};
 pub use normalize::normalize_for_embedding;
@@ -60,5 +63,8 @@ pub use observability::{KnowledgeEvent, KnowledgeMetrics, MetricsCollector};
 pub use progressive::ProgressiveLoader;
 pub use quality::QualityFilter;
 pub use retrieval::{HybridRetriever, SearchStrategy, SummaryGenerator};
-pub use tagger::{ContentPreparator, TagGenerator, TagMerger};
+pub use tagger::{
+    ContentPreparator, MetadataExtractor, MetadataParser, SummaryGenerator as LlmSummaryGenerator,
+    TagGenerator, TagMerger,
+};
 pub use tokenizer::{AutoTokenizer, ChineseTokenizer, SimpleTokenizer, Tokenizer};

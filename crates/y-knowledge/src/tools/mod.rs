@@ -118,6 +118,12 @@ pub struct KnowledgeIngestParams {
     /// Target collection (default: "default").
     #[serde(default = "default_collection")]
     pub collection: String,
+    /// Use LLM for L0/L1 summarization instead of text extraction.
+    #[serde(default)]
+    pub use_llm_summary: bool,
+    /// Extract multi-dimensional metadata via LLM.
+    #[serde(default)]
+    pub extract_metadata: bool,
 }
 
 fn default_collection() -> String {

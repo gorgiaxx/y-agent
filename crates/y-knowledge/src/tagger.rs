@@ -1,9 +1,15 @@
-//! LLM-driven tag generation for knowledge entries.
+//! LLM-driven metadata extraction and tag generation for knowledge entries.
 //!
-//! Provides the [`TagGenerator`] trait for async tag generation via the
-//! `knowledge-tagger` built-in sub-agent, [`ContentPreparator`] for
-//! preparing document content within LLM context limits, and [`TagMerger`]
-//! for normalizing and deduplicating tag sets.
+//! Provides:
+//! - [`TagGenerator`] trait for backward-compatible async tag generation
+//! - [`MetadataExtractor`] trait for multi-dimensional metadata extraction
+//!   via the `knowledge-metadata` sub-agent
+//! - [`MetadataParser`] for parsing structured JSON from LLM output
+//! - [`SummaryGenerator`] trait for LLM-driven L0/L1 summarization via
+//!   the `knowledge-summarizer` sub-agent
+//! - [`ContentPreparator`] for preparing document content within LLM
+//!   context limits
+//! - [`TagMerger`] for normalizing and deduplicating tag sets
 //!
 //! # Token-Aware Content Preparation
 //!
@@ -16,17 +22,19 @@
 //! | Large  | > 30K tokens    | Map-reduce: per-window tags + merge   |
 
 use crate::error::KnowledgeError;
+use crate::metadata::DocumentMetadata;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Token thresholds
 // ---------------------------------------------------------------------------
 
-/// Maximum tokens for "small" documents — passed in full.
+/// Maximum tokens for "small" documents -- passed in full.
 const SMALL_DOC_THRESHOLD: u32 = 4_000;
 
-/// Maximum tokens for "medium" documents — use summary + excerpts.
+/// Maximum tokens for "medium" documents -- use summary + excerpts.
 const MEDIUM_DOC_THRESHOLD: u32 = 30_000;
 
 /// Target window size for map-reduce chunking of large documents.
@@ -36,13 +44,13 @@ const MAP_REDUCE_WINDOW_TOKENS: u32 = 4_000;
 const MAX_TAGS: usize = 15;
 
 // ---------------------------------------------------------------------------
-// TagGenerator trait
+// TagGenerator trait (backward compat)
 // ---------------------------------------------------------------------------
 
 /// Trait for async tag generation via LLM sub-agent.
 ///
-/// Implementations call the `knowledge-tagger` built-in agent via
-/// `AgentDelegator` to generate tags for knowledge content.
+/// Retained for backward compatibility. New code should prefer
+/// [`MetadataExtractor`] which returns full [`DocumentMetadata`].
 #[async_trait]
 pub trait TagGenerator: Send + Sync {
     /// Generate tags for the given content.
@@ -55,6 +63,270 @@ pub trait TagGenerator: Send + Sync {
         l0_summary: Option<&str>,
         l1_section_titles: &[String],
     ) -> Result<Vec<String>, KnowledgeError>;
+}
+
+// ---------------------------------------------------------------------------
+// MetadataExtractor trait
+// ---------------------------------------------------------------------------
+
+/// Trait for multi-dimensional metadata extraction via LLM sub-agent.
+///
+/// Implementations call the `knowledge-metadata` built-in agent to extract
+/// structured classification (document type, industry, sub-category,
+/// interpreted title, and topic tags) from document content.
+#[async_trait]
+pub trait MetadataExtractor: Send + Sync {
+    /// Extract multi-dimensional metadata from document content.
+    ///
+    /// Uses L0 summary and L1 section titles as input to the metadata agent.
+    /// Returns a populated [`DocumentMetadata`] struct.
+    async fn extract_metadata(
+        &self,
+        content: &str,
+        l0_summary: Option<&str>,
+        l1_section_titles: &[String],
+        original_filename: Option<&str>,
+    ) -> Result<DocumentMetadata, KnowledgeError>;
+}
+
+// ---------------------------------------------------------------------------
+// MetadataParser
+// ---------------------------------------------------------------------------
+
+/// Strip all `<think>...</think>` chain-of-thought blocks from LLM output.
+///
+/// Some models (e.g. `DeepSeek`, Qwen with extended thinking) wrap their
+/// reasoning in `<think>` tags before the actual JSON payload. These blocks
+/// often contain curly braces that confuse the naive `find('{')` JSON
+/// extraction fallback.
+///
+/// This function handles:
+/// - `<think>` appearing after leading whitespace or other preamble text
+/// - Multiple consecutive `<think>` blocks
+/// - Unclosed `<think>` blocks (returns text up to the opening tag)
+fn strip_think_tags(text: &str) -> String {
+    let mut result = text.to_owned();
+    loop {
+        match result.find("<think>") {
+            None => break,
+            Some(start) => {
+                if let Some(end) = result.find("</think>") {
+                    // Replace `<think>...</think>` (including the closing tag) with a space.
+                    let after = end + "</think>".len();
+                    result.replace_range(start..after, " ");
+                } else {
+                    // Unclosed tag: drop everything from `<think>` onward.
+                    result.truncate(start);
+                    break;
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Parses structured JSON output from the `knowledge-metadata` agent
+/// into a [`DocumentMetadata`] struct.
+///
+/// Handles common LLM output quirks: markdown code fences, leading text,
+/// null fields, partial JSON objects, and `<think>` chain-of-thought blocks.
+pub struct MetadataParser;
+
+impl MetadataParser {
+    /// Parse LLM output into [`DocumentMetadata`].
+    ///
+    /// Attempts JSON parsing with fallback for markdown fences,
+    /// `<think>` blocks, and non-JSON preamble.
+    pub fn parse(llm_output: &str) -> Result<DocumentMetadata, KnowledgeError> {
+        tracing::debug!(
+            raw_len = llm_output.len(),
+            raw_preview = %&llm_output[..llm_output.len().min(300)],
+            "MetadataParser: raw LLM output received"
+        );
+
+        // Strip <think>...</think> blocks first.
+        let stripped = strip_think_tags(llm_output);
+        let trimmed = stripped.trim();
+        tracing::debug!(
+            stripped_len = trimmed.len(),
+            stripped_preview = %&trimmed[..trimmed.len().min(300)],
+            "MetadataParser: after stripping think tags"
+        );
+
+        // Strip markdown code fences if present.
+        let cleaned = if trimmed.starts_with("```") {
+            let inner = trimmed
+                .trim_start_matches("```json")
+                .trim_start_matches("```JSON")
+                .trim_start_matches("```")
+                .trim_end_matches("```")
+                .trim();
+            tracing::debug!(
+                cleaned_len = inner.len(),
+                "MetadataParser: stripped markdown fence"
+            );
+            inner
+        } else {
+            trimmed
+        };
+
+        // Try direct parse.
+        if let Ok(meta) = serde_json::from_str::<DocumentMetadata>(cleaned) {
+            tracing::debug!("MetadataParser: direct JSON parse succeeded");
+            return Ok(meta);
+        }
+
+        // Try finding a JSON object in the output.
+        if let Some(start) = cleaned.find('{') {
+            if let Some(end) = cleaned.rfind('}') {
+                let json_str = &cleaned[start..=end];
+                tracing::debug!(
+                    json_preview = %&json_str[..json_str.len().min(300)],
+                    "MetadataParser: trying extracted JSON object"
+                );
+                match serde_json::from_str::<DocumentMetadata>(json_str) {
+                    Ok(meta) => {
+                        tracing::debug!("MetadataParser: extracted JSON object parse succeeded");
+                        return Ok(meta);
+                    }
+                    Err(e) => {
+                        tracing::debug!(err = %e, "MetadataParser: extracted JSON object parse failed");
+                    }
+                }
+            }
+        }
+
+        tracing::warn!(
+            cleaned_preview = %&cleaned[..cleaned.len().min(500)],
+            "MetadataParser: all parse strategies exhausted, returning error"
+        );
+        Err(KnowledgeError::IngestionError {
+            message: format!(
+                "failed to parse metadata from LLM output (first 200 chars): {}",
+                &trimmed[..trimmed.len().min(200)]
+            ),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SummaryGenerator trait
+// ---------------------------------------------------------------------------
+
+/// LLM-generated summary output containing L0 and L1 content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmSummary {
+    /// Concise document summary (L0 level, 100-300 tokens).
+    pub l0_summary: String,
+    /// Structured L1 sections with title and summary.
+    pub l1_sections: Vec<LlmL1Section>,
+}
+
+/// A single L1 section from LLM summarization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmL1Section {
+    /// Section title.
+    pub title: String,
+    /// Section summary.
+    pub summary: String,
+}
+
+/// Trait for LLM-driven document summarization.
+///
+/// Implementations call the `knowledge-summarizer` built-in agent which
+/// uses `FileRead` tool calls to progressively read large files and
+/// generate structured summaries without context window overflow.
+#[async_trait]
+pub trait SummaryGenerator: Send + Sync {
+    /// Generate an LLM-driven summary for a document.
+    ///
+    /// `file_path` is passed to the summarizer agent so it can use
+    /// `FileRead` with `line_offset`/`limit` for progressive reading.
+    /// `total_lines` tells the agent the file size for reading strategy.
+    async fn generate_summary(
+        &self,
+        file_path: &str,
+        total_lines: usize,
+        original_filename: &str,
+    ) -> Result<LlmSummary, KnowledgeError>;
+}
+
+/// Parses structured JSON output from the `knowledge-summarizer` agent
+/// into an [`LlmSummary`] struct.
+pub struct SummaryParser;
+
+impl SummaryParser {
+    /// Parse LLM output into [`LlmSummary`].
+    pub fn parse(llm_output: &str) -> Result<LlmSummary, KnowledgeError> {
+        tracing::debug!(
+            raw_len = llm_output.len(),
+            raw_preview = %&llm_output[..llm_output.len().min(300)],
+            "SummaryParser: raw LLM output received"
+        );
+
+        // Strip <think>...</think> blocks first.
+        let stripped = strip_think_tags(llm_output);
+        let trimmed = stripped.trim();
+        tracing::debug!(
+            stripped_len = trimmed.len(),
+            stripped_preview = %&trimmed[..trimmed.len().min(300)],
+            "SummaryParser: after stripping think tags"
+        );
+
+        // Strip markdown code fences if present.
+        let cleaned = if trimmed.starts_with("```") {
+            let inner = trimmed
+                .trim_start_matches("```json")
+                .trim_start_matches("```JSON")
+                .trim_start_matches("```")
+                .trim_end_matches("```")
+                .trim();
+            tracing::debug!(
+                cleaned_len = inner.len(),
+                "SummaryParser: stripped markdown fence"
+            );
+            inner
+        } else {
+            trimmed
+        };
+
+        // Try direct parse.
+        if let Ok(summary) = serde_json::from_str::<LlmSummary>(cleaned) {
+            tracing::debug!("SummaryParser: direct JSON parse succeeded");
+            return Ok(summary);
+        }
+
+        // Try finding a JSON object in the output.
+        if let Some(start) = cleaned.find('{') {
+            if let Some(end) = cleaned.rfind('}') {
+                let json_str = &cleaned[start..=end];
+                tracing::debug!(
+                    json_preview = %&json_str[..json_str.len().min(300)],
+                    "SummaryParser: trying extracted JSON object"
+                );
+                match serde_json::from_str::<LlmSummary>(json_str) {
+                    Ok(summary) => {
+                        tracing::debug!("SummaryParser: extracted JSON object parse succeeded");
+                        return Ok(summary);
+                    }
+                    Err(e) => {
+                        tracing::debug!(err = %e, "SummaryParser: extracted JSON object parse failed");
+                    }
+                }
+            }
+        }
+
+        tracing::warn!(
+            cleaned_preview = %&cleaned[..cleaned.len().min(500)],
+            "SummaryParser: all parse strategies exhausted, returning error"
+        );
+        Err(KnowledgeError::IngestionError {
+            message: format!(
+                "failed to parse summary from LLM output (first 200 chars): {}",
+                &trimmed[..trimmed.len().min(200)]
+            ),
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -453,5 +725,161 @@ mod tests {
         let windows = preparator.split_into_windows(&content);
         // 2000 chars / (100 * 4 = 400 chars per window) = 5 windows.
         assert_eq!(windows.len(), 5);
+    }
+
+    // --- MetadataParser tests ---
+
+    #[test]
+    fn test_metadata_parser_valid_json() {
+        let output = r#"{
+            "document_type": "standards",
+            "industry": "cybersecurity",
+            "subcategory": "cryptography",
+            "interpreted_title": "Applied Cryptography",
+            "title_language": "en",
+            "topics": ["aes", "rsa"]
+        }"#;
+        let meta = MetadataParser::parse(output).expect("should parse");
+        assert_eq!(meta.document_type, Some("standards".to_string()));
+        assert_eq!(meta.industry, Some("cybersecurity".to_string()));
+        assert_eq!(meta.subcategory, Some("cryptography".to_string()));
+        assert_eq!(
+            meta.interpreted_title,
+            Some("Applied Cryptography".to_string())
+        );
+        assert_eq!(meta.topics, vec!["aes", "rsa"]);
+    }
+
+    #[test]
+    fn test_metadata_parser_with_code_fences() {
+        let output = "```json\n{\"document_type\": \"paper\", \"topics\": [\"ml\"]}\n```";
+        let meta = MetadataParser::parse(output).expect("should parse");
+        assert_eq!(meta.document_type, Some("paper".to_string()));
+    }
+
+    #[test]
+    fn test_metadata_parser_with_preamble() {
+        let output =
+            "Here is the metadata:\n{\"document_type\": \"manual\", \"industry\": \"engineering\"}";
+        let meta = MetadataParser::parse(output).expect("should parse");
+        assert_eq!(meta.document_type, Some("manual".to_string()));
+        assert_eq!(meta.industry, Some("engineering".to_string()));
+    }
+
+    #[test]
+    fn test_metadata_parser_with_null_fields() {
+        let output = r#"{"document_type": "paper", "industry": null, "topics": []}"#;
+        let meta = MetadataParser::parse(output).expect("should parse");
+        assert_eq!(meta.document_type, Some("paper".to_string()));
+        assert!(meta.industry.is_none());
+        assert!(meta.topics.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_parser_invalid() {
+        let output = "This is not JSON at all";
+        assert!(MetadataParser::parse(output).is_err());
+    }
+
+    // --- SummaryParser tests ---
+
+    #[test]
+    fn test_summary_parser_valid_json() {
+        let output = r#"{
+            "l0_summary": "A guide to cryptography.",
+            "l1_sections": [
+                {"title": "Introduction", "summary": "Overview of crypto."},
+                {"title": "AES", "summary": "Symmetric encryption."}
+            ]
+        }"#;
+        let summary = SummaryParser::parse(output).expect("should parse");
+        assert_eq!(summary.l0_summary, "A guide to cryptography.");
+        assert_eq!(summary.l1_sections.len(), 2);
+        assert_eq!(summary.l1_sections[0].title, "Introduction");
+    }
+
+    #[test]
+    fn test_summary_parser_with_code_fences() {
+        let output = "```json\n{\"l0_summary\": \"Test\", \"l1_sections\": []}\n```";
+        let summary = SummaryParser::parse(output).expect("should parse");
+        assert_eq!(summary.l0_summary, "Test");
+    }
+
+    #[test]
+    fn test_summary_parser_invalid() {
+        let output = "Not valid JSON";
+        assert!(SummaryParser::parse(output).is_err());
+    }
+
+    // --- strip_think_tags tests ---
+
+    #[test]
+    fn test_strip_think_tags_basic() {
+        let input = "<think>reasoning here</think>\n\n{\"key\": \"value\"}";
+        assert_eq!(strip_think_tags(input).trim(), "{\"key\": \"value\"}");
+    }
+
+    #[test]
+    fn test_strip_think_tags_with_braces_in_thinking() {
+        let input =
+            "<think>I need to output {\"foo\": \"bar\"} format</think>\n\n{\"actual\": \"data\"}";
+        assert_eq!(strip_think_tags(input).trim(), "{\"actual\": \"data\"}");
+    }
+
+    #[test]
+    fn test_strip_think_tags_no_tags() {
+        let input = "{\"key\": \"value\"}";
+        assert_eq!(strip_think_tags(input).trim(), "{\"key\": \"value\"}");
+    }
+
+    #[test]
+    fn test_strip_think_tags_preamble_before_tag() {
+        // Preamble text before <think> should be preserved; think block removed.
+        let input = "Sure!\n<think>inner reasoning</think>\n{\"key\": \"value\"}";
+        let result = strip_think_tags(input);
+        assert!(result.contains("{\"key\": \"value\"}"));
+        assert!(!result.contains("inner reasoning"));
+    }
+
+    #[test]
+    fn test_strip_think_tags_multiple_blocks() {
+        let input = "<think>first</think>middle<think>second</think>end";
+        let result = strip_think_tags(input);
+        assert!(!result.contains("first"));
+        assert!(!result.contains("second"));
+        assert!(result.contains("middle"));
+        assert!(result.contains("end"));
+    }
+
+    #[test]
+    fn test_strip_think_tags_unclosed() {
+        let input = "prefix<think>unclosed reasoning";
+        let result = strip_think_tags(input);
+        assert_eq!(result.trim(), "prefix");
+    }
+
+    #[test]
+    fn test_metadata_parser_with_think_tags() {
+        let output = "<think>Let me analyze this document. It seems like a standards doc with {json} content.\n</think>\n\n{\"document_type\": \"standards\", \"industry\": \"automotive\", \"topics\": [\"safety\"]}";
+        let meta = MetadataParser::parse(output).expect("should parse with think tags");
+        assert_eq!(meta.document_type, Some("standards".to_string()));
+        assert_eq!(meta.industry, Some("automotive".to_string()));
+    }
+
+    #[test]
+    fn test_metadata_parser_with_think_tags_and_preamble() {
+        // Simulates a model that outputs text before the <think> block.
+        let output = "Here is my analysis:\n<think>thinking...</think>\n{\"document_type\": \"standards\", \"industry\": \"automotive\", \"topics\": [\"safety\"]}";
+        let meta =
+            MetadataParser::parse(output).expect("should parse with think tags and preamble");
+        assert_eq!(meta.document_type, Some("standards".to_string()));
+    }
+
+    #[test]
+    fn test_summary_parser_with_think_tags() {
+        let output = "<think>I'll summarize this document now.</think>\n\n{\"l0_summary\": \"Test summary.\", \"l1_sections\": [{\"title\": \"Intro\", \"summary\": \"Overview.\"}]}";
+        let summary = SummaryParser::parse(output).expect("should parse with think tags");
+        assert_eq!(summary.l0_summary, "Test summary.");
+        assert_eq!(summary.l1_sections.len(), 1);
     }
 }
