@@ -13,6 +13,41 @@ use y_knowledge::config::KnowledgeConfig;
 use y_service::knowledge_service::KnowledgeService;
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Strip a title prefix from the beginning of content text.
+///
+/// When L1 sections are chunked, the chunk content often starts with the
+/// heading line that was also extracted as the section title. This helper
+/// removes that redundant prefix so the GUI displays title and body
+/// separately without duplication.
+fn strip_title_prefix(content: &str, title: &str) -> String {
+    let trimmed = content.trim_start();
+
+    // Try stripping markdown heading markers (e.g. "## Title\n...")
+    for prefix in ["#### ", "### ", "## ", "# "] {
+        let heading = format!("{prefix}{title}");
+        if let Some(rest) = trimmed.strip_prefix(&heading) {
+            let rest = rest.trim_start();
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
+    }
+
+    // Try stripping plain title at the start of content.
+    if let Some(rest) = trimmed.strip_prefix(title) {
+        let rest = rest.trim_start();
+        if !rest.is_empty() {
+            return rest.to_string();
+        }
+    }
+
+    content.to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Lazy knowledge service (stored alongside AppState)
 // ---------------------------------------------------------------------------
 
@@ -90,6 +125,12 @@ pub struct EntryInfo {
     pub state: String,
     pub hit_count: u64,
     pub updated_at: String,
+    /// Multi-dimensional metadata fields.
+    pub document_type: Option<String>,
+    pub industry: Option<String>,
+    pub subcategory: Option<String>,
+    pub interpreted_title: Option<String>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -105,6 +146,12 @@ pub struct EntryDetail {
     pub l0_summary: String,
     pub l1_sections: Vec<SectionInfo>,
     pub l2_chunks: Vec<ChunkInfo>,
+    /// Multi-dimensional metadata fields.
+    pub document_type: Option<String>,
+    pub industry: Option<String>,
+    pub subcategory: Option<String>,
+    pub interpreted_title: Option<String>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -271,6 +318,11 @@ pub async fn kb_entry_list(
             state: e.state.to_string(),
             hit_count: u64::from(e.hit_num),
             updated_at: e.refreshed_at.to_rfc3339(),
+            document_type: e.metadata.document_type.clone(),
+            industry: e.metadata.industry.clone(),
+            subcategory: e.metadata.subcategory.clone(),
+            interpreted_title: e.metadata.interpreted_title.clone(),
+            tags: e.tags.clone(),
         })
         .collect())
 }
@@ -294,10 +346,15 @@ pub async fn kb_entry_detail(
     let l1_sections: Vec<SectionInfo> = entry
         .l1_sections
         .iter()
-        .map(|s| SectionInfo {
-            index: s.index,
-            title: s.title.clone(),
-            summary: s.content.clone(),
+        .map(|s| {
+            // Strip the title from the beginning of the content to avoid
+            // redundant display (title shown as heading, content as body).
+            let summary = strip_title_prefix(&s.content, &s.title);
+            SectionInfo {
+                index: s.index,
+                title: s.title.clone(),
+                summary,
+            }
         })
         .collect();
 
@@ -327,6 +384,11 @@ pub async fn kb_entry_detail(
         l0_summary,
         l1_sections,
         l2_chunks,
+        document_type: entry.metadata.document_type.clone(),
+        industry: entry.metadata.industry.clone(),
+        subcategory: entry.metadata.subcategory.clone(),
+        interpreted_title: entry.metadata.interpreted_title.clone(),
+        tags: entry.tags.clone(),
     })
 }
 
@@ -364,19 +426,27 @@ pub async fn kb_search(
 /// Ingest a document.
 #[tauri::command]
 pub async fn kb_ingest(
+    _app: tauri::AppHandle,
     kb: State<'_, KnowledgeState>,
     source: String,
     domain: Option<String>,
     collection: String,
+    use_llm_summary: Option<bool>,
+    extract_metadata: Option<bool>,
 ) -> Result<IngestResult, String> {
+    let llm_summary = use_llm_summary.unwrap_or(false);
+    let metadata_flag = extract_metadata.unwrap_or(false);
+
     let mut service = kb.service.lock().await;
     let params = y_knowledge::tools::KnowledgeIngestParams {
         source,
         domain,
         collection,
+        use_llm_summary: llm_summary,
+        extract_metadata: metadata_flag,
     };
 
-    match service.ingest(&params, "default").await {
+    let result = match service.ingest(&params, "default").await {
         Ok(r) => Ok(IngestResult {
             success: r.success,
             entry_id: r.entry_id,
@@ -393,7 +463,9 @@ pub async fn kb_ingest(
             quality_score: 0.0,
             message: e.to_string(),
         }),
-    }
+    };
+
+    result
 }
 
 /// Delete an entry.
@@ -494,10 +566,15 @@ pub async fn kb_ingest_batch(
     sources: Vec<String>,
     domain: Option<String>,
     collection: String,
+    use_llm_summary: Option<bool>,
+    extract_metadata: Option<bool>,
 ) -> Result<BatchIngestResult, String> {
     let total = sources.len();
     let mut succeeded = 0usize;
     let mut errors = Vec::<String>::new();
+
+    let llm_summary = use_llm_summary.unwrap_or(false);
+    let metadata_flag = extract_metadata.unwrap_or(false);
 
     for (i, source) in sources.iter().enumerate() {
         // Emit progress before each file.
@@ -514,6 +591,8 @@ pub async fn kb_ingest_batch(
             source: source.clone(),
             domain: domain.clone(),
             collection: collection.clone(),
+            use_llm_summary: llm_summary,
+            extract_metadata: metadata_flag,
         };
 
         let mut service = kb.service.lock().await;
@@ -535,4 +614,42 @@ pub async fn kb_ingest_batch(
         failed: errors.len(),
         errors,
     })
+}
+
+/// Update metadata fields for a knowledge entry.
+#[tauri::command]
+pub async fn kb_entry_update_metadata(
+    kb: State<'_, KnowledgeState>,
+    entry_id: String,
+    document_type: Option<String>,
+    industry: Option<String>,
+    subcategory: Option<String>,
+    interpreted_title: Option<String>,
+    tags: Option<Vec<String>>,
+) -> Result<(), String> {
+    let mut service = kb.service.lock().await;
+    let entry = service
+        .get_entry_mut(&entry_id)
+        .ok_or_else(|| format!("Entry '{entry_id}' not found"))?;
+
+    if let Some(dt) = document_type {
+        entry.metadata.document_type = Some(dt);
+    }
+    if let Some(ind) = industry {
+        entry.metadata.industry = Some(ind);
+    }
+    if let Some(sub) = subcategory {
+        entry.metadata.subcategory = Some(sub);
+    }
+    if let Some(title) = interpreted_title {
+        entry.metadata.interpreted_title = Some(title);
+    }
+    if let Some(new_tags) = tags {
+        entry.tags.clone_from(&new_tags);
+        entry.metadata.topics = new_tags;
+    }
+
+    // Persist changes.
+    service.save_entries_public();
+    Ok(())
 }

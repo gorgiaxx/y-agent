@@ -86,14 +86,6 @@ pub struct TitleUpdatedPayload {
     pub title: String,
 }
 
-/// Payload emitted on `diagnostics:subagent_completed` so the frontend
-/// can refresh subagent history in the Global diagnostics view.
-#[derive(Debug, Serialize, Clone)]
-pub struct SubagentCompletedPayload {
-    pub agent_name: String,
-    pub session_id: Option<String>,
-}
-
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -114,10 +106,23 @@ pub async fn chat_send(
     skills: Option<Vec<String>>,
     knowledge_collections: Option<Vec<String>>,
     context_start_index: Option<usize>,
+    thinking_effort: Option<String>,
 ) -> Result<ChatStarted, String> {
     if message.trim().is_empty() {
         return Err("Message must not be empty".into());
     }
+
+    let thinking = thinking_effort.and_then(|e| {
+        use y_core::provider::{ThinkingConfig, ThinkingEffort};
+        let effort = match e.as_str() {
+            "low" => ThinkingEffort::Low,
+            "medium" => ThinkingEffort::Medium,
+            "high" => ThinkingEffort::High,
+            "max" => ThinkingEffort::Max,
+            _ => return None,
+        };
+        Some(ThinkingConfig { effort })
+    });
 
     let run_id = uuid::Uuid::new_v4().to_string();
 
@@ -130,6 +135,7 @@ pub async fn chat_send(
             provider_id: provider_id.clone(),
             skills: skills.clone(),
             knowledge_collections: knowledge_collections.clone(),
+            thinking,
         },
     )
     .await
@@ -414,18 +420,6 @@ fn spawn_llm_worker(
                             }
                         }
                     }
-
-                    // Notify the frontend to refresh subagent history.
-                    // This covers all subagent calls that may have occurred
-                    // during the turn: title generation, post-turn pruning
-                    // (progressive summarizer), and any future subagent paths.
-                    let _ = app.emit(
-                        "diagnostics:subagent_completed",
-                        SubagentCompletedPayload {
-                            agent_name: "turn-complete".to_string(),
-                            session_id: Some(sid_clone.0.clone()),
-                        },
-                    );
                 }
                 Err(e) => {
                     let _ = app.emit(
@@ -651,6 +645,7 @@ pub async fn chat_resend(
             checkpoint_id,
             provider_id,
             knowledge_collections,
+            thinking: None,
         },
     )
     .await
@@ -945,7 +940,7 @@ pub struct CompactResult {
 /// compaction threshold.
 #[tauri::command]
 pub async fn context_compact(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<CompactResult, String> {
@@ -956,16 +951,6 @@ pub async fn context_compact(
     )
     .await
     .map_err(|e| format!("{e}"))?;
-
-    // Notify the frontend to refresh subagent history in case progressive
-    // pruning used the pruning-summarizer subagent.
-    let _ = app.emit(
-        "diagnostics:subagent_completed",
-        SubagentCompletedPayload {
-            agent_name: "context-compact".to_string(),
-            session_id: Some(sid.0.clone()),
-        },
-    );
 
     Ok(CompactResult {
         messages_pruned: report.messages_pruned,

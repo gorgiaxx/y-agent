@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 use y_skills::{
     FilesystemSkillStore, FormatDetector, IngestionFormat, ManifestParser, SkillConfig,
@@ -202,7 +202,7 @@ pub async fn skill_open_folder(state: State<'_, AppState>, name: String) -> Resu
 /// when the user explicitly enables it.
 #[tauri::command]
 pub async fn skill_import(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     sanitize: bool,
@@ -334,18 +334,9 @@ pub async fn skill_import(
                 // If secure, caution, or unparseable, fall through to ingestion.
             }
             Err(e) => {
-                tracing::warn!(error = %e, "Security check agent failed — proceeding with ingestion");
+                tracing::warn!(error = %e, "Security check agent failed -- proceeding with ingestion");
             }
         }
-
-        // Notify frontend that the security subagent finished.
-        let _ = app.emit(
-            "diagnostics:subagent_completed",
-            super::chat::SubagentCompletedPayload {
-                agent_name: "skill-security-check".to_string(),
-                session_id: None,
-            },
-        );
     }
 
     // ---------------------------------------------------------------
@@ -362,68 +353,35 @@ pub async fn skill_import(
 
     let ingestion_service = state.container.skill_ingestion_service(registry);
 
-    // Set up a progress channel so that LLM / tool-call events during
-    // agent-assisted ingestion are forwarded to the frontend in real-time
-    // (instead of batched at the end).
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<y_service::TurnEvent>();
-    let app_progress = app.clone();
-    let progress_task = tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            let _ = app_progress.emit(
-                "diagnostics:subagent_progress",
-                super::chat::ProgressPayload {
-                    run_id: "skill-ingestion".to_string(),
-                    event,
-                },
-            );
+    // Real-time diagnostics events (LLM calls, tool calls) are delivered
+    // automatically via the diagnostics broadcast bridge -- no manual
+    // channel wiring needed.
+    let import_result = match ingestion_service.import(source_path).await {
+        Ok(result) => {
+            let decision = match result.decision {
+                y_service::ImportDecision::Accepted => "accepted",
+                y_service::ImportDecision::Optimized => "optimized",
+                y_service::ImportDecision::PartialAccept => "partial_accept",
+                y_service::ImportDecision::Rejected => "rejected",
+            };
+            Ok(SkillImportResult {
+                decision: decision.to_string(),
+                classification: result.classification,
+                skill_id: result.skill_id,
+                error: result.rejection_reason,
+                security_issues: result.security_issues,
+                permissions_needed: None,
+            })
         }
-    });
-
-    // Run the import with the progress sender injected via task-local.
-    let import_result = y_service::diagnostics::SUBAGENT_PROGRESS
-        .scope(tx, async {
-            match ingestion_service.import(source_path).await {
-                Ok(result) => {
-                    let decision = match result.decision {
-                        y_service::ImportDecision::Accepted => "accepted",
-                        y_service::ImportDecision::Optimized => "optimized",
-                        y_service::ImportDecision::PartialAccept => "partial_accept",
-                        y_service::ImportDecision::Rejected => "rejected",
-                    };
-                    Ok(SkillImportResult {
-                        decision: decision.to_string(),
-                        classification: result.classification,
-                        skill_id: result.skill_id,
-                        error: result.rejection_reason,
-                        security_issues: result.security_issues,
-                        permissions_needed: None,
-                    })
-                }
-                Err(e) => Ok(SkillImportResult {
-                    decision: "rejected".to_string(),
-                    classification: String::new(),
-                    skill_id: None,
-                    error: Some(e.to_string()),
-                    security_issues: vec![],
-                    permissions_needed: None,
-                }),
-            }
-        })
-        .await;
-
-    // Wait for the progress forwarder to flush all queued events before
-    // emitting the terminal event.
-    let _ = progress_task.await;
-
-    // Notify frontend that the ingestion subagent finished so the
-    // Global diagnostics view picks up the new trace entries.
-    let _ = app.emit(
-        "diagnostics:subagent_completed",
-        super::chat::SubagentCompletedPayload {
-            agent_name: "skill-ingestion".to_string(),
-            session_id: None,
-        },
-    );
+        Err(e) => Ok(SkillImportResult {
+            decision: "rejected".to_string(),
+            classification: String::new(),
+            skill_id: None,
+            error: Some(e.to_string()),
+            security_issues: vec![],
+            permissions_needed: None,
+        }),
+    };
 
     import_result
 }

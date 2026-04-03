@@ -46,6 +46,7 @@ pub struct AgentDetail {
     pub timeout_secs: u64,
     pub context_sharing: String,
     pub max_context_tokens: usize,
+    pub max_completion_tokens: Option<usize>,
     pub is_overridden: bool,
 }
 
@@ -127,6 +128,7 @@ pub async fn agent_get(state: State<'_, AppState>, id: String) -> Result<AgentDe
         timeout_secs: def.timeout_secs,
         context_sharing: format!("{:?}", def.context_sharing).to_lowercase(),
         max_context_tokens: def.max_context_tokens,
+        max_completion_tokens: def.max_completion_tokens,
         is_overridden: registry.is_overridden(&def.id),
     })
 }

@@ -10,7 +10,7 @@ mod state;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use y_service::{ServiceConfig, ServiceContainer};
 
@@ -117,6 +117,34 @@ pub fn run() {
             // get the full execution loop with multi-turn tool calling.
             rt.block_on(container.start_background_services());
 
+            // Spawn a background task that bridges the diagnostics broadcast
+            // channel to Tauri events. This enables real-time diagnostics
+            // for ALL agent executions (knowledge import, skill import, etc.)
+            // without per-caller manual wiring.
+            {
+                let mut rx = container.diagnostics_broadcast.subscribe();
+                let app_handle = app.handle().clone();
+                rt.spawn(async move {
+                    loop {
+                        match rx.recv().await {
+                            Ok(event) => {
+                                let _ = app_handle.emit("diagnostics:event", &event);
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!(
+                                    skipped = n,
+                                    "diagnostics broadcast bridge lagged -- events dropped"
+                                );
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                tracing::debug!("diagnostics broadcast channel closed");
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+
             let app_state = AppState::new(Arc::clone(&container), config_path.clone());
             app.manage(app_state);
             app.manage(knowledge_state);
@@ -206,6 +234,7 @@ pub fn run() {
             commands::knowledge::kb_stats,
             commands::knowledge::kb_expand_folder,
             commands::knowledge::kb_ingest_batch,
+            commands::knowledge::kb_entry_update_metadata,
             // Agents
             commands::agents::agent_list,
             commands::agents::agent_get,
