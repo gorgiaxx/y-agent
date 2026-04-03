@@ -211,12 +211,14 @@ export function ChatSidebarPanel({
           dragGroupRef.current = groupSessionIds;
           dropTargetRef.current = null;
           setDraggedSessionId(sessionId);
+          document.body.classList.add('y-gui-dragging');
         }
       };
 
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
+        document.body.classList.remove('y-gui-dragging');
         if (!dragging) return;
 
         // Commit reorder using the latest drop target tracked by handleItemHover.
@@ -245,7 +247,10 @@ export function ChatSidebarPanel({
       }
     };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.body.classList.remove('y-gui-dragging');
+    };
   }, []);
 
   const filtered = useMemo(() => {
