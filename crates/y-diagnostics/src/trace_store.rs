@@ -45,6 +45,10 @@ pub trait TraceStore: Send + Sync {
     /// Insert an observation for a trace.
     async fn insert_observation(&self, obs: Observation) -> Result<(), TraceStoreError>;
 
+    /// Update an existing observation (e.g. Running -> Completed after
+    /// streaming finishes).
+    async fn update_observation(&self, obs: Observation) -> Result<(), TraceStoreError>;
+
     /// Get all observations for a trace (flat list).
     async fn get_observations(&self, trace_id: Uuid) -> Result<Vec<Observation>, TraceStoreError>;
 
@@ -104,6 +108,9 @@ impl<T: TraceStore + ?Sized> TraceStore for std::sync::Arc<T> {
     }
     async fn insert_observation(&self, obs: Observation) -> Result<(), TraceStoreError> {
         (**self).insert_observation(obs).await
+    }
+    async fn update_observation(&self, obs: Observation) -> Result<(), TraceStoreError> {
+        (**self).update_observation(obs).await
     }
     async fn get_observations(&self, trace_id: Uuid) -> Result<Vec<Observation>, TraceStoreError> {
         (**self).get_observations(trace_id).await
@@ -197,6 +204,19 @@ impl TraceStore for InMemoryTraceStore {
             .or_default()
             .push(obs);
         Ok(())
+    }
+
+    async fn update_observation(&self, obs: Observation) -> Result<(), TraceStoreError> {
+        let mut map = self.observations.write().unwrap();
+        let entries = map
+            .get_mut(&obs.trace_id)
+            .ok_or(TraceStoreError::ObservationNotFound { id: obs.id })?;
+        if let Some(existing) = entries.iter_mut().find(|o| o.id == obs.id) {
+            *existing = obs;
+            Ok(())
+        } else {
+            Err(TraceStoreError::ObservationNotFound { id: obs.id })
+        }
     }
 
     async fn get_observations(&self, trace_id: Uuid) -> Result<Vec<Observation>, TraceStoreError> {

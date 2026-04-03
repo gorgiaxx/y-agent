@@ -517,6 +517,43 @@ impl TraceStore for SqliteTraceStore {
         Ok(())
     }
 
+    async fn update_observation(&self, obs: Observation) -> Result<(), TraceStoreError> {
+        let id = obs.id.to_string();
+        let status = obs_status_to_str(obs.status);
+        let output = serde_json::to_string(&obs.output).unwrap_or_else(|_| "null".into());
+        let metadata = serde_json::to_string(&obs.metadata).unwrap_or_else(|_| "null".into());
+        let completed_at = obs.completed_at.map(|t| t.to_rfc3339());
+        let input_toks = i64::try_from(obs.input_tokens).unwrap_or(i64::MAX);
+        let output_toks = i64::try_from(obs.output_tokens).unwrap_or(i64::MAX);
+
+        let rows = sqlx::query(
+            "UPDATE diag_observations SET \
+             status = ?1, output = ?2, metadata = ?3, completed_at = ?4, \
+             input_tokens = ?5, output_tokens = ?6, cost_usd = ?7, \
+             error_message = ?8, model = ?9 \
+             WHERE id = ?10",
+        )
+        .bind(status)
+        .bind(&output)
+        .bind(&metadata)
+        .bind(&completed_at)
+        .bind(input_toks)
+        .bind(output_toks)
+        .bind(obs.cost_usd)
+        .bind(&obs.error_message)
+        .bind(&obs.model)
+        .bind(&id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| storage_err(format!("update_observation: {e}")))?
+        .rows_affected();
+
+        if rows == 0 {
+            return Err(TraceStoreError::ObservationNotFound { id: obs.id });
+        }
+        Ok(())
+    }
+
     async fn get_observations(&self, trace_id: Uuid) -> Result<Vec<Observation>, TraceStoreError> {
         let trace_id_str = trace_id.to_string();
         let rows: Vec<ObsRow> = sqlx::query_as(

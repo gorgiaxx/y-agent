@@ -36,6 +36,25 @@ pub struct GenerationParams {
     pub duration_ms: u64,
 }
 
+/// Parameters for creating a Running generation observation (stream started).
+pub struct GenerationStartParams {
+    pub trace_id: Uuid,
+    pub parent_id: Option<Uuid>,
+    pub session_id: Option<Uuid>,
+    pub model: String,
+    pub input: serde_json::Value,
+}
+
+/// Parameters for finalizing a streaming generation observation.
+pub struct GenerationCompleteParams {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+    pub output: serde_json::Value,
+    pub duration_ms: u64,
+    pub model: String,
+}
+
 /// Subscriber that listens to y-hooks events and auto-captures diagnostics.
 pub struct DiagnosticsSubscriber<S: ?Sized> {
     store: Arc<S>,
@@ -94,6 +113,56 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
         let obs_id = obs.id;
         self.store.insert_observation(obs).await?;
         Ok(obs_id)
+    }
+
+    /// Create a Running generation observation (stream started).
+    ///
+    /// Returns the observation ID so the caller can later finalize it with
+    /// [`on_generation_complete`].
+    pub async fn on_generation_start(
+        &self,
+        params: GenerationStartParams,
+    ) -> Result<Uuid, crate::trace_store::TraceStoreError> {
+        let mut obs = Observation::new(
+            params.trace_id,
+            ObservationType::Generation,
+            "llm-generation",
+        );
+        obs.parent_id = params.parent_id;
+        obs.session_id = params.session_id;
+        obs.model = Some(params.model.clone());
+        obs.input = params.input;
+        obs.status = ObservationStatus::Running;
+        let obs_id = obs.id;
+        self.store.insert_observation(obs).await?;
+        Ok(obs_id)
+    }
+
+    /// Finalize a streaming generation observation (stream completed).
+    ///
+    /// Updates the observation from Running to Completed with final token
+    /// counts, cost, and output.
+    pub async fn on_generation_complete(
+        &self,
+        obs_id: Uuid,
+        trace_id: Uuid,
+        params: GenerationCompleteParams,
+    ) -> Result<(), crate::trace_store::TraceStoreError> {
+        let observations = self.store.get_observations(trace_id).await?;
+        let existing = observations
+            .into_iter()
+            .find(|o| o.id == obs_id)
+            .ok_or(crate::trace_store::TraceStoreError::ObservationNotFound { id: obs_id })?;
+        let mut obs = existing;
+        obs.model = Some(params.model);
+        obs.input_tokens = params.input_tokens;
+        obs.output_tokens = params.output_tokens;
+        obs.cost_usd = params.cost_usd;
+        obs.output = params.output;
+        obs.status = ObservationStatus::Completed;
+        obs.completed_at = Some(Utc::now());
+        obs.metadata = serde_json::json!({ "duration_ms": params.duration_ms });
+        self.store.update_observation(obs).await
     }
 
     /// Handle a tool call observation (recorded after execution).
