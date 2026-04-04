@@ -92,6 +92,9 @@ bollard = "0.18"
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 
+# Encoding
+base64 = "0.22"
+
 # JSON Schema validation
 jsonschema = "0.28"
 
