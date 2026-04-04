@@ -89,7 +89,7 @@ pub fn ensure_initialized(
 
     // -- Copy skills from source directory ------------------------------------
     if let Some(source) = skills_source_dir {
-        report.skills_seeded = copy_skills_from_source(source, data_dir)?;
+        report.skills_seeded = copy_skills_from_source(source, config_dir)?;
     }
 
     // -- Seed agent definitions -----------------------------------------------
@@ -167,13 +167,13 @@ fn seed_builtin_prompts(config_dir: &Path) -> Result<Vec<String>> {
     Ok(seeded)
 }
 
-/// Copy skill directories from a source directory into `<data_dir>/skills/`.
+/// Copy skill directories from a source directory into `<base_dir>/skills/`.
 ///
 /// Each immediate subdirectory in `source_dir` is treated as a skill.
 /// Skills that already exist in the destination are skipped (idempotent).
 /// Returns the list of skill names that were copied.
-pub fn copy_skills_from_source(source_dir: &Path, data_dir: &Path) -> Result<Vec<String>> {
-    let skills_dir = data_dir.join("skills");
+pub fn copy_skills_from_source(source_dir: &Path, base_dir: &Path) -> Result<Vec<String>> {
+    let skills_dir = base_dir.join("skills");
     std::fs::create_dir_all(&skills_dir)
         .with_context(|| format!("creating skills directory: {}", skills_dir.display()))?;
 
@@ -300,9 +300,11 @@ mod tests {
         assert!(config_dir.join("y-agent.toml").exists());
         assert!(config_dir.join("providers.toml").exists());
         assert!(config_dir.join("prompts").is_dir());
-        assert!(data_dir.join("skills").is_dir());
-        assert!(data_dir.join("skills/test-skill/skill.toml").exists());
-        assert!(data_dir.join("skills/test-skill/details/guide.md").exists());
+        assert!(config_dir.join("skills").is_dir());
+        assert!(config_dir.join("skills/test-skill/skill.toml").exists());
+        assert!(config_dir
+            .join("skills/test-skill/details/guide.md")
+            .exists());
     }
 
     #[test]
@@ -339,25 +341,25 @@ mod tests {
     #[test]
     fn copy_skills_from_source_skips_existing() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let data_dir = tmp.path().join("data");
+        let config_dir = tmp.path().join("config");
         let skills_src = create_sample_skills_source(tmp.path());
 
         // First copy succeeds.
-        let seeded = copy_skills_from_source(&skills_src, &data_dir).unwrap();
+        let seeded = copy_skills_from_source(&skills_src, &config_dir).unwrap();
         assert_eq!(seeded, vec!["test-skill"]);
 
         // Second copy skips existing.
-        let seeded2 = copy_skills_from_source(&skills_src, &data_dir).unwrap();
+        let seeded2 = copy_skills_from_source(&skills_src, &config_dir).unwrap();
         assert!(seeded2.is_empty());
     }
 
     #[test]
     fn copy_skills_nonexistent_source_returns_empty() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let data_dir = tmp.path().join("data");
+        let config_dir = tmp.path().join("config");
         let fake_src = tmp.path().join("nonexistent-skills");
 
-        let seeded = copy_skills_from_source(&fake_src, &data_dir).unwrap();
+        let seeded = copy_skills_from_source(&fake_src, &config_dir).unwrap();
         assert!(seeded.is_empty());
     }
 }

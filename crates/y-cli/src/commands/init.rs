@@ -532,8 +532,8 @@ pub fn detect_skills_source() -> Option<PathBuf> {
 /// Thin wrapper around [`y_service::init::copy_skills_from_source`].
 /// Only installs skills that don't already exist (won't overwrite user modifications).
 /// Returns the list of skill names that were seeded.
-pub fn seed_skills_from_source(source_dir: &Path, data_dir: &Path) -> Result<Vec<String>> {
-    y_service::init::copy_skills_from_source(source_dir, data_dir)
+pub fn seed_skills_from_source(source_dir: &Path, base_dir: &Path) -> Result<Vec<String>> {
+    y_service::init::copy_skills_from_source(source_dir, base_dir)
 }
 
 /// Seed built-in prompt files into the user's config directory.
@@ -968,7 +968,7 @@ pub async fn run(args: &InitArgs) -> Result<()> {
 
     // --- Step 6c: Seed skills from source directory ---
     if let Some(skills_source) = detect_skills_source() {
-        match seed_skills_from_source(&skills_source, &data_dir) {
+        match seed_skills_from_source(&skills_source, &base) {
             Ok(seeded) => {
                 if seeded.is_empty() {
                     output::print_info("Skills already installed");

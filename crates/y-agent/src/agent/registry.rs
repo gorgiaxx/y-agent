@@ -49,6 +49,9 @@ pub struct AgentRegistry {
     definitions: HashMap<String, AgentDefinition>,
     /// Original built-in definitions, preserved for reset support.
     builtin_originals: HashMap<String, AgentDefinition>,
+    /// Expanded TOML source content for each built-in agent (keyed by agent ID).
+    /// Used to detect unmodified seed copies in the user agents directory.
+    builtin_sources: HashMap<String, String>,
     /// Template variables for TOML expansion (e.g. `{{YAGENT_CONFIG_PATH}}`).
     template_vars: Vec<(String, String)>,
     /// Path to the user-defined agents directory, retained for hot-reload.
@@ -88,6 +91,7 @@ impl AgentRegistry {
         let mut registry = Self {
             definitions: HashMap::new(),
             builtin_originals: HashMap::new(),
+            builtin_sources: HashMap::new(),
             template_vars: Vec::new(),
             agents_dir: None,
         };
@@ -108,6 +112,7 @@ impl AgentRegistry {
         Self {
             definitions: HashMap::new(),
             builtin_originals: HashMap::new(),
+            builtin_sources: HashMap::new(),
             template_vars: Vec::new(),
             agents_dir: None,
         }
@@ -364,8 +369,17 @@ impl AgentRegistry {
                     let expanded = self.expand_templates(&content);
                     match AgentDefinition::from_toml(&expanded) {
                         Ok(mut def) => {
-                            // User-loaded agents are always UserDefined tier,
-                            // even if they override a built-in.
+                            // Check whether this file is an unmodified copy of a
+                            // built-in agent. Compare the expanded TOML content
+                            // against the stored built-in source; if identical,
+                            // skip the override to keep the BuiltIn trust tier.
+                            let is_unmodified_builtin = self
+                                .builtin_sources
+                                .get(&def.id)
+                                .is_some_and(|src| src == &expanded);
+                            if is_unmodified_builtin {
+                                continue;
+                            }
                             def.trust_tier = TrustTier::UserDefined;
                             if let Err(e) = self.register_or_override(def) {
                                 errors.push((filename, e.to_string()));
@@ -514,6 +528,7 @@ impl AgentRegistry {
             let def = AgentDefinition::from_toml(&expanded)
                 .unwrap_or_else(|e| panic!("built-in agent '{name}' should parse: {e}"));
             self.builtin_originals.insert(def.id.clone(), def.clone());
+            self.builtin_sources.insert(def.id.clone(), expanded);
             self.definitions.insert(def.id.clone(), def);
         }
     }
@@ -649,7 +664,7 @@ mod tests {
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 13); // 11 built-in + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 12); // 10 built-in + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -774,7 +789,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 11);
+        assert_eq!(builtins.len(), 10);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
         assert_eq!(user_defs.len(), 1);
@@ -857,7 +872,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 11);
+        assert_eq!(builtins.len(), 10);
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
@@ -985,7 +1000,7 @@ mod tests {
             assert!(!def.system_prompt.is_empty());
         }
 
-        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 11);
+        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 10);
     }
 
     /// Override a built-in agent with `register_or_override`.

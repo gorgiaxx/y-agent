@@ -42,8 +42,6 @@ pub enum InteractionMode {
 pub enum SidebarView {
     /// Session list.
     Sessions,
-    /// Agent list.
-    Agents,
 }
 
 /// Role of a chat message for display purposes.
@@ -191,6 +189,10 @@ pub struct AppState {
     pub cumulative_output_tokens: u64,
     /// Input tokens from the last LLM iteration (actual context occupancy).
     pub last_input_tokens: u64,
+    /// Cost (USD) from the last LLM turn, if available.
+    pub last_cost: Option<f64>,
+    /// Application version string (e.g. "0.1.0").
+    pub version: String,
 }
 
 impl Default for AppState {
@@ -219,6 +221,8 @@ impl Default for AppState {
             cumulative_input_tokens: 0,
             cumulative_output_tokens: 0,
             last_input_tokens: 0,
+            last_cost: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 }
@@ -274,12 +278,10 @@ impl AppState {
         }
     }
 
-    /// Switch sidebar view between Sessions and Agents.
+    /// Switch sidebar view (currently sessions only, reserved for future views).
     pub fn toggle_sidebar_view(&mut self) {
-        self.sidebar_view = match self.sidebar_view {
-            SidebarView::Sessions => SidebarView::Agents,
-            SidebarView::Agents => SidebarView::Sessions,
-        };
+        // Currently sessions-only; no-op.
+        self.sidebar_view = SidebarView::Sessions;
     }
 
     /// Push a toast notification. Returns the assigned toast ID.
@@ -622,9 +624,7 @@ mod tests {
         let mut state = AppState::new();
         assert_eq!(state.sidebar_view, SidebarView::Sessions);
 
-        state.toggle_sidebar_view();
-        assert_eq!(state.sidebar_view, SidebarView::Agents);
-
+        // Currently sessions-only; toggle is a no-op.
         state.toggle_sidebar_view();
         assert_eq!(state.sidebar_view, SidebarView::Sessions);
     }
