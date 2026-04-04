@@ -49,19 +49,19 @@ const COLOR_ERROR: Color = Color::Rgb(255, 100, 100);
 const COLOR_PANEL_BG: Color = Color::Rgb(22, 22, 30);
 /// Welcome screen accent.
 const COLOR_WELCOME: Color = Color::Rgb(100, 120, 180);
-/// ThinkingCard accent (purple, from GUI ThinkingCard.tsx #a78bfa).
+/// `ThinkingCard` accent (purple, from GUI ThinkingCard.tsx #a78bfa).
 const COLOR_THINK_ACCENT: Color = Color::Rgb(167, 139, 250);
-/// ThinkingCard content text.
+/// `ThinkingCard` content text.
 const COLOR_THINK_TEXT: Color = Color::Rgb(160, 150, 200);
-/// ToolCallCard accent (blue, from GUI ToolCallCard.tsx #00a6ff).
+/// `ToolCallCard` accent (blue, from GUI ToolCallCard.tsx #00a6ff).
 const COLOR_TOOL_ACCENT: Color = Color::Rgb(0, 166, 255);
-/// ToolCallCard content text.
+/// `ToolCallCard` content text.
 const COLOR_TOOL_CARD_TEXT: Color = Color::Rgb(140, 170, 200);
-/// ToolCallCard success status.
+/// `ToolCallCard` success status.
 const COLOR_TOOL_SUCCESS: Color = Color::Rgb(100, 200, 120);
-/// ToolCallCard error status.
+/// `ToolCallCard` error status.
 const COLOR_TOOL_ERROR: Color = Color::Rgb(255, 100, 100);
-/// ToolCallCard running status.
+/// `ToolCallCard` running status.
 const COLOR_TOOL_RUNNING: Color = Color::Rgb(255, 200, 60);
 
 // ---------------------------------------------------------------------------
@@ -457,21 +457,20 @@ fn strip_tool_result_blocks(input: &str) -> String {
     result
 }
 
-/// Segment content string into ThinkBlock, ToolCall, and Text segments.
+/// Segment content string into `ThinkBlock`, `ToolCall`, and Text segments.
 fn segment_content(input: &str) -> Vec<ContentSegment> {
     let mut segments: Vec<ContentSegment> = Vec::new();
     let mut cursor = 0;
-    let bytes = input.as_bytes();
+    let _bytes = input.as_bytes();
 
     while cursor < input.len() {
         // Find the next `<` character.
-        let next_lt = match input[cursor..].find('<') {
-            Some(pos) => cursor + pos,
-            None => {
-                // No more tags -- rest is text.
-                push_text_segment(&mut segments, &input[cursor..]);
-                break;
-            }
+        let next_lt = if let Some(pos) = input[cursor..].find('<') {
+            cursor + pos
+        } else {
+            // No more tags -- rest is text.
+            push_text_segment(&mut segments, &input[cursor..]);
+            break;
         };
 
         let remaining = &input[next_lt..];
@@ -593,7 +592,7 @@ fn find_tool_call_open(remaining: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// Check if the remaining text is a partial prefix of a think or tool_call tag.
+/// Check if the remaining text is a partial prefix of a think or `tool_call` tag.
 fn is_partial_tag_prefix(remaining: &str) -> bool {
     let candidates = [
         "<think>",
@@ -611,7 +610,7 @@ fn is_partial_tag_prefix(remaining: &str) -> bool {
     false
 }
 
-/// Parse the inner content of a tool_call block to extract name and arguments.
+/// Parse the inner content of a `tool_call` block to extract name and arguments.
 ///
 /// Handles XML-nested format: `<name>tool</name><arguments>{...}</arguments>`
 /// Also handles JSON: `{"name": "tool", "arguments": {...}}`
