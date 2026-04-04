@@ -462,6 +462,7 @@ impl AgentDelegator for AgentPool {
             max_iterations: definition.max_iterations,
             trust_tier: Some(definition.trust_tier),
             trace_id: None,
+            prune_tool_history: definition.prune_tool_history,
         };
 
         // Register for observability before execution.
@@ -516,6 +517,7 @@ mod tests {
             max_context_tokens: 4096,
             max_completion_tokens: None,
             user_callable: false,
+            prune_tool_history: false,
         }
     }
 

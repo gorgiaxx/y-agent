@@ -194,6 +194,7 @@ mod tests {
             max_context_tokens: 4096,
             max_completion_tokens: None,
             user_callable: false,
+            prune_tool_history: false,
         };
         registry.register(def).unwrap();
         registry

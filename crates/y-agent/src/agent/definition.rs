@@ -126,6 +126,18 @@ pub struct AgentDefinition {
     /// `false` (default) = internal system agent; `true` = user-callable.
     #[serde(default)]
     pub user_callable: bool,
+
+    // -- Working history pruning --
+    /// Whether to prune historical tool call pairs from `working_history`.
+    ///
+    /// When `true`, after each iteration the agent loop removes all but the
+    /// most recent batch of assistant+tool message pairs from `working_history`.
+    /// Both the assistant message (with its `tool_calls`) and the corresponding
+    /// tool result messages are removed together -- no orphaned references.
+    ///
+    /// Default: `false` -- all tool call history is preserved.
+    #[serde(default)]
+    pub prune_tool_history: bool,
 }
 
 const fn default_max_iterations() -> usize {
@@ -270,6 +282,7 @@ system_prompt = ""
             max_context_tokens: 4096,
             max_completion_tokens: None,
             user_callable: false,
+            prune_tool_history: false,
         };
         assert!(def.validate().is_err());
     }

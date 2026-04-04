@@ -528,10 +528,6 @@ impl AgentRegistry {
                 include_str!("../../../../config/agents/compaction-summarizer.toml"),
             ),
             (
-                "context-summarizer",
-                include_str!("../../../../config/agents/context-summarizer.toml"),
-            ),
-            (
                 "title-generator",
                 include_str!("../../../../config/agents/title-generator.toml"),
             ),
@@ -606,6 +602,7 @@ mod tests {
             max_context_tokens: 4096,
             max_completion_tokens: None,
             user_callable: false,
+            prune_tool_history: false,
         }
     }
 
@@ -647,6 +644,7 @@ mod tests {
             max_context_tokens: 2048,
             max_completion_tokens: None,
             user_callable: false,
+            prune_tool_history: false,
         };
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
@@ -844,6 +842,7 @@ mod tests {
             max_context_tokens: 2048,
             max_completion_tokens: None,
             user_callable: false,
+            prune_tool_history: false,
         };
         registry.register_dynamic(dyn_def).unwrap();
         assert_eq!(registry.count(), 2);
@@ -966,7 +965,6 @@ mod tests {
         let registry = AgentRegistry::new();
         let expected_ids = [
             "compaction-summarizer",
-            "context-summarizer",
             "title-generator",
             "task-intent-analyzer",
             "pattern-extractor",

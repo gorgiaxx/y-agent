@@ -179,6 +179,11 @@ pub struct AgentRunConfig {
     /// that per-iteration observations are recorded under this trace instead
     /// of creating a new one.
     pub trace_id: Option<uuid::Uuid>,
+    /// Whether to prune historical tool call pairs from `working_history`.
+    ///
+    /// When `true`, old assistant+tool message pairs are removed between
+    /// iterations, keeping only the most recent batch.
+    pub prune_tool_history: bool,
 }
 
 /// Output from a single agent execution.
@@ -342,6 +347,7 @@ mod tests {
             max_iterations: 1,
             trust_tier: None,
             trace_id: None,
+            prune_tool_history: false,
         };
         assert_eq!(config.agent_name, "title-generator");
         assert_eq!(config.preferred_models.len(), 1);

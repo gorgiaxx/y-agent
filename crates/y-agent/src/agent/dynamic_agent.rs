@@ -210,7 +210,6 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
         "tool-engineer",
         "agent-architect",
         "compaction-summarizer",
-        "context-summarizer",
         "title-generator",
         "task-intent-analyzer",
         "pattern-extractor",
@@ -483,6 +482,7 @@ pub fn make_dynamic_agent(
         max_context_tokens: 4096,
         max_completion_tokens: None,
         user_callable: false,
+        prune_tool_history: false,
     };
 
     let effective_permissions = EffectivePermissions::compute(&definition, creator_snapshot);
@@ -563,6 +563,7 @@ mod tests {
             max_context_tokens: 16384,
             max_completion_tokens: None,
             user_callable: false,
+            prune_tool_history: false,
         };
 
         let creator = CreatorPermissionSnapshot {
@@ -829,7 +830,6 @@ mod tests {
     fn test_reserved_name_all_builtins() {
         let reserved_names = [
             "compaction-summarizer",
-            "context-summarizer",
             "title-generator",
             "task-intent-analyzer",
             "pattern-extractor",
