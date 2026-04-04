@@ -8,7 +8,7 @@
 
 import { useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import type { ChatStarted, ThinkingEffort } from '../types';
+import type { ChatStarted, ThinkingEffort, Attachment } from '../types';
 import type { ViewType } from '../components/Sidebar';
 
 export interface ChatDeps {
@@ -21,7 +21,7 @@ export interface ChatDeps {
   clearMessages: () => void;
 
   // Chat deps
-  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]) => Promise<ChatStarted | null>;
   editAndResend: (sessionId: string, newContent: string, providerId?: string) => Promise<ChatStarted | null>;
   editMessage: (messageId: string, content: string) => void;
   cancelEdit: () => void;
@@ -48,7 +48,7 @@ export interface ChatDeps {
 }
 
 export interface UseChatHandlersReturn {
-  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null) => Promise<void>;
+  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]) => Promise<void>;
   handleEditMessage: (content: string, messageId: string) => void;
   handleUndoMessage: (messageId: string) => Promise<void>;
   handleCancelEdit: () => void;
@@ -89,7 +89,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
   } = deps;
 
   const handleSend = useCallback(
-    async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null) => {
+    async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]) => {
       let sid = activeSessionId;
       if (!sid) {
         const session = await createSession();
@@ -117,9 +117,9 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
         return;
       }
 
-      // Normal send -- pass skills and knowledge collections to the backend.
+      // Normal send -- pass skills, knowledge collections, and attachments to the backend.
       addUserMessage(message, sid);
-      const result = await sendMessage(message, sid, providerArg, skillNames, knowledgeCollections, thinkingEffort);
+      const result = await sendMessage(message, sid, providerArg, skillNames, knowledgeCollections, thinkingEffort, attachments);
       if (result) {
         if (result.session_id !== activeSessionId) {
           selectSession(result.session_id);

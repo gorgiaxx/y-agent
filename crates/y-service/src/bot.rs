@@ -99,6 +99,7 @@ impl BotService {
                 skills: None,
                 knowledge_collections: None,
                 thinking: None,
+                user_message_metadata: None,
             },
         )
         .await;
@@ -118,6 +119,7 @@ impl BotService {
                         skills: None,
                         knowledge_collections: None,
                         thinking: None,
+                        user_message_metadata: None,
                     },
                 )
                 .await

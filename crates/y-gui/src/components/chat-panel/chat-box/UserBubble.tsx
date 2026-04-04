@@ -18,7 +18,7 @@ import {
   RefreshCw,
   Puzzle,
 } from 'lucide-react';
-import type { Message } from '../../../types';
+import type { Message, Attachment } from '../../../types';
 import { Avatar } from './MessageShared';
 import './UserBubble.css';
 
@@ -150,6 +150,22 @@ export function UserBubble({ message, onEdit, onUndo, onResend, disabled }: User
               ))}
             </div>
           )}
+          {(() => {
+            const attachments = (message.metadata?.attachments ?? []) as Attachment[];
+            return attachments.length > 0 ? (
+              <div className="message-attachments">
+                {attachments.map((att) => (
+                  <img
+                    key={att.id}
+                    src={`data:${att.mime_type};base64,${att.base64_data}`}
+                    alt={att.filename}
+                    className="message-attachment-thumb"
+                    title={att.filename}
+                  />
+                ))}
+              </div>
+            ) : null;
+          })()}
           {message.content}
         </div>
 

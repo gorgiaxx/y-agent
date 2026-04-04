@@ -1,17 +1,19 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, Attachment } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
 import './InputArea.css';
 
 interface InputAreaProps {
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -206,6 +208,7 @@ export function InputArea({
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
   const lastCompEndRef = useRef<number>(0);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   // Close provider dropdown on outside click.
   useEffect(() => {
@@ -374,7 +377,7 @@ export function InputArea({
     const { text, skills: extractedSkills } = extractContent(editableRef.current);
     const trimmed = text.trim();
 
-    if (!trimmed && extractedSkills.length === 0 && selectedKbCollections.length === 0) return;
+    if (!trimmed && extractedSkills.length === 0 && selectedKbCollections.length === 0 && attachments.length === 0) return;
 
     // Intercept slash commands.
     if (trimmed.startsWith('/')) {
@@ -388,20 +391,46 @@ export function InputArea({
     }
 
     sendingRef.current = true;
-    console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, selectedKbCollections, thinkingEffort });
+    console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, selectedKbCollections, thinkingEffort, attachmentCount: attachments.length });
     onSend(
       trimmed,
       extractedSkills.length > 0 ? extractedSkills : undefined,
       selectedKbCollections.length > 0 ? selectedKbCollections : undefined,
       thinkingEffort,
+      attachments.length > 0 ? attachments : undefined,
     );
     resetInput();
+    setAttachments([]);
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort]);
+  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments]);
 
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    // Check for pasted images first.
+    const items = e.clipboardData.items;
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) return;
+        const buffer = await file.arrayBuffer();
+        const base64 = btoa(
+          new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''),
+        );
+        const ext = file.type.split('/')[1] || 'png';
+        const att: Attachment = {
+          id: `paste-${Date.now()}`,
+          filename: `pasted-image.${ext}`,
+          mime_type: file.type,
+          base64_data: base64,
+          size: file.size,
+        };
+        setAttachments((prev) => [...prev, att]);
+        return;
+      }
+    }
+    // Fallback: paste as plain text.
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
     document.execCommand('insertText', false, text);
@@ -518,6 +547,28 @@ export function InputArea({
 
         {/* Editable div with inline skill mentions */}
         <div className="input-content">
+          {/* Attachment preview strip */}
+          {attachments.length > 0 && (
+            <div className="attachment-preview-strip">
+              {attachments.map((att) => (
+                <div key={att.id} className="attachment-thumb">
+                  <img
+                    src={`data:${att.mime_type};base64,${att.base64_data}`}
+                    alt={att.filename}
+                    className="attachment-thumb-img"
+                  />
+                  <button
+                    className="attachment-remove-btn"
+                    onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                    title={`Remove ${att.filename}`}
+                    aria-label={`Remove ${att.filename}`}
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div
             ref={editableRef}
             className="input-editable"
@@ -546,9 +597,36 @@ export function InputArea({
           </button>
         )}
 
-        {/* Toolbar row with action buttons — inside the input border */}
+        {/* Toolbar row with action buttons -- inside the input border */}
         <div className="input-toolbar">
-          {/* (a) Model / provider selection */}
+          {/* (a) Attachment picker */}
+          <button
+            className={`toolbar-btn has-tooltip ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
+            onClick={async () => {
+              try {
+                const result = await open({
+                  multiple: true,
+                  filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+                });
+                if (result) {
+                  const paths = Array.isArray(result) ? result : [result];
+                  const atts = await invoke<Attachment[]>('attachment_read_files', { paths });
+                  setAttachments((prev) => [...prev, ...atts]);
+                }
+              } catch (e) {
+                console.error('[InputArea] attachment picker error:', e);
+              }
+            }}
+            data-tooltip="Attach images"
+            disabled={disabled}
+          >
+            <Paperclip size={14} />
+            {attachments.length > 0 && (
+              <span className="toolbar-btn-label">{attachments.length}</span>
+            )}
+          </button>
+
+          {/* (b) Model / provider selection */}
           <div className="toolbar-btn-group" ref={providerDropdownRef}>
             <button
               className="toolbar-btn has-tooltip"

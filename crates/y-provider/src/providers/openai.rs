@@ -107,11 +107,43 @@ impl OpenAiProvider {
                         let content = if m.content.is_empty() {
                             None
                         } else {
-                            Some(m.content.clone())
+                            Some(OpenAiContent::Text(m.content.clone()))
                         };
                         (content, Some(tcs))
+                    } else if m.role == y_core::types::Role::User {
+                        // Check for image attachments in metadata (multimodal).
+                        let content = if let Some(arr) =
+                            m.metadata.get("attachments").and_then(|v| v.as_array())
+                        {
+                            if arr.is_empty() {
+                                Some(OpenAiContent::Text(m.content.clone()))
+                            } else {
+                                let mut parts: Vec<OpenAiContentPart> = Vec::new();
+                                for att in arr {
+                                    if let (Some(mime), Some(data)) = (
+                                        att.get("mime_type").and_then(|v| v.as_str()),
+                                        att.get("base64_data").and_then(|v| v.as_str()),
+                                    ) {
+                                        parts.push(OpenAiContentPart::ImageUrl {
+                                            image_url: OpenAiImageUrl {
+                                                url: format!("data:{mime};base64,{data}"),
+                                            },
+                                        });
+                                    }
+                                }
+                                if !m.content.is_empty() {
+                                    parts.push(OpenAiContentPart::Text {
+                                        text: m.content.clone(),
+                                    });
+                                }
+                                Some(OpenAiContent::Parts(parts))
+                            }
+                        } else {
+                            Some(OpenAiContent::Text(m.content.clone()))
+                        };
+                        (content, None)
                     } else {
-                        (Some(m.content.clone()), None)
+                        (Some(OpenAiContent::Text(m.content.clone())), None)
                     };
 
                 OpenAiMessage {
@@ -257,7 +289,7 @@ impl LlmProvider for OpenAiProvider {
                     message: "no choices in response".into(),
                 })?;
 
-        let content = choice.message.content;
+        let content = choice.message.content.and_then(OpenAiContent::into_text);
         let reasoning_content = choice.message.reasoning_content;
         let tool_calls = choice
             .message
@@ -681,7 +713,7 @@ struct StreamOptions {
 struct OpenAiMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<OpenAiContent>,
     /// Reasoning/thinking content from thinking-mode LLMs (e.g. DeepSeek-R1).
     /// Some providers use `reasoning_content`, others use `reasoning` (vLLM).
     #[serde(skip_serializing_if = "Option::is_none", default, alias = "reasoning")]
@@ -690,6 +722,63 @@ struct OpenAiMessage {
     tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OpenAiToolCall>>,
+}
+
+/// `OpenAI` content -- either a plain text string or an array of content parts
+/// (used for multimodal messages containing text + images).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum OpenAiContent {
+    Text(String),
+    Parts(Vec<OpenAiContentPart>),
+}
+
+impl OpenAiContent {
+    /// Extract the text content from this value.
+    /// For `Text`, returns the string directly.
+    /// For `Parts`, concatenates all text-type parts.
+    fn into_text(self) -> Option<String> {
+        match self {
+            OpenAiContent::Text(s) => {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
+            OpenAiContent::Parts(parts) => {
+                let texts: Vec<String> = parts
+                    .into_iter()
+                    .filter_map(|p| match p {
+                        OpenAiContentPart::Text { text } => Some(text),
+                        OpenAiContentPart::ImageUrl { .. } => None,
+                    })
+                    .collect();
+                if texts.is_empty() {
+                    None
+                } else {
+                    Some(texts.join(""))
+                }
+            }
+        }
+    }
+}
+
+/// A single content part within an `OpenAI` multimodal message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum OpenAiContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: OpenAiImageUrl },
+}
+
+/// Image URL payload for `OpenAI` vision API. Supports both HTTP URLs
+/// and inline data URIs (`data:{mime};base64,{data}`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OpenAiImageUrl {
+    url: String,
 }
 
 #[allow(dead_code)]
@@ -868,7 +957,7 @@ mod tests {
             model: "gpt-4o".into(),
             messages: vec![OpenAiMessage {
                 role: "user".into(),
-                content: Some("Hello".into()),
+                content: Some(OpenAiContent::Text("Hello".into())),
                 reasoning_content: None,
                 tool_call_id: None,
                 tool_calls: None,
@@ -936,7 +1025,14 @@ mod tests {
         let response: OpenAiResponse = serde_json::from_value(json).unwrap();
         assert_eq!(response.id, "chatcmpl-123");
         assert_eq!(response.choices.len(), 1);
-        assert_eq!(response.choices[0].message.content, Some("Hello!".into()));
+        assert_eq!(
+            response.choices[0]
+                .message
+                .content
+                .clone()
+                .and_then(|c| c.into_text()),
+            Some("Hello!".into())
+        );
         let usage = response.usage.unwrap();
         assert_eq!(usage.prompt_tokens, 10);
     }
@@ -1150,5 +1246,110 @@ mod tests {
         assert_eq!(m3.finish_reason, Some(FinishReason::ToolUse));
         assert!(m3.usage.is_some());
         assert!(acc.is_empty()); // Drained.
+    }
+
+    #[test]
+    fn test_build_messages_with_image_attachments() {
+        use y_core::types::{Message, Role};
+
+        let request = ChatRequest {
+            messages: vec![Message {
+                message_id: "test-1".into(),
+                role: Role::User,
+                content: "What is in this image?".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({
+                    "attachments": [{
+                        "id": "att-1",
+                        "filename": "photo.png",
+                        "mime_type": "image/png",
+                        "base64_data": "iVBORw0KGgo=",
+                        "size": 8
+                    }]
+                }),
+            }],
+            model: None,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+        };
+
+        let messages = OpenAiProvider::build_messages(&request);
+        assert_eq!(messages.len(), 1);
+
+        let json = serde_json::to_value(&messages[0]).unwrap();
+        assert_eq!(json["role"], "user");
+        let content = json["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        // First part: image_url with data URI
+        assert_eq!(content[0]["type"], "image_url");
+        assert_eq!(
+            content[0]["image_url"]["url"],
+            "data:image/png;base64,iVBORw0KGgo="
+        );
+        // Second part: text
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "What is in this image?");
+    }
+
+    #[test]
+    fn test_build_messages_user_without_attachments() {
+        use y_core::types::{Message, Role};
+
+        let request = ChatRequest {
+            messages: vec![Message {
+                message_id: "test-1".into(),
+                role: Role::User,
+                content: "Hello".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+        };
+
+        let messages = OpenAiProvider::build_messages(&request);
+        assert_eq!(messages.len(), 1);
+
+        // Plain text content (no array), serialized as a string.
+        let json = serde_json::to_value(&messages[0]).unwrap();
+        assert_eq!(json["content"], "Hello");
+    }
+
+    #[test]
+    fn test_openai_content_into_text() {
+        let text = OpenAiContent::Text("hello".into());
+        assert_eq!(text.into_text(), Some("hello".into()));
+
+        let empty = OpenAiContent::Text(String::new());
+        assert_eq!(empty.into_text(), None);
+
+        let parts = OpenAiContent::Parts(vec![
+            OpenAiContentPart::ImageUrl {
+                image_url: OpenAiImageUrl {
+                    url: "data:image/png;base64,abc".into(),
+                },
+            },
+            OpenAiContentPart::Text {
+                text: "describe this".into(),
+            },
+        ]);
+        assert_eq!(parts.into_text(), Some("describe this".into()));
     }
 }

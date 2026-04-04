@@ -262,6 +262,8 @@ pub fn run() {
             commands::automation::schedule_execution_get,
             commands::automation::schedule_trigger_now,
             commands::automation::workflow_execute,
+            // Attachments
+            commands::attachments::attachment_read_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

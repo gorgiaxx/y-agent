@@ -77,6 +77,7 @@ async fn chat_turn(
             skills: None,
             knowledge_collections: None,
             thinking: None,
+            user_message_metadata: None,
         },
     )
     .await

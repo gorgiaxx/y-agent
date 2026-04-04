@@ -14,6 +14,7 @@ import type {
   UndoResult,
   RestoreResult,
   ThinkingEffort,
+  Attachment,
 } from '../types';
 import {
   chatBusState,
@@ -74,7 +75,7 @@ interface UseChatReturn {
   pendingEdit: PendingEdit | null;
   /** Tool results from the current streaming run (for inline cards). */
   toolResults: ToolResultRecord[];
-  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
@@ -735,6 +736,27 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     setOp('idle');
   }, [setOp]);
 
+  // ------------------------------------------------------------------
+  // invalidateStaleContextResets -- remove reset points at or after a
+  // given message count. Called by undo / edit / resend operations so
+  // that context reset markers do not survive when the user goes back
+  // to a point before the reset was placed.
+  // ------------------------------------------------------------------
+
+  const invalidateStaleContextResets = useCallback((sessionId: string, newMsgCount: number) => {
+    const existing = contextResetMapRef.current.get(sessionId) ?? [];
+    const kept = existing.filter((idx) => idx < newMsgCount);
+    if (kept.length === existing.length) return; // nothing changed
+    contextResetMapRef.current.set(sessionId, kept);
+    if (activeSessionIdRef.current === sessionId) {
+      setContextResetPoints(kept);
+    }
+    // Persist: store the latest kept point (or clear if none remain).
+    const persistIdx = kept.length > 0 ? kept[kept.length - 1] : null;
+    invoke('session_set_context_reset', { sessionId, index: persistIdx })
+      .catch((e) => console.error('[chat] failed to clear stale context reset:', e));
+  }, []);
+
   const isStreaming = activeSessionId ? streamingSessionIds.has(activeSessionId) : false;
 
   const cancelRun = useCallback(async () => {
@@ -767,7 +789,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const sendingRef = useRef(false);
 
   const sendMessage = useCallback(
-    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null): Promise<ChatStarted | null> => {
+    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]): Promise<ChatStarted | null> => {
       // Guard: block if any operation is already in progress, including a
       // prior send.  The previous guard also allowed 'sending' through,
       // which could cause duplicate LLM calls when rapid double-fires
@@ -798,6 +820,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         timestamp: new Date().toISOString(),
         tool_calls: [],
         skills: skills && skills.length > 0 ? skills : undefined,
+        metadata: attachments && attachments.length > 0 ? { attachments } : undefined,
       };
       setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => [...prev, userMsg]);
       syncVisible(sessionId);
@@ -815,6 +838,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           knowledgeCollections: knowledgeCollections && knowledgeCollections.length > 0 ? knowledgeCollections : null,
           contextStartIndex: resetIdx,
           thinkingEffort: thinkingEffort ?? null,
+          attachments: attachments && attachments.length > 0 ? attachments : null,
         });
         return result;
       } catch (e) {
@@ -903,6 +927,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               });
               const keptMsgs = freshMsgs.slice(0, userIdx);
               setCachedMessages(sessionMessagesRef.current, sessionId, keptMsgs);
+              invalidateStaleContextResets(sessionId, keptMsgs.length);
               syncVisible(sessionId);
               setPendingEdit(null);
 
@@ -941,6 +966,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           // 3. Reload messages from backend to sync UI with actual state.
           const msgs = await invoke<Message[]>('session_get_messages', { sessionId });
           setCachedMessages(sessionMessagesRef.current, sessionId, msgs);
+          invalidateStaleContextResets(sessionId, msgs.length);
           syncVisible(sessionId);
 
           // 4. Clear edit state.
@@ -976,7 +1002,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
       });
     },
-    [pendingEdit, syncVisible, setOp, loadMessages],
+    [pendingEdit, syncVisible, setOp, loadMessages, invalidateStaleContextResets],
   );
 
   // ------------------------------------------------------------------
@@ -1017,6 +1043,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             if (targetIdx >= 0) {
               // Truncate to before this user message.
               await invoke('session_truncate_messages', { sessionId, keepCount: targetIdx });
+              invalidateStaleContextResets(sessionId, targetIdx);
               await loadMessages(sessionId);
               setOp('idle');
               return { messages_removed: targetIdx, restored_turn_number: 0, files_restored: 0 } as UndoResult;
@@ -1036,6 +1063,8 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
           // 3. Reload messages from backend.
           console.log('[chat] undoToMessage: reloading messages...');
+          // Invalidate context resets that fall at or after the restored point.
+          invalidateStaleContextResets(sessionId, checkpoint.message_count_before);
           await loadMessages(sessionId);
           console.log('[chat] undoToMessage: loadMessages complete');
           setOp('idle');
@@ -1049,7 +1078,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
       });
     },
-    [loadMessages, setOp],
+    [loadMessages, setOp, invalidateStaleContextResets],
   );
 
   // ------------------------------------------------------------------
@@ -1099,6 +1128,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               // Update cache to remove the user message and any cancelled assistant msg.
               const keptMsgs = freshMsgs.slice(0, userIdx);
               setCachedMessages(sessionMessagesRef.current, sessionId, keptMsgs);
+              invalidateStaleContextResets(sessionId, keptMsgs.length);
               syncVisible(sessionId);
 
               // Add optimistic user message so the bubble stays visible while
@@ -1136,6 +1166,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           console.log('[chat] resendLastTurn: keeping:', keptMsgs.map(m => `[${m.role}] ${m.content.slice(0, 40)}...`));
           console.log('[chat] resendLastTurn: removing:', removedMsgs.map(m => `[${m.role}] ${m.content.slice(0, 40)}...`));
           setCachedMessages(sessionMessagesRef.current, sessionId, keptMsgs);
+          invalidateStaleContextResets(sessionId, keptMsgs.length);
           syncVisible(sessionId);
 
           // 3. Backend resend: truncates transcript (keeps user msg), re-runs LLM.
@@ -1158,7 +1189,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
       });
     },
-    [syncVisible, setOp, loadMessages],
+    [syncVisible, setOp, loadMessages, invalidateStaleContextResets],
   );
 
   // ------------------------------------------------------------------

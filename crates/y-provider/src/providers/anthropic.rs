@@ -113,6 +113,40 @@ impl AnthropicProvider {
                     }
                 }
 
+                // Check for image attachments in metadata (multimodal).
+                if m.role == y_core::types::Role::User {
+                    if let Some(attachments) = m.metadata.get("attachments") {
+                        if let Some(arr) = attachments.as_array() {
+                            if !arr.is_empty() {
+                                let mut blocks: Vec<AnthropicContentBlock> = Vec::new();
+                                for att in arr {
+                                    if let (Some(mime), Some(data)) = (
+                                        att.get("mime_type").and_then(|v| v.as_str()),
+                                        att.get("base64_data").and_then(|v| v.as_str()),
+                                    ) {
+                                        blocks.push(AnthropicContentBlock::Image {
+                                            source: AnthropicImageSource {
+                                                r#type: "base64".to_string(),
+                                                media_type: mime.to_string(),
+                                                data: data.to_string(),
+                                            },
+                                        });
+                                    }
+                                }
+                                if !m.content.is_empty() {
+                                    blocks.push(AnthropicContentBlock::Text {
+                                        text: m.content.clone(),
+                                    });
+                                }
+                                return AnthropicMessage {
+                                    role: role.to_string(),
+                                    content: AnthropicContent::Blocks(blocks),
+                                };
+                            }
+                        }
+                    }
+                }
+
                 AnthropicMessage {
                     role: role.to_string(),
                     content: AnthropicContent::Text(m.content.clone()),
@@ -314,7 +348,7 @@ impl LlmProvider for AnthropicProvider {
                         arguments: input.clone(),
                     });
                 }
-                AnthropicContentBlock::ToolResult { .. } => {}
+                AnthropicContentBlock::ToolResult { .. } | AnthropicContentBlock::Image { .. } => {}
             }
         }
 
@@ -926,6 +960,16 @@ enum AnthropicContentBlock {
         tool_use_id: String,
         content: String,
     },
+    #[serde(rename = "image")]
+    Image { source: AnthropicImageSource },
+}
+
+/// Base64-encoded image source for Anthropic's vision API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AnthropicImageSource {
+    r#type: String,
+    media_type: String,
+    data: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1332,5 +1376,53 @@ mod tests {
         } else {
             panic!("Expected MessageStart event");
         }
+    }
+
+    #[test]
+    fn test_build_messages_with_image_attachments() {
+        use y_core::types::{Message, Role};
+
+        let request = ChatRequest {
+            messages: vec![Message {
+                message_id: "test-1".into(),
+                role: Role::User,
+                content: "What is in this image?".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({
+                    "attachments": [{
+                        "id": "att-1",
+                        "filename": "photo.png",
+                        "mime_type": "image/png",
+                        "base64_data": "iVBORw0KGgo=",
+                        "size": 8
+                    }]
+                }),
+            }],
+            model: None,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+        };
+
+        let messages = AnthropicProvider::build_messages(&request);
+        assert_eq!(messages.len(), 1);
+
+        let json = serde_json::to_value(&messages[0]).unwrap();
+        assert_eq!(json["role"], "user");
+        let content = json["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["type"], "base64");
+        assert_eq!(content[0]["source"]["media_type"], "image/png");
+        assert_eq!(content[0]["source"]["data"], "iVBORw0KGgo=");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "What is in this image?");
     }
 }

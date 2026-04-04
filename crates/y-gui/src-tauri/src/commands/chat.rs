@@ -107,6 +107,7 @@ pub async fn chat_send(
     knowledge_collections: Option<Vec<String>>,
     context_start_index: Option<usize>,
     thinking_effort: Option<String>,
+    attachments: Option<Vec<serde_json::Value>>,
 ) -> Result<ChatStarted, String> {
     if message.trim().is_empty() {
         return Err("Message must not be empty".into());
@@ -126,6 +127,9 @@ pub async fn chat_send(
 
     let run_id = uuid::Uuid::new_v4().to_string();
 
+    // Build user message metadata from attachments.
+    let user_message_metadata = attachments.map(|atts| serde_json::json!({ "attachments": atts }));
+
     // Prepare turn: resolve/create session, persist user message, read transcript.
     let mut prepared = ChatService::prepare_turn(
         &state.container,
@@ -136,6 +140,7 @@ pub async fn chat_send(
             skills: skills.clone(),
             knowledge_collections: knowledge_collections.clone(),
             thinking,
+            user_message_metadata,
         },
     )
     .await

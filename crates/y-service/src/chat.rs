@@ -304,6 +304,9 @@ pub struct PrepareTurnRequest {
     pub knowledge_collections: Option<Vec<String>>,
     /// Thinking/reasoning configuration (`None` = use model defaults).
     pub thinking: Option<y_core::provider::ThinkingConfig>,
+    /// Additional metadata to attach to the user message (e.g. attachments).
+    /// Merged into the `Message.metadata` field during `prepare_turn()`.
+    pub user_message_metadata: Option<serde_json::Value>,
 }
 
 /// Fully resolved turn data, ready for `execute_turn()` or
@@ -503,11 +506,25 @@ impl ChatService {
         };
 
         // 2. Build and persist the user message.
-        let metadata = match &request.skills {
-            Some(skills) if !skills.is_empty() => {
-                serde_json::json!({ "skills": skills })
+        let metadata = {
+            let mut meta = serde_json::Map::new();
+            if let Some(skills) = &request.skills {
+                if !skills.is_empty() {
+                    meta.insert("skills".into(), serde_json::json!(skills));
+                }
             }
-            _ => serde_json::Value::Null,
+            if let Some(extra) = &request.user_message_metadata {
+                if let Some(obj) = extra.as_object() {
+                    for (k, v) in obj {
+                        meta.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            if meta.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::Object(meta)
+            }
         };
         let user_msg = Message {
             message_id: generate_message_id(),
@@ -764,6 +781,7 @@ impl ChatService {
             external_trace_id: None,
             trust_tier: None,
             agent_allowed_tools: vec![],
+            prune_tool_history: false,
         };
 
         // 3. Delegate to AgentService.
@@ -1241,6 +1259,7 @@ mod tests {
             skills: None,
             knowledge_collections: None,
             thinking: None,
+            user_message_metadata: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1273,6 +1292,7 @@ mod tests {
             skills: None,
             knowledge_collections: None,
             thinking: None,
+            user_message_metadata: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1291,6 +1311,7 @@ mod tests {
             skills: None,
             knowledge_collections: None,
             thinking: None,
+            user_message_metadata: None,
         };
         let err = ChatService::prepare_turn(&container, request)
             .await
@@ -1308,6 +1329,7 @@ mod tests {
             skills: None,
             knowledge_collections: None,
             thinking: None,
+            user_message_metadata: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1332,6 +1354,7 @@ mod tests {
             skills: None,
             knowledge_collections: None,
             thinking: None,
+            user_message_metadata: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1354,6 +1377,7 @@ mod tests {
             skills: None,
             knowledge_collections: None,
             thinking: None,
+            user_message_metadata: None,
         };
         let p1 = ChatService::prepare_turn(&container, request)
             .await
@@ -1368,6 +1392,7 @@ mod tests {
             skills: None,
             knowledge_collections: None,
             thinking: None,
+            user_message_metadata: None,
         };
         let p2 = ChatService::prepare_turn(&container, request2)
             .await
