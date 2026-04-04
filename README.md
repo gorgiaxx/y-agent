@@ -373,7 +373,6 @@ Agent definitions live in `config/agents/` as TOML files. They support **templat
 | `tool-engineer`         | Dynamic tool creation                 |
 | `title-generator`       | Session title auto-generation         |
 | `compaction-summarizer` | Context compaction                    |
-| `context-summarizer`    | Context summary generation            |
 | `pruning-summarizer`    | Context pruning optimization          |
 | `task-intent-analyzer`  | Intent classification for delegation  |
 | `pattern-extractor`     | Pattern extraction from conversations |

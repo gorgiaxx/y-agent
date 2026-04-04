@@ -144,12 +144,12 @@ Output the summary as plain text, not markdown.
 
 ### 3.3 Naming Convention
 
-| Category                               | Pattern                                             | Examples                                      |
-| -------------------------------------- | --------------------------------------------------- | --------------------------------------------- |
-| System agents (compaction, enrichment) | `{function}-{role}`                                 | `compaction-summarizer`, `context-summarizer` |
-| Autonomy agents                        | `{domain}-{role}`                                   | `tool-engineer`, `agent-architect`            |
-| User-facing agents                     | User-chosen                                         | `researcher`, `code-reviewer`                 |
-| Dynamic agents                         | User/agent-chosen (prefixed internally with `dyn:`) | `dyn:pr-reviewer`                             |
+| Category                               | Pattern                                             | Examples                           |
+| -------------------------------------- | --------------------------------------------------- | ---------------------------------- |
+| System agents (compaction, enrichment) | `{function}-{role}`                                 | `compaction-summarizer`,           |
+| Autonomy agents                        | `{domain}-{role}`                                   | `tool-engineer`, `agent-architect` |
+| User-facing agents                     | User-chosen                                         | `researcher`, `code-reviewer`      |
+| Dynamic agents                         | User/agent-chosen (prefixed internally with `dyn:`) | `dyn:pr-reviewer`                  |
 
 ### 3.4 Mode Selection Guidelines
 
@@ -275,7 +275,7 @@ The following existing implementations violate this standard and MUST be refacto
 | Module                            | Current Pattern                                                                                   | Target State                                                      |
 | --------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `y-context/compaction.rs`         | `CompactionLlm` trait with `build_summarize_prompt()`                                             | Replace with delegation to `compaction-summarizer` built-in agent |
-| `y-agent/context.rs`              | `apply_summary()` with inline summary logic                                                       | Replace with delegation to `context-summarizer` built-in agent    |
+| `y-agent/context.rs`              | `apply_summary()` with inline summary logic                                                       | Replace with delegation to `compaction-summarizer` built-in agent |
 | `y-session/manager.rs`            | `generate_title()` with hardcoded system prompt and direct `ProviderPool::chat_completion()` call | Replace with delegation to `title-generator` built-in agent       |
 | `y-context` (planned)             | `TaskIntentAnalyzer` as inline sub-agent                                                          | Define as `task-intent-analyzer` built-in agent                   |
 | `y-skills/evolution.rs` (planned) | Pattern extraction LLM calls                                                                      | Define as `pattern-extractor` built-in agent                      |
