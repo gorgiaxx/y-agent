@@ -8,6 +8,7 @@
 //!
 //! Supported envelope formats:
 //! - `<tool_call>...</tool_call>` (y-agent custom, GLM-4, `Qwen3Coder`)
+//! - `<longcat_tool_call>...</longcat_tool_call>` (Longcat Flash)
 //! - `<function_calls>...</function_calls>` (generic XML tool calling)
 //! - `<|DSML|function_calls>...</|DSML|function_calls>` (`DeepSeek` V3.2)
 //! - `<minimax:tool_call>...</minimax:tool_call>` (`MiniMax` M2)
@@ -63,6 +64,10 @@ const ENVELOPES: &[TagPair] = &[
     TagPair {
         open: "<tool_call>",
         close: "</tool_call>",
+    },
+    TagPair {
+        open: "<longcat_tool_call>",
+        close: "</longcat_tool_call>",
     },
     TagPair {
         open: "<function_calls>",
@@ -1677,5 +1682,92 @@ line2"}"#;
         assert!(!stripped.contains("function_calls"));
         assert!(stripped.contains("Before"));
         assert!(stripped.contains("After"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Longcat Flash envelope tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_longcat_single_tool_call() {
+        let input = r#"Let me search for that.
+
+<longcat_tool_call>
+{"name": "WebSearch", "arguments": {"query": "Rust async patterns"}}
+</longcat_tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "WebSearch");
+        assert_eq!(
+            result.tool_calls[0].arguments["query"],
+            "Rust async patterns"
+        );
+        assert!(result.text.contains("Let me search for that."));
+        assert!(!result.text.contains("longcat_tool_call"));
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_longcat_multiple_tool_calls() {
+        let input = r#"I'll read both files.
+
+<longcat_tool_call>
+{"name": "FileRead", "arguments": {"path": "/src/lib.rs"}}
+</longcat_tool_call>
+
+<longcat_tool_call>
+{"name": "FileRead", "arguments": {"path": "/src/main.rs"}}
+</longcat_tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].arguments["path"], "/src/lib.rs");
+        assert_eq!(result.tool_calls[1].arguments["path"], "/src/main.rs");
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_longcat_xml_nested_format() {
+        let input = r#"<longcat_tool_call>
+<name>ShellExec</name>
+<arguments>{"command": "cargo build"}</arguments>
+</longcat_tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "ShellExec");
+        assert_eq!(result.tool_calls[0].arguments["command"], "cargo build");
+    }
+
+    #[test]
+    fn test_strip_tool_call_blocks_longcat() {
+        let input = "Before\n\
+            <longcat_tool_call>\n\
+            {\"name\": \"Test\", \"arguments\": {}}\n\
+            </longcat_tool_call>\n\
+            After";
+
+        let stripped = strip_tool_call_blocks(input);
+        assert!(!stripped.contains("longcat_tool_call"));
+        assert!(stripped.contains("Before"));
+        assert!(stripped.contains("After"));
+    }
+
+    #[test]
+    fn test_parse_longcat_mixed_with_standard() {
+        let input = r#"<tool_call>
+{"name": "First", "arguments": {}}
+</tool_call>
+
+<longcat_tool_call>
+{"name": "Second", "arguments": {"key": "val"}}
+</longcat_tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].name, "First");
+        assert_eq!(result.tool_calls[1].name, "Second");
+        assert_eq!(result.tool_calls[1].arguments["key"], "val");
     }
 }

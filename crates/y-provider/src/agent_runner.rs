@@ -19,7 +19,7 @@ use y_core::types::{generate_message_id, Message, Role};
 /// Executes a single-turn agent by making one `ProviderPool::chat_completion()` call.
 ///
 /// Suitable for system agents that need one LLM inference pass:
-/// `title-generator`, `compaction-summarizer`, `context-summarizer`, etc.
+/// `title-generator`, `compaction-summarizer`, etc.
 ///
 /// The runner builds a `ChatRequest` from the agent's config:
 /// - System message from `config.system_prompt`
@@ -154,6 +154,7 @@ mod tests {
             max_iterations: 1,
             trust_tier: None,
             trace_id: None,
+            prune_tool_history: false,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -188,6 +189,7 @@ mod tests {
             max_iterations: 1,
             trust_tier: None,
             trace_id: None,
+            prune_tool_history: false,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -214,6 +216,7 @@ mod tests {
             max_iterations: 1,
             trust_tier: None,
             trace_id: None,
+            prune_tool_history: false,
         };
 
         let route = SingleTurnRunner::build_route(&config);

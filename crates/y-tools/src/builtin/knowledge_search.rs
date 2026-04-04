@@ -250,6 +250,7 @@ mod tests {
                 domain: "programming".to_string(),
                 title: "Rust Basics".to_string(),
                 section_index: 0,
+                ..Default::default()
             },
         });
 
@@ -277,6 +278,7 @@ mod tests {
                     domain: "programming".to_string(),
                     title: "Rust Basics".to_string(),
                     section_index: 0,
+                    ..Default::default()
                 },
             },
             vec![0.1, 0.2, 0.3],
