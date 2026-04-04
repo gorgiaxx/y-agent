@@ -83,6 +83,65 @@ const ENVELOPES: &[TagPair] = &[
     },
 ];
 
+/// Patch `MiniMax` 2.5 output that omits the `<minimax:tool_call>` open tag.
+///
+/// `MiniMax` 2.5 frequently produces malformed output like:
+/// ```text
+/// <invoke name="Glob"> <parameter name="query">*.rs</parameter> </invoke> </minimax:tool_call>
+/// ```
+/// where the closing `</minimax:tool_call>` is present but the opening tag
+/// is missing. This function scans for each such orphaned close tag and
+/// inserts `<minimax:tool_call>` immediately before the `<invoke` that
+/// belongs to it. Handles multiple broken tool calls in a single response.
+fn patch_minimax_missing_open_tags(raw: &str) -> String {
+    const OPEN: &str = "<minimax:tool_call>";
+    const CLOSE: &str = "</minimax:tool_call>";
+
+    // Fast path: nothing to patch if the close tag is absent.
+    if !raw.contains(CLOSE) {
+        return raw.to_string();
+    }
+
+    let mut result = String::with_capacity(raw.len() + OPEN.len() * 4);
+    let mut cursor = 0;
+
+    while cursor < raw.len() {
+        // Find the next close tag from the current cursor.
+        let Some(close_offset) = raw[cursor..].find(CLOSE) else {
+            // No more close tags -- append the rest and finish.
+            result.push_str(&raw[cursor..]);
+            break;
+        };
+        let close_abs = cursor + close_offset;
+
+        // The region between `cursor` and `close_abs` is where the open tag
+        // and invoke content should live.
+        let region = &raw[cursor..close_abs];
+
+        if region.contains(OPEN) {
+            // The open tag is present -- no patching needed for this block.
+            result.push_str(&raw[cursor..close_abs + CLOSE.len()]);
+        } else {
+            // Missing open tag. Find the `<invoke` that starts this tool call
+            // block by scanning backwards from the close tag position.
+            if let Some(invoke_offset) = region.rfind("<invoke") {
+                // Append text before the invoke tag, then insert the open tag.
+                result.push_str(&region[..invoke_offset]);
+                result.push_str(OPEN);
+                result.push_str(&region[invoke_offset..]);
+                result.push_str(CLOSE);
+            } else {
+                // No `<invoke` found -- cannot patch; emit the region as-is.
+                result.push_str(&raw[cursor..close_abs + CLOSE.len()]);
+            }
+        }
+
+        cursor = close_abs + CLOSE.len();
+    }
+
+    result
+}
+
 /// Find the earliest occurring envelope open tag from `cursor` onward.
 ///
 /// Returns `(tag_pair_index, absolute_offset_of_open_tag)` for the earliest
@@ -108,6 +167,10 @@ fn find_earliest_envelope(raw: &str, cursor: usize) -> Option<(usize, usize)> {
 /// extracted tool calls. Malformed blocks are treated as regular text
 /// and a warning is emitted.
 pub fn parse_tool_calls(raw: &str) -> ParseResult {
+    // Pre-process: patch MiniMax 2.5 output with missing open tags.
+    let patched = patch_minimax_missing_open_tags(raw);
+    let raw = &patched;
+
     let mut text = String::new();
     let mut tool_calls = Vec::new();
     let mut warnings = Vec::new();
@@ -1769,5 +1832,77 @@ line2"}"#;
         assert_eq!(result.tool_calls[0].name, "First");
         assert_eq!(result.tool_calls[1].name, "Second");
         assert_eq!(result.tool_calls[1].arguments["key"], "val");
+    }
+
+    // -----------------------------------------------------------------------
+    // MiniMax 2.5 missing open tag patch tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_patch_minimax_single_missing_open_tag() {
+        let input = r#"<think>thinking...</think>
+<invoke name="Glob"> <parameter name="query">**/glob.rs</parameter> </invoke> </minimax:tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "Glob");
+        assert_eq!(result.tool_calls[0].arguments["query"], "**/glob.rs");
+    }
+
+    #[test]
+    fn test_patch_minimax_multiple_missing_open_tags() {
+        let input = r#"<think>thinking...</think>
+<invoke name="Glob"> <parameter name="query">**/glob.rs</parameter> </invoke> </minimax:tool_call>
+
+Some text in between.
+
+<invoke name="FileRead"> <parameter name="path">/src/main.rs</parameter> </invoke> </minimax:tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].name, "Glob");
+        assert_eq!(result.tool_calls[0].arguments["query"], "**/glob.rs");
+        assert_eq!(result.tool_calls[1].name, "FileRead");
+        assert_eq!(result.tool_calls[1].arguments["path"], "/src/main.rs");
+        assert!(result.text.contains("Some text in between."));
+    }
+
+    #[test]
+    fn test_patch_minimax_mixed_present_and_missing() {
+        // First tool call has proper tags, second is missing the open tag.
+        let input = r#"<minimax:tool_call>
+<invoke name="Glob"> <parameter name="query">*.rs</parameter> </invoke>
+</minimax:tool_call>
+
+<invoke name="FileRead"> <parameter name="path">/a.rs</parameter> </invoke> </minimax:tool_call>"#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].name, "Glob");
+        assert_eq!(result.tool_calls[1].name, "FileRead");
+    }
+
+    #[test]
+    fn test_patch_minimax_no_close_tag_no_patch() {
+        // No close tag at all -- should not be affected.
+        let input = "<invoke name=\"Glob\"> <parameter name=\"query\">*.rs</parameter> </invoke>";
+        let result = parse_tool_calls(input);
+        assert!(result.tool_calls.is_empty());
+        assert!(result.text.contains("<invoke"));
+    }
+
+    #[test]
+    fn test_patch_minimax_preserves_surrounding_text() {
+        let input = r#"Before text.
+
+<invoke name="Glob"> <parameter name="query">*.rs</parameter> </invoke> </minimax:tool_call>
+
+After text."#;
+
+        let result = parse_tool_calls(input);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "Glob");
+        assert!(result.text.contains("Before text."));
+        assert!(result.text.contains("After text."));
     }
 }
