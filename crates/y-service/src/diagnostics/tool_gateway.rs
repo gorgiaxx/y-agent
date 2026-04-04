@@ -11,7 +11,7 @@ use y_diagnostics::{DiagnosticsEvent, DiagnosticsSubscriber, TraceStore, DIAGNOS
 /// A thin gateway that records tool call observations after execution.
 ///
 /// Does NOT own the tool dispatch logic. The caller executes the tool and
-/// then calls [`record`] to persist the observation and emit a broadcast
+/// then calls [`Self::record`] to persist the observation and emit a broadcast
 /// event. This keeps the gateway stateless and composable.
 pub struct DiagnosticsToolGateway {
     diagnostics: Arc<DiagnosticsSubscriber<dyn TraceStore>>,

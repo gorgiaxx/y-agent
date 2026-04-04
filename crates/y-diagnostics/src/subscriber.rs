@@ -118,7 +118,7 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
     /// Create a Running generation observation (stream started).
     ///
     /// Returns the observation ID so the caller can later finalize it with
-    /// [`on_generation_complete`].
+    /// [`Self::on_generation_complete`].
     pub async fn on_generation_start(
         &self,
         params: GenerationStartParams,
