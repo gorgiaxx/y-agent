@@ -594,6 +594,16 @@ export function ChatSidebarPanel({
             {workspaces.length > 0 && (
               <div className="workspace-label workspace-label--general">
                 <span className="workspace-name">General</span>
+                <button
+                  className="btn-workspace-menu"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNewChat();
+                  }}
+                  title="New session in General"
+                >
+                  <Plus size={12} />
+                </button>
               </div>
             )}
             {getPreviewList(ungrouped).map((s) => renderSessionItem(s, ungrouped.map((x) => x.id)))}
