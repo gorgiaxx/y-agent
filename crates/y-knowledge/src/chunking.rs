@@ -23,6 +23,21 @@ pub enum ChunkLevel {
     L2,
 }
 
+impl ChunkLevel {
+    /// Parse a resolution string (`"l0"`, `"l1"`, `"l2"`) into a `ChunkLevel`.
+    ///
+    /// Returns `None` for unrecognized strings, which callers treat as
+    /// "return all levels" (no level filter).
+    pub fn from_resolution(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "l0" => Some(Self::L0),
+            "l1" => Some(Self::L1),
+            "l2" => Some(Self::L2),
+            _ => None,
+        }
+    }
+}
+
 /// A chunk of knowledge content at a specific resolution level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
@@ -51,6 +66,21 @@ pub struct ChunkMetadata {
     pub title: String,
     /// Section index within the document.
     pub section_index: usize,
+    /// Knowledge collection this chunk belongs to.
+    #[serde(default)]
+    pub collection: String,
+    /// Index of the parent L1 section that this L2 chunk belongs to.
+    ///
+    /// `None` for L0/L1 chunks or when L1 alignment has not been computed.
+    /// Used to enable resolution-aware retrieval: when `resolution=l1` is
+    /// requested, the system can aggregate L2 chunks by their parent L1 section.
+    #[serde(default)]
+    pub l1_section_index: Option<usize>,
+    /// ISO 8601 timestamp of when this chunk was indexed.
+    ///
+    /// Used with `RetrievalFilter::freshness_after` to exclude stale entries.
+    #[serde(default)]
+    pub indexed_at: Option<String>,
 }
 
 /// Chunking algorithm type.
@@ -318,7 +348,11 @@ fn split_by_headings(content: &str) -> Vec<String> {
 /// Uses a mixed heuristic: CJK characters count as ~1.5 tokens each
 /// (most embedding tokenizers split them into 1-2 BPE tokens),
 /// while ASCII/Latin characters use the ~4-chars-per-token rule.
-fn estimate_tokens(text: &str) -> u32 {
+///
+/// This is the canonical token estimator for the `y-knowledge` crate.
+/// All modules should use this instead of local implementations to
+/// ensure consistent token accounting.
+pub fn estimate_tokens(text: &str) -> u32 {
     let mut cjk_chars = 0u32;
     let mut other_bytes = 0u32;
 
@@ -413,6 +447,49 @@ pub fn is_generic_section_title(title: &str) -> bool {
         .is_some_and(|rest| rest.parse::<u32>().is_ok())
 }
 
+/// Compute the parent L1 section index for each L2 chunk.
+///
+/// Both L1 sections and L2 chunks are sequential splits of the same document.
+/// This function maps each L2 chunk to its parent L1 section by tracking
+/// cumulative character positions: the midpoint of each L2 chunk is mapped
+/// to the L1 section whose range contains that midpoint.
+///
+/// Returns a vector with one entry per L2 chunk, containing the L1 section
+/// index (`Some(n)`) or `None` if no sections are available.
+pub fn compute_l1_alignment(
+    l1_sections: &[(usize, usize)],
+    l2_chunks: &[String],
+) -> Vec<Option<usize>> {
+    if l1_sections.is_empty() {
+        return vec![None; l2_chunks.len()];
+    }
+
+    // Compute cumulative end positions for L1 sections.
+    // l1_boundaries[i] = (cumulative_char_end, section_index)
+    let mut l1_boundaries: Vec<(usize, usize)> = Vec::with_capacity(l1_sections.len());
+    let mut pos = 0usize;
+    for &(index, content_len) in l1_sections {
+        pos += content_len;
+        l1_boundaries.push((pos, index));
+    }
+
+    // For each L2 chunk, find which L1 section boundary contains its midpoint.
+    let mut l2_pos = 0usize;
+    l2_chunks
+        .iter()
+        .map(|chunk| {
+            let chunk_mid = l2_pos + chunk.len() / 2;
+            l2_pos += chunk.len();
+
+            l1_boundaries
+                .iter()
+                .find(|(end, _)| chunk_mid < *end)
+                .map(|(_, idx)| *idx)
+                .or_else(|| l1_boundaries.last().map(|(_, idx)| *idx))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,6 +504,7 @@ mod tests {
             domain: "rust".to_string(),
             title: "Test Document".to_string(),
             section_index: 0,
+            ..Default::default()
         }
     }
 
@@ -648,5 +726,68 @@ mod tests {
         assert!(!is_generic_section_title("Section"));
         assert!(!is_generic_section_title("Section 1.1"));
         assert!(!is_generic_section_title(""));
+    }
+
+    // --- L1 alignment tests ---
+
+    #[test]
+    fn test_l1_alignment_empty_sections() {
+        let chunks = vec!["hello world".to_string(), "foo bar".to_string()];
+        let result = compute_l1_alignment(&[], &chunks);
+        assert_eq!(result, vec![None, None]);
+    }
+
+    #[test]
+    fn test_l1_alignment_empty_chunks() {
+        let sections = vec![(0, 100), (1, 200)];
+        let result = compute_l1_alignment(&sections, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_l1_alignment_single_section() {
+        let sections = vec![(0, 500)];
+        let chunks = vec!["a".repeat(100), "b".repeat(200), "c".repeat(200)];
+        let result = compute_l1_alignment(&sections, &chunks);
+        // All chunks should map to section 0.
+        assert_eq!(result, vec![Some(0), Some(0), Some(0)]);
+    }
+
+    #[test]
+    fn test_l1_alignment_multi_section() {
+        // 3 sections of 100, 200, 100 chars.
+        let sections = vec![(0, 100), (1, 200), (2, 100)];
+        // 4 chunks: first in section 0, next two in section 1, last in section 2.
+        let chunks = vec![
+            "a".repeat(100), // 0..100 -> midpoint 50 -> section 0
+            "b".repeat(100), // 100..200 -> midpoint 150 -> section 1
+            "c".repeat(100), // 200..300 -> midpoint 250 -> section 1
+            "d".repeat(100), // 300..400 -> midpoint 350 -> section 2
+        ];
+        let result = compute_l1_alignment(&sections, &chunks);
+        assert_eq!(result, vec![Some(0), Some(1), Some(1), Some(2)]);
+    }
+
+    #[test]
+    fn test_l1_alignment_chunks_exceed_sections() {
+        // Section covers 100 chars, but chunks total 200.
+        let sections = vec![(0, 100)];
+        let chunks = vec!["a".repeat(100), "b".repeat(100)];
+        let result = compute_l1_alignment(&sections, &chunks);
+        // Both should map to section 0 (last boundary fallback).
+        assert_eq!(result, vec![Some(0), Some(0)]);
+    }
+
+    // --- ChunkLevel::from_resolution tests ---
+
+    #[test]
+    fn test_chunk_level_from_resolution() {
+        assert_eq!(ChunkLevel::from_resolution("l0"), Some(ChunkLevel::L0));
+        assert_eq!(ChunkLevel::from_resolution("L0"), Some(ChunkLevel::L0));
+        assert_eq!(ChunkLevel::from_resolution("l1"), Some(ChunkLevel::L1));
+        assert_eq!(ChunkLevel::from_resolution("l2"), Some(ChunkLevel::L2));
+        assert_eq!(ChunkLevel::from_resolution("L2"), Some(ChunkLevel::L2));
+        assert_eq!(ChunkLevel::from_resolution("all"), None);
+        assert_eq!(ChunkLevel::from_resolution(""), None);
     }
 }

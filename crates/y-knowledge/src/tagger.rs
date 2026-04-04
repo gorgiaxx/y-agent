@@ -227,6 +227,9 @@ pub struct LlmSummary {
 pub struct LlmL1Section {
     /// Section title.
     pub title: String,
+    /// Approximate line range of this section in the source file (e.g. "L0-L349").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_range: Option<String>,
     /// Section summary.
     pub summary: String,
 }
@@ -551,10 +554,7 @@ impl TagMerger {
 // Token estimation helpers
 // ---------------------------------------------------------------------------
 
-/// Estimate token count for a text string (4 chars per token heuristic).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
+use crate::chunking::estimate_tokens;
 
 /// Convert a token count to approximate character count.
 fn tokens_to_chars(tokens: u32) -> usize {

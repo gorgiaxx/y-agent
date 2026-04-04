@@ -83,11 +83,7 @@ impl Default for QualityFilter {
     }
 }
 
-/// Estimate token count (rough: chars / 4).
-fn estimate_tokens(text: &str) -> u32 {
-    let chars = u32::try_from(text.len()).unwrap_or(u32::MAX);
-    chars.div_ceil(4)
-}
+use crate::chunking::estimate_tokens;
 
 /// Length score: 0.0–0.3.
 ///

@@ -8,7 +8,7 @@
 //! Features: paragraph-level dedup, `min_similarity_threshold`, quality/freshness boosts.
 
 use crate::bm25::Bm25Index;
-use crate::chunking::Chunk;
+use crate::chunking::{Chunk, ChunkLevel};
 use crate::tokenizer::Tokenizer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -90,8 +90,18 @@ pub struct RetrievalResult {
 pub struct RetrievalFilter {
     /// Filter by knowledge domain.
     pub domain: Option<String>,
+    /// Filter by knowledge collection.
+    pub collection: Option<String>,
     /// Exclude chunks older than this (ISO 8601 timestamp).
+    ///
+    /// Compared lexicographically against `ChunkMetadata::indexed_at`.
+    /// Chunks without a timestamp are always included.
     pub freshness_after: Option<String>,
+    /// Filter by chunk resolution level.
+    ///
+    /// When set, only chunks at the specified level are returned.
+    /// `None` returns all levels.
+    pub level: Option<ChunkLevel>,
     /// Maximum number of results.
     pub limit: usize,
 }
@@ -448,6 +458,24 @@ impl<T: Tokenizer> HybridRetriever<T> {
                 return false;
             }
         }
+        if let Some(ref collection) = filter.collection {
+            if chunk.metadata.collection != *collection {
+                return false;
+            }
+        }
+        if let Some(ref level) = filter.level {
+            if chunk.level != *level {
+                return false;
+            }
+        }
+        if let Some(ref after) = filter.freshness_after {
+            // Chunks without a timestamp are always included (backwards compat).
+            if let Some(ref ts) = chunk.metadata.indexed_at {
+                if ts.as_str() < after.as_str() {
+                    return false;
+                }
+            }
+        }
         true
     }
 
@@ -637,6 +665,7 @@ mod tests {
                 domain: domain.to_string(),
                 title: "Test".to_string(),
                 section_index: section,
+                ..Default::default()
             },
         }
     }
@@ -828,6 +857,137 @@ mod tests {
             results[0].chunk.id, "c1",
             "higher quality should rank first"
         );
+    }
+
+    // --- Collection Filter ---
+
+    #[test]
+    fn test_search_collection_filter() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+
+        // Two chunks in different collections.
+        let mut c1 = make_chunk("c1", "Rust error handling guide", "rust");
+        c1.metadata.collection = "rust-docs".to_string();
+        let mut c2 = make_chunk("c2", "Rust async runtime patterns", "rust");
+        c2.metadata.collection = "rust-async".to_string();
+
+        retriever.index(c1);
+        retriever.index(c2);
+
+        // No filter: both match.
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = retriever.search("Rust", &filter);
+        assert_eq!(results.len(), 2, "unfiltered should return both");
+
+        // Filter by collection: only one matches.
+        let filter = RetrievalFilter {
+            limit: 10,
+            collection: Some("rust-docs".to_string()),
+            ..Default::default()
+        };
+        let results = retriever.search("Rust", &filter);
+        assert_eq!(results.len(), 1, "filtered should return only matching");
+        assert_eq!(results[0].chunk.id, "c1");
+    }
+
+    #[test]
+    fn test_search_level_filter() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+
+        // L0 summary chunk.
+        let mut c_l0 = make_chunk("c-l0", "Rust programming overview summary", "rust");
+        c_l0.level = ChunkLevel::L0;
+        // L2 detail chunk.
+        let c_l2 = make_chunk("c-l2", "Rust error handling with Result type", "rust");
+
+        retriever.index(c_l0);
+        retriever.index(c_l2);
+
+        // No level filter: both returned.
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = retriever.search("Rust", &filter);
+        assert_eq!(results.len(), 2, "unfiltered should return both levels");
+
+        // Filter L0 only.
+        let filter = RetrievalFilter {
+            limit: 10,
+            level: Some(ChunkLevel::L0),
+            ..Default::default()
+        };
+        let results = retriever.search("Rust", &filter);
+        assert_eq!(results.len(), 1, "L0 filter should return one");
+        assert_eq!(results[0].chunk.id, "c-l0");
+
+        // Filter L2 only.
+        let filter = RetrievalFilter {
+            limit: 10,
+            level: Some(ChunkLevel::L2),
+            ..Default::default()
+        };
+        let results = retriever.search("Rust", &filter);
+        assert_eq!(results.len(), 1, "L2 filter should return one");
+        assert_eq!(results[0].chunk.id, "c-l2");
+    }
+
+    #[test]
+    fn test_search_freshness_filter() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+
+        let mut c_old = make_chunk("c-old", "Rust old documentation content", "rust");
+        c_old.metadata.indexed_at = Some("2025-01-01T00:00:00Z".to_string());
+        let mut c_new = make_chunk("c-new", "Rust new documentation content", "rust");
+        c_new.metadata.indexed_at = Some("2026-03-01T00:00:00Z".to_string());
+        // Chunk with no timestamp (backwards compat -- always included).
+        let c_none = make_chunk("c-none", "Rust content without timestamp", "rust");
+
+        retriever.index(c_old);
+        retriever.index(c_new);
+        retriever.index(c_none);
+
+        // No freshness filter: all match.
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = retriever.search("Rust", &filter);
+        assert_eq!(results.len(), 3, "unfiltered should return all");
+
+        // Freshness after 2026-01-01: excludes c_old.
+        let filter = RetrievalFilter {
+            limit: 10,
+            freshness_after: Some("2026-01-01T00:00:00Z".to_string()),
+            ..Default::default()
+        };
+        let results = retriever.search("Rust", &filter);
+        assert_eq!(results.len(), 2, "freshness filter should exclude old");
+        let ids: Vec<&str> = results.iter().map(|r| r.chunk.id.as_str()).collect();
+        assert!(ids.contains(&"c-new"), "new chunk should be included");
+        assert!(
+            ids.contains(&"c-none"),
+            "no-timestamp chunk should be included"
+        );
+        assert!(!ids.contains(&"c-old"), "old chunk should be excluded");
     }
 
     // --- Search Strategy ---

@@ -49,7 +49,7 @@ pub mod tools;
 
 // Re-export primary types.
 pub use bm25::Bm25Index;
-pub use chunking::{Chunk, ChunkLevel, ChunkerType, ChunkingStrategy};
+pub use chunking::{estimate_tokens, Chunk, ChunkLevel, ChunkerType, ChunkingStrategy};
 pub use classifier::{Classifier, RuleBasedClassifier};
 pub use config::KnowledgeConfig;
 pub use error::KnowledgeError;

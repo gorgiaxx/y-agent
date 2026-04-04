@@ -114,6 +114,8 @@ impl IngestionPipeline {
             domain: String::new(),
             title: doc.title,
             section_index: 0,
+            collection: collection.to_string(),
+            ..Default::default()
         };
         let chunks = strategy.chunk(
             &entry.id.to_string(),

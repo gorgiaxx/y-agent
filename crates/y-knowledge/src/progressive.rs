@@ -112,6 +112,7 @@ mod tests {
             domain: "test".to_string(),
             title: "Test".to_string(),
             section_index: 0,
+            ..Default::default()
         }
     }
 

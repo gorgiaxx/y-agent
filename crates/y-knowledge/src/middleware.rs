@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use crate::chunking::ChunkLevel;
 use crate::retrieval::{HybridRetriever, RetrievalFilter, RetrievalResult};
 use crate::tokenizer::Tokenizer;
 
@@ -21,10 +22,7 @@ pub const INJECT_KNOWLEDGE_PRIORITY: u32 = 350;
 /// Default token budget for knowledge context.
 const DEFAULT_KNOWLEDGE_BUDGET: u32 = 4_000;
 
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
+use crate::chunking::estimate_tokens;
 
 /// Configuration for the knowledge injection middleware.
 #[derive(Debug, Clone)]
@@ -71,6 +69,12 @@ pub struct EntryMetadata {
     pub summary: Option<String>,
     /// L1: section titles only (not full content, to save memory).
     pub section_titles: Vec<String>,
+    /// L1: section content summaries (LLM-generated or text-based).
+    ///
+    /// Parallel to `section_titles` -- `section_summaries[i]` is the
+    /// summary for `section_titles[i]`. Empty when L1 sections have no
+    /// meaningful content beyond their titles.
+    pub section_summaries: Vec<String>,
     /// LLM-generated semantic tags for topic identification.
     pub tags: Vec<String>,
     /// Document type classification (e.g., "standards", "paper", "manual").
@@ -167,14 +171,48 @@ impl<T: Tokenizer> InjectKnowledge<T> {
     /// When L0/L1 metadata is available for a matched document, the result
     /// is formatted with structured summary + section titles instead of
     /// raw chunk text, saving tokens and improving LLM comprehension.
+    ///
+    /// When `collection_filter` is provided, only chunks from that
+    /// collection are searched, preventing cross-collection query leaks.
     pub fn retrieve_for_context(
         &self,
         user_query: &str,
         query_embedding: Option<&[f32]>,
         domain_hint: Option<&str>,
     ) -> Vec<KnowledgeContextItem> {
+        self.retrieve_for_context_in_collection(user_query, query_embedding, domain_hint, None)
+    }
+
+    /// Retrieve knowledge items with an optional collection scope.
+    pub fn retrieve_for_context_in_collection(
+        &self,
+        user_query: &str,
+        query_embedding: Option<&[f32]>,
+        domain_hint: Option<&str>,
+        collection_filter: Option<&str>,
+    ) -> Vec<KnowledgeContextItem> {
+        self.retrieve_for_context_filtered(
+            user_query,
+            query_embedding,
+            domain_hint,
+            collection_filter,
+            None,
+        )
+    }
+
+    /// Retrieve knowledge items with full filter control (collection + level).
+    pub fn retrieve_for_context_filtered(
+        &self,
+        user_query: &str,
+        query_embedding: Option<&[f32]>,
+        domain_hint: Option<&str>,
+        collection_filter: Option<&str>,
+        level_filter: Option<ChunkLevel>,
+    ) -> Vec<KnowledgeContextItem> {
         let filter = RetrievalFilter {
             domain: domain_hint.map(String::from),
+            collection: collection_filter.map(String::from),
+            level: level_filter,
             limit: self.config.max_chunks,
             ..Default::default()
         };
@@ -189,10 +227,18 @@ impl<T: Tokenizer> InjectKnowledge<T> {
             .filter(|r| r.relevance >= self.config.min_relevance)
             .collect();
 
-        // Deduplicate by document_id: only inject one item per document.
-        // When metadata is available we inject the structured L0/L1 summary,
-        // so duplicate chunks from the same document are redundant.
-        let mut seen_documents: std::collections::HashSet<String> =
+        // Deduplicate by (document_id, chunk_level, l1_section) to avoid
+        // injecting identical or overlapping content. Unlike the previous
+        // per-document dedup, this allows multiple sections from the same
+        // document to appear in results -- important now that L0/L1 chunks
+        // are first-class indexed objects.
+        let mut seen_chunks: std::collections::HashSet<(String, String, Option<usize>)> =
+            std::collections::HashSet::new();
+
+        // When metadata is available and a document already has its *structured
+        // summary* injected (via L0 hit), skip additional raw L2 chunks from
+        // that document since the structured format already covers them.
+        let mut docs_with_structured_summary: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
         // Track which document+section ranges have already been included
@@ -208,13 +254,29 @@ impl<T: Tokenizer> InjectKnowledge<T> {
             let doc_id = &result.chunk.document_id;
             let metadata = self.entry_metadata.get(doc_id);
 
-            // If we have L0/L1 metadata, deduplicate by document.
-            if metadata.is_some() && !seen_documents.insert(doc_id.clone()) {
-                continue; // Already injected this document's summary
+            // Build a dedup key from (doc_id, level, l1_section_index).
+            let level_tag = format!("{:?}", result.chunk.level);
+            let dedup_key = (
+                doc_id.clone(),
+                level_tag,
+                result.chunk.metadata.l1_section_index,
+            );
+            if !seen_chunks.insert(dedup_key) {
+                continue;
+            }
+
+            // If this document already had a structured summary injected
+            // (from an L0/L1 hit with metadata), skip duplicate L2 chunks
+            // since the summary already provides coverage.
+            if docs_with_structured_summary.contains(doc_id) && result.chunk.level == ChunkLevel::L2
+            {
+                continue;
             }
 
             // Format content based on available metadata.
             let content = if let Some(meta) = metadata {
+                // Mark this document as having a structured summary.
+                docs_with_structured_summary.insert(doc_id.clone());
                 Self::format_structured(result, meta)
             } else if self.config.context_window > 0 {
                 let neighbors = self
@@ -328,11 +390,19 @@ impl<T: Tokenizer> InjectKnowledge<T> {
         let meaningful: Vec<_> = meta
             .section_titles
             .iter()
-            .filter(|t| !is_generic_section_title(t))
+            .enumerate()
+            .filter(|(_, t)| !is_generic_section_title(t))
             .collect();
         if !meaningful.is_empty() {
             out.push_str("\nSections:");
-            for (i, title) in meaningful.iter().enumerate() {
+            for (i, (orig_idx, title)) in meaningful.iter().enumerate() {
+                // Include section summary if available and non-empty.
+                if let Some(summary) = meta.section_summaries.get(*orig_idx) {
+                    if !summary.is_empty() {
+                        write!(&mut out, "\n  {}. {} -- {}", i + 1, title, summary).unwrap();
+                        continue;
+                    }
+                }
                 write!(&mut out, "\n  {}. {}", i + 1, title).unwrap();
             }
         }
@@ -401,6 +471,7 @@ mod tests {
                 domain: "rust".to_string(),
                 title: "Rust Error Handling".to_string(),
                 section_index: 0,
+                ..Default::default()
             },
         });
         retriever.index(Chunk {
@@ -415,6 +486,7 @@ mod tests {
                 domain: "python".to_string(),
                 title: "Python Exceptions".to_string(),
                 section_index: 0,
+                ..Default::default()
             },
         });
 
@@ -516,6 +588,7 @@ mod tests {
                     "The ? Operator".to_string(),
                     "Custom Errors".to_string(),
                 ],
+                section_summaries: vec![],
                 tags: vec![],
                 document_type: None,
                 industry: None,
@@ -584,6 +657,7 @@ mod tests {
                 title: "Test".to_string(),
                 summary: Some("Test summary".to_string()),
                 section_titles: vec![],
+                section_summaries: vec![],
                 tags: vec![],
                 document_type: None,
                 industry: None,
