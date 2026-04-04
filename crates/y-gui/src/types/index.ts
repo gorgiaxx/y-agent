@@ -536,3 +536,17 @@ export interface KnowledgeStats {
   total_chunks: number;
   total_hits: number;
 }
+
+// ---------------------------------------------------------------------------
+// Attachments (multimodal image uploads)
+// ---------------------------------------------------------------------------
+
+/** Attachment data returned by `attachment_read_files`. */
+export interface Attachment {
+  id: string;
+  filename: string;
+  mime_type: string;
+  base64_data: string;
+  size: number;
+}
+

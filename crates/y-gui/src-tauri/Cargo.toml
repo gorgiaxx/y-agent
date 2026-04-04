@@ -60,5 +60,11 @@ chrono = { workspace = true }
 # HTTP client (for provider_test command)
 reqwest = { workspace = true }
 
+# Encoding
+base64 = { workspace = true }
+
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "3"
