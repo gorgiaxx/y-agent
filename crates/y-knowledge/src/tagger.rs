@@ -27,6 +27,19 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Return a byte index clamped to the nearest char boundary at or before `max_bytes`.
+///
+/// Prevents panics when slicing multi-byte UTF-8 strings (e.g. CJK text).
+fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
+    let idx = max_bytes.min(s.len());
+    // Walk backward until we land on a char boundary.
+    let mut pos = idx;
+    while pos > 0 && !s.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
+}
+
 // ---------------------------------------------------------------------------
 // Token thresholds
 // ---------------------------------------------------------------------------
@@ -140,7 +153,7 @@ impl MetadataParser {
     pub fn parse(llm_output: &str) -> Result<DocumentMetadata, KnowledgeError> {
         tracing::debug!(
             raw_len = llm_output.len(),
-            raw_preview = %&llm_output[..llm_output.len().min(300)],
+            raw_preview = %&llm_output[..floor_char_boundary(llm_output, 300)],
             "MetadataParser: raw LLM output received"
         );
 
@@ -149,7 +162,7 @@ impl MetadataParser {
         let trimmed = stripped.trim();
         tracing::debug!(
             stripped_len = trimmed.len(),
-            stripped_preview = %&trimmed[..trimmed.len().min(300)],
+            stripped_preview = %&trimmed[..floor_char_boundary(trimmed, 300)],
             "MetadataParser: after stripping think tags"
         );
 
@@ -181,7 +194,7 @@ impl MetadataParser {
             if let Some(end) = cleaned.rfind('}') {
                 let json_str = &cleaned[start..=end];
                 tracing::debug!(
-                    json_preview = %&json_str[..json_str.len().min(300)],
+                    json_preview = %&json_str[..floor_char_boundary(json_str, 300)],
                     "MetadataParser: trying extracted JSON object"
                 );
                 match serde_json::from_str::<DocumentMetadata>(json_str) {
@@ -197,13 +210,13 @@ impl MetadataParser {
         }
 
         tracing::warn!(
-            cleaned_preview = %&cleaned[..cleaned.len().min(500)],
+            cleaned_preview = %&cleaned[..floor_char_boundary(cleaned, 500)],
             "MetadataParser: all parse strategies exhausted, returning error"
         );
         Err(KnowledgeError::IngestionError {
             message: format!(
                 "failed to parse metadata from LLM output (first 200 chars): {}",
-                &trimmed[..trimmed.len().min(200)]
+                &trimmed[..floor_char_boundary(trimmed, 200)]
             ),
         })
     }
@@ -263,7 +276,7 @@ impl SummaryParser {
     pub fn parse(llm_output: &str) -> Result<LlmSummary, KnowledgeError> {
         tracing::debug!(
             raw_len = llm_output.len(),
-            raw_preview = %&llm_output[..llm_output.len().min(300)],
+            raw_preview = %&llm_output[..floor_char_boundary(llm_output, 300)],
             "SummaryParser: raw LLM output received"
         );
 
@@ -272,7 +285,7 @@ impl SummaryParser {
         let trimmed = stripped.trim();
         tracing::debug!(
             stripped_len = trimmed.len(),
-            stripped_preview = %&trimmed[..trimmed.len().min(300)],
+            stripped_preview = %&trimmed[..floor_char_boundary(trimmed, 300)],
             "SummaryParser: after stripping think tags"
         );
 
@@ -304,7 +317,7 @@ impl SummaryParser {
             if let Some(end) = cleaned.rfind('}') {
                 let json_str = &cleaned[start..=end];
                 tracing::debug!(
-                    json_preview = %&json_str[..json_str.len().min(300)],
+                    json_preview = %&json_str[..floor_char_boundary(json_str, 300)],
                     "SummaryParser: trying extracted JSON object"
                 );
                 match serde_json::from_str::<LlmSummary>(json_str) {
@@ -320,13 +333,13 @@ impl SummaryParser {
         }
 
         tracing::warn!(
-            cleaned_preview = %&cleaned[..cleaned.len().min(500)],
+            cleaned_preview = %&cleaned[..floor_char_boundary(cleaned, 500)],
             "SummaryParser: all parse strategies exhausted, returning error"
         );
         Err(KnowledgeError::IngestionError {
             message: format!(
                 "failed to parse summary from LLM output (first 200 chars): {}",
-                &trimmed[..trimmed.len().min(200)]
+                &trimmed[..floor_char_boundary(trimmed, 200)]
             ),
         })
     }
@@ -881,5 +894,46 @@ mod tests {
         let summary = SummaryParser::parse(output).expect("should parse with think tags");
         assert_eq!(summary.l0_summary, "Test summary.");
         assert_eq!(summary.l1_sections.len(), 1);
+    }
+
+    // --- floor_char_boundary tests ---
+
+    #[test]
+    fn test_floor_char_boundary_ascii() {
+        let s = "hello world";
+        assert_eq!(floor_char_boundary(s, 5), 5);
+        assert_eq!(floor_char_boundary(s, 100), s.len());
+        assert_eq!(floor_char_boundary(s, 0), 0);
+    }
+
+    #[test]
+    fn test_floor_char_boundary_multibyte() {
+        // Each CJK char is 3 bytes in UTF-8.
+        let s = "abcde\u{4EE3}\u{7801}"; // "abcde" (5 bytes) + 2 CJK chars (6 bytes) = 11 bytes
+                                         // Byte 5 is the start of first CJK char -> valid boundary
+        assert_eq!(floor_char_boundary(s, 5), 5);
+        // Byte 6 is inside first CJK char -> floor to 5
+        assert_eq!(floor_char_boundary(s, 6), 5);
+        // Byte 7 is inside first CJK char -> floor to 5
+        assert_eq!(floor_char_boundary(s, 7), 5);
+        // Byte 8 is the start of second CJK char -> valid boundary
+        assert_eq!(floor_char_boundary(s, 8), 8);
+    }
+
+    #[test]
+    fn test_summary_parser_no_panic_on_cjk_content() {
+        // Build a CJK string longer than 500 bytes to exercise the preview truncation.
+        // Each CJK char is 3 bytes, so 200 chars = 600 bytes.
+        let cjk: String = std::iter::repeat('\u{4EE3}').take(200).collect();
+        let output = format!("Not JSON: {cjk}");
+        // Should return Err, but must NOT panic.
+        assert!(SummaryParser::parse(&output).is_err());
+    }
+
+    #[test]
+    fn test_metadata_parser_no_panic_on_cjk_content() {
+        let cjk: String = std::iter::repeat('\u{7801}').take(200).collect();
+        let output = format!("Not JSON: {cjk}");
+        assert!(MetadataParser::parse(&output).is_err());
     }
 }
