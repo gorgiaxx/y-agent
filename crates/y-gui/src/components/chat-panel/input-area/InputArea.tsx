@@ -599,32 +599,6 @@ export function InputArea({
 
         {/* Toolbar row with action buttons -- inside the input border */}
         <div className="input-toolbar">
-          {/* (a) Attachment picker */}
-          <button
-            className={`toolbar-btn has-tooltip ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
-            onClick={async () => {
-              try {
-                const result = await open({
-                  multiple: true,
-                  filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
-                });
-                if (result) {
-                  const paths = Array.isArray(result) ? result : [result];
-                  const atts = await invoke<Attachment[]>('attachment_read_files', { paths });
-                  setAttachments((prev) => [...prev, ...atts]);
-                }
-              } catch (e) {
-                console.error('[InputArea] attachment picker error:', e);
-              }
-            }}
-            data-tooltip="Attach images"
-            disabled={disabled}
-          >
-            <Paperclip size={14} />
-            {attachments.length > 0 && (
-              <span className="toolbar-btn-label">{attachments.length}</span>
-            )}
-          </button>
 
           {/* (b) Model / provider selection */}
           <div className="toolbar-btn-group" ref={providerDropdownRef}>
@@ -663,13 +637,31 @@ export function InputArea({
             )}
           </div>
 
-          {/* (b) Expand / collapse input */}
+          {/* (a) Attachment picker */}
           <button
-            className="toolbar-btn has-tooltip"
-            onClick={() => onExpandChange?.(!expanded)}
-            data-tooltip={expanded ? 'Collapse input' : 'Expand input'}
+            className={`toolbar-btn has-tooltip ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
+            onClick={async () => {
+              try {
+                const result = await open({
+                  multiple: true,
+                  filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+                });
+                if (result) {
+                  const paths = Array.isArray(result) ? result : [result];
+                  const atts = await invoke<Attachment[]>('attachment_read_files', { paths });
+                  setAttachments((prev) => [...prev, ...atts]);
+                }
+              } catch (e) {
+                console.error('[InputArea] attachment picker error:', e);
+              }
+            }}
+            data-tooltip="Attach images"
+            disabled={disabled}
           >
-            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            <Paperclip size={14} />
+            {attachments.length > 0 && (
+              <span className="toolbar-btn-label">{attachments.length}</span>
+            )}
           </button>
 
           {/* (c) Clear all messages */}
@@ -763,7 +755,17 @@ export function InputArea({
                 </div>
               )}
             </div>
+            
           )}
+
+          {/* (b) Expand / collapse input */}
+          <button
+            className="toolbar-btn has-tooltip"
+            onClick={() => onExpandChange?.(!expanded)}
+            data-tooltip={expanded ? 'Collapse input' : 'Expand input'}
+          >
+            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
         </div>
       </div>
 

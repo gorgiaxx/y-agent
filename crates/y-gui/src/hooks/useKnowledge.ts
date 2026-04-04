@@ -209,12 +209,39 @@ export function useKnowledge() {
     setBatchProgress({ current: 0, total: sources.length });
     ingestCancelledRef.current = false;
 
-    // Listen for progress events from the backend.
     const { listen } = await import('@tauri-apps/api/event');
-    const unlisten = await listen<{ current: number; total: number; source: string }>(
+
+    // Listen for progress counter updates.
+    const unlistenProgress = await listen<{ current: number; total: number; source: string }>(
       'kb:batch_progress',
       (event) => {
         setBatchProgress({ current: event.payload.current, total: event.payload.total });
+      },
+    );
+
+    // Listen for per-file completion events. The backend includes the
+    // full entry data in the event payload so we can merge it directly
+    // into local state WITHOUT making additional invoke calls (which
+    // would compete for the same backend mutex and block user clicks).
+    const unlistenIngested = await listen<{
+      entry_id: string;
+      source: string;
+      collection: string;
+      current: number;
+      total: number;
+      entry: KnowledgeEntryInfo | null;
+    }>(
+      'kb:entry_ingested',
+      (event) => {
+        const { entry, collection: entryCollection } = event.payload;
+        if (entry && selectedCollection && entryCollection === selectedCollection) {
+          // Append the new entry to the local list -- no backend call needed.
+          setEntries(prev => {
+            // Guard against duplicates (in case of event replay).
+            if (prev.some(e => e.id === entry.id)) return prev;
+            return [...prev, entry];
+          });
+        }
       },
     );
 
@@ -244,9 +271,11 @@ export function useKnowledge() {
         setIngestError(String(err));
       }
     } finally {
-      unlisten();
+      unlistenProgress();
+      unlistenIngested();
     }
 
+    // Final refresh to ensure authoritative state (collection stats etc.).
     await refreshCollections();
     if (selectedCollection) {
       await loadEntries(selectedCollection);
