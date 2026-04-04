@@ -15,13 +15,13 @@ This document defines the standards for skill creation, ingestion, storage, vers
 
 ## 2. Core Philosophy
 
-| Principle | Rule |
-|-----------|------|
-| **LLM-instruction-only** | Skills contain only instructions that require LLM reasoning. API calls, scripts, tool invocations, and executable code belong in the Tool System or Agent framework. |
-| **Atomic by default** | One skill = one capability. Complex workflows are composed via multi-agent task decomposition, not monolithic skills. |
-| **Tree-indexed, not monolithic** | Root documents ≤ 2,000 tokens. Longer content is decomposed into sub-documents loaded on demand. |
-| **Reference, not embed** | Skills reference tools, other skills, and knowledge bases by identifier. No inline scripts or duplicated content. |
-| **Transform at import, not at runtime** | All LLM-intensive processing happens once at import time. Runtime skill access is a fast index lookup. |
+| Principle                               | Rule                                                                                                                                                                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **LLM-instruction-only**                | Skills contain only instructions that require LLM reasoning. API calls, scripts, tool invocations, and executable code belong in the Tool System or Agent framework. |
+| **Atomic by default**                   | One skill = one capability. Complex workflows are composed via multi-agent task decomposition, not monolithic skills.                                                |
+| **Tree-indexed, not monolithic**        | Root documents ≤ 2,000 tokens. Longer content is decomposed into sub-documents loaded on demand.                                                                     |
+| **Reference, not embed**                | Skills reference tools, other skills, and knowledge bases by identifier. No inline scripts or duplicated content.                                                    |
+| **Transform at import, not at runtime** | All LLM-intensive processing happens once at import time. Runtime skill access is a fast index lookup.                                                               |
 
 ---
 
@@ -41,6 +41,7 @@ Every registered skill is a directory with the following layout:
 ```
 
 Rules:
+
 - Skill directory name = skill `name` field (kebab-case, lowercase)
 - `skill.toml` and `root.md` are mandatory; validation fails without them
 - Sub-documents must be under a `details/` subdirectory
@@ -48,12 +49,12 @@ Rules:
 
 ### 3.2 Skill Naming
 
-| Rule | Convention | Example |
-|------|-----------|---------|
-| Format | `kebab-case`, lowercase | `humanizer-zh`, `code-review-rust` |
-| Length | 3–64 characters | — |
-| Characters | `[a-z0-9-]` only, no leading/trailing hyphens | — |
-| Uniqueness | Name must be unique within the registry | — |
+| Rule        | Convention                                                                | Example                         |
+| ----------- | ------------------------------------------------------------------------- | ------------------------------- |
+| Format      | `kebab-case`, lowercase                                                   | `humanizer-zh`                  |
+| Length      | 3–64 characters                                                           | —                               |
+| Characters  | `[a-z0-9-]` only, no leading/trailing hyphens                             | —                               |
+| Uniqueness  | Name must be unique within the registry                                   | —                               |
 | Descriptive | Name should indicate the skill's capability and optional domain qualifier | `translate-en-zh` not `skill-1` |
 
 ### 3.3 Manifest Schema (`skill.toml`)
@@ -102,37 +103,37 @@ max_delegation_depth = 0                       # Required, default: 0
 
 ### 3.4 Classification Types
 
-| Type | Definition | Registry Action |
-|------|-----------|----------------|
-| `llm_reasoning` | Instructions requiring LLM inference only: text transformation, analysis, summarization, style transfer | **Accept** |
-| `api_call` | Primarily describes external API interactions | **Reject** → redirect to Tool System |
-| `tool_wrapper` | Wraps a command-line tool or script | **Reject** → redirect to Tool System |
-| `agent_behavior` | Describes a complex multi-step workflow or agent persona | **Reject** → redirect to Agent framework |
-| `hybrid` | Mixes LLM reasoning with tool/API calls | **Partial accept** → extract LLM portion, redirect rest |
+| Type             | Definition                                                                                              | Registry Action                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `llm_reasoning`  | Instructions requiring LLM inference only: text transformation, analysis, summarization, style transfer | **Accept**                                              |
+| `api_call`       | Primarily describes external API interactions                                                           | **Reject** → redirect to Tool System                    |
+| `tool_wrapper`   | Wraps a command-line tool or script                                                                     | **Reject** → redirect to Tool System                    |
+| `agent_behavior` | Describes a complex multi-step workflow or agent persona                                                | **Reject** → redirect to Agent framework                |
+| `hybrid`         | Mixes LLM reasoning with tool/API calls                                                                 | **Partial accept** → extract LLM portion, redirect rest |
 
 Classification must be one of these 5 values. Use an enum in code, not a freeform string.
 
 ### 3.5 Root Document Rules
 
-| Rule | Constraint |
-|------|-----------|
-| Token budget | ≤ `max_root_tokens` (default: 2,000 tokens) |
-| Content | Concise instructions + sub-document index |
-| Sub-doc index | Must reference all sub-documents by ID in a `## Sub-Document Index` section |
-| Self-contained | Root must be useful on its own; sub-documents are supplementary |
+| Rule             | Constraint                                                                   |
+| ---------------- | ---------------------------------------------------------------------------- |
+| Token budget     | ≤ `max_root_tokens` (default: 2,000 tokens)                                  |
+| Content          | Concise instructions + sub-document index                                    |
+| Sub-doc index    | Must reference all sub-documents by ID in a `## Sub-Document Index` section  |
+| Self-contained   | Root must be useful on its own; sub-documents are supplementary              |
 | No embedded code | No fenced code blocks with executable language tags (`bash`, `python`, etc.) |
-| Format | Markdown only |
+| Format           | Markdown only                                                                |
 
 ### 3.6 Sub-Document Rules
 
-| Rule | Constraint |
-|------|-----------|
-| Naming | `{topic-name}.md`, kebab-case |
-| Location | Under `details/` subdirectory |
-| Max token count | 5,000 tokens per sub-document |
-| Max depth | 3 levels of tree nesting |
-| Load condition | Each sub-document declares when it should be loaded (e.g., `on_demand`, `always`, `if_uncertain`) |
-| Cross-references | May reference other sub-documents within the same skill by ID |
+| Rule             | Constraint                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------- |
+| Naming           | `{topic-name}.md`, kebab-case                                                                     |
+| Location         | Under `details/` subdirectory                                                                     |
+| Max token count  | 5,000 tokens per sub-document                                                                     |
+| Max depth        | 3 levels of tree nesting                                                                          |
+| Load condition   | Each sub-document declares when it should be loaded (e.g., `on_demand`, `always`, `if_uncertain`) |
+| Cross-references | May reference other sub-documents within the same skill by ID                                     |
 
 ---
 
@@ -140,30 +141,30 @@ Classification must be one of these 5 values. Use an enum in code, not a freefor
 
 ### 4.1 Accepted Input Formats
 
-| Format | Extensions | Detection |
-|--------|-----------|-----------|
-| Markdown | `.md` | Heading patterns |
-| YAML | `.yaml`, `.yml` | Structure validation |
-| JSON | `.json` | JSON parsing |
-| TOML | `.toml` | TOML parsing |
-| Plain text | `.txt` | Fallback |
-| Directory | — | Directory detection, recursive scan |
+| Format     | Extensions      | Detection                           |
+| ---------- | --------------- | ----------------------------------- |
+| Markdown   | `.md`           | Heading patterns                    |
+| YAML       | `.yaml`, `.yml` | Structure validation                |
+| JSON       | `.json`         | JSON parsing                        |
+| TOML       | `.toml`         | TOML parsing                        |
+| Plain text | `.txt`          | Fallback                            |
+| Directory  | —               | Directory detection, recursive scan |
 
 ### 4.2 Pipeline Stages
 
 Each stage is deterministic unless marked `(LLM)`:
 
-| Stage | Module | Max Latency | Feature Flag |
-|-------|--------|------------|--------------|
-| Format Detection | `FormatDetector` | < 10ms | `skill_ingestion` |
-| Content Analysis | `ContentAnalyzer` (LLM) | < 10s | `skill_ingestion` |
-| Classification | `SkillClassifier` | < 50ms | `skill_ingestion` |
-| Security Screening | `SecurityScreener` | < 50ms | `skill_security_screening` |
-| Filter Gate | `FilterGate` | < 1ms | `skill_ingestion` |
-| Decomposition | `DocumentDecomposer` (LLM) | < 15s | `skill_transformation` |
-| Tool Separation | `ToolSeparator` | < 100ms | `skill_transformation` |
-| Resource Linkage | `ResourceLinker` | < 500ms | `skill_linkage` |
-| Format Conversion | `FormatConverter` | < 100ms | `skill_transformation` |
+| Stage              | Module                     | Max Latency | Feature Flag               |
+| ------------------ | -------------------------- | ----------- | -------------------------- |
+| Format Detection   | `FormatDetector`           | < 10ms      | `skill_ingestion`          |
+| Content Analysis   | `ContentAnalyzer` (LLM)    | < 10s       | `skill_ingestion`          |
+| Classification     | `SkillClassifier`          | < 50ms      | `skill_ingestion`          |
+| Security Screening | `SecurityScreener`         | < 50ms      | `skill_security_screening` |
+| Filter Gate        | `FilterGate`               | < 1ms       | `skill_ingestion`          |
+| Decomposition      | `DocumentDecomposer` (LLM) | < 15s       | `skill_transformation`     |
+| Tool Separation    | `ToolSeparator`            | < 100ms     | `skill_transformation`     |
+| Resource Linkage   | `ResourceLinker`           | < 500ms     | `skill_linkage`            |
+| Format Conversion  | `FormatConverter`          | < 100ms     | `skill_transformation`     |
 
 **Total pipeline target**: < 60 seconds per skill.
 
@@ -171,13 +172,13 @@ Each stage is deterministic unless marked `(LLM)`:
 
 The security screener blocks skills containing these patterns:
 
-| Pattern | Tag | Severity |
-|---------|-----|----------|
-| Prompt injection (override system prompts) | `security:prompt_injection` | Critical |
-| Privilege escalation (unauthorized access) | `security:privilege_escalation` | Critical |
-| Unconstrained delegation (arbitrary tasks) | `security:unconstrained_delegation` | High |
-| Data exfiltration (send data to external endpoints) | `security:data_exfiltration` | Critical |
-| Excessive freedom ("do anything the user asks") | `security:unconstrained_scope` | Medium |
+| Pattern                                             | Tag                                 | Severity |
+| --------------------------------------------------- | ----------------------------------- | -------- |
+| Prompt injection (override system prompts)          | `security:prompt_injection`         | Critical |
+| Privilege escalation (unauthorized access)          | `security:privilege_escalation`     | Critical |
+| Unconstrained delegation (arbitrary tasks)          | `security:unconstrained_delegation` | High     |
+| Data exfiltration (send data to external endpoints) | `security:data_exfiltration`        | Critical |
+| Excessive freedom ("do anything the user asks")     | `security:unconstrained_scope`      | Medium   |
 
 Security screening uses both pattern matching and (when available) LLM-assisted analysis as defense-in-depth.
 
@@ -187,22 +188,22 @@ Security screening uses both pattern matching and (when available) LLM-assisted 
 
 ### 5.1 Registration Rules
 
-| Rule | Enforcement |
-|------|------------|
-| Format-only | Only proprietary format (valid `skill.toml` + `root.md`) accepted |
-| Root token limit | `root.md` must not exceed `max_root_tokens` (default: 2,000) |
-| Security constraints | Security flags must be `false` unless explicitly user-approved |
-| Unique name | Name must be unique within the registry |
-| Lineage required | `lineage.toml` must be present |
+| Rule                 | Enforcement                                                          |
+| -------------------- | -------------------------------------------------------------------- |
+| Format-only          | Only proprietary format (valid `skill.toml` + `root.md`) accepted    |
+| Root token limit     | `root.md` must not exceed `max_root_tokens` (default: 2,000)         |
+| Security constraints | Security flags must be `false` unless explicitly user-approved       |
+| Unique name          | Name must be unique within the registry                              |
+| Lineage required     | `lineage.toml` must be present                                       |
 | Reference resolution | All `[tool:X]`, `[skill:X]`, `[knowledge:X]` references must resolve |
 
 ### 5.2 Runtime Skill Selection
 
-| Metric | Target |
-|--------|--------|
-| Index lookup | < 10ms |
-| Root document injection | < 1ms |
-| Sub-document lazy load | < 5ms |
+| Metric                  | Target |
+| ----------------------- | ------ |
+| Index lookup            | < 10ms |
+| Root document injection | < 1ms  |
+| Sub-document lazy load  | < 5ms  |
 
 At runtime, only the root document is injected into the LLM context. Sub-documents are loaded on demand when the agent explicitly requests them.
 
@@ -243,13 +244,13 @@ Content-addressable store (Git-like):
 
 ### 6.2 Version Operations
 
-| Operation | Signature | Description |
-|-----------|----------|-------------|
-| `register` | `(manifest) → SkillVersion` | Create new version, update HEAD |
-| `rollback` | `(id, target_version) → ()` | Revert HEAD to previous version |
-| `version_history` | `(id) → Vec<SkillVersion>` | List all versions from reflog |
-| `get_manifest` | `(id) → SkillManifest` | Load current HEAD version |
-| `diff` | `(id, hash_a, hash_b) → Diff` | Compare two versions |
+| Operation         | Signature                     | Description                     |
+| ----------------- | ----------------------------- | ------------------------------- |
+| `register`        | `(manifest) → SkillVersion`   | Create new version, update HEAD |
+| `rollback`        | `(id, target_version) → ()`   | Revert HEAD to previous version |
+| `version_history` | `(id) → Vec<SkillVersion>`    | List all versions from reflog   |
+| `get_manifest`    | `(id) → SkillManifest`        | Load current HEAD version       |
+| `diff`            | `(id, hash_a, hash_b) → Diff` | Compare two versions            |
 
 ### 6.3 Reflog Format (JSONL)
 
@@ -261,6 +262,7 @@ Content-addressable store (Git-like):
 ### 6.4 Garbage Collection
 
 Objects are eligible for GC when:
+
 1. Not the current HEAD of any skill
 2. Not within the retention window (default: last 10 versions per skill)
 3. No pending evaluation metrics
@@ -275,28 +277,28 @@ GC runs as a scheduled background task (default: daily) or on explicit trigger.
 
 Every agent run that uses a skill produces an `ExperienceRecord`:
 
-| Field | Type | Required |
-|-------|------|----------|
-| `id` | String | Yes |
-| `timestamp` | DateTime | Yes |
-| `skill_id` | Option\<String\> | No (null enables skillless analysis) |
-| `skill_version` | Option\<String\> | No |
-| `task_description` | String | Yes |
-| `outcome` | Enum (Success / Partial / Failure) | Yes |
-| `trajectory_summary` | String | Yes |
-| `key_decisions` | Vec\<String\> | Yes |
-| `tool_calls` | Vec\<ToolCallRecord\> | Yes |
-| `evidence` | Vec\<EvidenceEntry\> | Yes |
-| `duration_ms` | u64 | Yes |
-| `token_usage` | TokenUsage | Yes |
+| Field                | Type                               | Required                             |
+| -------------------- | ---------------------------------- | ------------------------------------ |
+| `id`                 | String                             | Yes                                  |
+| `timestamp`          | DateTime                           | Yes                                  |
+| `skill_id`           | Option\<String\>                   | No (null enables skillless analysis) |
+| `skill_version`      | Option\<String\>                   | No                                   |
+| `task_description`   | String                             | Yes                                  |
+| `outcome`            | Enum (Success / Partial / Failure) | Yes                                  |
+| `trajectory_summary` | String                             | Yes                                  |
+| `key_decisions`      | Vec\<String\>                      | Yes                                  |
+| `tool_calls`         | Vec\<ToolCallRecord\>              | Yes                                  |
+| `evidence`           | Vec\<EvidenceEntry\>               | Yes                                  |
+| `duration_ms`        | u64                                | Yes                                  |
+| `token_usage`        | TokenUsage                         | Yes                                  |
 
 ### 7.2 Evidence Provenance
 
-| Provenance | Source | Pattern Extraction Rule |
-|------------|-------|------------------------|
-| `user_stated` | User explicitly stated | Can directly inform skill updates |
-| `user_correction` | User corrected agent output | **Highest priority**; overrides `user_stated` |
-| `task_outcome` | Objective success/failure | Statistical signal only |
+| Provenance          | Source                      | Pattern Extraction Rule                                                                  |
+| ------------------- | --------------------------- | ---------------------------------------------------------------------------------------- |
+| `user_stated`       | User explicitly stated      | Can directly inform skill updates                                                        |
+| `user_correction`   | User corrected agent output | **Highest priority**; overrides `user_stated`                                            |
+| `task_outcome`      | Objective success/failure   | Statistical signal only                                                                  |
 | `agent_observation` | Agent self-inferred pattern | **Must have corroboration** from `user_stated` or `user_correction`; discarded otherwise |
 
 The `agent_observation` corroboration rule is a **hard constraint**, not a soft weight.
@@ -305,20 +307,20 @@ The `agent_observation` corroboration rule is a **hard constraint**, not a soft 
 
 Per-retrieval auditing tracks whether injected skills were actually used:
 
-| Metric | Description |
-|--------|------------|
-| `injection_count` | Times the skill was injected into context |
+| Metric               | Description                               |
+| -------------------- | ----------------------------------------- |
+| `injection_count`    | Times the skill was injected into context |
 | `actual_usage_count` | Times the LLM demonstrably used the skill |
-| `usage_rate` | `actual_usage_count / injection_count` |
+| `usage_rate`         | `actual_usage_count / injection_count`    |
 
 Skills with `usage_rate` < 0.1 after ≥ 10 injections are flagged as **obsolete candidates**.
 
 ### 7.4 Evolution Approval
 
-| Mode | Description |
-|------|------------|
-| `supervised` (default) | All evolution proposals require human approval |
-| `autonomous` | Auto-apply proposals that pass regression detection; human review on regressions |
+| Mode                   | Description                                                                      |
+| ---------------------- | -------------------------------------------------------------------------------- |
+| `supervised` (default) | All evolution proposals require human approval                                   |
+| `autonomous`           | Auto-apply proposals that pass regression detection; human review on regressions |
 
 No skill modification occurs without explicit approval in `supervised` mode.
 
@@ -326,21 +328,22 @@ No skill modification occurs without explicit approval in `supervised` mode.
 
 ## 8. Feature Flags
 
-| Flag | Controls | Default |
-|------|---------|---------|
-| `skill_core` | Core registry + version control | **on** |
-| `skill_ingestion` | LLM-assisted ingestion pipeline | off |
-| `skill_transformation` | Transformation engine (decomposer, validator, state) | off |
-| `skill_security_screening` | Security screener | off |
-| `skill_linkage` | Cross-resource linker | off |
-| `skill_lazy_loading` | Lazy sub-document loading | off |
-| `evolution_capture` | Experience capture | off |
-| `evolution_extraction` | LLM-assisted pattern extraction | off |
-| `evolution_refinement` | Proposal generation + regression detection | off |
-| `evolution_fast_path` | Real-time fast-path extraction | off |
-| `skill_usage_audit` | Per-retrieval usage tracking | off |
+| Flag                       | Controls                                             | Default |
+| -------------------------- | ---------------------------------------------------- | ------- |
+| `skill_core`               | Core registry + version control                      | **on**  |
+| `skill_ingestion`          | LLM-assisted ingestion pipeline                      | off     |
+| `skill_transformation`     | Transformation engine (decomposer, validator, state) | off     |
+| `skill_security_screening` | Security screener                                    | off     |
+| `skill_linkage`            | Cross-resource linker                                | off     |
+| `skill_lazy_loading`       | Lazy sub-document loading                            | off     |
+| `evolution_capture`        | Experience capture                                   | off     |
+| `evolution_extraction`     | LLM-assisted pattern extraction                      | off     |
+| `evolution_refinement`     | Proposal generation + regression detection           | off     |
+| `evolution_fast_path`      | Real-time fast-path extraction                       | off     |
+| `skill_usage_audit`        | Per-retrieval usage tracking                         | off     |
 
 Rules:
+
 - Every non-trivial subsystem is behind a feature flag
 - `skill_core` is always enabled (included in `default`)
 - Downstream crates must explicitly enable the features they need
@@ -350,28 +353,28 @@ Rules:
 
 ## 9. CLI Commands
 
-| Command | Description |
-|---------|------------|
-| `y-agent skill list` | List all registered skills with classification, version, and token estimate |
-| `y-agent skill inspect <name>` | Show full manifest, sub-document tree, references, and lineage |
-| `y-agent skill import <path>` | Import a skill via AI agent-based ingestion (use `--legacy` for TOML parser) |
-| `y-agent skill validate` | Check all skills for broken references, missing files, and schema compliance |
-| `y-agent skill deprecate <name>` | Mark skill as deprecated and remove from store |
-| `y-agent skill rollback <name> <version>` | Rollback to a specific version |
+| Command                                   | Description                                                                  |
+| ----------------------------------------- | ---------------------------------------------------------------------------- |
+| `y-agent skill list`                      | List all registered skills with classification, version, and token estimate  |
+| `y-agent skill inspect <name>`            | Show full manifest, sub-document tree, references, and lineage               |
+| `y-agent skill import <path>`             | Import a skill via AI agent-based ingestion (use `--legacy` for TOML parser) |
+| `y-agent skill validate`                  | Check all skills for broken references, missing files, and schema compliance |
+| `y-agent skill deprecate <name>`          | Mark skill as deprecated and remove from store                               |
+| `y-agent skill rollback <name> <version>` | Rollback to a specific version                                               |
 
 ---
 
 ## 10. Observability
 
-| Signal | Metrics |
-|--------|---------|
-| Ingestion | `skills.ingestion.{submitted,accepted,rejected}`, `skills.ingestion.duration_ms` |
-| Classification | `skills.classification.type` (by type) |
-| Security | `skills.security.blocks` (by finding type) |
+| Signal         | Metrics                                                                                     |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| Ingestion      | `skills.ingestion.{submitted,accepted,rejected}`, `skills.ingestion.duration_ms`            |
+| Classification | `skills.classification.type` (by type)                                                      |
+| Security       | `skills.security.blocks` (by finding type)                                                  |
 | Transformation | `skills.transform.duration_ms`, `sub_documents_created`, `tools_extracted`, `links_created` |
-| Registry | `skills.registry.{total,active,deprecated,broken_references}` |
-| Runtime | `skills.runtime.{selections,sub_document_loads,selection_latency_ms}` |
-| Usage Audit | `skills.usage_audit.{injection_count,actual_usage_count,usage_rate}` |
+| Registry       | `skills.registry.{total,active,deprecated,broken_references}`                               |
+| Runtime        | `skills.runtime.{selections,sub_document_loads,selection_latency_ms}`                       |
+| Usage Audit    | `skills.usage_audit.{injection_count,actual_usage_count,usage_rate}`                        |
 
 ---
 
