@@ -90,7 +90,7 @@ pub struct ServiceContainer {
     /// Agent pool for runtime instance management.
     /// Shared via `Arc` with `MutexPoolDelegator` so that runner upgrades
     /// (via `init_agent_runner`) affect both direct pool access and delegation.
-    pub agent_pool: Arc<Mutex<AgentPool>>,
+    pub agent_pool: Arc<RwLock<AgentPool>>,
 
     /// Agent delegator for delegating tasks to agents (wired through `AgentPool` + `SingleTurnRunner`).
     /// Once `init_agent_runner` is called post-construction, sub-agents use `ServiceAgentRunner`.
@@ -285,8 +285,7 @@ impl ServiceContainer {
 
         // Knowledge handle for the KnowledgeSearch tool.
         // Built here so the tool is registered in the service layer (not each
-        // presentation layer). The same handle is shared with
-        // KnowledgeContextProvider below.
+        // presentation layer).
         let kb_handle = {
             let ks = knowledge_service.lock().await;
             ks.knowledge_handle()
@@ -416,20 +415,9 @@ tools = ["ToolSearch"]
         }
 
         // 10d. Register KnowledgeContextProvider in context pipeline.
-        //      (knowledge_service was initialised in step 7b above.)
-        {
-            let ks = knowledge_service.lock().await;
-            let knowledge_handle = ks.knowledge_handle();
-            if let Some(ref provider) = embedding_provider {
-                context_pipeline.register(Box::new(KnowledgeContextProvider::with_embedding(
-                    knowledge_handle,
-                    Arc::clone(provider),
-                )));
-            } else {
-                context_pipeline
-                    .register(Box::new(KnowledgeContextProvider::new(knowledge_handle)));
-            }
-        }
+        //      Injects a prompt hint when collections are selected, letting the
+        //      LLM autonomously use KnowledgeSearch tool.
+        context_pipeline.register(Box::new(KnowledgeContextProvider::new()));
 
         // 11. Workflow store.
         let workflow_store = SqliteWorkflowStore::new(pool.clone());
@@ -645,22 +633,23 @@ tools = ["ToolSearch"]
 }
 
 // ---------------------------------------------------------------------------
-// MutexPoolDelegator -- shared-pool delegation adapter
+// RwLockPoolDelegator -- shared-pool delegation adapter
 // ---------------------------------------------------------------------------
 
 /// Thin wrapper: implements `AgentDelegator` by locking a shared
-/// `Arc<Mutex<AgentPool>>` so that runner swaps propagate to all
+/// `Arc<RwLock<AgentPool>>` so that runner swaps propagate to all
 /// delegation call sites.
-struct MutexPoolDelegator(Arc<Mutex<AgentPool>>);
+struct RwLockPoolDelegator(Arc<RwLock<AgentPool>>);
 
-impl std::fmt::Debug for MutexPoolDelegator {
+impl std::fmt::Debug for RwLockPoolDelegator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MutexPoolDelegator").finish_non_exhaustive()
+        f.debug_struct("RwLockPoolDelegator")
+            .finish_non_exhaustive()
     }
 }
 
 #[async_trait::async_trait]
-impl AgentDelegator for MutexPoolDelegator {
+impl AgentDelegator for RwLockPoolDelegator {
     async fn delegate(
         &self,
         agent_name: &str,
@@ -668,7 +657,7 @@ impl AgentDelegator for MutexPoolDelegator {
         context_strategy: y_core::agent::ContextStrategyHint,
         session_id: Option<uuid::Uuid>,
     ) -> Result<y_core::agent::DelegationOutput, y_core::agent::DelegationError> {
-        let pool = self.0.lock().await;
+        let pool = self.0.read().await;
         pool.delegate(agent_name, input, context_strategy, session_id)
             .await
     }
@@ -677,7 +666,7 @@ impl AgentDelegator for MutexPoolDelegator {
 /// Result of agent sub-system initialisation.
 type AgentInitResult = (
     Arc<Mutex<AgentRegistry>>,
-    Arc<Mutex<AgentPool>>,
+    Arc<RwLock<AgentPool>>,
     Arc<dyn AgentDelegator>,
     Arc<DelegationTracker>,
 );
@@ -685,7 +674,7 @@ type AgentInitResult = (
 impl ServiceContainer {
     /// Initialise agent registry, pool, delegator, and wrap the delegator with diagnostics.
     ///
-    /// Uses a SINGLE shared `AgentPool` behind `tokio::sync::Mutex` so that
+    /// Uses a SINGLE shared `AgentPool` behind `tokio::sync::RwLock` so that
     /// both `self.agent_pool` and `self.agent_delegator` share the same pool.
     /// When `init_agent_runner()` swaps the runner to `ServiceAgentRunner`,
     /// the change automatically affects the delegation path.
@@ -709,12 +698,12 @@ impl ServiceContainer {
 
         let delegation_tracker = Arc::clone(agent_pool.delegation_tracker());
 
-        // Wrap the pool in Arc<Mutex<..>> so both self.agent_pool and the
+        // Wrap the pool in Arc<RwLock<..>> so both self.agent_pool and the
         // delegator share the same pool instance.
-        let shared_pool = Arc::new(Mutex::new(agent_pool));
+        let shared_pool = Arc::new(RwLock::new(agent_pool));
 
         let agent_delegator: Arc<dyn AgentDelegator> =
-            Arc::new(MutexPoolDelegator(Arc::clone(&shared_pool)));
+            Arc::new(RwLockPoolDelegator(Arc::clone(&shared_pool)));
         let agent_delegator: Arc<dyn AgentDelegator> =
             Arc::new(crate::diagnostics::DiagnosticsAgentDelegator::new(
                 agent_delegator,
@@ -930,7 +919,7 @@ impl ServiceContainer {
     /// to `ServiceAgentRunner` so that sub-agents use the unified
     /// `AgentService::execute()` loop with multi-turn tool calling.
     ///
-    /// Because `agent_pool` is shared (via `MutexPoolDelegator`) with
+    /// Because `agent_pool` is shared (via `RwLockPoolDelegator`) with
     /// `agent_delegator`, this single swap upgrades both delegation and
     /// direct pool access paths.
     ///
@@ -939,10 +928,10 @@ impl ServiceContainer {
         let runner = Arc::new(crate::agent_service::ServiceAgentRunner::new(Arc::clone(
             self,
         )));
-        // The agent_pool held by the container is behind a tokio::sync::Mutex.
-        // Since the delegator shares this same pool (via MutexPoolDelegator),
+        // The agent_pool held by the container is behind a tokio::sync::RwLock.
+        // Since the delegator shares this same pool (via RwLockPoolDelegator),
         // the runner swap automatically takes effect for all delegation calls.
-        self.agent_pool.lock().await.set_runner(runner);
+        self.agent_pool.write().await.set_runner(runner);
         tracing::info!("ServiceAgentRunner initialised for sub-agent delegation");
     }
 

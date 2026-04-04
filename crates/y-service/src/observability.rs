@@ -170,7 +170,7 @@ impl ObservabilityService {
 
     /// Build the agent pool snapshot from the pool's internal state and active delegations.
     async fn build_agent_pool_snapshot(container: &ServiceContainer) -> AgentPoolSnapshot {
-        let pool = container.agent_pool.lock().await;
+        let pool = container.agent_pool.read().await;
 
         let all = pool.list_all();
         let active = pool.list_active();

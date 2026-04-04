@@ -95,6 +95,11 @@ pub struct AgentExecutionConfig {
     /// Used together with `trust_tier` to auto-allow built-in agent tools.
     /// Empty for the root chat agent.
     pub agent_allowed_tools: Vec<String>,
+    /// Whether to prune historical tool call pairs from `working_history`.
+    ///
+    /// When `true`, old assistant+tool message pairs (all except the most
+    /// recent batch) are removed between iterations.
+    pub prune_tool_history: bool,
 }
 
 /// Result of agent execution.
@@ -351,17 +356,7 @@ impl AgentService {
 
             // Intra-turn pruning: remove failed tool call branches from
             // working_history before building the next LLM request.
-            //
-            // Only enabled when use_context_pipeline is true (root agent session
-            // loop). Sub-agents (e.g. knowledge-summarizer) use progressive
-            // multi-chunk tool call patterns where assistant messages intentionally
-            // have empty text content (native function calling). Without this
-            // guard the pruner would incorrectly classify the empty-content
-            // assistant messages as "repeated calls" (similarity = 1.0 for two
-            // empty strings) and delete prior FileRead results from
-            // working_history, causing the LLM to lose context and terminate
-            // the loop prematurely after the first tool call.
-            if ctx.iteration > 0 && config.use_context_pipeline {
+            if ctx.iteration > 0 {
                 let prune_report = intra_turn_pruner
                     .prune_working_history(&mut ctx.working_history, ctx.iteration);
                 if !prune_report.skipped && prune_report.messages_removed > 0 {
@@ -373,6 +368,25 @@ impl AgentService {
                         "intra-turn pruning applied to working history"
                     );
                 }
+
+                // Tool history pruning (opt-in per agent): merge old assistant
+                // summaries into the latest assistant, then remove old pairs.
+                if config.prune_tool_history {
+                    let pruned = Self::prune_old_tool_results(&mut ctx.working_history);
+                    if pruned > 0 {
+                        tracing::debug!(
+                            agent = %config.agent_name,
+                            iteration = ctx.iteration,
+                            messages_removed = pruned,
+                            "tool history pruning: merged old summaries and removed old pairs"
+                        );
+                    }
+                }
+
+                // Strip thinking/reasoning content from historical assistant
+                // messages (always-on). The LLM does not benefit from
+                // re-reading its own prior chain-of-thought.
+                Self::strip_historical_thinking(&mut ctx.working_history);
             }
 
             ctx.iteration += 1;
@@ -1718,6 +1732,116 @@ impl AgentService {
     }
 
     // -----------------------------------------------------------------------
+    // Working history pruning helpers
+    // -----------------------------------------------------------------------
+
+    /// Merge-and-prune historical tool call pairs from `working_history`.
+    ///
+    /// For agents that build incremental summaries (e.g. `knowledge-summarizer`),
+    /// each assistant response contains a summary of the tool result it just
+    /// processed. This function:
+    ///
+    /// 1. **Collects** text content (stripped of `<think>` tags) from all
+    ///    assistant messages with `tool_calls` that appear *before* the latest
+    ///    assistant message.
+    /// 2. **Merges** those summaries into the latest assistant message by
+    ///    prepending them, so the accumulated context is preserved in a single
+    ///    assistant message.
+    /// 3. **Removes** the old assistant+tool message pairs.
+    ///
+    /// The net effect: the LLM request always contains at most **one**
+    /// assistant message (with the accumulated rolling summary) and **one**
+    /// tool result (the most recent chunk). System and User messages are
+    /// never removed.
+    fn prune_old_tool_results(working_history: &mut Vec<Message>) -> usize {
+        let last_assistant_idx = working_history
+            .iter()
+            .rposition(|m| m.role == Role::Assistant);
+
+        let Some(last_idx) = last_assistant_idx else {
+            return 0;
+        };
+
+        // Pass 1: collect old summaries and mark indices for removal.
+        let mut old_summaries: Vec<String> = Vec::new();
+        let mut indices_to_remove: Vec<usize> = Vec::new();
+
+        for (i, msg) in working_history.iter().enumerate() {
+            if i >= last_idx {
+                break;
+            }
+            match msg.role {
+                Role::Assistant if !msg.tool_calls.is_empty() => {
+                    let stripped = strip_think_tags(&msg.content);
+                    let trimmed = stripped.trim();
+                    if !trimmed.is_empty() {
+                        old_summaries.push(trimmed.to_string());
+                    }
+                    indices_to_remove.push(i);
+                }
+                Role::Tool => {
+                    indices_to_remove.push(i);
+                }
+                _ => {}
+            }
+        }
+
+        if indices_to_remove.is_empty() {
+            return 0;
+        }
+
+        // Pass 2: merge old summaries into the latest assistant message.
+        if !old_summaries.is_empty() {
+            let current_content = &working_history[last_idx].content;
+            let merged = format!("{}\n\n{}", old_summaries.join("\n\n"), current_content);
+            working_history[last_idx].content = merged;
+        }
+
+        // Pass 3: remove old messages (reverse order to preserve indices).
+        let removed = indices_to_remove.len();
+        for &idx in indices_to_remove.iter().rev() {
+            working_history.remove(idx);
+        }
+
+        removed
+    }
+
+    /// Strip thinking/reasoning content from historical assistant messages.
+    ///
+    /// Two forms are handled:
+    /// 1. `<think>...</think>` tags in `message.content` -- stripped
+    /// 2. `metadata.reasoning_content` field -- removed from metadata JSON
+    ///
+    /// Only processes assistant messages that are NOT the most recent one.
+    /// The latest assistant message's thinking is preserved because the
+    /// current iteration result should not be altered.
+    fn strip_historical_thinking(working_history: &mut [Message]) {
+        let last_assistant_idx = working_history
+            .iter()
+            .rposition(|m| m.role == Role::Assistant);
+
+        for (i, msg) in working_history.iter_mut().enumerate() {
+            if msg.role != Role::Assistant {
+                continue;
+            }
+            // Protect the most recent assistant message.
+            if Some(i) == last_assistant_idx {
+                continue;
+            }
+
+            // 1. Strip <think>...</think> from content.
+            if msg.content.contains("<think>") {
+                msg.content = strip_think_tags(&msg.content);
+            }
+
+            // 2. Remove reasoning_content from metadata.
+            if let Some(obj) = msg.metadata.as_object_mut() {
+                obj.remove("reasoning_content");
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -2126,6 +2250,30 @@ impl AgentService {
 }
 
 // ---------------------------------------------------------------------------
+// Think tag stripping
+// ---------------------------------------------------------------------------
+
+/// Remove all `<think>...</think>` blocks from a string.
+///
+/// Handles multiple consecutive blocks and unclosed tags (drops from the
+/// opening tag to the end of the string).
+fn strip_think_tags(content: &str) -> String {
+    let mut result = content.to_string();
+    while let Some(start) = result.find("<think>") {
+        if let Some(end_offset) = result[start..].find("</think>") {
+            // Remove <think>...</think> including the tags.
+            let end = start + end_offset + "</think>".len();
+            result = format!("{}{}", &result[..start], result[end..].trim_start());
+        } else {
+            // Unclosed <think> -- drop from tag to end.
+            result.truncate(start);
+            break;
+        }
+    }
+    result.trim().to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Sub-agent prompt augmentation
 // ---------------------------------------------------------------------------
 
@@ -2287,6 +2435,7 @@ impl AgentRunner for ServiceAgentRunner {
             external_trace_id,
             trust_tier: config.trust_tier,
             agent_allowed_tools: config.allowed_tools.clone(),
+            prune_tool_history: config.prune_tool_history,
         };
 
         let result = AgentService::execute(&self.container, &exec_config, None, None)
@@ -2484,5 +2633,243 @@ mod tests {
 
         assert_eq!(resolved.action, PermissionAction::Deny);
         assert_eq!(resolved.reason, decision.reason);
+    }
+
+    // -----------------------------------------------------------------------
+    // strip_think_tags tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_strip_think_tags_basic() {
+        let input = "<think>reasoning here</think>Final answer";
+        assert_eq!(super::strip_think_tags(input), "Final answer");
+    }
+
+    #[test]
+    fn test_strip_think_tags_multiple() {
+        let input = "<think>first</think>Part A <think>second</think>Part B";
+        assert_eq!(super::strip_think_tags(input), "Part A Part B");
+    }
+
+    #[test]
+    fn test_strip_think_tags_unclosed() {
+        let input = "Some text <think>never closed";
+        assert_eq!(super::strip_think_tags(input), "Some text");
+    }
+
+    #[test]
+    fn test_strip_think_tags_no_tags() {
+        let input = "No thinking here";
+        assert_eq!(super::strip_think_tags(input), "No thinking here");
+    }
+
+    #[test]
+    fn test_strip_think_tags_empty_think() {
+        let input = "<think></think>Content";
+        assert_eq!(super::strip_think_tags(input), "Content");
+    }
+
+    // -----------------------------------------------------------------------
+    // prune_old_tool_results tests
+    // -----------------------------------------------------------------------
+
+    fn make_msg(role: Role, content: &str) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role,
+            content: content.to_string(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn make_assistant_with_tool_calls(content: &str) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: content.to_string(),
+            tool_call_id: None,
+            tool_calls: vec![y_core::types::ToolCallRequest {
+                id: "tc_1".to_string(),
+                name: "FileRead".to_string(),
+                arguments: serde_json::json!({}),
+            }],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn make_tool_result(content: &str) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Tool,
+            content: content.to_string(),
+            tool_call_id: Some("tc_1".to_string()),
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn test_prune_old_tool_results_merges_and_removes() {
+        let mut history = vec![
+            make_msg(Role::System, "system prompt"),
+            make_msg(Role::User, "user question"),
+            // Old pair -- should be merged + removed
+            make_assistant_with_tool_calls("<think>reasoning</think>Summary of chunk 1"),
+            make_tool_result("raw chunk 1 contents"),
+            // Current pair -- kept, with old summary prepended
+            make_assistant_with_tool_calls("<think>more reasoning</think>Summary of chunk 2"),
+            make_tool_result("raw chunk 2 contents"),
+        ];
+
+        let removed = AgentService::prune_old_tool_results(&mut history);
+        assert_eq!(removed, 2); // old assistant + old tool removed
+        assert_eq!(history.len(), 4); // system + user + merged assistant + current tool
+        assert_eq!(history[0].role, Role::System);
+        assert_eq!(history[1].role, Role::User);
+        assert_eq!(history[2].role, Role::Assistant);
+        assert_eq!(history[3].role, Role::Tool);
+
+        // The merged assistant should contain old summary prepended to current.
+        let merged = &history[2].content;
+        assert!(
+            merged.starts_with("Summary of chunk 1"),
+            "old summary should be prepended"
+        );
+        assert!(
+            merged.contains("<think>more reasoning</think>Summary of chunk 2"),
+            "current content (including think tags) should be preserved"
+        );
+        // Old thinking tags should be stripped from the merged portion.
+        assert!(
+            !merged.contains("<think>reasoning</think>"),
+            "old thinking should be stripped"
+        );
+    }
+
+    #[test]
+    fn test_prune_old_tool_results_three_iterations() {
+        // Simulates three iterations of progressive summarization.
+        let mut history = vec![
+            make_msg(Role::System, "system prompt"),
+            make_msg(Role::User, "summarize document"),
+            // Iteration 0
+            make_assistant_with_tool_calls("chunk 1 summary"),
+            make_tool_result("raw chunk 1"),
+            // Iteration 1
+            make_assistant_with_tool_calls("chunk 2 summary"),
+            make_tool_result("raw chunk 2"),
+            // Iteration 2 (latest)
+            make_assistant_with_tool_calls("chunk 3 summary"),
+            make_tool_result("raw chunk 3"),
+        ];
+
+        let removed = AgentService::prune_old_tool_results(&mut history);
+        assert_eq!(removed, 4); // 2 old assistants + 2 old tools
+        assert_eq!(history.len(), 4); // system + user + merged + latest tool
+
+        let merged = &history[2].content;
+        // All old summaries should be present in order.
+        assert!(merged.contains("chunk 1 summary"));
+        assert!(merged.contains("chunk 2 summary"));
+        assert!(merged.contains("chunk 3 summary"));
+        // Only the latest tool result should remain.
+        assert_eq!(history[3].content, "raw chunk 3");
+    }
+
+    #[test]
+    fn test_prune_old_tool_results_preserves_user_messages() {
+        let mut history = vec![
+            make_msg(Role::System, "system prompt"),
+            make_msg(Role::User, "question 1"),
+            make_assistant_with_tool_calls("old summary"),
+            make_tool_result("old result"),
+            make_msg(Role::User, "question 2"),
+            make_assistant_with_tool_calls("new summary"),
+            make_tool_result("new result"),
+        ];
+
+        let removed = AgentService::prune_old_tool_results(&mut history);
+        assert_eq!(removed, 2); // old assistant + old tool
+        assert_eq!(history.len(), 5); // system + user1 + user2 + merged + tool
+        assert!(history.iter().filter(|m| m.role == Role::User).count() == 2);
+        // Merged assistant should have "old summary" prepended.
+        let asst = history.iter().find(|m| m.role == Role::Assistant).unwrap();
+        assert!(asst.content.contains("old summary"));
+        assert!(asst.content.contains("new summary"));
+    }
+
+    #[test]
+    fn test_prune_old_tool_results_no_assistant() {
+        let mut history = vec![
+            make_msg(Role::System, "prompt"),
+            make_msg(Role::User, "hello"),
+        ];
+        let removed = AgentService::prune_old_tool_results(&mut history);
+        assert_eq!(removed, 0);
+        assert_eq!(history.len(), 2);
+    }
+
+    #[test]
+    fn test_prune_old_tool_results_single_pair() {
+        // Only one assistant+tool pair -- nothing to prune.
+        let mut history = vec![
+            make_msg(Role::System, "prompt"),
+            make_msg(Role::User, "hello"),
+            make_assistant_with_tool_calls("call tool"),
+            make_tool_result("result"),
+        ];
+        let removed = AgentService::prune_old_tool_results(&mut history);
+        assert_eq!(removed, 0);
+        assert_eq!(history.len(), 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // strip_historical_thinking tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_strip_historical_thinking_removes_think_tags() {
+        let mut history = vec![
+            make_msg(Role::System, "prompt"),
+            make_msg(Role::User, "hello"),
+            // Historical assistant -- should have <think> stripped
+            {
+                let mut m = make_msg(Role::Assistant, "<think>reasoning</think>Answer 1");
+                m.metadata = serde_json::json!({"reasoning_content": "deep thought"});
+                m
+            },
+            // Current (latest) assistant -- should be preserved
+            {
+                let mut m = make_msg(Role::Assistant, "<think>current reasoning</think>Answer 2");
+                m.metadata = serde_json::json!({"reasoning_content": "current thought"});
+                m
+            },
+        ];
+
+        AgentService::strip_historical_thinking(&mut history);
+
+        // Historical assistant: think tags and reasoning_content removed
+        assert_eq!(history[2].content, "Answer 1");
+        assert!(history[2].metadata.get("reasoning_content").is_none());
+
+        // Current assistant: preserved intact
+        assert!(history[3].content.contains("<think>"));
+        assert!(history[3].metadata.get("reasoning_content").is_some());
+    }
+
+    #[test]
+    fn test_strip_historical_thinking_skips_non_assistant() {
+        let mut history = vec![
+            make_msg(Role::User, "<think>user text</think>question"),
+            make_msg(Role::Assistant, "answer"),
+        ];
+        AgentService::strip_historical_thinking(&mut history);
+        // User message content should not be modified
+        assert!(history[0].content.contains("<think>"));
     }
 }

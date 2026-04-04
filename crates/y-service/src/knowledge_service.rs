@@ -33,12 +33,18 @@ use y_knowledge::metadata::DocumentMetadata;
 /// Snapshot of entry data used during re-indexing to avoid borrow conflicts.
 struct ReindexEntryData {
     entry_id: String,
+    collection: String,
     chunks: Vec<String>,
     source_uri: String,
     title: String,
     quality_score: f32,
     summary: Option<String>,
     section_titles: Vec<String>,
+    section_summaries: Vec<String>,
+    /// (`section_index`, `content_len`) pairs for L1 alignment computation.
+    l1_section_info: Vec<(usize, usize)>,
+    /// ISO 8601 timestamp from `SourceRef::fetched_at`.
+    indexed_at: Option<String>,
     tags: Vec<String>,
     metadata: DocumentMetadata,
 }
@@ -586,59 +592,13 @@ impl KnowledgeService {
         };
 
         // Index chunks for retrieval (batch -- much faster than per-chunk).
-        {
-            use y_knowledge::chunking::{Chunk, ChunkLevel, ChunkMetadata};
-            let mut knowledge = self
-                .inject_knowledge
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-            let domain = domains.first().cloned().unwrap_or_default();
-            let chunks_for_index: Vec<Chunk> = entry
-                .chunks
-                .iter()
-                .enumerate()
-                .map(|(i, chunk_content)| Chunk {
-                    id: format!("{entry_id}-{i}"),
-                    document_id: entry_id.clone(),
-                    level: ChunkLevel::L2,
-                    content: chunk_content.clone(),
-                    token_estimate: u32::try_from(chunk_content.len() / 4).unwrap_or(u32::MAX),
-                    metadata: ChunkMetadata {
-                        source: entry.source.uri.clone(),
-                        domain: domain.clone(),
-                        title: entry.source.title.clone(),
-                        section_index: i,
-                    },
-                })
-                .collect();
-
-            if let Some(ref embeddings) = chunk_embeddings {
-                knowledge.retriever_mut().index_batch_with_embeddings(
-                    chunks_for_index,
-                    embeddings.clone(),
-                    quality_score,
-                );
-            } else {
-                knowledge
-                    .retriever_mut()
-                    .index_batch_with_quality(chunks_for_index, quality_score);
-            }
-
-            // Register L0/L1 metadata for progressive context injection.
-            knowledge.register_entry_metadata(
-                &entry_id,
-                EntryMetadata {
-                    title: entry.source.title.clone(),
-                    summary: entry.summary.clone(),
-                    section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
-                    tags: entry.tags.clone(),
-                    document_type: entry.metadata.document_type.clone(),
-                    industry: entry.metadata.industry.clone(),
-                    subcategory: entry.metadata.subcategory.clone(),
-                },
-            );
-        }
+        self.index_entry_chunks(
+            &entry_id,
+            &entry,
+            &domains,
+            quality_score,
+            chunk_embeddings.as_ref(),
+        );
 
         // Update collection stats.
         if let Some(collection) = self.collections.get_mut(&params.collection) {
@@ -703,12 +663,19 @@ impl KnowledgeService {
         };
 
         let domain = params.domain.as_deref();
+        let collection = params.collection.as_deref();
+        let level_filter = y_knowledge::chunking::ChunkLevel::from_resolution(&params.resolution);
         let knowledge = self
             .inject_knowledge
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let items =
-            knowledge.retrieve_for_context(&params.query, query_embedding.as_deref(), domain);
+        let items = knowledge.retrieve_for_context_filtered(
+            &params.query,
+            query_embedding.as_deref(),
+            domain,
+            collection,
+            level_filter,
+        );
 
         let results: Vec<SearchResultItem> = items
             .iter()
@@ -839,6 +806,143 @@ impl KnowledgeService {
     }
 
     // -------------------------------------------------------------------
+    // Entry chunk indexing (shared by ingest and re-import)
+    // -------------------------------------------------------------------
+
+    /// Index all L0/L1/L2 chunks for a knowledge entry into the retriever.
+    ///
+    /// - L2 chunks get L1 alignment so each knows its parent section.
+    /// - L0 summary is indexed to make document-level concepts searchable.
+    /// - L1 section content is indexed for section-level matching.
+    /// - `EntryMetadata` is registered for structured context injection.
+    fn index_entry_chunks(
+        &self,
+        entry_id: &str,
+        entry: &KnowledgeEntry,
+        domains: &[String],
+        quality_score: f32,
+        chunk_embeddings: Option<&Vec<Vec<f32>>>,
+    ) {
+        use y_knowledge::chunking::{compute_l1_alignment, Chunk, ChunkLevel, ChunkMetadata};
+
+        let mut knowledge = self
+            .inject_knowledge
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        let domain = domains.first().cloned().unwrap_or_default();
+        let indexed_at = Some(entry.source.fetched_at.to_rfc3339());
+
+        // Compute L1-to-L2 alignment so L2 chunks know their parent section.
+        let l1_info: Vec<(usize, usize)> = entry
+            .l1_sections
+            .iter()
+            .map(|s| (s.index, s.content.len()))
+            .collect();
+        let l1_alignment = compute_l1_alignment(&l1_info, &entry.chunks);
+
+        // -- Index L2 chunks (with L1 alignment) --
+        let chunks_for_index: Vec<Chunk> = entry
+            .chunks
+            .iter()
+            .enumerate()
+            .map(|(i, chunk_content)| Chunk {
+                id: format!("{entry_id}-{i}"),
+                document_id: entry_id.to_string(),
+                level: ChunkLevel::L2,
+                content: chunk_content.clone(),
+                token_estimate: u32::try_from(chunk_content.len() / 4).unwrap_or(u32::MAX),
+                metadata: ChunkMetadata {
+                    source: entry.source.uri.clone(),
+                    domain: domain.clone(),
+                    title: entry.source.title.clone(),
+                    section_index: i,
+                    collection: entry.collection.clone(),
+                    l1_section_index: l1_alignment.get(i).copied().flatten(),
+                    indexed_at: indexed_at.clone(),
+                },
+            })
+            .collect();
+
+        if let Some(embeddings) = chunk_embeddings {
+            knowledge.retriever_mut().index_batch_with_embeddings(
+                chunks_for_index,
+                embeddings.clone(),
+                quality_score,
+            );
+        } else {
+            knowledge
+                .retriever_mut()
+                .index_batch_with_quality(chunks_for_index, quality_score);
+        }
+
+        // -- Index L0 summary chunk (makes document-level concepts searchable) --
+        if let Some(ref summary) = entry.summary {
+            let l0_chunk = Chunk {
+                id: format!("{entry_id}-L0"),
+                document_id: entry_id.to_string(),
+                level: ChunkLevel::L0,
+                content: summary.clone(),
+                token_estimate: u32::try_from(summary.len() / 4).unwrap_or(u32::MAX),
+                metadata: ChunkMetadata {
+                    source: entry.source.uri.clone(),
+                    domain: domain.clone(),
+                    title: entry.source.title.clone(),
+                    section_index: 0,
+                    collection: entry.collection.clone(),
+                    l1_section_index: None,
+                    indexed_at: indexed_at.clone(),
+                },
+            };
+            knowledge
+                .retriever_mut()
+                .index_with_quality(l0_chunk, quality_score);
+        }
+
+        // -- Index L1 section chunks (makes section-level concepts searchable) --
+        for section in &entry.l1_sections {
+            let l1_chunk = Chunk {
+                id: format!("{entry_id}-L1-{}", section.index),
+                document_id: entry_id.to_string(),
+                level: ChunkLevel::L1,
+                content: section.content.clone(),
+                token_estimate: u32::try_from(section.content.len() / 4).unwrap_or(u32::MAX),
+                metadata: ChunkMetadata {
+                    source: entry.source.uri.clone(),
+                    domain: domain.clone(),
+                    title: entry.source.title.clone(),
+                    section_index: section.index,
+                    collection: entry.collection.clone(),
+                    l1_section_index: Some(section.index),
+                    indexed_at: indexed_at.clone(),
+                },
+            };
+            knowledge
+                .retriever_mut()
+                .index_with_quality(l1_chunk, quality_score);
+        }
+
+        // Register L0/L1 metadata for progressive context injection.
+        knowledge.register_entry_metadata(
+            entry_id,
+            EntryMetadata {
+                title: entry.source.title.clone(),
+                summary: entry.summary.clone(),
+                section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
+                section_summaries: entry
+                    .l1_sections
+                    .iter()
+                    .map(|s| s.content.clone())
+                    .collect(),
+                tags: entry.tags.clone(),
+                document_type: entry.metadata.document_type.clone(),
+                industry: entry.metadata.industry.clone(),
+                subcategory: entry.metadata.subcategory.clone(),
+            },
+        );
+    }
+
+    // -------------------------------------------------------------------
     // Re-indexing (rebuild in-memory index from persisted entries)
     // -------------------------------------------------------------------
 
@@ -863,12 +967,24 @@ impl KnowledgeService {
             .filter(|(_, entry)| !entry.chunks.is_empty())
             .map(|(entry_id, entry)| ReindexEntryData {
                 entry_id: entry_id.clone(),
+                collection: entry.collection.clone(),
                 chunks: entry.chunks.clone(),
                 source_uri: entry.source.uri.clone(),
                 title: entry.source.title.clone(),
                 quality_score: entry.quality_score,
                 summary: entry.summary.clone(),
                 section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
+                section_summaries: entry
+                    .l1_sections
+                    .iter()
+                    .map(|s| s.content.clone())
+                    .collect(),
+                l1_section_info: entry
+                    .l1_sections
+                    .iter()
+                    .map(|s| (s.index, s.content.len()))
+                    .collect(),
+                indexed_at: Some(entry.source.fetched_at.to_rfc3339()),
                 tags: entry.tags.clone(),
                 metadata: entry.metadata.clone(),
             })
@@ -886,7 +1002,11 @@ impl KnowledgeService {
                 .and_then(|e| e.domains.first().cloned())
                 .unwrap_or_default();
 
-            // Build all Chunk structs for this entry.
+            // Compute L1-to-L2 alignment.
+            let l1_alignment =
+                y_knowledge::chunking::compute_l1_alignment(&entry.l1_section_info, &entry.chunks);
+
+            // Build all L2 Chunk structs for this entry.
             let all_chunks: Vec<Chunk> = entry
                 .chunks
                 .iter()
@@ -902,6 +1022,9 @@ impl KnowledgeService {
                         domain: domain.clone(),
                         title: entry.title.clone(),
                         section_index: i,
+                        collection: entry.collection.clone(),
+                        l1_section_index: l1_alignment.get(i).copied().flatten(),
+                        indexed_at: entry.indexed_at.clone(),
                     },
                 })
                 .collect();
@@ -936,6 +1059,60 @@ impl KnowledgeService {
                     .index_batch_with_quality(chunks_without_emb, entry.quality_score);
             }
 
+            // -- Index L0 summary chunk --
+            if let Some(ref summary) = entry.summary {
+                let l0_chunk = Chunk {
+                    id: format!("{}-L0", entry.entry_id),
+                    document_id: entry.entry_id.clone(),
+                    level: ChunkLevel::L0,
+                    content: summary.clone(),
+                    token_estimate: u32::try_from(summary.len() / 4).unwrap_or(u32::MAX),
+                    metadata: ChunkMetadata {
+                        source: entry.source_uri.clone(),
+                        domain: domain.clone(),
+                        title: entry.title.clone(),
+                        section_index: 0,
+                        collection: entry.collection.clone(),
+                        l1_section_index: None,
+                        indexed_at: entry.indexed_at.clone(),
+                    },
+                };
+                knowledge
+                    .retriever_mut()
+                    .index_with_quality(l0_chunk, entry.quality_score);
+            }
+
+            // -- Index L1 section chunks --
+            for (idx, (section_idx, _)) in entry.l1_section_info.iter().enumerate() {
+                let content = entry
+                    .section_summaries
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or_default();
+                if content.is_empty() {
+                    continue;
+                }
+                let l1_chunk = Chunk {
+                    id: format!("{}-L1-{section_idx}", entry.entry_id),
+                    document_id: entry.entry_id.clone(),
+                    level: ChunkLevel::L1,
+                    content: content.clone(),
+                    token_estimate: u32::try_from(content.len() / 4).unwrap_or(u32::MAX),
+                    metadata: ChunkMetadata {
+                        source: entry.source_uri.clone(),
+                        domain: domain.clone(),
+                        title: entry.title.clone(),
+                        section_index: *section_idx,
+                        collection: entry.collection.clone(),
+                        l1_section_index: Some(*section_idx),
+                        indexed_at: entry.indexed_at.clone(),
+                    },
+                };
+                knowledge
+                    .retriever_mut()
+                    .index_with_quality(l1_chunk, entry.quality_score);
+            }
+
             // Register L0/L1 metadata for progressive context injection.
             knowledge.register_entry_metadata(
                 &entry.entry_id,
@@ -943,6 +1120,7 @@ impl KnowledgeService {
                     title: entry.title.clone(),
                     summary: entry.summary.clone(),
                     section_titles: entry.section_titles.clone(),
+                    section_summaries: entry.section_summaries.clone(),
                     tags: entry.tags.clone(),
                     document_type: entry.metadata.document_type.clone(),
                     industry: entry.metadata.industry.clone(),
@@ -1452,6 +1630,11 @@ impl KnowledgeService {
                         title: entry.source.title.clone(),
                         summary: entry.summary.clone(),
                         section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
+                        section_summaries: entry
+                            .l1_sections
+                            .iter()
+                            .map(|s| s.content.clone())
+                            .collect(),
                         tags: new_tags,
                         document_type: entry.metadata.document_type.clone(),
                         industry: entry.metadata.industry.clone(),
@@ -1587,6 +1770,7 @@ mod tests {
                 l0_summary: "LLM summary".to_string(),
                 l1_sections: vec![LlmL1Section {
                     title: "Overview".to_string(),
+                    line_range: None,
                     summary: "Generated by summary generator.".to_string(),
                 }],
             })
