@@ -2257,7 +2257,7 @@ impl AgentService {
 ///
 /// Handles multiple consecutive blocks and unclosed tags (drops from the
 /// opening tag to the end of the string).
-fn strip_think_tags(content: &str) -> String {
+pub(crate) fn strip_think_tags(content: &str) -> String {
     let mut result = content.to_string();
     while let Some(start) = result.find("<think>") {
         if let Some(end_offset) = result[start..].find("</think>") {

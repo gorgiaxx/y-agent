@@ -174,8 +174,12 @@ impl BotService {
         );
 
         // Format the response for platform delivery.
+        // Strip accumulated <think> blocks from intermediate tool-call
+        // iterations. The GUI renders these via ThinkingCard components,
+        // but bot platforms receive plain text -- raw XML must not leak.
+        let clean_content = crate::agent_service::strip_think_tags(&result.content);
         let max_len = persona.config.persona.messaging.max_response_length;
-        let formatted = formatter::format_response(&result.content, max_len);
+        let formatted = formatter::format_response(&clean_content, max_len);
 
         // Send the response.
         let outbound = OutboundMessage {
@@ -232,9 +236,12 @@ impl BotService {
             "Bot: turn complete"
         );
 
+        // Strip accumulated <think> blocks -- same rationale as the
+        // persona-aware path (see handle_message_with_persona).
+        let clean_content = crate::agent_service::strip_think_tags(&result.content);
         let outbound = OutboundMessage {
             chat_id: message.chat_id.clone(),
-            content: result.content.clone(),
+            content: clean_content,
             reply_to_message_id: Some(message.message_id.clone()),
         };
 
@@ -426,5 +433,37 @@ mod tests {
         let a = derive_bot_session_id(PlatformKind::Feishu, "oc_abc");
         let b = derive_bot_session_id(PlatformKind::Feishu, "oc_abc");
         assert_eq!(a.0, b.0);
+    }
+
+    #[test]
+    fn test_strip_think_tags_from_accumulated_content() {
+        // Simulates the exact bug: accumulated_content from multiple
+        // tool-call iterations prepended to the final response.
+        let input = concat!(
+            "<think>first iteration thinking</think>",
+            "<think>second iteration thinking</think>",
+            "<think>third iteration thinking\n</think>\n\n",
+            "Final answer text"
+        );
+        let result = crate::agent_service::strip_think_tags(input);
+        assert_eq!(result, "Final answer text");
+    }
+
+    #[test]
+    fn test_strip_think_tags_no_tags() {
+        let input = "Just plain text";
+        let result = crate::agent_service::strip_think_tags(input);
+        assert_eq!(result, "Just plain text");
+    }
+
+    #[test]
+    fn test_strip_think_tags_chinese_content() {
+        let input = concat!(
+            "<think>chinese thinking content</think>",
+            "<think>more thinking</think>",
+            "Final answer"
+        );
+        let result = crate::agent_service::strip_think_tags(input);
+        assert_eq!(result, "Final answer");
     }
 }
