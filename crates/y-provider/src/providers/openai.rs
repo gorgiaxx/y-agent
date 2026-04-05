@@ -4,7 +4,7 @@
 //! vLLM, `LiteLLM`) via configurable base URL.
 
 use async_trait::async_trait;
-use futures::StreamExt;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -201,7 +201,14 @@ impl OpenAiProvider {
                     effort: match tc.effort {
                         ThinkingEffort::Low => "low".to_string(),
                         ThinkingEffort::Medium => "medium".to_string(),
-                        ThinkingEffort::High | ThinkingEffort::Max => "high".to_string(),
+                        ThinkingEffort::High => "high".to_string(),
+                        ThinkingEffort::Max => {
+                            tracing::warn!(
+                                "ThinkingEffort::Max not supported by OpenAI; \
+                                 downgrading to 'high'"
+                            );
+                            "high".to_string()
+                        }
                     },
                 }
             }),
@@ -394,23 +401,21 @@ impl LlmProvider for OpenAiProvider {
         let provider_id = self.metadata.id.to_string();
 
         let stream = futures::stream::unfold(
-            SseState {
-                byte_stream: Box::pin(byte_stream),
-                buffer: String::new(),
-                bytes_remainder: Vec::new(),
-                tool_calls_acc: Vec::new(),
-                done: false,
-            },
-            move |mut state| {
+            (
+                crate::sse::SseStreamState::new(Box::pin(byte_stream)),
+                Vec::<ToolCallAccumulator>::new(),
+            ),
+            move |mut composite| {
                 let _provider_id = provider_id.clone();
                 async move {
+                    let (ref mut state, ref mut tool_calls_acc) = composite;
                     if state.done {
                         return None;
                     }
 
                     loop {
                         // Try to extract a complete SSE event from the buffer.
-                        if let Some(event) = extract_sse_event(&mut state.buffer) {
+                        if let Some(event) = crate::sse::extract_sse_data(&mut state.buffer) {
                             let trimmed = event.trim();
                             if trimmed.is_empty() {
                                 continue;
@@ -425,9 +430,8 @@ impl LlmProvider for OpenAiProvider {
                             // Parse the JSON chunk.
                             match serde_json::from_str::<OpenAiStreamChunk>(trimmed) {
                                 Ok(chunk) => {
-                                    let mapped =
-                                        map_stream_chunk(&chunk, &mut state.tool_calls_acc);
-                                    return Some((Ok(mapped), state));
+                                    let mapped = map_stream_chunk(&chunk, tool_calls_acc);
+                                    return Some((Ok(mapped), composite));
                                 }
                                 Err(e) => {
                                     return Some((
@@ -436,69 +440,34 @@ impl LlmProvider for OpenAiProvider {
                                                 "SSE JSON parse error: {e}, data: {trimmed}"
                                             ),
                                         }),
-                                        state,
+                                        composite,
                                     ));
                                 }
                             }
                         }
 
                         // Need more data from the network.
-                        match state.byte_stream.next().await {
-                            Some(Ok(bytes)) => {
-                                // Prepend any leftover bytes from a previous incomplete UTF-8 sequence.
-                                let combined = if state.bytes_remainder.is_empty() {
-                                    bytes.to_vec()
-                                } else {
-                                    let mut combined = std::mem::take(&mut state.bytes_remainder);
-                                    combined.extend_from_slice(&bytes);
-                                    combined
-                                };
-                                match std::str::from_utf8(&combined) {
-                                    Ok(text) => state.buffer.push_str(text),
-                                    Err(e) => {
-                                        // Decode as much valid UTF-8 as possible.
-                                        let valid_up_to = e.valid_up_to();
-                                        if valid_up_to > 0 {
-                                            // Safety: valid_up_to is guaranteed to be a valid UTF-8 boundary.
-                                            let valid_text = unsafe {
-                                                std::str::from_utf8_unchecked(
-                                                    &combined[..valid_up_to],
-                                                )
-                                            };
-                                            state.buffer.push_str(valid_text);
-                                        }
-                                        // Keep the remaining bytes for the next chunk.
-                                        state.bytes_remainder = combined[valid_up_to..].to_vec();
-                                    }
-                                }
-                            }
-                            Some(Err(e)) => {
-                                state.done = true;
-                                return Some((
-                                    Err(ProviderError::NetworkError {
-                                        message: format!("stream read error: {e}"),
-                                    }),
-                                    state,
-                                ));
-                            }
-                            None => {
-                                // Stream ended without [DONE] — this is acceptable.
-                                state.done = true;
-
+                        match state.read_next().await {
+                            Ok(true) => {} // Data appended to buffer, loop again.
+                            Ok(false) => {
+                                // Stream ended without [DONE] -- acceptable.
                                 // Drain any remaining buffer.
-                                if let Some(event) = extract_sse_event(&mut state.buffer) {
+                                if let Some(event) = crate::sse::extract_sse_data(&mut state.buffer)
+                                {
                                     let trimmed = event.trim();
                                     if !trimmed.is_empty() && trimmed != "[DONE]" {
                                         if let Ok(chunk) =
                                             serde_json::from_str::<OpenAiStreamChunk>(trimmed)
                                         {
-                                            let mapped =
-                                                map_stream_chunk(&chunk, &mut state.tool_calls_acc);
-                                            return Some((Ok(mapped), state));
+                                            let mapped = map_stream_chunk(&chunk, tool_calls_acc);
+                                            return Some((Ok(mapped), composite));
                                         }
                                     }
                                 }
                                 return None;
+                            }
+                            Err(e) => {
+                                return Some((Err(e), composite));
                             }
                         }
                     }
@@ -521,20 +490,7 @@ impl LlmProvider for OpenAiProvider {
 }
 
 // ---------------------------------------------------------------------------
-// SSE parsing helpers
-// ---------------------------------------------------------------------------
-
-/// Internal state for SSE stream parsing.
-struct SseState {
-    byte_stream:
-        std::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
-    buffer: String,
-    /// Leftover bytes from the previous chunk that form an incomplete UTF-8 sequence.
-    bytes_remainder: Vec<u8>,
-    /// Accumulated tool calls for incremental assembly.
-    tool_calls_acc: Vec<ToolCallAccumulator>,
-    done: bool,
-}
+// (SseState and extract_sse_event are now in crate::sse)
 
 /// Accumulates incremental tool call arguments across multiple chunks.
 #[derive(Debug, Clone)]
@@ -543,48 +499,6 @@ struct ToolCallAccumulator {
     id: String,
     name: String,
     arguments: String,
-}
-
-/// Extract one SSE event `data:` payload from the buffer.
-///
-/// SSE events are separated by double newlines. Each event line starts with
-/// `data: `. Returns `None` if no complete event is available yet.
-fn extract_sse_event(buffer: &mut String) -> Option<String> {
-    // Look for double newline (event boundary).
-    let boundary = if let Some(pos) = buffer.find("\n\n") {
-        pos
-    } else if let Some(pos) = buffer.find("\r\n\r\n") {
-        pos
-    } else {
-        return None;
-    };
-
-    let raw_event: String = buffer.drain(..boundary).collect();
-    // Consume the boundary newlines.
-    let trim_count = buffer
-        .chars()
-        .take_while(|c| *c == '\n' || *c == '\r')
-        .count();
-    if trim_count > 0 {
-        buffer.drain(..trim_count);
-    }
-
-    // Extract data from `data: <payload>` lines.
-    let mut data_parts = Vec::new();
-    for line in raw_event.lines() {
-        let line = line.trim();
-        if let Some(data) = line.strip_prefix("data:") {
-            data_parts.push(data.trim().to_string());
-        }
-        // Ignore other SSE fields (event:, id:, retry:).
-    }
-
-    if data_parts.is_empty() {
-        // Not a data event — skip.
-        return Some(String::new());
-    }
-
-    Some(data_parts.join("\n"))
 }
 
 /// Map an `OpenAI` streaming chunk to our `ChatStreamChunk`, with incremental

@@ -7,7 +7,7 @@
 //! - Streaming support via SSE (generateContent?alt=sse)
 
 use async_trait::async_trait;
-use futures::StreamExt;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -418,12 +418,7 @@ impl LlmProvider for GeminiProvider {
         let model = self.metadata.model.clone();
 
         let stream = futures::stream::unfold(
-            GeminiSseState {
-                byte_stream: Box::pin(byte_stream),
-                buffer: String::new(),
-                bytes_remainder: Vec::new(),
-                done: false,
-            },
+            crate::sse::SseStreamState::new(Box::pin(byte_stream)),
             move |mut state| {
                 let model = model.clone();
                 async move {
@@ -433,7 +428,7 @@ impl LlmProvider for GeminiProvider {
 
                     loop {
                         // Try to extract a complete SSE event from the buffer.
-                        if let Some(data) = extract_sse_data(&mut state.buffer) {
+                        if let Some(data) = crate::sse::extract_sse_data(&mut state.buffer) {
                             let trimmed = data.trim();
                             if trimmed.is_empty() {
                                 continue;
@@ -459,47 +454,14 @@ impl LlmProvider for GeminiProvider {
                         }
 
                         // Need more data from network.
-                        match state.byte_stream.next().await {
-                            Some(Ok(bytes)) => {
-                                // Prepend any leftover bytes from a previous incomplete UTF-8 sequence.
-                                let combined = if state.bytes_remainder.is_empty() {
-                                    bytes.to_vec()
-                                } else {
-                                    let mut combined = std::mem::take(&mut state.bytes_remainder);
-                                    combined.extend_from_slice(&bytes);
-                                    combined
-                                };
-                                match std::str::from_utf8(&combined) {
-                                    Ok(text) => state.buffer.push_str(text),
-                                    Err(e) => {
-                                        // Decode as much valid UTF-8 as possible.
-                                        let valid_up_to = e.valid_up_to();
-                                        if valid_up_to > 0 {
-                                            // Safety: valid_up_to is guaranteed to be a valid UTF-8 boundary.
-                                            let valid_text = unsafe {
-                                                std::str::from_utf8_unchecked(
-                                                    &combined[..valid_up_to],
-                                                )
-                                            };
-                                            state.buffer.push_str(valid_text);
-                                        }
-                                        // Keep the remaining bytes for the next chunk.
-                                        state.bytes_remainder = combined[valid_up_to..].to_vec();
-                                    }
-                                }
-                            }
-                            Some(Err(e)) => {
-                                state.done = true;
-                                return Some((
-                                    Err(ProviderError::NetworkError {
-                                        message: format!("stream read error: {e}"),
-                                    }),
-                                    state,
-                                ));
-                            }
-                            None => {
-                                state.done = true;
+                        match state.read_next().await {
+                            Ok(true) => {} // Data appended to buffer, loop again.
+                            Ok(false) => {
+                                // Stream ended.
                                 return None;
+                            }
+                            Err(e) => {
+                                return Some((Err(e), state));
                             }
                         }
                     }
@@ -521,44 +483,7 @@ impl LlmProvider for GeminiProvider {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SSE parsing helpers
-// ---------------------------------------------------------------------------
-
-struct GeminiSseState {
-    byte_stream:
-        std::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
-    buffer: String,
-    /// Leftover bytes from the previous chunk that form an incomplete UTF-8 sequence.
-    bytes_remainder: Vec<u8>,
-    done: bool,
-}
-
-/// Extract one SSE `data:` payload from the buffer.
-///
-/// Gemini SSE uses standard `data: <json>` format with double-newline boundaries.
-fn extract_sse_data(buffer: &mut String) -> Option<String> {
-    let boundary = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"))?;
-
-    let raw_event: String = buffer.drain(..boundary).collect();
-    while buffer.starts_with('\n') || buffer.starts_with('\r') {
-        buffer.remove(0);
-    }
-
-    let mut data_parts = Vec::new();
-    for line in raw_event.lines() {
-        let line = line.trim();
-        if let Some(data) = line.strip_prefix("data:") {
-            data_parts.push(data.trim().to_string());
-        }
-    }
-
-    if data_parts.is_empty() {
-        return Some(String::new());
-    }
-
-    Some(data_parts.join("\n"))
-}
+// (SSE state and extract_sse_data are now in crate::sse)
 
 /// Map a Gemini streaming response chunk to a `ChatStreamChunk`.
 fn map_gemini_stream_chunk(resp: &GeminiResponse, _model: &str) -> ChatStreamChunk {

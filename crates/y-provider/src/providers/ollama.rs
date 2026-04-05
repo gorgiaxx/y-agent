@@ -7,7 +7,7 @@
 //! - Tool calling support via Ollama's function calling
 
 use async_trait::async_trait;
-use futures::StreamExt;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -299,12 +299,7 @@ impl LlmProvider for OllamaProvider {
         let byte_stream = response.bytes_stream();
 
         let stream = futures::stream::unfold(
-            OllamaStreamState {
-                byte_stream: Box::pin(byte_stream),
-                buffer: String::new(),
-                bytes_remainder: Vec::new(),
-                done: false,
-            },
+            crate::sse::SseStreamState::new(Box::pin(byte_stream)),
             move |mut state| async move {
                 if state.done {
                     return None;
@@ -312,7 +307,7 @@ impl LlmProvider for OllamaProvider {
 
                 loop {
                     // Ollama streams one JSON object per line.
-                    if let Some(line) = extract_json_line(&mut state.buffer) {
+                    if let Some(line) = crate::sse::extract_json_line(&mut state.buffer) {
                         let trimmed = line.trim();
                         if trimmed.is_empty() {
                             continue;
@@ -373,45 +368,14 @@ impl LlmProvider for OllamaProvider {
                     }
 
                     // Need more data.
-                    match state.byte_stream.next().await {
-                        Some(Ok(bytes)) => {
-                            // Prepend any leftover bytes from a previous incomplete UTF-8 sequence.
-                            let combined = if state.bytes_remainder.is_empty() {
-                                bytes.to_vec()
-                            } else {
-                                let mut combined = std::mem::take(&mut state.bytes_remainder);
-                                combined.extend_from_slice(&bytes);
-                                combined
-                            };
-                            match std::str::from_utf8(&combined) {
-                                Ok(text) => state.buffer.push_str(text),
-                                Err(e) => {
-                                    // Decode as much valid UTF-8 as possible.
-                                    let valid_up_to = e.valid_up_to();
-                                    if valid_up_to > 0 {
-                                        // Safety: valid_up_to is guaranteed to be a valid UTF-8 boundary.
-                                        let valid_text = unsafe {
-                                            std::str::from_utf8_unchecked(&combined[..valid_up_to])
-                                        };
-                                        state.buffer.push_str(valid_text);
-                                    }
-                                    // Keep the remaining bytes for the next chunk.
-                                    state.bytes_remainder = combined[valid_up_to..].to_vec();
-                                }
-                            }
-                        }
-                        Some(Err(e)) => {
-                            state.done = true;
-                            return Some((
-                                Err(ProviderError::NetworkError {
-                                    message: format!("stream read error: {e}"),
-                                }),
-                                state,
-                            ));
-                        }
-                        None => {
-                            state.done = true;
+                    match state.read_next().await {
+                        Ok(true) => {} // Data appended to buffer, loop again.
+                        Ok(false) => {
+                            // Stream ended.
                             return None;
+                        }
+                        Err(e) => {
+                            return Some((Err(e), state));
                         }
                     }
                 }
@@ -432,27 +396,7 @@ impl LlmProvider for OllamaProvider {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Streaming helpers
-// ---------------------------------------------------------------------------
-
-struct OllamaStreamState {
-    byte_stream:
-        std::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
-    buffer: String,
-    /// Leftover bytes from the previous chunk that form an incomplete UTF-8 sequence.
-    bytes_remainder: Vec<u8>,
-    done: bool,
-}
-
-/// Extract one complete JSON line from the buffer.
-///
-/// Ollama streaming sends one JSON object per line, delimited by `\n`.
-fn extract_json_line(buffer: &mut String) -> Option<String> {
-    let newline_pos = buffer.find('\n')?;
-    let line: String = buffer.drain(..=newline_pos).collect();
-    Some(line)
-}
+// (SSE state and extract_json_line are now in crate::sse)
 
 // ---------------------------------------------------------------------------
 // Ollama API types (internal)

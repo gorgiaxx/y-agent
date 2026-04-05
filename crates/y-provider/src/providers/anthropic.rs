@@ -7,7 +7,7 @@
 //! - Streaming support via SSE (event-based format)
 
 use async_trait::async_trait;
-use futures::StreamExt;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -454,23 +454,20 @@ impl LlmProvider for AnthropicProvider {
 
         let stream = futures::stream::unfold(
             AnthropicSseState {
-                byte_stream: Box::pin(byte_stream),
-                buffer: String::new(),
-                bytes_remainder: Vec::new(),
+                sse: crate::sse::SseStreamState::new(Box::pin(byte_stream)),
                 current_tool_id: None,
                 current_tool_name: None,
                 current_tool_args: String::new(),
                 current_thinking: String::new(),
                 accumulated_usage: None,
-                done: false,
             },
             move |mut state| async move {
-                if state.done {
+                if state.sse.done {
                     return None;
                 }
 
                 loop {
-                    if let Some(event) = extract_anthropic_sse_event(&mut state.buffer) {
+                    if let Some(event) = extract_anthropic_sse_event(&mut state.sse.buffer) {
                         match event {
                             AnthropicSseEvent::ContentBlockDelta { delta } => match delta {
                                 AnthropicDelta::Text { text } => {
@@ -608,7 +605,7 @@ impl LlmProvider for AnthropicProvider {
                                 ));
                             }
                             AnthropicSseEvent::MessageStop => {
-                                state.done = true;
+                                state.sse.done = true;
                                 return None;
                             }
                             AnthropicSseEvent::Ping
@@ -620,45 +617,15 @@ impl LlmProvider for AnthropicProvider {
                     }
 
                     // Need more data.
-                    match state.byte_stream.next().await {
-                        Some(Ok(bytes)) => {
-                            // Prepend any leftover bytes from a previous incomplete UTF-8 sequence.
-                            let combined = if state.bytes_remainder.is_empty() {
-                                bytes.to_vec()
-                            } else {
-                                let mut combined = std::mem::take(&mut state.bytes_remainder);
-                                combined.extend_from_slice(&bytes);
-                                combined
-                            };
-                            match std::str::from_utf8(&combined) {
-                                Ok(text) => state.buffer.push_str(text),
-                                Err(e) => {
-                                    // Decode as much valid UTF-8 as possible.
-                                    let valid_up_to = e.valid_up_to();
-                                    if valid_up_to > 0 {
-                                        // Safety: valid_up_to is guaranteed to be a valid UTF-8 boundary.
-                                        let valid_text = unsafe {
-                                            std::str::from_utf8_unchecked(&combined[..valid_up_to])
-                                        };
-                                        state.buffer.push_str(valid_text);
-                                    }
-                                    // Keep the remaining bytes for the next chunk.
-                                    state.bytes_remainder = combined[valid_up_to..].to_vec();
-                                }
-                            }
-                        }
-                        Some(Err(e)) => {
-                            state.done = true;
-                            return Some((
-                                Err(ProviderError::NetworkError {
-                                    message: format!("stream read error: {e}"),
-                                }),
-                                state,
-                            ));
-                        }
-                        None => {
-                            state.done = true;
+                    match state.sse.read_next().await {
+                        Ok(true) => {} // Data appended to buffer, loop again.
+                        Ok(false) => {
+                            // Stream ended.
+                            state.sse.done = true;
                             return None;
+                        }
+                        Err(e) => {
+                            return Some((Err(e), state));
                         }
                     }
                 }
@@ -684,18 +651,14 @@ impl LlmProvider for AnthropicProvider {
 // ---------------------------------------------------------------------------
 
 struct AnthropicSseState {
-    byte_stream:
-        std::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
-    buffer: String,
-    /// Leftover bytes from the previous chunk that form an incomplete UTF-8 sequence.
-    bytes_remainder: Vec<u8>,
+    /// Shared SSE byte-stream decoder.
+    sse: crate::sse::SseStreamState,
     current_tool_id: Option<String>,
     current_tool_name: Option<String>,
     current_tool_args: String,
     current_thinking: String,
     /// Usage accumulated from `message_start` event.
     accumulated_usage: Option<TokenUsage>,
-    done: bool,
 }
 
 /// Parsed Anthropic SSE event types.
