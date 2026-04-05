@@ -21,17 +21,12 @@ use y_context::{
 };
 use y_core::agent::AgentDelegator;
 use y_core::permission_types::PermissionMode;
-use y_core::provider::LlmProvider;
+
 use y_core::types::{SessionId, ToolName};
 use y_diagnostics::{DiagnosticsEvent, DiagnosticsSubscriber, TraceStore};
 use y_guardrails::GuardrailManager;
 use y_hooks::HookSystem;
 use y_prompt::{builtin_section_store_with_overrides, default_template, PromptContext};
-use y_provider::providers::anthropic::AnthropicProvider;
-use y_provider::providers::azure::AzureOpenAiProvider;
-use y_provider::providers::gemini::GeminiProvider;
-use y_provider::providers::ollama::OllamaProvider;
-use y_provider::providers::openai::OpenAiProvider;
 use y_provider::ProviderPoolImpl;
 use y_provider::SingleTurnRunner;
 use y_runtime::{RuntimeManager, VenvManager};
@@ -241,7 +236,7 @@ impl ServiceContainer {
         let sessions = Self::init_sessions(&pool, config);
 
         // 3. Provider pool.
-        let providers = build_providers_from_config(&config.providers);
+        let providers = y_provider::build_providers(&config.providers);
         let provider_pool = Arc::new(ProviderPoolImpl::from_providers(
             providers,
             &config.providers,
@@ -831,7 +826,7 @@ impl ServiceContainer {
     /// This rebuilds all LLM provider instances and atomically swaps the
     /// pool. In-flight requests using the old `Arc` remain unaffected.
     pub async fn reload_providers(&self, pool_config: &y_provider::ProviderPoolConfig) {
-        let providers = build_providers_from_config(pool_config);
+        let providers = y_provider::build_providers(pool_config);
         let new_pool = Arc::new(ProviderPoolImpl::from_providers(providers, pool_config));
         let mut guard = self.provider_pool.write().await;
         *guard = new_pool;
@@ -1318,106 +1313,6 @@ fn extract_usage_hint(params: &serde_json::Value) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Provider construction
-// ---------------------------------------------------------------------------
-
-/// Build LLM provider instances from configuration entries.
-pub fn build_providers_from_config(
-    pool_config: &y_provider::config::ProviderPoolConfig,
-) -> Vec<Arc<dyn LlmProvider>> {
-    let mut providers: Vec<Arc<dyn LlmProvider>> = Vec::new();
-
-    for config in &pool_config.providers {
-        // Skip disabled providers.
-        if !config.enabled {
-            info!(
-                provider_id = %config.id,
-                "provider is disabled, skipping"
-            );
-            continue;
-        }
-
-        let Some(api_key) = config.resolve_api_key() else {
-            let env_var = config.api_key_env.as_deref().unwrap_or("(not configured)");
-            warn!(
-                provider_id = %config.id,
-                env_var = %env_var,
-                "Skipping provider: API key not found in environment"
-            );
-            continue;
-        };
-
-        let proxy_url = pool_config.resolve_proxy_url(&config.id, &config.tags);
-        let tool_calling_mode = config.resolve_tool_calling_mode();
-
-        if let Some(provider) =
-            build_provider_instance(config, api_key, proxy_url, tool_calling_mode)
-        {
-            providers.push(provider);
-        }
-    }
-
-    providers
-}
-
-/// Construct a single provider instance from its type discriminator.
-///
-/// Returns `None` for unsupported types (logged as a warning).
-fn build_provider_instance(
-    config: &y_provider::config::ProviderConfig,
-    api_key: String,
-    proxy_url: Option<String>,
-    tool_calling_mode: y_core::provider::ToolCallingMode,
-) -> Option<Arc<dyn LlmProvider>> {
-    // DeepSeek uses an OpenAI-compatible REST API with a default base URL.
-    let base_url_for_deepseek = || {
-        config
-            .base_url
-            .clone()
-            .or_else(|| Some("https://api.deepseek.com/v1".to_string()))
-    };
-
-    // Macro to reduce per-variant boilerplate: every provider constructor
-    // takes the same 9 arguments in the same order.
-    macro_rules! make_provider {
-        ($ty:ty, $base:expr) => {
-            Some(Arc::new(<$ty>::new(
-                &config.id,
-                &config.model,
-                api_key,
-                $base,
-                proxy_url,
-                config.tags.clone(),
-                config.max_concurrency,
-                config.context_window,
-                tool_calling_mode,
-            )) as Arc<dyn LlmProvider>)
-        };
-    }
-
-    match config.provider_type.as_str() {
-        // openai-compat covers any OpenAI-compatible REST endpoint
-        // (e.g., vLLM, LiteLLM, self-hosted models). Both types use the
-        // same OpenAiProvider implementation.
-        "openai" | "openai-compat" => make_provider!(OpenAiProvider, config.base_url.clone()),
-        "anthropic" => make_provider!(AnthropicProvider, config.base_url.clone()),
-        "gemini" => make_provider!(GeminiProvider, config.base_url.clone()),
-        "ollama" => make_provider!(OllamaProvider, config.base_url.clone()),
-        "azure" => make_provider!(AzureOpenAiProvider, config.base_url.clone()),
-        "deepseek" => make_provider!(OpenAiProvider, base_url_for_deepseek()),
-        other => {
-            warn!(
-                provider_id = %config.id,
-                provider_type = %other,
-                "Skipping provider: unsupported type \
-                (supported: openai, openai-compat, anthropic, gemini, ollama, azure, deepseek)"
-            );
-            None
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1479,109 +1374,103 @@ mod tests {
             }],
             ..Default::default()
         };
-        let providers = build_providers_from_config(&pool_config);
+        let providers = y_provider::build_providers(&pool_config);
         assert!(providers.is_empty());
     }
 
     #[test]
     fn test_build_providers_skips_unsupported_type() {
-        std::env::set_var("Y_AGENT_TEST_SVC_KEY", "test-key");
-
-        let pool_config = y_provider::config::ProviderPoolConfig {
-            providers: vec![y_provider::config::ProviderConfig {
-                id: "test-unsupported".into(),
-                provider_type: "unsupported_backend".into(),
-                model: "some-model".into(),
-                enabled: true,
-                tags: vec![],
-                max_concurrency: 5,
-                context_window: 128_000,
-                cost_per_1k_input: 0.0,
-                cost_per_1k_output: 0.0,
-                api_key: None,
-                api_key_env: Some("Y_AGENT_TEST_SVC_KEY".into()),
-                base_url: None,
-                temperature: None,
-                top_p: None,
-                tool_calling_mode: None,
-                icon: None,
-            }],
-            ..Default::default()
-        };
-        let providers = build_providers_from_config(&pool_config);
-        assert!(providers.is_empty());
-
-        std::env::remove_var("Y_AGENT_TEST_SVC_KEY");
+        temp_env::with_var("Y_AGENT_TEST_SVC_KEY", Some("test-key"), || {
+            let pool_config = y_provider::config::ProviderPoolConfig {
+                providers: vec![y_provider::config::ProviderConfig {
+                    id: "test-unsupported".into(),
+                    provider_type: "unsupported_backend".into(),
+                    model: "some-model".into(),
+                    enabled: true,
+                    tags: vec![],
+                    max_concurrency: 5,
+                    context_window: 128_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    api_key: None,
+                    api_key_env: Some("Y_AGENT_TEST_SVC_KEY".into()),
+                    base_url: None,
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                    icon: None,
+                }],
+                ..Default::default()
+            };
+            let providers = y_provider::build_providers(&pool_config);
+            assert!(providers.is_empty());
+        });
     }
 
     #[test]
     fn test_build_providers_openai_compat_alias() {
-        std::env::set_var("Y_AGENT_TEST_COMPAT_KEY", "sk-test");
-
-        let pool_config = y_provider::config::ProviderPoolConfig {
-            providers: vec![y_provider::config::ProviderConfig {
-                id: "my-compat".into(),
-                provider_type: "openai-compat".into(),
-                model: "local-model".into(),
-                enabled: true,
-                tags: vec![],
-                max_concurrency: 2,
-                context_window: 32_000,
-                cost_per_1k_input: 0.0,
-                cost_per_1k_output: 0.0,
-                api_key: None,
-                api_key_env: Some("Y_AGENT_TEST_COMPAT_KEY".into()),
-                base_url: Some("http://localhost:8080/v1".into()),
-                temperature: None,
-                top_p: None,
-                tool_calling_mode: None,
-                icon: None,
-            }],
-            ..Default::default()
-        };
-        let providers = build_providers_from_config(&pool_config);
-        assert_eq!(
-            providers.len(),
-            1,
-            "openai-compat should build exactly one provider"
-        );
-
-        std::env::remove_var("Y_AGENT_TEST_COMPAT_KEY");
+        temp_env::with_var("Y_AGENT_TEST_COMPAT_KEY", Some("sk-test"), || {
+            let pool_config = y_provider::config::ProviderPoolConfig {
+                providers: vec![y_provider::config::ProviderConfig {
+                    id: "my-compat".into(),
+                    provider_type: "openai-compat".into(),
+                    model: "local-model".into(),
+                    enabled: true,
+                    tags: vec![],
+                    max_concurrency: 2,
+                    context_window: 32_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    api_key: None,
+                    api_key_env: Some("Y_AGENT_TEST_COMPAT_KEY".into()),
+                    base_url: Some("http://localhost:8080/v1".into()),
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                    icon: None,
+                }],
+                ..Default::default()
+            };
+            let providers = y_provider::build_providers(&pool_config);
+            assert_eq!(
+                providers.len(),
+                1,
+                "openai-compat should build exactly one provider"
+            );
+        });
     }
 
     #[test]
     fn test_build_providers_deepseek_alias() {
-        std::env::set_var("Y_AGENT_TEST_DEEPSEEK_KEY", "sk-ds-test");
-
-        let pool_config = y_provider::config::ProviderPoolConfig {
-            providers: vec![y_provider::config::ProviderConfig {
-                id: "deepseek-chat".into(),
-                provider_type: "deepseek".into(),
-                model: "deepseek-chat".into(),
-                enabled: true,
-                tags: vec![],
-                max_concurrency: 3,
-                context_window: 64_000,
-                cost_per_1k_input: 0.0,
-                cost_per_1k_output: 0.0,
-                api_key: None,
-                api_key_env: Some("Y_AGENT_TEST_DEEPSEEK_KEY".into()),
-                base_url: None,
-                temperature: None,
-                top_p: None,
-                tool_calling_mode: None,
-                icon: None,
-            }],
-            ..Default::default()
-        };
-        let providers = build_providers_from_config(&pool_config);
-        assert_eq!(
-            providers.len(),
-            1,
-            "deepseek should build exactly one provider"
-        );
-
-        std::env::remove_var("Y_AGENT_TEST_DEEPSEEK_KEY");
+        temp_env::with_var("Y_AGENT_TEST_DEEPSEEK_KEY", Some("sk-ds-test"), || {
+            let pool_config = y_provider::config::ProviderPoolConfig {
+                providers: vec![y_provider::config::ProviderConfig {
+                    id: "deepseek-chat".into(),
+                    provider_type: "deepseek".into(),
+                    model: "deepseek-chat".into(),
+                    enabled: true,
+                    tags: vec![],
+                    max_concurrency: 3,
+                    context_window: 64_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    api_key: None,
+                    api_key_env: Some("Y_AGENT_TEST_DEEPSEEK_KEY".into()),
+                    base_url: None,
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                    icon: None,
+                }],
+                ..Default::default()
+            };
+            let providers = y_provider::build_providers(&pool_config);
+            assert_eq!(
+                providers.len(),
+                1,
+                "deepseek should build exactly one provider"
+            );
+        });
     }
 
     #[tokio::test]

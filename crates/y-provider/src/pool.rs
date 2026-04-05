@@ -115,112 +115,117 @@ impl ProviderPoolImpl {
     /// Providers with `enabled = false` are silently skipped.
     pub fn from_config(config: &ProviderPoolConfig) -> Result<Self, ProviderPoolError> {
         config.validate()?;
-
-        let mut providers: Vec<Arc<dyn LlmProvider>> = Vec::with_capacity(config.providers.len());
-
-        for cfg in &config.providers {
-            // Skip disabled providers -- they are kept in config but excluded
-            // from the active pool.
-            if !cfg.enabled {
-                tracing::info!(
-                    provider_id = %cfg.id,
-                    "provider is disabled, skipping pool registration"
-                );
-                continue;
-            }
-
-            let api_key = cfg.resolve_api_key().unwrap_or_default();
-            let proxy_url = config.resolve_proxy_url(&cfg.id, &cfg.tags);
-            let tool_calling_mode = cfg.resolve_tool_calling_mode();
-
-            let provider: Arc<dyn LlmProvider> = match cfg.provider_type.as_str() {
-                "openai" | "openai-compat" | "openai_compatible" | "custom" => {
-                    Arc::new(crate::providers::openai::OpenAiProvider::new(
-                        &cfg.id,
-                        &cfg.model,
-                        api_key,
-                        cfg.base_url.clone(),
-                        proxy_url,
-                        cfg.tags.clone(),
-                        cfg.max_concurrency,
-                        cfg.context_window,
-                        tool_calling_mode,
-                    ))
-                }
-                "anthropic" => Arc::new(crate::providers::anthropic::AnthropicProvider::new(
-                    &cfg.id,
-                    &cfg.model,
-                    api_key,
-                    cfg.base_url.clone(),
-                    proxy_url,
-                    cfg.tags.clone(),
-                    cfg.max_concurrency,
-                    cfg.context_window,
-                    tool_calling_mode,
-                )),
-                "gemini" => Arc::new(crate::providers::gemini::GeminiProvider::new(
-                    &cfg.id,
-                    &cfg.model,
-                    api_key,
-                    cfg.base_url.clone(),
-                    proxy_url,
-                    cfg.tags.clone(),
-                    cfg.max_concurrency,
-                    cfg.context_window,
-                    tool_calling_mode,
-                )),
-                "ollama" => Arc::new(crate::providers::ollama::OllamaProvider::new(
-                    &cfg.id,
-                    &cfg.model,
-                    api_key,
-                    cfg.base_url.clone(),
-                    proxy_url,
-                    cfg.tags.clone(),
-                    cfg.max_concurrency,
-                    cfg.context_window,
-                    tool_calling_mode,
-                )),
-                "azure" => Arc::new(crate::providers::azure::AzureOpenAiProvider::new(
-                    &cfg.id,
-                    &cfg.model,
-                    api_key,
-                    cfg.base_url.clone(),
-                    proxy_url,
-                    cfg.tags.clone(),
-                    cfg.max_concurrency,
-                    cfg.context_window,
-                    tool_calling_mode,
-                )),
-                "deepseek" => {
-                    let base_url = cfg
-                        .base_url
-                        .clone()
-                        .or_else(|| Some("https://api.deepseek.com/v1".to_string()));
-                    Arc::new(crate::providers::openai::OpenAiProvider::new(
-                        &cfg.id,
-                        &cfg.model,
-                        api_key,
-                        base_url,
-                        proxy_url,
-                        cfg.tags.clone(),
-                        cfg.max_concurrency,
-                        cfg.context_window,
-                        tool_calling_mode,
-                    ))
-                }
-                unknown => {
-                    return Err(ProviderPoolError::Config {
-                        message: format!("unknown provider_type: \"{unknown}\""),
-                    });
-                }
-            };
-
-            providers.push(provider);
-        }
-
+        let providers = build_providers(config);
         Ok(Self::from_providers(providers, config))
     }
+}
 
+/// Build provider instances from configuration.
+///
+/// Resolves API keys and proxy URLs per provider, constructs the appropriate
+/// provider backend for each entry. Providers with `enabled = false` or
+/// missing API keys are silently skipped (logged at info/warn level).
+///
+/// This is the **single source of truth** for provider construction.
+/// Both `ProviderPoolImpl::from_config` and `ServiceContainer` must use
+/// this function to avoid behavioral divergence.
+pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>> {
+    let mut providers: Vec<Arc<dyn LlmProvider>> = Vec::with_capacity(config.providers.len());
+
+    for cfg in &config.providers {
+        // Skip disabled providers.
+        if !cfg.enabled {
+            tracing::info!(
+                provider_id = %cfg.id,
+                "provider is disabled, skipping"
+            );
+            continue;
+        }
+
+        let Some(api_key) = cfg.resolve_api_key() else {
+            let env_var = cfg.api_key_env.as_deref().unwrap_or("(not configured)");
+            tracing::warn!(
+                provider_id = %cfg.id,
+                env_var = %env_var,
+                "Skipping provider: API key not found in environment"
+            );
+            continue;
+        };
+
+        let proxy_url = config.resolve_proxy_url(&cfg.id, &cfg.tags);
+        let tool_calling_mode = cfg.resolve_tool_calling_mode();
+
+        // DeepSeek uses an OpenAI-compatible REST API with a default base URL.
+        let base_url_for_deepseek = || {
+            cfg.base_url
+                .clone()
+                .or_else(|| Some("https://api.deepseek.com/v1".to_string()))
+        };
+
+        // Macro to reduce per-variant boilerplate: every provider constructor
+        // takes the same 9 arguments in the same order.
+        macro_rules! make_provider {
+            ($ty:ty, $base:expr) => {
+                Arc::new(<$ty>::new(
+                    &cfg.id,
+                    &cfg.model,
+                    api_key.clone(),
+                    $base,
+                    proxy_url.clone(),
+                    cfg.tags.clone(),
+                    cfg.max_concurrency,
+                    cfg.context_window,
+                    tool_calling_mode,
+                )) as Arc<dyn LlmProvider>
+            };
+        }
+
+        let provider: Option<Arc<dyn LlmProvider>> = match cfg.provider_type.as_str() {
+            // openai-compat / openai_compatible / custom all use the OpenAI provider.
+            "openai" | "openai-compat" | "openai_compatible" | "custom" => Some(make_provider!(
+                crate::providers::openai::OpenAiProvider,
+                cfg.base_url.clone()
+            )),
+            "anthropic" => Some(make_provider!(
+                crate::providers::anthropic::AnthropicProvider,
+                cfg.base_url.clone()
+            )),
+            "gemini" => Some(make_provider!(
+                crate::providers::gemini::GeminiProvider,
+                cfg.base_url.clone()
+            )),
+            "ollama" => Some(make_provider!(
+                crate::providers::ollama::OllamaProvider,
+                cfg.base_url.clone()
+            )),
+            "azure" => Some(make_provider!(
+                crate::providers::azure::AzureOpenAiProvider,
+                cfg.base_url.clone()
+            )),
+            "deepseek" => Some(make_provider!(
+                crate::providers::openai::OpenAiProvider,
+                base_url_for_deepseek()
+            )),
+            other => {
+                tracing::warn!(
+                    provider_id = %cfg.id,
+                    provider_type = %other,
+                    "Skipping provider: unsupported type \
+                    (supported: openai, openai-compat, anthropic, gemini, ollama, azure, deepseek)"
+                );
+                None
+            }
+        };
+
+        if let Some(p) = provider {
+            providers.push(p);
+        }
+    }
+
+    providers
+}
+
+impl ProviderPoolImpl {
     /// Build the routable providers list for the router.
     fn routable_providers(&self) -> Vec<RoutableProvider> {
         self.providers
@@ -407,10 +412,9 @@ impl ProviderPool for ProviderPoolImpl {
         entry.active_requests.fetch_add(1, Ordering::Relaxed);
         let guard = ActiveRequestGuard(Arc::clone(&entry.active_requests));
 
-        // For streaming, we record the request but can't easily track tokens
-        // until the stream completes. Token tracking for streams happens
-        // at the caller level (the orchestrator reads the final chunk).
-        entry.metrics.record_success(0, 0);
+        // Streaming metrics are tracked at the caller level when the stream
+        // completes or errors. We do NOT record a premature success here
+        // because the stream has not started consuming yet.
 
         let meta = entry.provider.metadata();
         let stream_result = entry.provider.chat_completion_stream(request).await;
@@ -501,8 +505,19 @@ impl ProviderPool for ProviderPoolImpl {
                 ProviderStatus {
                     id: meta.id.clone(),
                     is_frozen: freeze_status.is_frozen,
-                    frozen_since: None, // Instant doesn't convert directly to Timestamp
-                    thaw_at: None,
+                    frozen_since: freeze_status.frozen_since.map(|inst| {
+                        chrono::Utc::now()
+                            - chrono::Duration::from_std(inst.elapsed()).unwrap_or_default()
+                    }),
+                    thaw_at: freeze_status.thaw_at.map(|inst| {
+                        let now = std::time::Instant::now();
+                        if inst > now {
+                            chrono::Utc::now()
+                                + chrono::Duration::from_std(inst - now).unwrap_or_default()
+                        } else {
+                            chrono::Utc::now()
+                        }
+                    }),
                     freeze_reason: freeze_status.reason,
                     active_requests: entry.active_requests.load(Ordering::Relaxed),
                     total_requests: metrics.total_requests,
@@ -615,7 +630,7 @@ mod tests {
             &self,
             _request: &ChatRequest,
         ) -> Result<ChatStreamResponse, ProviderError> {
-            unimplemented!("mock streaming")
+            panic!("MockProvider does not support streaming -- this code path should not be reached in pool unit tests")
         }
 
         fn metadata(&self) -> &ProviderMetadata {

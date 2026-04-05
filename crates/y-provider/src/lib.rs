@@ -31,6 +31,7 @@ pub mod pool;
 pub mod providers;
 pub mod router;
 pub mod scheduler;
+pub mod sse;
 
 // Re-export primary types.
 pub use agent_runner::SingleTurnRunner;
@@ -44,7 +45,7 @@ pub use hook_llm_runner::ProviderPoolHookLlmRunner;
 pub use lease::{LeaseGuard, LeaseId, LeaseManager};
 pub use metrics::{MetricsEvent, MetricsSnapshot, ProviderMetrics};
 pub use metrics_export::render_prometheus;
-pub use pool::ProviderPoolImpl;
+pub use pool::{build_providers, ProviderPoolImpl};
 pub use providers::anthropic::AnthropicProvider;
 pub use providers::azure::AzureOpenAiProvider;
 pub use providers::gemini::GeminiProvider;
