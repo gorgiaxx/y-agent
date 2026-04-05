@@ -2,11 +2,12 @@ import { useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { Sparkles, AlertTriangle } from 'lucide-react';
 import type { Message } from '../../types';
-import type { ToolResultRecord } from '../../hooks/useChat';
+import type { ToolResultRecord, CompactInfo } from '../../hooks/useChat';
 import { UserBubble } from './chat-box/UserBubble';
 import { AssistantBubble } from './chat-box/AssistantBubble';
 import { RestoreDivider } from './chat-box/RestoreDivider';
 import { ContextResetDivider } from './chat-box/ContextResetDivider';
+import { CompactDivider } from './chat-box/CompactDivider';
 import './ChatPanel.css';
 
 /** A tombstoned segment for rendering restore dividers. */
@@ -25,10 +26,12 @@ interface ChatPanelProps {
   onEditMessage?: (content: string, messageId: string) => void;
   onUndoMessage?: (messageId: string) => void;
   onResendMessage?: (content: string, messageId: string) => void;
+  onForkMessage?: (messageIndex: number) => void;
   tombstonedSegments?: TombstonedSegment[];
   onRestoreBranch?: (checkpointId: string) => void;
   toolResults?: ToolResultRecord[];
   contextResetPoints?: number[];
+  compactPoints?: CompactInfo[];
 }
 
 // ---------------------------------------------------------------------------
@@ -39,6 +42,8 @@ type DisplayItem =
   | { kind: 'message'; msg: Message; toolResults?: ToolResultRecord[] }
   | { kind: 'restore-divider'; segment: TombstonedSegment }
   | { kind: 'context-reset'; pointIndex: number }
+  | { kind: 'compact-divider'; info: CompactInfo; pointIndex: number }
+  | { kind: 'compact-summary'; info: CompactInfo; pointIndex: number }
   | { kind: 'streaming-indicator' }
   | { kind: 'error'; error: string };
 
@@ -51,6 +56,7 @@ function buildDisplayItems(
   messages: Message[],
   tombstonedSegments: TombstonedSegment[] | undefined,
   contextResetPoints: number[] | undefined,
+  compactPoints: CompactInfo[] | undefined,
   toolResults: ToolResultRecord[] | undefined,
   isStreaming: boolean,
   error: string | null,
@@ -76,6 +82,18 @@ function buildDisplayItems(
       for (let pi = 0; pi < contextResetPoints.length; pi++) {
         if (contextResetPoints[pi] === idx) {
           items.push({ kind: 'context-reset', pointIndex: pi });
+        }
+      }
+    }
+
+    // Compact divider(s) at this index.
+    if (compactPoints) {
+      for (let pi = 0; pi < compactPoints.length; pi++) {
+        if (compactPoints[pi].atIndex === idx) {
+          items.push({ kind: 'compact-divider', info: compactPoints[pi], pointIndex: pi });
+          if (compactPoints[pi].summary) {
+            items.push({ kind: 'compact-summary', info: compactPoints[pi], pointIndex: pi });
+          }
         }
       }
     }
@@ -106,6 +124,18 @@ function buildDisplayItems(
     }
   }
 
+  // Compact divider(s) at the end.
+  if (compactPoints) {
+    for (let pi = 0; pi < compactPoints.length; pi++) {
+      if (compactPoints[pi].atIndex >= messages.length) {
+        items.push({ kind: 'compact-divider', info: compactPoints[pi], pointIndex: pi });
+        if (compactPoints[pi].summary) {
+          items.push({ kind: 'compact-summary', info: compactPoints[pi], pointIndex: pi });
+        }
+      }
+    }
+  }
+
   if (isStreaming && !messages.some((m) => m.id.startsWith('streaming-'))) {
     items.push({ kind: 'streaming-indicator' });
   }
@@ -125,10 +155,12 @@ function ChatPanelInner({
   onEditMessage,
   onUndoMessage,
   onResendMessage,
+  onForkMessage,
   tombstonedSegments,
   onRestoreBranch,
   toolResults,
   contextResetPoints,
+  compactPoints,
 }: ChatPanelProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   /** Whether the user is near the bottom of the scroll area. */
@@ -138,8 +170,8 @@ function ChatPanelInner({
 
   // Pre-compute the flat display item list.
   const displayItems = useMemo(
-    () => buildDisplayItems(messages, tombstonedSegments, contextResetPoints, toolResults, isStreaming, error),
-    [messages, tombstonedSegments, contextResetPoints, toolResults, isStreaming, error],
+    () => buildDisplayItems(messages, tombstonedSegments, contextResetPoints, compactPoints, toolResults, isStreaming, error),
+    [messages, tombstonedSegments, contextResetPoints, compactPoints, toolResults, isStreaming, error],
   );
 
   // Auto-scroll on new messages (count changes) or streaming updates (if near bottom).
@@ -175,6 +207,28 @@ function ChatPanelInner({
       case 'context-reset':
         return <ContextResetDivider />;
 
+      case 'compact-divider':
+        return (
+          <CompactDivider
+            messagesPruned={item.info.messagesPruned}
+            messagesCompacted={item.info.messagesCompacted}
+            tokensSaved={item.info.tokensSaved}
+          />
+        );
+
+      case 'compact-summary':
+        return (
+          <AssistantBubble
+            message={{
+              id: `compact-summary-${item.pointIndex}`,
+              role: 'assistant',
+              content: item.info.summary,
+              timestamp: new Date().toISOString(),
+              tool_calls: [],
+            }}
+          />
+        );
+
       case 'streaming-indicator':
         return (
           <div className="streaming-indicator">
@@ -193,14 +247,18 @@ function ChatPanelInner({
           </div>
         );
 
-      case 'message':
+      case 'message': {
+        // Compute the 0-based message index from the display-item list.
+        const msgIdx = messages.indexOf(item.msg);
         if (item.msg.role === 'user') {
           return (
             <UserBubble
               message={item.msg}
+              messageIndex={msgIdx >= 0 ? msgIdx : undefined}
               onEdit={(content) => onEditMessage?.(content, item.msg.id)}
               onUndo={onUndoMessage}
               onResend={(content) => onResendMessage?.(content, item.msg.id)}
+              onFork={onForkMessage}
               disabled={isStreaming}
             />
           );
@@ -211,11 +269,12 @@ function ChatPanelInner({
             toolResults={item.toolResults}
           />
         );
+      }
 
       default:
         return null;
     }
-  }, [isStreaming, onEditMessage, onUndoMessage, onResendMessage, onRestoreBranch]);
+  }, [messages, isStreaming, onEditMessage, onUndoMessage, onResendMessage, onForkMessage, onRestoreBranch]);
 
   if (isLoading) {
     return (
@@ -255,6 +314,8 @@ function ChatPanelInner({
             if (item.kind === 'message') return item.msg.id;
             if (item.kind === 'restore-divider') return `restore-${item.segment.checkpointId}`;
             if (item.kind === 'context-reset') return `reset-${item.pointIndex}`;
+            if (item.kind === 'compact-divider') return `compact-div-${item.pointIndex}`;
+            if (item.kind === 'compact-summary') return `compact-sum-${item.pointIndex}`;
             if (item.kind === 'streaming-indicator') return 'streaming-indicator';
             if (item.kind === 'error') return 'error';
             return 'unknown';

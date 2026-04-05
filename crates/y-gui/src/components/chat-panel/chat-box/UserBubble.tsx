@@ -17,6 +17,7 @@ import {
   Undo2,
   RefreshCw,
   Puzzle,
+  GitBranch,
 } from 'lucide-react';
 import type { Message, Attachment } from '../../../types';
 import { Avatar } from './MessageShared';
@@ -25,28 +26,35 @@ import './UserBubble.css';
 
 export interface UserBubbleProps {
   message: Message;
+  /** 0-based index of this message in the display list. */
+  messageIndex?: number;
   onEdit?: (content: string) => void;
   onUndo?: (messageId: string) => void;
   onResend?: (content: string) => void;
+  onFork?: (messageIndex: number) => void;
   /** When true, action bar buttons are disabled (e.g. task is running). */
   disabled?: boolean;
 }
 
 
-/** Action bar shown on hover for user messages: Copy, Edit, Resend, Undo. */
+/** Action bar shown on hover for user messages: Copy, Edit, Resend, Undo, Fork. */
 function UserActionBar({
   content,
   messageId,
+  messageIndex,
   onEdit,
   onUndo,
   onResend,
+  onFork,
   disabled = false,
 }: {
   content: string;
   messageId: string;
+  messageIndex?: number;
   onEdit?: (content: string) => void;
   onUndo?: (messageId: string) => void;
   onResend?: (content: string) => void;
+  onFork?: (messageIndex: number) => void;
   disabled?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
@@ -82,6 +90,12 @@ function UserActionBar({
     }
   }, [content, onResend]);
 
+  const handleFork = useCallback(() => {
+    if (onFork && messageIndex !== undefined) {
+      onFork(messageIndex);
+    }
+  }, [messageIndex, onFork]);
+
   return (
     <div className={`message-actions user-action-bar${disabled ? ' disabled' : ''}`}>
       <button className="action-btn" onClick={handleCopy} title="Copy message" aria-label="Copy message" disabled={disabled}>
@@ -103,12 +117,19 @@ function UserActionBar({
         <Undo2 size={14} />
         <span className="action-label">Undo</span>
       </button>
+
+      {onFork && messageIndex !== undefined && (
+        <button className="action-btn" onClick={handleFork} title="Fork conversation from here" aria-label="Fork conversation from here" disabled={disabled}>
+          <GitBranch size={14} />
+          <span className="action-label">Fork</span>
+        </button>
+      )}
     </div>
   );
 }
 
 
-export function UserBubble({ message, onEdit, onUndo, onResend, disabled }: UserBubbleProps) {
+export function UserBubble({ message, messageIndex, onEdit, onUndo, onResend, onFork, disabled }: UserBubbleProps) {
   const handleBubbleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (disabled) return;
@@ -172,9 +193,11 @@ export function UserBubble({ message, onEdit, onUndo, onResend, disabled }: User
         <UserActionBar
           content={message.content}
           messageId={message.id}
+          messageIndex={messageIndex}
           onEdit={onEdit}
           onUndo={onUndo}
           onResend={onResend}
+          onFork={onFork}
           disabled={disabled}
         />
 

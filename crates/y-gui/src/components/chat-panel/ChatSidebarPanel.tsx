@@ -7,6 +7,7 @@ import {
   Pencil,
   Trash2,
   ChevronRight,
+  GitBranch,
 } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
 import { WorkspaceDialog } from './WorkspaceDialog';
@@ -22,6 +23,7 @@ interface ChatSidebarPanelProps {
   onNewChat: () => void;
   onNewChatInWorkspace: (workspaceId: string) => void;
   onDeleteSession: (id: string) => void;
+  onForkSession?: (sessionId: string) => void;
   onCreateWorkspace: (name: string, path: string) => void;
   onUpdateWorkspace: (id: string, name: string, path: string) => void;
   onDeleteWorkspace: (id: string) => void;
@@ -52,6 +54,7 @@ export function ChatSidebarPanel({
   onNewChat,
   onNewChatInWorkspace,
   onDeleteSession,
+  onForkSession,
   onCreateWorkspace,
   onUpdateWorkspace,
   onDeleteWorkspace,
@@ -458,6 +461,21 @@ export function ChatSidebarPanel({
                     Remove from workspace
                   </button>
                 )}
+                <hr className="context-menu-divider" />
+              </>
+            )}
+            {onForkSession && (
+              <>
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    onForkSession(session.id);
+                    setOpenSessionMenuId(null);
+                  }}
+                >
+                  <GitBranch size={11} />
+                  Fork session
+                </button>
                 <hr className="context-menu-divider" />
               </>
             )}
