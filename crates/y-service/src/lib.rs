@@ -97,16 +97,27 @@ pub mod config_types {
     pub use y_tools::ToolRegistryConfig;
 }
 
-// Flat re-exports for backward compatibility and convenience.
+// Flat re-exports for backward compatibility.
+// Prefer importing from `config_types::` module instead.
+#[deprecated(note = "import from y_service::config_types::BrowserConfig instead")]
 pub use y_browser::BrowserConfig;
+#[deprecated(note = "import from y_service::config_types::PruningConfig instead")]
 pub use y_context::PruningConfig;
+#[deprecated(note = "import from y_service::config_types::GuardrailConfig instead")]
 pub use y_guardrails::GuardrailConfig;
+#[deprecated(note = "import from y_service::config_types::HookConfig instead")]
 pub use y_hooks::HookConfig;
+#[deprecated(note = "import from y_service::config_types::KnowledgeConfig instead")]
 pub use y_knowledge::config::KnowledgeConfig;
+#[deprecated(note = "import from y_service::config_types::ProviderPoolConfig instead")]
 pub use y_provider::ProviderPoolConfig;
+#[deprecated(note = "import from y_service::config_types::RuntimeConfig instead")]
 pub use y_runtime::RuntimeConfig;
+#[deprecated(note = "import from y_service::config_types::SessionConfig instead")]
 pub use y_session::SessionConfig;
+#[deprecated(note = "import from y_service::config_types::StorageConfig instead")]
 pub use y_storage::StorageConfig;
+#[deprecated(note = "import from y_service::config_types::ToolRegistryConfig instead")]
 pub use y_tools::ToolRegistryConfig;
 
 // Re-export context assembly types (used in tests by presentation layers).

@@ -104,17 +104,105 @@ pub struct KnowledgeService {
     summary_generator: Option<Arc<dyn y_knowledge::tagger::SummaryGenerator>>,
 }
 
-impl KnowledgeService {
-    /// Create a new knowledge service with default settings (in-memory only).
+// ---------------------------------------------------------------------------
+// Builder
+// ---------------------------------------------------------------------------
+
+/// Builder for [`KnowledgeService`].
+///
+/// Consolidates the shared initialization logic that was previously
+/// duplicated across `new()`, `with_data_dir()`, and `with_inject_config()`.
+///
+/// ```ignore
+/// let service = KnowledgeService::builder(config)
+///     .data_dir(dir)
+///     .embedding_provider(provider)
+///     .build();
+/// ```
+#[must_use]
+pub struct KnowledgeServiceBuilder {
+    config: KnowledgeConfig,
+    data_dir: Option<PathBuf>,
+    inject_config: Option<InjectKnowledgeConfig>,
+    embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    tag_generator: Option<Arc<dyn TagGenerator>>,
+    metadata_extractor: Option<Arc<dyn MetadataExtractor>>,
+    summary_generator: Option<Arc<dyn y_knowledge::tagger::SummaryGenerator>>,
+}
+
+impl KnowledgeServiceBuilder {
+    /// Create a builder with the given configuration.
     pub fn new(config: KnowledgeConfig) -> Self {
+        Self {
+            config,
+            data_dir: None,
+            inject_config: None,
+            embedding_provider: None,
+            tag_generator: None,
+            metadata_extractor: None,
+            summary_generator: None,
+        }
+    }
+
+    /// Set a persistent data directory.
+    ///
+    /// When set, collections and entries are persisted to JSON files
+    /// and reloaded on construction.
+    pub fn data_dir(mut self, dir: PathBuf) -> Self {
+        self.data_dir = Some(dir);
+        self
+    }
+
+    /// Set a custom injection configuration.
+    pub fn inject_config(mut self, config: InjectKnowledgeConfig) -> Self {
+        self.inject_config = Some(config);
+        self
+    }
+
+    /// Set the embedding provider for vector search.
+    pub fn embedding_provider(mut self, provider: Arc<dyn EmbeddingProvider>) -> Self {
+        self.embedding_provider = Some(provider);
+        self
+    }
+
+    /// Set the tag generator for LLM-driven auto-tagging.
+    pub fn tag_generator(mut self, generator: Arc<dyn TagGenerator>) -> Self {
+        self.tag_generator = Some(generator);
+        self
+    }
+
+    /// Set the metadata extractor for multi-dimensional LLM classification.
+    pub fn metadata_extractor(mut self, extractor: Arc<dyn MetadataExtractor>) -> Self {
+        self.metadata_extractor = Some(extractor);
+        self
+    }
+
+    /// Set the summary generator for LLM-driven L0/L1 summarization.
+    pub fn summary_generator(
+        mut self,
+        generator: Arc<dyn y_knowledge::tagger::SummaryGenerator>,
+    ) -> Self {
+        self.summary_generator = Some(generator);
+        self
+    }
+
+    /// Build the [`KnowledgeService`].
+    pub fn build(self) -> KnowledgeService {
         let retriever = HybridRetriever::new(SimpleTokenizer::new());
-        let inject_knowledge = Arc::new(StdMutex::new(InjectKnowledge::new(retriever)));
-        let pipeline = IngestionPipeline::new(config.clone());
+        let inject_knowledge = if let Some(inject_cfg) = self.inject_config {
+            Arc::new(StdMutex::new(InjectKnowledge::with_config(
+                retriever, inject_cfg,
+            )))
+        } else {
+            Arc::new(StdMutex::new(InjectKnowledge::new(retriever)))
+        };
+
+        let pipeline = IngestionPipeline::new(self.config.clone());
         let classifier = RuleBasedClassifier::default_taxonomy();
         let quality_filter = QualityFilter::new();
 
-        let mut service = Self {
-            config,
+        let mut service = KnowledgeService {
+            config: self.config,
             workspace_id: "default".to_string(),
             collections: HashMap::new(),
             entries: HashMap::new(),
@@ -122,16 +210,37 @@ impl KnowledgeService {
             pipeline,
             classifier,
             quality_filter,
-            data_dir: None,
-            embedding_provider: None,
-            tag_generator: None,
-            metadata_extractor: None,
-            summary_generator: None,
+            data_dir: self.data_dir,
+            embedding_provider: self.embedding_provider,
+            tag_generator: self.tag_generator,
+            metadata_extractor: self.metadata_extractor,
+            summary_generator: self.summary_generator,
         };
 
-        // Create default collection.
-        service.create_collection("default", "Default knowledge collection");
+        // If data_dir is set, load persisted data and reindex.
+        if service.data_dir.is_some() {
+            service.load_collections();
+            service.load_entries();
+            service.reindex_all_entries();
+        }
+
+        // Ensure the default collection always exists.
+        if !service.has_collection("default") {
+            service.create_collection("default", "Default knowledge collection");
+        }
+
         service
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Service implementation
+// ---------------------------------------------------------------------------
+
+impl KnowledgeService {
+    /// Create a new knowledge service with default settings (in-memory only).
+    pub fn new(config: KnowledgeConfig) -> Self {
+        KnowledgeServiceBuilder::new(config).build()
     }
 
     /// Create a new knowledge service with persistence to the given data directory.
@@ -139,76 +248,14 @@ impl KnowledgeService {
     /// Collections are loaded from `<data_dir>/knowledge_collections.json` on
     /// construction and saved back after every mutation.
     pub fn with_data_dir(config: KnowledgeConfig, data_dir: PathBuf) -> Self {
-        let retriever = HybridRetriever::new(SimpleTokenizer::new());
-        let inject_knowledge = Arc::new(StdMutex::new(InjectKnowledge::new(retriever)));
-        let pipeline = IngestionPipeline::new(config.clone());
-        let classifier = RuleBasedClassifier::default_taxonomy();
-        let quality_filter = QualityFilter::new();
-
-        let mut service = Self {
-            config,
-            workspace_id: "default".to_string(),
-            collections: HashMap::new(),
-            entries: HashMap::new(),
-            inject_knowledge,
-            pipeline,
-            classifier,
-            quality_filter,
-            data_dir: Some(data_dir),
-            embedding_provider: None,
-            tag_generator: None,
-            metadata_extractor: None,
-            summary_generator: None,
-        };
-
-        // Try to load persisted data.
-        service.load_collections();
-        service.load_entries();
-
-        // Re-index all loaded entries into the HybridRetriever so the
-        // in-memory search index is populated on startup.
-        service.reindex_all_entries();
-
-        // Ensure the default collection exists.
-        if !service.has_collection("default") {
-            service.create_collection("default", "Default knowledge collection");
-        }
-
-        service
+        KnowledgeServiceBuilder::new(config)
+            .data_dir(data_dir)
+            .build()
     }
 
-    /// Create with custom injection config.
-    pub fn with_inject_config(
-        config: KnowledgeConfig,
-        inject_config: InjectKnowledgeConfig,
-    ) -> Self {
-        let retriever = HybridRetriever::new(SimpleTokenizer::new());
-        let inject_knowledge = Arc::new(StdMutex::new(InjectKnowledge::with_config(
-            retriever,
-            inject_config,
-        )));
-        let pipeline = IngestionPipeline::new(config.clone());
-        let classifier = RuleBasedClassifier::default_taxonomy();
-        let quality_filter = QualityFilter::new();
-
-        let mut service = Self {
-            config,
-            workspace_id: "default".to_string(),
-            collections: HashMap::new(),
-            entries: HashMap::new(),
-            inject_knowledge,
-            pipeline,
-            classifier,
-            quality_filter,
-            data_dir: None,
-            embedding_provider: None,
-            tag_generator: None,
-            metadata_extractor: None,
-            summary_generator: None,
-        };
-
-        service.create_collection("default", "Default knowledge collection");
-        service
+    /// Return a builder for advanced configuration.
+    pub fn builder(config: KnowledgeConfig) -> KnowledgeServiceBuilder {
+        KnowledgeServiceBuilder::new(config)
     }
 
     /// Hot-reload the knowledge configuration.
@@ -851,7 +898,8 @@ impl KnowledgeService {
                 document_id: entry_id.to_string(),
                 level: ChunkLevel::L2,
                 content: chunk_content.clone(),
-                token_estimate: u32::try_from(chunk_content.len() / 4).unwrap_or(u32::MAX),
+                token_estimate: u32::try_from(chunk_content.chars().count() / 4)
+                    .unwrap_or(u32::MAX),
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
@@ -883,7 +931,7 @@ impl KnowledgeService {
                 document_id: entry_id.to_string(),
                 level: ChunkLevel::L0,
                 content: summary.clone(),
-                token_estimate: u32::try_from(summary.len() / 4).unwrap_or(u32::MAX),
+                token_estimate: u32::try_from(summary.chars().count() / 4).unwrap_or(u32::MAX),
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
@@ -906,7 +954,8 @@ impl KnowledgeService {
                 document_id: entry_id.to_string(),
                 level: ChunkLevel::L1,
                 content: section.content.clone(),
-                token_estimate: u32::try_from(section.content.len() / 4).unwrap_or(u32::MAX),
+                token_estimate: u32::try_from(section.content.chars().count() / 4)
+                    .unwrap_or(u32::MAX),
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
@@ -1016,7 +1065,8 @@ impl KnowledgeService {
                     document_id: entry.entry_id.clone(),
                     level: ChunkLevel::L2,
                     content: chunk_content.clone(),
-                    token_estimate: u32::try_from(chunk_content.len() / 4).unwrap_or(u32::MAX),
+                    token_estimate: u32::try_from(chunk_content.chars().count() / 4)
+                        .unwrap_or(u32::MAX),
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),
@@ -1066,7 +1116,7 @@ impl KnowledgeService {
                     document_id: entry.entry_id.clone(),
                     level: ChunkLevel::L0,
                     content: summary.clone(),
-                    token_estimate: u32::try_from(summary.len() / 4).unwrap_or(u32::MAX),
+                    token_estimate: u32::try_from(summary.chars().count() / 4).unwrap_or(u32::MAX),
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),
@@ -1097,7 +1147,7 @@ impl KnowledgeService {
                     document_id: entry.entry_id.clone(),
                     level: ChunkLevel::L1,
                     content: content.clone(),
-                    token_estimate: u32::try_from(content.len() / 4).unwrap_or(u32::MAX),
+                    token_estimate: u32::try_from(content.chars().count() / 4).unwrap_or(u32::MAX),
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),

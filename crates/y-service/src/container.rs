@@ -58,34 +58,43 @@ const BACKGROUND_SCHEDULER_TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 /// All wired application services, constructed from [`ServiceConfig`].
 ///
-/// Some fields (e.g., `runtime_manager`, `hook_system`, `guardrail_manager`)
-/// are not yet consumed by `ChatService` but are reserved for middleware
-/// pipeline integration (see TODO(middleware) comments in `chat.rs`).
+/// Fields are logically grouped by domain. A future refactoring may extract
+/// these groups into dedicated sub-structs (e.g. `SessionServices`,
+/// `ToolServices`).
 #[allow(dead_code)]
 pub struct ServiceContainer {
+    // -- Provider ----------------------------------------------------------
     /// Provider pool for LLM communication.
     /// Wrapped in `RwLock` to support hot-reload of provider configuration.
     provider_pool: RwLock<Arc<ProviderPoolImpl>>,
 
+    // -- Sessions ----------------------------------------------------------
     /// Session manager for session lifecycle.
     pub session_manager: SessionManager,
 
-    /// Unified hook system (registry, event bus, middleware chains, handler executor).
-    /// Wrapped in `std::sync::RwLock` to support hot-reload from `Arc<ServiceContainer>`.
-    pub hook_system: std::sync::RwLock<HookSystem>,
+    /// Chat checkpoint manager for turn-level rollback.
+    pub chat_checkpoint_manager: ChatCheckpointManager,
 
+    /// Chat message store for session history tree (Phase 2).
+    pub chat_message_store: Arc<SqliteChatMessageStore>,
+
+    // -- Tools -------------------------------------------------------------
     /// Tool registry for tool management.
     pub tool_registry: ToolRegistryImpl,
 
-    /// Runtime manager for tool execution environments.
-    pub runtime_manager: Arc<RuntimeManager>,
+    /// Session-scoped tool activation set (LRU, ceiling 20).
+    pub tool_activation_set: Arc<RwLock<ToolActivationSet>>,
 
-    /// Context pipeline for prompt assembly.
-    pub context_pipeline: ContextPipeline,
+    /// Hierarchical tool taxonomy for prompt-based discovery.
+    pub tool_taxonomy: Arc<ToolTaxonomy>,
 
-    /// Guardrail manager for security middleware.
-    pub guardrail_manager: GuardrailManager,
+    /// Skill search index for unified `ToolSearch` capability discovery.
+    ///
+    /// Pre-loaded from the skills directory at startup. Wrapped in `RwLock`
+    /// so it can be refreshed when skills are added/removed.
+    pub skill_search: RwLock<SkillSearch>,
 
+    // -- Agents ------------------------------------------------------------
     /// Agent registry for definition management.
     pub agent_registry: Arc<Mutex<AgentRegistry>>,
 
@@ -94,114 +103,124 @@ pub struct ServiceContainer {
     /// (via `init_agent_runner`) affect both direct pool access and delegation.
     pub agent_pool: Arc<RwLock<AgentPool>>,
 
-    /// Agent delegator for delegating tasks to agents (wired through `AgentPool` + `SingleTurnRunner`).
-    /// Once `init_agent_runner` is called post-construction, sub-agents use `ServiceAgentRunner`.
+    /// Agent delegator for delegating tasks to agents.
     pub agent_delegator: Arc<dyn AgentDelegator>,
 
-    /// Shared delegation tracker: records active delegations from `agent_delegator`
-    /// so observability can see them even though they bypass pool instance tracking.
+    /// Shared delegation tracker for observability.
     pub delegation_tracker: Arc<DelegationTracker>,
 
+    /// Dynamic text listing user-callable agents for prompt injection.
+    pub callable_agents_text: Arc<RwLock<String>>,
+
+    // -- Context -----------------------------------------------------------
+    /// Context pipeline for prompt assembly.
+    pub context_pipeline: ContextPipeline,
+
+    /// Shared prompt context, updated per-turn by the chat loop.
+    pub prompt_context: Arc<RwLock<PromptContext>>,
+
+    /// Pruning engine for failed tool call removal and summarization.
+    pub pruning_engine: PruningEngine,
+
+    /// Compaction engine for older history summarization.
+    pub compaction_engine: CompactionEngine,
+
+    /// Compaction trigger threshold as a percentage of `context_window`.
+    pub compaction_threshold_pct: u32,
+
+    /// Per-session token watermarks for delta-based pruning.
+    pub pruning_watermarks: RwLock<HashMap<SessionId, u32>>,
+
+    // -- Diagnostics -------------------------------------------------------
+    /// Diagnostics subscriber for trace recording.
+    pub diagnostics: Arc<DiagnosticsSubscriber<dyn TraceStore>>,
+
+    /// Broadcast channel for real-time diagnostics events.
+    pub diagnostics_broadcast: tokio::sync::broadcast::Sender<DiagnosticsEvent>,
+
+    /// Tool call diagnostics gateway.
+    pub tool_gateway: Arc<crate::diagnostics::DiagnosticsToolGateway>,
+
+    /// Provider metrics event log store for persistence across restarts.
+    pub provider_metrics_store: SqliteProviderMetricsStore,
+
+    // -- Middleware ---------------------------------------------------------
+    /// Unified hook system (registry, event bus, middleware chains).
+    pub hook_system: std::sync::RwLock<HookSystem>,
+
+    /// Runtime manager for tool execution environments.
+    pub runtime_manager: Arc<RuntimeManager>,
+
+    /// Guardrail manager for security middleware.
+    pub guardrail_manager: GuardrailManager,
+
+    // -- Scheduler ---------------------------------------------------------
     /// Workflow store for persistent workflow templates.
     pub workflow_store: SqliteWorkflowStore,
 
-    /// Schedule store for persistent schedule definitions (SQLite-backed).
+    /// Schedule store for persistent schedule definitions.
     pub schedule_store: SqliteScheduleStore,
 
     /// Scheduler manager for scheduled task management.
     pub scheduler_manager: y_scheduler::SchedulerManager,
 
-    /// Shared prompt context, updated per-turn by the chat loop.
-    pub prompt_context: Arc<RwLock<PromptContext>>,
-
-    /// Diagnostics subscriber for trace recording.
-    pub diagnostics: Arc<DiagnosticsSubscriber<dyn TraceStore>>,
-
-    /// Broadcast channel for real-time diagnostics events.
-    ///
-    /// Gateways emit events here; GUI, CLI, and web SSE can subscribe.
-    /// Capacity 256 with 5-second poll fallback for missed events.
-    pub diagnostics_broadcast: tokio::sync::broadcast::Sender<DiagnosticsEvent>,
-
-    /// Tool call diagnostics gateway.
-    ///
-    /// Records tool call observations and emits broadcast events
-    /// automatically when called from within a `DIAGNOSTICS_CTX` scope.
-    pub tool_gateway: Arc<crate::diagnostics::DiagnosticsToolGateway>,
-
-    /// Chat checkpoint manager for turn-level rollback.
-    pub chat_checkpoint_manager: ChatCheckpointManager,
-
-    /// Session-scoped tool activation set (LRU, ceiling 20).
-    pub tool_activation_set: Arc<RwLock<ToolActivationSet>>,
-
-    /// Hierarchical tool taxonomy for prompt-based discovery.
-    pub tool_taxonomy: Arc<ToolTaxonomy>,
-
-    /// Chat message store for session history tree (Phase 2).
-    pub chat_message_store: Arc<SqliteChatMessageStore>,
-
+    // -- Knowledge ---------------------------------------------------------
     /// Knowledge base service (ingestion, retrieval, embedding).
-    ///
-    /// Uses `tokio::sync::Mutex` so the GUI layer can share this `Arc` and
-    /// hold the lock across `.await` points (e.g. `ingest().await`).
     pub knowledge_service: Arc<Mutex<KnowledgeService>>,
 
-    /// Pruning engine — removes failed tool call branches and summarizes
-    /// completed multi-step sequences. Wired with the `agent_delegator`
-    /// so progressive pruning can delegate to the `pruning-summarizer` agent.
-    pub pruning_engine: PruningEngine,
-
-    /// Compaction engine — summarizes older history to reclaim context space.
-    pub compaction_engine: CompactionEngine,
-
-    /// Compaction trigger threshold as a percentage of `context_window`
-    /// (e.g. 85 = compact when usage exceeds 85% of model context window).
-    pub compaction_threshold_pct: u32,
-
-    /// Per-session token watermarks for delta-based pruning.
-    /// Tracks the total token count at the time pruning last ran.
-    /// Pruning only triggers when `current_tokens - watermark >= token_threshold`.
-    pub pruning_watermarks: RwLock<HashMap<SessionId, u32>>,
-
-    /// Provider metrics event log store for persistence across restarts.
-    pub provider_metrics_store: SqliteProviderMetricsStore,
-
-    /// Skill search index for unified `ToolSearch` capability discovery.
-    ///
-    /// Pre-loaded from the skills directory at startup. Wrapped in `RwLock`
-    /// so it can be refreshed when skills are added/removed.
-    pub skill_search: RwLock<SkillSearch>,
-
-    /// Dynamic text listing user-callable agents for prompt injection.
-    /// Populated from the `AgentRegistry` and injected into the orchestration prompt
-    /// via `BuildSystemPromptProvider::callable_agents_text`.
-    pub callable_agents_text: Arc<RwLock<String>>,
-
+    // -- Interactions (HITL) -----------------------------------------------
     /// Pending user-interaction answer channels for `AskUser` tool calls.
-    ///
-    /// Shared between the agent execution loop (which registers oneshot senders)
-    /// and the presentation layer (which delivers answers). Global to the
-    /// container so multiple concurrent sessions can be served.
     pub pending_interactions: crate::chat::PendingInteractions,
 
     /// Pending permission-approval channels for HITL permission requests.
-    ///
-    /// Shared between the agent execution loop (which registers oneshot senders
-    /// when a tool requires HITL approval) and the presentation layer (which
-    /// delivers the user's allow/deny decision).
     pub pending_permissions: crate::chat::PendingPermissions,
 
     /// Session-scoped permission overrides.
-    ///
-    /// Used for temporary session-level modes such as "allow all for this
-    /// session" without mutating the global guardrail configuration.
     pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
 
+    // -- Bot ---------------------------------------------------------------
     /// Path to the bot persona directory (`~/.config/y-agent/persona/`).
-    ///
-    /// Used by `BotService` to load persona files at turn time.
     pub persona_dir: Option<PathBuf>,
+}
+
+// ---------------------------------------------------------------------------
+// Intermediate result types for init helpers
+// ---------------------------------------------------------------------------
+
+/// Session infrastructure initialised by [`ServiceContainer::init_sessions`].
+struct SessionInit {
+    session_manager: SessionManager,
+    chat_checkpoint_manager: ChatCheckpointManager,
+    chat_message_store: Arc<SqliteChatMessageStore>,
+}
+
+/// Tool infrastructure initialised by [`ServiceContainer::init_tools`].
+struct ToolInit {
+    tool_registry: ToolRegistryImpl,
+    tool_taxonomy: Arc<ToolTaxonomy>,
+    tool_activation_set: Arc<RwLock<ToolActivationSet>>,
+}
+
+/// Context pipeline initialised by [`ServiceContainer::init_context_pipeline`].
+struct ContextPipelineInit {
+    pipeline: ContextPipeline,
+    prompt_context: Arc<RwLock<PromptContext>>,
+    skill_search: SkillSearch,
+    callable_agents_text: Arc<RwLock<String>>,
+}
+
+/// Scheduler infrastructure initialised by [`ServiceContainer::init_scheduler`].
+struct SchedulerInit {
+    workflow_store: SqliteWorkflowStore,
+    schedule_store: SqliteScheduleStore,
+    scheduler_manager: y_scheduler::SchedulerManager,
+}
+
+/// Diagnostics infrastructure initialised by [`ServiceContainer::init_diagnostics`].
+struct DiagnosticsInit {
+    diagnostics: Arc<DiagnosticsSubscriber<dyn TraceStore>>,
+    broadcast_tx: tokio::sync::broadcast::Sender<DiagnosticsEvent>,
+    tool_gateway: Arc<crate::diagnostics::DiagnosticsToolGateway>,
 }
 
 impl ServiceContainer {
@@ -215,19 +234,11 @@ impl ServiceContainer {
     ///
     /// Panics if the fallback tool taxonomy TOML is invalid.
     pub async fn from_config(config: &ServiceConfig) -> Result<Self> {
-        // 1. Storage layer — SQLite pool.
-        let pool = y_storage::create_pool(&config.storage)
-            .await
-            .context("failed to create SQLite pool")?;
+        // 1. Storage -- SQLite pool + migrations.
+        let pool = Self::init_storage(config).await?;
 
-        // 1b. Run embedded SQLite migrations.
-        y_storage::migration::run_embedded_migrations(&pool)
-            .await
-            .context("failed to run SQLite migrations")?;
-
-        // 2. Session store from pool.
-        let session_store: Arc<dyn y_core::session::SessionStore> =
-            Arc::new(SqliteSessionStore::new(pool.clone()));
+        // 2. Session infrastructure.
+        let sessions = Self::init_sessions(&pool, config);
 
         // 3. Provider pool.
         let providers = build_providers_from_config(&config.providers);
@@ -236,23 +247,132 @@ impl ServiceContainer {
             &config.providers,
         ));
 
-        // 4. Transcript stores.
+        // 4. Hook system.
+        let hook_system = Self::init_hooks(config, &provider_pool);
+
+        // 5. Guardrails.
+        let guardrail_manager = GuardrailManager::new(config.guardrails.clone());
+
+        // 6. Knowledge service (early -- needed for tool registration).
+        let (knowledge_service, embedding_provider) = Self::init_knowledge_service(config);
+
+        // 7. Tool registry + taxonomy + activation set.
+        let tools = Self::init_tools(config, &knowledge_service, embedding_provider.clone()).await;
+
+        // 8. Runtime manager + venvs.
+        let (runtime_manager, venv_info) = Self::init_runtime(config).await;
+
+        // 9. Context pipeline.
+        let ctx = Self::init_context_pipeline(
+            config,
+            &tools.tool_registry,
+            &tools.tool_activation_set,
+            &tools.tool_taxonomy,
+            venv_info,
+        )
+        .await;
+
+        // 10. Workflow + scheduler.
+        let sched = Self::init_scheduler_services(&pool).await;
+
+        // 11. Diagnostics.
+        let diag = Self::init_diagnostics(&pool);
+
+        // 12. Agent infrastructure.
+        let config_dir = config.prompts_dir.as_ref().and_then(|p| p.parent());
+        let (agent_registry, agent_pool, agent_delegator, delegation_tracker) =
+            Self::init_agent_and_diagnostics(
+                config_dir,
+                &provider_pool,
+                &diag.diagnostics,
+                diag.broadcast_tx.clone(),
+            );
+
+        // 13. Pruning + compaction.
+        let pruning_engine =
+            PruningEngine::with_delegator(config.pruning.clone(), Arc::clone(&agent_delegator));
+        let compaction_llm: Box<dyn CompactionLlm> =
+            Box::new(DelegatingCompactionLlm(Arc::clone(&agent_delegator)));
+        let compaction_engine =
+            CompactionEngine::with_llm(CompactionConfig::default(), compaction_llm);
+
+        // 14. Provider metrics.
+        let provider_metrics_store = SqliteProviderMetricsStore::new(pool.clone());
+        {
+            let receivers = provider_pool.attach_event_senders();
+            let pms = provider_metrics_store.clone();
+            tokio::spawn(async move {
+                Self::run_metrics_event_consumers(receivers, pms).await;
+            });
+        }
+
+        Ok(Self {
+            provider_pool: RwLock::new(provider_pool),
+            session_manager: sessions.session_manager,
+            hook_system: std::sync::RwLock::new(hook_system),
+            tool_registry: tools.tool_registry,
+            runtime_manager,
+            context_pipeline: ctx.pipeline,
+            guardrail_manager,
+            agent_registry,
+            agent_pool,
+            agent_delegator,
+            delegation_tracker,
+            workflow_store: sched.workflow_store,
+            schedule_store: sched.schedule_store,
+            scheduler_manager: sched.scheduler_manager,
+            prompt_context: ctx.prompt_context,
+            diagnostics: diag.diagnostics,
+            diagnostics_broadcast: diag.broadcast_tx,
+            tool_gateway: diag.tool_gateway,
+            chat_checkpoint_manager: sessions.chat_checkpoint_manager,
+            tool_activation_set: tools.tool_activation_set,
+            tool_taxonomy: tools.tool_taxonomy,
+            chat_message_store: sessions.chat_message_store,
+            knowledge_service,
+            pruning_engine,
+            compaction_engine,
+            compaction_threshold_pct: config.session.compaction_threshold_pct,
+            pruning_watermarks: RwLock::new(HashMap::new()),
+            provider_metrics_store,
+            skill_search: RwLock::new(ctx.skill_search),
+            callable_agents_text: ctx.callable_agents_text,
+            pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
+            persona_dir: config.persona_dir.clone(),
+        })
+    }
+
+    // -- Init helpers (private) --------------------------------------------
+
+    /// Create `SQLite` pool and run migrations.
+    async fn init_storage(config: &ServiceConfig) -> Result<y_storage::SqlitePool> {
+        let pool = y_storage::create_pool(&config.storage)
+            .await
+            .context("failed to create SQLite pool")?;
+        y_storage::migration::run_embedded_migrations(&pool)
+            .await
+            .context("failed to run SQLite migrations")?;
+        Ok(pool)
+    }
+
+    /// Construct session manager, checkpoint manager, and message store.
+    fn init_sessions(pool: &y_storage::SqlitePool, config: &ServiceConfig) -> SessionInit {
+        let session_store: Arc<dyn y_core::session::SessionStore> =
+            Arc::new(SqliteSessionStore::new(pool.clone()));
         let transcript_store: Arc<dyn y_core::session::TranscriptStore> = Arc::new(
             y_storage::JsonlTranscriptStore::new(&config.storage.transcript_dir),
         );
         let display_transcript_store: Arc<dyn y_core::session::DisplayTranscriptStore> = Arc::new(
             y_storage::JsonlDisplayTranscriptStore::new(&config.storage.transcript_dir),
         );
-
-        // 5. Session manager.
         let session_manager = SessionManager::new(
             Arc::clone(&session_store),
             Arc::clone(&transcript_store),
             Arc::clone(&display_transcript_store),
             config.session.clone(),
         );
-
-        // 5b. Chat checkpoint manager.
         let chat_checkpoint_store = Arc::new(SqliteChatCheckpointStore::new(pool.clone()));
         let chat_checkpoint_manager = ChatCheckpointManager::new(
             Arc::clone(&transcript_store),
@@ -260,39 +380,39 @@ impl ServiceContainer {
             chat_checkpoint_store,
             Arc::clone(&session_store),
         );
-
-        // 5c. Chat message store (Phase 2 — session history tree).
         let chat_message_store = Arc::new(SqliteChatMessageStore::new(pool.clone()));
 
-        // 6. Hook system.
+        SessionInit {
+            session_manager,
+            chat_checkpoint_manager,
+            chat_message_store,
+        }
+    }
+
+    /// Create hook system with optional LLM runner injection.
+    fn init_hooks(config: &ServiceConfig, _provider_pool: &Arc<ProviderPoolImpl>) -> HookSystem {
         #[allow(unused_mut)]
         let mut hook_system = HookSystem::new(&config.hooks);
-
-        // 6b. Inject LLM runner for prompt hooks (feature-gated).
         #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
         {
             use y_core::provider::ProviderPool as _;
             let llm_runner = Arc::new(y_provider::ProviderPoolHookLlmRunner::new(Arc::new(
-                provider_pool.clone(),
+                _provider_pool.clone(),
             )
                 as Arc<dyn y_core::provider::ProviderPool>));
             hook_system.set_llm_runner(llm_runner);
             info!("Prompt hook LLM runner injected");
         }
+        hook_system
+    }
 
-        // 7. Guardrails.
-        let guardrail_manager = GuardrailManager::new(config.guardrails.clone());
-
-        // 7b. Knowledge service + embedding provider (initialised early so the
-        //     KnowledgeSearch tool can be registered as part of step 8).
-        let (knowledge_service, embedding_provider) = Self::init_knowledge_service(config);
-
-        // 8. Tool registry.
+    /// Initialise tool registry, taxonomy, and activation set.
+    async fn init_tools(
+        config: &ServiceConfig,
+        knowledge_service: &Arc<Mutex<KnowledgeService>>,
+        embedding_provider: Option<Arc<dyn y_core::embedding::EmbeddingProvider>>,
+    ) -> ToolInit {
         let tool_registry = ToolRegistryImpl::new(config.tools.clone());
-
-        // Knowledge handle for the KnowledgeSearch tool.
-        // Built here so the tool is registered in the service layer (not each
-        // presentation layer).
         let kb_handle = {
             let ks = knowledge_service.lock().await;
             ks.knowledge_handle()
@@ -301,11 +421,10 @@ impl ServiceContainer {
             &tool_registry,
             config.browser.clone(),
             Some(kb_handle),
-            embedding_provider.clone(),
+            embedding_provider,
         )
         .await;
 
-        // 8b. Tool taxonomy (loaded from embedded TOML).
         let tool_taxonomy = Arc::new(
             ToolTaxonomy::from_toml(DEFAULT_TAXONOMY_TOML).unwrap_or_else(|e| {
                 warn!(error = %e, "failed to load tool taxonomy; using empty");
@@ -320,20 +439,20 @@ tools = ["ToolSearch"]
                 .expect("fallback taxonomy")
             }),
         );
-
-        // 8c. Tool activation set.
         let tool_activation_set =
             Arc::new(RwLock::new(ToolActivationSet::new(ACTIVATION_SET_CEILING)));
-
-        // Pre-activate all built-in tools as always-active.
-        // The core-tools summary is generated from these definitions so that
-        // the prompt is never out of sync with the actual tool registry.
         pre_activate_core_tools(&tool_registry, &tool_activation_set).await;
 
-        // 9. Runtime manager.
-        let runtime_manager = Arc::new(RuntimeManager::new(config.runtime.clone(), None));
+        ToolInit {
+            tool_registry,
+            tool_taxonomy,
+            tool_activation_set,
+        }
+    }
 
-        // 9b. Initialise virtual environments (uv / bun).
+    /// Initialise runtime manager and build venv prompt info.
+    async fn init_runtime(config: &ServiceConfig) -> (Arc<RuntimeManager>, VenvPromptInfo) {
+        let runtime_manager = Arc::new(RuntimeManager::new(config.runtime.clone(), None));
         let venv_report = VenvManager::init_all(&config.runtime).await;
         let venv_info = VenvPromptInfo {
             python: venv_report.python.as_ref().and_then(|s| {
@@ -362,14 +481,24 @@ tools = ["ToolSearch"]
                 }
             }),
         };
+        (runtime_manager, venv_info)
+    }
 
-        // 10. Context pipeline.
-        //
-        // PromptContext is created without any static flags; the service layer
-        // sets `tool_calling.prompt_based` per-request based on the provider
-        // actually selected for that turn (see agent_service.rs).
+    /// Build the context pipeline with all providers.
+    async fn init_context_pipeline(
+        config: &ServiceConfig,
+        tool_registry: &ToolRegistryImpl,
+        tool_activation_set: &Arc<RwLock<ToolActivationSet>>,
+        tool_taxonomy: &Arc<ToolTaxonomy>,
+        venv_info: VenvPromptInfo,
+    ) -> ContextPipelineInit {
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
-        let mut context_pipeline = ContextPipeline::new();
+        let mut pipeline = ContextPipeline::new();
+
+        // Clone venv_info before it is consumed by the system prompt provider,
+        // so we can also pass it to InjectSkills for template variable expansion.
+        let venv_info_for_skills = venv_info.clone();
+
         let callable_agents_text;
         {
             let mut sys_prompt_provider = BuildSystemPromptProvider::with_venv_info(
@@ -381,19 +510,10 @@ tools = ["ToolSearch"]
             );
             sys_prompt_provider.set_prompts_dir(config.prompts_dir.clone());
             callable_agents_text = sys_prompt_provider.callable_agents_handle();
-            context_pipeline.register(Box::new(sys_prompt_provider));
+            pipeline.register(Box::new(sys_prompt_provider));
         }
-        context_pipeline.register(Box::new(InjectContextStatus::new(4096)));
+        pipeline.register(Box::new(InjectContextStatus::new(4096)));
 
-        // 10b. Register InjectTools in dynamic mode.
-        //
-        // Carries data for both PromptBased and Native modes. At each
-        // `provide()` call, reads `config_flags["tool_calling.prompt_based"]`
-        // from the shared PromptContext to decide which strategy to use.
-        // The service layer sets this flag per-request based on the provider
-        // actually selected for that turn, so the injection strategy matches
-        // the provider. Hot-reload is automatic: new provider configurations
-        // affect subsequent per-request flag updates.
         let core_tools_summary = {
             let set = tool_activation_set.read().await;
             build_core_tools_summary(&set)
@@ -404,43 +524,41 @@ tools = ["ToolSearch"]
             .iter()
             .map(|d| d.name.as_str().to_string())
             .collect();
-        context_pipeline.register(Box::new(InjectTools::dynamic(
+        pipeline.register(Box::new(InjectTools::dynamic(
             tool_names,
             tool_taxonomy.root_summary(),
             core_tools_summary,
             Arc::clone(&prompt_context),
         )));
 
-        // 10c. Register InjectSkills (dynamic -- reads active_skills from PromptContext).
-        //      Also build the SkillSearch index for ToolSearch.
         let skill_search = Self::build_skill_search_index(config.skills_dir.as_deref());
         if let Some(ref skills_dir) = config.skills_dir {
-            context_pipeline.register(Box::new(InjectSkills::new(
+            pipeline.register(Box::new(InjectSkills::new(
                 Arc::clone(&prompt_context),
                 skills_dir.clone(),
+                venv_info_for_skills,
             )));
         }
+        pipeline.register(Box::new(KnowledgeContextProvider::new()));
 
-        // 10d. Register KnowledgeContextProvider in context pipeline.
-        //      Injects a prompt hint when collections are selected, letting the
-        //      LLM autonomously use KnowledgeSearch tool.
-        context_pipeline.register(Box::new(KnowledgeContextProvider::new()));
+        ContextPipelineInit {
+            pipeline,
+            prompt_context,
+            skill_search,
+            callable_agents_text,
+        }
+    }
 
-        // 11. Workflow store.
+    /// Initialise workflow store, schedule store, and scheduler manager.
+    async fn init_scheduler_services(pool: &y_storage::SqlitePool) -> SchedulerInit {
         let workflow_store = SqliteWorkflowStore::new(pool.clone());
-
-        // 11b. Schedule store (SQLite-backed persistence for schedule definitions).
         let schedule_store = SqliteScheduleStore::new(pool.clone());
-
-        // 11c. Scheduler manager.
         let scheduler_manager = crate::scheduler_service::SchedulerService::create_manager();
         crate::scheduler_service::SchedulerService::attach_persistence(
             &scheduler_manager,
             schedule_store.clone(),
         )
         .await;
-
-        // 11d. Hydrate in-memory scheduler from SQLite.
         if let Err(e) = crate::scheduler_service::SchedulerService::load_schedules_from_db(
             &scheduler_manager,
             &schedule_store,
@@ -457,92 +575,28 @@ tools = ["ToolSearch"]
         {
             warn!(error = %e, "Failed to load persisted schedule executions; starting with empty history");
         }
-
-        // 12. Diagnostics -- SQLite-backed for persistence.
-        let sqlite_trace_store = y_diagnostics::SqliteTraceStore::new(pool.clone());
-        let trace_store_dyn: Arc<dyn TraceStore> = Arc::new(sqlite_trace_store);
-        let diagnostics = Arc::new(DiagnosticsSubscriber::new(trace_store_dyn));
-
-        // 12b. Broadcast channel for real-time diagnostics push.
-        let (diagnostics_broadcast, _) = tokio::sync::broadcast::channel::<DiagnosticsEvent>(256);
-
-        // 12c. Tool call diagnostics gateway.
-        let tool_gateway = Arc::new(crate::diagnostics::DiagnosticsToolGateway::new(
-            Arc::clone(&diagnostics),
-            diagnostics_broadcast.clone(),
-        ));
-
-        // 13. Agent infrastructure.
-        let config_dir = config.prompts_dir.as_ref().and_then(|p| p.parent());
-        let (agent_registry, agent_pool_for_services, agent_delegator, delegation_tracker) =
-            Self::init_agent_and_diagnostics(
-                config_dir,
-                &provider_pool,
-                &diagnostics,
-                diagnostics_broadcast.clone(),
-            );
-
-        // 14. Pruning engine -- wired with agent_delegator for progressive pruning.
-        let pruning_engine =
-            PruningEngine::with_delegator(config.pruning.clone(), Arc::clone(&agent_delegator));
-
-        // 15. Compaction engine -- wired with agent_delegator for LLM summarization.
-        let compaction_llm: Box<dyn CompactionLlm> =
-            Box::new(DelegatingCompactionLlm(Arc::clone(&agent_delegator)));
-        let compaction_engine =
-            CompactionEngine::with_llm(CompactionConfig::default(), compaction_llm);
-
-        // Default compaction threshold from session config (percentage of context window).
-        let compaction_threshold_pct = config.session.compaction_threshold_pct;
-
-        // 16. Provider metrics store (observability persistence).
-        let provider_metrics_store = SqliteProviderMetricsStore::new(pool.clone());
-
-        // Wire metrics event senders so each request is logged to SQLite.
-        {
-            let receivers = provider_pool.attach_event_senders();
-            let pms = provider_metrics_store.clone();
-            tokio::spawn(async move {
-                Self::run_metrics_event_consumers(receivers, pms).await;
-            });
-        }
-
-        Ok(Self {
-            provider_pool: RwLock::new(provider_pool),
-            session_manager,
-            hook_system: std::sync::RwLock::new(hook_system),
-            tool_registry,
-            runtime_manager,
-            context_pipeline,
-            guardrail_manager,
-            agent_registry,
-            agent_pool: agent_pool_for_services,
-            agent_delegator,
-            delegation_tracker,
+        SchedulerInit {
             workflow_store,
             schedule_store,
             scheduler_manager,
-            prompt_context,
+        }
+    }
+
+    /// Initialise diagnostics subscriber, broadcast channel, and tool gateway.
+    fn init_diagnostics(pool: &y_storage::SqlitePool) -> DiagnosticsInit {
+        let sqlite_trace_store = y_diagnostics::SqliteTraceStore::new(pool.clone());
+        let trace_store_dyn: Arc<dyn TraceStore> = Arc::new(sqlite_trace_store);
+        let diagnostics = Arc::new(DiagnosticsSubscriber::new(trace_store_dyn));
+        let (broadcast_tx, _) = tokio::sync::broadcast::channel::<DiagnosticsEvent>(256);
+        let tool_gateway = Arc::new(crate::diagnostics::DiagnosticsToolGateway::new(
+            Arc::clone(&diagnostics),
+            broadcast_tx.clone(),
+        ));
+        DiagnosticsInit {
             diagnostics,
-            diagnostics_broadcast,
+            broadcast_tx,
             tool_gateway,
-            chat_checkpoint_manager,
-            tool_activation_set,
-            tool_taxonomy,
-            chat_message_store,
-            knowledge_service,
-            pruning_engine,
-            compaction_engine,
-            compaction_threshold_pct,
-            pruning_watermarks: RwLock::new(HashMap::new()),
-            provider_metrics_store,
-            skill_search: RwLock::new(skill_search),
-            callable_agents_text,
-            pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
-            persona_dir: config.persona_dir.clone(),
-        })
+        }
     }
 
     /// Initialise the knowledge service and optional embedding provider.
@@ -559,8 +613,6 @@ tools = ["ToolSearch"]
                 .unwrap_or(std::path::Path::new("."))
                 .join("knowledge")
         };
-        let mut knowledge_service =
-            KnowledgeService::with_data_dir(config.knowledge.clone(), knowledge_data_dir);
 
         let embedding_provider: Option<Arc<dyn y_core::embedding::EmbeddingProvider>> = if config
             .knowledge
@@ -593,9 +645,12 @@ tools = ["ToolSearch"]
             None
         };
 
+        let mut builder =
+            KnowledgeService::builder(config.knowledge.clone()).data_dir(knowledge_data_dir);
         if let Some(ref provider) = embedding_provider {
-            knowledge_service.set_embedding_provider(Arc::clone(provider));
+            builder = builder.embedding_provider(Arc::clone(provider));
         }
+        let knowledge_service = builder.build();
 
         (Arc::new(Mutex::new(knowledge_service)), embedding_provider)
     }
@@ -1134,28 +1189,24 @@ async fn pre_activate_core_tools(
     }
 }
 
-/// Generate a compact summary of essential tools for prompt injection.
+/// Build a Markdown tool summary table from a slice of definitions.
 ///
-/// Produces a Markdown table with tool name, first-sentence description,
-/// and a usage hint (required args or available params), followed by a
-/// usage reminder. Only includes `ESSENTIAL_TOOL_NAMES` -- the tools whose
-/// full schemas are always sent in the API call. Called once at startup.
-fn build_core_tools_summary(set: &ToolActivationSet) -> String {
-    let essential: std::collections::HashSet<&str> = ESSENTIAL_TOOL_NAMES.iter().copied().collect();
-    let mut defs: Vec<&y_core::tool::ToolDefinition> = set
-        .always_active_definitions()
-        .into_iter()
-        .filter(|d| essential.contains(d.name.as_str()))
-        .collect();
-    defs.sort_by_key(|d| d.name.as_str().to_string());
-    let mut lines = vec![
-        "## Core Tools (always available)\n".to_string(),
-        "You can call these tools directly without searching:\n".to_string(),
-        "| Tool | Description | Usage |".to_string(),
-        "|------|-------------|-------|".to_string(),
-    ];
-    for def in &defs {
-        // First sentence of description only.
+/// Shared implementation backing both [`build_core_tools_summary`] and
+/// [`build_agent_tools_summary`]. Callers supply a header preamble
+/// (lines before the table) and a footer reminder (line after the table).
+fn build_tool_summary_table(
+    defs: &[&y_core::tool::ToolDefinition],
+    header_lines: &[&str],
+    footer: &str,
+) -> String {
+    let mut sorted = defs.to_vec();
+    sorted.sort_by_key(|d| d.name.as_str().to_string());
+
+    let mut lines: Vec<String> = header_lines.iter().map(|s| (*s).to_string()).collect();
+    lines.push("| Tool | Description | Usage |".to_string());
+    lines.push("|------|-------------|-------|".to_string());
+
+    for def in &sorted {
         let desc = def
             .description
             .split('.')
@@ -1165,14 +1216,36 @@ fn build_core_tools_summary(set: &ToolActivationSet) -> String {
         let usage = extract_usage_hint(&def.parameters);
         lines.push(format!("| {} | {} | {} |", def.name.as_str(), desc, usage));
     }
+
     lines.push(String::new());
-    lines.push(
+    lines.push(footer.to_string());
+    lines.join("\n")
+}
+
+/// Generate a compact summary of essential tools for prompt injection.
+///
+/// Produces a Markdown table with tool name, first-sentence description,
+/// and a usage hint (required args or available params), followed by a
+/// usage reminder. Only includes `ESSENTIAL_TOOL_NAMES` -- the tools whose
+/// full schemas are always sent in the API call. Called once at startup.
+fn build_core_tools_summary(set: &ToolActivationSet) -> String {
+    let essential: std::collections::HashSet<&str> = ESSENTIAL_TOOL_NAMES.iter().copied().collect();
+    let defs: Vec<&y_core::tool::ToolDefinition> = set
+        .always_active_definitions()
+        .into_iter()
+        .filter(|d| essential.contains(d.name.as_str()))
+        .collect();
+
+    build_tool_summary_table(
+        &defs,
+        &[
+            "## Core Tools (always available)\n",
+            "You can call these tools directly without searching:\n",
+        ],
         "IMPORTANT: Use ONLY these exact tool names. \
          Do NOT invent tool names like 'ls', 'cat', 'grep', or 'mkdir'. \
-         For shell operations not covered above, use ShellExec."
-            .to_string(),
-    );
-    lines.join("\n")
+         For shell operations not covered above, use ShellExec.",
+    )
 }
 
 /// Generate a compact tools summary for a sub-agent from filtered definitions.
@@ -1184,26 +1257,12 @@ pub(crate) fn build_agent_tools_summary(defs: &[y_core::tool::ToolDefinition]) -
     if defs.is_empty() {
         return String::new();
     }
-    let mut sorted: Vec<&y_core::tool::ToolDefinition> = defs.iter().collect();
-    sorted.sort_by_key(|d| d.name.as_str());
-    let mut lines = vec![
-        "## Available Tools\n".to_string(),
-        "| Tool | Description | Usage |".to_string(),
-        "|------|-------------|-------|".to_string(),
-    ];
-    for def in &sorted {
-        let desc = def
-            .description
-            .split('.')
-            .next()
-            .unwrap_or(&def.description)
-            .trim();
-        let usage = extract_usage_hint(&def.parameters);
-        lines.push(format!("| {} | {} | {} |", def.name.as_str(), desc, usage));
-    }
-    lines.push(String::new());
-    lines.push("Use ONLY these tool names. Do NOT invent tool names.".to_string());
-    lines.join("\n")
+    let refs: Vec<&y_core::tool::ToolDefinition> = defs.iter().collect();
+    build_tool_summary_table(
+        &refs,
+        &["## Available Tools\n"],
+        "Use ONLY these tool names. Do NOT invent tool names.",
+    )
 }
 
 /// Extract a compact usage hint from a JSON Schema `parameters` value.
@@ -1291,106 +1350,71 @@ pub fn build_providers_from_config(
         let proxy_url = pool_config.resolve_proxy_url(&config.id, &config.tags);
         let tool_calling_mode = config.resolve_tool_calling_mode();
 
-        match config.provider_type.as_str() {
-            "openai" | "openai-compat" => {
-                // openai-compat covers any OpenAI-compatible REST endpoint
-                // (e.g., vLLM, LiteLLM, self-hosted models).  Both types
-                // use the same OpenAiProvider implementation; the distinction
-                // is purely for user clarity in the configuration UI.
-                providers.push(Arc::new(OpenAiProvider::new(
-                    &config.id,
-                    &config.model,
-                    api_key,
-                    config.base_url.clone(),
-                    proxy_url,
-                    config.tags.clone(),
-                    config.max_concurrency,
-                    config.context_window,
-                    tool_calling_mode,
-                )));
-            }
-            "anthropic" => {
-                providers.push(Arc::new(AnthropicProvider::new(
-                    &config.id,
-                    &config.model,
-                    api_key,
-                    config.base_url.clone(),
-                    proxy_url,
-                    config.tags.clone(),
-                    config.max_concurrency,
-                    config.context_window,
-                    tool_calling_mode,
-                )));
-            }
-            "gemini" => {
-                providers.push(Arc::new(GeminiProvider::new(
-                    &config.id,
-                    &config.model,
-                    api_key,
-                    config.base_url.clone(),
-                    proxy_url,
-                    config.tags.clone(),
-                    config.max_concurrency,
-                    config.context_window,
-                    tool_calling_mode,
-                )));
-            }
-            "ollama" => {
-                providers.push(Arc::new(OllamaProvider::new(
-                    &config.id,
-                    &config.model,
-                    api_key,
-                    config.base_url.clone(),
-                    proxy_url,
-                    config.tags.clone(),
-                    config.max_concurrency,
-                    config.context_window,
-                    tool_calling_mode,
-                )));
-            }
-            "azure" => {
-                providers.push(Arc::new(AzureOpenAiProvider::new(
-                    &config.id,
-                    &config.model,
-                    api_key,
-                    config.base_url.clone(),
-                    proxy_url,
-                    config.tags.clone(),
-                    config.max_concurrency,
-                    config.context_window,
-                    tool_calling_mode,
-                )));
-            }
-            "deepseek" => {
-                // DeepSeek uses an OpenAI-compatible REST API.  Default
-                // base URL points to the official DeepSeek endpoint.
-                let base_url = config
-                    .base_url
-                    .clone()
-                    .or_else(|| Some("https://api.deepseek.com/v1".to_string()));
-                providers.push(Arc::new(OpenAiProvider::new(
-                    &config.id,
-                    &config.model,
-                    api_key,
-                    base_url,
-                    proxy_url,
-                    config.tags.clone(),
-                    config.max_concurrency,
-                    config.context_window,
-                    tool_calling_mode,
-                )));
-            }
-            other => {
-                warn!(
-                    provider_id = %config.id,
-                    provider_type = %other,
-                    "Skipping provider: unsupported type (supported: openai, openai-compat, anthropic, gemini, ollama, azure, deepseek)"
-                );
-            }
+        if let Some(provider) =
+            build_provider_instance(config, api_key, proxy_url, tool_calling_mode)
+        {
+            providers.push(provider);
         }
     }
 
     providers
+}
+
+/// Construct a single provider instance from its type discriminator.
+///
+/// Returns `None` for unsupported types (logged as a warning).
+fn build_provider_instance(
+    config: &y_provider::config::ProviderConfig,
+    api_key: String,
+    proxy_url: Option<String>,
+    tool_calling_mode: y_core::provider::ToolCallingMode,
+) -> Option<Arc<dyn LlmProvider>> {
+    // DeepSeek uses an OpenAI-compatible REST API with a default base URL.
+    let base_url_for_deepseek = || {
+        config
+            .base_url
+            .clone()
+            .or_else(|| Some("https://api.deepseek.com/v1".to_string()))
+    };
+
+    // Macro to reduce per-variant boilerplate: every provider constructor
+    // takes the same 9 arguments in the same order.
+    macro_rules! make_provider {
+        ($ty:ty, $base:expr) => {
+            Some(Arc::new(<$ty>::new(
+                &config.id,
+                &config.model,
+                api_key,
+                $base,
+                proxy_url,
+                config.tags.clone(),
+                config.max_concurrency,
+                config.context_window,
+                tool_calling_mode,
+            )) as Arc<dyn LlmProvider>)
+        };
+    }
+
+    match config.provider_type.as_str() {
+        // openai-compat covers any OpenAI-compatible REST endpoint
+        // (e.g., vLLM, LiteLLM, self-hosted models). Both types use the
+        // same OpenAiProvider implementation.
+        "openai" | "openai-compat" => make_provider!(OpenAiProvider, config.base_url.clone()),
+        "anthropic" => make_provider!(AnthropicProvider, config.base_url.clone()),
+        "gemini" => make_provider!(GeminiProvider, config.base_url.clone()),
+        "ollama" => make_provider!(OllamaProvider, config.base_url.clone()),
+        "azure" => make_provider!(AzureOpenAiProvider, config.base_url.clone()),
+        "deepseek" => make_provider!(OpenAiProvider, base_url_for_deepseek()),
+        other => {
+            warn!(
+                provider_id = %config.id,
+                provider_type = %other,
+                "Skipping provider: unsupported type \
+                (supported: openai, openai-compat, anthropic, gemini, ollama, azure, deepseek)"
+            );
+            None
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

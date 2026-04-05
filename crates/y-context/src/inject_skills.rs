@@ -6,8 +6,23 @@
 //! At `provide()` time, reads `PromptContext.active_skills` and loads content
 //! from a `FilesystemSkillStore`. Each skill root document is kept under
 //! 2,000 tokens per design principle 2.4 (Token Efficiency).
+//!
+//! ## Template Variable Expansion
+//!
+//! Skills that contain companion files (scripts, data, templates) need path
+//! context at injection time. When a skill's `root_content` contains `{{}}`
+//! template markers OR its installed directory has companion files beyond
+//! the standard layout, the following variables are expanded:
+//!
+//! | Variable | Description |
+//! |---|---|
+//! | `{{WORKSPACE}}` | Current session workspace path (CWD fallback) |
+//! | `{{SKILL_PATH}}` | Absolute path to this skill's installed directory |
+//! | `{{PYTHON_PATH}}` | Path to the runtime's `uv` binary |
+//! | `{{PYTHON_VENV}}` | Path to the Python virtual environment directory |
+//! | `{{BUN_PATH}}` | Path to the runtime's `bun` binary |
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,14 +32,127 @@ use y_prompt::PromptContext;
 use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
 };
+use crate::system_prompt::VenvPromptInfo;
 
 /// Maximum tokens per individual skill description (design principle 2.4).
 const MAX_TOKENS_PER_SKILL: u32 = 2_000;
+
+/// Files and directories that are part of the standard skill layout.
+/// Anything beyond these in the skill directory is considered a companion file.
+const STANDARD_SKILL_FILES: &[&str] = &["skill.toml", "root.md", "lineage.toml", "details"];
 
 /// Simple token estimation (4 chars per token).
 fn estimate_tokens(text: &str) -> u32 {
     u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
 }
+
+// ---------------------------------------------------------------------------
+// Template variable support
+// ---------------------------------------------------------------------------
+
+/// Runtime template variables for skill content expansion.
+///
+/// Built once per `provide()` call from the current `PromptContext` and
+/// `VenvPromptInfo`, then applied to each skill that needs template expansion.
+#[derive(Debug, Clone, Default)]
+pub struct SkillTemplateVars {
+    /// Key-value pairs for template expansion (e.g. `("{{WORKSPACE}}", "/path")`).
+    vars: Vec<(String, String)>,
+}
+
+impl SkillTemplateVars {
+    /// Build template variables from the current runtime context.
+    ///
+    /// `workspace` is the session's workspace directory (falls back to CWD).
+    /// `venv_info` provides Python/Bun runtime paths.
+    pub fn from_context(workspace: &str, venv_info: &VenvPromptInfo) -> Self {
+        let mut vars = Vec::with_capacity(5);
+
+        vars.push(("{{WORKSPACE}}".to_string(), workspace.to_string()));
+
+        // Python runtime paths.
+        if let Some(ref py) = venv_info.python {
+            vars.push(("{{PYTHON_PATH}}".to_string(), py.uv_path.clone()));
+            vars.push(("{{PYTHON_VENV}}".to_string(), py.venv_dir.clone()));
+        } else {
+            vars.push(("{{PYTHON_PATH}}".to_string(), String::new()));
+            vars.push(("{{PYTHON_VENV}}".to_string(), String::new()));
+        }
+
+        // Bun runtime path.
+        if let Some(ref bun) = venv_info.bun {
+            vars.push(("{{BUN_PATH}}".to_string(), bun.bun_path.clone()));
+        } else {
+            vars.push(("{{BUN_PATH}}".to_string(), String::new()));
+        }
+
+        Self { vars }
+    }
+
+    /// Expand template variables in the given content.
+    ///
+    /// `skill_path` is the absolute path to the skill's installed directory,
+    /// added as `{{SKILL_PATH}}` per-skill.
+    pub fn expand(&self, content: &str, skill_path: &str) -> String {
+        let mut result = content.to_string();
+
+        // Per-skill variable.
+        result = result.replace("{{SKILL_PATH}}", skill_path);
+
+        // Shared runtime variables.
+        for (key, val) in &self.vars {
+            result = result.replace(key, val);
+        }
+
+        result
+    }
+
+    /// Check whether the content contains any `{{` template markers.
+    pub fn content_has_templates(content: &str) -> bool {
+        content.contains("{{")
+    }
+}
+
+/// Check whether a skill directory contains companion files beyond the
+/// standard layout (`skill.toml`, `root.md`, `lineage.toml`, `details/`).
+///
+/// Returns `true` if any non-standard files or directories are found,
+/// indicating the skill ships scripts, data, or template files that may
+/// reference runtime paths.
+pub fn has_companion_files(skill_dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(skill_dir) else {
+        return false;
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        // Skip hidden files/dirs.
+        if name_str.starts_with('.') {
+            continue;
+        }
+
+        if !STANDARD_SKILL_FILES.contains(&name_str.as_ref()) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Determine whether template expansion should be applied to a skill.
+///
+/// Returns `true` when either:
+/// 1. The skill's `root_content` contains `{{` template markers, OR
+/// 2. The skill directory has companion files (scripts, data, templates)
+fn needs_template_expansion(root_content: &str, skill_dir: &Path) -> bool {
+    SkillTemplateVars::content_has_templates(root_content) || has_companion_files(skill_dir)
+}
+
+// ---------------------------------------------------------------------------
+// SkillSummary (for static injection)
+// ---------------------------------------------------------------------------
 
 /// Summary of a skill available to the agent.
 #[derive(Debug, Clone)]
@@ -37,25 +165,38 @@ pub struct SkillSummary {
     pub triggers: Vec<String>,
 }
 
-/// `InjectSkills` — dynamically injects active skill descriptions into context.
+// ---------------------------------------------------------------------------
+// InjectSkills (dynamic, filesystem-backed)
+// ---------------------------------------------------------------------------
+
+/// `InjectSkills` -- dynamically injects active skill descriptions into context.
 ///
 /// Runs at priority 400 (`INJECT_SKILLS`).
 ///
 /// At `provide()` time, reads `PromptContext.active_skills` and loads each
 /// skill's manifest from the on-disk skill store to get its `root_content`.
+/// When a skill contains companion files or uses `{{}}` template syntax,
+/// runtime template variables are expanded before injection.
 pub struct InjectSkills {
     /// Shared prompt context to read `active_skills` from.
     prompt_context: Arc<RwLock<PromptContext>>,
     /// Path to the skills store directory (e.g. `~/.config/y-agent/skills/`).
     skills_dir: PathBuf,
+    /// Virtual environment info for template variable expansion.
+    venv_info: VenvPromptInfo,
 }
 
 impl InjectSkills {
     /// Create a new dynamic `InjectSkills` provider.
-    pub fn new(prompt_context: Arc<RwLock<PromptContext>>, skills_dir: PathBuf) -> Self {
+    pub fn new(
+        prompt_context: Arc<RwLock<PromptContext>>,
+        skills_dir: PathBuf,
+        venv_info: VenvPromptInfo,
+    ) -> Self {
         Self {
             prompt_context,
             skills_dir,
+            venv_info,
         }
     }
 
@@ -91,6 +232,22 @@ impl InjectSkills {
             priority: 400,
         }
     }
+
+    /// Resolve the workspace path: prefer `PromptContext.working_directory`,
+    /// fall back to the process CWD.
+    fn resolve_workspace(prompt_ctx: &PromptContext) -> String {
+        prompt_ctx
+            .working_directory
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map_or_else(
+                || {
+                    std::env::current_dir()
+                        .map_or_else(|_| ".".to_string(), |p| p.display().to_string())
+                },
+                String::from,
+            )
+    }
 }
 
 #[async_trait]
@@ -104,9 +261,11 @@ impl ContextProvider for InjectSkills {
     }
 
     async fn provide(&self, ctx: &mut AssembledContext) -> Result<(), ContextPipelineError> {
-        let active_skills = {
+        let (active_skills, workspace) = {
             let prompt_ctx = self.prompt_context.read().await;
-            prompt_ctx.active_skills.clone()
+            let skills = prompt_ctx.active_skills.clone();
+            let ws = Self::resolve_workspace(&prompt_ctx);
+            (skills, ws)
         };
 
         if active_skills.is_empty() {
@@ -130,14 +289,32 @@ impl ContextProvider for InjectSkills {
             }
         };
 
+        // Build template vars once for all skills in this turn.
+        let template_vars = SkillTemplateVars::from_context(&workspace, &self.venv_info);
+
         let mut injected = 0;
         for skill_name in &active_skills {
             match store.load_skill(skill_name) {
                 Ok(manifest) => {
+                    let skill_dir = self.skills_dir.join(&manifest.name);
+                    let skill_path = skill_dir.display().to_string();
+
+                    // Apply template expansion if the skill needs it.
+                    let root_content =
+                        if needs_template_expansion(&manifest.root_content, &skill_dir) {
+                            tracing::debug!(
+                                skill = %skill_name,
+                                "applying template variable expansion"
+                            );
+                            template_vars.expand(&manifest.root_content, &skill_path)
+                        } else {
+                            manifest.root_content.clone()
+                        };
+
                     let item = Self::format_skill_item(
                         &manifest.name,
                         &manifest.description,
-                        &manifest.root_content,
+                        &root_content,
                     );
                     ctx.add(item);
                     injected += 1;
@@ -164,7 +341,7 @@ impl ContextProvider for InjectSkills {
 // Static variant (for tests and non-filesystem use cases)
 // ---------------------------------------------------------------------------
 
-/// Static version of `InjectSkills` — takes a fixed list of skill summaries.
+/// Static version of `InjectSkills` -- takes a fixed list of skill summaries.
 /// Used primarily for testing.
 pub struct InjectSkillsStatic {
     skills: Vec<SkillSummary>,
@@ -295,9 +472,151 @@ mod tests {
     #[tokio::test]
     async fn test_dynamic_no_active_skills() {
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
-        let provider = InjectSkills::new(prompt_context, PathBuf::from("/nonexistent"));
+        let provider = InjectSkills::new(
+            prompt_context,
+            PathBuf::from("/nonexistent"),
+            VenvPromptInfo::default(),
+        );
         let mut ctx = AssembledContext::default();
         provider.provide(&mut ctx).await.unwrap();
         assert!(ctx.items.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Template variable expansion tests
+    // -----------------------------------------------------------------------
+
+    /// Template variables in skill content are expanded.
+    #[test]
+    fn test_template_expansion_with_venv_info() {
+        use crate::system_prompt::{BunVenvPromptInfo, PythonVenvPromptInfo};
+
+        let venv_info = VenvPromptInfo {
+            python: Some(PythonVenvPromptInfo {
+                uv_path: "/usr/local/bin/uv".into(),
+                python_version: "3.12".into(),
+                venv_dir: "/home/user/.venv".into(),
+                working_dir: "/tmp".into(),
+            }),
+            bun: Some(BunVenvPromptInfo {
+                bun_path: "/usr/local/bin/bun".into(),
+                bun_version: "1.1".into(),
+                working_dir: "/tmp".into(),
+            }),
+        };
+
+        let vars = SkillTemplateVars::from_context("/home/user/project", &venv_info);
+
+        let content = "Run {{PYTHON_PATH}} run {{SKILL_PATH}}/scripts/convert.py \
+                        in {{WORKSPACE}} or use {{BUN_PATH}} for JS. \
+                        Venv at {{PYTHON_VENV}}.";
+
+        let result = vars.expand(content, "/opt/skills/xlsx-processor");
+
+        assert!(result.contains("/usr/local/bin/uv"));
+        assert!(result.contains("/opt/skills/xlsx-processor/scripts/convert.py"));
+        assert!(result.contains("/home/user/project"));
+        assert!(result.contains("/usr/local/bin/bun"));
+        assert!(result.contains("/home/user/.venv"));
+        assert!(!result.contains("{{"));
+    }
+
+    /// When venv info is unavailable, template variables are replaced with empty strings.
+    #[test]
+    fn test_template_expansion_partial_vars() {
+        let venv_info = VenvPromptInfo::default(); // no Python, no Bun
+        let vars = SkillTemplateVars::from_context("/workspace", &venv_info);
+
+        let content = "python: {{PYTHON_PATH}}, bun: {{BUN_PATH}}, ws: {{WORKSPACE}}";
+        let result = vars.expand(content, "/skills/test");
+
+        assert_eq!(result, "python: , bun: , ws: /workspace");
+    }
+
+    /// Content without `{{` markers is detected as not needing templates.
+    #[test]
+    fn test_content_has_templates_detection() {
+        assert!(SkillTemplateVars::content_has_templates(
+            "Run {{PYTHON_PATH}} script"
+        ));
+        assert!(!SkillTemplateVars::content_has_templates(
+            "Simple instructions without templates"
+        ));
+    }
+
+    /// Companion file detection identifies non-standard files.
+    #[test]
+    fn test_has_companion_files_detection() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Standard layout only -- no companions.
+        std::fs::write(dir.path().join("skill.toml"), "").unwrap();
+        std::fs::write(dir.path().join("root.md"), "").unwrap();
+        std::fs::write(dir.path().join("lineage.toml"), "").unwrap();
+        std::fs::create_dir(dir.path().join("details")).unwrap();
+        assert!(!has_companion_files(dir.path()));
+
+        // Add a script -- now has companions.
+        std::fs::create_dir(dir.path().join("scripts")).unwrap();
+        std::fs::write(dir.path().join("scripts/convert.py"), "").unwrap();
+        assert!(has_companion_files(dir.path()));
+    }
+
+    /// Companion files in the top level are detected.
+    #[test]
+    fn test_has_companion_files_top_level() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("skill.toml"), "").unwrap();
+        std::fs::write(dir.path().join("root.md"), "").unwrap();
+
+        // Add a non-standard file (e.g. LICENSE.txt).
+        std::fs::write(dir.path().join("LICENSE.txt"), "MIT").unwrap();
+        assert!(has_companion_files(dir.path()));
+    }
+
+    /// Hidden files are ignored by companion detection.
+    #[test]
+    fn test_has_companion_files_ignores_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("skill.toml"), "").unwrap();
+        std::fs::write(dir.path().join("root.md"), "").unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "").unwrap();
+        assert!(!has_companion_files(dir.path()));
+    }
+
+    /// Non-existent directory returns false for companion detection.
+    #[test]
+    fn test_has_companion_files_nonexistent() {
+        assert!(!has_companion_files(Path::new("/nonexistent/skill")));
+    }
+
+    /// `needs_template_expansion` triggers on template markers in content.
+    #[test]
+    fn test_needs_expansion_with_template_markers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("skill.toml"), "").unwrap();
+        std::fs::write(dir.path().join("root.md"), "").unwrap();
+
+        // Content has templates, no companion files.
+        assert!(needs_template_expansion(
+            "Use {{PYTHON_PATH}} to run",
+            dir.path()
+        ));
+
+        // No templates, no companions.
+        assert!(!needs_template_expansion("Simple instructions", dir.path()));
+    }
+
+    /// `needs_template_expansion` triggers on companion files even without markers.
+    #[test]
+    fn test_needs_expansion_with_companion_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("skill.toml"), "").unwrap();
+        std::fs::write(dir.path().join("root.md"), "").unwrap();
+        std::fs::create_dir(dir.path().join("scripts")).unwrap();
+        std::fs::write(dir.path().join("scripts/run.py"), "").unwrap();
+
+        // No template markers in content, but has companion files.
+        assert!(needs_template_expansion("Run the script", dir.path()));
     }
 }
