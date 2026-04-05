@@ -50,6 +50,8 @@ pub struct GuiConfig {
     pub window_width: u32,
     /// Remembered window height.
     pub window_height: u32,
+    /// Whether the initial setup wizard has been completed.
+    pub setup_completed: bool,
 }
 
 impl Default for GuiConfig {
@@ -60,6 +62,7 @@ impl Default for GuiConfig {
             send_on_enter: true,
             window_width: 1200,
             window_height: 800,
+            setup_completed: false,
         }
     }
 }

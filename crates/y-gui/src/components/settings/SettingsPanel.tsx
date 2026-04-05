@@ -61,6 +61,7 @@ interface SettingsPanelProps {
   loadSection: (section: string) => Promise<string>;
   saveSection: (section: string, content: string) => Promise<void>;
   reloadConfig: () => Promise<string>;
+  onRunWizard?: () => void;
 }
 
 export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'prompts' | 'about';
@@ -72,6 +73,7 @@ export function SettingsPanel({
   loadSection,
   saveSection,
   reloadConfig,
+  onRunWizard,
 }: SettingsPanelProps) {
   const [localConfig, setLocalConfig] = useState<GuiConfig>({ ...config });
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -297,6 +299,7 @@ export function SettingsPanel({
             localConfig={localConfig}
             setLocalConfig={setLocalConfig}
             setToast={setToast}
+            onRunWizard={onRunWizard}
           />
         )}
 

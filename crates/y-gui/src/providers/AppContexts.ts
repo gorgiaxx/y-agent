@@ -56,6 +56,8 @@ export interface NavigationState {
   setAutomationSelectedId: (id: string | null) => void;
   automationCreating: 'workflow' | 'schedule' | null;
   setAutomationCreating: (type: 'workflow' | 'schedule' | null) => void;
+
+  onRunWizard?: () => void;
 }
 export const NavigationContext = createContext<NavigationState | null>(null);
 

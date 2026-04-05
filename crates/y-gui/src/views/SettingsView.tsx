@@ -22,6 +22,7 @@ export function SettingsView() {
         providerHooks.refreshProviders();
         return '';
       }}
+      onRunWizard={navProps.onRunWizard}
     />
   );
 }

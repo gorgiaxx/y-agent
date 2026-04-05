@@ -321,6 +321,7 @@ export interface GuiConfig {
   send_on_enter: boolean;
   window_width: number;
   window_height: number;
+  setup_completed: boolean;
 }
 
 // ---------------------------------------------------------------------------

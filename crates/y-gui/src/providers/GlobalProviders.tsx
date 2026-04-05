@@ -27,7 +27,12 @@ import {
   NavigationContext,
 } from './AppContexts';
 
-export function GlobalProviders({ children }: { children: ReactNode }) {
+interface GlobalProvidersProps {
+  children: ReactNode;
+  onRunWizard?: () => void;
+}
+
+export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps) {
   const sessionHooks = useSessions();
   const chatHooks = useChat(sessionHooks.activeSessionId);
   const configHooks = useConfig();
@@ -98,6 +103,7 @@ export function GlobalProviders({ children }: { children: ReactNode }) {
     automationSelectedType, setAutomationSelectedType,
     automationSelectedId, setAutomationSelectedId,
     automationCreating, setAutomationCreating,
+    onRunWizard,
   };
 
   return (

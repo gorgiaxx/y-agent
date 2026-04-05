@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useState } from 'react';
 
 import { Sidebar } from '../components/Sidebar';
 import { DiagnosticsPanel } from '../components/observation/DiagnosticsPanel';
@@ -47,10 +46,7 @@ export function MainLayout() {
     timeRange: obsTimeRange,
   });
 
-  // Show the window once the React tree is mounted to avoid white-flash.
-  useEffect(() => {
-    invoke('show_window').catch(() => {});
-  }, []);
+
 
   return (
     <div className="app">

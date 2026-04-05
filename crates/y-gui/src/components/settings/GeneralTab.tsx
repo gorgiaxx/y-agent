@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react';
-import { Copy } from 'lucide-react';
+import { Copy, Wand2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GuiConfig } from '../../types';
 import {
@@ -21,9 +21,10 @@ interface GeneralTabProps {
   localConfig: GuiConfig;
   setLocalConfig: (config: GuiConfig) => void;
   setToast: (toast: { message: string; type: 'success' | 'error' } | null) => void;
+  onRunWizard?: () => void;
 }
 
-export function GeneralTab({ localConfig, setLocalConfig, setToast }: GeneralTabProps) {
+export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard }: GeneralTabProps) {
   const [configPath, setConfigPath] = useState('');
   const [dataPath, setDataPath] = useState('');
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -143,6 +144,21 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast }: GeneralTab
         <p className="form-hint">
           When enabled, press Enter to send and Shift+Enter for newline.
         </p>
+      </div>
+
+      <h3 className="section-title">Setup</h3>
+
+      <div className="form-group">
+        <p className="form-hint" style={{ marginBottom: '8px' }}>
+          Re-run the initial setup wizard to reconfigure providers, runtime, browser, guardrails, and knowledge base.
+        </p>
+        <Button
+          variant="outline"
+          onClick={onRunWizard}
+        >
+          <Wand2 size={14} />
+          Run Setup Wizard
+        </Button>
       </div>
     </div>
   );

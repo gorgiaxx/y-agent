@@ -10,6 +10,7 @@ const defaultConfig: GuiConfig = {
   send_on_enter: true,
   window_width: 1200,
   window_height: 800,
+  setup_completed: false,
 };
 
 interface UseConfigReturn {
