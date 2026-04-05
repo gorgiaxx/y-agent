@@ -437,21 +437,15 @@ RUST_LOG=info
 ## Architecture
 
 ```mermaid
-block-beta
-    columns 1
-
-    block:CLIENT["Client"]:1
-        columns 4
+flowchart TD
+    subgraph CLIENT ["Client"]
         CLI["CLI / TUI"]
         GUI["Tauri v2 GUI"]
         API["Web API (axum)"]
         BOT["Bot Adapters"]
     end
 
-    space
-
-    block:SERVICE["Service"]:1
-        columns 5
+    subgraph SERVICE ["Service"]
         Chat["Chat"]
         Agent["Agent"]
         Bot["Bot"]
@@ -459,30 +453,21 @@ block-beta
         More["Knowledge / Skill / ..."]
     end
 
-    space
-
-    block:CORE["Core"]:1
-        columns 4
+    subgraph CORE ["Core"]
         Router["Request Router"]
         Orchestrator["Agent Orchestrator"]
         DAG["DAG Engine"]
         Checkpoint["Checkpoint"]
     end
 
-    space
-
-    block:MIDDLE["Middleware"]:1
-        columns 4
+    subgraph MIDDLE ["Middleware"]
         CtxMW["Context Pipeline"]
         ToolMW["Tool Middleware"]
         LlmMW["LLM Middleware"]
         Guard["Guardrails"]
     end
 
-    space
-
-    block:EXEC["Execution"]:1
-        columns 5
+    subgraph EXEC ["Execution"]
         Providers["LLM Provider Pool"]
         ToolReg["Tool Registry"]
         MCP["MCP Servers"]
@@ -490,10 +475,7 @@ block-beta
         Runtime["Sandboxed Runtimes"]
     end
 
-    space
-
-    block:STATE["State"]:1
-        columns 5
+    subgraph STATE ["State"]
         Session["Session Tree"]
         STM["Short-Term Memory"]
         LTM["Long-Term Memory"]
@@ -501,10 +483,7 @@ block-beta
         KB["Knowledge Base"]
     end
 
-    space
-
-    block:INFRA["Infrastructure"]:1
-        columns 3
+    subgraph INFRA ["Infrastructure"]
         SQLite[("SQLite")]
         PG[("PostgreSQL")]
         Qdrant[("Qdrant")]
@@ -518,13 +497,13 @@ block-beta
     STATE --> INFRA
     EXEC --> INFRA
 
-    style CLIENT fill:#e8f0fe,stroke:#4285f4
-    style SERVICE fill:#e8f5e9,stroke:#34a853
-    style CORE fill:#fce8e6,stroke:#ea4335
-    style MIDDLE fill:#fef7e0,stroke:#f9ab00
-    style EXEC fill:#f3e8fd,stroke:#a142f4
-    style STATE fill:#e0f2f1,stroke:#009688
-    style INFRA fill:#f5f5f5,stroke:#9e9e9e
+    style CLIENT fill:#e8f0fe,stroke:#4285f4,color:#1a73e8
+    style SERVICE fill:#e8f5e9,stroke:#34a853,color:#1e8e3e
+    style CORE fill:#fce8e6,stroke:#ea4335,color:#c5221f
+    style MIDDLE fill:#fef7e0,stroke:#f9ab00,color:#e37400
+    style EXEC fill:#f3e8fd,stroke:#a142f4,color:#8430ce
+    style STATE fill:#e0f2f1,stroke:#009688,color:#00796b
+    style INFRA fill:#f5f5f5,stroke:#9e9e9e,color:#616161
 ```
 
 ### Layer Responsibilities
