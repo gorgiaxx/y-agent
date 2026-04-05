@@ -273,7 +273,7 @@ mod tests {
         }
     }
 
-    /// T-P2-01: Simple prepare_context returns valid PreparedContext.
+    /// T-P2-01: Simple `prepare_context` returns valid `PreparedContext`.
     #[tokio::test]
     async fn test_prepare_context_simple() {
         let mut manager = ContextManager::new();

@@ -1380,7 +1380,7 @@ mod tests {
         let mut state = AppState::default();
         state.is_streaming = true;
         // No messages have is_streaming=true.
-        let items = build_display_items(&state);
+        let _items = build_display_items(&state);
         // WelcomeScreen should NOT appear since we are streaming.
         // But messages is empty and is_streaming is true, so we still get
         // an empty messages list (no WelcomeScreen when streaming).

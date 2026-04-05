@@ -658,7 +658,7 @@ mod tests {
     /// (all info is in `tool_calls`). Two consecutive empty-content assistant
     /// messages must NOT be classified as "repeated calls" regardless of
     /// iteration count, because `content_similarity("", "") == 1.0` would
-    /// otherwise delete the earlier FileRead result and break the loop.
+    /// otherwise delete the earlier `FileRead` result and break the loop.
     #[test]
     fn test_no_pruning_for_empty_content_native_tool_calls() {
         let pruner = IntraTurnPruner::from_config(&default_config());

@@ -316,8 +316,7 @@ mod tests {
         let total_chars: usize = result.iter().map(|s| s.content.chars().count()).sum();
         assert!(
             total_chars <= 10,
-            "truncated result too long: {} chars",
-            total_chars,
+            "truncated result too long: {total_chars} chars",
         );
     }
 }

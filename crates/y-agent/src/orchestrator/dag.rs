@@ -335,7 +335,7 @@ mod tests {
         assert!(matches!(result, Err(DagError::DuplicateTask { .. })));
     }
 
-    /// T-P1-01: TaskNode with TaskType::LlmCall serializes/deserializes correctly.
+    /// T-P1-01: `TaskNode` with `TaskType::LlmCall` serializes/deserializes correctly.
     #[test]
     fn test_task_type_llm_call_serialization() {
         let node = TaskNode {
@@ -356,7 +356,7 @@ mod tests {
         ));
     }
 
-    /// T-P1-02: TaskNode with TaskType::ToolExecution stores parameters.
+    /// T-P1-02: `TaskNode` with `TaskType::ToolExecution` stores parameters.
     #[test]
     fn test_task_type_tool_execution_serialization() {
         let node = TaskNode {
@@ -376,7 +376,7 @@ mod tests {
         ));
     }
 
-    /// T-P1-03: TaskDag with typed nodes validates as before (regression).
+    /// T-P1-03: `TaskDag` with typed nodes validates as before (regression).
     #[test]
     fn test_dag_with_typed_nodes_validates() {
         let mut dag = TaskDag::new();
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(ready[0].id, "search");
     }
 
-    /// TaskType default is Noop.
+    /// `TaskType` default is Noop.
     #[test]
     fn test_task_type_default_is_noop() {
         assert!(matches!(TaskType::default(), TaskType::Noop));

@@ -152,7 +152,7 @@ impl ContextProvider for InputEnrichmentProvider {
 mod tests {
     use super::*;
 
-    /// T-P3-35-01: Enrichment provider implements ContextProvider.
+    /// T-P3-35-01: Enrichment provider implements `ContextProvider`.
     #[tokio::test]
     async fn test_enrichment_provides_context() {
         let provider =

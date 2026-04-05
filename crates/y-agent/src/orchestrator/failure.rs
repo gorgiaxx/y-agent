@@ -112,13 +112,13 @@ impl RetryConfig {
 mod tests {
     use super::*;
 
-    /// T-P1-04: FailureStrategy default is FailFast.
+    /// T-P1-04: `FailureStrategy` default is `FailFast`.
     #[test]
     fn test_failure_strategy_default() {
         assert_eq!(FailureStrategy::default(), FailureStrategy::FailFast);
     }
 
-    /// T-P1-05a: RetryConfig with exponential backoff calculates correct delays.
+    /// T-P1-05a: `RetryConfig` with exponential backoff calculates correct delays.
     #[test]
     fn test_retry_exponential_backoff() {
         let config = RetryConfig {
@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(config.delay_for_attempt(4), Duration::from_millis(800));
     }
 
-    /// T-P1-05b: RetryConfig with linear backoff calculates correct delays.
+    /// T-P1-05b: `RetryConfig` with linear backoff calculates correct delays.
     #[test]
     fn test_retry_linear_backoff() {
         let config = RetryConfig {
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(config.delay_for_attempt(3), Duration::from_millis(600));
     }
 
-    /// T-P1-05c: RetryConfig with fixed backoff always returns base delay.
+    /// T-P1-05c: `RetryConfig` with fixed backoff always returns base delay.
     #[test]
     fn test_retry_fixed_backoff() {
         let config = RetryConfig {
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(config.delay_for_attempt(3), Duration::from_millis(500));
     }
 
-    /// T-P1-05d: Default RetryConfig has sensible values.
+    /// T-P1-05d: Default `RetryConfig` has sensible values.
     #[test]
     fn test_retry_config_defaults() {
         let config = RetryConfig::default();
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(config.backoff, BackoffStrategy::Exponential);
     }
 
-    /// FailureStrategy serialization round-trips.
+    /// `FailureStrategy` serialization round-trips.
     #[test]
     fn test_failure_strategy_serialization() {
         let strategy = FailureStrategy::Compensation {

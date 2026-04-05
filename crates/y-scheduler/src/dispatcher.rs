@@ -92,7 +92,7 @@ mod tests {
         };
         let json = serde_json::to_string(&result).unwrap();
         let back: DispatchResult = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.success, true);
+        assert!(back.success);
         assert_eq!(back.duration_ms, 42);
         assert!(back.error.is_none());
     }

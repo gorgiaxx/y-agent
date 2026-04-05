@@ -911,7 +911,8 @@ mod tests {
         let mut c_l0 = make_chunk("c-l0", "Rust programming overview summary", "rust");
         c_l0.level = ChunkLevel::L0;
         // L2 detail chunk.
-        let c_l2 = make_chunk("c-l2", "Rust error handling with Result type", "rust");
+        let mut c_l2 = make_chunk("c-l2", "Rust error handling with Result type", "rust");
+        c_l2.level = ChunkLevel::L2;
 
         retriever.index(c_l0);
         retriever.index(c_l2);

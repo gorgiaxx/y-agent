@@ -426,7 +426,7 @@ tasks = []
         ));
     }
 
-    /// T-P4-05: TOML and DSL produce equivalent TaskDag for same workflow.
+    /// T-P4-05: TOML and DSL produce equivalent `TaskDag` for same workflow.
     #[test]
     fn test_toml_dsl_equivalence() {
         // DSL: a >> b >> c
@@ -464,7 +464,7 @@ depends_on = ["b"]
         assert_eq!(dsl_order, toml_order);
     }
 
-    /// WorkflowDefinition::Expression round-trips through parse.
+    /// `WorkflowDefinition::Expression` round-trips through parse.
     #[test]
     fn test_workflow_definition_expression() {
         let def = WorkflowDefinition::Expression("a | b | c".into());

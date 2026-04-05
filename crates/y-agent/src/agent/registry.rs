@@ -702,7 +702,7 @@ mod tests {
         );
     }
 
-    /// Template expansion with no config_dir falls back to ".".
+    /// Template expansion with no `config_dir` falls back to ".".
     #[test]
     fn test_template_expansion_fallback() {
         let registry = AgentRegistry::new();
@@ -1268,7 +1268,7 @@ system_prompt = "hello"
         assert_eq!(def.mode, AgentMode::Explore);
     }
 
-    /// Re-registering the same agent ID via register_agent_from_toml
+    /// Re-registering the same agent ID via `register_agent_from_toml`
     /// replaces the previous definition.
     #[test]
     fn test_register_agent_from_toml_override() {

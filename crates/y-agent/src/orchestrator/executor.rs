@@ -513,7 +513,7 @@ mod tests {
 
     // -- Async tests --
 
-    /// T-P2-05: Async executor runs 3-task sequential DAG with NoopExecutor.
+    /// T-P2-05: Async executor runs 3-task sequential DAG with `NoopExecutor`.
     #[tokio::test]
     async fn test_async_execute_sequential() {
         let mut dag = TaskDag::new();
@@ -625,7 +625,7 @@ mod tests {
         assert!(executor.context.read("a.output").is_some());
     }
 
-    /// T-P2-09: Async executor respects max_concurrent_tasks semaphore.
+    /// T-P2-09: Async executor respects `max_concurrent_tasks` semaphore.
     #[tokio::test]
     async fn test_async_execute_concurrency_limit() {
         let mut dag = TaskDag::new();
@@ -656,7 +656,7 @@ mod tests {
         assert_eq!(executor.completed_count(), 10);
     }
 
-    /// T-P2-04: OutputMapping::Context writes to channel via reducer.
+    /// T-P2-04: `OutputMapping::Context` writes to channel via reducer.
     #[tokio::test]
     async fn test_async_execute_output_mapping() {
         let mut dag = TaskDag::new();
@@ -754,7 +754,7 @@ mod tests {
         assert_eq!(executor.state, WorkflowState::Completed);
     }
 
-    /// T-P3-02: FailFast aborts the workflow immediately on task failure.
+    /// T-P3-02: `FailFast` aborts the workflow immediately on task failure.
     #[tokio::test]
     async fn test_fail_fast_aborts() {
         use crate::orchestrator::executors::failing::FailingExecutor;
@@ -789,7 +789,7 @@ mod tests {
         assert_eq!(executor.completed_count(), 0);
     }
 
-    /// T-P3-03: ContinueOnError lets downstream tasks proceed.
+    /// T-P3-03: `ContinueOnError` lets downstream tasks proceed.
     #[tokio::test]
     async fn test_continue_on_error() {
         use crate::orchestrator::executors::failing::FailingExecutor;

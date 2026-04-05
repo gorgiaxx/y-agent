@@ -153,7 +153,7 @@ pub enum InputResolveError {
 mod tests {
     use super::*;
 
-    /// T-P2-01: InputMapping::WorkflowInput resolves from initial inputs.
+    /// T-P2-01: `InputMapping::WorkflowInput` resolves from initial inputs.
     #[test]
     fn test_resolve_workflow_input() {
         let mut wf_inputs = serde_json::Map::new();
@@ -170,7 +170,7 @@ mod tests {
         assert_eq!(result["query"], serde_json::json!("rust async"));
     }
 
-    /// T-P2-02: InputMapping::TaskOutput resolves from predecessor output.
+    /// T-P2-02: `InputMapping::TaskOutput` resolves from predecessor output.
     #[test]
     fn test_resolve_task_output() {
         let wf_inputs = serde_json::Map::new();
@@ -191,7 +191,7 @@ mod tests {
         assert_eq!(result["data"], serde_json::json!(["a", "b"]));
     }
 
-    /// T-P2-03: InputMapping::Context resolves from channel.
+    /// T-P2-03: `InputMapping::Context` resolves from channel.
     #[test]
     fn test_resolve_context_channel() {
         let wf_inputs = serde_json::Map::new();
@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(result["val"], serde_json::json!(42));
     }
 
-    /// InputMapping::Constant resolves to the literal value.
+    /// `InputMapping::Constant` resolves to the literal value.
     #[test]
     fn test_resolve_constant() {
         let wf_inputs = serde_json::Map::new();
@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(result["c"], serde_json::json!("fixed"));
     }
 
-    /// InputMapping::Expression resolves simple template expressions.
+    /// `InputMapping::Expression` resolves simple template expressions.
     #[test]
     fn test_resolve_expression() {
         let mut wf_inputs = serde_json::Map::new();
@@ -253,7 +253,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// InputMapping serialization round-trip.
+    /// `InputMapping` serialization round-trip.
     #[test]
     fn test_input_mapping_serialization() {
         let mapping = InputMapping::TaskOutput {
@@ -265,7 +265,7 @@ mod tests {
         assert!(matches!(deserialized, InputMapping::TaskOutput { .. }));
     }
 
-    /// OutputMapping serialization round-trip.
+    /// `OutputMapping` serialization round-trip.
     #[test]
     fn test_output_mapping_serialization() {
         let mapping = OutputMapping::Context {

@@ -742,7 +742,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// T-MA-P2-08: Delegation without runner returns DelegationFailed.
+    /// T-MA-P2-08: Delegation without runner returns `DelegationFailed`.
     #[tokio::test]
     async fn test_pool_delegate_without_runner_errors() {
         let pool = AgentPool::new(MultiAgentConfig::default());

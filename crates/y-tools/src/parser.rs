@@ -1248,12 +1248,12 @@ not valid json or xml
 
     #[test]
     fn test_parse_function_format_with_parameters() {
-        let input = r#"<tool_call>
+        let input = r"<tool_call>
 <function=Browser>
 <action>navigate</action>
 <parameter=url>https://www.google.com/search?q=weather</parameter>
 </function>
-</tool_call>"#;
+</tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
@@ -1268,12 +1268,12 @@ not valid json or xml
 
     #[test]
     fn test_parse_function_format_multiple_params() {
-        let input = r#"<tool_call>
+        let input = r"<tool_call>
 <function=FileWrite>
 <parameter=path>/src/main.rs</parameter>
 <parameter=content>fn main() {}</parameter>
 </function>
-</tool_call>"#;
+</tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
@@ -1296,10 +1296,10 @@ not valid json or xml
 
     #[test]
     fn test_parse_function_format_no_closing_function_tag() {
-        let input = r#"<tool_call>
+        let input = r"<tool_call>
 <function=Browser>
 <parameter=url>https://example.com</parameter>
-</tool_call>"#;
+</tool_call>";
 
         let result = parse_tool_calls(input);
         assert_eq!(result.tool_calls.len(), 1);
@@ -1309,11 +1309,11 @@ not valid json or xml
 
     #[test]
     fn test_parse_function_format_empty_name_fails() {
-        let input = r#"<tool_call>
+        let input = r"<tool_call>
 <function=>
 <parameter=url>https://example.com</parameter>
 </function>
-</tool_call>"#;
+</tool_call>";
 
         let result = parse_tool_calls(input);
         assert!(result.tool_calls.is_empty());

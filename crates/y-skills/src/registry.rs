@@ -421,7 +421,7 @@ mod tests {
         assert_eq!(history.len(), 2);
     }
 
-    /// T-SKILL-004-03: `get_manifest()` returns full manifest with root_content.
+    /// T-SKILL-004-03: `get_manifest()` returns full manifest with `root_content`.
     #[tokio::test]
     async fn test_registry_get_manifest() {
         let registry = SkillRegistryImpl::new();

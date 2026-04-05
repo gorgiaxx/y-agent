@@ -924,7 +924,7 @@ mod tests {
     fn test_summary_parser_no_panic_on_cjk_content() {
         // Build a CJK string longer than 500 bytes to exercise the preview truncation.
         // Each CJK char is 3 bytes, so 200 chars = 600 bytes.
-        let cjk: String = std::iter::repeat('\u{4EE3}').take(200).collect();
+        let cjk: String = std::iter::repeat_n('\u{4EE3}', 200).collect();
         let output = format!("Not JSON: {cjk}");
         // Should return Err, but must NOT panic.
         assert!(SummaryParser::parse(&output).is_err());
@@ -932,7 +932,7 @@ mod tests {
 
     #[test]
     fn test_metadata_parser_no_panic_on_cjk_content() {
-        let cjk: String = std::iter::repeat('\u{7801}').take(200).collect();
+        let cjk: String = std::iter::repeat_n('\u{7801}', 200).collect();
         let output = format!("Not JSON: {cjk}");
         assert!(MetadataParser::parse(&output).is_err());
     }

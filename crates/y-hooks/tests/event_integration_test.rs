@@ -60,7 +60,7 @@ async fn test_event_bus_under_load() {
     }
 
     // Verify tool-only subscribers got only tool events (~334).
-    let tool_event_count = 1000 / 3 + if 1000 % 3 > 0 { 1 } else { 0 };
+    let tool_event_count = 1000 / 3 + i32::from(1000 % 3 > 0);
     for i in (1..10).step_by(2) {
         let mut count = 0;
         while let Ok(event) = subs[i].receiver.try_recv() {

@@ -1030,7 +1030,7 @@ mod tests {
                 .message
                 .content
                 .clone()
-                .and_then(|c| c.into_text()),
+                .and_then(super::OpenAiContent::into_text),
             Some("Hello!".into())
         );
         let usage = response.usage.unwrap();
@@ -1131,7 +1131,7 @@ mod tests {
         assert!(chunk.usage.is_some());
     }
 
-    /// Regression test: openai-compat providers (e.g. MiniMax) may return usage objects
+    /// Regression test: openai-compat providers (e.g. `MiniMax`) may return usage objects
     /// without `prompt_tokens`/`completion_tokens`, using `total_tokens` instead.
     /// The parser must tolerate this and default missing fields to 0.
     #[test]

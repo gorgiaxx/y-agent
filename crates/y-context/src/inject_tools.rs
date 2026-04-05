@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(ctx.items[0].category, ContextCategory::Tools);
     }
 
-    /// T-P1-07: Tool index contains tool names and ToolSearch.
+    /// T-P1-07: Tool index contains tool names and `ToolSearch`.
     #[tokio::test]
     async fn test_tool_index_contains_names_and_search() {
         let provider = InjectTools::new(vec!["read_file".into(), "write_file".into()]);
@@ -322,7 +322,7 @@ mod tests {
         assert!(content.contains("ToolSearch"));
     }
 
-    /// Tool index without ToolSearch meta-tool.
+    /// Tool index without `ToolSearch` meta-tool.
     #[tokio::test]
     async fn test_without_tool_search() {
         let provider = InjectTools::without_tool_search(vec!["read_file".into()]);
