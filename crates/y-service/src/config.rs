@@ -79,6 +79,12 @@ pub struct ServiceConfig {
     /// When set, `InjectSkills` reads skill content from here.
     #[serde(skip)]
     pub skills_dir: Option<PathBuf>,
+
+    /// Path to the bot persona directory (`~/.config/y-agent/persona/`).
+    /// When set and containing `persona.toml` with `enabled = true`,
+    /// `BotService` uses persona-aware prompting.
+    #[serde(skip)]
+    pub persona_dir: Option<PathBuf>,
 }
 
 /// Config file basenames (without `.toml` extension) mapping to `ServiceConfig` fields.
@@ -113,6 +119,10 @@ impl ServiceConfig {
         // Set skills store directory to <config_dir>/skills/.
         let skills_dir = config_dir.join("skills");
         config.skills_dir = Some(skills_dir);
+
+        // Set persona directory to <config_dir>/persona/.
+        let persona_dir = config_dir.join("persona");
+        config.persona_dir = Some(persona_dir);
 
         if !config_dir.is_dir() {
             warn!(

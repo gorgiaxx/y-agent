@@ -1,0 +1,27 @@
+# Bot persona configuration
+# Operator-managed structural settings. The bot does NOT modify this file.
+
+[persona]
+name = "Y"                        # default name (may be overridden by IDENTITY.md)
+language = "auto"                  # auto | en | zh | ...
+enabled = false                    # set to true to enable persona-aware prompting
+
+[persona.messaging]
+max_response_length = 2000        # characters (platform-dependent override)
+prefer_short_responses = true
+markdown_dialect = "auto"         # auto | discord | telegram | plain
+
+[persona.memory]
+conversation_memory_turns = 50    # recent turns to keep in context window
+persona_memory_enabled = true     # enable vector-backed persona memory
+memory_extraction_enabled = true  # auto-extract user preferences from turns
+
+[persona.tools]
+allowed_tools = ["KnowledgeSearch", "WebSearch", "DateTime"]
+max_tool_iterations = 3
+enable_thinking = false
+
+[persona.bootstrap]
+# When true, BOOTSTRAP.md is seeded on first run and the bot runs the
+# bootstrap ritual. When bootstrap completes, the bot deletes BOOTSTRAP.md.
+enabled = true

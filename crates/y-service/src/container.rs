@@ -4,6 +4,7 @@
 //! service layer so CLI, TUI, and future Web API can all construct one.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -196,6 +197,11 @@ pub struct ServiceContainer {
     /// Used for temporary session-level modes such as "allow all for this
     /// session" without mutating the global guardrail configuration.
     pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
+
+    /// Path to the bot persona directory (`~/.config/y-agent/persona/`).
+    ///
+    /// Used by `BotService` to load persona files at turn time.
+    pub persona_dir: Option<PathBuf>,
 }
 
 impl ServiceContainer {
@@ -535,6 +541,7 @@ tools = ["ToolSearch"]
             pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
+            persona_dir: config.persona_dir.clone(),
         })
     }
 

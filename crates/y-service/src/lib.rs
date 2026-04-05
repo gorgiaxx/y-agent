@@ -45,7 +45,7 @@ pub use agent_service::{
     AgentExecutionConfig, AgentExecutionError, AgentExecutionResult, AgentService,
     ServiceAgentRunner,
 };
-pub use bot::{BotService, BotServiceError};
+pub use bot::{BotConfig, BotPersona, BotService, BotServiceError};
 pub use chat::{
     ChatService, PendingInteractions, PendingPermissions, PermissionPromptResponse,
     PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError, ResendTurnRequest,
