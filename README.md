@@ -29,7 +29,7 @@
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | **Multi-Provider LLM Pool**   | Tag-based routing, automatic failover, provider freeze/thaw, enable/disable toggle                                        |
 | **DAG Workflow Engine**       | Typed channels, checkpointing, interrupt/resume protocol                                                                  |
-| **Tool System**               | JSON Schema validation, LRU activation, dynamic tool creation, multi-format parser (OpenAI, DeepSeek DSML, MiniMax, GLM4) |
+| **Tool System**               | JSON Schema validation, LRU activation, dynamic tool creation, multi-format parser (OpenAI, DeepSeek DSML, MiniMax, GLM4, Longcat, Qwen3Coder) |
 | **Three-Tier Memory**         | Short-term, long-term (Qdrant), and working memory with semantic search                                                   |
 | **Multi-Agent Collaboration** | Session tree, parent/child delegation, TOML-defined agents with template expansion                                        |
 | **Guardrails & Safety**       | Content filtering, PII detection, loop detection, risk scoring middleware                                                 |
@@ -365,18 +365,20 @@ Bot adapters are wired into `y-web` and share the same `ServiceContainer`. Confi
 
 Agent definitions live in `config/agents/` as TOML files. They support **template expansion** -- placeholders like `{{YAGENT_CONFIG_PATH}}` are resolved to system-specific paths at load time. Built-in agents include:
 
-| Agent                   | Purpose                               |
-| ----------------------- | ------------------------------------- |
-| `skill-ingestion`       | Skill import and validation           |
-| `skill-security-check`  | Security audit for skill packages     |
-| `agent-architect`       | Agent design and configuration        |
-| `tool-engineer`         | Dynamic tool creation                 |
-| `title-generator`       | Session title auto-generation         |
-| `compaction-summarizer` | Context compaction                    |
-| `pruning-summarizer`    | Context pruning optimization          |
-| `task-intent-analyzer`  | Intent classification for delegation  |
-| `pattern-extractor`     | Pattern extraction from conversations |
-| `capability-assessor`   | Capability assessment                 |
+| Agent                    | Purpose                               |
+| ------------------------ | ------------------------------------- |
+| `skill-ingestion`        | Skill import and validation           |
+| `skill-security-check`   | Security audit for skill packages     |
+| `agent-architect`        | Agent design and configuration        |
+| `tool-engineer`          | Dynamic tool creation                 |
+| `title-generator`        | Session title auto-generation         |
+| `compaction-summarizer`  | Context compaction                    |
+| `pruning-summarizer`     | Context pruning optimization          |
+| `knowledge-summarizer`   | Knowledge base document summarization |
+| `knowledge-metadata`     | Knowledge entry metadata extraction   |
+| `task-intent-analyzer`   | Intent classification for delegation  |
+| `pattern-extractor`      | Pattern extraction from conversations |
+| `capability-assessor`    | Capability assessment                 |
 
 ### Proxy Configuration
 
@@ -435,104 +437,107 @@ RUST_LOG=info
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Clients["Client Layer"]
-        CLI["CLI (clap)"]
-        TUI["TUI (ratatui)"]
-        GUI["GUI (Tauri v2)"]
+block-beta
+    columns 1
+
+    block:CLIENT["Client"]:1
+        columns 4
+        CLI["CLI / TUI"]
+        GUI["Tauri v2 GUI"]
         API["Web API (axum)"]
-        Bots["Bot Adapters"]
+        BOT["Bot Adapters"]
     end
 
-    subgraph Service["Service Layer"]
-        ChatSvc["ChatService"]
-        CostSvc["CostService"]
-        SysSvc["SystemService"]
-        ObsSvc["ObservabilityService"]
-        WorkflowSvc["WorkflowService"]
-        SkillSvc["SkillService"]
-        AgentSvc["AgentService"]
-        SchedulerSvc["SchedulerService"]
-        KBSvc["KnowledgeService"]
-        BotSvc["BotService"]
+    space
+
+    block:SERVICE["Service"]:1
+        columns 5
+        Chat["Chat"]
+        Agent["Agent"]
+        Bot["Bot"]
+        Workflow["Workflow"]
+        More["Knowledge / Skill / ..."]
     end
 
-    subgraph Core["Core Layer"]
+    space
+
+    block:CORE["Core"]:1
+        columns 4
         Router["Request Router"]
-        Scheduler["Message Scheduler"]
         Orchestrator["Agent Orchestrator"]
-        DAG["DAG Engine + Typed Channels"]
-        Checkpoint["Checkpoint Manager"]
+        DAG["DAG Engine"]
+        Checkpoint["Checkpoint"]
     end
 
-    subgraph Extensibility["Extensibility Layer"]
-        CtxMW["Context Middleware"]
+    space
+
+    block:MIDDLE["Middleware"]:1
+        columns 4
+        CtxMW["Context Pipeline"]
         ToolMW["Tool Middleware"]
         LlmMW["LLM Middleware"]
-        EventBus["Async Event Bus"]
+        Guard["Guardrails"]
     end
 
-    subgraph Execution["Execution Layer"]
-        Providers["Provider Pool (tag routing, failover)"]
-        ToolReg["Tool Registry (built-in, dynamic, MCP)"]
-        AgentPool["Agent Pool (delegation)"]
-        Runtime["Runtime Manager"]
-        PromptSys["Prompt System"]
-        Docker["Docker"]
-        Native["Native"]
-        SSH["SSH"]
+    space
+
+    block:EXEC["Execution"]:1
+        columns 5
+        Providers["LLM Provider Pool"]
+        ToolReg["Tool Registry"]
+        MCP["MCP Servers"]
+        AgentPool["Agent Pool"]
+        Runtime["Sandboxed Runtimes"]
     end
 
-    subgraph State["State Layer"]
-        SessionMgr["Session Manager"]
+    space
+
+    block:STATE["State"]:1
+        columns 5
+        Session["Session Tree"]
         STM["Short-Term Memory"]
         LTM["Long-Term Memory"]
-        WM["Working Memory"]
-        SkillReg["Skill Registry"]
+        Skills["Skill Registry"]
         KB["Knowledge Base"]
-        Journal["File Journal"]
     end
 
-    subgraph Infra["Infrastructure"]
-        SQLite[("SQLite (operational)")]
-        PG[("PostgreSQL (diagnostics)")]
-        Qdrant[("Qdrant (vectors)")]
+    space
+
+    block:INFRA["Infrastructure"]:1
+        columns 3
+        SQLite[("SQLite")]
+        PG[("PostgreSQL")]
+        Qdrant[("Qdrant")]
     end
 
-    Clients --> Service
-    Service --> Router
-    Router --> Scheduler --> Orchestrator
-    Orchestrator --> DAG
-    DAG --> Checkpoint
+    CLIENT --> SERVICE
+    SERVICE --> CORE
+    CORE --> MIDDLE
+    MIDDLE --> EXEC
+    MIDDLE --> STATE
+    STATE --> INFRA
+    EXEC --> INFRA
 
-    Orchestrator --> CtxMW & ToolMW & LlmMW
-    EventBus -.-> PG
-
-    Orchestrator --> Providers
-    Orchestrator --> AgentPool
-    CtxMW --> PromptSys
-    ToolMW --> ToolReg
-    ToolReg --> Runtime
-    Runtime --> Docker & Native & SSH
-
-    CtxMW --> SessionMgr & STM & LTM & SkillReg & KB
-    DAG --> WM
-
-    SessionMgr & Checkpoint & Journal --> SQLite
-    LTM & KB --> Qdrant
+    style CLIENT fill:#e8f0fe,stroke:#4285f4
+    style SERVICE fill:#e8f5e9,stroke:#34a853
+    style CORE fill:#fce8e6,stroke:#ea4335
+    style MIDDLE fill:#fef7e0,stroke:#f9ab00
+    style EXEC fill:#f3e8fd,stroke:#a142f4
+    style STATE fill:#e0f2f1,stroke:#009688
+    style INFRA fill:#f5f5f5,stroke:#9e9e9e
 ```
 
 ### Layer Responsibilities
 
-| Layer              | Purpose                                                                                                                                                                            |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Client**         | User-facing entry points -- CLI, TUI, Tauri GUI, REST API, bot adapters -- all thin wrappers over the Service layer                                                                |
-| **Service**        | Shared business logic (`ChatService`, `CostService`, `SystemService`, `ObservabilityService`, `WorkflowService`, `SkillService`, `AgentService`, `SchedulerService`, `BotService`) |
-| **Core**           | Request routing, message scheduling, DAG-based orchestration with typed channels and checkpointing                                                                                 |
-| **Extensibility**  | Three middleware chains (Context, Tool, LLM), async event bus, lifecycle hooks                                                                                                     |
-| **Execution**      | LLM provider pool with failover, tool registry (built-in + dynamic + MCP), agent delegation pool, sandboxed runtimes                                                               |
-| **State**          | Session tree, three-tier memory (STM / LTM / WM), skill registry, knowledge base, file journal                                                                                     |
-| **Infrastructure** | SQLite (operational state), PostgreSQL (diagnostics / analytics), Qdrant (semantic vectors)                                                                                        |
+| Layer              | Purpose                                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| **Client**         | Thin I/O wrappers -- CLI, TUI, Tauri GUI, REST API, bot adapters                                           |
+| **Service**        | Business logic -- Chat, Agent, Bot, Workflow, Knowledge, Skill, Scheduler, Observability, DI container     |
+| **Core**           | Request routing, agent orchestration, DAG engine with typed channels and checkpointing                     |
+| **Middleware**     | Context pipeline, tool middleware, LLM middleware, guardrails, async event bus                              |
+| **Execution**      | LLM provider pool with tag routing and failover, tool registry (built-in + dynamic + MCP), sandboxed runtimes |
+| **State**          | Session tree, three-tier memory (STM / LTM / WM), skill registry, knowledge base, file journal            |
+| **Infrastructure** | SQLite (operational state), PostgreSQL (diagnostics / analytics), Qdrant (semantic vectors)                |
 
 ---
 
@@ -586,9 +591,9 @@ The workspace contains **24 crates** organized by concern:
 
 ### Service
 
-| Crate       | Description                                                                                                 |
-| ----------- | ----------------------------------------------------------------------------------------------------------- |
-| `y-service` | Business logic layer -- `ChatService`, `CostService`, `SystemService`, `ObservabilityService`, DI container |
+| Crate       | Description                                                                                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `y-service` | Business logic layer -- `ChatService`, `AgentService`, `BotService`, `WorkflowService`, `KnowledgeService`, `SkillService`, `SchedulerService`, DI container |
 
 ### Presentation
 
