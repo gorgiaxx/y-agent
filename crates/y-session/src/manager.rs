@@ -367,6 +367,123 @@ impl SessionManager {
         &*self.display_transcript_store
     }
 
+    /// Fork a session at a specific message index, creating a new Branch session.
+    ///
+    /// Copies messages `[0..=message_index]` from both the context and display
+    /// transcripts of the source session into a new `Branch` session. The
+    /// original session is never mutated.
+    ///
+    /// If `message_index` equals or exceeds the total message count, all
+    /// messages are copied (full fork).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the session configuration lock is poisoned.
+    #[instrument(skip(self), fields(source_id = %source_id, message_index = message_index))]
+    pub async fn fork_session(
+        &self,
+        source_id: &SessionId,
+        message_index: usize,
+        title: Option<String>,
+    ) -> Result<SessionNode, SessionManagerError> {
+        // 1. Validate source session exists.
+        let source = self.session_store.get(source_id).await?;
+
+        // 2. Read display transcript from source.
+        let display_messages = self
+            .display_transcript_store
+            .read_all(source_id)
+            .await
+            .map_err(|e| SessionManagerError::Transcript {
+                message: format!("read display transcript: {e}"),
+            })?;
+
+        // 3. Read context transcript from source.
+        let context_messages = self
+            .transcript_store
+            .read_all(source_id)
+            .await
+            .map_err(|e| SessionManagerError::Transcript {
+                message: e.to_string(),
+            })?;
+
+        if display_messages.is_empty() && context_messages.is_empty() {
+            return Err(SessionManagerError::Other {
+                message: "source session has no messages to fork".into(),
+            });
+        }
+
+        // 4. Determine fork title.
+        let fork_title = title.or_else(|| source.title.as_ref().map(|t| format!("{t} (Branch)")));
+
+        // 5. Create the new Branch session.
+        let max_depth = self.config.read().unwrap().max_depth;
+        if source.depth >= max_depth {
+            return Err(SessionManagerError::Config {
+                message: format!("maximum tree depth {max_depth} exceeded"),
+            });
+        }
+
+        let fork_node = self
+            .session_store
+            .create(CreateSessionOptions {
+                parent_id: Some(source_id.clone()),
+                session_type: y_core::session::SessionType::Branch,
+                agent_id: source.agent_id.clone(),
+                title: fork_title,
+            })
+            .await?;
+
+        // 6. Copy display messages [0..=message_index].
+        let display_end = (message_index + 1).min(display_messages.len());
+        for msg in &display_messages[..display_end] {
+            self.display_transcript_store
+                .append(&fork_node.id, msg)
+                .await
+                .map_err(|e| SessionManagerError::Transcript {
+                    message: format!("write forked display transcript: {e}"),
+                })?;
+        }
+
+        // 7. Copy context messages [0..=message_index].
+        let context_end = (message_index + 1).min(context_messages.len());
+        for msg in &context_messages[..context_end] {
+            self.transcript_store
+                .append(&fork_node.id, msg)
+                .await
+                .map_err(|e| SessionManagerError::Transcript {
+                    message: e.to_string(),
+                })?;
+        }
+
+        // 8. Carry over context_reset_index if it falls within forked range.
+        if let Ok(Some(reset_idx)) = self.session_store.get_context_reset_index(source_id).await {
+            let reset_usize = reset_idx as usize;
+            if reset_usize < context_end {
+                self.session_store
+                    .set_context_reset_index(&fork_node.id, Some(reset_idx))
+                    .await?;
+            }
+        }
+
+        // 9. Update metadata on the new session.
+        let msg_count = u32::try_from(context_end).unwrap_or(u32::MAX);
+        self.session_store
+            .update_metadata(&fork_node.id, None, 0, msg_count)
+            .await?;
+
+        tracing::info!(
+            fork_id = %fork_node.id,
+            source_id = %source_id,
+            messages_copied = context_end,
+            "session forked successfully"
+        );
+
+        // Re-read the node to get updated metadata.
+        let updated = self.session_store.get(&fork_node.id).await?;
+        Ok(updated)
+    }
+
     /// Get a snapshot of the session configuration.
     ///
     /// # Panics
@@ -614,6 +731,155 @@ mod tests {
                 title: None,
             })
             .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_fork_session_copies_messages() {
+        let mgr = setup().await;
+        let session = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("Original".into()),
+            })
+            .await
+            .unwrap();
+
+        // Append 5 messages.
+        for i in 0..5 {
+            mgr.append_message(&session.id, &test_msg(&format!("msg-{i}")))
+                .await
+                .unwrap();
+        }
+
+        // Fork at message index 2 (copy messages 0, 1, 2).
+        let fork = mgr.fork_session(&session.id, 2, None).await.unwrap();
+
+        assert_eq!(fork.session_type, SessionType::Branch);
+        assert_eq!(fork.parent_id, Some(session.id.clone()));
+        assert_eq!(fork.message_count, 3);
+        assert_eq!(fork.title, Some("Original (Branch)".into()));
+
+        // Verify forked context transcript.
+        let fork_msgs = mgr.read_transcript(&fork.id).await.unwrap();
+        assert_eq!(fork_msgs.len(), 3);
+        assert_eq!(fork_msgs[0].content, "msg-0");
+        assert_eq!(fork_msgs[1].content, "msg-1");
+        assert_eq!(fork_msgs[2].content, "msg-2");
+
+        // Verify forked display transcript.
+        let fork_display = mgr.read_display_transcript(&fork.id).await.unwrap();
+        assert_eq!(fork_display.len(), 3);
+
+        // Verify original is untouched.
+        let orig_msgs = mgr.read_transcript(&session.id).await.unwrap();
+        assert_eq!(orig_msgs.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_fork_session_at_index_zero() {
+        let mgr = setup().await;
+        let session = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: None,
+            })
+            .await
+            .unwrap();
+
+        mgr.append_message(&session.id, &test_msg("first"))
+            .await
+            .unwrap();
+        mgr.append_message(&session.id, &test_msg("second"))
+            .await
+            .unwrap();
+
+        // Fork at index 0: only the first message.
+        let fork = mgr
+            .fork_session(&session.id, 0, Some("Just first".into()))
+            .await
+            .unwrap();
+
+        let fork_msgs = mgr.read_transcript(&fork.id).await.unwrap();
+        assert_eq!(fork_msgs.len(), 1);
+        assert_eq!(fork_msgs[0].content, "first");
+        assert_eq!(fork.title, Some("Just first".into()));
+    }
+
+    #[tokio::test]
+    async fn test_fork_session_full_copy() {
+        let mgr = setup().await;
+        let session = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: None,
+            })
+            .await
+            .unwrap();
+
+        for i in 0..3 {
+            mgr.append_message(&session.id, &test_msg(&format!("msg-{i}")))
+                .await
+                .unwrap();
+        }
+
+        // Fork at index >= total count: should copy all.
+        let fork = mgr.fork_session(&session.id, 100, None).await.unwrap();
+
+        let fork_msgs = mgr.read_transcript(&fork.id).await.unwrap();
+        assert_eq!(fork_msgs.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_fork_session_independence() {
+        let mgr = setup().await;
+        let session = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: None,
+            })
+            .await
+            .unwrap();
+
+        mgr.append_message(&session.id, &test_msg("shared"))
+            .await
+            .unwrap();
+
+        let fork = mgr.fork_session(&session.id, 0, None).await.unwrap();
+
+        // Append to original after fork.
+        mgr.append_message(&session.id, &test_msg("original-only"))
+            .await
+            .unwrap();
+
+        // Fork should still have only 1 message.
+        let fork_msgs = mgr.read_transcript(&fork.id).await.unwrap();
+        assert_eq!(fork_msgs.len(), 1);
+        assert_eq!(fork_msgs[0].content, "shared");
+    }
+
+    #[tokio::test]
+    async fn test_fork_empty_session_fails() {
+        let mgr = setup().await;
+        let session = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: None,
+            })
+            .await
+            .unwrap();
+
+        let result = mgr.fork_session(&session.id, 0, None).await;
         assert!(result.is_err());
     }
 }

@@ -13,6 +13,7 @@ interface UseSessionsReturn {
   selectSession: (id: string) => void;
   deleteSession: (id: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
+  forkSession: (sessionId: string, messageIndex: number, title?: string) => Promise<SessionInfo | null>;
 }
 
 // Polling interval in ms -- keeps session titles and new sessions from the TUI in sync.
@@ -112,6 +113,25 @@ export function useSessions(): UseSessionsReturn {
     [activeSessionId],
   );
 
+  const forkSession = useCallback(
+    async (sessionId: string, messageIndex: number, title?: string): Promise<SessionInfo | null> => {
+      try {
+        const fork = await invoke<SessionInfo>('session_fork', {
+          sessionId,
+          messageIndex,
+          title: title ?? null,
+        });
+        setSessions((prev) => [fork, ...prev]);
+        setActiveSessionId(fork.id);
+        return fork;
+      } catch (e) {
+        console.error('Failed to fork session:', e);
+        return null;
+      }
+    },
+    [],
+  );
+
   return {
     sessions,
     activeSessionId,
@@ -120,5 +140,6 @@ export function useSessions(): UseSessionsReturn {
     selectSession,
     deleteSession,
     refreshSessions,
+    forkSession,
   };
 }

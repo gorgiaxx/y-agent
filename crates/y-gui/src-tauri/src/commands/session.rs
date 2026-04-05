@@ -239,3 +239,37 @@ pub async fn session_set_context_reset(
         .await
         .map_err(|e| format!("Failed to set context reset: {e}"))
 }
+
+// ---------------------------------------------------------------------------
+// Fork (branch) session
+// ---------------------------------------------------------------------------
+
+/// Fork a session at a specific message index, creating a new Branch session.
+///
+/// Copies messages `[0..=message_index]` from both transcripts into a new
+/// independent session. The original session is never mutated.
+///
+/// Returns the newly created `SessionInfo` so the frontend can navigate to it.
+#[tauri::command]
+pub async fn session_fork(
+    state: State<'_, AppState>,
+    session_id: String,
+    message_index: usize,
+    title: Option<String>,
+) -> Result<SessionInfo, String> {
+    let sid = SessionId(session_id);
+    let fork = state
+        .container
+        .session_manager
+        .fork_session(&sid, message_index, title)
+        .await
+        .map_err(|e| format!("Failed to fork session: {e}"))?;
+
+    Ok(SessionInfo {
+        id: fork.id.0.clone(),
+        title: fork.title.clone(),
+        created_at: fork.created_at.to_rfc3339(),
+        updated_at: fork.updated_at.to_rfc3339(),
+        message_count: fork.message_count as usize,
+    })
+}
