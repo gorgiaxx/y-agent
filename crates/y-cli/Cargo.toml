@@ -60,6 +60,7 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 criterion = { workspace = true }
 sqlx = { workspace = true }
+temp-env = "0.3"
 
 [[bench]]
 name = "e2e_bench"

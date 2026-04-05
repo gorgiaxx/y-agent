@@ -51,6 +51,7 @@ llm_hooks = ["y-hooks/llm_hooks"]
 y-test-utils = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
+temp-env = "0.3"
 
 [lints]
 workspace = true

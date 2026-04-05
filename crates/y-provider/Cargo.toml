@@ -22,6 +22,7 @@ bytes = "1.11.1"
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 toml = { workspace = true }
+temp-env = "0.3"
 
 [lints]
 workspace = true
