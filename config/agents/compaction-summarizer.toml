@@ -16,4 +16,4 @@ max_iterations = 5
 max_tool_calls = 0
 timeout_secs = 60
 context_sharing = "full"
-max_context_tokens = 16384
+max_context_tokens = 163840

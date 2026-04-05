@@ -161,7 +161,16 @@ impl CompactionEngine {
 
     /// Compact a list of messages (synchronous fallback when no LLM).
     pub fn compact(&self, messages: &[String]) -> CompactionResult {
-        if messages.len() <= self.config.retain_window {
+        self.compact_with_retain(messages, self.config.retain_window)
+    }
+
+    /// Compact with a custom retain window (synchronous fallback).
+    pub fn compact_with_retain(
+        &self,
+        messages: &[String],
+        retain_window: usize,
+    ) -> CompactionResult {
+        if messages.len() <= retain_window {
             return CompactionResult {
                 summary: String::new(),
                 messages_compacted: 0,
@@ -170,7 +179,7 @@ impl CompactionEngine {
             };
         }
 
-        let to_compact = messages.len() - self.config.retain_window;
+        let to_compact = messages.len() - retain_window;
         let compacted = &messages[..to_compact];
 
         // Fallback: simple placeholder summary.
@@ -194,7 +203,21 @@ impl CompactionEngine {
     ///
     /// Falls back to simple truncation if LLM is unavailable or fails.
     pub async fn compact_async(&self, messages: &[String]) -> CompactionResult {
-        if messages.len() <= self.config.retain_window {
+        self.compact_async_with_retain(messages, self.config.retain_window)
+            .await
+    }
+
+    /// Compact with a custom retain window (async with LLM).
+    ///
+    /// Used by manual `/compact` to bypass the strict default retain window.
+    /// Pass a smaller value (e.g. 2) so even short conversations can be
+    /// compacted on demand.
+    pub async fn compact_async_with_retain(
+        &self,
+        messages: &[String],
+        retain_window: usize,
+    ) -> CompactionResult {
+        if messages.len() <= retain_window {
             return CompactionResult {
                 summary: String::new(),
                 messages_compacted: 0,
@@ -203,12 +226,12 @@ impl CompactionEngine {
             };
         }
 
-        let to_compact = messages.len() - self.config.retain_window;
+        let to_compact = messages.len() - retain_window;
         let compacted = &messages[..to_compact];
         let original_tokens: u32 = compacted.iter().map(|m| estimate_tokens(m)).sum();
 
         let Some(llm) = &self.llm else {
-            return self.compact(messages);
+            return self.compact_with_retain(messages, retain_window);
         };
 
         let summary = match &self.config.strategy {

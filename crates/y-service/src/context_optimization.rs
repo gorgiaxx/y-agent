@@ -34,6 +34,8 @@ pub struct OptimizationReport {
     pub messages_compacted: usize,
     /// Tokens saved by compaction (if compaction ran).
     pub compaction_tokens_saved: u32,
+    /// The compaction summary text (empty if compaction did not run).
+    pub compaction_summary: String,
 }
 
 impl OptimizationReport {
@@ -45,6 +47,7 @@ impl OptimizationReport {
             compaction_triggered: false,
             messages_compacted: 0,
             compaction_tokens_saved: 0,
+            compaction_summary: String::new(),
         }
     }
 }
@@ -120,18 +123,31 @@ impl ContextOptimizationService {
 
     /// Manual compaction: bypasses threshold check, compacts immediately.
     ///
-    /// Used by the `/compact` slash command.
+    /// Used by the `/compact` slash command. Uses a small retain window (2)
+    /// so even short conversations can be compacted on demand.
     pub async fn compact_now(
         container: &ServiceContainer,
         session_id: &SessionId,
     ) -> Result<OptimizationReport, OptimizationError> {
+        // Retain window for manual compaction -- keep only the last
+        // user+assistant exchange so /compact works even on short
+        // conversations. The automatic post-turn path uses the configured
+        // default (typically 10).
+        const MANUAL_RETAIN_WINDOW: usize = 2;
+
         let mut report = OptimizationReport::empty();
 
         // Force pruning (bypass delta check).
         Self::run_pruning(container, session_id, &mut report).await?;
 
-        // Force compaction (bypass threshold check).
-        Self::run_compaction(container, session_id, &mut report).await?;
+        // Force compaction with the small retain window.
+        Self::run_compaction(
+            container,
+            session_id,
+            &mut report,
+            Some(MANUAL_RETAIN_WINDOW),
+        )
+        .await?;
 
         // Reset the watermark after forced optimization.
         Self::update_pruning_watermark(container, session_id).await;
@@ -430,14 +446,19 @@ impl ContextOptimizationService {
             "compaction threshold reached, triggering compaction"
         );
 
-        Self::run_compaction(container, session_id, report).await
+        Self::run_compaction(container, session_id, report, None).await
     }
 
     /// Execute compaction on the context transcript.
+    ///
+    /// When `retain_window_override` is `Some(n)`, the compaction engine keeps
+    /// only the last `n` messages instead of the configured default. This lets
+    /// manual `/compact` work on short conversations.
     async fn run_compaction(
         container: &ServiceContainer,
         session_id: &SessionId,
         report: &mut OptimizationReport,
+        retain_window_override: Option<usize>,
     ) -> Result<(), OptimizationError> {
         let transcript = container
             .session_manager
@@ -454,15 +475,23 @@ impl ContextOptimizationService {
             return Ok(());
         }
 
-        let result = container
-            .compaction_engine
-            .compact_async(&message_strings)
-            .await;
+        let result = if let Some(retain) = retain_window_override {
+            container
+                .compaction_engine
+                .compact_async_with_retain(&message_strings, retain)
+                .await
+        } else {
+            container
+                .compaction_engine
+                .compact_async(&message_strings)
+                .await
+        };
 
         if result.messages_compacted > 0 {
             report.compaction_triggered = true;
             report.messages_compacted = result.messages_compacted;
             report.compaction_tokens_saved = result.tokens_saved;
+            report.compaction_summary.clone_from(&result.summary);
 
             // Keep the messages that were NOT compacted (the recent ones).
             let retained = &transcript[result.messages_compacted..];

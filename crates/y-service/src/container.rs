@@ -13,9 +13,10 @@ use tracing::{info, warn};
 
 use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
 use y_context::{
-    BuildSystemPromptProvider, BunVenvPromptInfo, CompactionEngine, ContextPipeline,
-    InjectContextStatus, InjectSkills, InjectTools, KnowledgeContextProvider, PruningEngine,
-    PythonVenvPromptInfo, SystemPromptConfig, VenvPromptInfo,
+    BuildSystemPromptProvider, BunVenvPromptInfo, CompactionConfig, CompactionEngine,
+    CompactionLlm, ContextPipeline, InjectContextStatus, InjectSkills, InjectTools,
+    KnowledgeContextProvider, PruningEngine, PythonVenvPromptInfo, SystemPromptConfig,
+    VenvPromptInfo,
 };
 use y_core::agent::AgentDelegator;
 use y_core::permission_types::PermissionMode;
@@ -479,8 +480,11 @@ tools = ["ToolSearch"]
         let pruning_engine =
             PruningEngine::with_delegator(config.pruning.clone(), Arc::clone(&agent_delegator));
 
-        // 15. Compaction engine (default config, no LLM backend yet).
-        let compaction_engine = CompactionEngine::new();
+        // 15. Compaction engine -- wired with agent_delegator for LLM summarization.
+        let compaction_llm: Box<dyn CompactionLlm> =
+            Box::new(DelegatingCompactionLlm(Arc::clone(&agent_delegator)));
+        let compaction_engine =
+            CompactionEngine::with_llm(CompactionConfig::default(), compaction_llm);
 
         // Default compaction threshold from session config (percentage of context window).
         let compaction_threshold_pct = config.session.compaction_threshold_pct;
@@ -660,6 +664,39 @@ impl AgentDelegator for RwLockPoolDelegator {
         let pool = self.0.read().await;
         pool.delegate(agent_name, input, context_strategy, session_id)
             .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DelegatingCompactionLlm -- bridges CompactionLlm with AgentDelegator
+// ---------------------------------------------------------------------------
+
+/// Adapter: implements [`CompactionLlm`] by delegating to the
+/// `compaction-summarizer` built-in agent via [`AgentDelegator`].
+///
+/// The prompt text is wrapped in a JSON object `{ "prompt": "..." }` and
+/// sent as the delegation input. The agent's text response is returned
+/// as the summary.
+struct DelegatingCompactionLlm(Arc<dyn AgentDelegator>);
+
+#[async_trait::async_trait]
+impl CompactionLlm for DelegatingCompactionLlm {
+    async fn summarize(&self, prompt: &str) -> Result<String, String> {
+        let input = serde_json::json!({ "prompt": prompt });
+        match self
+            .0
+            .delegate(
+                "compaction-summarizer",
+                input,
+                y_core::agent::ContextStrategyHint::None,
+                None,
+            )
+            .await
+        {
+            Ok(output) if !output.text.trim().is_empty() => Ok(output.text),
+            Ok(_) => Err("compaction-summarizer returned empty response".to_string()),
+            Err(e) => Err(format!("compaction-summarizer delegation failed: {e}")),
+        }
     }
 }
 
