@@ -83,7 +83,6 @@ pub struct BootstrapConfig {
 // Defaults
 // ---------------------------------------------------------------------------
 
-
 impl Default for PersonaConfig {
     fn default() -> Self {
         Self {
