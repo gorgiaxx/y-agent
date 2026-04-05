@@ -148,6 +148,13 @@ fn builtin_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Session,
         },
         CommandInfo {
+            name: "compact",
+            alias: None,
+            description: "Compact context (summarize older messages)",
+            args: "",
+            category: CommandCategory::Session,
+        },
+        CommandInfo {
             name: "export",
             alias: None,
             description: "Export session to file",
@@ -301,7 +308,7 @@ mod tests {
     #[test]
     fn test_all_commands_registered() {
         let reg = CommandRegistry::new();
-        assert!(reg.all().len() >= 17, "should have at least 17 commands");
+        assert!(reg.all().len() >= 18, "should have at least 18 commands");
     }
 
     #[test]

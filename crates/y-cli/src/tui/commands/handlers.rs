@@ -2,6 +2,9 @@
 //!
 //! Each handler receives a parsed command line, the mutable `AppState`,
 //! and returns a `CommandResult` indicating success, failure, or output.
+//!
+//! Commands that require async service access return `CommandResult::Async`
+//! with an `AsyncCommand` variant that the TUI event loop executes.
 
 use std::fmt::Write as _;
 
@@ -17,15 +20,43 @@ pub enum CommandResult {
     Error(String),
     /// Quit the application.
     Quit,
-    /// A new session was requested — state has been reset.
+    /// A new session was requested -- state has been reset.
     /// The TUI event loop should handle any async follow-up.
     NewSession,
+    /// Command requires async service access -- deferred to TUI event loop.
+    Async(AsyncCommand),
+}
+
+/// Deferred async commands that require `AppServices` access.
+///
+/// The TUI event loop matches on these to perform the real work
+/// with access to `SessionManager`, `ProviderPool`, etc.
+#[derive(Debug, Clone)]
+pub enum AsyncCommand {
+    /// `/list` -- list all sessions.
+    ListSessions,
+    /// `/switch <id|label>` -- switch to another session.
+    SwitchSession(String),
+    /// `/delete <id>` -- delete a session.
+    DeleteSession(String),
+    /// `/branch [label]` -- fork session from current point.
+    BranchSession(Option<String>),
+    /// `/export [format]` -- export session transcript.
+    ExportSession(Option<String>),
+    /// `/stats` -- show token/cost statistics.
+    ShowStats,
+    /// `/compact` -- trigger manual context compaction.
+    CompactContext,
+    /// `/model [subcommand]` -- model management.
+    ListModels,
+    /// `/agent [subcommand]` -- agent management.
+    ShowAgents,
 }
 
 /// Parse and execute a command string.
 ///
 /// The input is the raw text after the `/` prefix, e.g. `"new my session"`.
-/// In Phase T5+, this will also accept `&AppServices` for real operations.
+/// Commands that need async service access return `CommandResult::Async`.
 pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
     let parts: Vec<&str> = input.trim().splitn(2, ' ').collect();
     let cmd_name = parts.first().copied().unwrap_or("");
@@ -106,12 +137,50 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             CommandResult::Ok(Some(msg))
         }
 
-        // Stub handlers for commands that need AppServices (Phase T5).
-        "list" | "switch" | "delete" | "branch" | "export" | "agent" | "model" | "stats" => {
-            CommandResult::Ok(Some(format!(
-                "/{resolved} requires server connection (coming in Phase T5)."
-            )))
+        // Async commands -- delegate to TUI event loop with service access.
+        "list" => CommandResult::Async(AsyncCommand::ListSessions),
+
+        "switch" => {
+            if args.is_empty() {
+                CommandResult::Error("Usage: /switch <session-id|label>".into())
+            } else {
+                CommandResult::Async(AsyncCommand::SwitchSession(args.to_string()))
+            }
         }
+
+        "delete" => {
+            if args.is_empty() {
+                CommandResult::Error("Usage: /delete <session-id>".into())
+            } else {
+                CommandResult::Async(AsyncCommand::DeleteSession(args.to_string()))
+            }
+        }
+
+        "branch" => {
+            let label = if args.is_empty() {
+                None
+            } else {
+                Some(args.to_string())
+            };
+            CommandResult::Async(AsyncCommand::BranchSession(label))
+        }
+
+        "export" => {
+            let format = if args.is_empty() {
+                None
+            } else {
+                Some(args.to_string())
+            };
+            CommandResult::Async(AsyncCommand::ExportSession(format))
+        }
+
+        "stats" => CommandResult::Async(AsyncCommand::ShowStats),
+
+        "compact" => CommandResult::Async(AsyncCommand::CompactContext),
+
+        "model" => CommandResult::Async(AsyncCommand::ListModels),
+
+        "agent" => CommandResult::Async(AsyncCommand::ShowAgents),
 
         "shortcuts" => {
             let text = generate_shortcuts_text();
@@ -201,7 +270,7 @@ fn generate_command_help(cmd_name: &str) -> String {
                 .map(|a| format!(" (alias: /{a})"))
                 .unwrap_or_default();
             format!(
-                "/{} {}\n{}{}\n\nCategory: {}",
+                "/{} {}\n{}{}\\n\nCategory: {}",
                 cmd.name,
                 cmd.args,
                 cmd.description,
@@ -227,7 +296,7 @@ fn generate_shortcuts_text() -> String {
         "  [Input Panel]
     Enter                     Send message
     Shift+Enter               New line
-    Tab                       Cycle focus (Input → Chat → Sidebar)
+    Tab                       Cycle focus (Input -> Chat -> Sidebar)
     /                         Open command palette (on empty input)
     :                         Open command palette (vim-style)
     Esc                       Return to normal mode\n\n",
@@ -235,8 +304,8 @@ fn generate_shortcuts_text() -> String {
 
     text.push_str(
         "  [Chat Panel]
-    j / ↓ / PageDown          Scroll down
-    k / ↑ / PageUp            Scroll up
+    j / Down / PageDown       Scroll down
+    k / Up / PageUp           Scroll up
     i                         Return focus to input
     Tab                       Cycle focus\n\n",
     );
@@ -250,7 +319,7 @@ fn generate_shortcuts_text() -> String {
 
     text.push_str(
         "  [Command Palette]
-    ↑ / ↓                     Navigate suggestions
+    Up / Down                 Navigate suggestions
     Tab                       Next suggestion
     Enter                     Execute selected command
     Esc                       Close palette\n\n",
@@ -366,5 +435,95 @@ mod tests {
         let result = execute("reset", &mut state);
         assert!(matches!(result, CommandResult::Ok(Some(_))));
         assert!(state.messages.is_empty());
+    }
+
+    // T-TUI-04-07: async commands return Async variant.
+    #[test]
+    fn test_list_returns_async() {
+        let mut state = AppState::default();
+        let result = execute("list", &mut state);
+        assert!(matches!(
+            result,
+            CommandResult::Async(AsyncCommand::ListSessions)
+        ));
+    }
+
+    #[test]
+    fn test_switch_requires_args() {
+        let mut state = AppState::default();
+        let result = execute("switch", &mut state);
+        assert!(matches!(result, CommandResult::Error(_)));
+
+        let result = execute("switch my-session", &mut state);
+        assert!(
+            matches!(result, CommandResult::Async(AsyncCommand::SwitchSession(ref s)) if s == "my-session")
+        );
+    }
+
+    #[test]
+    fn test_delete_requires_args() {
+        let mut state = AppState::default();
+        let result = execute("delete", &mut state);
+        assert!(matches!(result, CommandResult::Error(_)));
+
+        let result = execute("delete abc-123", &mut state);
+        assert!(
+            matches!(result, CommandResult::Async(AsyncCommand::DeleteSession(ref s)) if s == "abc-123")
+        );
+    }
+
+    #[test]
+    fn test_branch_optional_label() {
+        let mut state = AppState::default();
+        let result = execute("branch", &mut state);
+        assert!(matches!(
+            result,
+            CommandResult::Async(AsyncCommand::BranchSession(None))
+        ));
+
+        let result = execute("branch my-branch", &mut state);
+        assert!(
+            matches!(result, CommandResult::Async(AsyncCommand::BranchSession(Some(ref s))) if s == "my-branch")
+        );
+    }
+
+    #[test]
+    fn test_compact_returns_async() {
+        let mut state = AppState::default();
+        let result = execute("compact", &mut state);
+        assert!(matches!(
+            result,
+            CommandResult::Async(AsyncCommand::CompactContext)
+        ));
+    }
+
+    #[test]
+    fn test_stats_returns_async() {
+        let mut state = AppState::default();
+        let result = execute("stats", &mut state);
+        assert!(matches!(
+            result,
+            CommandResult::Async(AsyncCommand::ShowStats)
+        ));
+    }
+
+    #[test]
+    fn test_model_returns_async() {
+        let mut state = AppState::default();
+        let result = execute("model", &mut state);
+        assert!(matches!(
+            result,
+            CommandResult::Async(AsyncCommand::ListModels)
+        ));
+    }
+
+    #[test]
+    fn test_agent_returns_async() {
+        let mut state = AppState::default();
+        let result = execute("agent", &mut state);
+        assert!(matches!(
+            result,
+            CommandResult::Async(AsyncCommand::ShowAgents)
+        ));
     }
 }

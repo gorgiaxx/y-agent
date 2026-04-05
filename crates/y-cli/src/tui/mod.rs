@@ -1,10 +1,10 @@
-//! TUI application shell — entry point, terminal setup, main event loop.
+//! TUI application shell -- entry point, terminal setup, main event loop.
 //!
 //! `TuiApp` manages the ratatui terminal lifecycle (raw mode, alternate screen)
-//! and drives the render–event–update loop. It delegates rendering to panel
+//! and drives the render-event-update loop. It delegates rendering to panel
 //! modules and key handling to the key dispatcher (both in Phase T3+).
 //!
-//! NOTE: `dead_code` is allowed at module level because this is a scaffold —
+//! NOTE: `dead_code` is allowed at module level because this is a scaffold --
 //! many state model types and methods will be consumed in later phases.
 #![allow(dead_code)]
 
@@ -19,6 +19,7 @@ pub mod selection;
 pub mod state;
 pub mod tracing_bridge;
 
+use std::fmt::Write as _;
 use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,12 +41,16 @@ use tui_textarea::TextArea;
 
 use crate::wire::AppServices;
 use chat_flow::ChatEvent;
-use commands::handlers::{self, CommandResult};
+use commands::handlers::{self, AsyncCommand, CommandResult};
 use events::{AppEvent, EventLoop};
 use keys::KeyAction;
 use layout::LayoutChunks;
 use overlays::command_palette::CommandPaletteState;
-use state::{AppState, InteractionMode, PanelFocus, SessionListItem, Toast, ToastLevel};
+use state::{
+    AppState, ChatMessage, InteractionMode, MessageRole, PanelFocus, SessionListItem, Toast,
+    ToastLevel,
+};
+use y_core::provider::ProviderPool as _;
 
 /// Type alias for the ratatui terminal with crossterm backend.
 type Term = Terminal<CrosstermBackend<Stdout>>;
@@ -166,7 +171,9 @@ impl TuiApp {
                     } else {
                         self.palette.input.clone()
                     };
-                    self.execute_command(&cmd_input);
+                    if self.execute_command(&cmd_input).await {
+                        return true;
+                    }
                     self.palette = CommandPaletteState::new();
                     self.state.set_mode(InteractionMode::Normal);
                     self.state.set_focus(PanelFocus::Input);
@@ -176,7 +183,9 @@ impl TuiApp {
                     if trimmed.starts_with('/') && !trimmed.is_empty() {
                         let cmd_input = &trimmed[1..];
                         self.state.push_history(trimmed);
-                        self.execute_command(cmd_input);
+                        if self.execute_command(cmd_input).await {
+                            return true;
+                        }
                     } else if !trimmed.is_empty() {
                         self.state.push_history(trimmed);
                         self.llm_rx =
@@ -405,7 +414,7 @@ impl TuiApp {
                     )),
                     Line::from(Span::styled(
                         format!(
-                            "Minimum: {}×{} — Current: {}×{}",
+                            "Minimum: {}x{} -- Current: {}x{}",
                             layout::MIN_COLS,
                             layout::MIN_ROWS,
                             area.width,
@@ -445,7 +454,8 @@ impl TuiApp {
     }
 
     /// Execute a command and apply its result to state.
-    fn execute_command(&mut self, cmd_input: &str) {
+    /// Returns `true` if the app should quit.
+    async fn execute_command(&mut self, cmd_input: &str) -> bool {
         let result = handlers::execute(cmd_input, &mut self.state);
         match result {
             CommandResult::Ok(Some(msg)) => {
@@ -455,7 +465,10 @@ impl TuiApp {
                 self.state
                     .push_toast(format!("Error: {msg}"), ToastLevel::Error);
             }
-            CommandResult::Quit | CommandResult::Ok(None) => {}
+            CommandResult::Quit => {
+                return true;
+            }
+            CommandResult::Ok(None) => {}
             CommandResult::NewSession => {
                 // State has been reset by the handler (messages cleared,
                 // current_session_id set to None, user_message_count reset).
@@ -464,7 +477,464 @@ impl TuiApp {
                 self.state
                     .push_toast("New session started.".into(), ToastLevel::Info);
             }
+            CommandResult::Async(cmd) => {
+                self.execute_async_command(cmd).await;
+            }
         }
+        false
+    }
+
+    /// Execute an async command that requires service access.
+    async fn execute_async_command(&mut self, cmd: AsyncCommand) {
+        match cmd {
+            AsyncCommand::ListSessions => self.cmd_list_sessions().await,
+            AsyncCommand::SwitchSession(target) => self.cmd_switch_session(&target).await,
+            AsyncCommand::DeleteSession(target) => self.cmd_delete_session(&target).await,
+            AsyncCommand::BranchSession(label) => self.cmd_branch_session(label).await,
+            AsyncCommand::ExportSession(ref format) => {
+                self.cmd_export_session(format.as_deref());
+            }
+            AsyncCommand::ShowStats => self.cmd_show_stats(),
+            AsyncCommand::CompactContext => self.cmd_compact_context().await,
+            AsyncCommand::ListModels => self.cmd_list_models().await,
+            AsyncCommand::ShowAgents => self.cmd_show_agents().await,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Async command implementations
+    // -----------------------------------------------------------------------
+
+    /// `/list` -- list all sessions.
+    async fn cmd_list_sessions(&mut self) {
+        use y_core::session::SessionFilter;
+
+        match self
+            .services
+            .session_manager
+            .list_sessions(&SessionFilter::default())
+            .await
+        {
+            Ok(mut nodes) => {
+                nodes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                if nodes.is_empty() {
+                    self.state
+                        .push_toast("No sessions found.".into(), ToastLevel::Info);
+                    return;
+                }
+                let mut text = format!("Sessions ({}):\n\n", nodes.len());
+                for n in &nodes {
+                    let title = n.title.as_deref().unwrap_or("(untitled)");
+                    let active =
+                        if self.state.current_session_id.as_deref() == Some(&n.id.to_string()) {
+                            " [*]"
+                        } else {
+                            ""
+                        };
+                    let _ = writeln!(
+                        text,
+                        "  {}  {}  ({} msgs){active}",
+                        &n.id.to_string()[..8],
+                        title,
+                        n.message_count,
+                    );
+                }
+                self.state.messages.push(ChatMessage {
+                    role: MessageRole::System,
+                    content: text,
+                    timestamp: chrono::Utc::now(),
+                    is_streaming: false,
+                    is_cancelled: false,
+                });
+            }
+            Err(e) => {
+                self.state
+                    .push_toast(format!("Failed to list sessions: {e}"), ToastLevel::Error);
+            }
+        }
+    }
+
+    /// `/switch <target>` -- switch to another session by ID prefix or title.
+    async fn cmd_switch_session(&mut self, target: &str) {
+        use y_core::session::SessionFilter;
+
+        let nodes = match self
+            .services
+            .session_manager
+            .list_sessions(&SessionFilter::default())
+            .await
+        {
+            Ok(n) => n,
+            Err(e) => {
+                self.state
+                    .push_toast(format!("Failed to list sessions: {e}"), ToastLevel::Error);
+                return;
+            }
+        };
+
+        // Find by ID prefix or title substring.
+        let target_lower = target.to_lowercase();
+        let matched = nodes.iter().find(|n| {
+            n.id.to_string().starts_with(target)
+                || n.title
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase().contains(&target_lower))
+        });
+
+        match matched {
+            Some(node) => {
+                let sid = node.id.clone();
+                let title = node
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| sid.to_string()[..8].to_string());
+                self.state.current_session_id = Some(sid.to_string());
+                self.load_session_transcript(&sid).await;
+                self.state.sync_selected_session_index();
+                self.state.set_focus(PanelFocus::Input);
+                self.state
+                    .push_toast(format!("Switched to: {title}"), ToastLevel::Info);
+            }
+            None => {
+                self.state.push_toast(
+                    format!("No session matching '{target}'."),
+                    ToastLevel::Error,
+                );
+            }
+        }
+    }
+
+    /// `/delete <target>` -- delete a session by ID prefix.
+    async fn cmd_delete_session(&mut self, target: &str) {
+        use y_core::session::SessionFilter;
+
+        let nodes = match self
+            .services
+            .session_manager
+            .list_sessions(&SessionFilter::default())
+            .await
+        {
+            Ok(n) => n,
+            Err(e) => {
+                self.state
+                    .push_toast(format!("Failed to list sessions: {e}"), ToastLevel::Error);
+                return;
+            }
+        };
+
+        let target_lower = target.to_lowercase();
+        let matched = nodes.iter().find(|n| {
+            n.id.to_string().starts_with(target)
+                || n.title
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase().contains(&target_lower))
+        });
+
+        match matched {
+            Some(node) => {
+                let sid = node.id.clone();
+                let is_current = self.state.current_session_id.as_deref() == Some(&sid.to_string());
+
+                match self.services.session_manager.delete_session(&sid).await {
+                    Ok(()) => {
+                        self.state.push_toast(
+                            format!("Deleted session: {}", &sid.to_string()[..8]),
+                            ToastLevel::Info,
+                        );
+                        // Refresh sidebar.
+                        self.load_sessions().await;
+                        // If we deleted the current session, clear the chat.
+                        if is_current {
+                            self.state.messages.clear();
+                            self.state.current_session_id = None;
+                            self.state.user_message_count = 0;
+                        }
+                        self.state.sync_selected_session_index();
+                    }
+                    Err(e) => {
+                        self.state
+                            .push_toast(format!("Delete failed: {e}"), ToastLevel::Error);
+                    }
+                }
+            }
+            None => {
+                self.state.push_toast(
+                    format!("No session matching '{target}'."),
+                    ToastLevel::Error,
+                );
+            }
+        }
+    }
+
+    /// `/branch [label]` -- fork current session.
+    async fn cmd_branch_session(&mut self, label: Option<String>) {
+        let Some(ref current_id) = self.state.current_session_id else {
+            self.state
+                .push_toast("No active session to branch.".into(), ToastLevel::Error);
+            return;
+        };
+
+        let sid = y_core::types::SessionId::from_string(current_id.clone());
+
+        // Fork at the last message (full fork).
+        match self
+            .services
+            .session_manager
+            .fork_session(&sid, usize::MAX, label)
+            .await
+        {
+            Ok(fork) => {
+                let fork_id = fork.id.to_string();
+                let fork_title = fork.title.unwrap_or_else(|| fork_id[..8].to_string());
+                self.state.current_session_id = Some(fork_id.clone());
+                self.load_session_transcript(&fork.id).await;
+                self.load_sessions().await;
+                self.state.sync_selected_session_index();
+                self.state.set_focus(PanelFocus::Input);
+                self.state
+                    .push_toast(format!("Branched: {fork_title}"), ToastLevel::Info);
+            }
+            Err(e) => {
+                self.state
+                    .push_toast(format!("Branch failed: {e}"), ToastLevel::Error);
+            }
+        }
+    }
+
+    /// `/export [format]` -- export session transcript to clipboard.
+    fn cmd_export_session(&mut self, format: Option<&str>) {
+        if self.state.messages.is_empty() {
+            self.state
+                .push_toast("No messages to export.".into(), ToastLevel::Info);
+            return;
+        }
+
+        let fmt = format.unwrap_or("md");
+        let content = if fmt == "json" {
+            let entries: Vec<serde_json::Value> = self
+                .state
+                .messages
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "role": format!("{:?}", m.role),
+                        "content": m.content,
+                        "timestamp": m.timestamp.to_rfc3339(),
+                    })
+                })
+                .collect();
+            serde_json::to_string_pretty(&entries).unwrap_or_default()
+        } else {
+            // Markdown format.
+            let mut md = String::new();
+            let _ = writeln!(md, "# Chat Export\n");
+            for m in &self.state.messages {
+                let role = match m.role {
+                    MessageRole::User => "User",
+                    MessageRole::Assistant => "Assistant",
+                    MessageRole::System => "System",
+                    MessageRole::Tool => "Tool",
+                };
+                let _ = writeln!(md, "## {role}\n\n{}\n", m.content);
+            }
+            md
+        };
+
+        #[cfg(feature = "tui")]
+        {
+            match arboard::Clipboard::new() {
+                Ok(mut clipboard) => match clipboard.set_text(&content) {
+                    Ok(()) => {
+                        self.state.push_toast(
+                            format!(
+                                "Exported {} messages ({fmt}) to clipboard.",
+                                self.state.messages.len()
+                            ),
+                            ToastLevel::Info,
+                        );
+                    }
+                    Err(e) => {
+                        self.state
+                            .push_toast(format!("Clipboard error: {e}"), ToastLevel::Error);
+                    }
+                },
+                Err(e) => {
+                    self.state
+                        .push_toast(format!("Clipboard error: {e}"), ToastLevel::Error);
+                }
+            }
+        }
+
+        #[cfg(not(feature = "tui"))]
+        {
+            let _ = content;
+            self.state.push_toast(
+                "Clipboard not available without TUI feature.".into(),
+                ToastLevel::Error,
+            );
+        }
+    }
+
+    /// `/stats` -- show token/cost statistics.
+    fn cmd_show_stats(&mut self) {
+        let mut text = String::from("Session Statistics:\n\n");
+        let _ = writeln!(
+            text,
+            "  Input tokens (cumulative):  {}",
+            self.state.cumulative_input_tokens
+        );
+        let _ = writeln!(
+            text,
+            "  Output tokens (cumulative): {}",
+            self.state.cumulative_output_tokens
+        );
+        let _ = writeln!(
+            text,
+            "  Last turn input tokens:     {}",
+            self.state.last_input_tokens
+        );
+        let _ = writeln!(
+            text,
+            "  Context usage:              {:.1}%",
+            self.state.context_usage_percent()
+        );
+        let _ = writeln!(
+            text,
+            "  Context window:             {} tokens",
+            self.state.context_window
+        );
+        if let Some(cost) = self.state.last_cost {
+            let _ = writeln!(text, "  Last turn cost:             ${cost:.6}");
+        }
+        let _ = writeln!(
+            text,
+            "  Messages in view:           {}",
+            self.state.messages.len()
+        );
+        let _ = writeln!(
+            text,
+            "  Turn count:                 {}",
+            self.state.user_message_count
+        );
+
+        self.state.messages.push(ChatMessage {
+            role: MessageRole::System,
+            content: text,
+            timestamp: chrono::Utc::now(),
+            is_streaming: false,
+            is_cancelled: false,
+        });
+    }
+
+    /// `/compact` -- trigger manual context compaction.
+    async fn cmd_compact_context(&mut self) {
+        let Some(ref current_id) = self.state.current_session_id else {
+            self.state
+                .push_toast("No active session to compact.".into(), ToastLevel::Error);
+            return;
+        };
+
+        let sid = y_core::types::SessionId::from_string(current_id.clone());
+        self.state
+            .push_toast("Compacting context...".into(), ToastLevel::Info);
+
+        match crate::orchestrator::compact_context(&self.services, &sid).await {
+            Ok(report) => {
+                if report.compaction_triggered {
+                    let msg = format!(
+                        "Compacted {} messages, saved ~{} tokens.",
+                        report.messages_compacted, report.compaction_tokens_saved,
+                    );
+                    self.state.push_toast(msg, ToastLevel::Success);
+                    if !report.compaction_summary.is_empty() {
+                        self.state.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: format!(
+                                "[Context Compacted]\n\n{}",
+                                report.compaction_summary
+                            ),
+                            timestamp: chrono::Utc::now(),
+                            is_streaming: false,
+                            is_cancelled: false,
+                        });
+                    }
+                } else {
+                    self.state
+                        .push_toast("Nothing to compact.".into(), ToastLevel::Info);
+                }
+            }
+            Err(e) => {
+                self.state
+                    .push_toast(format!("Compaction failed: {e}"), ToastLevel::Error);
+            }
+        }
+    }
+
+    /// `/model` -- list configured models/providers.
+    async fn cmd_list_models(&mut self) {
+        let pool = self.services.provider_pool().await;
+        let metadata = pool.list_metadata();
+
+        if metadata.is_empty() {
+            self.state
+                .push_toast("No providers configured.".into(), ToastLevel::Info);
+            return;
+        }
+
+        let statuses = pool.provider_statuses().await;
+
+        let mut text = format!("Configured Models ({}):\n\n", metadata.len());
+        for meta in &metadata {
+            let status = statuses.iter().find(|s| s.id == meta.id);
+            let frozen = status.is_some_and(|s| s.is_frozen);
+            let frozen_str = if frozen { " [FROZEN]" } else { "" };
+            let _ = writeln!(
+                text,
+                "  {:<16} {:<24} ctx:{}k  {:?}{frozen_str}",
+                meta.id.as_str(),
+                meta.model,
+                meta.context_window / 1000,
+                meta.provider_type,
+            );
+        }
+
+        self.state.messages.push(ChatMessage {
+            role: MessageRole::System,
+            content: text,
+            timestamp: chrono::Utc::now(),
+            is_streaming: false,
+            is_cancelled: false,
+        });
+    }
+
+    /// `/agent` -- list registered agents.
+    async fn cmd_show_agents(&mut self) {
+        let registry = self.services.agent_registry.lock().await;
+        let agents = registry.list();
+
+        if agents.is_empty() {
+            self.state
+                .push_toast("No agents registered.".into(), ToastLevel::Info);
+            return;
+        }
+
+        let mut text = format!("Registered Agents ({}):\n\n", agents.len());
+        for def in &agents {
+            let callable = if def.user_callable { " [callable]" } else { "" };
+            let _ = writeln!(
+                text,
+                "  {:<24} {:?}  {:?}{callable}",
+                def.id, def.mode, def.trust_tier,
+            );
+        }
+
+        self.state.messages.push(ChatMessage {
+            role: MessageRole::System,
+            content: text,
+            timestamp: chrono::Utc::now(),
+            is_streaming: false,
+            is_cancelled: false,
+        });
     }
 
     /// Render all panels into their layout chunks.
@@ -480,7 +950,7 @@ impl TuiApp {
             panels::sidebar::render(frame, sidebar_area, state);
         }
 
-        // Chat panel — returns plain text lines for selection.
+        // Chat panel -- returns plain text lines for selection.
         let plain_lines = panels::chat::render(frame, chunks.chat, state);
 
         // Status bar.
@@ -520,7 +990,7 @@ impl TuiApp {
 
         let row = scroll_to + content_y;
 
-        // Convert display column → character index using unicode widths.
+        // Convert display column -> character index using unicode widths.
         let char_idx = if let Some(line) = self.chat_plain_lines.get(row) {
             display_col_to_char_idx(line, display_col)
         } else {
@@ -573,7 +1043,7 @@ impl TuiApp {
     }
 
     /// Ensure there is a current session. On fresh startup, we do NOT resume
-    /// the most recent session — instead, we leave `current_session_id = None`
+    /// the most recent session -- instead, we leave `current_session_id = None`
     /// so the user always starts with a clean slate. The session will be created
     /// lazily when the first message is sent (see `chat_flow::submit_message`).
     fn ensure_current_session() {
@@ -660,7 +1130,7 @@ fn display_col_to_char_idx(text: &str, display_col: usize) -> usize {
         }
         col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
     }
-    // Past end of line — clamp to character count.
+    // Past end of line -- clamp to character count.
     text.chars().count()
 }
 

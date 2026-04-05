@@ -21,6 +21,7 @@ use y_context::{AssembledContext, ContextCategory};
 use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore};
 use y_core::types::{Message, Role, SessionId};
 
+use crate::agent_service::AgentExecutionError;
 use crate::container::ServiceContainer;
 
 // ---------------------------------------------------------------------------
@@ -258,6 +259,19 @@ pub enum TurnError {
     /// The turn was explicitly cancelled by the caller.
     #[error("Cancelled")]
     Cancelled,
+}
+
+impl From<AgentExecutionError> for TurnError {
+    fn from(err: AgentExecutionError) -> Self {
+        match err {
+            AgentExecutionError::LlmError { message, .. } => TurnError::LlmError(message),
+            AgentExecutionError::ContextError(msg) => TurnError::ContextError(msg),
+            AgentExecutionError::ToolLoopLimitExceeded { max_iterations } => {
+                TurnError::ToolLoopLimitExceeded { max_iterations }
+            }
+            AgentExecutionError::Cancelled => TurnError::Cancelled,
+        }
+    }
 }
 
 /// Input for a turn execution.
@@ -826,15 +840,7 @@ impl ChatService {
                 }
                 return Err(TurnError::LlmError(message));
             }
-            Err(AgentExecutionError::ContextError(msg)) => {
-                return Err(TurnError::ContextError(msg));
-            }
-            Err(AgentExecutionError::ToolLoopLimitExceeded { max_iterations }) => {
-                return Err(TurnError::ToolLoopLimitExceeded { max_iterations });
-            }
-            Err(AgentExecutionError::Cancelled) => {
-                return Err(TurnError::Cancelled);
-            }
+            Err(e) => return Err(TurnError::from(e)),
         };
 
         // 4. Session-specific post-processing: persist final assistant message,

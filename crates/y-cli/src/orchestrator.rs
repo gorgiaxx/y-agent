@@ -27,3 +27,17 @@ pub async fn execute_turn_streaming(
 ) -> Result<TurnResult, TurnError> {
     ChatService::execute_turn_with_progress(services, input, progress, None).await
 }
+
+/// Trigger manual context compaction for a session.
+///
+/// Thin delegation to `ContextOptimizationService::compact_now`.
+pub async fn compact_context(
+    services: &AppServices,
+    session_id: &y_core::types::SessionId,
+) -> Result<
+    y_service::context_optimization::OptimizationReport,
+    y_service::context_optimization::OptimizationError,
+> {
+    y_service::context_optimization::ContextOptimizationService::compact_now(services, session_id)
+        .await
+}
