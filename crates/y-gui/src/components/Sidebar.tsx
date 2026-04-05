@@ -36,6 +36,7 @@ export interface ChatSidebarProps {
   onNewChat: () => void;
   onNewChatInWorkspace: (workspaceId: string) => void;
   onDeleteSession: (id: string) => void;
+  onForkSession?: (sessionId: string) => void;
   onCreateWorkspace: (name: string, path: string) => void;
   onUpdateWorkspace: (id: string, name: string, path: string) => void;
   onDeleteWorkspace: (id: string) => void;
@@ -188,6 +189,7 @@ export function Sidebar({ chat, skills, knowledge, agents, automation, nav }: Si
           onNewChat={chat.onNewChat}
           onNewChatInWorkspace={chat.onNewChatInWorkspace}
           onDeleteSession={chat.onDeleteSession}
+          onForkSession={chat.onForkSession}
           onCreateWorkspace={chat.onCreateWorkspace}
           onUpdateWorkspace={chat.onUpdateWorkspace}
           onDeleteWorkspace={chat.onDeleteWorkspace}

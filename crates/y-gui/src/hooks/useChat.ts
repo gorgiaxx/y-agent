@@ -50,7 +50,8 @@ export type ChatOpStatus =
   | 'editing'
   | 'undoing'
   | 'resending'
-  | 'restoring';
+  | 'restoring'
+  | 'compacting';
 
 /** Tracked tool result from a progress event. */
 export interface ToolResultRecord {
@@ -97,6 +98,22 @@ interface UseChatReturn {
   contextResetPoints: number[];
   /** Add a new context reset point at the current message position. */
   addContextReset: () => void;
+  /** Compaction display items (divider + summary) injected after compaction completes. */
+  compactPoints: CompactInfo[];
+  /** Add a compaction point at the current message position (called by handleCommand). */
+  addCompactPoint: (info: Omit<CompactInfo, 'atIndex'>) => void;
+  /** Set the operation status (used by handlers for compacting state). */
+  setOp: (status: ChatOpStatus) => void;
+}
+
+/** Info about a completed compaction for rendering a divider + summary bubble. */
+export interface CompactInfo {
+  /** Index in the message list where the divider should appear. */
+  atIndex: number;
+  messagesPruned: number;
+  messagesCompacted: number;
+  tokensSaved: number;
+  summary: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +173,10 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const contextResetMapRef = useRef(new Map<string, number[]>());
   const [contextResetPoints, setContextResetPoints] = useState<number[]>([]);
 
+  // Per-session compaction points (divider + summary info after /compact completes).
+  const compactMapRef = useRef(new Map<string, CompactInfo[]>());
+  const [compactPoints, setCompactPoints] = useState<CompactInfo[]>([]);
+
   // Keep a ref in sync with activeSessionId.
   const activeSessionIdRef = useRef<string | null>(activeSessionId);
   useEffect(() => {
@@ -204,6 +225,12 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       }
     } else {
       setContextResetPoints([]);
+    }
+    // Restore compact points for the new session.
+    if (activeSessionId) {
+      setCompactPoints(compactMapRef.current.get(activeSessionId) ?? []);
+    } else {
+      setCompactPoints([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId]);
@@ -1249,6 +1276,22 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       .catch((e) => console.error('[chat] failed to persist context reset:', e));
   }, []);
 
+  // ------------------------------------------------------------------
+  // addCompactPoint -- record a compaction point for display
+  // ------------------------------------------------------------------
+
+  const addCompactPoint = useCallback((info: Omit<CompactInfo, 'atIndex'>) => {
+    const sid = activeSessionIdRef.current;
+    if (!sid) return;
+
+    const msgs = getCachedMessages(sessionMessagesRef.current, sid);
+    const entry: CompactInfo = { ...info, atIndex: msgs.length };
+    const existing = compactMapRef.current.get(sid) ?? [];
+    const updated = [...existing, entry];
+    compactMapRef.current.set(sid, updated);
+    setCompactPoints(updated);
+  }, []);
+
   return {
     messages: visibleMessages,
     isStreaming,
@@ -1271,5 +1314,8 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     restoreBranch,
     contextResetPoints,
     addContextReset,
+    compactPoints,
+    addCompactPoint,
+    setOp,
   };
 }

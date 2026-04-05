@@ -605,3 +605,26 @@
   background: var(--error);
 }
 
+/* ---- Compacting spinner ---- */
+
+.btn-compacting {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: rgba(74, 222, 128, 0.8);
+}
+
+.compacting-spinner {
+  animation: compactSpin 1s linear infinite;
+}
+
+@keyframes compactSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+

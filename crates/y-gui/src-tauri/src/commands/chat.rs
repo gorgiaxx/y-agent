@@ -936,6 +936,8 @@ pub struct CompactResult {
     pub messages_pruned: usize,
     pub messages_compacted: usize,
     pub tokens_saved: u32,
+    /// The compaction summary text (for display in the chat panel).
+    pub summary: String,
 }
 
 /// Manually trigger context compaction for a session.
@@ -961,6 +963,7 @@ pub async fn context_compact(
         messages_pruned: report.messages_pruned,
         messages_compacted: report.messages_compacted,
         tokens_saved: report.pruning_tokens_saved + report.compaction_tokens_saved,
+        summary: report.compaction_summary,
     })
 }
 

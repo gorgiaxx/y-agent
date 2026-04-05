@@ -10,6 +10,7 @@ import { useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { ChatStarted, ThinkingEffort, Attachment } from '../types';
 import type { ViewType } from '../components/Sidebar';
+import type { CompactInfo, ChatOpStatus } from './useChat';
 
 export interface ChatDeps {
   // Session deps
@@ -29,6 +30,7 @@ export interface ChatDeps {
   resendLastTurn: (sessionId: string, messageId: string, content: string, providerId?: string) => Promise<unknown>;
   restoreBranch: (sessionId: string, checkpointId: string) => Promise<unknown>;
   pendingEdit: { messageId: string; content: string } | null;
+  loadMessages: (sessionId: string) => Promise<void>;
 
   // Provider
   selectedProviderId: string;
@@ -40,6 +42,10 @@ export interface ChatDeps {
 
   // Diagnostics integration
   addUserMessage: (content: string, sessionId: string) => void;
+
+  // Compact
+  addCompactPoint: (info: Omit<CompactInfo, 'atIndex'>) => void;
+  setOp: (status: ChatOpStatus) => void;
 
   // Navigation
   setActiveView: (view: ViewType) => void;
@@ -78,11 +84,14 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     resendLastTurn,
     restoreBranch,
     pendingEdit,
+    loadMessages,
     selectedProviderId,
     welcomeWorkspaceId,
     assignSession,
     refreshWorkspaces,
     addUserMessage,
+    addCompactPoint,
+    setOp,
     setActiveView,
     setDiagOpen,
     setObsOpen,
@@ -223,9 +232,29 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
           return true;
         case 'compact':
           if (activeSessionId) {
-            invoke('context_compact', { sessionId: activeSessionId })
-              .then(() => console.log('Compaction completed'))
-              .catch((e) => console.error('Compaction failed:', e));
+            const sid = activeSessionId;
+            setOp('compacting');
+            invoke<{ messages_pruned: number; messages_compacted: number; tokens_saved: number; summary: string }>(
+              'context_compact',
+              { sessionId: sid },
+            )
+              .then((result) => {
+                console.info(
+                  `[compact] done: pruned=${result.messages_pruned}, ` +
+                  `compacted=${result.messages_compacted}, tokens_saved=${result.tokens_saved}`,
+                );
+                // Record a compaction point for the divider + summary bubble.
+                addCompactPoint({
+                  messagesPruned: result.messages_pruned,
+                  messagesCompacted: result.messages_compacted,
+                  tokensSaved: result.tokens_saved,
+                  summary: result.summary,
+                });
+                // Reload messages so the UI reflects the compacted state.
+                loadMessages(sid);
+              })
+              .catch((e) => console.error('[compact] failed:', e))
+              .finally(() => setOp('idle'));
           }
           return true;
         case 'settings':
@@ -255,7 +284,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
           return false;
       }
     },
-    [handleNewChat, clearMessages, activeSessionId, setActiveView, setDiagOpen, setObsOpen],
+    [handleNewChat, clearMessages, activeSessionId, loadMessages, setActiveView, setDiagOpen, setObsOpen, addCompactPoint, setOp],
   );
 
   return {

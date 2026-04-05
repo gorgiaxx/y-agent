@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
@@ -62,6 +62,8 @@ interface InputAreaProps {
   onPermissionDeny?: (requestId: string) => void;
   /** Callback when user allows all future tool calls for this session. */
   onPermissionAllowAllForSession?: (requestId: string) => void;
+  /** Whether context compaction is in progress. */
+  isCompacting?: boolean;
 }
 
 /** Data attribute used to identify skill mention tokens in the contenteditable. */
@@ -195,6 +197,7 @@ export function InputArea({
   onPermissionApprove,
   onPermissionDeny,
   onPermissionAllowAllForSession,
+  isCompacting = false,
 }: InputAreaProps) {
   const [commandMode, setCommandMode] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
@@ -457,6 +460,26 @@ export function InputArea({
         resetInput();
         return;
       }
+      // When Enter is pressed in the editable while command mode is active,
+      // extract the slash command from the editable text and dispatch it
+      // directly. This handles the case where the user types `/compact`
+      // fast and presses Enter before the CommandMenu search captures focus.
+      if (sendOnEnter && e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (editableRef.current) {
+          const plainText = getPlainText(editableRef.current).trim();
+          if (plainText.startsWith('/')) {
+            const cmdName = plainText.slice(1).split(/\s+/)[0];
+            if (cmdName && onCommand?.(cmdName)) {
+              resetInput();
+              exitCommandMode();
+              return;
+            }
+          }
+        }
+        // Fallback: treat as normal send (exits command mode via handleSend).
+        handleSend();
+      }
       return;
     }
 
@@ -579,14 +602,20 @@ export function InputArea({
             onCompositionEnd={() => {
               lastCompEndRef.current = Date.now();
             }}
-            data-placeholder={disabled ? 'Waiting for response...' : 'Type a message... (/ for commands), Enter to send, Shift+Enter for newline)'}
+            data-placeholder={isCompacting ? 'Compacting context, please wait...' : disabled ? 'Waiting for response...' : 'Type a message... (/ for commands), Enter to send, Shift+Enter for newline)'}
             role="textbox"
             aria-multiline="true"
             suppressContentEditableWarning
           />
         </div>
 
-        {disabled && onStop && (
+        {isCompacting && (
+          <div className="btn-compacting" title="Compacting context...">
+            <Loader2 size={16} className="compacting-spinner" />
+          </div>
+        )}
+
+        {!isCompacting && disabled && onStop && (
           <button
             className="btn-stop"
             onClick={onStop}

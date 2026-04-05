@@ -154,11 +154,14 @@ export function ChatView() {
     resendLastTurn: chatHooks.resendLastTurn,
     restoreBranch: chatHooks.restoreBranch,
     pendingEdit: chatHooks.pendingEdit,
+    loadMessages: chatHooks.loadMessages,
     selectedProviderId: providerHooks.selectedProviderId,
     welcomeWorkspaceId: navProps.welcomeWorkspaceId,
     assignSession: workspaceHooks.assignSession,
     refreshWorkspaces: workspaceHooks.refreshWorkspaces,
     addUserMessage,
+    addCompactPoint: chatHooks.addCompactPoint,
+    setOp: chatHooks.setOp,
     setActiveView: navProps.setActiveView,
     setDiagOpen: (fn: (prev: boolean) => boolean) => navProps.setDiagOpen(fn(navProps.diagOpen)),
     setObsOpen: (fn: (prev: boolean) => boolean) => navProps.setObsOpen(fn(navProps.obsOpen)),
@@ -166,7 +169,9 @@ export function ChatView() {
 
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
 
-  const inputDisabled = chatHooks.isStreaming || (chatHooks.opStatus !== 'idle' && chatHooks.opStatus !== 'sending');
+  const inputDisabled = chatHooks.isStreaming
+    || chatHooks.opStatus === 'compacting'
+    || (chatHooks.opStatus !== 'idle' && chatHooks.opStatus !== 'sending');
 
   const statusBarMeta = useStatusBarMeta({
     activeSessionId: sessionHooks.activeSessionId,
@@ -176,6 +181,11 @@ export function ChatView() {
     diagnosticEntries: entries,
     isDiagnosticsActive: isActive,
   });
+
+  const handleForkMessage = useCallback((messageIndex: number) => {
+    if (!sessionHooks.activeSessionId) return;
+    sessionHooks.forkSession(sessionHooks.activeSessionId, messageIndex);
+  }, [sessionHooks]);
 
   return (
     <>
@@ -188,9 +198,11 @@ export function ChatView() {
           onEditMessage={handleEditMessage} 
           onUndoMessage={handleUndoMessage} 
           onResendMessage={handleResendMessage} 
+          onForkMessage={handleForkMessage}
           onRestoreBranch={handleRestoreBranch} 
           toolResults={chatHooks.toolResults} 
           contextResetPoints={chatHooks.contextResetPoints} 
+          compactPoints={chatHooks.compactPoints}
         />
       )}
       {!navProps.inputExpanded && !sessionHooks.activeSessionId && (
@@ -229,6 +241,7 @@ export function ChatView() {
         onPermissionApprove={handlePermissionApprove}
         onPermissionDeny={handlePermissionDeny}
         onPermissionAllowAllForSession={handlePermissionAllowAllForSession}
+        isCompacting={chatHooks.opStatus === 'compacting'}
       />
       <StatusBar
         providerCount={providerHooks.systemStatus?.provider_count ?? 0}

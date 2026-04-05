@@ -88,6 +88,10 @@ export function MainLayout() {
           onDeleteSession: async (id) => {
              await sessionHooks.deleteSession(id);
           },
+          onForkSession: async (sessionId) => {
+             // Fork the entire session (use max index to copy all messages).
+             await sessionHooks.forkSession(sessionId, Number.MAX_SAFE_INTEGER);
+          },
           onCreateWorkspace: async () => {
              await workspaceHooks.createWorkspace();
           },
