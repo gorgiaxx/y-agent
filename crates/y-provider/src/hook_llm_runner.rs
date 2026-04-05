@@ -136,7 +136,7 @@ mod tests {
             _request: &ChatRequest,
             _route: &RouteRequest,
         ) -> Result<ChatStreamResponse, ProviderError> {
-            unimplemented!("not needed for hook tests")
+            panic!("MockPool::chat_completion_stream should not be called in hook tests")
         }
 
         fn report_error(&self, _provider_id: &ProviderId, _error: &ProviderError) {}

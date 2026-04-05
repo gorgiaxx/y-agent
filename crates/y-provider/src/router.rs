@@ -263,13 +263,13 @@ mod tests {
             &self,
             _request: &ChatRequest,
         ) -> Result<ChatResponse, ProviderError> {
-            unimplemented!("mock")
+            panic!("MockProvider::chat_completion should not be called in router tests")
         }
         async fn chat_completion_stream(
             &self,
             _request: &ChatRequest,
         ) -> Result<ChatStreamResponse, ProviderError> {
-            unimplemented!("mock")
+            panic!("MockProvider::chat_completion_stream should not be called in router tests")
         }
         fn metadata(&self) -> &ProviderMetadata {
             &self.meta

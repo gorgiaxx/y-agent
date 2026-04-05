@@ -108,40 +108,38 @@ mod tests {
             }],
             ..Default::default()
         };
-        let providers = y_service::container::build_providers_from_config(&pool_config);
+        let providers = y_provider::build_providers(&pool_config);
         assert!(providers.is_empty());
     }
 
     // T-CLI-002-04: test_build_providers_skips_unsupported_type
     #[test]
     fn test_build_providers_skips_unsupported_type() {
-        std::env::set_var("Y_AGENT_TEST_WIRE_KEY", "test-key");
-
-        let pool_config = y_service::config_types::ProviderPoolConfig {
-            providers: vec![y_service::ProviderConfig {
-                id: "test-unsupported".into(),
-                provider_type: "unsupported_backend".into(),
-                model: "some-model".into(),
-                enabled: true,
-                tags: vec![],
-                max_concurrency: 5,
-                context_window: 128_000,
-                cost_per_1k_input: 0.0,
-                cost_per_1k_output: 0.0,
-                api_key: None,
-                api_key_env: Some("Y_AGENT_TEST_WIRE_KEY".into()),
-                base_url: None,
-                temperature: None,
-                top_p: None,
-                tool_calling_mode: None,
-                icon: None,
-            }],
-            ..Default::default()
-        };
-        let providers = y_service::container::build_providers_from_config(&pool_config);
-        assert!(providers.is_empty());
-
-        std::env::remove_var("Y_AGENT_TEST_WIRE_KEY");
+        temp_env::with_var("Y_AGENT_TEST_WIRE_KEY", Some("test-key"), || {
+            let pool_config = y_service::config_types::ProviderPoolConfig {
+                providers: vec![y_service::ProviderConfig {
+                    id: "test-unsupported".into(),
+                    provider_type: "unsupported_backend".into(),
+                    model: "some-model".into(),
+                    enabled: true,
+                    tags: vec![],
+                    max_concurrency: 5,
+                    context_window: 128_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    api_key: None,
+                    api_key_env: Some("Y_AGENT_TEST_WIRE_KEY".into()),
+                    base_url: None,
+                    temperature: None,
+                    top_p: None,
+                    tool_calling_mode: None,
+                    icon: None,
+                }],
+                ..Default::default()
+            };
+            let providers = y_provider::build_providers(&pool_config);
+            assert!(providers.is_empty());
+        });
     }
 
     // T-CLI-002-05: test_wire_registers_context_providers

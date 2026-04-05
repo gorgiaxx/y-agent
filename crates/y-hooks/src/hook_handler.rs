@@ -1031,19 +1031,19 @@ mod tests {
 
     #[test]
     fn test_expand_env_vars_dollar_form() {
-        std::env::set_var("TEST_HOOK_VAR_1", "hello");
-        assert_eq!(expand_env_vars("Bearer $TEST_HOOK_VAR_1"), "Bearer hello");
-        std::env::remove_var("TEST_HOOK_VAR_1");
+        temp_env::with_var("TEST_HOOK_VAR_1", Some("hello"), || {
+            assert_eq!(expand_env_vars("Bearer $TEST_HOOK_VAR_1"), "Bearer hello");
+        });
     }
 
     #[test]
     fn test_expand_env_vars_brace_form() {
-        std::env::set_var("TEST_HOOK_VAR_2", "world");
-        assert_eq!(
-            expand_env_vars("prefix-${TEST_HOOK_VAR_2}-suffix"),
-            "prefix-world-suffix"
-        );
-        std::env::remove_var("TEST_HOOK_VAR_2");
+        temp_env::with_var("TEST_HOOK_VAR_2", Some("world"), || {
+            assert_eq!(
+                expand_env_vars("prefix-${TEST_HOOK_VAR_2}-suffix"),
+                "prefix-world-suffix"
+            );
+        });
     }
 
     #[test]

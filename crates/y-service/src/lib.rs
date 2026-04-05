@@ -25,6 +25,7 @@ pub mod cost;
 pub mod diagnostics;
 pub mod init;
 pub mod knowledge_service;
+pub mod message_builder;
 pub mod observability;
 pub mod orchestrator_dispatcher;
 pub mod scheduler_service;

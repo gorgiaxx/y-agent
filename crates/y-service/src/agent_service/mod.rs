@@ -297,45 +297,13 @@ impl AgentService {
     }
 
     /// Build LLM messages by prepending system prompt from assembled context.
+    ///
+    /// Delegates to [`crate::message_builder::build_chat_messages`].
     pub fn build_chat_messages(
         assembled: &y_context::AssembledContext,
         history: &[Message],
     ) -> Vec<Message> {
-        use y_context::ContextCategory;
-        use y_core::types::Role;
-
-        let system_parts: Vec<&str> = assembled
-            .items
-            .iter()
-            .filter(|item| {
-                matches!(
-                    item.category,
-                    ContextCategory::SystemPrompt
-                        | ContextCategory::Skills
-                        | ContextCategory::Knowledge
-                        | ContextCategory::Tools
-                )
-            })
-            .map(|item| item.content.as_str())
-            .collect();
-
-        let mut messages = Vec::with_capacity(history.len() + 1);
-
-        if !system_parts.is_empty() {
-            let system_content = system_parts.join("\n\n");
-            messages.push(Message {
-                message_id: y_core::types::generate_message_id(),
-                role: Role::System,
-                content: system_content,
-                tool_call_id: None,
-                tool_calls: vec![],
-                timestamp: y_core::types::now(),
-                metadata: serde_json::Value::Null,
-            });
-        }
-
-        messages.extend_from_slice(history);
-        messages
+        crate::message_builder::build_chat_messages(assembled, history)
     }
 
     /// Filter tool definitions by an agent's allowed/denied tool lists.

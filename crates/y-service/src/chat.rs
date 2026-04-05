@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use y_context::{AssembledContext, ContextCategory};
+use y_context::AssembledContext;
 use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore};
 use y_core::types::{Message, Role, SessionId};
 
@@ -971,39 +971,10 @@ impl ChatService {
     }
 
     /// Build LLM messages by prepending system prompt from assembled context.
+    ///
+    /// Delegates to [`crate::message_builder::build_chat_messages`].
     pub fn build_chat_messages(assembled: &AssembledContext, history: &[Message]) -> Vec<Message> {
-        let system_parts: Vec<&str> = assembled
-            .items
-            .iter()
-            .filter(|item| {
-                matches!(
-                    item.category,
-                    ContextCategory::SystemPrompt
-                        | ContextCategory::Skills
-                        | ContextCategory::Knowledge
-                        | ContextCategory::Tools
-                )
-            })
-            .map(|item| item.content.as_str())
-            .collect();
-
-        let mut messages = Vec::with_capacity(history.len() + 1);
-
-        if !system_parts.is_empty() {
-            let system_content = system_parts.join("\n\n");
-            messages.push(Message {
-                message_id: y_core::types::generate_message_id(),
-                role: Role::System,
-                content: system_content,
-                tool_call_id: None,
-                tool_calls: vec![],
-                timestamp: y_core::types::now(),
-                metadata: serde_json::Value::Null,
-            });
-        }
-
-        messages.extend_from_slice(history);
-        messages
+        crate::message_builder::build_chat_messages(assembled, history)
     }
 
     /// Build tool definitions in `OpenAI` function-calling JSON format.

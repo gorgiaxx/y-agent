@@ -439,7 +439,7 @@ async fn maybe_auto_register_agent(container: &ServiceContainer, arguments: &ser
     }
 
     // Read the file from disk and attempt registration.
-    match std::fs::read_to_string(path) {
+    match tokio::fs::read_to_string(path).await {
         Ok(content) => match container.register_agent_from_toml(&content).await {
             Ok(id) => {
                 tracing::info!(

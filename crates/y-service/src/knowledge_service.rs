@@ -30,6 +30,22 @@ use y_knowledge::{
 
 use y_knowledge::metadata::DocumentMetadata;
 
+/// Atomically write `data` to `path` by writing to a temporary sibling file,
+/// flushing + syncing, then renaming. On most filesystems `rename` is atomic,
+/// so the target file is never left in a partially-written state.
+fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let tmp_path = path.with_extension("json.tmp");
+    let mut file = fs::File::create(&tmp_path)?;
+    file.write_all(data)?;
+    file.flush()?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
 /// Snapshot of entry data used during re-indexing to avoid borrow conflicts.
 struct ReindexEntryData {
     entry_id: String,
@@ -1194,6 +1210,8 @@ impl KnowledgeService {
     // -------------------------------------------------------------------
 
     /// Persist collections to disk (if a data directory is configured).
+    ///
+    /// Uses atomic write-to-temp-then-rename to avoid corruption on crash.
     fn save_collections(&self) {
         let Some(dir) = &self.data_dir else { return };
         if let Err(e) = fs::create_dir_all(dir) {
@@ -1203,7 +1221,7 @@ impl KnowledgeService {
         let path = dir.join("knowledge_collections.json");
         match serde_json::to_string_pretty(&self.collections) {
             Ok(json) => {
-                if let Err(e) = fs::write(&path, json) {
+                if let Err(e) = atomic_write_file(&path, json.as_bytes()) {
                     tracing::warn!("Failed to save knowledge collections: {e}");
                 }
             }
@@ -1240,6 +1258,8 @@ impl KnowledgeService {
     }
 
     /// Persist entry metadata to disk.
+    ///
+    /// Uses atomic write-to-temp-then-rename to avoid corruption on crash.
     fn save_entries(&self) {
         let Some(dir) = &self.data_dir else { return };
         if let Err(e) = fs::create_dir_all(dir) {
@@ -1249,7 +1269,7 @@ impl KnowledgeService {
         let path = dir.join("knowledge_entries.json");
         match serde_json::to_string_pretty(&self.entries) {
             Ok(json) => {
-                if let Err(e) = fs::write(&path, json) {
+                if let Err(e) = atomic_write_file(&path, json.as_bytes()) {
                     tracing::warn!("Failed to save knowledge entries: {e}");
                 }
             }
@@ -1310,8 +1330,10 @@ impl KnowledgeService {
             return;
         }
 
+        let tmp_path = path.with_extension("bin.tmp");
+
         let result = (|| -> std::io::Result<()> {
-            let mut file = fs::File::create(&path)?;
+            let mut file = fs::File::create(&tmp_path)?;
 
             // Entry count.
             file.write_all(&u32::try_from(embeddings.len()).unwrap_or(0).to_le_bytes())?;
@@ -1328,6 +1350,10 @@ impl KnowledgeService {
                     file.write_all(&f.to_le_bytes())?;
                 }
             }
+            file.flush()?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&tmp_path, &path)?;
             Ok(())
         })();
 
