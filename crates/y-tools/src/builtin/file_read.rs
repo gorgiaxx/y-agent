@@ -131,6 +131,41 @@ impl Tool for FileReadTool {
     }
 }
 
+/// Internal helper to read a file and decode to UTF-8 using `chardetng` if necessary.
+async fn read_file_as_utf8_impl(
+    path: &std::path::Path,
+) -> Result<(String, &'static str), std::io::Error> {
+    let bytes = tokio::fs::read(path).await?;
+
+    // Fast path: if it's already valid UTF-8, return directly.
+    if let Ok(s) = std::str::from_utf8(&bytes) {
+        return Ok((s.to_string(), "UTF-8"));
+    }
+
+    // Detect encoding using chardetng.
+    let mut detector = chardetng::EncodingDetector::new();
+    detector.feed(&bytes, true);
+    let encoding = detector.guess(None, true);
+
+    let (cow, actual_encoding, had_errors) = encoding.decode(&bytes);
+
+    if had_errors {
+        tracing::warn!(
+            path = %path.display(),
+            encoding = actual_encoding.name(),
+            "encoding conversion had replacement characters"
+        );
+    }
+
+    tracing::debug!(
+        path = %path.display(),
+        encoding = actual_encoding.name(),
+        "converted file to UTF-8"
+    );
+
+    Ok((cow.into_owned(), actual_encoding.name()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,39 +258,4 @@ mod tests {
         assert_eq!(def.category, ToolCategory::FileSystem);
         assert!(!def.is_dangerous);
     }
-}
-
-/// Internal helper to read a file and decode to UTF-8 using `chardetng` if necessary.
-async fn read_file_as_utf8_impl(
-    path: &std::path::Path,
-) -> Result<(String, &'static str), std::io::Error> {
-    let bytes = tokio::fs::read(path).await?;
-
-    // Fast path: if it's already valid UTF-8, return directly.
-    if let Ok(s) = std::str::from_utf8(&bytes) {
-        return Ok((s.to_string(), "UTF-8"));
-    }
-
-    // Detect encoding using chardetng.
-    let mut detector = chardetng::EncodingDetector::new();
-    detector.feed(&bytes, true);
-    let encoding = detector.guess(None, true);
-
-    let (cow, actual_encoding, had_errors) = encoding.decode(&bytes);
-
-    if had_errors {
-        tracing::warn!(
-            path = %path.display(),
-            encoding = actual_encoding.name(),
-            "encoding conversion had replacement characters"
-        );
-    }
-
-    tracing::debug!(
-        path = %path.display(),
-        encoding = actual_encoding.name(),
-        "converted file to UTF-8"
-    );
-
-    Ok((cow.into_owned(), actual_encoding.name()))
 }
