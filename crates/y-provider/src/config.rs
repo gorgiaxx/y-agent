@@ -532,9 +532,9 @@ mod tests {
         assert!(config.resolve_api_key().is_none());
 
         // With env var set.
-        std::env::set_var("Y_AGENT_TEST_KEY_XYZ", "sk-test-123");
-        assert_eq!(config.resolve_api_key(), Some("sk-test-123".into()));
-        std::env::remove_var("Y_AGENT_TEST_KEY_XYZ");
+        temp_env::with_var("Y_AGENT_TEST_KEY_XYZ", Some("sk-test-123"), || {
+            assert_eq!(config.resolve_api_key(), Some("sk-test-123".into()));
+        });
     }
 
     #[test]
@@ -559,9 +559,9 @@ mod tests {
         };
 
         // Direct key takes priority over env var.
-        std::env::set_var("Y_AGENT_TEST_KEY_DIRECT", "sk-env-key");
-        assert_eq!(config.resolve_api_key(), Some("sk-direct-key".into()));
-        std::env::remove_var("Y_AGENT_TEST_KEY_DIRECT");
+        temp_env::with_var("Y_AGENT_TEST_KEY_DIRECT", Some("sk-env-key"), || {
+            assert_eq!(config.resolve_api_key(), Some("sk-direct-key".into()));
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -810,13 +810,13 @@ mod tests {
         assert!(spec.auth.is_none());
 
         // With env var set — spec should resolve credentials.
-        std::env::set_var("Y_AGENT_TEST_PROXY_AUTH", "user1:secret123");
-        let spec = config
-            .resolve_proxy_spec("any", &["any".into()])
-            .expect("should resolve");
-        assert_eq!(spec.url, "socks5://proxy.company.com:1080");
-        assert_eq!(spec.auth, Some(("user1".into(), "secret123".into())));
-        std::env::remove_var("Y_AGENT_TEST_PROXY_AUTH");
+        temp_env::with_var("Y_AGENT_TEST_PROXY_AUTH", Some("user1:secret123"), || {
+            let spec = config
+                .resolve_proxy_spec("any", &["any".into()])
+                .expect("should resolve");
+            assert_eq!(spec.url, "socks5://proxy.company.com:1080");
+            assert_eq!(spec.auth, Some(("user1".into(), "secret123".into())));
+        });
     }
 
     #[test]

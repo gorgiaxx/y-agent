@@ -696,15 +696,12 @@ log_level = "debug"
     // T-CLI-001-06: test_config_secrets_from_env_only
     #[test]
     fn test_config_secrets_from_env_only() {
-        // Set a test env var for this test.
         let key = "Y_AGENT_TEST_SECRET_KEY_12345";
-        std::env::set_var(key, "sk-test-abc123");
-
-        let result = resolve_secret(key);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "sk-test-abc123");
-
-        std::env::remove_var(key);
+        temp_env::with_var(key, Some("sk-test-abc123"), || {
+            let result = resolve_secret(key);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), "sk-test-abc123");
+        });
 
         // Missing env var should error.
         let result = resolve_secret("Y_AGENT_NONEXISTENT_KEY_XYZ");
@@ -823,49 +820,35 @@ log_level = "debug"
     #[test]
     fn test_dirs_log_default() {
         // Temporarily remove XDG_STATE_HOME to test fallback.
-        let prev = std::env::var_os("XDG_STATE_HOME");
-        std::env::remove_var("XDG_STATE_HOME");
-
-        let log_dir = dirs_log();
-        assert!(log_dir.is_some());
-        let path = log_dir.unwrap();
-        assert!(
-            path.ends_with("y-agent/log"),
-            "expected path ending with y-agent/log, got: {}",
-            path.display()
-        );
-        // Should be under ~/.local/state/
-        let path_str = path.to_string_lossy();
-        assert!(
-            path_str.contains(".local/state"),
-            "expected .local/state in path: {path_str}"
-        );
-
-        // Restore.
-        if let Some(val) = prev {
-            std::env::set_var("XDG_STATE_HOME", val);
-        }
+        temp_env::with_var_unset("XDG_STATE_HOME", || {
+            let log_dir = dirs_log();
+            assert!(log_dir.is_some());
+            let path = log_dir.unwrap();
+            assert!(
+                path.ends_with("y-agent/log"),
+                "expected path ending with y-agent/log, got: {}",
+                path.display()
+            );
+            // Should be under ~/.local/state/
+            let path_str = path.to_string_lossy();
+            assert!(
+                path_str.contains(".local/state"),
+                "expected .local/state in path: {path_str}"
+            );
+        });
     }
 
     // T-LOG-02: dirs_log() respects XDG_STATE_HOME env var.
     #[test]
     fn test_dirs_log_respects_xdg_state_home() {
-        let prev = std::env::var_os("XDG_STATE_HOME");
-        std::env::set_var("XDG_STATE_HOME", "/tmp/test-xdg-state");
-
-        let log_dir = dirs_log();
-        assert!(log_dir.is_some());
-        assert_eq!(
-            log_dir.unwrap(),
-            PathBuf::from("/tmp/test-xdg-state/y-agent/log")
-        );
-
-        // Restore.
-        if let Some(val) = prev {
-            std::env::set_var("XDG_STATE_HOME", val);
-        } else {
-            std::env::remove_var("XDG_STATE_HOME");
-        }
+        temp_env::with_var("XDG_STATE_HOME", Some("/tmp/test-xdg-state"), || {
+            let log_dir = dirs_log();
+            assert!(log_dir.is_some());
+            assert_eq!(
+                log_dir.unwrap(),
+                PathBuf::from("/tmp/test-xdg-state/y-agent/log")
+            );
+        });
     }
 
     // T-LOG-03: YAgentConfig.log_dir override takes precedence.
