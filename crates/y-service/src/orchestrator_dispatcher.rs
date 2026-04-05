@@ -155,7 +155,7 @@ impl WorkflowDispatcher for OrchestratorDispatcher {
 mod tests {
     use super::*;
 
-    /// Compile-time check: OrchestratorDispatcher implements WorkflowDispatcher.
+    /// Compile-time check: `OrchestratorDispatcher` implements `WorkflowDispatcher`.
     #[allow(dead_code)]
     fn assert_implements_trait(_: Arc<dyn WorkflowDispatcher>) {}
 }

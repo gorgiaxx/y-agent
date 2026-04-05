@@ -136,7 +136,7 @@ mod tests {
         }
     }
 
-    /// Mock delegator that always fails with DelegationFailed.
+    /// Mock delegator that always fails with `DelegationFailed`.
     #[derive(Debug)]
     struct FailingDelegator;
 
@@ -172,7 +172,7 @@ mod tests {
         }
     }
 
-    /// Mock delegator that returns DepthExhausted.
+    /// Mock delegator that returns `DepthExhausted`.
     #[derive(Debug)]
     struct DepthExhaustedDelegator;
 

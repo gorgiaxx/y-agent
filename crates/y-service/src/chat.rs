@@ -556,17 +556,25 @@ impl ChatService {
         )
         .await;
 
-        // 3. Read full display transcript (includes the just-appended user message).
-        //    The display transcript is used for GUI-facing history; it is never
-        //    compacted, so users always see the complete conversation.
+        // 3. Read class transcript for LLM context (may be compacted).
+        //    The context transcript is the source of truth for what the LLM
+        //    sees. After compaction, older messages are replaced by a summary
+        //    system message, so the LLM receives a shorter history.
         let history = container
             .session_manager
-            .read_display_transcript(&session_id)
+            .read_transcript(&session_id)
             .await
             .map_err(|e| PrepareTurnError::TranscriptReadFailed(e.to_string()))?;
 
-        // 4. Derive turn number and session UUID.
-        let turn_number = u32::try_from(history.len()).unwrap_or(u32::MAX);
+        // 4. Derive turn number from the *display* transcript length (which is
+        //    never compacted) so checkpoint bookkeeping stays consistent.
+        let display_len = container
+            .session_manager
+            .read_display_transcript(&session_id)
+            .await
+            .map(|t| t.len())
+            .unwrap_or(history.len());
+        let turn_number = u32::try_from(display_len).unwrap_or(u32::MAX);
         let session_uuid = Uuid::parse_str(session_id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
 
         Ok(PreparedTurn {
@@ -627,10 +635,10 @@ impl ChatService {
             .await
             .map_err(|e| ResendTurnError::TruncateFailed(e.to_string()))?;
 
-        // 4. Read display transcript (now ends with the original user message).
+        // 4. Read context transcript (may be compacted) for LLM messages.
         let history = container
             .session_manager
-            .read_display_transcript(&request.session_id)
+            .read_transcript(&request.session_id)
             .await
             .map_err(|e| ResendTurnError::TranscriptReadFailed(e.to_string()))?;
 
@@ -650,7 +658,16 @@ impl ChatService {
             )));
         }
         let user_input = last_msg.content.clone();
-        let turn_number = u32::try_from(history.len()).unwrap_or(0);
+
+        // Derive turn number from display transcript (never compacted) for
+        // checkpoint consistency.
+        let display_len = container
+            .session_manager
+            .read_display_transcript(&request.session_id)
+            .await
+            .map(|t| t.len())
+            .unwrap_or(history.len());
+        let turn_number = u32::try_from(display_len).unwrap_or(0);
         let session_uuid =
             Uuid::parse_str(request.session_id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
 
