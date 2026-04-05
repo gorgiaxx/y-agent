@@ -55,7 +55,7 @@ mod tests {
     #[tokio::test]
     async fn test_wire_creates_all_services() {
         let mut config = YAgentConfig::default();
-        config.storage = y_service::StorageConfig::in_memory();
+        config.storage = y_service::config_types::StorageConfig::in_memory();
 
         let result = wire(&config).await;
         assert!(result.is_ok(), "wiring with default config should succeed");
@@ -76,7 +76,7 @@ mod tests {
     #[tokio::test]
     async fn test_wire_registers_middleware() {
         let mut config = YAgentConfig::default();
-        config.storage = y_service::StorageConfig::in_memory();
+        config.storage = y_service::config_types::StorageConfig::in_memory();
 
         let services = wire(&config).await.unwrap();
         let _tool_guard = services.guardrail_manager.tool_guard();
@@ -87,7 +87,7 @@ mod tests {
     // T-CLI-002-03: test_build_providers_skips_missing_key
     #[test]
     fn test_build_providers_skips_missing_key() {
-        let pool_config = y_service::ProviderPoolConfig {
+        let pool_config = y_service::config_types::ProviderPoolConfig {
             providers: vec![y_service::ProviderConfig {
                 id: "test-no-key".into(),
                 provider_type: "openai".into(),
@@ -117,7 +117,7 @@ mod tests {
     fn test_build_providers_skips_unsupported_type() {
         std::env::set_var("Y_AGENT_TEST_WIRE_KEY", "test-key");
 
-        let pool_config = y_service::ProviderPoolConfig {
+        let pool_config = y_service::config_types::ProviderPoolConfig {
             providers: vec![y_service::ProviderConfig {
                 id: "test-unsupported".into(),
                 provider_type: "unsupported_backend".into(),
@@ -148,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn test_wire_registers_context_providers() {
         let mut config = YAgentConfig::default();
-        config.storage = y_service::StorageConfig::in_memory();
+        config.storage = y_service::config_types::StorageConfig::in_memory();
 
         let services = wire(&config).await.unwrap();
         assert_eq!(services.context_pipeline.provider_count(), 5);

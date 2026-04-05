@@ -783,8 +783,11 @@ pub fn select_providers(args: &InitArgs, prompter: &dyn Prompter) -> Result<Prov
 /// - `data_dir` is `~/.local/state/y-agent/data/` where the database lives.
 ///
 /// Only one connection is needed since init just runs migrations.
-fn build_init_storage_config(_config_base: &Path, data_dir: &Path) -> y_service::StorageConfig {
-    y_service::StorageConfig {
+fn build_init_storage_config(
+    _config_base: &Path,
+    data_dir: &Path,
+) -> y_service::config_types::StorageConfig {
+    y_service::config_types::StorageConfig {
         db_path: data_dir.join("y-agent.db").to_string_lossy().to_string(),
         pool_size: 1,
         wal_enabled: true,
@@ -1166,7 +1169,7 @@ mod tests {
 
         // Verify it parses as part of a ProviderPoolConfig.
         let pool_toml = format!("default_freeze_duration_secs = 60\n\n{toml_str}\n");
-        let parsed: y_service::ProviderPoolConfig =
+        let parsed: y_service::config_types::ProviderPoolConfig =
             toml::from_str(&pool_toml).expect("should parse");
         assert_eq!(parsed.providers.len(), 1);
         assert_eq!(parsed.providers[0].id, "openai-main");
@@ -1295,7 +1298,8 @@ mod tests {
         assert!(content.contains("default_freeze_duration_secs"));
 
         // Verify it parses.
-        let parsed: y_service::ProviderPoolConfig = toml::from_str(&content).expect("should parse");
+        let parsed: y_service::config_types::ProviderPoolConfig =
+            toml::from_str(&content).expect("should parse");
         assert_eq!(parsed.providers.len(), 1);
         assert_eq!(parsed.providers[0].provider_type, "anthropic");
     }

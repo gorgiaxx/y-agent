@@ -66,9 +66,13 @@ pub enum OptimizationError {
 // Token estimation helper
 // ---------------------------------------------------------------------------
 
-/// Estimate tokens from text length (4 chars per token).
+/// Estimate tokens from character count (~4 chars per token).
+///
+/// Uses `chars().count()` rather than `len()` (byte count) so multi-byte
+/// scripts (Chinese, Japanese, Korean) produce accurate estimates instead
+/// of being inflated by UTF-8 encoding overhead.
 fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
+    u32::try_from(text.chars().count().div_ceil(4)).unwrap_or(u32::MAX)
 }
 
 // ---------------------------------------------------------------------------
@@ -562,5 +566,17 @@ mod tests {
         assert_eq!(estimate_tokens("1234"), 1);
         assert_eq!(estimate_tokens("12345"), 2);
         assert_eq!(estimate_tokens("12345678"), 2);
+    }
+
+    #[test]
+    fn test_estimate_tokens_cjk() {
+        // 4 Chinese characters = 1 token (4 chars / 4).
+        // Before the fix, 4 CJK chars = 12 bytes -> 3 tokens (inflated by UTF-8).
+        assert_eq!(estimate_tokens("abcd"), 1);
+        // Actual CJK characters (3 bytes each in UTF-8).
+        assert_eq!(estimate_tokens("\u{4F60}\u{597D}\u{4E16}\u{754C}"), 1); // 4 CJK chars -> 1 token
+        assert_eq!(estimate_tokens("\u{4F60}\u{597D}"), 1); // 2 chars -> ceil(2/4) = 1
+                                                            // Mixed: 4 ASCII + 4 CJK = 8 chars -> 2 tokens.
+        assert_eq!(estimate_tokens("abcd\u{4F60}\u{597D}\u{4E16}\u{754C}"), 2);
     }
 }

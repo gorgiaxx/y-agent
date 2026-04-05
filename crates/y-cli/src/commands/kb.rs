@@ -74,8 +74,8 @@ pub enum CollectionAction {
 
 /// Run a kb subcommand.
 pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
+    use y_service::config_types::KnowledgeConfig;
     use y_service::knowledge_service::KnowledgeService;
-    use y_service::KnowledgeConfig;
 
     // Create a service instance.
     // In production, this would come from the ServiceContainer.

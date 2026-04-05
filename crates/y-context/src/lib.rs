@@ -44,7 +44,7 @@ pub use context_status::InjectContextStatus;
 pub use guard::{ContextWindowGuard, GuardMode, GuardVerdict, TokenBudget};
 pub use inject_bootstrap::{BootstrapEntry, InjectBootstrap};
 pub use inject_memory::InjectMemory;
-pub use inject_skills::{InjectSkills, InjectSkillsStatic, SkillSummary};
+pub use inject_skills::{InjectSkills, InjectSkillsStatic, SkillSummary, SkillTemplateVars};
 pub use inject_tools::InjectTools;
 pub use knowledge_provider::KnowledgeContextProvider;
 pub use load_history::LoadHistory;

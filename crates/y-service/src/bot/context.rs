@@ -66,9 +66,12 @@ impl BotContextProvider {
     }
 
     /// Estimate token count from a string.
+    ///
+    /// Uses `chars().count()` rather than `len()` (byte count) so multi-byte
+    /// scripts (Chinese, Japanese, Korean) produce accurate estimates.
     fn estimate_tokens(text: &str) -> u32 {
-        let len = u32::try_from(text.len()).unwrap_or(u32::MAX);
-        len / CHARS_PER_TOKEN
+        let char_count = u32::try_from(text.chars().count()).unwrap_or(u32::MAX);
+        char_count / CHARS_PER_TOKEN
     }
 }
 
