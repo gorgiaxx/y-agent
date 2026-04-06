@@ -63,6 +63,10 @@ const COLOR_TOOL_SUCCESS: Color = Color::Rgb(100, 200, 120);
 const COLOR_TOOL_ERROR: Color = Color::Rgb(255, 100, 100);
 /// `ToolCallCard` running status.
 const COLOR_TOOL_RUNNING: Color = Color::Rgb(255, 200, 60);
+/// Blockquote accent.
+const COLOR_BLOCKQUOTE: Color = Color::Rgb(100, 120, 160);
+/// Horizontal rule color.
+const COLOR_HR: Color = Color::Rgb(60, 60, 80);
 
 // ---------------------------------------------------------------------------
 // Display items (mirrors GUI `DisplayItem` enum)
@@ -997,6 +1001,37 @@ fn render_content_lines(
             continue;
         }
 
+        // Horizontal rules (---, ***, ___).
+        if is_horizontal_rule(trimmed) {
+            let hr_width = 40;
+            let hr_line = format!("{indent}{}", "\u{2500}".repeat(hr_width));
+            lines.push(Line::from(Span::styled(
+                hr_line.clone(),
+                Style::default().fg(COLOR_HR),
+            )));
+            plain_lines.push(hr_line);
+            continue;
+        }
+
+        // Blockquotes (> text).
+        if let Some(rest) = trimmed.strip_prefix("> ") {
+            let formatted = format!("{indent}\u{2502} {rest}");
+            let spans = build_inline_spans(&formatted, Style::default().fg(COLOR_BLOCKQUOTE));
+            lines.push(Line::from(spans));
+            plain_lines.push(formatted);
+            continue;
+        }
+        // Bare blockquote marker.
+        if trimmed == ">" {
+            let formatted = format!("{indent}\u{2502}");
+            lines.push(Line::from(Span::styled(
+                formatted.clone(),
+                Style::default().fg(COLOR_BLOCKQUOTE),
+            )));
+            plain_lines.push(formatted);
+            continue;
+        }
+
         // Bullet list items.
         if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
             let bullet_content = &trimmed[2..];
@@ -1032,8 +1067,19 @@ fn render_content_lines(
     }
 }
 
+/// Check if a trimmed line is a horizontal rule (---, ***, ___).
+fn is_horizontal_rule(trimmed: &str) -> bool {
+    if trimmed.len() < 3 {
+        return false;
+    }
+    let first = trimmed.chars().next().unwrap_or(' ');
+    matches!(first, '-' | '*' | '_') && trimmed.chars().all(|c| c == first || c == ' ')
+}
+
 /// Build styled spans for a line with inline markdown:
 ///   - `**bold**` -> bold
+///   - `*italic*` -> italic
+///   - `~~strikethrough~~` -> crossed out
 ///   - `` `code` `` -> code style
 fn build_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -1046,8 +1092,31 @@ fn build_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>> {
         .fg(Color::Rgb(200, 220, 255))
         .bg(COLOR_CODE_BG);
     let bold_style = base_style.add_modifier(Modifier::BOLD);
+    let italic_style = base_style.add_modifier(Modifier::ITALIC);
+    let strikethrough_style = base_style.add_modifier(Modifier::CROSSED_OUT);
 
     while i < len {
+        // Strikethrough: ~~...~~
+        if i + 1 < len && chars[i] == '~' && chars[i + 1] == '~' {
+            if !buf.is_empty() {
+                spans.push(Span::styled(buf.clone(), base_style));
+                buf.clear();
+            }
+            i += 2;
+            let mut strike_buf = String::new();
+            while i + 1 < len && !(chars[i] == '~' && chars[i + 1] == '~') {
+                strike_buf.push(chars[i]);
+                i += 1;
+            }
+            if i + 1 < len {
+                i += 2; // skip closing ~~
+            }
+            if !strike_buf.is_empty() {
+                spans.push(Span::styled(strike_buf, strikethrough_style));
+            }
+            continue;
+        }
+
         // Bold: **...**
         if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
             if !buf.is_empty() {
@@ -1067,6 +1136,25 @@ fn build_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>> {
                 spans.push(Span::styled(bold_buf, bold_style));
             }
             continue;
+        }
+
+        // Italic: *...* (single asterisk, not followed by another *)
+        if chars[i] == '*' && (i + 1 >= len || chars[i + 1] != '*') {
+            // Look for closing single *
+            let mut end = i + 1;
+            while end < len && chars[end] != '*' {
+                end += 1;
+            }
+            if end < len && end > i + 1 {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(buf.clone(), base_style));
+                    buf.clear();
+                }
+                let italic_buf: String = chars[i + 1..end].iter().collect();
+                spans.push(Span::styled(italic_buf, italic_style));
+                i = end + 1; // skip closing *
+                continue;
+            }
         }
 
         // Inline code: `...`

@@ -237,6 +237,38 @@ impl TuiApp {
                     self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
                 }
             }
+            KeyAction::PageScrollUp => {
+                let page = self.state.page_height.max(1);
+                self.state.scroll_offset = self.state.scroll_offset.saturating_add(page);
+            }
+            KeyAction::PageScrollDown => {
+                let page = self.state.page_height.max(1);
+                self.state.scroll_offset = self.state.scroll_offset.saturating_sub(page);
+            }
+            KeyAction::ScrollToTop => {
+                // Set a very large offset to scroll to the beginning.
+                self.state.scroll_offset = usize::MAX / 2;
+            }
+            KeyAction::ScrollToBottom => {
+                self.state.scroll_offset = 0;
+            }
+            KeyAction::CancelStreaming => {
+                chat_flow::cancel_streaming(&mut self.state);
+                self.llm_rx = None;
+                self.state
+                    .push_toast("Response cancelled.".into(), ToastLevel::Info);
+            }
+            KeyAction::ShowHelp => {
+                if self.state.mode == InteractionMode::Help {
+                    self.state.set_mode(InteractionMode::Normal);
+                } else {
+                    // Close any other overlay first, then show help.
+                    if self.state.mode != InteractionMode::Normal {
+                        self.state.set_mode(InteractionMode::Normal);
+                    }
+                    self.state.set_mode(InteractionMode::Help);
+                }
+            }
             KeyAction::EnterCommandMode => {
                 self.state.set_mode(InteractionMode::Command);
                 self.palette = CommandPaletteState::new();
@@ -393,6 +425,9 @@ impl TuiApp {
         let chunks = layout::compute_layout(term_rect, self.state.sidebar_visible, input_lines);
         self.last_chunks = Some(chunks.clone());
 
+        // Update page_height from the chat panel for page-scroll calculations.
+        self.state.page_height = chunks.chat.height.saturating_sub(2) as usize;
+
         let state = &self.state;
         let textarea = &mut self.textarea;
         let palette = &self.palette;
@@ -441,6 +476,11 @@ impl TuiApp {
             // Render command palette overlay if in Command mode.
             if state.mode == InteractionMode::Command {
                 overlays::command_palette::render(frame, area, palette);
+            }
+
+            // Render help overlay if in Help mode.
+            if state.mode == InteractionMode::Help {
+                overlays::help::render(frame, area);
             }
 
             // Render toast overlay (always, non-modal).

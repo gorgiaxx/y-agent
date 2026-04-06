@@ -31,6 +31,18 @@ pub enum KeyAction {
     ScrollUp,
     /// Scroll chat down.
     ScrollDown,
+    /// Scroll chat up by one page.
+    PageScrollUp,
+    /// Scroll chat down by one page.
+    PageScrollDown,
+    /// Scroll to the top of the chat.
+    ScrollToTop,
+    /// Scroll to the bottom of the chat.
+    ScrollToBottom,
+    /// Cancel the current streaming response.
+    CancelStreaming,
+    /// Show the help overlay.
+    ShowHelp,
     /// Enter command mode.
     EnterCommandMode,
     /// Return to normal mode.
@@ -58,6 +70,7 @@ pub fn dispatch(key: KeyEvent, state: &AppState) -> KeyAction {
         InteractionMode::Command => dispatch_command(key, state),
         InteractionMode::Search => dispatch_search(key),
         InteractionMode::Select => dispatch_select(key),
+        InteractionMode::Help => dispatch_help(key),
     }
 }
 
@@ -67,8 +80,10 @@ pub fn dispatch(key: KeyEvent, state: &AppState) -> KeyAction {
 
 fn dispatch_global(key: KeyEvent) -> Option<KeyAction> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
-        if let KeyCode::Char('q' | 'd' | 'c') = key.code {
-            return Some(KeyAction::Quit);
+        match key.code {
+            KeyCode::Char('q' | 'd' | 'c') => return Some(KeyAction::Quit),
+            KeyCode::Char('h') => return Some(KeyAction::ShowHelp),
+            _ => {}
         }
     }
     None
@@ -80,14 +95,14 @@ fn dispatch_global(key: KeyEvent) -> Option<KeyAction> {
 
 fn dispatch_normal(key: KeyEvent, state: &AppState) -> KeyAction {
     match state.focus {
-        PanelFocus::Input => dispatch_input_normal(key),
-        PanelFocus::Chat => dispatch_chat_normal(key),
+        PanelFocus::Input => dispatch_input_normal(key, state),
+        PanelFocus::Chat => dispatch_chat_normal(key, state),
         PanelFocus::Sidebar => dispatch_sidebar_normal(key),
     }
 }
 
 /// Normal mode, Input panel focused.
-fn dispatch_input_normal(key: KeyEvent) -> KeyAction {
+fn dispatch_input_normal(key: KeyEvent, state: &AppState) -> KeyAction {
     match key.code {
         // Enter submits the message.
         KeyCode::Enter => {
@@ -106,29 +121,57 @@ fn dispatch_input_normal(key: KeyEvent) -> KeyAction {
         _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') => {
             KeyAction::ToggleSidebar
         }
+        // Ctrl+G scrolls to bottom (dismiss "new content below").
+        _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') => {
+            KeyAction::ScrollToBottom
+        }
         // ':' prefix enters command mode.
         KeyCode::Char(':') => KeyAction::EnterCommandMode,
-        // Escape returns to normal (no-op in normal, but clears any partial).
-        KeyCode::Esc => KeyAction::ReturnToNormal,
+        // Escape cancels streaming if active, otherwise returns to normal.
+        KeyCode::Esc => {
+            if state.is_streaming {
+                KeyAction::CancelStreaming
+            } else {
+                KeyAction::ReturnToNormal
+            }
+        }
         // Everything else passes through to textarea.
         _ => KeyAction::InputPassthrough,
     }
 }
 
 /// Normal mode, Chat panel focused.
-fn dispatch_chat_normal(key: KeyEvent) -> KeyAction {
+fn dispatch_chat_normal(key: KeyEvent, state: &AppState) -> KeyAction {
     match key.code {
-        // Scroll navigation.
-        KeyCode::Up | KeyCode::Char('k') | KeyCode::PageUp => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Char('j') | KeyCode::PageDown => KeyAction::ScrollDown,
+        // Line scroll.
+        KeyCode::Up | KeyCode::Char('k') => KeyAction::ScrollUp,
+        KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
+        // Page scroll.
+        KeyCode::PageUp => KeyAction::PageScrollUp,
+        KeyCode::PageDown => KeyAction::PageScrollDown,
+        // Jump to top/bottom.
+        KeyCode::Home | KeyCode::Char('g') => KeyAction::ScrollToTop,
+        KeyCode::End => KeyAction::ScrollToBottom,
+        // Shift+G = scroll to bottom (vim-style).
+        KeyCode::Char('G') => KeyAction::ScrollToBottom,
         // Tab cycles focus.
         KeyCode::Tab => KeyAction::CycleFocus,
         // Ctrl+B toggles sidebar.
         _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') => {
             KeyAction::ToggleSidebar
         }
-        // Escape or 'i' returns focus to input.
-        KeyCode::Esc | KeyCode::Char('i') => KeyAction::ReturnToNormal,
+        // '?' shows help.
+        KeyCode::Char('?') => KeyAction::ShowHelp,
+        // Escape cancels streaming if active, otherwise returns to input.
+        KeyCode::Esc => {
+            if state.is_streaming {
+                KeyAction::CancelStreaming
+            } else {
+                KeyAction::ReturnToNormal
+            }
+        }
+        // 'i' returns focus to input.
+        KeyCode::Char('i') => KeyAction::ReturnToNormal,
         _ => KeyAction::Unhandled,
     }
 }
@@ -196,6 +239,17 @@ fn dispatch_select(key: KeyEvent) -> KeyAction {
         KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
         KeyCode::Enter => KeyAction::Submit,
         _ => KeyAction::Unhandled,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2: Help mode
+// ---------------------------------------------------------------------------
+
+fn dispatch_help(key: KeyEvent) -> KeyAction {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => KeyAction::ReturnToNormal,
+        _ => KeyAction::Consumed,
     }
 }
 

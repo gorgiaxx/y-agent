@@ -35,6 +35,8 @@ pub enum InteractionMode {
     Search,
     /// Select mode: navigating chat messages for yank/branch/copy.
     Select,
+    /// Help mode: help overlay is visible.
+    Help,
 }
 
 /// Which list the sidebar is currently showing.
@@ -193,6 +195,8 @@ pub struct AppState {
     pub last_cost: Option<f64>,
     /// Application version string (e.g. "0.1.0").
     pub version: String,
+    /// Visible chat panel height in lines (updated each frame from layout).
+    pub page_height: usize,
 }
 
 impl Default for AppState {
@@ -223,6 +227,7 @@ impl Default for AppState {
             last_input_tokens: 0,
             last_cost: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            page_height: 20,
         }
     }
 }
@@ -256,9 +261,13 @@ impl AppState {
                 InteractionMode::Command
                     | InteractionMode::Search
                     | InteractionMode::Select
+                    | InteractionMode::Help
                     | InteractionMode::Normal
             ) | (
-                InteractionMode::Command | InteractionMode::Search | InteractionMode::Select,
+                InteractionMode::Command
+                    | InteractionMode::Search
+                    | InteractionMode::Select
+                    | InteractionMode::Help,
                 InteractionMode::Normal
             )
         );
