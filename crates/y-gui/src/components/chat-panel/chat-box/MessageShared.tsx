@@ -24,7 +24,6 @@ import {
   ThumbsDown,
 } from 'lucide-react';
 import type { Message } from '../../../types';
-import { ThinkingCard } from './ThinkingCard';
 import { escapeThinkTags, extractThinkTags } from './messageUtils';
 import './MessageShared.css';
 import './AssistantBubble.css';
@@ -206,19 +205,9 @@ export function AssistantMessageShell({
           )}
         </div>
 
-        {/* Reasoning/thinking block at the top of assistant messages */}
-        {/* Source 1: metadata.reasoning_content (from stream_reasoning_delta events) */}
-        {typeof message.metadata?.reasoning_content === 'string' && (
-          <ThinkingCard
-            content={message.metadata.reasoning_content}
-            isStreaming={isStreaming && !message.metadata?._reasoningDoneTs}
-            durationMs={(message.metadata?.reasoning_duration_ms ?? message.metadata?._reasoningDurationMs) as number | undefined}
-          />
-        )}
-        {/* <think> tag extraction is handled by child components
-            (StreamingBubble / StaticBubble) in each rendering path,
-            so the ThinkingCard appears in the correct position
-            (e.g. after ActionCard in the conclusion). */}
+        {/* Reasoning/thinking is rendered inline via segments in
+            StreamingBubble / StaticBubble. <think> tag extraction is
+            handled by ThinkContentBlock. */}
 
         {children}
 

@@ -10,7 +10,7 @@
 //   6. Complete   -- redirect to settings for more
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   ChevronRight,
@@ -25,6 +25,7 @@ import {
   Search,
 } from 'lucide-react';
 import { ProviderIconImg } from '../common/ProviderIconPicker';
+import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
 import type { GuiConfig } from '../../types';
 import {
   type ProviderFormData,
@@ -71,93 +72,6 @@ const API_TYPE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
 };
 
-// ---------------------------------------------------------------------------
-// ModelItem & ModelPickerDropdown (like settings ProvidersTab)
-// ---------------------------------------------------------------------------
-
-interface ModelItem {
-  id: string;
-  display_name?: string;
-}
-
-function WizardModelPicker({
-  models,
-  loading,
-  error,
-  onSelect,
-  onClose,
-}: {
-  models: ModelItem[];
-  loading: boolean;
-  error: string | null;
-  onSelect: (id: string) => void;
-  onClose: () => void;
-}) {
-  const [filter, setFilter] = useState('');
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
-
-  const filtered = models.filter((m) =>
-    m.id.toLowerCase().includes(filter.toLowerCase()) ||
-    (m.display_name ?? '').toLowerCase().includes(filter.toLowerCase()),
-  );
-
-  return (
-    <div className="wizard-model-picker" ref={dropdownRef}>
-      <div className="wizard-model-picker-search">
-        <Search size={12} className="wizard-model-picker-search-icon" />
-        <input
-          ref={inputRef}
-          className="wizard-model-picker-filter"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter models..."
-          onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
-        />
-      </div>
-      {loading && (
-        <div className="wizard-model-picker-status">
-          <span className="wizard-spinner" /> Fetching models...
-        </div>
-      )}
-      {error && (
-        <div className="wizard-model-picker-status wizard-model-picker-error">{error}</div>
-      )}
-      {!loading && !error && filtered.length === 0 && (
-        <div className="wizard-model-picker-status">No models found</div>
-      )}
-      {!loading && !error && filtered.length > 0 && (
-        <div className="wizard-model-picker-list">
-          {filtered.map((m) => (
-            <button
-              key={m.id}
-              className="wizard-model-picker-item"
-              onClick={() => { onSelect(m.id); onClose(); }}
-              type="button"
-            >
-              <span className="wizard-model-picker-item-id">{m.id}</span>
-              {m.display_name && m.display_name !== m.id && (
-                <span className="wizard-model-picker-item-name">{m.display_name}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Props
@@ -466,7 +380,7 @@ export function SetupWizard({
               </button>
             )}
             {modelPickerOpen && (
-              <WizardModelPicker
+              <ModelPickerDropdown
                 models={modelList}
                 loading={modelLoading}
                 error={modelError}

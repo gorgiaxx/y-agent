@@ -50,7 +50,7 @@ import { GuardrailsTab } from './GuardrailsTab';
 import { KnowledgeTab } from './KnowledgeTab';
 import { PromptsTab } from './PromptsTab';
 import { AboutTab } from './AboutTab';
-import { Button } from '../ui';
+import { Button, Tabs, TabsContent } from '../ui';
 
 import './SettingsPanel.css';
 
@@ -293,148 +293,130 @@ export function SettingsPanel({
         </div>
       </div>
 
-      <div className="settings-content">
-        {activeTab === 'general' && (
+      <Tabs value={activeTab} className="settings-content">
+        <TabsContent value="general">
           <GeneralTab
             localConfig={localConfig}
             setLocalConfig={setLocalConfig}
             setToast={setToast}
             onRunWizard={onRunWizard}
           />
-        )}
+        </TabsContent>
 
-        {activeTab === 'providers' && (
-          <div className="settings-section">
-            <ProvidersTab
-              loadSection={loadSection}
-              setToast={setToast}
-              providersList={providersList}
-              setProvidersList={setProvidersList}
-              providersMeta={providersMeta}
-              setProvidersMeta={setProvidersMeta}
-              setDirtyProviders={setDirtyProviders}
-              rawProvidersToml={rawProvidersToml}
-              setRawProvidersToml={setRawProvidersToml}
-            />
-          </div>
-        )}
+        <TabsContent value="providers" className="settings-section">
+          <ProvidersTab
+            loadSection={loadSection}
+            setToast={setToast}
+            providersList={providersList}
+            setProvidersList={setProvidersList}
+            providersMeta={providersMeta}
+            setProvidersMeta={setProvidersMeta}
+            setDirtyProviders={setDirtyProviders}
+            rawProvidersToml={rawProvidersToml}
+            setRawProvidersToml={setRawProvidersToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'session' && (
-          <div className="settings-section">
-            <SessionTab
-              loadSection={loadSection}
-              sessionForm={sessionForm}
-              setSessionForm={setSessionForm}
-              setDirtySession={setDirtySession}
-              setRawSessionToml={setRawSessionToml}
-            />
-          </div>
-        )}
+        <TabsContent value="session" className="settings-section">
+          <SessionTab
+            loadSection={loadSection}
+            sessionForm={sessionForm}
+            setSessionForm={setSessionForm}
+            setDirtySession={setDirtySession}
+            setRawSessionToml={setRawSessionToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'runtime' && (
-          <div className="settings-section">
-            <RuntimeTab
-              loadSection={loadSection}
-              runtimeForm={runtimeForm}
-              setRuntimeForm={setRuntimeForm}
-              setDirtyRuntime={setDirtyRuntime}
-              setRawRuntimeToml={setRawRuntimeToml}
-            />
-          </div>
-        )}
+        <TabsContent value="runtime" className="settings-section">
+          <RuntimeTab
+            loadSection={loadSection}
+            runtimeForm={runtimeForm}
+            setRuntimeForm={setRuntimeForm}
+            setDirtyRuntime={setDirtyRuntime}
+            setRawRuntimeToml={setRawRuntimeToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'browser' && (
-          <div className="settings-section">
-            <BrowserTab
-              loadSection={loadSection}
-              browserForm={browserForm}
-              setBrowserForm={setBrowserForm}
-              setDirtyBrowser={setDirtyBrowser}
-              setRawBrowserToml={setRawBrowserToml}
-            />
-          </div>
-        )}
+        <TabsContent value="browser" className="settings-section">
+          <BrowserTab
+            loadSection={loadSection}
+            browserForm={browserForm}
+            setBrowserForm={setBrowserForm}
+            setDirtyBrowser={setDirtyBrowser}
+            setRawBrowserToml={setRawBrowserToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'mcp' && (
-          <div className="settings-section">
-            <McpTab
-              mcpServersList={mcpServersList}
-              setMcpServersList={setMcpServersList}
-              setDirtyMcp={setDirtyMcp}
-            />
-          </div>
-        )}
+        <TabsContent value="mcp" className="settings-section">
+          <McpTab
+            mcpServersList={mcpServersList}
+            setMcpServersList={setMcpServersList}
+            setDirtyMcp={setDirtyMcp}
+          />
+        </TabsContent>
 
-        {activeTab === 'storage' && (
-          <div className="settings-section">
-            <StorageTab
-              loadSection={loadSection}
-              storageForm={storageForm}
-              setStorageForm={setStorageForm}
-              setDirtyStorage={setDirtyStorage}
-              setRawStorageToml={setRawStorageToml}
-            />
-          </div>
-        )}
+        <TabsContent value="storage" className="settings-section">
+          <StorageTab
+            loadSection={loadSection}
+            storageForm={storageForm}
+            setStorageForm={setStorageForm}
+            setDirtyStorage={setDirtyStorage}
+            setRawStorageToml={setRawStorageToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'hooks' && (
-          <div className="settings-section">
-            <HooksTab
-              loadSection={loadSection}
-              hooksForm={hooksForm}
-              setHooksForm={setHooksForm}
-              setDirtyHooks={setDirtyHooks}
-              setRawHooksToml={setRawHooksToml}
-            />
-          </div>
-        )}
+        <TabsContent value="hooks" className="settings-section">
+          <HooksTab
+            loadSection={loadSection}
+            hooksForm={hooksForm}
+            setHooksForm={setHooksForm}
+            setDirtyHooks={setDirtyHooks}
+            setRawHooksToml={setRawHooksToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'tools' && (
-          <div className="settings-section">
-            <ToolsTab
-              loadSection={loadSection}
-              toolsForm={toolsForm}
-              setToolsForm={setToolsForm}
-              setDirtyTools={setDirtyTools}
-              setRawToolsToml={setRawToolsToml}
-            />
-          </div>
-        )}
+        <TabsContent value="tools" className="settings-section">
+          <ToolsTab
+            loadSection={loadSection}
+            toolsForm={toolsForm}
+            setToolsForm={setToolsForm}
+            setDirtyTools={setDirtyTools}
+            setRawToolsToml={setRawToolsToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'guardrails' && (
-          <div className="settings-section">
-            <GuardrailsTab
-              loadSection={loadSection}
-              guardrailsForm={guardrailsForm}
-              setGuardrailsForm={setGuardrailsForm}
-              setDirtyGuardrails={setDirtyGuardrails}
-              setRawGuardrailsToml={setRawGuardrailsToml}
-            />
-          </div>
-        )}
+        <TabsContent value="guardrails" className="settings-section">
+          <GuardrailsTab
+            loadSection={loadSection}
+            guardrailsForm={guardrailsForm}
+            setGuardrailsForm={setGuardrailsForm}
+            setDirtyGuardrails={setDirtyGuardrails}
+            setRawGuardrailsToml={setRawGuardrailsToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'knowledge' && (
-          <div className="settings-section">
-            <KnowledgeTab
-              loadSection={loadSection}
-              knowledgeForm={knowledgeForm}
-              setKnowledgeForm={setKnowledgeForm}
-              setDirtyKnowledge={setDirtyKnowledge}
-              setRawKnowledgeToml={setRawKnowledgeToml}
-            />
-          </div>
-        )}
+        <TabsContent value="knowledge" className="settings-section">
+          <KnowledgeTab
+            loadSection={loadSection}
+            knowledgeForm={knowledgeForm}
+            setKnowledgeForm={setKnowledgeForm}
+            setDirtyKnowledge={setDirtyKnowledge}
+            setRawKnowledgeToml={setRawKnowledgeToml}
+          />
+        </TabsContent>
 
-        {activeTab === 'prompts' && (
+        <TabsContent value="prompts">
           <PromptsTab
             setToast={setToast}
             dirtyPrompts={dirtyPrompts}
             setDirtyPrompts={setDirtyPrompts}
           />
-        )}
+        </TabsContent>
 
-        {activeTab === 'about' && <AboutTab />}
-      </div>
+        <TabsContent value="about">
+          <AboutTab />
+        </TabsContent>
+      </Tabs>
 
       {/* Toast notification */}
       {toast && (

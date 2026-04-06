@@ -5,7 +5,6 @@
 //   - Theme resolution and markdown component creation
 //   - processStreamContent parsing
 //   - toolResultsMap (consumed-set dedup matching)
-//   - segmentActions grouping
 // ---------------------------------------------------------------------------
 
 import { useMemo } from 'react';
@@ -13,8 +12,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { ToolResultRecord } from '../../../hooks/useChat';
 import { makeMarkdownComponents } from './messageUtils';
-import { processStreamContent, synthesizeNativeStreamResult, type StreamContentResult } from '../../../hooks/useStreamContent';
-import { segmentActions, type ActionSegmentResult } from '../../../hooks/useActionSegment';
+import { processStreamContent, type StreamContentResult } from '../../../hooks/useStreamContent';
 import { useResolvedTheme } from '../../../hooks/useTheme';
 
 export interface AssistantBubbleData {
@@ -26,8 +24,6 @@ export interface AssistantBubbleData {
   streamResult: StreamContentResult | null;
   /** Tool results keyed by segment index. */
   toolResultsMap: Map<number, ToolResultRecord>;
-  /** Action/preamble/conclusion segmentation, or null if no actions. */
-  actionResult: ActionSegmentResult | null;
 }
 
 /**
@@ -37,14 +33,12 @@ export interface AssistantBubbleData {
  * 1. Theme resolution + markdown component creation
  * 2. processStreamContent XML parsing
  * 3. toolResultsMap building (consumed-set dedup)
- * 4. segmentActions grouping
  *
  * This hook consolidates that logic into one place.
  */
 export function useAssistantBubble(
   content: string,
   toolResults: ToolResultRecord[],
-  hasPendingToolCall?: boolean,
 ): AssistantBubbleData {
   // Theme + markdown components.
   const resolvedTheme = useResolvedTheme();
@@ -55,19 +49,17 @@ export function useAssistantBubble(
   );
 
   // Process content to extract text segments and tool call blocks.
+  // Only applies when content contains XML tool_call tags (prompt-based mode).
   const streamResult = useMemo(() => {
     if (
       !content.includes('<tool_call') &&
       !content.includes('<tool_cal') &&
       !content.includes('<tool_result')
     ) {
-      if (toolResults.length > 0) {
-        return synthesizeNativeStreamResult(content, toolResults);
-      }
       return null;
     }
     return processStreamContent(content);
-  }, [content, toolResults]);
+  }, [content]);
 
   // Build the tool results lookup by matching tool names with consumed-set dedup.
   const toolResultsMap = useMemo(() => {
@@ -90,20 +82,10 @@ export function useAssistantBubble(
     return map;
   }, [toolResults, streamResult]);
 
-  // Segment into preamble, actions, and conclusion.
-  const actionResult = useMemo(() => {
-    if (!streamResult) return null;
-    return segmentActions(
-      streamResult.segments,
-      hasPendingToolCall ?? streamResult.hasPendingToolCall,
-    );
-  }, [streamResult, hasPendingToolCall]);
-
   return {
     resolvedTheme,
     markdownComponents,
     streamResult,
     toolResultsMap,
-    actionResult,
   };
 }

@@ -51,6 +51,9 @@ export interface ChatDeps {
   setActiveView: (view: ViewType) => void;
   setDiagOpen: (fn: (prev: boolean) => boolean) => void;
   setObsOpen: (fn: (prev: boolean) => boolean) => void;
+
+  // Rewind
+  onRewind?: () => void;
 }
 
 export interface UseChatHandlersReturn {
@@ -95,6 +98,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     setActiveView,
     setDiagOpen,
     setObsOpen,
+    onRewind,
   } = deps;
 
   const handleSend = useCallback(
@@ -280,11 +284,14 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
         case 'model':
           setActiveView('settings');
           return true;
+        case 'rewind':
+          onRewind?.();
+          return true;
         default:
           return false;
       }
     },
-    [handleNewChat, clearMessages, activeSessionId, loadMessages, setActiveView, setDiagOpen, setObsOpen, addCompactPoint, setOp],
+    [handleNewChat, clearMessages, activeSessionId, loadMessages, setActiveView, setDiagOpen, setObsOpen, addCompactPoint, setOp, onRewind],
   );
 
   return {

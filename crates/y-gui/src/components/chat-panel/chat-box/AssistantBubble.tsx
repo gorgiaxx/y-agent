@@ -7,6 +7,7 @@
 
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/useChat';
+import type { InterleavedSegment } from '../../../hooks/useInterleavedSegments';
 import { StreamingBubble } from './StreamingBubble';
 import { StaticBubble } from './StaticBubble';
 import './AssistantBubble.css';
@@ -16,16 +17,21 @@ export interface AssistantBubbleProps {
   message: Message;
   /** Tool results from progress events (only provided for streaming messages). */
   toolResults?: ToolResultRecord[];
+  /** Lazy getter for event-ordered segments (only called for streaming messages). */
+  getStreamSegments?: () => InterleavedSegment[] | null;
 }
 
 
-export function AssistantBubble({ message, toolResults }: AssistantBubbleProps) {
+export function AssistantBubble({ message, toolResults, getStreamSegments }: AssistantBubbleProps) {
   const isStreamingMsg = message.id.startsWith('streaming-')
     || message.id.startsWith('cancelled-')
     || message.id.startsWith('error-');
 
   if (isStreamingMsg) {
-    return <StreamingBubble message={message} toolResults={toolResults} />;
+    // Only call the getter for streaming messages -- avoids unnecessary
+    // evaluation for every history message in the list.
+    const streamSegments = getStreamSegments?.() ?? null;
+    return <StreamingBubble message={message} toolResults={toolResults} streamSegments={streamSegments} />;
   }
   return <StaticBubble message={message} />;
 }

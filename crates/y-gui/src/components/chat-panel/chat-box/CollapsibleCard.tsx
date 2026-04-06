@@ -1,7 +1,7 @@
 /**
  * CollapsibleCard -- generic collapsible container primitive.
  *
- * Shared by ThinkingCard, ActionCard, and ToolCallCard. Renders a clickable
+ * Shared by ThinkingCard and ToolCallCard. Renders a clickable
  * header with icon, label, optional right-side content, and a chevron. The
  * body is shown/hidden via the controlled `expanded` prop.
  */

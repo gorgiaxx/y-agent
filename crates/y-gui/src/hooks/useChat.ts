@@ -29,6 +29,7 @@ import {
   withSessionLock,
   findCheckpointForMessage,
 } from './chatHelpers';
+import type { InterleavedSegment } from './useInterleavedSegments';
 
 // Re-export ChatBusEvent for consumers that need the union type.
 export type { ChatBusEvent } from './chatBus';
@@ -76,6 +77,11 @@ interface UseChatReturn {
   pendingEdit: PendingEdit | null;
   /** Tool results from the current streaming run (for inline cards). */
   toolResults: ToolResultRecord[];
+  /** Get event-ordered segments for the active streaming session.
+   *  Returns null if no tool calls are present. Built from event arrival
+   *  order (stream_delta -> text, tool_result -> tool card) so the
+   *  interleaving is inherently correct without character offsets. */
+  getStreamSegments: () => InterleavedSegment[] | null;
   sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
@@ -169,6 +175,26 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const toolResultsRef = useRef(new Map<string, ToolResultRecord[]>());
   const [visibleToolResults, setVisibleToolResults] = useState<ToolResultRecord[]>([]);
 
+  // Per-session event-ordered segments (text + tool_result interleaved by
+  // arrival order). Mutated in place on every stream_delta and tool_result
+  // event. Read via getStreamSegments() during render.
+  const streamSegsRef = useRef(new Map<string, InterleavedSegment[]>());
+  // Counter bumped on structural changes (tool_result added) to force
+  // re-renders in consuming components.
+  const [streamSegsVersion, setStreamSegsVersion] = useState(0);
+
+  const getStreamSegments = useCallback((): InterleavedSegment[] | null => {
+    const sid = activeSessionIdRef.current;
+    if (!sid) return null;
+    const segs = streamSegsRef.current.get(sid);
+    if (!segs || segs.length === 0) return null;
+    // Only return segments when there are tool results or reasoning
+    // (otherwise plain text handled by the bubble directly).
+    if (segs.some((s) => s.type === 'tool_result' || s.type === 'reasoning')) return segs;
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamSegsVersion]);
+
   // Per-session context reset points (list of message indices where context was reset).
   const contextResetMapRef = useRef(new Map<string, number[]>());
   const [contextResetPoints, setContextResetPoints] = useState<number[]>([]);
@@ -253,14 +279,33 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
         activeRunIdRef.current = event.run_id;
         setActiveRunId(event.run_id);
-        // Clear tool results for the new run.
+        // Clear tool results and stream segments for the new run.
         toolResultsRef.current.set(event.session_id, []);
+        streamSegsRef.current.set(event.session_id, []);
         if (event.session_id === activeSessionIdRef.current) {
           setVisibleToolResults([]);
         }
         console.log('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
       } else if (event.type === 'stream_delta') {
         const sid = event.session_id;
+        // Append to event-ordered segments (text segment).
+        const segs = streamSegsRef.current.get(sid);
+        if (segs) {
+          // When content arrives, mark any in-progress reasoning segment as done.
+          const lastSeg = segs[segs.length - 1];
+          if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
+            lastSeg.isStreaming = false;
+            if (lastSeg._startTs) {
+              lastSeg.durationMs = Date.now() - lastSeg._startTs;
+            }
+          }
+          // Append text.
+          if (lastSeg && lastSeg.type === 'text') {
+            lastSeg.text += event.content;
+          } else {
+            segs.push({ type: 'text', text: event.content });
+          }
+        }
         setCachedMessages(sessionMessagesRef.current, sid, (prev) => {
           const streamingId = `streaming-${sid}`;
           const lastIdx = prev.findIndex((m) => m.id === streamingId);
@@ -294,9 +339,27 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         });
         syncVisible(sid);
       } else if (event.type === 'stream_reasoning_delta') {
-        // Merge reasoning into the streaming message's metadata.
         const sid = event.session_id;
-        console.log(`[chat] stream_reasoning_delta: session=${sid}, len=${event.content.length}, preview=${event.content.substring(0, 50)}`);
+        console.log(`[chat] stream_reasoning_delta: session=${sid}, len=${event.content.length}`);
+        // Push/extend a reasoning segment in event-ordered segments.
+        const segs = streamSegsRef.current.get(sid);
+        if (segs) {
+          const lastSeg = segs[segs.length - 1];
+          if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
+            // Extend existing in-progress reasoning segment.
+            lastSeg.content += event.content;
+          } else {
+            // New reasoning segment (new iteration's reasoning).
+            segs.push({
+              type: 'reasoning',
+              content: event.content,
+              isStreaming: true,
+              _startTs: Date.now(),
+            });
+            setStreamSegsVersion((v) => v + 1);
+          }
+        }
+        // Also merge into metadata for backward compat (copy, etc.).
         setCachedMessages(sessionMessagesRef.current, sid, (prev) => {
           const streamingId = `streaming-${sid}`;
           const lastIdx = prev.findIndex((m) => m.id === streamingId);
@@ -311,7 +374,6 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             updated[lastIdx] = { ...existing, metadata: meta };
             return updated;
           }
-          // Streaming message doesn't exist yet — create it with reasoning.
           return [
             ...prev,
             {
@@ -615,6 +677,12 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         toolResultsRef.current.set(sid, existing);
         if (sid === activeSessionIdRef.current) {
           setVisibleToolResults([...existing]);
+        }
+        // Push tool_result segment and bump version to force re-render.
+        const segs = streamSegsRef.current.get(sid);
+        if (segs) {
+          segs.push({ type: 'tool_result', record });
+          setStreamSegsVersion((v) => v + 1);
         }
       }
     };
@@ -1302,6 +1370,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     opStatus,
     pendingEdit,
     toolResults: visibleToolResults,
+    getStreamSegments,
     sendMessage,
     cancelRun,
     loadMessages,

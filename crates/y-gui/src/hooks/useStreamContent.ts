@@ -349,117 +349,31 @@ function isPartialToolCallPrefix(s: string): boolean {
   return false;
 }
 
-// ---------------------------------------------------------------------------
-// Native Mode Synthesis
-// ---------------------------------------------------------------------------
-
 /**
- * Synthesize a StreamContentResult for Native mode tool calls.
+ * Extract the final answer from XML-parsed content segments.
  *
- * In Native mode, the LLM does NOT emit `<tool_call>` XML tags. Instead, it
- * natively outputs tool parameters, which the backend provides as separate
- * objects. The backend wraps each intermediate iteration's text in
- * `<think>...</think>` tags so the frontend can distinguish iteration
- * boundaries from the final conclusion text.
- *
- * This function finds all **paired** `<think>...</think>` blocks, creates one
- * text segment per block, interleaves tool calls chronologically (one per
- * iteration), and leaves the post-think trailing text as the conclusion.
- *
- * Using paired matching instead of positional `<think>` splitting avoids
- * false positives from inline mentions such as `` `<think>` `` in markdown.
+ * Returns text after the last tool_call (the final LLM answer), or all
+ * text joined if no tool calls exist. Used by the copy button.
  */
-export function synthesizeNativeStreamResult(
-  content: string,
-  nativeToolCalls: Array<{ name: string; arguments?: string }>
-): StreamContentResult | null {
-  if (nativeToolCalls.length === 0 && !content.includes('<think>')) return null;
-
-  const toolCalls: ParsedToolCall[] = nativeToolCalls.map((tc) => ({
-    name: tc.name,
-    arguments: tc.arguments ?? '',
-    startIndex: 0,
-  }));
-
-  // Find all paired <think>...</think> blocks.
-  // Paired matching correctly ignores inline mentions like `<think>` that
-  // have no corresponding closing tag.
-  const THINK_OPEN = '<think>';
-  const THINK_CLOSE = '</think>';
-  const thinkBlocks: { start: number; end: number }[] = [];
-  let searchStart = 0;
-  while (searchStart < content.length) {
-    const openIdx = content.indexOf(THINK_OPEN, searchStart);
-    if (openIdx < 0) break;
-    const closeIdx = content.indexOf(THINK_CLOSE, openIdx + THINK_OPEN.length);
-    if (closeIdx < 0) break; // unclosed tag -- stop
-    const blockEnd = closeIdx + THINK_CLOSE.length;
-    thinkBlocks.push({ start: openIdx, end: blockEnd });
-    searchStart = blockEnd;
+export function extractXmlFinalAnswer(
+  segments: ContentSegment[],
+  stripThinkFn: (text: string) => string,
+): string {
+  let lastToolIdx = -1;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (segments[i].type === 'tool_call') { lastToolIdx = i; break; }
   }
-
-  const segments: ContentSegment[] = [];
-
-  // No paired think blocks found -- simple: text + tool calls.
-  if (thinkBlocks.length === 0) {
-    if (content.trim()) segments.push({ type: 'text', text: content });
-    toolCalls.forEach((tc) => segments.push({ type: 'tool_call', toolCall: tc }));
-    return { segments, displayText: content, toolCalls, hasPendingToolCall: false };
+  if (lastToolIdx >= 0) {
+    const afterTool = segments.slice(lastToolIdx + 1)
+      .filter((s): s is { type: 'text'; text: string } => s.type === 'text')
+      .map((s) => s.text).join('');
+    if (afterTool.trim()) return stripThinkFn(afterTool);
+    return '';
   }
-
-  let toolIdx = 0;
-
-  // Pre-think text (text before the first <think> block).
-  // In old-format data this is iteration-1 reasoning without <think> wrapper.
-  if (thinkBlocks[0].start > 0) {
-    const preText = content.slice(0, thinkBlocks[0].start);
-    if (preText.trim()) {
-      segments.push({ type: 'text', text: preText });
-      // This text represents an iteration's reasoning -- pair with a tool call.
-      if (toolIdx < toolCalls.length) {
-        segments.push({ type: 'tool_call', toolCall: toolCalls[toolIdx++] });
-      }
-    }
-  }
-
-  // Each <think>...</think> block represents one LLM iteration's reasoning.
-  for (let i = 0; i < thinkBlocks.length; i++) {
-    const block = thinkBlocks[i];
-
-    // Text between consecutive blocks (rare but handle gracefully).
-    if (i > 0) {
-      const gap = content.slice(thinkBlocks[i - 1].end, block.start);
-      if (gap.trim()) {
-        segments.push({ type: 'text', text: gap });
-      }
-    }
-
-    // The think block text (including tags, for extractThinkTags to process).
-    segments.push({ type: 'text', text: content.slice(block.start, block.end) });
-
-    // Pair with a tool call.
-    if (toolIdx < toolCalls.length) {
-      segments.push({ type: 'tool_call', toolCall: toolCalls[toolIdx++] });
-    }
-  }
-
-  // Post-think text (after the last </think> block) -- conclusion / final answer.
-  const lastEnd = thinkBlocks[thinkBlocks.length - 1].end;
-  if (lastEnd < content.length) {
-    const postText = content.slice(lastEnd);
-    // Place any remaining tool calls before the conclusion.
-    while (toolIdx < toolCalls.length) {
-      segments.push({ type: 'tool_call', toolCall: toolCalls[toolIdx++] });
-    }
-    if (postText.trim()) {
-      segments.push({ type: 'text', text: postText });
-    }
-  } else {
-    // No text after last think block -- place remaining tool calls at the end.
-    while (toolIdx < toolCalls.length) {
-      segments.push({ type: 'tool_call', toolCall: toolCalls[toolIdx++] });
-    }
-  }
-
-  return { segments, displayText: content, toolCalls, hasPendingToolCall: false };
+  const allText = segments
+    .filter((s): s is { type: 'text'; text: string } => s.type === 'text')
+    .map((s) => s.text).join('');
+  return stripThinkFn(allText);
 }
+
+
