@@ -126,6 +126,10 @@ pub(crate) async fn execute_inner(
         session_id,
         working_history,
         accumulated_content: String::new(),
+        iteration_texts: Vec::new(),
+        iteration_reasonings: Vec::new(),
+        iteration_reasoning_durations_ms: Vec::new(),
+        iteration_tool_counts: Vec::new(),
         dynamic_tool_defs: Vec::new(),
         pending_interactions: container.pending_interactions.clone(),
         pending_permissions: container.pending_permissions.clone(),
@@ -288,6 +292,11 @@ pub(crate) async fn execute_inner(
                 }
 
                 if !response.tool_calls.is_empty() {
+                    // Track per-iteration reasoning before delegating to tool handling.
+                    ctx.iteration_reasonings
+                        .push(response.reasoning_content.clone());
+                    ctx.iteration_reasoning_durations_ms
+                        .push(iter_reasoning_duration_ms);
                     tool_handling::handle_native_tool_calls(
                         container,
                         config,
@@ -322,6 +331,11 @@ pub(crate) async fn execute_inner(
                         "fallback: parse_tool_calls result"
                     );
                     if !parse_result.tool_calls.is_empty() {
+                        // Track per-iteration reasoning before delegating to tool handling.
+                        ctx.iteration_reasonings
+                            .push(response.reasoning_content.clone());
+                        ctx.iteration_reasoning_durations_ms
+                            .push(iter_reasoning_duration_ms);
                         tool_handling::handle_prompt_based_tool_calls(
                             container,
                             config,

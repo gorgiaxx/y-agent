@@ -52,17 +52,19 @@ pub(crate) async fn handle_native_tool_calls(
     };
 
     // Accumulate this iteration's text so the final persisted message
-    // includes all iterations' content. If the response doesn't already
-    // contain <think> tags, wrap it so the frontend can properly interleave
-    // and group it inside the ActionCard's collapsible section.
+    // includes all iterations' content. The raw content is preserved
+    // as-is -- the frontend renders it sequentially.
     let out_content = if iter_content.trim().is_empty() {
         String::new()
-    } else if iter_content.trim().starts_with("<think>") {
-        iter_content.clone()
     } else {
-        format!("<think>\n{}\n</think>\n", iter_content.trim())
+        format!("{}\n", iter_content.trim())
     };
     ctx.accumulated_content.push_str(&out_content);
+    // Store per-iteration text separately so the frontend can interleave
+    // text and tool cards by iteration order (without character offsets).
+    // Always push (even empty) to stay parallel with iteration_reasonings.
+    ctx.iteration_texts.push(out_content.clone());
+    ctx.iteration_tool_counts.push(response.tool_calls.len());
 
     let assistant_msg =
         result::build_assistant_msg(response, out_content, response.tool_calls.clone());
@@ -132,18 +134,19 @@ pub(crate) async fn handle_prompt_based_tool_calls(
     let msgs_before = ctx.new_messages.len();
 
     // Accumulate this iteration's text so the final persisted message
-    // includes all iterations' content. If the response doesn't already
-    // contain <think> tags, wrap it so the frontend can properly interleave
-    // and group it inside the ActionCard's collapsible section.
+    // includes all iterations' content. The raw content is preserved
+    // as-is -- the frontend renders it sequentially.
     let out_content = if text.trim().is_empty() {
         String::new()
-    } else if text.trim().starts_with("<think>") {
-        text.to_string()
     } else {
-        format!("<think>\n{}\n</think>\n", text.trim())
+        format!("{}\n", text.trim())
     };
 
     ctx.accumulated_content.push_str(&out_content);
+    // Always push (even empty) to stay parallel with iteration_reasonings.
+    ctx.iteration_texts.push(out_content.clone());
+    ctx.iteration_tool_counts
+        .push(parse_result.tool_calls.len());
 
     let assistant_msg = result::build_assistant_msg(response, out_content, vec![]);
 

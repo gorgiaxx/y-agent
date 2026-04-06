@@ -220,6 +220,31 @@ pub(crate) async fn execute_and_record_tool(
     }
 
     // ---------------------------------------------------------------
+    // File history tracking (rewind support)
+    // ---------------------------------------------------------------
+    // Before executing file-mutating tools, capture the current file
+    // state so we can restore it during a rewind operation.
+    {
+        let file_path = match tc.name.as_str() {
+            "FileWrite" | "FileCreate" | "FileDelete" | "FileMove" => tc
+                .arguments
+                .get("path")
+                .or_else(|| tc.arguments.get("source"))
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            _ => None,
+        };
+        if let Some(ref path) = file_path {
+            crate::rewind::RewindService::track_edit(
+                &container.file_history_managers,
+                &ctx.session_id,
+                path,
+            )
+            .await;
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Actual tool execution
     // ---------------------------------------------------------------
     let (tool_success, result_content) =

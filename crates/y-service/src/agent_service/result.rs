@@ -253,6 +253,11 @@ pub(crate) async fn build_final_result(
         tool_calls_executed: ctx.tool_calls_executed,
         iterations: ctx.iteration,
         new_messages: ctx.new_messages,
+        final_response: content.clone(),
+        iteration_texts: ctx.iteration_texts,
+        iteration_reasonings: ctx.iteration_reasonings,
+        iteration_reasoning_durations_ms: ctx.iteration_reasoning_durations_ms,
+        iteration_tool_counts: ctx.iteration_tool_counts,
         reasoning_content: response.reasoning_content.clone(),
         reasoning_duration_ms,
     })
