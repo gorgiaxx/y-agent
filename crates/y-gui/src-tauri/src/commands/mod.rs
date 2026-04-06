@@ -8,6 +8,7 @@ pub mod config;
 pub mod diagnostics;
 pub mod knowledge;
 pub mod observability;
+pub mod rewind;
 pub mod session;
 pub mod skills;
 pub mod system;

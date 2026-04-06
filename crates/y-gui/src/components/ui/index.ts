@@ -35,3 +35,4 @@ export {
 export { ScrollArea } from './ScrollArea'
 export { Separator } from './Separator'
 export { Checkbox } from './Checkbox'
+export { Tabs, TabsList, TabsTrigger, TabsContent } from './Tabs'

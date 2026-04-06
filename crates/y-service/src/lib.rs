@@ -28,6 +28,7 @@ pub mod knowledge_service;
 pub mod message_builder;
 pub mod observability;
 pub mod orchestrator_dispatcher;
+pub mod rewind;
 pub mod scheduler_service;
 pub mod skill_evolution;
 pub mod skill_ingestion;
@@ -60,6 +61,7 @@ pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,
 };
+pub use rewind::{FileHistoryManagers, RewindError, RewindPointInfo, RewindResult, RewindService};
 pub use scheduler_service::{
     CreateScheduleRequest, ExecutionSummary, ScheduleSummary, SchedulerService,
     SchedulerServiceError, UpdateScheduleRequest,

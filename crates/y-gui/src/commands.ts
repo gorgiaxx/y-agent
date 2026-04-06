@@ -20,6 +20,7 @@ export const GUI_COMMANDS: GuiCommandDef[] = [
   { name: 'new', alias: 'n', description: 'Create new session', category: 'Session', immediate: true },
   { name: 'export', alias: null, description: 'Export session', category: 'Session', immediate: true },
   { name: 'compact', alias: null, description: 'Compact context (prune + summarize)', category: 'Session', immediate: true },
+  { name: 'rewind', alias: null, description: 'Rewind to a previous message (undo file changes)', category: 'Session', immediate: true },
   // General commands
   { name: 'clear', alias: 'cl', description: 'Clear current session', category: 'General', immediate: true },
   { name: 'help', alias: 'h', description: 'Show help', category: 'General', immediate: true },

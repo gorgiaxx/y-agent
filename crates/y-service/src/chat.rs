@@ -570,6 +570,27 @@ impl ChatService {
         )
         .await;
 
+        // 2b. File history snapshot (rewind support).
+        //     Ensure a FileHistoryManager exists for this session, then
+        //     create a snapshot at this user-message boundary. If the
+        //     manager cannot be created, log and continue (rewind is
+        //     best-effort, not turn-blocking).
+        if let Err(e) = crate::rewind::RewindService::ensure_manager(
+            &container.file_history_managers,
+            &session_id,
+            &container.data_dir,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "failed to initialize file history manager");
+        }
+        crate::rewind::RewindService::make_snapshot(
+            &container.file_history_managers,
+            &session_id,
+            &user_msg.message_id,
+        )
+        .await;
+
         // 3. Read class transcript for LLM context (may be compacted).
         //    The context transcript is the source of truth for what the LLM
         //    sees. After compaction, older messages are replaced by a summary
@@ -870,6 +891,11 @@ impl ChatService {
             "tool_results": tool_results_meta,
             "context_window": result.context_window,
             "context_tokens_used": result.last_input_tokens,
+            "final_response": result.final_response,
+            "iteration_texts": result.iteration_texts,
+            "iteration_reasonings": result.iteration_reasonings,
+            "iteration_reasoning_durations_ms": result.iteration_reasoning_durations_ms,
+            "iteration_tool_counts": result.iteration_tool_counts,
         });
 
         // Preserve reasoning_content: prefer the direct field (always available),

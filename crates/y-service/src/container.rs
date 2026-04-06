@@ -176,6 +176,14 @@ pub struct ServiceContainer {
     // -- Bot ---------------------------------------------------------------
     /// Path to the bot persona directory (`~/.config/y-agent/persona/`).
     pub persona_dir: Option<PathBuf>,
+
+    // -- File History (Rewind) ---------------------------------------------
+    /// Per-session file history managers for rewind support.
+    pub file_history_managers: crate::rewind::FileHistoryManagers,
+
+    /// Data directory root (parent of the `SQLite` database file).
+    /// Used for constructing file-history backup paths.
+    pub data_dir: PathBuf,
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +344,14 @@ impl ServiceContainer {
             pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
             persona_dir: config.persona_dir.clone(),
+            file_history_managers: crate::rewind::create_file_history_managers(),
+            data_dir: {
+                let db_path = std::path::Path::new(&config.storage.db_path);
+                db_path
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf()
+            },
         })
     }
 

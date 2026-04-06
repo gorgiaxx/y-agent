@@ -265,6 +265,9 @@ pub fn run() {
             commands::automation::workflow_execute,
             // Attachments
             commands::attachments::attachment_read_files,
+            // Rewind (File History)
+            commands::rewind::rewind_list_points,
+            commands::rewind::rewind_execute,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,0 +1,203 @@
+/* RewindPanel styles */
+
+.rewind-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: rewind-fade-in 0.15s ease-out;
+}
+
+@keyframes rewind-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.rewind-panel {
+  background: var(--bg-secondary, #1e1e2e);
+  border: 1px solid var(--border-color, #313244);
+  border-radius: 12px;
+  width: 480px;
+  max-width: 90vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  animation: rewind-slide-up 0.2s ease-out;
+}
+
+@keyframes rewind-slide-up {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.rewind-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 0;
+}
+
+.rewind-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rewind-header-icon {
+  color: var(--accent-color, #89b4fa);
+}
+
+.rewind-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #cdd6f4);
+}
+
+.rewind-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #a6adc8);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.rewind-close:hover {
+  background: var(--bg-hover, #313244);
+  color: var(--text-primary, #cdd6f4);
+}
+
+.rewind-subtitle {
+  margin: 8px 20px 12px;
+  font-size: 12px;
+  color: var(--text-secondary, #a6adc8);
+  line-height: 1.4;
+}
+
+.rewind-error {
+  margin: 0 20px 12px;
+  padding: 8px 12px;
+  background: rgba(243, 139, 168, 0.1);
+  border: 1px solid rgba(243, 139, 168, 0.25);
+  border-radius: 6px;
+  color: #f38ba8;
+  font-size: 12px;
+}
+
+.rewind-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 20px;
+  color: var(--text-secondary, #a6adc8);
+  font-size: 13px;
+}
+
+.rewind-spinner {
+  animation: rewind-spin 1s linear infinite;
+}
+
+@keyframes rewind-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.rewind-empty {
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--text-secondary, #a6adc8);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rewind-list {
+  overflow-y: auto;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rewind-point {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary, #cdd6f4);
+  transition: background 0.15s, border-color 0.15s;
+  font-family: inherit;
+  width: 100%;
+}
+
+.rewind-point:hover {
+  background: var(--bg-hover, #313244);
+  border-color: var(--border-color, #45475a);
+}
+
+.rewind-point:active {
+  background: var(--bg-active, #45475a);
+}
+
+.rewind-point-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rewind-point-turn {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-color, #89b4fa);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rewind-point-time {
+  font-size: 11px;
+  color: var(--text-tertiary, #6c7086);
+}
+
+.rewind-point-preview {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-secondary, #a6adc8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rewind-point-stats {
+  display: flex;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.rewind-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.rewind-stat--changed {
+  color: #fab387;
+}
+
+.rewind-stat--created {
+  color: #a6e3a1;
+}

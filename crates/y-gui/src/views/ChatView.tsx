@@ -6,6 +6,8 @@ import { WelcomePage } from '../components/WelcomePage';
 import { InputArea } from '../components/chat-panel/input-area/InputArea';
 import { StatusBar } from '../components/chat-panel/StatusBar';
 import { WorkspaceDialog } from '../components/chat-panel/WorkspaceDialog';
+import { RewindPanel } from '../components/chat-panel/RewindPanel';
+import { useRewind } from '../hooks/useRewind';
 
 import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useNavigationContext } from '../providers/AppContexts';
 import { useChatHandlers } from '../hooks/useChatHandlers';
@@ -23,6 +25,8 @@ export function ChatView() {
   const providerHooks = useProvidersContext();
   const configHooks = useConfigContext();
   const navProps = useNavigationContext();
+
+  const rewind = useRewind();
 
   // AskUser interaction state.
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
@@ -165,6 +169,11 @@ export function ChatView() {
     setActiveView: navProps.setActiveView,
     setDiagOpen: (fn: (prev: boolean) => boolean) => navProps.setDiagOpen(fn(navProps.diagOpen)),
     setObsOpen: (fn: (prev: boolean) => boolean) => navProps.setObsOpen(fn(navProps.obsOpen)),
+    onRewind: () => {
+      if (sessionHooks.activeSessionId) {
+        rewind.open(sessionHooks.activeSessionId);
+      }
+    },
   });
 
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
@@ -201,6 +210,7 @@ export function ChatView() {
           onForkMessage={handleForkMessage}
           onRestoreBranch={handleRestoreBranch} 
           toolResults={chatHooks.toolResults} 
+          getStreamSegments={chatHooks.getStreamSegments}
           contextResetPoints={chatHooks.contextResetPoints} 
           compactPoints={chatHooks.compactPoints}
         />
@@ -266,6 +276,27 @@ export function ChatView() {
             setWsDialogOpen(false);
           }}
           onClose={() => setWsDialogOpen(false)}
+        />
+      )}
+
+      {rewind.isOpen && sessionHooks.activeSessionId && (
+        <RewindPanel
+          points={rewind.points}
+          isLoading={rewind.isLoading}
+          isRewinding={rewind.isRewinding}
+          error={rewind.error}
+          onSelect={async (messageId) => {
+            const result = await rewind.executeRewind(
+              sessionHooks.activeSessionId!,
+              messageId,
+            );
+            if (result) {
+              // Reload messages to reflect the rewound state.
+              await chatHooks.loadMessages(sessionHooks.activeSessionId!);
+              sessionHooks.refreshSessions();
+            }
+          }}
+          onClose={rewind.close}
         />
       )}
     </>

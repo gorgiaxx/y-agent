@@ -136,6 +136,26 @@ pub struct AgentExecutionResult {
     pub iterations: usize,
     /// Messages generated during this agent run (assistant + tool messages).
     pub new_messages: Vec<Message>,
+    /// Content from the final LLM call only (excludes accumulated intermediate
+    /// text from earlier tool-call iterations). Used by the frontend copy button
+    /// to copy only the final answer.
+    pub final_response: String,
+    /// Per-iteration text content, in order. Used by the frontend to
+    /// interleave text and tool cards on session reload.
+    /// `[iter1_text, iter2_text, ...]` -- does NOT include `final_response`.
+    pub iteration_texts: Vec<String>,
+    /// Per-iteration reasoning content, in order. Each entry corresponds to
+    /// one LLM call's reasoning output (`None` when that call produced no
+    /// reasoning). Does NOT include reasoning from the final LLM call (that
+    /// one is in `reasoning_content`).
+    pub iteration_reasonings: Vec<Option<String>>,
+    /// Per-iteration reasoning durations in milliseconds, parallel to
+    /// `iteration_reasonings`.
+    pub iteration_reasoning_durations_ms: Vec<Option<u64>>,
+    /// Number of tool calls executed in each iteration, parallel to
+    /// `iteration_texts`. Used by the frontend to distribute the flat
+    /// `tool_results` array across iterations for correct interleaving.
+    pub iteration_tool_counts: Vec<usize>,
     /// Reasoning/thinking content from the final LLM response (if the model
     /// supports chain-of-thought). `None` when the model did not produce
     /// reasoning output.
@@ -205,6 +225,14 @@ pub(crate) struct ToolExecContext {
     pub(crate) session_id: SessionId,
     pub(crate) working_history: Vec<Message>,
     pub(crate) accumulated_content: String,
+    /// Per-iteration text content, stored separately for frontend interleaving.
+    pub(crate) iteration_texts: Vec<String>,
+    /// Per-iteration reasoning content (parallel to `iteration_texts`).
+    pub(crate) iteration_reasonings: Vec<Option<String>>,
+    /// Per-iteration reasoning durations in milliseconds.
+    pub(crate) iteration_reasoning_durations_ms: Vec<Option<u64>>,
+    /// Number of tool calls executed in each iteration.
+    pub(crate) iteration_tool_counts: Vec<usize>,
     /// Tool definitions dynamically activated via `ToolSearch` during this turn.
     /// Merged with `config.tool_definitions` when building each `ChatRequest`.
     pub(crate) dynamic_tool_defs: Vec<serde_json::Value>,

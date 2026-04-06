@@ -5,6 +5,7 @@ import type { Message } from '../../types';
 import type { ToolResultRecord, CompactInfo } from '../../hooks/useChat';
 import { UserBubble } from './chat-box/UserBubble';
 import { AssistantBubble } from './chat-box/AssistantBubble';
+import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import { RestoreDivider } from './chat-box/RestoreDivider';
 import { ContextResetDivider } from './chat-box/ContextResetDivider';
 import { CompactDivider } from './chat-box/CompactDivider';
@@ -30,6 +31,8 @@ interface ChatPanelProps {
   tombstonedSegments?: TombstonedSegment[];
   onRestoreBranch?: (checkpointId: string) => void;
   toolResults?: ToolResultRecord[];
+  /** Getter for event-ordered stream segments (from useChat ref). */
+  getStreamSegments?: () => InterleavedSegment[] | null;
   contextResetPoints?: number[];
   compactPoints?: CompactInfo[];
 }
@@ -159,6 +162,7 @@ function ChatPanelInner({
   tombstonedSegments,
   onRestoreBranch,
   toolResults,
+  getStreamSegments,
   contextResetPoints,
   compactPoints,
 }: ChatPanelProps) {
@@ -267,6 +271,7 @@ function ChatPanelInner({
           <AssistantBubble
             message={item.msg}
             toolResults={item.toolResults}
+            getStreamSegments={getStreamSegments}
           />
         );
       }
