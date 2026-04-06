@@ -10,13 +10,13 @@
 //!
 //! ## Module Structure
 //!
-//! - [`executor`] -- main execution loop (`execute_inner`)
-//! - [`llm`] -- LLM call dispatch (streaming + non-streaming)
-//! - [`tool_dispatch`] -- tool execution, permission gating, HITL flow
-//! - [`tool_handling`] -- native/prompt-based tool call handling, dynamic tool sync
-//! - [`pruning`] -- mid-loop context pruning, tool history pruning, thinking strip
-//! - [`result`] -- result building, progress events, diagnostics recording
-//! - [`subagent`] -- `ServiceAgentRunner`, sub-agent prompt construction
+//! - `executor` -- main execution loop (`execute_inner`)
+//! - `llm` -- LLM call dispatch (streaming + non-streaming)
+//! - `tool_dispatch` -- tool execution, permission gating, HITL flow
+//! - `tool_handling` -- native/prompt-based tool call handling, dynamic tool sync
+//! - `pruning` -- mid-loop context pruning, tool history pruning, thinking strip
+//! - `result` -- result building, progress events, diagnostics recording
+//! - `subagent` -- `ServiceAgentRunner`, sub-agent prompt construction
 
 mod executor;
 mod llm;
@@ -367,10 +367,12 @@ impl AgentService {
 // Think tag stripping
 // ---------------------------------------------------------------------------
 
-/// Remove all `<think>...</think>` blocks from a string.
+/// Remove all `<think>...</think>` blocks and `<!-- iter -->` markers from
+/// a string.
 ///
-/// Handles multiple consecutive blocks and unclosed tags (drops from the
-/// opening tag to the end of the string).
+/// Handles multiple consecutive think blocks and unclosed tags (drops from
+/// the opening tag to the end of the string). Also strips `<!-- iter -->`
+/// iteration boundary markers inserted during tool-call loops.
 pub(crate) fn strip_think_tags(content: &str) -> String {
     let mut result = content.to_string();
     while let Some(start) = result.find("<think>") {
@@ -384,6 +386,8 @@ pub(crate) fn strip_think_tags(content: &str) -> String {
             break;
         }
     }
+    // Also strip iteration boundary markers.
+    result = result.replace("<!-- iter -->", "");
     result.trim().to_string()
 }
 
@@ -591,6 +595,25 @@ mod tests {
     fn test_strip_think_tags_empty_think() {
         let input = "<think></think>Content";
         assert_eq!(super::strip_think_tags(input), "Content");
+    }
+
+    #[test]
+    fn test_strip_iter_markers() {
+        let input = "<!-- iter -->first iteration\n<!-- iter -->second iteration\nFinal answer";
+        assert_eq!(
+            super::strip_think_tags(input),
+            "first iteration\nsecond iteration\nFinal answer"
+        );
+    }
+
+    #[test]
+    fn test_strip_iter_markers_with_think_tags() {
+        // Mixed legacy think tags and new iter markers.
+        let input = "<think>reasoning</think><!-- iter -->iteration text\nFinal answer";
+        assert_eq!(
+            super::strip_think_tags(input),
+            "iteration text\nFinal answer"
+        );
     }
 
     // -----------------------------------------------------------------------
