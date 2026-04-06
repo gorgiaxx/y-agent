@@ -124,6 +124,7 @@ y-scheduler = { path = "crates/y-scheduler" }
 
 y-agent = { path = "crates/y-agent" }
 y-guardrails = { path = "crates/y-guardrails" }
+y-journal = { path = "crates/y-journal" }
 y-skills = { path = "crates/y-skills" }
 y-prompt = { path = "crates/y-prompt" }
 y-diagnostics = { path = "crates/y-diagnostics" }
