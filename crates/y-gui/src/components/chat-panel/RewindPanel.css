@@ -18,15 +18,15 @@
 }
 
 .rewind-panel {
-  background: var(--bg-secondary, #1e1e2e);
-  border: 1px solid var(--border-color, #313244);
-  border-radius: 12px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   width: 480px;
   max-width: 90vw;
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
   animation: rewind-slide-up 0.2s ease-out;
 }
 
@@ -39,57 +39,57 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px 0;
+  padding: var(--space-md) 20px 0;
 }
 
 .rewind-header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .rewind-header-icon {
-  color: var(--accent-color, #89b4fa);
+  color: var(--accent);
 }
 
 .rewind-title {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-primary, #cdd6f4);
+  color: var(--text-primary);
 }
 
 .rewind-close {
   background: none;
   border: none;
-  color: var(--text-secondary, #a6adc8);
+  color: var(--text-secondary);
   cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   transition: background 0.15s, color 0.15s;
 }
 
 .rewind-close:hover {
-  background: var(--bg-hover, #313244);
-  color: var(--text-primary, #cdd6f4);
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .rewind-subtitle {
-  margin: 8px 20px 12px;
+  margin: var(--space-sm) 20px var(--space-md);
   font-size: 12px;
-  color: var(--text-secondary, #a6adc8);
+  color: var(--text-secondary);
   line-height: 1.4;
 }
 
 .rewind-error {
-  margin: 0 20px 12px;
-  padding: 8px 12px;
-  background: rgba(243, 139, 168, 0.1);
-  border: 1px solid rgba(243, 139, 168, 0.25);
-  border-radius: 6px;
-  color: #f38ba8;
+  margin: 0 20px var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--error-subtle);
+  border: 1px solid var(--error);
+  border-radius: var(--radius-sm);
+  color: var(--error);
   font-size: 12px;
 }
 
@@ -97,9 +97,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 32px 20px;
-  color: var(--text-secondary, #a6adc8);
+  gap: var(--space-sm);
+  padding: var(--space-xl) 20px;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
@@ -113,44 +113,44 @@
 }
 
 .rewind-empty {
-  padding: 32px 20px;
+  padding: var(--space-xl) 20px;
   text-align: center;
-  color: var(--text-secondary, #a6adc8);
+  color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.5;
 }
 
 .rewind-list {
   overflow-y: auto;
-  padding: 0 12px 12px;
+  padding: 0 var(--space-md) var(--space-md);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-xs);
 }
 
 .rewind-point {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: var(--space-xs);
+  padding: 10px var(--space-md);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   text-align: left;
-  color: var(--text-primary, #cdd6f4);
+  color: var(--text-primary);
   transition: background 0.15s, border-color 0.15s;
   font-family: inherit;
   width: 100%;
 }
 
 .rewind-point:hover {
-  background: var(--bg-hover, #313244);
-  border-color: var(--border-color, #45475a);
+  background: var(--surface-hover);
+  border-color: var(--border);
 }
 
 .rewind-point:active {
-  background: var(--bg-active, #45475a);
+  background: var(--surface-active);
 }
 
 .rewind-point-header {
@@ -162,20 +162,20 @@
 .rewind-point-turn {
   font-size: 11px;
   font-weight: 600;
-  color: var(--accent-color, #89b4fa);
+  color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 
 .rewind-point-time {
   font-size: 11px;
-  color: var(--text-tertiary, #6c7086);
+  color: var(--text-muted);
 }
 
 .rewind-point-preview {
   font-size: 13px;
   line-height: 1.4;
-  color: var(--text-secondary, #a6adc8);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -183,21 +183,21 @@
 
 .rewind-point-stats {
   display: flex;
-  gap: 12px;
+  gap: var(--space-md);
   margin-top: 2px;
 }
 
 .rewind-stat {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xs);
   font-size: 11px;
 }
 
 .rewind-stat--changed {
-  color: #fab387;
+  color: var(--warning);
 }
 
 .rewind-stat--created {
-  color: #a6e3a1;
+  color: var(--success);
 }

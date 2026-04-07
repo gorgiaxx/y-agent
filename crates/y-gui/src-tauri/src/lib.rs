@@ -268,6 +268,7 @@ pub fn run() {
             // Rewind (File History)
             commands::rewind::rewind_list_points,
             commands::rewind::rewind_execute,
+            commands::rewind::rewind_restore_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

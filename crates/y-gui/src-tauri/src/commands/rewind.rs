@@ -42,3 +42,29 @@ pub async fn rewind_execute(
         .await
         .map_err(|e| e.to_string())
 }
+
+/// Restore files to a message boundary without truncating transcripts.
+///
+/// Used by the GUI undo flow where `chat_undo` already handles transcript
+/// and checkpoint rollback. This only performs file restoration.
+#[tauri::command]
+pub async fn rewind_restore_files(
+    state: State<'_, AppState>,
+    session_id: String,
+    target_message_id: String,
+) -> Result<(), String> {
+    let session_id = y_core::types::SessionId(session_id);
+
+    // File restoration is best-effort: if no file history exists for this
+    // session (e.g. the session never made file changes), we silently succeed.
+    match y_service::RewindService::restore_files_only(
+        &state.container,
+        &session_id,
+        &target_message_id,
+    )
+    .await
+    {
+        Ok(_) | Err(y_service::RewindError::NoHistory(_)) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}

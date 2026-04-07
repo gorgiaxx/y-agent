@@ -15,7 +15,8 @@ interface RewindPanelProps {
   isLoading: boolean;
   isRewinding: boolean;
   error: string | null;
-  onSelect: (messageId: string) => void;
+  /** Called with the full point info so the parent can extract message content. */
+  onSelect: (point: RewindPointInfo) => void;
   onClose: () => void;
 }
 
@@ -114,7 +115,7 @@ export function RewindPanel({
               <button
                 key={point.message_id}
                 className="rewind-point"
-                onClick={() => onSelect(point.message_id)}
+                onClick={() => onSelect(point)}
               >
                 <div className="rewind-point-header">
                   <span className="rewind-point-turn">

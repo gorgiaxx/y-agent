@@ -7,7 +7,7 @@
 //!
 //! Design reference: Implementation plan for rewind feature.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -166,17 +166,18 @@ impl RewindService {
                     .find(|(scope, _)| scope.contains(message_id.as_str()))
                     .map_or(0, |(_, tn)| *tn);
 
-                let preview = preview_index.get(message_id.as_str()).map_or_else(
-                    || "[unknown message]".to_string(),
-                    |content| {
-                        let truncated: String = content.chars().take(100).collect();
-                        if content.chars().count() > 100 {
-                            format!("{truncated}...")
-                        } else {
-                            truncated
-                        }
-                    },
-                );
+                // Skip orphaned snapshots whose message was removed by
+                // undo/truncation. These have no entry in the display
+                // transcript and would show as "[unknown message]".
+                let content = preview_index.get(message_id.as_str())?;
+                let preview = {
+                    let truncated: String = content.chars().take(100).collect();
+                    if content.chars().count() > 100 {
+                        format!("{truncated}...")
+                    } else {
+                        truncated
+                    }
+                };
 
                 Some(RewindPointInfo {
                     message_id: message_id.clone(),
@@ -336,6 +337,108 @@ impl RewindService {
             checkpoints_invalidated,
             file_report,
         })
+    }
+
+    /// Restore files to a specific message boundary without touching transcripts
+    /// or checkpoints.
+    ///
+    /// This is used by the GUI undo flow, where transcript truncation and
+    /// checkpoint invalidation are already handled by `chat_undo`. We only
+    /// need to perform the file restoration phase.
+    ///
+    /// If the target snapshot does not exist (e.g. the undone turn had no
+    /// file edits), orphaned snapshots are cleaned up and an empty report
+    /// is returned.
+    pub async fn restore_files_only(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        target_message_id: &str,
+    ) -> Result<RewindReport, RewindError> {
+        info!(
+            session = %session_id.0,
+            target = target_message_id,
+            "restoring files only (no transcript/checkpoint changes)"
+        );
+
+        let file_report = {
+            let mut mgr = container
+                .file_history_managers
+                .write()
+                .await
+                .remove(session_id)
+                .ok_or_else(|| RewindError::NoHistory(session_id.0.clone()))?;
+
+            let target = target_message_id.to_string();
+            let (mgr, result) = tokio::task::spawn_blocking(move || {
+                let report = mgr.rewind_to(&target);
+                (mgr, report)
+            })
+            .await
+            .map_err(|e| RewindError::FileError(format!("blocking task failed: {e}")))?;
+
+            // Put the manager back.
+            container
+                .file_history_managers
+                .write()
+                .await
+                .insert(session_id.clone(), mgr);
+
+            match result {
+                Ok(report) => report,
+                Err(y_journal::JournalError::ScopeNotFound { .. }) => {
+                    // Target message had no file edits -- no snapshot exists.
+                    // Clean up any orphaned snapshots left behind by previous
+                    // undo operations.
+                    info!(
+                        session = %session_id.0,
+                        target = target_message_id,
+                        "no snapshot for target; cleaning up orphaned snapshots"
+                    );
+                    Self::cleanup_orphaned_snapshots(container, session_id).await;
+                    RewindReport {
+                        restored: Vec::new(),
+                        deleted: Vec::new(),
+                        conflicts: Vec::new(),
+                    }
+                }
+                Err(e) => return Err(RewindError::FileError(e.to_string())),
+            }
+        };
+
+        info!(
+            session = %session_id.0,
+            restored = file_report.restored.len(),
+            deleted = file_report.deleted.len(),
+            conflicts = file_report.conflicts.len(),
+            "file-only restoration complete"
+        );
+
+        Ok(file_report)
+    }
+
+    /// Remove file history snapshots whose `message_id` no longer appears
+    /// in the display transcript.
+    ///
+    /// Called after undo operations where the transcript has been truncated
+    /// but snapshot cleanup was skipped (e.g. the undone turn had no
+    /// file-level snapshot).
+    pub async fn cleanup_orphaned_snapshots(container: &ServiceContainer, session_id: &SessionId) {
+        let transcript = container
+            .session_manager
+            .read_display_transcript(session_id)
+            .await
+            .unwrap_or_default();
+
+        let valid_ids: HashSet<String> = transcript
+            .iter()
+            .filter(|m| m.role == Role::User)
+            .map(|m| m.message_id.clone())
+            .collect();
+
+        let mut managers = container.file_history_managers.write().await;
+        if let Some(mgr) = managers.get_mut(session_id) {
+            mgr.retain_snapshots(&valid_ids);
+        }
     }
 
     /// Get or create a [`FileHistoryManager`] for a session.
