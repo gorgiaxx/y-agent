@@ -28,6 +28,9 @@ export function ChatView() {
 
   const rewind = useRewind();
 
+  // Draft text to populate in the input box after rewind/undo.
+  const [rewindDraft, setRewindDraft] = useState<string | null>(null);
+
   // AskUser interaction state.
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
   const [askUserData, setAskUserData] = useState<{
@@ -159,6 +162,7 @@ export function ChatView() {
     restoreBranch: chatHooks.restoreBranch,
     pendingEdit: chatHooks.pendingEdit,
     loadMessages: chatHooks.loadMessages,
+    messages: chatHooks.messages,
     selectedProviderId: providerHooks.selectedProviderId,
     welcomeWorkspaceId: navProps.welcomeWorkspaceId,
     assignSession: workspaceHooks.assignSession,
@@ -174,6 +178,7 @@ export function ChatView() {
         rewind.open(sessionHooks.activeSessionId);
       }
     },
+    onSetRewindDraft: setRewindDraft,
   });
 
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
@@ -252,6 +257,8 @@ export function ChatView() {
         onPermissionDeny={handlePermissionDeny}
         onPermissionAllowAllForSession={handlePermissionAllowAllForSession}
         isCompacting={chatHooks.opStatus === 'compacting'}
+        rewindDraft={rewindDraft}
+        onRewindDraftConsumed={() => setRewindDraft(null)}
       />
       <StatusBar
         providerCount={providerHooks.systemStatus?.provider_count ?? 0}
@@ -285,15 +292,17 @@ export function ChatView() {
           isLoading={rewind.isLoading}
           isRewinding={rewind.isRewinding}
           error={rewind.error}
-          onSelect={async (messageId) => {
+          onSelect={async (point) => {
             const result = await rewind.executeRewind(
               sessionHooks.activeSessionId!,
-              messageId,
+              point.message_id,
             );
             if (result) {
               // Reload messages to reflect the rewound state.
               await chatHooks.loadMessages(sessionHooks.activeSessionId!);
               sessionHooks.refreshSessions();
+              // Place the rewound message content back in the input box.
+              setRewindDraft(point.message_preview);
             }
           }}
           onClose={rewind.close}

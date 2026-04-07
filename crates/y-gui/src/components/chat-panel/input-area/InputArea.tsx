@@ -64,6 +64,10 @@ interface InputAreaProps {
   onPermissionAllowAllForSession?: (requestId: string) => void;
   /** Whether context compaction is in progress. */
   isCompacting?: boolean;
+  /** Draft text to populate after rewind/undo (normal draft, not edit mode). */
+  rewindDraft?: string | null;
+  /** Called after rewindDraft is consumed to clear the state. */
+  onRewindDraftConsumed?: () => void;
 }
 
 /** Data attribute used to identify skill mention tokens in the contenteditable. */
@@ -198,6 +202,8 @@ export function InputArea({
   onPermissionDeny,
   onPermissionAllowAllForSession,
   isCompacting = false,
+  rewindDraft,
+  onRewindDraftConsumed,
 }: InputAreaProps) {
   const [commandMode, setCommandMode] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
@@ -515,6 +521,18 @@ export function InputArea({
       updateHasContent();
     }
   }, [pendingEdit, exitCommandMode, updateHasContent]);
+
+  // Populate input with draft text from rewind/undo operations.
+  useEffect(() => {
+    if (rewindDraft && editableRef.current) {
+      editableRef.current.textContent = rewindDraft;
+      exitCommandMode();
+      editableRef.current.focus();
+      placeCursorAtEnd(editableRef.current);
+      updateHasContent();
+      onRewindDraftConsumed?.();
+    }
+  }, [rewindDraft, exitCommandMode, updateHasContent, onRewindDraftConsumed]);
 
   return (
     <div className={`input-area ${expanded ? 'input-area--expanded' : ''}`}>

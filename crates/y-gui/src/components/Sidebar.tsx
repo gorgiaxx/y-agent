@@ -114,6 +114,12 @@ export function Sidebar({ chat, skills, knowledge, agents, automation, nav }: Si
   // Handle icon bar clicks: toggle panel collapse when clicking the active view,
   // switch view and expand panel when clicking a different view.
   const handleIconClick = (view: ViewType) => {
+    if (view === 'settings') {
+      // Settings panel is always visible -- no collapse toggle
+      nav.onSelectView(view);
+      setPanelCollapsed(false);
+      return;
+    }
     if (view === nav.activeView && !panelCollapsed) {
       // Same view is active and panel is open -- collapse
       setPanelCollapsed(true);
@@ -175,7 +181,7 @@ export function Sidebar({ chat, skills, knowledge, agents, automation, nav }: Si
       </div>
 
       {/* Sidebar panel content */}
-      <div className={`sidebar-panel ${panelCollapsed ? 'sidebar-panel--collapsed' : ''}`}>
+      <div className={`sidebar-panel ${panelCollapsed ? 'sidebar-panel--collapsed' : ''} ${nav.activeView === 'settings' ? 'sidebar-panel--settings' : ''}`}>
 
       {/* Sessions content (only when chat view is active) */}
       {nav.activeView === 'chat' && (

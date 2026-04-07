@@ -8,7 +8,7 @@
 
 import { useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import type { ChatStarted, ThinkingEffort, Attachment } from '../types';
+import type { ChatStarted, Message, ThinkingEffort, Attachment } from '../types';
 import type { ViewType } from '../components/Sidebar';
 import type { CompactInfo, ChatOpStatus } from './useChat';
 
@@ -54,6 +54,10 @@ export interface ChatDeps {
 
   // Rewind
   onRewind?: () => void;
+  /** Callback to set the input box draft after rewind/undo. */
+  onSetRewindDraft?: (content: string) => void;
+  /** Current messages (for finding content on undo). */
+  messages: Message[];
 }
 
 export interface UseChatHandlersReturn {
@@ -99,6 +103,8 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     setDiagOpen,
     setObsOpen,
     onRewind,
+    onSetRewindDraft,
+    messages,
   } = deps;
 
   const handleSend = useCallback(
@@ -150,9 +156,30 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
   const handleUndoMessage = useCallback(
     async (messageId: string) => {
       if (!activeSessionId) return;
+
+      // Find the message content before undo so we can populate the input.
+      const targetMsg = messages.find((m) => m.id === messageId);
+      const messageContent = targetMsg?.content ?? '';
+
       await undoToMessage(activeSessionId, messageId);
+
+      // Restore files to the state before this message was sent.
+      // Best-effort: silently succeeds if no file history exists.
+      try {
+        await invoke('rewind_restore_files', {
+          sessionId: activeSessionId,
+          targetMessageId: messageId,
+        });
+      } catch (e) {
+        console.warn('[undo] file restoration failed (non-fatal):', e);
+      }
+
+      // Put the undone message content back in the input box.
+      if (messageContent && onSetRewindDraft) {
+        onSetRewindDraft(messageContent);
+      }
     },
-    [activeSessionId, undoToMessage],
+    [activeSessionId, undoToMessage, messages, onSetRewindDraft],
   );
 
   const handleCancelEdit = useCallback(() => {

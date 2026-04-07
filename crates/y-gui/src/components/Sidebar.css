@@ -73,6 +73,11 @@
   border-right-width: 0;
 }
 
+.sidebar-panel--settings {
+  width: 180px;
+  min-width: 180px;
+}
+
 /* ---- Placeholder views ---- */
 .sidebar-placeholder {
   flex: 1;
