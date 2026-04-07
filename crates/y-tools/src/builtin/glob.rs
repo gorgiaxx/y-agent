@@ -1,7 +1,7 @@
 //! `Glob` built-in tool: fast file pattern matching.
 //!
-//! Uses ripgrep (`rg --files --Glob`) under the hood for performant
-//! file discovery across any codebase size. Supports standard Glob
+//! Uses ripgrep (`rg --files --glob`) under the hood for performant
+//! file discovery across any codebase size. Supports standard glob
 //! patterns (e.g. `**/*.rs`, `src/**/*.ts`) and returns matching file
 //! paths sorted by modification time.
 //!
@@ -20,9 +20,12 @@ use y_core::types::ToolName;
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 100_000;
 
+/// Default timeout for the ripgrep subprocess (seconds).
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
 /// Built-in Glob tool for file pattern matching.
 ///
-/// Accepts a Glob `pattern` and an optional `path` (defaults to cwd).
+/// Accepts a glob `pattern` and an optional `path` (defaults to cwd).
 /// Delegates to ripgrep for fast, ignore-aware file discovery.
 pub struct GlobTool {
     def: ToolDefinition,
@@ -102,7 +105,7 @@ impl GlobTool {
         }
     }
 
-    /// Resolve an absolute Glob pattern into a base directory and relative pattern.
+    /// Resolve an absolute glob pattern into a base directory and relative pattern.
     ///
     /// When the user provides an absolute path like `/home/user/src/**/*.rs`,
     /// we split it into base dir `/home/user/src` and pattern `**/*.rs`.
@@ -112,7 +115,7 @@ impl GlobTool {
             return None;
         }
 
-        // Walk components until we hit a Glob metacharacter.
+        // Walk components until we hit a glob metacharacter.
         let mut base = PathBuf::new();
         let mut remaining_parts = Vec::new();
         let mut found_glob = false;
@@ -139,9 +142,8 @@ impl GlobTool {
     fn build_rg_args(pattern: &str, no_ignore: bool, hidden: bool) -> Vec<String> {
         let mut args = vec![
             "--files".to_string(),
-            "--Glob".to_string(),
+            "--glob".to_string(),
             pattern.to_string(),
-            "--sort=modified".to_string(),
         ];
 
         if no_ignore {
@@ -153,9 +155,121 @@ impl GlobTool {
 
         args
     }
+
+    /// Build the full shell command string for ripgrep execution.
+    fn build_rg_command(rg_args: &[String], search_path: &str) -> String {
+        let args_str = rg_args
+            .iter()
+            .map(|a| shell_escape(a))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("rg {args_str} {}", shell_escape(search_path))
+    }
+
+    /// Execute ripgrep via direct subprocess (fallback when no `CommandRunner`).
+    async fn execute_rg_direct(rg_args: &[String], search_path: &str) -> Result<String, ToolError> {
+        let mut cmd = tokio::process::Command::new("rg");
+        for arg in rg_args {
+            cmd.arg(arg);
+        }
+        cmd.arg(search_path);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
+        let result = tokio::time::timeout(timeout, cmd.output()).await;
+
+        match result {
+            Ok(Ok(output)) => {
+                // ripgrep exits with 1 when no matches found -- that is not an error.
+                if output.status.success() || output.status.code() == Some(1) {
+                    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    Err(ToolError::RuntimeError {
+                        name: "Glob".into(),
+                        message: format!(
+                            "rg exited with code {}: {}",
+                            output.status.code().unwrap_or(-1),
+                            stderr
+                        ),
+                    })
+                }
+            }
+            Ok(Err(e)) => Err(ToolError::RuntimeError {
+                name: "Glob".into(),
+                message: format!("failed to execute rg: {e}"),
+            }),
+            Err(_) => Err(ToolError::Timeout {
+                timeout_secs: DEFAULT_TIMEOUT_SECS,
+            }),
+        }
+    }
+
+    /// Parse ripgrep stdout into a list of absolute file paths, sorted by mtime
+    /// (most recent first).
+    fn parse_and_sort_matches(raw_output: &str, search_path: &str) -> Vec<String> {
+        let base = Path::new(search_path);
+        let mut entries: Vec<(String, std::time::SystemTime)> = raw_output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let p = if Path::new(line).is_absolute() {
+                    PathBuf::from(line)
+                } else {
+                    base.join(line)
+                };
+                let mtime = p
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                (p.to_string_lossy().to_string(), mtime)
+            })
+            .collect();
+
+        // Sort newest first.
+        entries.sort_by(|a, b| b.1.cmp(&a.1));
+        entries.into_iter().map(|(path, _)| path).collect()
+    }
+
+    /// Truncate the result to fit within the character budget.
+    fn truncate_matches(matches: Vec<String>) -> (Vec<String>, bool) {
+        let mut total_chars = 0usize;
+        let mut truncated = false;
+        let mut result = Vec::new();
+
+        for m in matches {
+            // +1 for the newline separator in the serialised form.
+            let entry_len = m.len() + 1;
+            if total_chars + entry_len > MAX_RESULT_SIZE_CHARS {
+                truncated = true;
+                break;
+            }
+            total_chars += entry_len;
+            result.push(m);
+        }
+
+        (result, truncated)
+    }
 }
 
-/// Check if a path component contains Glob metacharacters.
+/// Simple shell escaping: wrap in single quotes, escape inner quotes.
+fn shell_escape(s: &str) -> String {
+    if s.contains(' ')
+        || s.contains('\'')
+        || s.contains('"')
+        || s.contains('*')
+        || s.contains('?')
+        || s.contains('[')
+        || s.contains('{')
+    {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    } else {
+        s.to_string()
+    }
+}
+
+/// Check if a path component contains glob metacharacters.
 fn contains_glob_meta(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{')
 }
@@ -179,9 +293,9 @@ impl Tool for GlobTool {
 
         let search_path = input.arguments.get("path").and_then(|v| v.as_str());
 
-        // Resolve the target directory and effective Glob pattern.
+        // Resolve the target directory and effective glob pattern.
         let (resolved_path, glob_pattern) = if Path::new(pattern).is_absolute() {
-            // Absolute pattern: split into base dir + relative Glob.
+            // Absolute pattern: split into base dir + relative glob.
             if let Some((base, rel)) = Self::parse_absolute_glob(pattern) {
                 (base.to_string_lossy().to_string(), rel)
             } else {
@@ -197,23 +311,37 @@ impl Tool for GlobTool {
         // Build rg arguments (behavior defaults: no_ignore=true, hidden=true).
         let rg_args = Self::build_rg_args(&glob_pattern, true, true);
 
-        // -- Behavior placeholder --
-        // Actual ripgrep execution will be implemented later.
-        // For now, return the planned execution descriptor so the orchestrator
-        // and tests can validate the tool's argument preparation logic.
-        let _ = MAX_RESULT_SIZE_CHARS;
+        tracing::debug!(
+            "Glob tool: pattern={glob_pattern:?}, search_path={resolved_path:?}, rg_args={rg_args:?}"
+        );
+
+        // Execute ripgrep -- prefer CommandRunner if available, fall back to direct.
+        let raw_output = if let Some(ref runner) = input.command_runner {
+            let cmd = Self::build_rg_command(&rg_args, &resolved_path);
+            let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
+            let result = runner.run_command(&cmd, None, timeout).await.map_err(|e| {
+                ToolError::RuntimeError {
+                    name: "Glob".into(),
+                    message: format!("{e}"),
+                }
+            })?;
+            String::from_utf8_lossy(&result.stdout).to_string()
+        } else {
+            Self::execute_rg_direct(&rg_args, &resolved_path).await?
+        };
+
+        // Parse, sort by mtime, and truncate.
+        let all_matches = Self::parse_and_sort_matches(&raw_output, &resolved_path);
+        let total_count = all_matches.len();
+        let (matches, truncated) = Self::truncate_matches(all_matches);
 
         Ok(ToolOutput {
             success: true,
             content: serde_json::json!({
-                "action": "glob_search",
-                "pattern": glob_pattern,
+                "matches": matches,
+                "count": total_count,
                 "search_path": resolved_path,
-                "rg_args": rg_args,
-                "matches": [],
-                "count": 0,
-                "truncated": false,
-                "status": "pending"
+                "truncated": truncated,
             }),
             warnings: vec![],
             metadata: serde_json::json!({}),
@@ -247,38 +375,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_glob_basic_pattern() {
+        // This test runs against the real filesystem -- we use a pattern
+        // that matches at least one file in the project root.
         let tool = GlobTool::new();
         let input = make_input(serde_json::json!({"pattern": "**/*.rs"}));
         let output = tool.execute(input).await.unwrap();
         assert!(output.success);
-        assert_eq!(output.content["action"], "glob_search");
-        assert_eq!(output.content["pattern"], "**/*.rs");
-        assert_eq!(output.content["search_path"], ".");
+        // Should find at least one .rs file.
+        let count = output.content["count"].as_u64().unwrap();
+        assert!(count > 0, "expected matches for **/*.rs, got 0");
+        assert!(!output.content["matches"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_glob_with_search_path() {
         let tool = GlobTool::new();
         let input = make_input(serde_json::json!({
-            "pattern": "*.toml",
-            "path": "/tmp/project"
+            "pattern": "*",
+            "path": "/tmp"
         }));
         let output = tool.execute(input).await.unwrap();
         assert!(output.success);
-        assert_eq!(output.content["pattern"], "*.toml");
-        assert_eq!(output.content["search_path"], "/tmp/project");
+        assert_eq!(output.content["search_path"], "/tmp");
     }
 
     #[tokio::test]
     async fn test_glob_absolute_pattern_split() {
-        let tool = GlobTool::new();
-        let input = make_input(serde_json::json!({
-            "pattern": "/home/user/src/**/*.ts"
-        }));
-        let output = tool.execute(input).await.unwrap();
-        assert!(output.success);
-        assert_eq!(output.content["pattern"], "**/*.ts");
-        assert_eq!(output.content["search_path"], "/home/user/src");
+        // Verify the path-splitting logic still works.
+        let (base, rel) = GlobTool::parse_absolute_glob("/home/user/src/**/*.ts").unwrap();
+        assert_eq!(base, PathBuf::from("/home/user/src"));
+        assert_eq!(rel, "**/*.ts");
     }
 
     #[tokio::test]
@@ -291,16 +417,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_glob_rg_args_include_flags() {
-        let tool = GlobTool::new();
-        let input = make_input(serde_json::json!({"pattern": "**/*.rs"}));
-        let output = tool.execute(input).await.unwrap();
-        let rg_args: Vec<String> =
-            serde_json::from_value(output.content["rg_args"].clone()).unwrap();
+        let rg_args = GlobTool::build_rg_args("**/*.rs", true, true);
         assert!(rg_args.contains(&"--files".to_string()));
-        assert!(rg_args.contains(&"--Glob".to_string()));
+        assert!(rg_args.contains(&"--glob".to_string()));
         assert!(rg_args.contains(&"--no-ignore".to_string()));
         assert!(rg_args.contains(&"--hidden".to_string()));
-        assert!(rg_args.contains(&"--sort=modified".to_string()));
     }
 
     #[test]
@@ -345,5 +466,20 @@ mod tests {
         assert!(contains_glob_meta("[a-z]"));
         assert!(contains_glob_meta("{foo,bar}"));
         assert!(!contains_glob_meta("main.rs"));
+    }
+
+    #[test]
+    fn test_truncate_matches() {
+        let matches: Vec<String> = (0..10).map(|i| format!("/path/to/file_{i}.rs")).collect();
+        let (result, truncated) = GlobTool::truncate_matches(matches);
+        assert!(!truncated);
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("simple"), "simple");
+        assert_eq!(shell_escape("**/*.rs"), "'**/*.rs'");
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
     }
 }

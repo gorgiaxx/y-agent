@@ -138,12 +138,16 @@ impl Tool for WebFetchTool {
                 let wait_ms = input.arguments["wait_ms"].as_u64().or(Some(1000));
 
                 let text = self.browser.fetch_page_text(url, wait_ms).await?;
+                // Best-effort page metadata for GUI rendering.
+                let (title, favicon) = self.browser.fetch_page_meta().await;
 
                 Ok(ToolOutput {
                     success: true,
                     content: serde_json::json!({
                         "action": "fetch",
                         "url": url,
+                        "title": title,
+                        "favicon_url": favicon,
                         "text": text,
                     }),
                     warnings: vec![],
@@ -165,6 +169,8 @@ impl Tool for WebFetchTool {
                     .browser
                     .search_page_text(query, search_engine, wait_ms)
                     .await?;
+                // Best-effort page metadata for GUI rendering.
+                let (title, favicon) = self.browser.fetch_page_meta().await;
 
                 Ok(ToolOutput {
                     success: true,
@@ -172,6 +178,8 @@ impl Tool for WebFetchTool {
                         "action": "search",
                         "query": query,
                         "search_engine": search_engine.unwrap_or("google"),
+                        "title": title,
+                        "favicon_url": favicon,
                         "text": text,
                     }),
                     warnings: vec![],
