@@ -185,6 +185,84 @@ interface GlobMeta {
   searchPath?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Grep helpers
+// ---------------------------------------------------------------------------
+
+interface GrepMeta {
+  pattern: string;
+  path?: string;
+  outputMode?: 'files_with_matches' | 'content' | 'count';
+  glob?: string;
+  type?: string;
+  caseInsensitive?: boolean;
+}
+
+/** Extract grep metadata from Grep tool call arguments. */
+function extractGrepMeta(toolName: string, argsRaw: string): GrepMeta | null {
+  if (toolName !== 'Grep') return null;
+  try {
+    const args = JSON.parse(argsRaw);
+    return {
+      pattern: args.pattern || '',
+      path: args.path,
+      outputMode: args.output_mode,
+      glob: args.Glob,
+      type: args.type,
+      caseInsensitive: args.i,
+    };
+  } catch {
+    return null;
+  }
+}
+
+interface GrepResult {
+  mode: 'files_with_matches' | 'content' | 'count';
+  numFiles: number;
+  numLines?: number;
+  numMatches?: number;
+  filenames?: string[];
+  content?: string;
+  appliedLimit?: number;
+  truncated?: boolean;
+}
+
+/** Parse the structured Grep result JSON. */
+function parseGrepResult(raw: string): GrepResult | null {
+  try {
+    const data = JSON.parse(raw);
+    // Determine mode based on which fields are present
+    if (data.filenames !== undefined) {
+      return {
+        mode: 'files_with_matches',
+        numFiles: data.numFiles ?? 0,
+        filenames: data.filenames ?? [],
+        appliedLimit: data.appliedLimit,
+        truncated: data.appliedLimit && data.numFiles >= data.appliedLimit,
+      };
+    } else if (data.numMatches !== undefined) {
+      return {
+        mode: 'count',
+        numFiles: data.numFiles ?? 0,
+        numMatches: data.numMatches ?? 0,
+        content: data.content,
+        appliedLimit: data.appliedLimit,
+      };
+    } else if (data.numLines !== undefined) {
+      return {
+        mode: 'content',
+        numFiles: data.numFiles ?? 0,
+        numLines: data.numLines ?? 0,
+        content: data.content,
+        appliedLimit: data.appliedLimit,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Extract glob metadata from Glob tool call arguments. */
 function extractGlobMeta(toolName: string, argsRaw: string): GlobMeta | null {
   if (toolName !== 'Glob') return null;
@@ -357,6 +435,15 @@ interface FormattedResult {
   parts: Array<{ text: string; isStderr: boolean }>;
 }
 
+/** Strip noisy internal fields from Browser/WebFetch result JSON. */
+function stripUrlMetaFields(raw: string): string {
+  const obj = tryParseJson(raw);
+  if (!obj) return raw;
+  // Remove favicon_url -- already consumed by the Favicon component.
+  const { favicon_url: _, ...rest } = obj as Record<string, unknown>;
+  return JSON.stringify(rest, null, 2);
+}
+
 /** Format result for display based on tool name. */
 function formatResult(name: string, raw: string): FormattedResult | null {
   if (!raw) return null;
@@ -373,6 +460,11 @@ function formatResult(name: string, raw: string): FormattedResult | null {
 
     if (parts.length > 0) return { parts };
     // If both empty, fall through to raw display
+  }
+
+  // Browser/WebFetch: strip favicon_url before display
+  if (name === 'Browser' || name === 'WebFetch') {
+    return { parts: [{ text: stripUrlMetaFields(raw), isStderr: false }] };
   }
 
   // Default: show raw result
@@ -704,6 +796,107 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
     );
   }
 
+  // ---- Grep compact tag rendering ----
+  const grepMeta = extractGrepMeta(toolCall.name, toolCall.arguments);
+  if (grepMeta) {
+    const grepResult = useMemo(
+      () => (result ? parseGrepResult(result) : null),
+      [result],
+    );
+    const canExpand = !!grepResult || hasExpandable;
+
+    // Build summary text based on mode
+    const getSummaryText = () => {
+      if (!grepResult) return null;
+      switch (grepResult.mode) {
+        case 'files_with_matches':
+          return `${grepResult.numFiles} files`;
+        case 'count':
+          return `${grepResult.numMatches} matches in ${grepResult.numFiles} files`;
+        case 'content':
+          return `${grepResult.numLines} lines in ${grepResult.numFiles} files`;
+        default:
+          return null;
+      }
+    };
+
+    return (
+      <div className={`tool-call-file-wrapper ${statusClass}`}>
+        <div
+          className="tool-call-file-tag"
+          onClick={() => canExpand && setExpanded(!expanded)}
+          title={grepMeta.path ? `Grep: ${grepMeta.pattern} in ${grepMeta.path}` : `Grep: ${grepMeta.pattern}`}
+        >
+          <span className="tool-call-file-action-group">
+            <Search size={14} className="tool-call-file-icon" />
+            <span className="tool-call-file-action">Grep</span>
+          </span>
+          <span className="tool-call-file-name">{grepMeta.pattern}</span>
+          {grepResult && (
+            <span className="tool-call-glob-count">{getSummaryText()}</span>
+          )}
+          <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
+          {durationMs !== undefined && (
+            <span className="tool-call-duration">{formatDuration(durationMs)}</span>
+          )}
+          {canExpand && (
+            <span className={`tool-call-file-chevron ${expanded ? 'expanded' : ''}`}>
+              <ChevronRight size={12} />
+            </span>
+          )}
+        </div>
+        {expanded && (
+          <div className="tool-call-glob-detail">
+            {grepResult ? (
+              <>
+                <div className="tool-call-glob-summary">
+                  <span className="tool-call-glob-summary-count">{getSummaryText()}</span>
+                  {grepMeta.path && (
+                    <span className="tool-call-glob-summary-path">in {grepMeta.path}</span>
+                  )}
+                  {grepMeta.glob && (
+                    <span className="tool-call-grep-filter">glob: {grepMeta.glob}</span>
+                  )}
+                  {grepMeta.type && (
+                    <span className="tool-call-grep-filter">type: {grepMeta.type}</span>
+                  )}
+                  {grepMeta.caseInsensitive && (
+                    <span className="tool-call-grep-filter">-i</span>
+                  )}
+                  {grepResult.truncated && (
+                    <span className="tool-call-glob-truncated">truncated</span>
+                  )}
+                </div>
+                {grepResult.mode === 'files_with_matches' && grepResult.filenames && (
+                  <div className="tool-call-glob-matches">
+                    {grepResult.filenames.map((f, i) => (
+                      <span key={i} className="tool-call-glob-match" title={f}>{basename(f)}</span>
+                    ))}
+                  </div>
+                )}
+                {(grepResult.mode === 'content' || grepResult.mode === 'count') && grepResult.content && (
+                  <pre className="tool-call-grep-content">{grepResult.content}</pre>
+                )}
+              </>
+            ) : displayResult ? (
+              <div className="tool-call-section">
+                <div className="tool-call-label">Result</div>
+                <pre className="tool-call-code">
+                  {displayResult.parts.map((part, i) => (
+                    <span key={i} className={part.isStderr ? 'tool-result-stderr' : ''}>
+                      {part.text}
+                      {i < displayResult.parts.length - 1 ? '\n' : ''}
+                    </span>
+                  ))}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ---- FileEdit / FileWrite inline tag rendering ----
   const fileMeta = extractFileToolMeta(toolCall.name, toolCall.arguments);
   if (fileMeta) {
@@ -721,7 +914,9 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
     const FileIcon = FILE_ICONS[fileMeta.toolType];
     const fileLabel = FILE_LABELS[fileMeta.toolType];
     const hasDiff = fileMeta.toolType === 'edit' && fileMeta.oldString !== undefined && fileMeta.newString !== undefined;
-    const canExpand = hasDiff || hasExpandable;
+    // When failed, show error result instead of diff
+    const showDiff = hasDiff && status !== 'error';
+    const canExpand = showDiff || hasExpandable;
 
     return (
       <div className={`tool-call-file-wrapper ${statusClass}`}>
@@ -747,8 +942,8 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
         </div>
         {expanded && (
           <div className="tool-call-file-detail">
-            {hasDiff && <FileDiffView oldString={fileMeta.oldString!} newString={fileMeta.newString!} />}
-            {!hasDiff && displayResult && (
+            {showDiff && <FileDiffView oldString={fileMeta.oldString!} newString={fileMeta.newString!} />}
+            {!showDiff && displayResult && (
               <div className="tool-call-section">
                 <div className="tool-call-label">Result</div>
                 <pre className="tool-call-code">

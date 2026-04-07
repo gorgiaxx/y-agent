@@ -490,6 +490,29 @@
   border-color: var(--border-active, rgba(255, 255, 255, 0.15));
 }
 
+/* ---- Grep specific styles ---- */
+.tool-call-grep-filter {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.tool-call-grep-content {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: transparent;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* ---- Inline diff view ---- */
 
 .tool-call-diff {
