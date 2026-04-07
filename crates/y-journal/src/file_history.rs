@@ -191,56 +191,63 @@ impl FileHistoryManager {
 
     /// Create a snapshot at the current user message boundary.
     ///
-    /// Records the latest backup version for each tracked file.
-    /// Called before each user message is processed.
+    /// Backs up the current content of every tracked file so that
+    /// `rewind_to()` can restore to exactly this point.  Files that
+    /// do not exist at snapshot time are recorded with
+    /// `backup_file_name: None` (meaning "delete on rewind").
     pub fn make_snapshot(&mut self, message_id: &str) {
-        // Build the snapshot from current tracked state.
         let mut file_backups = HashMap::new();
+        let now = chrono::Utc::now().timestamp();
+        let tracked: Vec<String> = self.tracked_files.iter().cloned().collect();
 
-        for file_path in &self.tracked_files {
-            let version = self
-                .file_versions
-                .get(file_path)
-                .copied()
-                .unwrap_or(0)
-                .saturating_sub(1);
+        for file_path in &tracked {
+            let path = Path::new(file_path);
 
-            if version == 0 && !Path::new(file_path).exists() {
-                // File was tracked as "will be created" but we have no
-                // backup for it. Record with backup_file_name = None.
+            if !path.exists() {
                 file_backups.insert(
                     file_path.clone(),
                     FileBackup {
                         backup_file_name: None,
                         version: 0,
-                        backup_time: chrono::Utc::now().timestamp(),
+                        backup_time: now,
                     },
                 );
                 continue;
             }
 
+            // Create a fresh backup of the file's current content.
+            let version = self.next_version(file_path);
             let hash_prefix = path_hash(file_path);
-            let backup_name = if version > 0 {
-                Some(format!("{hash_prefix}@v{version}"))
-            } else {
-                // Check if the file existed at start (version 0 means
-                // the first edit bumped it to 1, so the backup is @v1).
-                let v1_name = format!("{hash_prefix}@v1");
-                if self.backup_dir.join(&v1_name).exists() {
-                    Some(v1_name)
-                } else {
-                    None
-                }
-            };
+            let backup_name = format!("{hash_prefix}@v{version}");
+            let backup_path = self.backup_dir.join(&backup_name);
 
-            file_backups.insert(
-                file_path.clone(),
-                FileBackup {
-                    backup_file_name: backup_name,
-                    version,
-                    backup_time: chrono::Utc::now().timestamp(),
-                },
-            );
+            match std::fs::copy(path, &backup_path) {
+                Ok(_) => {
+                    file_backups.insert(
+                        file_path.clone(),
+                        FileBackup {
+                            backup_file_name: Some(backup_name),
+                            version,
+                            backup_time: now,
+                        },
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        path = %file_path,
+                        error = %e,
+                        "failed to backup file for snapshot"
+                    );
+                    file_backups.insert(
+                        file_path.clone(),
+                        FileBackup {
+                            backup_file_name: None,
+                            version: 0,
+                            backup_time: now,
+                        },
+                    );
+                }
+            }
         }
 
         let snapshot = FileHistorySnapshot {
@@ -469,6 +476,25 @@ impl FileHistoryManager {
     pub fn has_changes_since(&self, message_id: &str) -> bool {
         self.diff_stats_for(message_id)
             .is_some_and(|s| s.files_changed > 0 || s.files_created > 0)
+    }
+
+    /// Remove snapshots whose `message_id` is not in the given set.
+    ///
+    /// Used to clean up orphaned snapshots after undo operations where
+    /// the display transcript has been truncated but snapshots remain.
+    pub fn retain_snapshots(&mut self, valid_message_ids: &HashSet<String>) {
+        let before = self.snapshots.len();
+        self.snapshots
+            .retain(|s| valid_message_ids.contains(&s.message_id));
+        if self.snapshots.len() != before {
+            self.save_state();
+            debug!(
+                session = %self.session_id,
+                removed = before - self.snapshots.len(),
+                remaining = self.snapshots.len(),
+                "orphaned snapshots cleaned up"
+            );
+        }
     }
 
     /// Return all snapshots (for UI listing).
@@ -711,6 +737,138 @@ mod tests {
         assert_eq!(mgr.snapshots.len(), 1);
         assert_eq!(mgr.snapshots[0].message_id, "msg-001");
         assert!(mgr.tracked_files.contains("/tmp/test.txt"));
+    }
+
+    #[test]
+    fn test_retain_snapshots_removes_orphaned() {
+        let (mut mgr, _dir) = setup_manager();
+
+        mgr.make_snapshot("msg-001");
+        mgr.make_snapshot("msg-002");
+        mgr.make_snapshot("msg-003");
+        assert_eq!(mgr.snapshots.len(), 3);
+
+        // Only msg-001 and msg-003 are still valid (msg-002 was undone).
+        let valid: HashSet<String> = ["msg-001", "msg-003"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        mgr.retain_snapshots(&valid);
+
+        assert_eq!(mgr.snapshots.len(), 2);
+        assert_eq!(mgr.snapshots[0].message_id, "msg-001");
+        assert_eq!(mgr.snapshots[1].message_id, "msg-003");
+    }
+
+    #[test]
+    fn test_retain_snapshots_noop_when_all_valid() {
+        let (mut mgr, _dir) = setup_manager();
+
+        mgr.make_snapshot("msg-001");
+        mgr.make_snapshot("msg-002");
+
+        let valid: HashSet<String> = ["msg-001", "msg-002"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        mgr.retain_snapshots(&valid);
+
+        assert_eq!(mgr.snapshots.len(), 2);
+    }
+
+    /// Reproduces the real chat flow:
+    ///   make_snapshot (prepare_turn) -> track_edit (tool dispatch) -> tool mutates file
+    ///
+    /// Scenario: create file (msg1), modify (msg2), modify (msg3), undo msg3.
+    /// Expected: file content matches state after msg2, not msg1 or deleted.
+    #[test]
+    fn test_multi_turn_rewind_correct_version() {
+        let (mut mgr, _dir) = setup_manager();
+
+        let test_dir = std::env::temp_dir().join("y_fh_test_multi_turn");
+        std::fs::create_dir_all(&test_dir).ok();
+        let file_path = test_dir.join("doc.txt");
+        let fp = file_path.to_str().unwrap();
+
+        // -- Turn 1: user asks to create the file --
+        // make_snapshot before tools run (file doesn't exist yet).
+        mgr.track_edit(fp).unwrap(); // tracked as "will be created"
+        mgr.make_snapshot("msg-001");
+        // Tool creates the file.
+        std::fs::write(&file_path, "initial content").unwrap();
+
+        // -- Turn 2: user asks to add MIT license --
+        mgr.make_snapshot("msg-002");
+        mgr.track_edit(fp).unwrap(); // backs up "initial content"
+                                     // Tool modifies the file.
+        std::fs::write(&file_path, "initial content\nMIT License").unwrap();
+
+        // -- Turn 3: user asks to append author --
+        mgr.make_snapshot("msg-003");
+        mgr.track_edit(fp).unwrap(); // backs up "initial content\nMIT License"
+                                     // Tool modifies the file.
+        std::fs::write(&file_path, "initial content\nMIT License\nAuthor: X").unwrap();
+
+        // -- Undo msg-003: should restore to state BEFORE msg-003 tools ran --
+        let report = mgr.rewind_to("msg-003").unwrap();
+        assert!(
+            !report.restored.is_empty(),
+            "expected at least one file restored"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file_path).unwrap(),
+            "initial content\nMIT License",
+            "undo msg3 should restore to post-msg2 state"
+        );
+
+        // Cleanup.
+        std::fs::remove_dir_all(&test_dir).ok();
+    }
+
+    /// Undoing the message that created a file should delete the file,
+    /// while undoing a later message should restore to the prior state.
+    #[test]
+    fn test_rewind_to_creation_message_deletes_file() {
+        let (mut mgr, _dir) = setup_manager();
+
+        let test_dir = std::env::temp_dir().join("y_fh_test_create_undo");
+        std::fs::create_dir_all(&test_dir).ok();
+        let file_path = test_dir.join("created.txt");
+        let fp = file_path.to_str().unwrap();
+
+        // Turn 1: file doesn't exist, will be created.
+        mgr.track_edit(fp).unwrap();
+        mgr.make_snapshot("msg-001");
+        std::fs::write(&file_path, "hello").unwrap();
+
+        // Turn 2: modify the file.
+        mgr.make_snapshot("msg-002");
+        mgr.track_edit(fp).unwrap();
+        std::fs::write(&file_path, "hello world").unwrap();
+
+        // Undo msg-002 -> should restore to post-msg1 state ("hello").
+        let report = mgr.rewind_to("msg-002").unwrap();
+        assert!(!report.restored.is_empty());
+        assert!(
+            file_path.exists(),
+            "file should still exist after undo msg2"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file_path).unwrap(),
+            "hello",
+            "undo msg2 should restore to post-msg1 content"
+        );
+
+        // Undo msg-001 -> file didn't exist before msg1, should be deleted.
+        let report = mgr.rewind_to("msg-001").unwrap();
+        assert!(!report.deleted.is_empty());
+        assert!(
+            !file_path.exists(),
+            "file should be deleted after undo msg1"
+        );
+
+        // Cleanup.
+        std::fs::remove_dir_all(&test_dir).ok();
     }
 
     #[test]
