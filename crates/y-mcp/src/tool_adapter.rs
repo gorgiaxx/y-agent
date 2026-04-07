@@ -73,11 +73,34 @@ impl Tool for McpToolAdapter {
 
 #[cfg(test)]
 mod tests {
+    use crate::error::McpError;
+    use crate::transport::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, McpTransport};
+
     use super::*;
+
+    struct DummyTransport;
+
+    #[async_trait::async_trait]
+    impl McpTransport for DummyTransport {
+        async fn send(&self, _req: JsonRpcRequest) -> Result<JsonRpcResponse, McpError> {
+            Err(McpError::Other {
+                message: "dummy".into(),
+            })
+        }
+        async fn send_notification(&self, _n: JsonRpcNotification) -> Result<(), McpError> {
+            Ok(())
+        }
+        async fn close(&self) -> Result<(), McpError> {
+            Ok(())
+        }
+        fn transport_type(&self) -> &'static str {
+            "dummy"
+        }
+    }
 
     #[test]
     fn test_adapter_definition() {
-        let transport = Arc::new(crate::transport::StdioTransport);
+        let transport: Arc<dyn McpTransport> = Arc::new(DummyTransport);
         let client = Arc::new(McpClient::new(transport, "test"));
         let adapter = McpToolAdapter::new(
             client,

@@ -12,8 +12,7 @@
 //! MCP tools are discovered at startup via `tools/list` and registered with
 //! the tool registry as [`ToolType::Mcp`](y_core::tool::ToolType::Mcp).
 //! Tool calls are proxied via `tools/call` over the configured transport.
-//! Transport implementations (stdio, HTTP/SSE) are pluggable and will be
-//! fully implemented in Phase 5.
+//! Transport implementations (stdio, HTTP/SSE) are pluggable.
 
 pub mod client;
 pub mod discovery;
