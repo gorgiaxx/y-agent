@@ -33,6 +33,8 @@ pub enum ChatEvent {
     },
     /// Incremental text delta from the LLM stream.
     StreamDelta { content: String },
+    /// Incremental reasoning/thinking delta from a thinking-mode LLM.
+    StreamReasoningDelta { content: String },
     /// LLM request failed.
     Error(String),
     /// Session title was updated by the background summarizer.
@@ -66,6 +68,9 @@ pub fn submit_message(
         timestamp: Utc::now(),
         is_streaming: false,
         is_cancelled: false,
+        reasoning_content: String::new(),
+        reasoning_complete: false,
+        tool_calls: Vec::new(),
     });
 
     // Track user message count for title summarization trigger.
@@ -110,6 +115,7 @@ pub fn submit_message(
     };
 
     let trimmed_owned = trimmed.to_string();
+    let selected_provider_id = state.selected_provider_id.clone();
 
     // Determine if title summarization should be triggered.
     let title_interval = services.session_manager.config().title_summarize_interval;
@@ -125,6 +131,9 @@ pub fn submit_message(
         timestamp: Utc::now(),
         is_streaming: true,
         is_cancelled: false,
+        reasoning_content: String::new(),
+        reasoning_complete: false,
+        tool_calls: Vec::new(),
     });
 
     // Spawn async task for LLM call.
@@ -184,7 +193,7 @@ pub fn submit_message(
             session_uuid,
             history: &history,
             turn_number: user_msg_count,
-            provider_id: None,
+            provider_id: selected_provider_id,
             knowledge_collections: vec![],
             thinking: None,
         };
@@ -197,8 +206,16 @@ pub fn submit_message(
         let tx_stream = tx.clone();
         let progress_forwarder = tokio::spawn(async move {
             while let Some(event) = progress_rx.recv().await {
-                if let y_service::TurnEvent::StreamDelta { content } = event {
-                    let _ = tx_stream.send(ChatEvent::StreamDelta { content }).await;
+                match event {
+                    y_service::TurnEvent::StreamDelta { content } => {
+                        let _ = tx_stream.send(ChatEvent::StreamDelta { content }).await;
+                    }
+                    y_service::TurnEvent::StreamReasoningDelta { content } => {
+                        let _ = tx_stream
+                            .send(ChatEvent::StreamReasoningDelta { content })
+                            .await;
+                    }
+                    _ => {}
                 }
             }
         });
@@ -287,6 +304,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 if last.role == MessageRole::Assistant && last.is_streaming {
                     last.content = content;
                     last.is_streaming = false;
+                    last.reasoning_complete = true;
                 }
             }
             state.is_streaming = false;
@@ -322,6 +340,14 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
                     last.content.push_str(&content);
+                }
+            }
+        }
+        ChatEvent::StreamReasoningDelta { content } => {
+            // Append incremental reasoning text to the streaming assistant message.
+            if let Some(last) = state.messages.last_mut() {
+                if last.role == MessageRole::Assistant && last.is_streaming {
+                    last.reasoning_content.push_str(&content);
                 }
             }
         }
@@ -402,6 +428,9 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: true,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         });
 
         apply_chat_event(
@@ -433,6 +462,9 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: true,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         });
 
         apply_chat_event(ChatEvent::Error("connection refused".into()), &mut state);
@@ -454,6 +486,9 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: true,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         });
 
         cancel_streaming(&mut state);
@@ -516,6 +551,9 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: true,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         });
 
         apply_chat_event(

@@ -21,7 +21,7 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::selection::TextSelection;
-use crate::tui::state::{AppState, ChatMessage, MessageRole, PanelFocus};
+use crate::tui::state::{AppState, ChatMessage, MessageRole, PanelFocus, ToolCallInfo};
 
 // ---------------------------------------------------------------------------
 // Color palette (aligned with GUI CSS variables)
@@ -149,7 +149,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
                     raw_lines.push(Line::from(""));
                     raw_plain.push(String::new());
                 }
-                render_message(&mut raw_lines, &mut raw_plain, msg, *is_last);
+                render_message(
+                    &mut raw_lines,
+                    &mut raw_plain,
+                    msg,
+                    *is_last,
+                    state.tick_counter,
+                );
             }
             DisplayItem::StreamingIndicator => {
                 raw_lines.push(Line::from(""));
@@ -300,6 +306,7 @@ fn render_message(
     plain_lines: &mut Vec<String>,
     msg: &ChatMessage,
     is_last: bool,
+    tick: u64,
 ) {
     let (role_label, role_color, prefix_char) = match msg.role {
         MessageRole::User => ("You", COLOR_USER, ">"),
@@ -337,6 +344,17 @@ fn render_message(
     lines.push(Line::from(header_spans));
     plain_lines.push(header_plain);
 
+    // Render accumulated reasoning content (from StreamReasoningDelta events).
+    if !msg.reasoning_content.is_empty() {
+        render_think_card(
+            lines,
+            plain_lines,
+            &msg.reasoning_content,
+            msg.reasoning_complete,
+            tick,
+        );
+    }
+
     // Pre-process content: extract think blocks, tool calls, strip tool results.
     let segments = preprocess_content(&msg.content);
     for seg in &segments {
@@ -348,7 +366,7 @@ fn render_message(
                 content,
                 is_complete,
             } => {
-                render_think_card(lines, plain_lines, content, *is_complete);
+                render_think_card(lines, plain_lines, content, *is_complete, tick);
             }
             ContentSegment::ToolCall {
                 name,
@@ -364,6 +382,11 @@ fn render_message(
                 );
             }
         }
+    }
+
+    // Render structured tool calls (from ToolCallExecuted events).
+    for tc in &msg.tool_calls {
+        render_tool_call_executed_card(lines, plain_lines, tc);
     }
 
     // Footer: timestamp + tokens (for completed assistant messages only).
@@ -700,11 +723,17 @@ fn merge_text_segments(segments: &mut Vec<ContentSegment>) {
 // ThinkingCard renderer (aligned with GUI ThinkingCard.tsx)
 // ---------------------------------------------------------------------------
 
+/// Braille spinner frames for animated thinking indicator.
+const SPINNER_FRAMES: &[&str] = &[
+    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
+    "\u{2827}", "\u{2807}", "\u{280f}",
+];
+
 /// Render a thinking block as a collapsible card.
 ///
 /// Layout:
 /// ```text
-///      [Thinking] Thought  (or "Thinking..." if streaming)
+///      [Thinking] Thought  (or spinner + "Thinking..." if streaming)
 ///      | reasoning line 1
 ///      | reasoning line 2
 ///      | ...
@@ -714,33 +743,42 @@ fn render_think_card(
     plain: &mut Vec<String>,
     content: &str,
     is_complete: bool,
+    tick: u64,
 ) {
     let indent = "     ";
 
     // Header line with icon and status.
-    let (label, label_style) = if is_complete {
-        (
-            "Thought",
-            Style::default()
-                .fg(COLOR_THINK_ACCENT)
-                .add_modifier(Modifier::BOLD),
-        )
+    let header_spans = if is_complete {
+        let label_style = Style::default()
+            .fg(COLOR_THINK_ACCENT)
+            .add_modifier(Modifier::BOLD);
+        vec![
+            Span::styled(
+                format!("{indent}\u{25b8} "),
+                Style::default().fg(COLOR_THINK_ACCENT),
+            ),
+            Span::styled("Thought".to_string(), label_style),
+        ]
     } else {
-        (
-            "Thinking...",
-            Style::default()
-                .fg(COLOR_THINK_ACCENT)
-                .add_modifier(Modifier::BOLD),
-        )
+        let frame_idx = (tick as usize) % SPINNER_FRAMES.len();
+        let spinner = SPINNER_FRAMES[frame_idx];
+        let label_style = Style::default()
+            .fg(COLOR_THINK_ACCENT)
+            .add_modifier(Modifier::BOLD);
+        vec![
+            Span::styled(
+                format!("{indent}{spinner} "),
+                Style::default().fg(COLOR_THINK_ACCENT),
+            ),
+            Span::styled("Thinking...".to_string(), label_style),
+        ]
     };
 
-    let header_spans = vec![
-        Span::styled(
-            format!("{indent}\u{25b8} "),
-            Style::default().fg(COLOR_THINK_ACCENT),
-        ),
-        Span::styled(label.to_string(), label_style),
-    ];
+    let label = if is_complete {
+        "Thought"
+    } else {
+        "Thinking..."
+    };
     let header_plain = format!("{indent}> {label}");
     lines.push(Line::from(header_spans));
     plain.push(header_plain);
@@ -850,6 +888,44 @@ fn render_tool_call_card(
             plain.push(args_line);
         }
     }
+}
+
+/// Render a tool call from structured `ToolCallInfo` (from ToolCallExecuted events).
+fn render_tool_call_executed_card(
+    lines: &mut Vec<Line>,
+    plain: &mut Vec<String>,
+    tc: &ToolCallInfo,
+) {
+    let indent = "     ";
+
+    let (status_label, status_color) = if tc.success {
+        ("Done", COLOR_TOOL_SUCCESS)
+    } else {
+        ("Failed", COLOR_TOOL_ERROR)
+    };
+
+    let duration_str = format!("{}ms", tc.duration_ms);
+
+    let header_spans = vec![
+        Span::styled(
+            format!("{indent}\u{2692} "),
+            Style::default().fg(COLOR_TOOL_ACCENT),
+        ),
+        Span::styled(
+            tc.name.clone(),
+            Style::default()
+                .fg(COLOR_TOOL_ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  ", Style::default()),
+        Span::styled(
+            format!("{status_label} ({duration_str})"),
+            Style::default().fg(status_color),
+        ),
+    ];
+    let header_plain = format!("{indent}# {}  {status_label} ({duration_str})", tc.name);
+    lines.push(Line::from(header_spans));
+    plain.push(header_plain);
 }
 
 /// Format JSON arguments as a compact preview string.
@@ -1382,10 +1458,13 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: false,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_message(&mut lines, &mut plain, &msg, false);
+        render_message(&mut lines, &mut plain, &msg, false, 0);
 
         // Header + 2 content lines = 3 lines.
         assert_eq!(lines.len(), 3);
@@ -1400,10 +1479,13 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: true,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_message(&mut lines, &mut plain, &msg, false);
+        render_message(&mut lines, &mut plain, &msg, false, 0);
 
         let header = &lines[0];
         let header_text: String = header.spans.iter().map(|s| s.content.to_string()).collect();
@@ -1457,6 +1539,9 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: false,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         });
         let items = build_display_items(&state);
         assert_eq!(items.len(), 1);

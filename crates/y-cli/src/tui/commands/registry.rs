@@ -173,8 +173,8 @@ fn builtin_commands() -> Vec<CommandInfo> {
         CommandInfo {
             name: "model",
             alias: Some("m"),
-            description: "Model management (list, select, params)",
-            args: "<subcommand> [args]",
+            description: "List models or switch active provider",
+            args: "[provider-id]",
             category: CommandCategory::Model,
         },
         // Debug commands

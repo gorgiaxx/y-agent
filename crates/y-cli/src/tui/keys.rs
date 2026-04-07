@@ -151,9 +151,7 @@ fn dispatch_chat_normal(key: KeyEvent, state: &AppState) -> KeyAction {
         KeyCode::PageDown => KeyAction::PageScrollDown,
         // Jump to top/bottom.
         KeyCode::Home | KeyCode::Char('g') => KeyAction::ScrollToTop,
-        KeyCode::End => KeyAction::ScrollToBottom,
-        // Shift+G = scroll to bottom (vim-style).
-        KeyCode::Char('G') => KeyAction::ScrollToBottom,
+        KeyCode::End | KeyCode::Char('G') => KeyAction::ScrollToBottom,
         // Tab cycles focus.
         KeyCode::Tab => KeyAction::CycleFocus,
         // Ctrl+B toggles sidebar.

@@ -9,7 +9,6 @@
 use std::fmt::Write as _;
 
 use crate::tui::state::{AppState, ChatMessage, MessageRole};
-use chrono::Utc;
 
 /// Result of executing a command.
 #[derive(Debug, Clone)]
@@ -47,8 +46,8 @@ pub enum AsyncCommand {
     ShowStats,
     /// `/compact` -- trigger manual context compaction.
     CompactContext,
-    /// `/model [subcommand]` -- model management.
-    ListModels,
+    /// `/model [provider-id]` -- list models or select a specific provider.
+    ModelCommand(Option<String>),
     /// `/agent [subcommand]` -- agent management.
     ShowAgents,
 }
@@ -83,13 +82,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
                 generate_command_help(args)
             };
             // Display help as a system message.
-            state.messages.push(ChatMessage {
-                role: MessageRole::System,
-                content: help_text,
-                timestamp: Utc::now(),
-                is_streaming: false,
-                is_cancelled: false,
-            });
+            state.messages.push(ChatMessage::system(help_text));
             CommandResult::Ok(None)
         }
 
@@ -118,13 +111,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
                 state.mode,
                 state.focus,
             );
-            state.messages.push(ChatMessage {
-                role: MessageRole::System,
-                content: msg,
-                timestamp: Utc::now(),
-                is_streaming: false,
-                is_cancelled: false,
-            });
+            state.messages.push(ChatMessage::system(msg));
             CommandResult::Ok(None)
         }
 
@@ -178,19 +165,20 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
 
         "compact" => CommandResult::Async(AsyncCommand::CompactContext),
 
-        "model" => CommandResult::Async(AsyncCommand::ListModels),
+        "model" => {
+            let provider_arg = if args.is_empty() {
+                None
+            } else {
+                Some(args.to_string())
+            };
+            CommandResult::Async(AsyncCommand::ModelCommand(provider_arg))
+        }
 
         "agent" => CommandResult::Async(AsyncCommand::ShowAgents),
 
         "shortcuts" => {
             let text = generate_shortcuts_text();
-            state.messages.push(ChatMessage {
-                role: MessageRole::System,
-                content: text,
-                timestamp: Utc::now(),
-                is_streaming: false,
-                is_cancelled: false,
-            });
+            state.messages.push(ChatMessage::system(text));
             CommandResult::Ok(None)
         }
 
@@ -343,6 +331,7 @@ fn generate_shortcuts_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     // T-TUI-04-04: /clear clears messages.
     #[test]
@@ -354,6 +343,9 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: false,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         });
 
         let result = execute("clear", &mut state);
@@ -373,6 +365,9 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: false,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         });
 
         let result = execute("new", &mut state);
@@ -431,6 +426,9 @@ mod tests {
             timestamp: Utc::now(),
             is_streaming: false,
             is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
         });
         let result = execute("reset", &mut state);
         assert!(matches!(result, CommandResult::Ok(Some(_))));
@@ -508,13 +506,25 @@ mod tests {
     }
 
     #[test]
-    fn test_model_returns_async() {
+    fn test_model_no_args_returns_async_none() {
         let mut state = AppState::default();
         let result = execute("model", &mut state);
         assert!(matches!(
             result,
-            CommandResult::Async(AsyncCommand::ListModels)
+            CommandResult::Async(AsyncCommand::ModelCommand(None))
         ));
+    }
+
+    #[test]
+    fn test_model_with_args_returns_async_some() {
+        let mut state = AppState::default();
+        let result = execute("model deepseek", &mut state);
+        assert!(
+            matches!(
+                result,
+                CommandResult::Async(AsyncCommand::ModelCommand(Some(ref id))) if id == "deepseek"
+            )
+        );
     }
 
     #[test]

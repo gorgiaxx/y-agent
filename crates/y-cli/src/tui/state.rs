@@ -59,6 +59,17 @@ pub enum MessageRole {
 // ChatMessage
 // ---------------------------------------------------------------------------
 
+/// Structured record of an executed tool call for rendering.
+#[derive(Debug, Clone)]
+pub struct ToolCallInfo {
+    /// Tool name (e.g. "WebSearch").
+    pub name: String,
+    /// Whether the tool call succeeded.
+    pub success: bool,
+    /// Execution duration in milliseconds.
+    pub duration_ms: u64,
+}
+
 /// A single message in the conversation transcript (display model).
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
@@ -72,6 +83,28 @@ pub struct ChatMessage {
     pub is_streaming: bool,
     /// Whether this message was cancelled mid-stream.
     pub is_cancelled: bool,
+    /// Accumulated reasoning/thinking content from streaming reasoning deltas.
+    pub reasoning_content: String,
+    /// Whether the reasoning phase is complete.
+    pub reasoning_complete: bool,
+    /// Tool calls executed during this message's generation (structured).
+    pub tool_calls: Vec<ToolCallInfo>,
+}
+
+impl ChatMessage {
+    /// Create a new non-streaming message with default fields.
+    pub fn system(content: String) -> Self {
+        Self {
+            role: MessageRole::System,
+            content,
+            timestamp: Utc::now(),
+            is_streaming: false,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +230,10 @@ pub struct AppState {
     pub version: String,
     /// Visible chat panel height in lines (updated each frame from layout).
     pub page_height: usize,
+    /// User-selected provider ID for the next turn. None = auto (pool assigns).
+    pub selected_provider_id: Option<String>,
+    /// Monotonic tick counter for frame-based animations (incremented every 250ms).
+    pub tick_counter: u64,
 }
 
 impl Default for AppState {
@@ -228,6 +265,8 @@ impl Default for AppState {
             last_cost: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             page_height: 20,
+            selected_provider_id: None,
+            tick_counter: 0,
         }
     }
 }
@@ -422,6 +461,11 @@ impl AppState {
         };
         self.history_index = Some(idx);
         self.input_history.get(idx).map(std::string::String::as_str)
+    }
+
+    /// Increment the animation tick counter. Called once per event-loop tick.
+    pub fn tick_animation(&mut self) {
+        self.tick_counter = self.tick_counter.wrapping_add(1);
     }
 
     /// Navigate to the next history entry. Returns `None` when past the end
@@ -759,6 +803,59 @@ mod tests {
         state.cumulative_input_tokens = 200_000;
         let pct = state.context_usage_percent();
         assert!((pct - 50.0).abs() < 0.1, "expected ~50%, got {pct}");
+    }
+
+    // T-STATE-TOOL-01: ToolCallInfo construction.
+    #[test]
+    fn test_tool_call_info_creation() {
+        let tc = ToolCallInfo {
+            name: "WebSearch".into(),
+            success: true,
+            duration_ms: 120,
+        };
+        assert_eq!(tc.name, "WebSearch");
+        assert!(tc.success);
+        assert_eq!(tc.duration_ms, 120);
+    }
+
+    // T-STATE-MSG-01: ChatMessage::system() helper.
+    #[test]
+    fn test_chat_message_system_helper() {
+        let msg = ChatMessage::system("hello".into());
+        assert_eq!(msg.role, MessageRole::System);
+        assert_eq!(msg.content, "hello");
+        assert!(!msg.is_streaming);
+        assert!(!msg.is_cancelled);
+        assert!(msg.reasoning_content.is_empty());
+        assert!(!msg.reasoning_complete);
+        assert!(msg.tool_calls.is_empty());
+    }
+
+    // T-STATE-PROV-01: selected_provider_id defaults to None.
+    #[test]
+    fn test_app_state_default_selected_provider_none() {
+        let state = AppState::new();
+        assert!(state.selected_provider_id.is_none());
+    }
+
+    // T-STATE-TICK-01: tick_animation increments counter.
+    #[test]
+    fn test_app_state_tick_counter_increments() {
+        let mut state = AppState::new();
+        assert_eq!(state.tick_counter, 0);
+        state.tick_animation();
+        assert_eq!(state.tick_counter, 1);
+        state.tick_animation();
+        assert_eq!(state.tick_counter, 2);
+    }
+
+    // T-STATE-TICK-02: tick_animation wraps at u64::MAX.
+    #[test]
+    fn test_app_state_tick_counter_wraps() {
+        let mut state = AppState::new();
+        state.tick_counter = u64::MAX;
+        state.tick_animation();
+        assert_eq!(state.tick_counter, 0);
     }
 
     // T-CTX-03: context_usage_percent caps conceptually (caller clamps).

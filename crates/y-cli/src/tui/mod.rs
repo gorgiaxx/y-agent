@@ -384,6 +384,8 @@ impl TuiApp {
 
     /// Handle periodic tick: drain channels and update timers.
     fn handle_tick(&mut self) {
+        self.state.tick_animation();
+
         if let Some(ref mut rx) = self.toast_rx {
             while let Ok(toast) = rx.try_recv() {
                 self.state.push_toast(toast.message, toast.level);
@@ -536,7 +538,9 @@ impl TuiApp {
             }
             AsyncCommand::ShowStats => self.cmd_show_stats(),
             AsyncCommand::CompactContext => self.cmd_compact_context().await,
-            AsyncCommand::ListModels => self.cmd_list_models().await,
+            AsyncCommand::ModelCommand(ref provider_id) => {
+                self.cmd_model(provider_id.clone()).await;
+            }
             AsyncCommand::ShowAgents => self.cmd_show_agents().await,
         }
     }
@@ -579,13 +583,7 @@ impl TuiApp {
                         n.message_count,
                     );
                 }
-                self.state.messages.push(ChatMessage {
-                    role: MessageRole::System,
-                    content: text,
-                    timestamp: chrono::Utc::now(),
-                    is_streaming: false,
-                    is_cancelled: false,
-                });
+                self.state.messages.push(ChatMessage::system(text));
             }
             Err(e) => {
                 self.state
@@ -857,13 +855,7 @@ impl TuiApp {
             self.state.user_message_count
         );
 
-        self.state.messages.push(ChatMessage {
-            role: MessageRole::System,
-            content: text,
-            timestamp: chrono::Utc::now(),
-            is_streaming: false,
-            is_cancelled: false,
-        });
+        self.state.messages.push(ChatMessage::system(text));
     }
 
     /// `/compact` -- trigger manual context compaction.
@@ -887,16 +879,10 @@ impl TuiApp {
                     );
                     self.state.push_toast(msg, ToastLevel::Success);
                     if !report.compaction_summary.is_empty() {
-                        self.state.messages.push(ChatMessage {
-                            role: MessageRole::System,
-                            content: format!(
+                        self.state.messages.push(ChatMessage::system(format!(
                                 "[Context Compacted]\n\n{}",
                                 report.compaction_summary
-                            ),
-                            timestamp: chrono::Utc::now(),
-                            is_streaming: false,
-                            is_cancelled: false,
-                        });
+                            )));
                     }
                 } else {
                     self.state
@@ -910,8 +896,8 @@ impl TuiApp {
         }
     }
 
-    /// `/model` -- list configured models/providers.
-    async fn cmd_list_models(&mut self) {
+    /// `/model [provider-id]` -- list models or switch active provider.
+    async fn cmd_model(&mut self, provider_id: Option<String>) {
         let pool = self.services.provider_pool().await;
         let metadata = pool.list_metadata();
 
@@ -921,30 +907,59 @@ impl TuiApp {
             return;
         }
 
-        let statuses = pool.provider_statuses().await;
+        match provider_id {
+            None => {
+                // List mode.
+                let statuses = pool.provider_statuses().await;
+                let selected = self.state.selected_provider_id.as_deref();
 
-        let mut text = format!("Configured Models ({}):\n\n", metadata.len());
-        for meta in &metadata {
-            let status = statuses.iter().find(|s| s.id == meta.id);
-            let frozen = status.is_some_and(|s| s.is_frozen);
-            let frozen_str = if frozen { " [FROZEN]" } else { "" };
-            let _ = writeln!(
-                text,
-                "  {:<16} {:<24} ctx:{}k  {:?}{frozen_str}",
-                meta.id.as_str(),
-                meta.model,
-                meta.context_window / 1000,
-                meta.provider_type,
-            );
+                let mut text = format!("Configured Models ({}):\n\n", metadata.len());
+                for meta in &metadata {
+                    let status = statuses.iter().find(|s| s.id == meta.id);
+                    let frozen = status.is_some_and(|s| s.is_frozen);
+                    let frozen_str = if frozen { " [FROZEN]" } else { "" };
+                    let active = if selected == Some(meta.id.as_str()) {
+                        " [*]"
+                    } else {
+                        ""
+                    };
+                    let _ = writeln!(
+                        text,
+                        "  {:<16} {:<24} ctx:{}k  {:?}{frozen_str}{active}",
+                        meta.id.as_str(),
+                        meta.model,
+                        meta.context_window / 1000,
+                        meta.provider_type,
+                    );
+                }
+                text.push_str("\nUse /model <provider-id> to switch.");
+                self.state.messages.push(ChatMessage::system(text));
+            }
+            Some(id) => {
+                // Selection mode: prefix-match against provider IDs.
+                let matched = metadata
+                    .iter()
+                    .find(|m| m.id.as_str() == id || m.id.as_str().starts_with(&id));
+                match matched {
+                    Some(meta) => {
+                        let pid = meta.id.as_str().to_string();
+                        self.state.selected_provider_id = Some(pid.clone());
+                        self.state.status_model = meta.model.clone();
+                        self.state.context_window = meta.context_window;
+                        self.state.push_toast(
+                            format!("Model: {} ({})", meta.model, pid),
+                            ToastLevel::Success,
+                        );
+                    }
+                    None => {
+                        self.state.push_toast(
+                            format!("Unknown provider: '{id}'. Use /model to list."),
+                            ToastLevel::Error,
+                        );
+                    }
+                }
+            }
         }
-
-        self.state.messages.push(ChatMessage {
-            role: MessageRole::System,
-            content: text,
-            timestamp: chrono::Utc::now(),
-            is_streaming: false,
-            is_cancelled: false,
-        });
     }
 
     /// `/agent` -- list registered agents.
@@ -968,13 +983,7 @@ impl TuiApp {
             );
         }
 
-        self.state.messages.push(ChatMessage {
-            role: MessageRole::System,
-            content: text,
-            timestamp: chrono::Utc::now(),
-            is_streaming: false,
-            is_cancelled: false,
-        });
+        self.state.messages.push(ChatMessage::system(text));
     }
 
     /// Render all panels into their layout chunks.
@@ -1112,6 +1121,9 @@ impl TuiApp {
                         timestamp: m.timestamp,
                         is_streaming: false,
                         is_cancelled: false,
+                        reasoning_content: String::new(),
+                        reasoning_complete: false,
+                        tool_calls: Vec::new(),
                     })
                     .collect();
                 self.state.scroll_offset = 0;
