@@ -1,16 +1,16 @@
 /**
- * ThinkingCard -- collapsible "Thinking" card rendered inside assistant messages.
+ * ThinkingCard -- lightweight, borderless thinking indicator.
  *
- * Wraps CollapsibleCard with purple accent. Manages streaming state and
- * live-updating elapsed time internally.
+ * Self-contained component (no CollapsibleCard dependency). Shows a pulsing
+ * dot animation during streaming and a subtle expandable content block.
  *
- * - During streaming: expanded, spinner icon, live elapsed time
- * - After completion: auto-collapses, shows final duration
+ * - During streaming: pulsing dot, "Thinking..." label, collapsed by default
+ * - After completion: static dot, "Thought" label, final duration, collapsed
+ * - Clicking the header toggles the reasoning content
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { Brain, Loader } from 'lucide-react';
-import { CollapsibleCard } from './CollapsibleCard';
+import { ChevronRight } from 'lucide-react';
 import './ThinkingCard.css';
 
 interface ThinkingCardProps {
@@ -29,20 +29,11 @@ function formatDuration(ms: number): string {
   return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
 }
 
-const ACCENT_COLOR = '#a78bfa';
-
 export function ThinkingCard({ content, isStreaming = false, durationMs }: ThinkingCardProps) {
-  const [expanded, setExpanded] = useState(isStreaming || !durationMs);
+  // Default collapsed -- user can expand manually.
+  const [expanded, setExpanded] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const startRef = useRef<number>(Date.now());
-
-  // Auto-collapse when streaming finishes.
-  useEffect(() => {
-    if (!isStreaming && expanded) {
-      setExpanded(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isStreaming]);
 
   // Live elapsed timer during streaming.
   useEffect(() => {
@@ -55,27 +46,25 @@ export function ThinkingCard({ content, isStreaming = false, durationMs }: Think
   }, [isStreaming]);
 
   const displayDuration = isStreaming ? elapsedMs : (durationMs || 0);
-
-  const icon = isStreaming
-    ? <Loader size={13} className="collapsible-card-spinner" />
-    : <Brain size={13} />;
-
   const label = isStreaming ? 'Thinking...' : 'Thought';
 
-  const headerRight = displayDuration > 0
-    ? <span className="thinking-card-duration">{formatDuration(displayDuration)}</span>
-    : undefined;
-
   return (
-    <CollapsibleCard
-      accentColor={ACCENT_COLOR}
-      icon={icon}
-      label={label}
-      expanded={expanded}
-      onToggle={() => setExpanded(!expanded)}
-      headerRight={headerRight}
-    >
-      <div className="thinking-card-content">{content}</div>
-    </CollapsibleCard>
+    <div className="thinking-card">
+      <div className="thinking-card-header" onClick={() => setExpanded(!expanded)}>
+        <span className={`thinking-card-dot${isStreaming ? ' is-streaming' : ''}`} />
+        <span className="thinking-card-label">{label}</span>
+        {displayDuration > 0 && (
+          <span className="thinking-card-duration">{formatDuration(displayDuration)}</span>
+        )}
+        <span className={`thinking-card-chevron${expanded ? ' expanded' : ''}`}>
+          <ChevronRight size={11} />
+        </span>
+      </div>
+      {expanded && content && (
+        <div className="thinking-card-body">
+          <div className="thinking-card-content">{content}</div>
+        </div>
+      )}
+    </div>
   );
 }
