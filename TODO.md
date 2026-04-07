@@ -25,20 +25,3 @@ Tasks:
 Priority: Low -- in-memory approach works well for small-to-medium knowledge bases.
 Qdrant becomes necessary when knowledge exceeds ~10K documents or when persistence
 across restarts without the binary embedding file is desired.
-
-### KnowledgeSearch Tool: Query Embedding Support
-
-Status: Bug -- tool always passes `None` for query embedding.
-
-The `KnowledgeSearchTool` in `y-tools/src/builtin/knowledge_search.rs` does not
-have access to the `EmbeddingProvider`, so it cannot embed the user query before
-retrieval. The context auto-injection pipeline (`KnowledgeContextProvider`) does
-this correctly.
-
-Tasks:
-
-- [ ] Pass `EmbeddingProvider` to `KnowledgeSearchTool` (or share via `InjectKnowledge`)
-- [ ] Embed the query in `KnowledgeSearchTool::execute()` before calling `retrieve_for_context()`
-- [ ] Add test with mock embedding provider
-
-Priority: Medium -- directly impacts search quality when LLM explicitly calls the tool.
