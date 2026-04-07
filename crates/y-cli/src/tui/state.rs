@@ -62,7 +62,7 @@ pub enum MessageRole {
 /// Structured record of an executed tool call for rendering.
 #[derive(Debug, Clone)]
 pub struct ToolCallInfo {
-    /// Tool name (e.g. "WebSearch").
+    /// Tool name (e.g. "`WebSearch`").
     pub name: String,
     /// Whether the tool call succeeded.
     pub success: bool,

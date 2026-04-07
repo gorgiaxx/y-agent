@@ -725,8 +725,8 @@ fn merge_text_segments(segments: &mut Vec<ContentSegment>) {
 
 /// Braille spinner frames for animated thinking indicator.
 const SPINNER_FRAMES: &[&str] = &[
-    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
-    "\u{2827}", "\u{2807}", "\u{280f}",
+    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}",
+    "\u{2807}", "\u{280f}",
 ];
 
 /// Render a thinking block as a collapsible card.
@@ -890,7 +890,7 @@ fn render_tool_call_card(
     }
 }
 
-/// Render a tool call from structured `ToolCallInfo` (from ToolCallExecuted events).
+/// Render a tool call from structured `ToolCallInfo` (from `ToolCallExecuted` events).
 fn render_tool_call_executed_card(
     lines: &mut Vec<Line>,
     plain: &mut Vec<String>,

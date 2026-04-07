@@ -880,9 +880,9 @@ impl TuiApp {
                     self.state.push_toast(msg, ToastLevel::Success);
                     if !report.compaction_summary.is_empty() {
                         self.state.messages.push(ChatMessage::system(format!(
-                                "[Context Compacted]\n\n{}",
-                                report.compaction_summary
-                            )));
+                            "[Context Compacted]\n\n{}",
+                            report.compaction_summary
+                        )));
                     }
                 } else {
                     self.state

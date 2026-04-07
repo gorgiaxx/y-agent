@@ -519,12 +519,10 @@ mod tests {
     fn test_model_with_args_returns_async_some() {
         let mut state = AppState::default();
         let result = execute("model deepseek", &mut state);
-        assert!(
-            matches!(
-                result,
-                CommandResult::Async(AsyncCommand::ModelCommand(Some(ref id))) if id == "deepseek"
-            )
-        );
+        assert!(matches!(
+            result,
+            CommandResult::Async(AsyncCommand::ModelCommand(Some(ref id))) if id == "deepseek"
+        ));
     }
 
     #[test]
