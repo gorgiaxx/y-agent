@@ -1,11 +1,12 @@
 //! MCP tool integration: discovers and registers MCP tools at startup.
 //!
-//! Design reference: tools-design.md §MCP Tool Discovery
+//! Design reference: tools-design.md -- MCP Tool Discovery
 //!
 //! At startup, the tool registry queries configured MCP servers via `tools/list`,
 //! adapts each discovered tool using `McpToolAdapter`, and registers them with
 //! the naming convention `mcp_{server}_{tool}`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tracing::{info, warn};
@@ -14,6 +15,7 @@ use y_core::tool::Tool;
 use y_core::types::ToolName;
 use y_mcp::client::McpClient;
 use y_mcp::tool_adapter::McpToolAdapter;
+use y_mcp::transport::StdioTransport;
 
 use crate::registry::ToolRegistryImpl;
 
@@ -33,6 +35,9 @@ pub struct McpServerConfig {
     /// URL for HTTP/SSE transport.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Environment variables for the subprocess (stdio transport).
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     /// Whether this server is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -99,10 +104,35 @@ async fn discover_server(
 
     // Build the MCP client with appropriate transport.
     let transport: Arc<dyn y_mcp::transport::McpTransport> = match config.transport.as_str() {
-        "stdio" => Arc::new(y_mcp::transport::StdioTransport),
-        "http" => Arc::new(y_mcp::transport::HttpTransport::new(
-            config.url.as_deref().unwrap_or("http://localhost:3000"),
-        )),
+        "stdio" => {
+            let Some(command) = config.command.as_deref() else {
+                result
+                    .errors
+                    .push("stdio transport requires a 'command' field".into());
+                return result;
+            };
+            match StdioTransport::spawn(command, &config.args, &config.env) {
+                Ok(t) => Arc::new(t),
+                Err(e) => {
+                    let msg = format!("failed to spawn MCP server '{}': {e}", config.name);
+                    warn!("{msg}");
+                    result.errors.push(msg);
+                    return result;
+                }
+            }
+        }
+        "http" => {
+            let url = config.url.as_deref().unwrap_or("http://localhost:3000");
+            match y_mcp::transport::HttpTransport::new(url) {
+                Ok(t) => Arc::new(t),
+                Err(e) => {
+                    let msg = format!("failed to create HTTP transport for '{}': {e}", config.name);
+                    warn!("{msg}");
+                    result.errors.push(msg);
+                    return result;
+                }
+            }
+        }
         other => {
             result
                 .errors
@@ -112,6 +142,14 @@ async fn discover_server(
     };
 
     let client = Arc::new(McpClient::new(transport, &config.name));
+
+    // Perform the MCP initialize handshake.
+    if let Err(e) = client.initialize().await {
+        let msg = format!("failed to initialize MCP server '{}': {e}", config.name);
+        warn!("{msg}");
+        result.errors.push(msg);
+        return result;
+    }
 
     // Discover tools via tools/list.
     let tools = match client.list_tools().await {
@@ -186,6 +224,7 @@ mod tests {
         assert_eq!(config.transport, "stdio");
         assert_eq!(config.command, Some("npx".into()));
         assert!(config.enabled);
+        assert!(config.env.is_empty());
     }
 
     #[test]
@@ -197,6 +236,21 @@ mod tests {
         "#;
         let config: McpServerConfig = toml::from_str(toml_str).unwrap();
         assert!(config.enabled);
+    }
+
+    #[test]
+    fn test_server_config_with_env() {
+        let toml_str = r#"
+            name = "github"
+            transport = "stdio"
+            command = "npx"
+            args = ["-y", "@modelcontextprotocol/server-github"]
+
+            [env]
+            GITHUB_TOKEN = "ghp_test123"
+        "#;
+        let config: McpServerConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.env.get("GITHUB_TOKEN").unwrap(), "ghp_test123");
     }
 
     #[test]
