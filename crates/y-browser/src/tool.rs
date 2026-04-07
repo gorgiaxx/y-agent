@@ -308,6 +308,17 @@ impl BrowserTool {
         Ok(truncate_output(&text, MAX_OUTPUT_CHARS))
     }
 
+    /// Fetch page metadata (title + favicon URL) for the currently loaded page.
+    ///
+    /// Best-effort: returns empty strings on failure. Call after navigation
+    /// has completed (i.e. after `fetch_page_text` or `search_page_text`).
+    pub async fn fetch_page_meta(&self) -> (String, String) {
+        let actions = self.session.actions();
+        let title = actions.get_title().await.unwrap_or_default();
+        let favicon = actions.get_favicon().await.unwrap_or_default();
+        (title, favicon)
+    }
+
     /// Search via a search engine and return the results page text.
     pub async fn search_page_text(
         &self,
@@ -392,11 +403,21 @@ impl BrowserTool {
             .navigate(&search_url)
             .await
             .map_err(cdp_to_tool_error)?;
+        // Best-effort page metadata for GUI rendering.
+        let title = self.session.actions().get_title().await.unwrap_or_default();
+        let favicon = self
+            .session
+            .actions()
+            .get_favicon()
+            .await
+            .unwrap_or_default();
         Ok(serde_json::json!({
             "action": "search",
             "query": query,
             "search_engine": engine,
             "url": search_url,
+            "title": title,
+            "favicon_url": favicon,
             "navigation": serde_json::to_value(&nav).unwrap_or_default(),
         }))
     }
@@ -428,7 +449,15 @@ impl BrowserTool {
                 })?;
 
                 let nav = actions.navigate(url).await.map_err(cdp_to_tool_error)?;
-                Ok(serde_json::to_value(nav).unwrap_or_default())
+                // Best-effort page metadata for GUI rendering.
+                let title = actions.get_title().await.unwrap_or_default();
+                let favicon = actions.get_favicon().await.unwrap_or_default();
+                Ok(serde_json::json!({
+                    "url": url,
+                    "title": title,
+                    "favicon_url": favicon,
+                    "navigation": serde_json::to_value(&nav).unwrap_or_default(),
+                }))
             }
 
             BrowserAction::Search => self.dispatch_search(input).await,

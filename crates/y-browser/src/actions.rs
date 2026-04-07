@@ -304,6 +304,73 @@ impl BrowserActions {
         Ok(result.value.as_str().unwrap_or_default().to_string())
     }
 
+    /// Get the favicon as a base64 data URL for the current page.
+    ///
+    /// Locates the favicon via `<link rel="icon">` tags (falling back to
+    /// `{origin}/favicon.ico`), fetches the image bytes in the browser
+    /// context, and returns a self-contained `data:image/...;base64,...`
+    /// string. Returns an empty string on failure (best-effort).
+    pub async fn get_favicon(&self) -> Result<String, CdpError> {
+        let js = r#"(async () => {
+            const icons = document.querySelectorAll(
+                'link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]'
+            );
+            let faviconUrl;
+            if (icons.length > 0) {
+                let best = icons[icons.length - 1];
+                for (const icon of icons) {
+                    const sizes = icon.getAttribute('sizes');
+                    if (sizes && sizes !== 'any') {
+                        const dim = parseInt(sizes.split('x')[0], 10);
+                        if (dim >= 32) { best = icon; break; }
+                    }
+                }
+                faviconUrl = best.href;
+            } else {
+                faviconUrl = new URL('/favicon.ico', window.location.origin).href;
+            }
+
+            // Strategy 1: fetch + FileReader (works for same-origin and CORS-enabled).
+            try {
+                const resp = await fetch(faviconUrl);
+                if (resp.ok) {
+                    const blob = await resp.blob();
+                    if (blob.size > 0) {
+                        return await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result || '');
+                            reader.onerror = () => resolve('');
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                }
+            } catch {}
+
+            // Strategy 2: load via Image + Canvas (works for many cross-origin
+            // favicons that block fetch but allow <img> loading).
+            try {
+                return await new Promise((resolve) => {
+                    const img = new Image();
+                    img.crossOrigin = 'anonymous';
+                    img.onload = () => {
+                        try {
+                            const c = document.createElement('canvas');
+                            c.width = img.naturalWidth || 16;
+                            c.height = img.naturalHeight || 16;
+                            c.getContext('2d').drawImage(img, 0, 0);
+                            resolve(c.toDataURL('image/png'));
+                        } catch { resolve(''); }
+                    };
+                    img.onerror = () => resolve('');
+                    setTimeout(() => resolve(''), 3000);
+                    img.src = faviconUrl;
+                });
+            } catch { return ''; }
+        })()"#;
+        let result = self.evaluate(js).await?;
+        Ok(result.value.as_str().unwrap_or_default().to_string())
+    }
+
     /// Get text content of an element by CSS selector or `@eN` ref.
     pub async fn get_text(&self, selector: &str) -> Result<String, CdpError> {
         if let Some(ref_id) = selector.strip_prefix('@') {
