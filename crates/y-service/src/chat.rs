@@ -96,6 +96,10 @@ pub enum TurnEvent {
         result_preview: String,
         /// Name of the agent that executed this tool call.
         agent_name: String,
+        /// Compact URL metadata for Browser/WebFetch tools (JSON with url,
+        /// title, `favicon_url`). Extracted from the full result before
+        /// truncation so base64 favicons survive. `None` for non-URL tools.
+        url_meta: Option<String>,
     },
     /// Emitted when the tool-call loop limit is hit.
     LoopLimitHit {
@@ -873,13 +877,42 @@ impl ChatService {
             .tool_calls_executed
             .iter()
             .map(|tc| {
-                serde_json::json!({
+                // Extract compact URL metadata from the full result content
+                // (before truncation) so base64 favicons survive persistence.
+                let url_meta = if tc.name == "Browser" || tc.name == "WebFetch" {
+                    serde_json::from_str::<serde_json::Value>(&tc.result_content)
+                        .ok()
+                        .and_then(|parsed| {
+                            let url = parsed.get("url")?.as_str()?;
+                            if url.is_empty() {
+                                return None;
+                            }
+                            let title =
+                                parsed.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                            let favicon = parsed
+                                .get("favicon_url")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            Some(serde_json::json!({
+                                "url": url,
+                                "title": title,
+                                "favicon_url": favicon,
+                            }))
+                        })
+                } else {
+                    None
+                };
+                let mut entry = serde_json::json!({
                     "name": tc.name,
                     "arguments": tc.arguments,
                     "success": tc.success,
                     "duration_ms": tc.duration_ms,
                     "result_preview": &tc.result_content[..tc.result_content.floor_char_boundary(2000)],
-                })
+                });
+                if let Some(meta) = url_meta {
+                    entry["url_meta"] = meta;
+                }
+                entry
             })
             .collect();
 

@@ -96,6 +96,7 @@ pub(crate) async fn execute_and_record_tool(
                     input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
                     result_preview: error_content.clone(),
                     agent_name: config.agent_name.clone(),
+                    url_meta: None,
                 });
             }
 
@@ -199,6 +200,7 @@ pub(crate) async fn execute_and_record_tool(
                             input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
                             result_preview: error_content.clone(),
                             agent_name: config.agent_name.clone(),
+                            url_meta: None,
                         });
                     }
 
@@ -269,6 +271,7 @@ pub(crate) async fn execute_and_record_tool(
     // Emit ToolResult progress event.
     if let Some(tx) = progress {
         let preview_len = result_content.floor_char_boundary(500);
+        let url_meta = extract_url_meta(&tc.name, &result_content);
         let _ = tx.send(TurnEvent::ToolResult {
             name: tc.name.clone(),
             success: tool_success,
@@ -276,6 +279,7 @@ pub(crate) async fn execute_and_record_tool(
             input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
             result_preview: result_content[..preview_len].to_string(),
             agent_name: config.agent_name.clone(),
+            url_meta,
         });
     }
 
@@ -489,4 +493,36 @@ async fn maybe_auto_register_agent(container: &ServiceContainer, arguments: &ser
             );
         }
     }
+}
+
+/// Extract compact URL metadata from a Browser/WebFetch tool result.
+///
+/// Parses the full (untruncated) result content and returns a compact JSON
+/// string containing only `url`, `title`, and `favicon_url`. Returns `None`
+/// for non-URL tools or when parsing fails.
+fn extract_url_meta(tool_name: &str, result_content: &str) -> Option<String> {
+    if tool_name != "Browser" && tool_name != "WebFetch" {
+        return None;
+    }
+    let parsed: serde_json::Value = serde_json::from_str(result_content).ok()?;
+    let url = parsed.get("url").and_then(|v| v.as_str())?;
+    if url.is_empty() {
+        return None;
+    }
+    let title = parsed
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let favicon = parsed
+        .get("favicon_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    Some(
+        serde_json::json!({
+            "url": url,
+            "title": title,
+            "favicon_url": favicon,
+        })
+        .to_string(),
+    )
 }
