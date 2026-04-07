@@ -46,6 +46,7 @@ export function StaticBubble({ message }: StaticBubbleProps) {
       success: Boolean(tr.success),
       durationMs: Number(tr.duration_ms ?? 0),
       resultPreview: String(tr.result_preview ?? ''),
+      urlMeta: tr.url_meta != null ? JSON.stringify(tr.url_meta) : undefined,
     }));
   }, [message.metadata]);
 
@@ -150,6 +151,7 @@ export function StaticBubble({ message }: StaticBubbleProps) {
                   status={status}
                   result={result?.resultPreview}
                   durationMs={result?.durationMs}
+                  urlMeta={result?.urlMeta}
                 />
               );
             }
@@ -192,6 +194,7 @@ export function StaticBubble({ message }: StaticBubbleProps) {
                   status={seg.record.success ? 'success' : 'error'}
                   result={seg.record.resultPreview}
                   durationMs={seg.record.durationMs}
+                  urlMeta={seg.record.urlMeta}
                 />
               );
             }

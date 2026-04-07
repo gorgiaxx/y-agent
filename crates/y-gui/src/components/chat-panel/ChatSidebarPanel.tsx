@@ -645,13 +645,6 @@ export function ChatSidebarPanel({
               <Trash2 size={13} />
               Delete
             </button>
-            <button
-              className="batch-action-btn"
-              onClick={clearSelection}
-            >
-              <X size={13} />
-              Cancel
-            </button>
           </div>
         )}
       </div>

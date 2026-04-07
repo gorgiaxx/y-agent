@@ -95,6 +95,7 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
                   status={status}
                   result={result?.resultPreview}
                   durationMs={result?.durationMs}
+                  urlMeta={result?.urlMeta}
                 />
               );
             }
@@ -145,6 +146,7 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
                   status={seg.record.success ? 'success' : 'error'}
                   result={seg.record.resultPreview}
                   durationMs={seg.record.durationMs}
+                  urlMeta={seg.record.urlMeta}
                 />
               );
             }
