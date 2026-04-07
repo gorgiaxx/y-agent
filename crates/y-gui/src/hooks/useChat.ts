@@ -685,6 +685,18 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         // Push tool_result segment and bump version to force re-render.
         const segs = streamSegsRef.current.get(sid);
         if (segs) {
+          // When a tool result arrives, mark any in-progress reasoning segment
+          // as done. This handles the case where the LLM thinks and then
+          // directly issues tool calls without emitting any text content
+          // (stream_delta) in between -- without this, the ThinkingCard would
+          // stay in "Thinking..." state indefinitely.
+          const lastSeg = segs[segs.length - 1];
+          if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
+            lastSeg.isStreaming = false;
+            if (lastSeg._startTs) {
+              lastSeg.durationMs = Date.now() - lastSeg._startTs;
+            }
+          }
           segs.push({ type: 'tool_result', record });
           setStreamSegsVersion((v) => v + 1);
         }
