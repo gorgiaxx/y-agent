@@ -40,7 +40,16 @@ pub struct ToolCallRecord {
     /// Wall-clock duration in milliseconds.
     pub duration_ms: u64,
     /// Result content (serialised JSON string).
+    ///
+    /// For Browser/WebFetch tools, this is the **stripped** result that only
+    /// contains LLM-relevant fields (`url`, `title`, `text`). GUI-only
+    /// metadata (`favicon_url`, `navigation`, `action`, etc.) is removed
+    /// before this field is set.
     pub result_content: String,
+    /// Compact URL metadata for Browser/WebFetch tools (JSON with url, title,
+    /// `favicon_url`). Extracted from the full result before stripping so
+    /// base64 favicons survive for GUI rendering.
+    pub url_meta: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +282,7 @@ impl From<AgentExecutionError> for TurnError {
             AgentExecutionError::ToolLoopLimitExceeded { max_iterations } => {
                 TurnError::ToolLoopLimitExceeded { max_iterations }
             }
-            AgentExecutionError::Cancelled => TurnError::Cancelled,
+            AgentExecutionError::Cancelled { .. } => TurnError::Cancelled,
         }
     }
 }
@@ -865,6 +874,78 @@ impl ChatService {
                 }
                 return Err(TurnError::LlmError(message));
             }
+            Err(AgentExecutionError::Cancelled {
+                partial_messages,
+                accumulated_content,
+                iteration_texts,
+                iteration_reasonings,
+                iteration_reasoning_durations_ms,
+                iteration_tool_counts,
+                tool_calls_executed,
+                iterations,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                model,
+            }) => {
+                // Persist intermediate messages (assistant + tool results from
+                // earlier successful iterations) so the conversation history
+                // survives the cancellation and is visible on session re-entry.
+                for msg in &partial_messages {
+                    let _ = container
+                        .session_manager
+                        .append_message(&input.session_id, msg)
+                        .await;
+                }
+
+                // Build and persist a partial assistant message with accumulated
+                // content so the conversation shows what was done before cancel.
+                if !accumulated_content.trim().is_empty() || !tool_calls_executed.is_empty() {
+                    let tool_results_meta: Vec<serde_json::Value> =
+                        Self::build_tool_results_metadata(&tool_calls_executed);
+
+                    let meta = serde_json::json!({
+                        "model": model,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost_usd": cost_usd,
+                        "tool_results": tool_results_meta,
+                        "iteration_texts": iteration_texts,
+                        "iteration_reasonings": iteration_reasonings,
+                        "iteration_reasoning_durations_ms": iteration_reasoning_durations_ms,
+                        "iteration_tool_counts": iteration_tool_counts,
+                        "cancelled": true,
+                    });
+
+                    let assistant_msg = Message {
+                        message_id: y_core::types::generate_message_id(),
+                        role: Role::Assistant,
+                        content: accumulated_content.clone(),
+                        tool_call_id: None,
+                        tool_calls: vec![],
+                        timestamp: y_core::types::now(),
+                        metadata: meta,
+                    };
+
+                    let _ = container
+                        .session_manager
+                        .append_message(&input.session_id, &assistant_msg)
+                        .await;
+                }
+
+                if !partial_messages.is_empty() || !accumulated_content.trim().is_empty() {
+                    tracing::info!(
+                        partial_count = partial_messages.len(),
+                        accumulated_len = accumulated_content.len(),
+                        iterations,
+                        session = %input.session_id.0,
+                        "persisted partial state on cancellation"
+                    );
+                }
+
+                // No checkpoint or post-turn optimization for cancelled turns.
+                return Err(TurnError::Cancelled);
+            }
             Err(e) => return Err(TurnError::from(e)),
         };
 
@@ -873,48 +954,8 @@ impl ChatService {
         //    that's the ChatService's responsibility.
 
         // Build tool_results metadata for frontend rendering after session reload.
-        let tool_results_meta: Vec<serde_json::Value> = result
-            .tool_calls_executed
-            .iter()
-            .map(|tc| {
-                // Extract compact URL metadata from the full result content
-                // (before truncation) so base64 favicons survive persistence.
-                let url_meta = if tc.name == "Browser" || tc.name == "WebFetch" {
-                    serde_json::from_str::<serde_json::Value>(&tc.result_content)
-                        .ok()
-                        .and_then(|parsed| {
-                            let url = parsed.get("url")?.as_str()?;
-                            if url.is_empty() {
-                                return None;
-                            }
-                            let title =
-                                parsed.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                            let favicon = parsed
-                                .get("favicon_url")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            Some(serde_json::json!({
-                                "url": url,
-                                "title": title,
-                                "favicon_url": favicon,
-                            }))
-                        })
-                } else {
-                    None
-                };
-                let mut entry = serde_json::json!({
-                    "name": tc.name,
-                    "arguments": tc.arguments,
-                    "success": tc.success,
-                    "duration_ms": tc.duration_ms,
-                    "result_preview": &tc.result_content[..tc.result_content.floor_char_boundary(2000)],
-                });
-                if let Some(meta) = url_meta {
-                    entry["url_meta"] = meta;
-                }
-                entry
-            })
-            .collect();
+        let tool_results_meta: Vec<serde_json::Value> =
+            Self::build_tool_results_metadata(&result.tool_calls_executed);
 
         let mut meta = serde_json::json!({
             "model": result.model,
@@ -1027,6 +1068,36 @@ impl ChatService {
             iterations: result.iterations,
             new_messages,
         })
+    }
+
+    /// Build tool results metadata for persisting in assistant message metadata.
+    ///
+    /// Shared by the normal completion path and the cancellation persistence
+    /// path to avoid duplicating the URL metadata extraction logic.
+    fn build_tool_results_metadata(
+        tool_calls: &[crate::agent_service::ToolCallRecord],
+    ) -> Vec<serde_json::Value> {
+        tool_calls
+            .iter()
+            .map(|tc| {
+                let mut entry = serde_json::json!({
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                    "success": tc.success,
+                    "duration_ms": tc.duration_ms,
+                    "result_preview":
+                        &tc.result_content[..tc.result_content.floor_char_boundary(2000)],
+                });
+                // Use pre-extracted url_meta directly (survives result
+                // stripping for Browser/WebFetch tools).
+                if let Some(ref meta_str) = tc.url_meta {
+                    if let Ok(meta_val) = serde_json::from_str::<serde_json::Value>(meta_str) {
+                        entry["url_meta"] = meta_val;
+                    }
+                }
+                entry
+            })
+            .collect()
     }
 
     /// Build LLM messages by prepending system prompt from assembled context.

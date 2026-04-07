@@ -49,7 +49,22 @@ pub(crate) async fn handle_llm_error(
     agent_name: &str,
 ) -> Result<AgentExecutionResult, AgentExecutionError> {
     if matches!(error, y_core::provider::ProviderError::Cancelled) {
-        return Err(AgentExecutionError::Cancelled);
+        return Err(AgentExecutionError::Cancelled {
+            partial_messages: std::mem::take(&mut ctx.new_messages),
+            accumulated_content: std::mem::take(&mut ctx.accumulated_content),
+            iteration_texts: std::mem::take(&mut ctx.iteration_texts),
+            iteration_reasonings: std::mem::take(&mut ctx.iteration_reasonings),
+            iteration_reasoning_durations_ms: std::mem::take(
+                &mut ctx.iteration_reasoning_durations_ms,
+            ),
+            iteration_tool_counts: std::mem::take(&mut ctx.iteration_tool_counts),
+            tool_calls_executed: std::mem::take(&mut ctx.tool_calls_executed),
+            iterations: ctx.iteration.saturating_sub(1),
+            input_tokens: ctx.cumulative_input_tokens,
+            output_tokens: ctx.cumulative_output_tokens,
+            cost_usd: ctx.cumulative_cost,
+            model: model.to_string(),
+        });
     }
 
     // Emit LlmError progress event so the diagnostics panel

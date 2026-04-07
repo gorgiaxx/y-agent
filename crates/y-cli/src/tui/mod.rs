@@ -944,7 +944,7 @@ impl TuiApp {
                     Some(meta) => {
                         let pid = meta.id.as_str().to_string();
                         self.state.selected_provider_id = Some(pid.clone());
-                        self.state.status_model = meta.model.clone();
+                        self.state.status_model.clone_from(&meta.model);
                         self.state.context_window = meta.context_window;
                         self.state.push_toast(
                             format!("Model: {} ({})", meta.model, pid),

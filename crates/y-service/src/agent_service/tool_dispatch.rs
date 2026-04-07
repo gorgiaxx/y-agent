@@ -86,6 +86,7 @@ pub(crate) async fn execute_and_record_tool(
                 success: false,
                 duration_ms: 0,
                 result_content: error_content.clone(),
+                url_meta: None,
             });
 
             if let Some(tx) = progress {
@@ -190,6 +191,7 @@ pub(crate) async fn execute_and_record_tool(
                         success: false,
                         duration_ms: 0,
                         result_content: error_content.clone(),
+                        url_meta: None,
                     });
 
                     if let Some(tx) = progress {
@@ -249,16 +251,26 @@ pub(crate) async fn execute_and_record_tool(
     // ---------------------------------------------------------------
     // Actual tool execution
     // ---------------------------------------------------------------
-    let (tool_success, result_content) =
+    let (tool_success, full_result, result_content) =
         match execute_tool_call(container, tc, &ctx.session_id).await {
             Ok(output) => {
-                let content = serde_json::to_string(&output.content).unwrap_or_default();
-                (true, content)
+                let full = serde_json::to_string(&output.content).unwrap_or_default();
+                // For Browser/WebFetch: strip GUI-only fields (favicon_url,
+                // action, search_engine, navigation) before sending to the
+                // LLM. Only keep text + url/title for context.
+                let stripped = strip_url_tool_result(&tc.name, &output.content);
+                (true, full, stripped)
             }
-            Err(e) => (false, format!("{e}")),
+            Err(e) => {
+                let msg = format!("{e}");
+                (false, msg.clone(), msg)
+            }
         };
 
     let tool_elapsed_ms = u64::try_from(tool_start.elapsed().as_millis()).unwrap_or(0);
+
+    // Extract URL metadata from the full (unstripped) result before storing.
+    let url_meta = extract_url_meta(&tc.name, &full_result);
 
     ctx.tool_calls_executed.push(ToolCallRecord {
         name: tc.name.clone(),
@@ -266,12 +278,14 @@ pub(crate) async fn execute_and_record_tool(
         success: tool_success,
         duration_ms: tool_elapsed_ms,
         result_content: result_content.clone(),
+        url_meta: url_meta.clone(),
     });
 
     // Emit ToolResult progress event.
+    // Use the full (unstripped) result for url_meta extraction and GUI
+    // preview, but the stripped version is what the LLM sees.
     if let Some(tx) = progress {
         let preview_len = result_content.floor_char_boundary(500);
-        let url_meta = extract_url_meta(&tc.name, &result_content);
         let _ = tx.send(TurnEvent::ToolResult {
             name: tc.name.clone(),
             success: tool_success,
@@ -497,7 +511,7 @@ async fn maybe_auto_register_agent(container: &ServiceContainer, arguments: &ser
 
 /// Extract compact URL metadata from a Browser/WebFetch tool result.
 ///
-/// Parses the full (untruncated) result content and returns a compact JSON
+/// Parses the full (unstripped) result content and returns a compact JSON
 /// string containing only `url`, `title`, and `favicon_url`. Returns `None`
 /// for non-URL tools or when parsing fails.
 fn extract_url_meta(tool_name: &str, result_content: &str) -> Option<String> {
@@ -525,4 +539,36 @@ fn extract_url_meta(tool_name: &str, result_content: &str) -> Option<String> {
         })
         .to_string(),
     )
+}
+
+/// Strip Browser/WebFetch results to only LLM-relevant fields.
+///
+/// GUI-only fields (`favicon_url`, `navigation`) and echo fields (`action`,
+/// `search_engine`, `query`) are removed. The LLM receives only `text` (the
+/// page content) plus `url` and `title` for attribution context.
+///
+/// Non-URL tools pass through unchanged.
+fn strip_url_tool_result(tool_name: &str, content: &serde_json::Value) -> String {
+    if tool_name != "Browser" && tool_name != "WebFetch" {
+        return serde_json::to_string(content).unwrap_or_default();
+    }
+
+    let Some(obj) = content.as_object() else {
+        return serde_json::to_string(content).unwrap_or_default();
+    };
+
+    // Keep only LLM-relevant fields.
+    let mut stripped = serde_json::Map::new();
+    for key in ["url", "title", "text"] {
+        if let Some(v) = obj.get(key) {
+            stripped.insert(key.to_string(), v.clone());
+        }
+    }
+
+    // If stripping removed everything meaningful, fall back to full content.
+    if stripped.is_empty() {
+        return serde_json::to_string(content).unwrap_or_default();
+    }
+
+    serde_json::to_string(&serde_json::Value::Object(stripped)).unwrap_or_default()
 }

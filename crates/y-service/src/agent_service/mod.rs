@@ -187,7 +187,35 @@ pub enum AgentExecutionError {
         max_iterations: usize,
     },
     /// The execution was explicitly cancelled by the caller.
-    Cancelled,
+    ///
+    /// Carries partial messages accumulated from successful iterations before
+    /// the cancellation point, so the caller can persist them.
+    Cancelled {
+        /// Messages from earlier successful iterations (assistant + tool).
+        partial_messages: Vec<Message>,
+        /// Accumulated text content from all completed iterations.
+        accumulated_content: String,
+        /// Per-iteration text content for frontend interleaving.
+        iteration_texts: Vec<String>,
+        /// Per-iteration reasoning content.
+        iteration_reasonings: Vec<Option<String>>,
+        /// Per-iteration reasoning durations in milliseconds.
+        iteration_reasoning_durations_ms: Vec<Option<u64>>,
+        /// Per-iteration tool call counts.
+        iteration_tool_counts: Vec<usize>,
+        /// Tool call records from completed iterations.
+        tool_calls_executed: Vec<ToolCallRecord>,
+        /// Number of completed iterations before cancellation.
+        iterations: usize,
+        /// Cumulative input tokens.
+        input_tokens: u64,
+        /// Cumulative output tokens.
+        output_tokens: u64,
+        /// Cumulative cost in USD.
+        cost_usd: f64,
+        /// Model name from the last successful iteration.
+        model: String,
+    },
 }
 
 impl std::fmt::Display for AgentExecutionError {
@@ -198,7 +226,7 @@ impl std::fmt::Display for AgentExecutionError {
             AgentExecutionError::ToolLoopLimitExceeded { max_iterations } => {
                 write!(f, "Tool call loop limit ({max_iterations}) exceeded")
             }
-            AgentExecutionError::Cancelled => write!(f, "Cancelled"),
+            AgentExecutionError::Cancelled { .. } => write!(f, "Cancelled"),
         }
     }
 }
@@ -487,9 +515,22 @@ mod tests {
                 .to_string()
                 .contains("10")
         );
-        assert!(AgentExecutionError::Cancelled
-            .to_string()
-            .contains("Cancelled"));
+        assert!(AgentExecutionError::Cancelled {
+            partial_messages: vec![],
+            accumulated_content: String::new(),
+            iteration_texts: vec![],
+            iteration_reasonings: vec![],
+            iteration_reasoning_durations_ms: vec![],
+            iteration_tool_counts: vec![],
+            tool_calls_executed: vec![],
+            iterations: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cost_usd: 0.0,
+            model: String::new(),
+        }
+        .to_string()
+        .contains("Cancelled"));
     }
 
     // -- build_subagent_system_prompt tests --
