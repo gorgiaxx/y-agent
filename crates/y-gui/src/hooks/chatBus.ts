@@ -34,7 +34,7 @@ export type ChatBusEvent =
   | { type: 'error'; payload: ChatErrorPayload }
   | { type: 'stream_delta'; run_id: string; session_id: string; content: string }
   | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string }
-  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; result_preview: string };
+  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string };
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -134,7 +134,9 @@ async function initialiseChatBus() {
           name: event.name,
           success: event.success,
           duration_ms: event.duration_ms,
+          input_preview: event.input_preview ?? '',
           result_preview: event.result_preview,
+          url_meta: event.url_meta ?? undefined,
         });
       }
     }

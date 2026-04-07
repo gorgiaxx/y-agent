@@ -62,6 +62,8 @@ export interface ToolResultRecord {
   success: boolean;
   durationMs: number;
   resultPreview: string;
+  /** Compact URL metadata JSON (url, title, favicon_url) for Browser/WebFetch. */
+  urlMeta?: string;
 }
 
 interface UseChatReturn {
@@ -668,9 +670,11 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         const sid = event.session_id;
         const record: ToolResultRecord = {
           name: event.name,
+          arguments: event.input_preview,
           success: event.success,
           durationMs: event.duration_ms,
           resultPreview: event.result_preview,
+          urlMeta: event.url_meta,
         };
         const existing = toolResultsRef.current.get(sid) ?? [];
         existing.push(record);

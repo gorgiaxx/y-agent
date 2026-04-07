@@ -119,6 +119,8 @@ export interface ToolResultEvent {
   result_preview: string;
   /** Name of the agent that executed this tool call. */
   agent_name?: string;
+  /** Compact URL metadata (JSON) for Browser/WebFetch tools. */
+  url_meta?: string;
 }
 
 export interface LoopLimitEvent {
