@@ -181,18 +181,18 @@ impl GlobTool {
 
         match result {
             Ok(Ok(output)) => {
-                // ripgrep exits with 1 when no matches found -- that is not an error.
-                if output.status.success() || output.status.code() == Some(1) {
+                // ripgrep exit codes:
+                //   0 = matches found
+                //   1 = no matches found
+                //   2 = partial errors (e.g. permission denied) but stdout still valid
+                let code = output.status.code().unwrap_or(-1);
+                if code <= 2 {
                     Ok(String::from_utf8_lossy(&output.stdout).to_string())
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     Err(ToolError::RuntimeError {
                         name: "Glob".into(),
-                        message: format!(
-                            "rg exited with code {}: {}",
-                            output.status.code().unwrap_or(-1),
-                            stderr
-                        ),
+                        message: format!("rg exited with code {code}: {stderr}"),
                     })
                 }
             }
@@ -389,14 +389,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_glob_with_search_path() {
+        // Use a controlled temp directory to avoid permission issues.
+        let tmp = tempfile::tempdir().unwrap();
+        let tmp_path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(tmp.path().join("hello.txt"), "hello").unwrap();
+
         let tool = GlobTool::new();
         let input = make_input(serde_json::json!({
             "pattern": "*",
-            "path": "/tmp"
+            "path": tmp_path
         }));
         let output = tool.execute(input).await.unwrap();
         assert!(output.success);
-        assert_eq!(output.content["search_path"], "/tmp");
+        assert_eq!(output.content["search_path"], tmp_path);
+        let count = output.content["count"].as_u64().unwrap();
+        assert!(count >= 1, "expected at least 1 match in tempdir");
     }
 
     #[tokio::test]

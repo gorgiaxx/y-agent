@@ -219,10 +219,18 @@ impl GrepTool {
             {
                 args.push(format!("-C{c}"));
             } else {
-                if let Some(b) = input.arguments.get("-B").and_then(serde_json::Value::as_u64) {
+                if let Some(b) = input
+                    .arguments
+                    .get("-B")
+                    .and_then(serde_json::Value::as_u64)
+                {
                     args.push(format!("-B{b}"));
                 }
-                if let Some(a) = input.arguments.get("-A").and_then(serde_json::Value::as_u64) {
+                if let Some(a) = input
+                    .arguments
+                    .get("-A")
+                    .and_then(serde_json::Value::as_u64)
+                {
                     args.push(format!("-A{a}"));
                 }
             }
@@ -256,7 +264,10 @@ impl GrepTool {
 
         if limit == 0 {
             // Unlimited.
-            let result: Vec<String> = after_offset.iter().map(std::string::ToString::to_string).collect();
+            let result: Vec<String> = after_offset
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect();
             (result, false)
         } else {
             let limit = limit as usize;
@@ -306,18 +317,18 @@ impl GrepTool {
 
         match result {
             Ok(Ok(output)) => {
-                // rg exits with 1 when no matches found -- that is not an error.
-                if output.status.success() || output.status.code() == Some(1) {
+                // ripgrep exit codes:
+                //   0 = matches found
+                //   1 = no matches found
+                //   2 = partial errors (e.g. permission denied) but stdout still valid
+                let code = output.status.code().unwrap_or(-1);
+                if code <= 2 {
                     Ok(String::from_utf8_lossy(&output.stdout).to_string())
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     Err(ToolError::RuntimeError {
                         name: "Grep".into(),
-                        message: format!(
-                            "rg exited with code {}: {}",
-                            output.status.code().unwrap_or(-1),
-                            stderr
-                        ),
+                        message: format!("rg exited with code {code}: {stderr}"),
                     })
                 }
             }
