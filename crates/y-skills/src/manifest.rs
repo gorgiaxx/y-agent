@@ -174,18 +174,41 @@ impl ManifestParser {
     /// Parse a TOML string into a `SkillManifest`.
     ///
     /// Auto-detects format: tries nested `[skill]` format first, then legacy flat format.
+    /// Enforces token budget limits -- use [`parse_lenient`] when loading
+    /// persisted skills from disk where the budget should not be re-checked.
     pub fn parse(&self, toml_str: &str) -> Result<SkillManifest, SkillModuleError> {
+        self.parse_inner(toml_str, true)
+    }
+
+    /// Parse a TOML string without enforcing token budget limits.
+    ///
+    /// Used by [`FilesystemSkillStore::load_from_dir`] to load skills that
+    /// are already persisted on disk -- the budget was checked at import time
+    /// and should not block loading.
+    pub fn parse_lenient(&self, toml_str: &str) -> Result<SkillManifest, SkillModuleError> {
+        self.parse_inner(toml_str, false)
+    }
+
+    fn parse_inner(
+        &self,
+        toml_str: &str,
+        validate_budget: bool,
+    ) -> Result<SkillManifest, SkillModuleError> {
         // Try nested format first
         if let Ok(wrapper) = toml::from_str::<NestedTomlWrapper>(toml_str) {
-            return self.parse_nested(wrapper.skill);
+            return self.parse_nested(wrapper.skill, validate_budget);
         }
         // Fall back to legacy flat format
         let parsed: TomlManifest = toml::from_str(toml_str)?;
-        self.parse_flat(parsed)
+        self.parse_flat(parsed, validate_budget)
     }
 
     /// Parse from the design-aligned nested `[skill]` format.
-    fn parse_nested(&self, skill: NestedTomlSkill) -> Result<SkillManifest, SkillModuleError> {
+    fn parse_nested(
+        &self,
+        skill: NestedTomlSkill,
+        validate_budget: bool,
+    ) -> Result<SkillManifest, SkillModuleError> {
         // Extract root content from the `[skill.root]` section
         let root_content = skill
             .root
@@ -199,8 +222,8 @@ impl ManifestParser {
             .and_then(|r| r.token_count)
             .unwrap_or_else(|| estimate_tokens(&root_content));
 
-        // Validate token budget
-        if token_estimate > self.config.max_root_tokens {
+        // Validate token budget (skipped when loading persisted skills)
+        if validate_budget && token_estimate > self.config.max_root_tokens {
             return Err(SkillModuleError::Core(SkillError::TokenBudgetExceeded {
                 actual: token_estimate,
                 max: self.config.max_root_tokens,
@@ -288,11 +311,15 @@ impl ManifestParser {
     }
 
     /// Parse from the legacy flat format.
-    fn parse_flat(&self, parsed: TomlManifest) -> Result<SkillManifest, SkillModuleError> {
+    fn parse_flat(
+        &self,
+        parsed: TomlManifest,
+        validate_budget: bool,
+    ) -> Result<SkillManifest, SkillModuleError> {
         let token_estimate = estimate_tokens(&parsed.root_content);
 
-        // Validate token budget
-        if token_estimate > self.config.max_root_tokens {
+        // Validate token budget (skipped when loading persisted skills)
+        if validate_budget && token_estimate > self.config.max_root_tokens {
             return Err(SkillModuleError::Core(SkillError::TokenBudgetExceeded {
                 actual: token_estimate,
                 max: self.config.max_root_tokens,

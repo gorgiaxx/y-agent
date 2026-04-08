@@ -8,6 +8,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use tempfile::TempDir;
+
 use y_core::agent::{AgentDelegator, ContextStrategyHint};
 use y_core::skill::{
     SkillClassification, SkillClassificationType, SkillConstraints, SkillManifest, SkillRegistry,
@@ -54,6 +56,10 @@ pub enum ImportDecision {
 // ---------------------------------------------------------------------------
 
 /// Structured output from the `skill-ingestion` agent.
+///
+/// The agent writes all file content (root.md, sub-documents, tools,
+/// companion transforms) to the `output_dir` via `FileWrite`. This struct
+/// contains only lightweight metadata -- no content fields.
 #[derive(Debug, Deserialize)]
 struct AgentIngestionOutput {
     decision: String,
@@ -66,8 +72,6 @@ struct AgentIngestionOutput {
     optimization_notes: Option<String>,
     #[serde(default)]
     manifest: Option<AgentManifestOutput>,
-    #[serde(default)]
-    root_content: Option<String>,
     #[serde(default)]
     sub_documents: Vec<AgentSubDocOutput>,
     #[serde(default)]
@@ -120,35 +124,38 @@ struct AgentConstraintsOutput {
 struct AgentSubDocOutput {
     path: String,
     title: String,
-    content: String,
     #[serde(default)]
     token_count: u32,
+    #[serde(default)]
+    load_condition: Option<String>,
 }
 
 /// A tool that the agent extracted from a hybrid skill.
+///
+/// The actual script content is written by the agent to
+/// `{output_dir}/tools/{name}.{ext}` -- this struct holds only metadata.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentExtractedTool {
     pub name: String,
     pub description: String,
     #[serde(rename = "type")]
     pub tool_type: String,
-    pub content: String,
 }
 
 /// Agent's decision on how to handle a companion file.
+///
+/// For "transform" actions, the agent writes the transformed content to
+/// `{output_dir}/companions/{path}` via `FileWrite`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CompanionDecision {
     /// Relative path within the skill directory.
     pub path: String,
-    /// Action: "keep" (copy as-is), "transform" (write `transformed_content`),
-    /// or "discard" (skip).
+    /// Action: "keep" (copy as-is), "transform" (agent wrote transformed
+    /// content to `{output_dir}/companions/{path}`), or "discard" (skip).
     pub action: String,
     /// Reason for the decision.
     #[serde(default)]
     pub reason: String,
-    /// Transformed content (only if action is "transform").
-    #[serde(default)]
-    pub transformed_content: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +179,9 @@ pub enum ImportError {
 
     #[error("skill registration failed: {0}")]
     RegistrationFailed(String),
+
+    #[error("temp directory error: {0}")]
+    TempDirError(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +219,10 @@ impl SkillIngestionService {
     }
 
     /// Import a skill from a file path.
+    ///
+    /// Creates a temporary output directory, delegates to the
+    /// `skill-ingestion` agent (which writes files there via `FileWrite`),
+    /// then reads back the generated files and registers the skill.
     pub async fn import(&self, path: &Path) -> Result<ImportResult, ImportError> {
         // 1. Read source file
         if !path.exists() {
@@ -231,13 +245,20 @@ impl SkillIngestionService {
         // 3. Gather existing skills for dedup context
         let existing_skills: Vec<String> = self.registry.read().await.list_names().await;
 
-        // 4. Delegate to skill-ingestion agent
-        //    The agent now has FileRead + ShellExec tools to explore the directory.
+        // 4. Create temp directory for agent output
+        let output_dir = TempDir::new()
+            .map_err(|e| ImportError::TempDirError(format!("failed to create temp dir: {e}")))?;
+        let output_dir_path = output_dir.path().to_string_lossy().to_string();
+
+        // 5. Delegate to skill-ingestion agent
+        //    The agent writes generated files to output_dir via FileWrite
+        //    and returns only metadata in JSON.
         let input = serde_json::json!({
             "source_content": source_content,
             "source_format": format_str,
             "source_dir": source_dir,
             "main_file_name": main_file_name,
+            "output_dir": output_dir_path,
             "existing_skills": existing_skills,
             "existing_tools": [],
         });
@@ -245,6 +266,7 @@ impl SkillIngestionService {
         info!(
             path = %path.display(),
             format = format_str,
+            output_dir = %output_dir_path,
             "Delegating skill ingestion to agent"
         );
 
@@ -254,10 +276,7 @@ impl SkillIngestionService {
             .await
             .map_err(|e| ImportError::DelegationFailed(e.to_string()))?;
 
-        // 5. Parse agent output
-        //    Multi-turn execution accumulates intermediate assistant content
-        //    (from tool-calling iterations) before the final JSON. Extract
-        //    the JSON object from any surrounding text.
+        // 6. Parse agent output (metadata-only JSON)
         let json_str = extract_json_from_response(&delegation_output.text);
         let agent_output: AgentIngestionOutput = serde_json::from_str(json_str).map_err(|e| {
             ImportError::InvalidAgentOutput(format!(
@@ -266,7 +285,7 @@ impl SkillIngestionService {
             ))
         })?;
 
-        // 6. Handle rejection
+        // 7. Handle rejection (temp dir auto-drops)
         let decision = match agent_output.decision.as_str() {
             "accepted" => ImportDecision::Accepted,
             "optimized" => ImportDecision::Optimized,
@@ -299,8 +318,18 @@ impl SkillIngestionService {
             );
         }
 
-        // 7. Build manifest and register
-        let manifest = Self::build_manifest(&agent_output, format_str)?;
+        // 8. Read root.md from the temp output directory
+        let root_md_path = output_dir.path().join("root.md");
+        let root_content = tokio::fs::read_to_string(&root_md_path)
+            .await
+            .map_err(|e| {
+                ImportError::InvalidAgentOutput(format!(
+                    "agent did not write root.md to output dir: {e}"
+                ))
+            })?;
+
+        // 9. Build manifest and register
+        let manifest = Self::build_manifest(&agent_output, &root_content, format_str)?;
         let skill_name = manifest.name.clone();
         let skill_id_str = manifest.id.to_string();
 
@@ -318,22 +347,35 @@ impl SkillIngestionService {
             "Skill successfully imported and registered"
         );
 
-        // 8. Store sub-document content
+        // 10. Store sub-document content (read from temp dir)
         for sub_doc in &agent_output.sub_documents {
-            if let Err(e) = reg
-                .store_sub_document(&skill_id_str, &sub_doc.path, &sub_doc.content)
-                .await
-            {
-                warn!(
-                    skill_id = %skill_id_str,
-                    path = %sub_doc.path,
-                    error = %e,
-                    "Failed to store sub-document"
-                );
+            let sub_doc_path = output_dir.path().join(&sub_doc.path);
+            match tokio::fs::read_to_string(&sub_doc_path).await {
+                Ok(content) => {
+                    if let Err(e) = reg
+                        .store_sub_document(&skill_id_str, &sub_doc.path, &content)
+                        .await
+                    {
+                        warn!(
+                            skill_id = %skill_id_str,
+                            path = %sub_doc.path,
+                            error = %e,
+                            "Failed to store sub-document"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        skill_id = %skill_id_str,
+                        path = %sub_doc.path,
+                        error = %e,
+                        "Agent declared sub-document but file not found in output dir"
+                    );
+                }
             }
         }
 
-        // 9. Log extracted tools (future: register in ToolRegistry)
+        // 11. Log extracted tools (future: register in ToolRegistry)
         if !agent_output.extracted_tools.is_empty() {
             info!(
                 count = agent_output.extracted_tools.len(),
@@ -341,14 +383,17 @@ impl SkillIngestionService {
             );
         }
 
-        // 10. Handle companion files based on agent decisions
+        // 12. Handle companion files based on agent decisions
         Self::handle_companion_files(
             path,
             &skill_name,
             &agent_output.companion_decisions,
             main_file_name.as_deref(),
+            output_dir.path(),
             &reg,
         )?;
+
+        // output_dir (TempDir) is dropped here, cleaning up the temp directory
 
         Ok(ImportResult {
             decision,
@@ -361,17 +406,15 @@ impl SkillIngestionService {
         })
     }
 
-    /// Build a `SkillManifest` from the agent's structured output.
+    /// Build a `SkillManifest` from the agent's metadata and the root
+    /// content read from the output directory.
     fn build_manifest(
         agent_output: &AgentIngestionOutput,
+        root_content: &str,
         format_str: &str,
     ) -> Result<SkillManifest, ImportError> {
         let manifest_data = agent_output.manifest.as_ref().ok_or_else(|| {
             ImportError::InvalidAgentOutput("accepted skill missing manifest".to_string())
-        })?;
-
-        let root_content = agent_output.root_content.as_ref().ok_or_else(|| {
-            ImportError::InvalidAgentOutput("accepted skill missing root_content".to_string())
         })?;
 
         let token_estimate = u32::try_from(root_content.chars().count() / 4).unwrap_or(0);
@@ -384,7 +427,10 @@ impl SkillIngestionService {
                 id: sd.path.clone(),
                 path: sd.path.clone(),
                 title: sd.title.clone(),
-                load_condition: "on_demand".to_string(),
+                load_condition: sd
+                    .load_condition
+                    .clone()
+                    .unwrap_or_else(|| "on_demand".to_string()),
                 token_estimate: sd.token_count,
             })
             .collect();
@@ -403,7 +449,7 @@ impl SkillIngestionService {
             tags,
             trigger_patterns: vec![],
             knowledge_bases: vec![],
-            root_content: root_content.clone(),
+            root_content: root_content.to_string(),
             sub_documents: sub_doc_refs,
             token_estimate,
             created_at: now,
@@ -441,11 +487,17 @@ impl SkillIngestionService {
     }
 
     /// Process companion file decisions from the agent output.
+    ///
+    /// - "keep" copies from the original source directory
+    /// - "transform" copies from `{output_dir}/companions/{path}` (written by
+    ///   the agent via `FileWrite`)
+    /// - "discard" logs and skips
     fn handle_companion_files(
         source_path: &Path,
         skill_name: &str,
         companion_decisions: &[CompanionDecision],
         main_file_name: Option<&str>,
+        output_dir: &Path,
         reg: &SkillRegistryImpl,
     ) -> Result<(), ImportError> {
         let Some(dir) = source_path.parent() else {
@@ -478,19 +530,26 @@ impl SkillIngestionService {
                     }
                 }
                 "transform" => {
-                    if let Some(ref content) = decision.transformed_content {
+                    let transformed_file = output_dir.join("companions").join(&decision.path);
+                    if transformed_file.exists() {
                         let target = store.base_path().join(skill_name).join(&decision.path);
                         if let Some(parent) = target.parent() {
                             let _ = std::fs::create_dir_all(parent);
                         }
-                        if let Err(e) = std::fs::write(&target, content) {
+                        if let Err(e) = std::fs::copy(&transformed_file, &target) {
                             warn!(
                                 skill = %skill_name,
                                 path = %decision.path,
                                 error = %e,
-                                "Failed to write transformed companion file"
+                                "Failed to copy transformed companion file"
                             );
                         }
+                    } else {
+                        warn!(
+                            skill = %skill_name,
+                            path = %decision.path,
+                            "Agent declared transform but file not found in output dir"
+                        );
                     }
                 }
                 "discard" => {
@@ -569,19 +628,31 @@ fn extract_json_from_response(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use y_core::agent::{AgentDelegator, DelegationError, DelegationOutput};
 
-    // Mock delegator that returns configurable JSON output
+    // Mock delegator that returns configurable JSON output and writes
+    // files to the agent's output_dir (extracted from the input JSON).
     #[derive(Debug)]
     struct MockDelegator {
         response: String,
+        /// Files to write to `output_dir`: relative_path -> content.
+        output_files: HashMap<String, String>,
     }
 
     impl MockDelegator {
         fn with_response(json: &str) -> Self {
             Self {
                 response: json.to_string(),
+                output_files: HashMap::new(),
+            }
+        }
+
+        fn with_response_and_files(json: &str, files: HashMap<String, String>) -> Self {
+            Self {
+                response: json.to_string(),
+                output_files: files,
             }
         }
     }
@@ -591,10 +662,22 @@ mod tests {
         async fn delegate(
             &self,
             _agent_name: &str,
-            _input: serde_json::Value,
+            input: serde_json::Value,
             _context_strategy: ContextStrategyHint,
             _session_id: Option<uuid::Uuid>,
         ) -> Result<DelegationOutput, DelegationError> {
+            // Simulate agent writing files to output_dir
+            if let Some(output_dir) = input.get("output_dir").and_then(|v| v.as_str()) {
+                let output_path = Path::new(output_dir);
+                for (rel_path, content) in &self.output_files {
+                    let file_path = output_path.join(rel_path);
+                    if let Some(parent) = file_path.parent() {
+                        std::fs::create_dir_all(parent).unwrap();
+                    }
+                    std::fs::write(&file_path, content).unwrap();
+                }
+            }
+
             Ok(DelegationOutput {
                 text: self.response.clone(),
                 tokens_used: 100,
@@ -629,11 +712,19 @@ mod tests {
                     "max_output_tokens": 8000
                 }
             },
-            "root_content": "# Humanizer\n\nRemove AI artifacts from text.\n\n## Rules\n\n1. Detect exaggerated language.\n2. Replace vague statements.",
             "sub_documents": [],
             "extracted_tools": []
         })
         .to_string()
+    }
+
+    fn accepted_files() -> HashMap<String, String> {
+        let mut files = HashMap::new();
+        files.insert(
+            "root.md".to_string(),
+            "# Humanizer\n\nRemove AI artifacts from text.\n\n## Rules\n\n1. Detect exaggerated language.\n2. Replace vague statements.".to_string(),
+        );
+        files
     }
 
     fn rejected_response() -> String {
@@ -649,7 +740,10 @@ mod tests {
     /// T-SK-A2-01: Accepted skill is registered.
     #[tokio::test]
     async fn test_import_accepted_skill() {
-        let delegator = Arc::new(MockDelegator::with_response(&accepted_response()));
+        let delegator = Arc::new(MockDelegator::with_response_and_files(
+            &accepted_response(),
+            accepted_files(),
+        ));
         let registry = test_registry();
         let service = SkillIngestionService::new(delegator, Arc::clone(&registry));
 
@@ -729,7 +823,10 @@ mod tests {
     /// T-SK-A2-05: Batch import processes multiple files.
     #[tokio::test]
     async fn test_import_batch() {
-        let delegator = Arc::new(MockDelegator::with_response(&accepted_response()));
+        let delegator = Arc::new(MockDelegator::with_response_and_files(
+            &accepted_response(),
+            accepted_files(),
+        ));
         let registry = test_registry();
         let service = SkillIngestionService::new(delegator, Arc::clone(&registry));
 
@@ -820,12 +917,10 @@ mod tests {
                     "max_output_tokens": 4000
                 }
             },
-            "root_content": "# Multi-Search-Engine\n\nGuide for constructing search queries across multiple engines.\n\n## Core Rules\n\n1. Identify the user's search intent.\n2. Select the appropriate engine from the sub-document index.\n3. Construct the URL using the engine's pattern.\n4. Use the `WebFetch` tool to retrieve results.\n\n## Sub-Document Index\n\n| Document | Load Condition |\n|----------|----------------|\n| details/general-engines.md | When searching Google, Bing, or DuckDuckGo |\n| details/academic-engines.md | When searching academic sources |",
             "sub_documents": [
                 {
                     "path": "details/general-engines.md",
                     "title": "General search engines",
-                    "content": "# General Search Engines\n\n| Engine | URL Pattern | Notes |\n|--------|------------|-------|\n| Google | `https://google.com/search?q={query}` | Default engine |\n| Bing | `https://bing.com/search?q={query}` | Alternative |",
                     "token_count": 400,
                     "load_condition": "when searching general web"
                 }
@@ -836,10 +931,26 @@ mod tests {
         .to_string()
     }
 
+    fn optimized_files() -> HashMap<String, String> {
+        let mut files = HashMap::new();
+        files.insert(
+            "root.md".to_string(),
+            "# Multi-Search-Engine\n\nGuide for constructing search queries across multiple engines.\n\n## Core Rules\n\n1. Identify the user's search intent.\n2. Select the appropriate engine from the sub-document index.\n3. Construct the URL using the engine's pattern.\n4. Use the `WebFetch` tool to retrieve results.\n\n## Sub-Document Index\n\n| Document | Load Condition |\n|----------|----------------|\n| details/general-engines.md | When searching Google, Bing, or DuckDuckGo |\n| details/academic-engines.md | When searching academic sources |".to_string(),
+        );
+        files.insert(
+            "details/general-engines.md".to_string(),
+            "# General Search Engines\n\n| Engine | URL Pattern | Notes |\n|--------|------------|-------|\n| Google | `https://google.com/search?q={query}` | Default engine |\n| Bing | `https://bing.com/search?q={query}` | Alternative |".to_string(),
+        );
+        files
+    }
+
     /// T-SK-A2-07: Optimized skill is registered successfully.
     #[tokio::test]
     async fn test_import_optimized_skill() {
-        let delegator = Arc::new(MockDelegator::with_response(&optimized_response()));
+        let delegator = Arc::new(MockDelegator::with_response_and_files(
+            &optimized_response(),
+            optimized_files(),
+        ));
         let registry = test_registry();
         let service = SkillIngestionService::new(delegator, Arc::clone(&registry));
 
@@ -863,5 +974,27 @@ mod tests {
         let reg = registry.read().await;
         let names = reg.list_names().await;
         assert!(names.contains(&"multi-search-engine".to_string()));
+    }
+
+    /// T-SK-A2-08: Agent returns accepted but fails to write root.md -> error.
+    #[tokio::test]
+    async fn test_import_missing_root_md() {
+        // No files written -- agent returned accepted but didn't write root.md
+        let delegator = Arc::new(MockDelegator::with_response(&accepted_response()));
+        let registry = test_registry();
+        let service = SkillIngestionService::new(delegator, registry);
+
+        let dir = tempfile::tempdir().unwrap();
+        let skill_path = dir.path().join("broken-skill.md");
+        tokio::fs::write(&skill_path, "# Broken skill")
+            .await
+            .unwrap();
+
+        let result = service.import(&skill_path).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ImportError::InvalidAgentOutput(_)
+        ));
     }
 }

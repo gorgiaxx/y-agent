@@ -193,9 +193,10 @@ impl FilesystemSkillStore {
             String::new()
         };
 
-        // Parse the manifest using ManifestParser
+        // Parse the manifest leniently -- skip token budget validation for
+        // persisted skills (the budget was enforced at import time).
         let parser = ManifestParser::new(crate::config::SkillConfig::default());
-        let mut manifest = parser.parse(&toml_content)?;
+        let mut manifest = parser.parse_lenient(&toml_content)?;
 
         // root.md is the canonical source for root content. Use it whenever
         // available, falling back to inline content from the TOML only when
