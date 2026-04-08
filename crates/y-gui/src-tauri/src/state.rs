@@ -52,6 +52,8 @@ pub struct GuiConfig {
     pub window_height: u32,
     /// Whether the initial setup wizard has been completed.
     pub setup_completed: bool,
+    /// Default target language for the translation agent (e.g. "English", "Chinese").
+    pub translate_target_language: String,
 }
 
 impl Default for GuiConfig {
@@ -63,6 +65,7 @@ impl Default for GuiConfig {
             window_width: 1200,
             window_height: 800,
             setup_completed: false,
+            translate_target_language: "English".to_string(),
         }
     }
 }

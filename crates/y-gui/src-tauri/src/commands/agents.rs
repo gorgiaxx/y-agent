@@ -1,9 +1,10 @@
-//! Agent management command handlers — list, get detail, save, reset, reload.
+//! Agent management command handlers — list, get detail, save, reset, reload, translate.
 
 use std::path::Path;
 
 use serde::Serialize;
 use tauri::State;
+use y_core::agent::ContextStrategyHint;
 
 use crate::state::AppState;
 
@@ -206,4 +207,21 @@ pub async fn agent_reload(state: State<'_, AppState>) -> Result<(), String> {
     })?;
 
     Ok(())
+}
+
+/// Translate text using the built-in translator agent.
+///
+/// Delegates the input text to the `translator` agent and returns the
+/// translated output. The target language is determined by the
+/// `{{TRANSLATE_TARGET_LANGUAGE}}` template variable set in GUI settings.
+#[tauri::command]
+pub async fn translate_text(state: State<'_, AppState>, text: String) -> Result<String, String> {
+    let input = serde_json::json!({ "text": text });
+    let result = state
+        .container
+        .agent_delegator
+        .delegate("translator", input, ContextStrategyHint::None, None)
+        .await
+        .map_err(|e| format!("Translation failed: {e}"))?;
+    Ok(result.text)
 }

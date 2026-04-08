@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Loader2, Zap, ScanSearch, ClipboardList, ScrollText } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Loader2, Zap, ScanSearch, ClipboardList, ScrollText, Languages } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
@@ -228,6 +228,8 @@ export function InputArea({
   const sendingRef = useRef(false);
   const lastCompEndRef = useRef<number>(0);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [translating, setTranslating] = useState(false);
+  const [inputHasText, setInputHasText] = useState(false);
 
   // Plan mode: global preference persisted in localStorage.
   const [planMode, setPlanMode] = useState<PlanMode>(() => {
@@ -286,7 +288,8 @@ export function InputArea({
 
   const updateHasContent = useCallback(() => {
     if (!editableRef.current) return;
-    // no-op currently — reserved for future use (e.g. enabling/disabling send button).
+    const text = getPlainText(editableRef.current).trim();
+    setInputHasText(text.length > 0);
   }, []);
 
   const resetInput = useCallback(() => {
@@ -562,6 +565,25 @@ export function InputArea({
     }
   }, [rewindDraft, exitCommandMode, updateHasContent, onRewindDraftConsumed]);
 
+  const handleTranslate = useCallback(async () => {
+    if (!editableRef.current || translating) return;
+    const { text } = extractContent(editableRef.current);
+    if (!text.trim()) return;
+    setTranslating(true);
+    try {
+      const translated = await invoke<string>('translate_text', { text: text.trim() });
+      if (editableRef.current) {
+        editableRef.current.textContent = translated;
+        placeCursorAtEnd(editableRef.current);
+        updateHasContent();
+      }
+    } catch (e) {
+      console.error('[InputArea] translation error:', e);
+    } finally {
+      setTranslating(false);
+    }
+  }, [translating, updateHasContent]);
+
   return (
     <div className={`input-area ${expanded ? 'input-area--expanded' : ''}`}>
       {pendingEdit && (
@@ -641,7 +663,7 @@ export function InputArea({
           <div
             ref={editableRef}
             className="input-editable"
-            contentEditable={!disabled}
+            contentEditable={!disabled && !translating}
             onInput={handleInput}
             onPaste={handlePaste}
             onKeyDown={handleKeyDown}
@@ -654,6 +676,13 @@ export function InputArea({
             suppressContentEditableWarning
           />
         </div>
+
+        {translating && (
+          <div className="translating-overlay" title="Translating...">
+            <Loader2 size={14} className="translating-spinner" />
+            <span className="translating-label">Translating...</span>
+          </div>
+        )}
 
         {isCompacting && (
           <div className="btn-compacting" title="Compacting context...">
@@ -854,6 +883,16 @@ export function InputArea({
             </div>
             
           )}
+
+          {/* Translate input text */}
+          <button
+            className="toolbar-btn has-tooltip"
+            onClick={handleTranslate}
+            data-tooltip="Translate"
+            disabled={disabled || !inputHasText || translating}
+          >
+            <Languages size={14} />
+          </button>
 
           {/* (b) Expand / collapse input */}
           <button

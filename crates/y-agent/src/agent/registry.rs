@@ -118,6 +118,17 @@ impl AgentRegistry {
         }
     }
 
+    /// Add or update a template variable used for expanding agent TOML definitions.
+    ///
+    /// If a variable with the same `key` already exists, its value is replaced.
+    pub fn add_template_var(&mut self, key: String, value: String) {
+        if let Some(entry) = self.template_vars.iter_mut().find(|(k, _)| *k == key) {
+            entry.1 = value;
+        } else {
+            self.template_vars.push((key, value));
+        }
+    }
+
     /// Expand registered template variables in a TOML string.
     pub fn expand_templates(&self, content: &str) -> String {
         let mut processed = content.to_string();

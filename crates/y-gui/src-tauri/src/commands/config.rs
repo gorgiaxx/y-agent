@@ -94,6 +94,14 @@ pub async fn config_set_gui(state: State<'_, AppState>, config: GuiConfig) -> Re
     save_gui_config(&state.config_dir, &config)
         .map_err(|e| format!("Failed to save GUI config: {e}"))?;
 
+    // Sync the translation target language template variable in the agent registry.
+    let mut registry = state.container.agent_registry.lock().await;
+    registry.add_template_var(
+        "{{TRANSLATE_TARGET_LANGUAGE}}".to_string(),
+        config.translate_target_language.clone(),
+    );
+    drop(registry);
+
     let mut current = state.gui_config.write().await;
     *current = config;
     Ok(())

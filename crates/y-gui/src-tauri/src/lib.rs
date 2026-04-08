@@ -146,6 +146,19 @@ pub fn run() {
             }
 
             let app_state = AppState::new(Arc::clone(&container), config_path.clone());
+
+            // Sync the translation target language from persisted GUI config
+            // into the agent registry so the translator agent prompt is correct
+            // on first use after launch.
+            {
+                let gui_cfg = rt.block_on(app_state.gui_config.read());
+                let mut registry = rt.block_on(container.agent_registry.lock());
+                registry.add_template_var(
+                    "{{TRANSLATE_TARGET_LANGUAGE}}".to_string(),
+                    gui_cfg.translate_target_language.clone(),
+                );
+            }
+
             app.manage(app_state);
             app.manage(knowledge_state);
 
@@ -244,6 +257,7 @@ pub fn run() {
             commands::agents::agent_save,
             commands::agents::agent_reset,
             commands::agents::agent_reload,
+            commands::agents::translate_text,
             // Automation: Workflows
             commands::automation::workflow_list,
             commands::automation::workflow_get,

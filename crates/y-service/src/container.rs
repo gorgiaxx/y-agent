@@ -795,9 +795,12 @@ impl ServiceContainer {
         broadcast_tx: tokio::sync::broadcast::Sender<DiagnosticsEvent>,
     ) -> AgentInitResult {
         let agents_dir = config_dir.map(|p| p.join("agents"));
-        let agent_registry = Arc::new(Mutex::new(AgentRegistry::new_with_user_agents(
-            agents_dir.as_deref(),
-        )));
+        let mut registry = AgentRegistry::new_with_user_agents(agents_dir.as_deref());
+        registry.add_template_var(
+            "{{TRANSLATE_TARGET_LANGUAGE}}".to_string(),
+            "English".to_string(),
+        );
+        let agent_registry = Arc::new(Mutex::new(registry));
         let mut agent_pool =
             AgentPool::with_registry(MultiAgentConfig::default(), Arc::clone(&agent_registry));
 

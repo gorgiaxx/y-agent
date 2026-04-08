@@ -328,6 +328,7 @@ export interface GuiConfig {
   window_width: number;
   window_height: number;
   setup_completed: boolean;
+  translate_target_language: string;
 }
 
 // ---------------------------------------------------------------------------

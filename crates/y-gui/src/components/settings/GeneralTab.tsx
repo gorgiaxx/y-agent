@@ -146,6 +146,36 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
         </p>
       </div>
 
+      <h3 className="section-title">Translation</h3>
+
+      <div className="form-group">
+        <label className="form-label">Default Target Language</label>
+        <Select
+          value={localConfig.translate_target_language}
+          onValueChange={(v) =>
+            setLocalConfig({ ...localConfig, translate_target_language: v })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Chinese">Chinese</SelectItem>
+            <SelectItem value="English">English</SelectItem>
+            <SelectItem value="Japanese">Japanese</SelectItem>
+            <SelectItem value="Korean">Korean</SelectItem>
+            <SelectItem value="Spanish">Spanish</SelectItem>
+            <SelectItem value="Russian">Russian</SelectItem>
+            <SelectItem value="German">German</SelectItem>
+            <SelectItem value="French">French</SelectItem>
+            <SelectItem value="Italian">Italian</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="form-hint">
+          The target language used by the translate button in the chat input toolbar.
+        </p>
+      </div>
+
       <h3 className="section-title">Setup</h3>
 
       <div className="form-group">
