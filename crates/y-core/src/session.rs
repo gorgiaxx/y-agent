@@ -171,6 +171,26 @@ pub trait SessionStore: Send + Sync {
         id: &SessionId,
         index: Option<u32>,
     ) -> Result<(), SessionError>;
+
+    /// Get the custom system prompt for a session.
+    ///
+    /// Returns `None` if no custom prompt has been set (global prompt is used).
+    async fn get_custom_system_prompt(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<String>, SessionError>;
+
+    /// Set or clear the custom system prompt for a session.
+    ///
+    /// When set, the custom prompt replaces the built-in identity/behavioral
+    /// sections while preserving dynamic/functional sections (tool protocol,
+    /// plan mode, datetime, environment). Pass `None` to revert to the
+    /// global prompt.
+    async fn set_custom_system_prompt(
+        &self,
+        id: &SessionId,
+        prompt: Option<String>,
+    ) -> Result<(), SessionError>;
 }
 
 /// Read/write interface for session message transcripts (JSONL).

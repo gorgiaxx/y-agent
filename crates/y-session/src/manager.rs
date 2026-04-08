@@ -301,6 +301,26 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Get the custom system prompt for a session.
+    pub async fn get_custom_system_prompt(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<String>, SessionManagerError> {
+        Ok(self.session_store.get_custom_system_prompt(id).await?)
+    }
+
+    /// Set or clear the custom system prompt for a session.
+    pub async fn set_custom_system_prompt(
+        &self,
+        id: &SessionId,
+        prompt: Option<String>,
+    ) -> Result<(), SessionManagerError> {
+        self.session_store
+            .set_custom_system_prompt(id, prompt)
+            .await?;
+        Ok(())
+    }
+
     /// Generate a session title by summarizing the conversation via agent delegation.
     ///
     /// Delegates to the `title-generator` built-in agent defined in

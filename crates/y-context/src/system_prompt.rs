@@ -247,6 +247,7 @@ impl ContextProvider for BuildSystemPromptProvider {
         }
 
         let prompt_ctx = self.prompt_context.read().await;
+        let has_custom_prompt = prompt_ctx.custom_system_prompt.is_some();
         let mode = &prompt_ctx.agent_mode;
         let effective_sections = self.template.effective_sections(mode);
         let total_budget = self.template.effective_budget(mode);
@@ -260,6 +261,19 @@ impl ContextProvider for BuildSystemPromptProvider {
 
         let mut accumulated = String::new();
         let mut cumulative_tokens: u32 = 0;
+
+        // When a per-session custom prompt is set, emit it first and mark
+        // the replaceable sections for skipping. Dynamic/functional sections
+        // (datetime, environment, tool_protocol, planning, exploration,
+        // orchestration, plan_mode_active) are preserved.
+        if let Some(ref custom) = prompt_ctx.custom_system_prompt {
+            accumulated.push_str(custom);
+            cumulative_tokens = estimate_tokens(custom);
+            tracing::debug!(
+                tokens = cumulative_tokens,
+                "custom system prompt injected, replacing built-in behavioral sections"
+            );
+        }
 
         // Resolve sections sorted by their effective priority.
         // PromptSection.priority is the canonical order; overlay priority_override
@@ -276,6 +290,18 @@ impl ContextProvider for BuildSystemPromptProvider {
         section_entries.sort_by_key(|&(_, _, p)| p);
 
         for (eff, section, _priority) in &section_entries {
+            // When a custom prompt is active, skip the sections it replaces
+            // (identity, guidelines, security, persona). Functional sections
+            // (datetime, environment, tool_protocol, planning, exploration,
+            // orchestration, plan_mode_active) are kept.
+            if has_custom_prompt && is_custom_prompt_replaced(&eff.section_id) {
+                tracing::debug!(
+                    section = %eff.section_id,
+                    "section replaced by custom prompt; skipping"
+                );
+                continue;
+            }
+
             // Evaluate condition.
             let condition = eff
                 .condition_override
@@ -365,6 +391,25 @@ impl ContextProvider for BuildSystemPromptProvider {
 
         Ok(())
     }
+}
+
+/// Sections replaced by a per-session custom system prompt.
+///
+/// These are the identity/behavioral sections that define "who the agent is"
+/// and "how it should behave". Dynamic/functional sections (datetime,
+/// environment, `tool_protocol`, planning, exploration, orchestration,
+/// `plan_mode_active`) are NOT in this list and will remain active even when
+/// a custom prompt is set.
+const CUSTOM_PROMPT_REPLACED_SECTIONS: &[&str] = &[
+    "core.identity",
+    "core.guidelines",
+    "core.security",
+    "core.persona",
+];
+
+/// Check whether a section is replaced when a custom system prompt is active.
+fn is_custom_prompt_replaced(section_id: &str) -> bool {
+    CUSTOM_PROMPT_REPLACED_SECTIONS.contains(&section_id)
 }
 
 #[cfg(test)]

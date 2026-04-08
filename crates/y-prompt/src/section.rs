@@ -70,6 +70,12 @@ pub struct PromptContext {
     /// Working directory override for the session.
     /// When set, `generate_environment()` uses this instead of `std::env::current_dir()`.
     pub working_directory: Option<String>,
+    /// Per-session custom system prompt override.
+    ///
+    /// When set, replaces the built-in identity/behavioral prompt sections
+    /// while preserving dynamic/functional sections (tool protocol, plan mode,
+    /// datetime, environment, orchestration).
+    pub custom_system_prompt: Option<String>,
 }
 
 impl SectionCondition {
