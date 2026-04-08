@@ -127,6 +127,7 @@ mod tests {
                 m
             },
             working_directory: None,
+            custom_system_prompt: None,
         }
     }
 

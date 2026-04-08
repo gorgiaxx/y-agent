@@ -174,7 +174,7 @@ impl ManifestParser {
     /// Parse a TOML string into a `SkillManifest`.
     ///
     /// Auto-detects format: tries nested `[skill]` format first, then legacy flat format.
-    /// Enforces token budget limits -- use [`parse_lenient`] when loading
+    /// Enforces token budget limits -- use `parse_lenient` when loading
     /// persisted skills from disk where the budget should not be re-checked.
     pub fn parse(&self, toml_str: &str) -> Result<SkillManifest, SkillModuleError> {
         self.parse_inner(toml_str, true)
@@ -182,7 +182,7 @@ impl ManifestParser {
 
     /// Parse a TOML string without enforcing token budget limits.
     ///
-    /// Used by [`FilesystemSkillStore::load_from_dir`] to load skills that
+    /// Used by `FilesystemSkillStore::load_from_dir` to load skills that
     /// are already persisted on disk -- the budget was checked at import time
     /// and should not block loading.
     pub fn parse_lenient(&self, toml_str: &str) -> Result<SkillManifest, SkillModuleError> {

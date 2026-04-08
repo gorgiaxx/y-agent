@@ -433,6 +433,7 @@ mod tests {
             available_tools: vec!["FileRead".into()],
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
+            custom_system_prompt: None,
         }
     }
 
@@ -473,6 +474,7 @@ mod tests {
             available_tools: vec!["FileRead".into()],
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
+            custom_system_prompt: None,
         };
         let provider = make_provider(plan_ctx, SystemPromptConfig::default());
         let mut ctx = AssembledContext::default();
@@ -588,6 +590,7 @@ mod tests {
             available_tools: vec![],
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
+            custom_system_prompt: None,
         };
 
         // Template where every section has a condition that won't match.
@@ -656,6 +659,7 @@ mod tests {
             available_tools: vec!["FileRead".into()],
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
+            custom_system_prompt: None,
         };
         let provider = make_provider(explore_ctx, SystemPromptConfig::default());
         let mut ctx = AssembledContext::default();
