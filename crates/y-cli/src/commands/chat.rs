@@ -85,6 +85,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
         available_tools: tool_names,
         config_flags: HashMap::new(),
         working_directory: None,
+        custom_system_prompt: None,
     };
     *services.prompt_context.write().await = initial_ctx;
 
