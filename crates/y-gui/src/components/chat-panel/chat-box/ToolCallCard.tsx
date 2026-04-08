@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Wrench, CheckCircle, XCircle, Loader, Globe, ExternalLink, SquareTerminal, ChevronRight, FilePenLine, FilePlus2, FileSearch, FolderSearch, Search, Code, FileText, MessageCircleQuestion } from 'lucide-react';
+import { Wrench, CheckCircle, XCircle, Loader, Globe, ExternalLink, SquareTerminal, ChevronRight, FilePenLine, FilePlus2, FileSearch, FolderSearch, Search, Code, FileText, MessageCircleQuestion, ClipboardList, Play } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { ToolCallBrief } from '../../../types';
 import { CollapsibleCard } from './CollapsibleCard';
@@ -19,6 +19,9 @@ import {
   extractFileToolMeta,
   extractAskUserMeta,
   parseAskUserResult,
+  extractPlanWriterMeta,
+  parsePlanWriterResult,
+  extractExitPlanModeMeta,
   computeLineDiff,
   formatArguments,
   formatResult,
@@ -264,6 +267,16 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
     () => (result ? parseAskUserResult(result) : null),
     [result],
   );
+  const planWriterMeta = toolCall.name === 'PlanWriter'
+    ? extractPlanWriterMeta(toolCall.arguments)
+    : null;
+  const planWriterResult = useMemo(
+    () => (result ? parsePlanWriterResult(result) : null),
+    [result],
+  );
+  const exitPlanModeMeta = toolCall.name === 'ExitPlanMode'
+    ? extractExitPlanModeMeta(toolCall.arguments)
+    : null;
 
   // ---- URL tag rendering for Browser/WebFetch ----
   if (urlMeta) {
@@ -552,8 +565,22 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
     const hasDiff = fileMeta?.toolType === 'edit' && fileMeta.oldString !== undefined && fileMeta.newString !== undefined;
     // When failed, show error result instead of diff
     const showDiff = hasDiff && status !== 'error';
+    // FileWrite/FileRead: extract the content to show inline (content-only view)
+    const fileContent = useMemo(() => {
+      if (toolType === 'write') {
+        const argsObj = tryParseJson(toolCall.arguments);
+        if (!argsObj) return null;
+        return typeof argsObj.content === 'string' ? argsObj.content : null;
+      }
+      if (toolType === 'read' && result) {
+        const resObj = tryParseJson(result);
+        if (!resObj) return null;
+        return typeof resObj.content === 'string' ? resObj.content : null;
+      }
+      return null;
+    }, [toolType, toolCall.arguments, result]);
     // On error, always allow expansion so the error detail is visible
-    const canExpand = showDiff || hasExpandable || status === 'error';
+    const canExpand = showDiff || !!fileContent || hasExpandable || status === 'error';
 
     return (
       <div className={`tool-call-file-wrapper ${statusClass}`}>
@@ -580,7 +607,98 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
         {expanded && (
           <div className="tool-call-file-detail">
             {showDiff && <FileDiffView oldString={fileMeta!.oldString!} newString={fileMeta!.newString!} />}
-            {!showDiff && <DetailSections displayArgs={displayArgs} displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />}
+            {!showDiff && fileContent && status !== 'error' && (
+              <pre className="tool-call-code">{fileContent}</pre>
+            )}
+            {!showDiff && !fileContent && <DetailSections displayArgs={displayArgs} displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />}
+            {!showDiff && fileContent && status === 'error' && <DetailSections displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ---- PlanWriter inline tag rendering ----
+  if (planWriterMeta || toolCall.name === 'PlanWriter') {
+    const title = planWriterMeta?.title ?? 'Plan';
+    const planContent = planWriterMeta?.content ?? '';
+    const writtenPath = planWriterResult?.path ?? '';
+    const canExpand = !!planContent || hasExpandable;
+
+    return (
+      <div className={`tool-call-plan-wrapper ${statusClass}`}>
+        <div
+          className="tool-call-plan-tag"
+          onClick={() => canExpand && setExpanded(!expanded)}
+          title={writtenPath || 'PlanWriter'}
+        >
+          <span className="tool-call-plan-action-group">
+            <ClipboardList size={14} className="tool-call-plan-icon" />
+            <span className="tool-call-plan-action">Plan</span>
+          </span>
+          <span className="tool-call-plan-title">{title}</span>
+          {writtenPath && (
+            <span className="tool-call-plan-path">{basename(writtenPath)}</span>
+          )}
+          <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
+          {durationMs !== undefined && (
+            <span className="tool-call-duration">{formatDuration(durationMs)}</span>
+          )}
+          {canExpand && (
+            <span className={`tool-call-plan-chevron ${expanded ? 'expanded' : ''}`}>
+              <ChevronRight size={12} />
+            </span>
+          )}
+        </div>
+        {expanded && (
+          <div className="tool-call-plan-detail">
+            {planContent ? (
+              <pre className="tool-call-plan-content">{planContent}</pre>
+            ) : (
+              <DetailSections displayArgs={displayArgs} displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ---- ExitPlanMode inline tag rendering ----
+  if (exitPlanModeMeta || toolCall.name === 'ExitPlanMode') {
+    const planFile = exitPlanModeMeta?.planFile ?? '';
+    const totalPhases = exitPlanModeMeta?.totalPhases ?? 0;
+    const canExpand = hasExpandable;
+
+    return (
+      <div className={`tool-call-plan-wrapper ${statusClass}`}>
+        <div
+          className="tool-call-plan-tag"
+          onClick={() => canExpand && setExpanded(!expanded)}
+          title={planFile || 'ExitPlanMode'}
+        >
+          <span className="tool-call-plan-action-group">
+            <Play size={14} className="tool-call-plan-icon" />
+            <span className="tool-call-plan-action">Execute</span>
+          </span>
+          <span className="tool-call-plan-title">
+            {totalPhases > 0 ? `${totalPhases} phase${totalPhases > 1 ? 's' : ''}` : 'Plan'}
+          </span>
+          {planFile && (
+            <span className="tool-call-plan-path">{basename(planFile)}</span>
+          )}
+          <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
+          {durationMs !== undefined && (
+            <span className="tool-call-duration">{formatDuration(durationMs)}</span>
+          )}
+          {canExpand && (
+            <span className={`tool-call-plan-chevron ${expanded ? 'expanded' : ''}`}>
+              <ChevronRight size={12} />
+            </span>
+          )}
+        </div>
+        {expanded && (
+          <div className="tool-call-plan-detail">
+            <DetailSections displayArgs={displayArgs} displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />
           </div>
         )}
       </div>
