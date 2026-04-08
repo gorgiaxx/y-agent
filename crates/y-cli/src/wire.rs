@@ -84,63 +84,9 @@ mod tests {
         let _llm_guard = services.guardrail_manager.llm_guard();
     }
 
-    // T-CLI-002-03: test_build_providers_skips_missing_key
-    #[test]
-    fn test_build_providers_skips_missing_key() {
-        let pool_config = y_service::config_types::ProviderPoolConfig {
-            providers: vec![y_service::ProviderConfig {
-                id: "test-no-key".into(),
-                provider_type: "openai".into(),
-                model: "gpt-4".into(),
-                enabled: true,
-                tags: vec![],
-                max_concurrency: 5,
-                context_window: 128_000,
-                cost_per_1k_input: 0.0,
-                cost_per_1k_output: 0.0,
-                api_key: None,
-                api_key_env: Some("Y_AGENT_NONEXISTENT_KEY_12345".into()),
-                base_url: None,
-                temperature: None,
-                top_p: None,
-                tool_calling_mode: None,
-                icon: None,
-            }],
-            ..Default::default()
-        };
-        let providers = y_provider::build_providers(&pool_config);
-        assert!(providers.is_empty());
-    }
-
-    // T-CLI-002-04: test_build_providers_skips_unsupported_type
-    #[test]
-    fn test_build_providers_skips_unsupported_type() {
-        temp_env::with_var("Y_AGENT_TEST_WIRE_KEY", Some("test-key"), || {
-            let pool_config = y_service::config_types::ProviderPoolConfig {
-                providers: vec![y_service::ProviderConfig {
-                    id: "test-unsupported".into(),
-                    provider_type: "unsupported_backend".into(),
-                    model: "some-model".into(),
-                    enabled: true,
-                    tags: vec![],
-                    max_concurrency: 5,
-                    context_window: 128_000,
-                    cost_per_1k_input: 0.0,
-                    cost_per_1k_output: 0.0,
-                    api_key: None,
-                    api_key_env: Some("Y_AGENT_TEST_WIRE_KEY".into()),
-                    base_url: None,
-                    temperature: None,
-                    top_p: None,
-                    tool_calling_mode: None,
-                    icon: None,
-                }],
-                ..Default::default()
-            };
-            let providers = y_provider::build_providers(&pool_config);
-            assert!(providers.is_empty());
-        });
-    }
+    // NOTE: test_build_providers_skips_missing_key and
+    // test_build_providers_skips_unsupported_type moved to y-service/container.rs
+    // where y_provider is a direct dependency.
 
     // T-CLI-002-05: test_wire_registers_context_providers
     #[tokio::test]
