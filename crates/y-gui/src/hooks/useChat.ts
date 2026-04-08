@@ -14,6 +14,7 @@ import type {
   UndoResult,
   RestoreResult,
   ThinkingEffort,
+  PlanMode,
   Attachment,
 } from '../types';
 import {
@@ -84,7 +85,7 @@ interface UseChatReturn {
    *  order (stream_delta -> text, tool_result -> tool card) so the
    *  interleaving is inherently correct without character offsets. */
   getStreamSegments: () => InterleavedSegment[] | null;
-  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
@@ -900,7 +901,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const sendingRef = useRef(false);
 
   const sendMessage = useCallback(
-    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]): Promise<ChatStarted | null> => {
+    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode): Promise<ChatStarted | null> => {
       // Guard: block if any operation is already in progress, including a
       // prior send.  The previous guard also allowed 'sending' through,
       // which could cause duplicate LLM calls when rapid double-fires
@@ -941,6 +942,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         // Use the latest (most recent) reset point.
         const resetPoints = contextResetMapRef.current.get(sessionId) ?? [];
         const resetIdx = resetPoints.length > 0 ? resetPoints[resetPoints.length - 1] : null;
+        console.log('[chat] sendMessage: planMode =', planMode, '-> sending:', planMode ?? null);
         const result = await invoke<ChatStarted>('chat_send', {
           message,
           sessionId,
@@ -950,6 +952,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           contextStartIndex: resetIdx,
           thinkingEffort: thinkingEffort ?? null,
           attachments: attachments && attachments.length > 0 ? attachments : null,
+          planMode: planMode ?? null,
         });
         return result;
       } catch (e) {

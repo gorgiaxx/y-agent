@@ -108,7 +108,9 @@ pub async fn chat_send(
     context_start_index: Option<usize>,
     thinking_effort: Option<String>,
     attachments: Option<Vec<serde_json::Value>>,
+    plan_mode: Option<String>,
 ) -> Result<ChatStarted, String> {
+    tracing::info!(plan_mode = ?plan_mode, "chat_send: plan_mode received from frontend");
     if message.trim().is_empty() {
         return Err("Message must not be empty".into());
     }
@@ -141,6 +143,7 @@ pub async fn chat_send(
             knowledge_collections: knowledge_collections.clone(),
             thinking,
             user_message_metadata,
+            plan_mode,
         },
     )
     .await

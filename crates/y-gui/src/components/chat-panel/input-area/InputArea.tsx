@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Loader2 } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Loader2, Zap, ScanSearch, ClipboardList } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
@@ -8,12 +8,12 @@ import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, Attachment } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, Attachment } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
 import './InputArea.css';
 
 interface InputAreaProps {
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[]) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -219,6 +219,20 @@ export function InputArea({
   const lastCompEndRef = useRef<number>(0);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
+  // Plan mode: global preference persisted in localStorage.
+  const [planMode, setPlanMode] = useState<PlanMode>(() => {
+    const stored = localStorage.getItem('y-agent-plan-mode');
+    if (stored === 'fast' || stored === 'auto' || stored === 'plan') return stored;
+    return 'fast';
+  });
+  const cyclePlanMode = useCallback(() => {
+    setPlanMode((prev) => {
+      const next: PlanMode = prev === 'fast' ? 'auto' : prev === 'auto' ? 'plan' : 'fast';
+      localStorage.setItem('y-agent-plan-mode', next);
+      return next;
+    });
+  }, []);
+
   // Close provider dropdown on outside click.
   useEffect(() => {
     if (!providerDropdownOpen) return;
@@ -407,13 +421,14 @@ export function InputArea({
       selectedKbCollections.length > 0 ? selectedKbCollections : undefined,
       thinkingEffort,
       attachments.length > 0 ? attachments : undefined,
+      planMode,
     );
     resetInput();
     setAttachments([]);
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments]);
+  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     // Check for pasted images first.
@@ -684,6 +699,18 @@ export function InputArea({
             )}
           </div>
 
+          {/* (f) Plan mode selector */}
+          <button
+            className={`toolbar-btn has-tooltip toolbar-btn--plan-${planMode}`}
+            onClick={cyclePlanMode}
+            data-tooltip={`Mode: ${planMode}`}
+            disabled={disabled}
+          >
+            {planMode === 'fast' && <Zap size={14} />}
+            {planMode === 'auto' && <ScanSearch size={14} />}
+            {planMode === 'plan' && <ClipboardList size={14} />}
+            <span className="toolbar-btn-label">{planMode}</span>
+          </button>
           {/* (a) Attachment picker */}
           <button
             className={`toolbar-btn has-tooltip ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}

@@ -628,3 +628,28 @@
   to { transform: rotate(360deg); }
 }
 
+/* ---- Plan mode selector ---- */
+
+.toolbar-btn--plan-fast {
+  color: var(--text-muted);
+}
+
+.toolbar-btn--plan-auto {
+  color: rgb(120, 180, 240);
+  background: rgba(100, 160, 220, 0.08);
+}
+
+.toolbar-btn--plan-auto:hover:not(:disabled) {
+  color: rgb(140, 200, 255);
+  background: rgba(100, 160, 220, 0.14);
+}
+
+.toolbar-btn--plan-plan {
+  color: var(--accent);
+  background: rgba(200, 181, 96, 0.08);
+}
+
+.toolbar-btn--plan-plan:hover:not(:disabled) {
+  color: var(--accent);
+  background: rgba(200, 181, 96, 0.14);
+}
