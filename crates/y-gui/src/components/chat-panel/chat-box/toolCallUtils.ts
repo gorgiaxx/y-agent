@@ -33,6 +33,42 @@ export function basename(filePath: string): string {
   return parts[parts.length - 1] || filePath;
 }
 
+/** Map file extension to Prism language identifier for syntax highlighting. */
+const EXT_TO_LANG: Record<string, string> = {
+  rs: 'rust', py: 'python', js: 'javascript', jsx: 'jsx',
+  ts: 'typescript', tsx: 'tsx', rb: 'ruby', go: 'go',
+  java: 'java', kt: 'kotlin', kts: 'kotlin', swift: 'swift',
+  c: 'c', h: 'c', cpp: 'cpp', cxx: 'cpp', cc: 'cpp', hpp: 'cpp',
+  cs: 'csharp', php: 'php', lua: 'lua', r: 'r',
+  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
+  ps1: 'powershell', bat: 'batch',
+  html: 'html', htm: 'html', css: 'css', scss: 'scss',
+  sass: 'sass', less: 'less', xml: 'xml', svg: 'xml',
+  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+  ini: 'ini', cfg: 'ini',
+  md: 'markdown', mdx: 'markdown',
+  sql: 'sql', graphql: 'graphql', gql: 'graphql',
+  dockerfile: 'docker', proto: 'protobuf',
+  makefile: 'makefile', cmake: 'cmake',
+  zig: 'zig', nim: 'nim', dart: 'dart', scala: 'scala',
+  ex: 'elixir', exs: 'elixir', erl: 'erlang',
+  hs: 'haskell', ml: 'ocaml', clj: 'clojure',
+  tf: 'hcl', hcl: 'hcl',
+};
+
+/** Infer Prism language from a file path based on its extension. */
+export function inferLanguage(filePath: string): string {
+  const name = basename(filePath).toLowerCase();
+  // Handle extensionless filenames like Dockerfile, Makefile
+  if (name === 'dockerfile') return 'docker';
+  if (name === 'makefile' || name === 'gnumakefile') return 'makefile';
+  if (name === 'cmakelists.txt') return 'cmake';
+  const dot = name.lastIndexOf('.');
+  if (dot < 0) return 'text';
+  const ext = name.slice(dot + 1);
+  return EXT_TO_LANG[ext] ?? 'text';
+}
+
 // ---------------------------------------------------------------------------
 // URL metadata extraction for Browser/WebFetch tool calls
 // ---------------------------------------------------------------------------

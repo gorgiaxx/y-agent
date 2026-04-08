@@ -1,8 +1,12 @@
 import { useState, useMemo } from 'react';
 import { FilePenLine, FilePlus2, FileSearch, ChevronRight } from 'lucide-react';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { tryParseJson, extractFileToolMeta, basename } from '../toolCallUtils';
+import { tryParseJson, extractFileToolMeta, basename, inferLanguage } from '../toolCallUtils';
 import type { FileToolType } from '../toolCallUtils';
+import { useResolvedTheme } from '../../../../hooks/useTheme';
+import { CodeBlock } from '../MessageShared';
 import { FileDiffView, DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -53,6 +57,10 @@ export function FileToolRenderer({
     return null;
   }, [toolType, toolCall.arguments, result]);
 
+  const resolvedTheme = useResolvedTheme();
+  const codeThemeStyle = resolvedTheme === 'light' ? oneLight : oneDark;
+  const language = fileMeta ? inferLanguage(fileMeta.filePath) : 'text';
+
   const activeResult = showRaw ? displayResult : (displayResultFormatted ?? displayResult);
   const hasExpandable = displayArgs || displayResult;
   const canExpand = showDiff || !!fileContent || hasExpandable || status === 'error';
@@ -83,7 +91,9 @@ export function FileToolRenderer({
         <div className="tool-call-file-detail">
           {showDiff && <FileDiffView oldString={fileMeta!.oldString!} newString={fileMeta!.newString!} />}
           {!showDiff && fileContent && status !== 'error' && (
-            <pre className="tool-call-code">{fileContent}</pre>
+            <CodeBlock language={language} themeStyle={codeThemeStyle}>
+              {fileContent}
+            </CodeBlock>
           )}
           {!showDiff && !fileContent && (
             <DetailSections

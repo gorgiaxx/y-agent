@@ -448,6 +448,10 @@
   overflow: hidden;
 }
 
+.tool-call-file-detail .code-block-wrapper {
+  margin: 0;
+}
+
 /* ---- Glob result detail ---- */
 
 .tool-call-glob-count {
