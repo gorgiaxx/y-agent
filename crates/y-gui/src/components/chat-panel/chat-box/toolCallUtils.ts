@@ -526,3 +526,50 @@ export function formatResultFormatted(
   // Others: use default formatting
   return formatResult(name, raw);
 }
+
+// ---------------------------------------------------------------------------
+// AskUser helpers
+// ---------------------------------------------------------------------------
+
+export interface AskUserQuestion {
+  question: string;
+  options: string[];
+  multi_select?: boolean;
+}
+
+export interface AskUserMeta {
+  questions: AskUserQuestion[];
+  status: string;
+}
+
+export interface AskUserResult {
+  answers: Record<string, string>;
+  status: string;
+}
+
+/** Extract AskUser metadata from the tool call arguments or result JSON. */
+export function extractAskUserMeta(argsRaw: string, resultRaw?: string): AskUserMeta | null {
+  // Try result first (it contains the full payload), then fall back to args.
+  const source = resultRaw ? tryParseJson(resultRaw) : tryParseJson(argsRaw);
+  if (!source) return null;
+
+  const questions = source.questions;
+  if (!Array.isArray(questions) || questions.length === 0) return null;
+
+  return {
+    questions: questions as AskUserQuestion[],
+    status: typeof source.status === 'string' ? source.status : 'pending',
+  };
+}
+
+/** Parse the AskUser result to extract final answers. */
+export function parseAskUserResult(raw: string): AskUserResult | null {
+  const obj = tryParseJson(raw);
+  if (!obj) return null;
+  const answers = obj.answers;
+  if (!answers || typeof answers !== 'object') return null;
+  return {
+    answers: answers as Record<string, string>,
+    status: typeof obj.status === 'string' ? obj.status : 'unknown',
+  };
+}
