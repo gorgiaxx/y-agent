@@ -117,7 +117,7 @@
 .tool-call-raw-toggle:hover {
   color: var(--text-primary);
   border-color: var(--border-active, rgba(255, 255, 255, 0.15));
-  background: var(--surface-hover);
+  background: var(--toolcall-tag-background-hover);
 }
 
 .tool-call-raw-toggle.active {
@@ -146,7 +146,7 @@
 }
 
 .tool-call-url-tag:hover {
-  background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
   border-color: var(--border-active, rgba(255, 255, 255, 0.15));
 }
 
@@ -195,7 +195,7 @@
 
 .tool-call-url-open:hover {
   color: var(--text-primary);
-  background: var(--surface-hover);
+  background: var(--toolcall-tag-background-hover);
 }
 
 .tool-call-url-detail {
@@ -226,7 +226,7 @@
 }
 
 .tool-call-shell-tag:hover {
-  background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
   border-color: var(--border-active, rgba(255, 255, 255, 0.15));
 }
 
@@ -287,7 +287,7 @@
 }
 
 .tool-call-search-tag:hover {
-  background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
   border-color: var(--border-active, rgba(255, 255, 255, 0.15));
 }
 
@@ -363,7 +363,7 @@
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-primary);
-  background: var(--surface-hover);
+  background: var(--toolcall-tag-background-hover);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 8px;
@@ -391,7 +391,7 @@
 }
 
 .tool-call-file-tag:hover {
-  background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
   border-color: var(--border-active, rgba(255, 255, 255, 0.15));
 }
 
@@ -510,7 +510,7 @@
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-primary);
-  background: var(--surface-hover);
+  background: var(--toolcall-tag-background-hover);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 8px;
@@ -532,7 +532,7 @@
   font-size: 10px;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  background: var(--surface-hover);
+  background: var(--toolcall-tag-background-hover);
   padding: 2px 6px;
   border-radius: var(--radius-sm);
 }
@@ -603,7 +603,7 @@
 .tool-call-diff-separator {
   border-top: 1px dashed var(--border);
   border-bottom: 1px dashed var(--border);
-  background: var(--surface-hover);
+  background: var(--toolcall-tag-background-hover);
   min-height: 16px;
 }
 
@@ -674,3 +674,166 @@
 [data-theme="light"] .tool-call-diff-remove {
   background: rgba(248, 81, 73, 0.10);
 }
+
+/* ---- AskUser inline tag rendering ---- */
+
+.tool-call-askuser-wrapper {
+  margin: var(--space-xs) 0;
+}
+
+.tool-call-askuser-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-code);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  max-width: 100%;
+  user-select: none;
+}
+
+.tool-call-askuser-tag:hover {
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--border-active, rgba(255, 255, 255, 0.15));
+}
+
+.tool-call-askuser-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.tool-call-askuser-action-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border);
+}
+
+.tool-call-askuser-action {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+
+.tool-call-askuser-summary {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+  line-height: 1.4;
+}
+
+.tool-call-askuser-pending {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--warning, #e5a100);
+  animation: pulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.tool-call-askuser-chevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.tool-call-askuser-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.tool-call-askuser-detail {
+  margin-top: var(--space-xs);
+  background: color-mix(in srgb, var(--surface-secondary) 60%, transparent);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* Question blocks in detail view */
+.tool-call-askuser-questions,
+.tool-call-askuser-answers {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.tool-call-askuser-question-block {
+  margin-bottom: var(--space-sm);
+}
+
+.tool-call-askuser-question-block:last-child {
+  margin-bottom: 0;
+}
+
+.tool-call-askuser-question-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.tool-call-askuser-question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tool-call-askuser-option-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--toolcall-tag-background-hover);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  line-height: 1.4;
+}
+
+.tool-call-askuser-option-multi-marker {
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Answer rows in detail view */
+.tool-call-askuser-answer-row {
+  margin-bottom: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-call-askuser-answer-row:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.tool-call-askuser-answer-q {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.tool-call-askuser-answer-a {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+

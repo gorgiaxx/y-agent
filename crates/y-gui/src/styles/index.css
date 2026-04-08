@@ -11,7 +11,7 @@
   --surface-primary:   #0f0f0f;
   --surface-secondary: #141414;
   --surface-tertiary:  #1c1c1c;
-  --surface-hover:     rgba(255, 255, 255, 0.04);
+  --surface-hover:     rgba(255, 255, 255, 0.01);
   --surface-code:      #1a1a1a;
 
   /* Text hierarchy */
@@ -73,8 +73,8 @@
   --surface-primary:   #ffffff;
   --surface-secondary: #f5f4f1;
   --surface-tertiary:  #edecea;
-  --surface-hover:     rgba(0, 0, 0, 0.04);
-  --surface-code:      #f0eeeb;
+  --surface-hover:     rgba(0, 0, 0, 0.01);
+  --surface-code:      #f1efed;
 
   --text-primary:   #1a1917;
   --text-secondary: #6b6560;
@@ -103,6 +103,8 @@
   --info-subtle: rgba(37, 99, 235, 0.08);
 
   --accent-contrast: #ffffff;
+  --toolcall-tag-border-active: #edecea;
+  --toolcall-tag-background-hover: #f2f0f0;
 }
 
 /* ---- Reset & Base ---- */
