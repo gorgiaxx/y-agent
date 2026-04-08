@@ -63,16 +63,7 @@ When uncertain -> High.
 
 ## 4) Agent Workflow
 
-### 4.1 Design Document Changes
-
-> Full workflow: `DESIGN_RULE.md` S7-11.
-
-1. Read target doc + `DESIGN_OVERVIEW.md` + `DESIGN_RULE.md` first.
-2. Check Cross-Cutting Alignment table; update all affected docs in one batch.
-3. Follow `DESIGN_RULE.md` S4 (13 required sections), S2 (diagrams), S3 (abstraction).
-4. Update `DESIGN_OVERVIEW.md`; bump version in every modified doc; run S10 checklist.
-
-### 4.2 Implementation (TDD)
+### 4.1 Implementation (TDD)
 
 > Standards: `TEST_STRATEGY.md` · `ENGINEERING_STANDARDS.md`
 
@@ -81,19 +72,19 @@ When uncertain -> High.
 - Rust casing: `snake_case` files/fns · `PascalCase` types · `SCREAMING_SNAKE_CASE` consts.
 - Dependencies point inward to `y-core`; every subsystem behind a feature flag.
 
-### 4.3 Sub-Agent Work
+### 4.2 Sub-Agent Work
 
 - Read `docs/standards/AGENT_AUTONOMY.md` before designing or implementing any sub-agent component (delegation, agent pools, autonomy).
 
-### 4.4 R&D Planning
+### 4.3 R&D Planning
 
 - **Before any R&D action**: write a plan to `.claude/plans` covering scope, steps, dependencies, and verification criteria. No implementation until the plan exists.
 
-### 4.5 Commit Discipline
+### 4.4 Commit Discipline
 
 - One concern per change; cross-doc changes in one batch; English commit messages; no secrets.
 
-### 4.6 Post-Development Quality Gates
+### 4.5 Post-Development Quality Gates
 
 After completing rust code change, run the following checks **in order** and fix all issues before considering the task done:
 
@@ -113,6 +104,16 @@ cargo doc --workspace --no-deps
 
 No task is complete until all four commands pass cleanly.
 
+### 4.6 Test Output Filtering
+
+When running `cargo test`, always pipe output through `grep` to extract error information. Use the following filter:
+
+```bash
+cargo test [args] 2>&1 | grep -v '^\s*Compiling\|^\s*Running\|^\s*Downloading\|^\s*Downloaded\|^\s*Blocking\|^\s*Finished\|^\s*Doc-tests\|^running\|^test \|^$' | head -200
+```
+
+This strips compilation progress, download noise, and individual test-pass lines, leaving only failures, panics, and diagnostic output.
+
 ## 5) Key References
 
 - `DESIGN_RULE.md` -- Design doc standards, playbooks, validation checklist
@@ -123,7 +124,6 @@ No task is complete until all four commands pass cleanly.
 - `docs/standards/DSL_STANDARD.md` -- DSL specification
 - `docs/standards/SKILLS_STANDARD.md` -- Skills format and authoring standard
 - `docs/standards/TOOL_CALL_PROTOCOL.md` -- Tool call protocol specification
-- `VISION.md` -- Project vision (Chinese)
 
 ## 6) Formatting Constraints
 
