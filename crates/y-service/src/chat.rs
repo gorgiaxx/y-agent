@@ -1178,7 +1178,7 @@ impl ChatService {
                     "success": tc.success,
                     "duration_ms": tc.duration_ms,
                     "result_preview":
-                        &tc.result_content[..tc.result_content.floor_char_boundary(2000)],
+                        &tc.result_content[..tc.result_content.floor_char_boundary(8000)],
                 });
                 // Use pre-extracted url_meta directly (survives result
                 // stripping for Browser/WebFetch tools).
