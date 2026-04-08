@@ -312,7 +312,8 @@ impl SystemService {
                     .header("anthropic-version", "2023-06-01")
                     .header("Content-Type", "application/json");
                 if !effective_key.is_empty() {
-                    req = req.header("x-api-key", &effective_key);
+                    req = req
+                        .header("Authorization", format!("Bearer {effective_key}"));
                 }
                 let response = req
                     .json(&body)

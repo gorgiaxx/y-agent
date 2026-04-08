@@ -3,7 +3,7 @@
 //! Implements the Anthropic Messages API format with:
 //! - Separated system message (not part of the messages array)
 //! - Content blocks for structured responses
-//! - `x-api-key` header authentication
+//! - `Authorization: Bearer` header authentication
 //! - Streaming support via SSE (event-based format)
 
 use async_trait::async_trait;
@@ -253,7 +253,8 @@ impl LlmProvider for AnthropicProvider {
             .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
-            request_builder = request_builder.header("x-api-key", &self.api_key);
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
         let response =
@@ -405,7 +406,8 @@ impl LlmProvider for AnthropicProvider {
             .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
-            request_builder = request_builder.header("x-api-key", &self.api_key);
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
         let response =
