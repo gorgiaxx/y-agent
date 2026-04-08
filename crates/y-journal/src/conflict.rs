@@ -79,43 +79,38 @@ mod tests {
 
     #[test]
     fn test_conflict_detection_file_missing() {
-        let entry = make_entry("/tmp/nonexistent_y_journal_detect.txt", Some("abc".into()));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.txt");
+        let entry = make_entry(path.to_str().unwrap(), Some("abc".into()));
         assert_eq!(detect_conflict(&entry), ConflictStatus::FileMissing);
     }
 
     #[test]
     fn test_conflict_detection_no_hash() {
-        let dir = std::env::temp_dir().join("y_journal_no_hash_test");
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join("nohash.txt");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nohash.txt");
         std::fs::write(&path, "some content").unwrap();
 
         let entry = make_entry(path.to_str().unwrap(), None);
         assert_eq!(detect_conflict(&entry), ConflictStatus::NoHashAvailable);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_conflict_detection_safe() {
-        let dir = std::env::temp_dir().join("y_journal_conflict_test");
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join("safe.txt");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("safe.txt");
         let content = b"safe content";
         std::fs::write(&path, content).unwrap();
 
         let hash = compute_hash(content);
         let entry = make_entry(path.to_str().unwrap(), Some(hash));
         assert_eq!(detect_conflict(&entry), ConflictStatus::Safe);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_conflict_detection_conflict() {
-        let dir = std::env::temp_dir().join("y_journal_conflict_test2");
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join("conflict.txt");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("conflict.txt");
 
         // Write original.
         let original = b"original content";
@@ -128,7 +123,5 @@ mod tests {
         let entry = make_entry(path.to_str().unwrap(), Some(original_hash));
         let status = detect_conflict(&entry);
         assert!(matches!(status, ConflictStatus::Conflict { .. }));
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

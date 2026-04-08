@@ -650,9 +650,8 @@ mod tests {
         let (mut mgr, _dir) = setup_manager();
 
         // Create a temp file.
-        let test_dir = std::env::temp_dir().join("y_fh_test");
-        std::fs::create_dir_all(&test_dir).ok();
-        let file_path = test_dir.join("existing.txt");
+        let test_dir = tempfile::tempdir().unwrap();
+        let file_path = test_dir.path().join("existing.txt");
         std::fs::write(&file_path, "original content").unwrap();
 
         let result = mgr.track_edit(file_path.to_str().unwrap()).unwrap();
@@ -663,9 +662,6 @@ mod tests {
         let hash_prefix = path_hash(file_path.to_str().unwrap());
         let backup_path = mgr.backup_dir.join(format!("{hash_prefix}@v1"));
         assert!(backup_path.exists());
-
-        // Cleanup.
-        std::fs::remove_dir_all(&test_dir).ok();
     }
 
     #[test]
@@ -673,9 +669,8 @@ mod tests {
         let (mut mgr, _dir) = setup_manager();
 
         // Create a test file.
-        let test_dir = std::env::temp_dir().join("y_fh_test_rewind");
-        std::fs::create_dir_all(&test_dir).ok();
-        let file_path = test_dir.join("rewindable.txt");
+        let test_dir = tempfile::tempdir().unwrap();
+        let file_path = test_dir.path().join("rewindable.txt");
         std::fs::write(&file_path, "version 1").unwrap();
 
         // Track edit and make snapshot.
@@ -694,9 +689,6 @@ mod tests {
         let report = mgr.rewind_to("msg-001").unwrap();
         assert!(!report.restored.is_empty());
         assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "version 1");
-
-        // Cleanup.
-        std::fs::remove_dir_all(&test_dir).ok();
     }
 
     #[test]
@@ -705,9 +697,8 @@ mod tests {
         mgr.make_snapshot("msg-001");
 
         // Track a new file in a subsequent snapshot.
-        let test_dir = std::env::temp_dir().join("y_fh_test_diff");
-        std::fs::create_dir_all(&test_dir).ok();
-        let file_path = test_dir.join("new_file.txt");
+        let test_dir = tempfile::tempdir().unwrap();
+        let file_path = test_dir.path().join("new_file.txt");
 
         mgr.tracked_files
             .insert(file_path.to_str().unwrap().to_string());
@@ -715,9 +706,6 @@ mod tests {
 
         let stats = mgr.diff_stats_for("msg-001").unwrap();
         assert_eq!(stats.files_created, 1);
-
-        // Cleanup.
-        std::fs::remove_dir_all(&test_dir).ok();
     }
 
     #[test]
@@ -785,9 +773,8 @@ mod tests {
     fn test_multi_turn_rewind_correct_version() {
         let (mut mgr, _dir) = setup_manager();
 
-        let test_dir = std::env::temp_dir().join("y_fh_test_multi_turn");
-        std::fs::create_dir_all(&test_dir).ok();
-        let file_path = test_dir.join("doc.txt");
+        let test_dir = tempfile::tempdir().unwrap();
+        let file_path = test_dir.path().join("doc.txt");
         let fp = file_path.to_str().unwrap();
 
         // -- Turn 1: user asks to create the file --
@@ -820,9 +807,6 @@ mod tests {
             "initial content\nMIT License",
             "undo msg3 should restore to post-msg2 state"
         );
-
-        // Cleanup.
-        std::fs::remove_dir_all(&test_dir).ok();
     }
 
     /// Undoing the message that created a file should delete the file,
@@ -831,9 +815,8 @@ mod tests {
     fn test_rewind_to_creation_message_deletes_file() {
         let (mut mgr, _dir) = setup_manager();
 
-        let test_dir = std::env::temp_dir().join("y_fh_test_create_undo");
-        std::fs::create_dir_all(&test_dir).ok();
-        let file_path = test_dir.join("created.txt");
+        let test_dir = tempfile::tempdir().unwrap();
+        let file_path = test_dir.path().join("created.txt");
         let fp = file_path.to_str().unwrap();
 
         // Turn 1: file doesn't exist, will be created.
@@ -866,9 +849,6 @@ mod tests {
             !file_path.exists(),
             "file should be deleted after undo msg1"
         );
-
-        // Cleanup.
-        std::fs::remove_dir_all(&test_dir).ok();
     }
 
     #[test]

@@ -132,9 +132,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_create_deletes_file() {
-        let dir = std::env::temp_dir().join("y_journal_rollback_test1");
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join("created.txt");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("created.txt");
         std::fs::write(&path, "created by tool").unwrap();
 
         let store = make_store();
@@ -159,15 +158,12 @@ mod tests {
         let report = rollback_scope(store, "scope1").await.unwrap();
         assert_eq!(report.restored, 1);
         assert!(!path.exists());
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
     async fn test_rollback_modify_restores_content() {
-        let dir = std::env::temp_dir().join("y_journal_rollback_test2");
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join("modified.txt");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("modified.txt");
         let original = b"original content";
         std::fs::write(&path, original).unwrap();
 
@@ -202,15 +198,12 @@ mod tests {
             });
         }
 
-        // "Modify" the file (simulate tool execution).
-        // For this test, file still has original content so hash matches → Safe.
+        // File still has original content so hash matches -> Safe.
         let report = rollback_scope(store, "scope1").await.unwrap();
         assert_eq!(report.restored, 1);
 
         let restored = std::fs::read(&path).unwrap();
         assert_eq!(restored, original);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
