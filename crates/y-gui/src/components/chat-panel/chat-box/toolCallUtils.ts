@@ -622,3 +622,18 @@ export function extractExitPlanModeMeta(argsRaw: string): ExitPlanModeMeta | nul
   if (!planFile) return null;
   return { planFile, totalPhases };
 }
+
+export interface EnterPlanModeMeta {
+  reason: string;
+  title: string;
+}
+
+/** Extract EnterPlanMode metadata from tool call arguments. */
+export function extractEnterPlanModeMeta(argsRaw: string): EnterPlanModeMeta | null {
+  const obj = tryParseJson(argsRaw);
+  if (!obj) return null;
+  const reason = typeof obj.reason === 'string' ? obj.reason : '';
+  const title = typeof obj.title === 'string' ? obj.title : '';
+  if (!title) return null;
+  return { reason, title };
+}
