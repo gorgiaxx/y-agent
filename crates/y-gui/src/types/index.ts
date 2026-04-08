@@ -10,6 +10,7 @@ export interface SessionInfo {
   created_at: string;
   updated_at: string;
   message_count: number;
+  has_custom_prompt?: boolean;
 }
 
 export interface WorkspaceInfo {

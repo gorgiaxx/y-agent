@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Loader2, Zap, ScanSearch, ClipboardList } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Loader2, Zap, ScanSearch, ClipboardList, ScrollText } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
+import { SessionPromptDialog } from '../SessionPromptDialog';
 import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, Attachment } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
@@ -64,6 +65,12 @@ interface InputAreaProps {
   onPermissionAllowAllForSession?: (requestId: string) => void;
   /** Whether context compaction is in progress. */
   isCompacting?: boolean;
+  /** Active session ID (for per-session features like custom prompt). */
+  sessionId?: string | null;
+  /** Whether the active session has a custom system prompt. */
+  hasCustomPrompt?: boolean;
+  /** Callback when custom prompt state changes. */
+  onCustomPromptChange?: (hasPrompt: boolean) => void;
   /** Draft text to populate after rewind/undo (normal draft, not edit mode). */
   rewindDraft?: string | null;
   /** Called after rewindDraft is consumed to clear the state. */
@@ -201,10 +208,14 @@ export function InputArea({
   onPermissionDeny,
   onPermissionAllowAllForSession,
   isCompacting = false,
+  sessionId,
+  hasCustomPrompt = false,
+  onCustomPromptChange,
   rewindDraft,
   onRewindDraftConsumed,
 }: InputAreaProps) {
   const [commandMode, setCommandMode] = useState(false);
+  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
@@ -760,6 +771,16 @@ export function InputArea({
             <Eraser size={14} />
           </button>
 
+          {/* (d2) Session custom prompt */}
+          <button
+            className={`toolbar-btn has-tooltip ${hasCustomPrompt ? 'toolbar-btn--active' : ''}`}
+            onClick={() => setPromptDialogOpen(true)}
+            data-tooltip="Session prompt"
+            disabled={disabled || !sessionId}
+          >
+            <ScrollText size={14} />
+          </button>
+
           {/* (e) Thinking effort selector */}
           <div className="toolbar-btn-group" ref={thinkingDropdownRef}>
             <button
@@ -857,6 +878,17 @@ export function InputArea({
         }}
         onCancel={() => setClearConfirmOpen(false)}
       />
+
+      {promptDialogOpen && sessionId && (
+        <SessionPromptDialog
+          sessionId={sessionId}
+          onClose={() => setPromptDialogOpen(false)}
+          onSaved={(hasPrompt) => {
+            setPromptDialogOpen(false);
+            onCustomPromptChange?.(hasPrompt);
+          }}
+        />
+      )}
     </div>
   );
 }

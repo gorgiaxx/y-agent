@@ -257,6 +257,15 @@ export function ChatView() {
         onPermissionDeny={handlePermissionDeny}
         onPermissionAllowAllForSession={handlePermissionAllowAllForSession}
         isCompacting={chatHooks.opStatus === 'compacting'}
+        sessionId={sessionHooks.activeSessionId}
+        hasCustomPrompt={
+          sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)
+            ?.has_custom_prompt ?? false
+        }
+        onCustomPromptChange={(hasPrompt) => {
+          sessionHooks.refreshSessions?.();
+          void hasPrompt;
+        }}
         rewindDraft={rewindDraft}
         onRewindDraftConsumed={() => setRewindDraft(null)}
       />
