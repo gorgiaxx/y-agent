@@ -78,6 +78,7 @@ async fn chat_turn(
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            plan_mode: None,
         },
     )
     .await

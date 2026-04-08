@@ -196,6 +196,7 @@ pub fn submit_message(
             provider_id: selected_provider_id,
             knowledge_collections: vec![],
             thinking: None,
+            plan_mode: None,
         };
 
         // Set up a progress channel to receive streaming deltas.
