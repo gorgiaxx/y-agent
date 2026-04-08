@@ -255,7 +255,7 @@ impl SkillIngestionService {
         };
         let input = serde_json::Value::String(format!(
             "## Skill Ingestion Request\n\n\
-             - **Source file**: `{source_path}`\n\
+             - **Source path**: `{source_path}`\n\
              - **Main file name**: `{main_file}`\n\
              - **Output directory**: `{output_dir}`\n\
              - **Existing skills** (for dedup): {skills}\n\n\

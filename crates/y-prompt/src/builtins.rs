@@ -131,7 +131,7 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         PROMPT_PLAN_MODE_ACTIVE,
         "plan_mode_active.txt",
         200,
-        435,
+        275,
         SectionCategoryTag::Behavioral,
         ConditionTag::PlanModeActive,
     ),
@@ -253,13 +253,13 @@ pub fn default_template() -> PromptTemplate {
         section_ref("core.datetime"),
         section_ref("core.environment"),
         section_ref("core.persona"),
+        section_ref("core.plan_mode_active"),
         section_ref("core.guidelines"),
         section_ref("core.security"),
         section_ref("core.tool_protocol"),
         section_ref("core.planning"),
         section_ref("core.exploration"),
         section_ref("core.orchestration"),
-        section_ref("core.plan_mode_active"),
     ];
 
     let mut mode_overlays = HashMap::new();
