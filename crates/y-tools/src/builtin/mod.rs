@@ -8,6 +8,7 @@ pub mod file_write;
 pub mod glob;
 pub mod grep;
 pub mod knowledge_search;
+pub mod plan_mode;
 pub mod shell_exec;
 pub mod task;
 pub mod tool_search;
@@ -135,6 +136,18 @@ pub async fn register_builtin_tools(
             Arc::new(workflow::ScheduleDeleteTool::new()),
             workflow::ScheduleDeleteTool::tool_definition(),
         ),
+        (
+            Arc::new(plan_mode::EnterPlanModeTool::new()),
+            plan_mode::EnterPlanModeTool::tool_definition(),
+        ),
+        (
+            Arc::new(plan_mode::PlanWriterTool::new()),
+            plan_mode::PlanWriterTool::tool_definition(),
+        ),
+        (
+            Arc::new(plan_mode::ExitPlanModeTool::new()),
+            plan_mode::ExitPlanModeTool::tool_definition(),
+        ),
     ];
 
     // Register knowledge search tool if knowledge base is available.
@@ -167,8 +180,9 @@ mod tests {
     async fn test_register_builtin_tools_populates_registry() {
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None, None).await;
-        // 3 core + file_edit + Task + ToolSearch + Glob + Grep + AskUser + Browser + WebFetch + 11 workflow/schedule = 22
-        assert_eq!(registry.len().await, 22);
+        // 3 core + file_edit + Task + ToolSearch + Glob + Grep + AskUser + Browser + WebFetch
+        // + 11 workflow/schedule + 3 plan_mode = 25
+        assert_eq!(registry.len().await, 25);
     }
 
     #[tokio::test]
@@ -186,8 +200,8 @@ mod tests {
             None,
         )
         .await;
-        // 22 + KnowledgeSearch = 23
-        assert_eq!(registry.len().await, 23);
+        // 25 + KnowledgeSearch = 26
+        assert_eq!(registry.len().await, 26);
     }
 
     #[tokio::test]

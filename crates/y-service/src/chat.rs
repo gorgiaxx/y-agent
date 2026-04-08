@@ -305,6 +305,10 @@ pub struct TurnInput<'a> {
     pub knowledge_collections: Vec<String>,
     /// Thinking/reasoning configuration (`None` = use model defaults).
     pub thinking: Option<y_core::provider::ThinkingConfig>,
+    /// Plan mode: `"fast"` (default), `"auto"`, or `"plan"`.
+    /// Controls whether plan-mode prompts are injected and whether a
+    /// complexity-assessment sub-agent runs before the main turn.
+    pub plan_mode: Option<String>,
 }
 pub type TurnCancellationToken = CancellationToken;
 
@@ -334,6 +338,8 @@ pub struct PrepareTurnRequest {
     /// Additional metadata to attach to the user message (e.g. attachments).
     /// Merged into the `Message.metadata` field during `prepare_turn()`.
     pub user_message_metadata: Option<serde_json::Value>,
+    /// Plan mode: `"fast"`, `"auto"`, or `"plan"` (`None` = `"fast"`).
+    pub plan_mode: Option<String>,
 }
 
 /// Fully resolved turn data, ready for `execute_turn()` or
@@ -361,6 +367,8 @@ pub struct PreparedTurn {
     pub knowledge_collections: Vec<String>,
     /// Thinking/reasoning configuration.
     pub thinking: Option<y_core::provider::ThinkingConfig>,
+    /// Plan mode: `"fast"`, `"auto"`, or `"plan"` (`None` = `"fast"`).
+    pub plan_mode: Option<String>,
 }
 
 impl PreparedTurn {
@@ -375,6 +383,7 @@ impl PreparedTurn {
             provider_id: self.provider_id.clone(),
             knowledge_collections: self.knowledge_collections.clone(),
             thinking: self.thinking.clone(),
+            plan_mode: self.plan_mode.clone(),
         }
     }
 }
@@ -635,6 +644,7 @@ impl ChatService {
             session_created,
             knowledge_collections: request.knowledge_collections.unwrap_or_default(),
             thinking: request.thinking,
+            plan_mode: request.plan_mode,
         })
     }
 
@@ -729,6 +739,7 @@ impl ChatService {
             session_created: false,
             knowledge_collections: request.knowledge_collections.unwrap_or_default(),
             thinking: request.thinking,
+            plan_mode: None,
         })
     }
 
@@ -821,7 +832,80 @@ impl ChatService {
                     .map_or(ToolCallingMode::default(), |m| m.tool_calling_mode)
             }
         };
-        let tool_defs = Self::build_essential_tool_definitions(container).await;
+        let mut tool_defs = Self::build_essential_tool_definitions(container).await;
+
+        // 1b. Inject plan_mode.active config flag based on the user's mode selection.
+        //
+        // - "fast" (default/None): no plan mode prompts injected.
+        // - "plan": always inject plan_mode_active prompt section.
+        // - "auto": run a lightweight complexity classification, inject if complex.
+        {
+            let plan_mode = input.plan_mode.as_deref().unwrap_or("fast");
+            tracing::info!(
+                plan_mode = %plan_mode,
+                raw_plan_mode = ?input.plan_mode,
+                "plan mode received from frontend"
+            );
+            match plan_mode {
+                "plan" => {
+                    let mut pctx = container.prompt_context.write().await;
+                    pctx.config_flags.insert("plan_mode.active".into(), true);
+                    tracing::info!("plan_mode.active flag SET in prompt context");
+                }
+                "auto" => {
+                    let needs_plan = crate::plan_mode_orchestrator::assess_complexity(
+                        container,
+                        input.user_input,
+                        input.provider_id.as_deref(),
+                    )
+                    .await;
+                    if needs_plan {
+                        let mut pctx = container.prompt_context.write().await;
+                        pctx.config_flags.insert("plan_mode.active".into(), true);
+                        tracing::info!("plan_mode.active flag SET (auto: complex)");
+                    } else {
+                        tracing::info!("plan_mode.active flag NOT set (auto: simple)");
+                    }
+                }
+                _ => {
+                    // "fast" or unknown: ensure flag is cleared.
+                    let mut pctx = container.prompt_context.write().await;
+                    pctx.config_flags.remove("plan_mode.active");
+                    tracing::info!("plan_mode.active flag CLEARED (fast mode)");
+                }
+            }
+        }
+
+        // 1c. Filter tool definitions when plan mode is active.
+        //
+        // Remove blocked tools from `ChatRequest.tools` so the LLM physically
+        // cannot call them. The prompt text already says they are "BLOCKED",
+        // but without removing the schemas the LLM ignores that instruction.
+        {
+            let pctx = container.prompt_context.read().await;
+            if pctx
+                .config_flags
+                .get("plan_mode.active")
+                .copied()
+                .unwrap_or(false)
+            {
+                use crate::container::PLAN_MODE_BLOCKED_TOOLS;
+                let before = tool_defs.len();
+                tool_defs.retain(|def| {
+                    let name = def
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("");
+                    !PLAN_MODE_BLOCKED_TOOLS.contains(&name)
+                });
+                tracing::info!(
+                    before,
+                    after = tool_defs.len(),
+                    "plan mode: filtered blocked tools from API schemas"
+                );
+            }
+        }
 
         // 2. Construct execution config for the root agent.
         let max_tool_iterations = container.guardrail_manager.config().max_tool_iterations;
@@ -889,17 +973,20 @@ impl ChatService {
                 model,
             }) => {
                 // Persist intermediate messages (assistant + tool results from
-                // earlier successful iterations) so the conversation history
-                // survives the cancellation and is visible on session re-entry.
+                // earlier successful iterations) to the CONTEXT transcript only.
+                // These are raw protocol messages (individual assistant msgs with
+                // tool_calls + tool role msgs) that the LLM needs for continuity
+                // on resume, but they are NOT suitable for GUI display (the
+                // frontend expects a single consolidated assistant message).
+                let ctx_store = container.session_manager.transcript_store();
                 for msg in &partial_messages {
-                    let _ = container
-                        .session_manager
-                        .append_message(&input.session_id, msg)
-                        .await;
+                    let _ = ctx_store.append(&input.session_id, msg).await;
                 }
 
-                // Build and persist a partial assistant message with accumulated
-                // content so the conversation shows what was done before cancel.
+                // Build and persist a consolidated assistant message with all
+                // accumulated content and metadata. This goes to BOTH transcripts
+                // so the GUI can render it properly and the LLM sees the final
+                // state on resume.
                 if !accumulated_content.trim().is_empty() || !tool_calls_executed.is_empty() {
                     let tool_results_meta: Vec<serde_json::Value> =
                         Self::build_tool_results_metadata(&tool_calls_executed);
@@ -927,10 +1014,15 @@ impl ChatService {
                         metadata: meta,
                     };
 
+                    // Display transcript: consolidated message for GUI rendering.
                     let _ = container
                         .session_manager
-                        .append_message(&input.session_id, &assistant_msg)
+                        .display_transcript_store()
+                        .append(&input.session_id, &assistant_msg)
                         .await;
+
+                    // Context transcript: consolidated message for LLM context.
+                    let _ = ctx_store.append(&input.session_id, &assistant_msg).await;
                 }
 
                 if !partial_messages.is_empty() || !accumulated_content.trim().is_empty() {
@@ -1384,6 +1476,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            plan_mode: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1417,6 +1510,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            plan_mode: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1436,6 +1530,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            plan_mode: None,
         };
         let err = ChatService::prepare_turn(&container, request)
             .await
@@ -1454,6 +1549,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            plan_mode: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1479,6 +1575,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            plan_mode: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1502,6 +1599,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            plan_mode: None,
         };
         let p1 = ChatService::prepare_turn(&container, request)
             .await
@@ -1517,6 +1615,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            plan_mode: None,
         };
         let p2 = ChatService::prepare_turn(&container, request2)
             .await

@@ -25,6 +25,61 @@ pub(crate) async fn execute_and_record_tool(
     let tool_start = std::time::Instant::now();
 
     // ---------------------------------------------------------------
+    // Plan-mode tool blocking (defense in depth).
+    //
+    // Even if a blocked tool's schema was dynamically loaded via
+    // ToolSearch, reject it at execution time when plan mode is active.
+    // ---------------------------------------------------------------
+    {
+        let pctx = container.prompt_context.read().await;
+        let plan_active = pctx
+            .config_flags
+            .get("plan_mode.active")
+            .copied()
+            .unwrap_or(false);
+        if plan_active {
+            use crate::container::PLAN_MODE_BLOCKED_TOOLS;
+            if PLAN_MODE_BLOCKED_TOOLS.contains(&tc.name.as_str()) {
+                tracing::warn!(
+                    tool = %tc.name,
+                    "tool blocked by plan mode"
+                );
+                let error_content = format!(
+                    "[SYSTEM] Tool '{}' is blocked in plan mode. \
+                     Only read-only tools are allowed. Use FileRead, Grep, \
+                     Glob, SearchCode, WebFetch, or Browser instead. \
+                     Write your plan using PlanWriter, then call ExitPlanMode \
+                     to begin execution.",
+                    tc.name
+                );
+
+                ctx.tool_calls_executed.push(ToolCallRecord {
+                    name: tc.name.clone(),
+                    arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                    success: false,
+                    duration_ms: 0,
+                    result_content: error_content.clone(),
+                    url_meta: None,
+                });
+
+                if let Some(tx) = progress {
+                    let _ = tx.send(TurnEvent::ToolResult {
+                        name: tc.name.clone(),
+                        success: false,
+                        duration_ms: 0,
+                        input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                        result_preview: error_content.clone(),
+                        agent_name: config.agent_name.clone(),
+                        url_meta: None,
+                    });
+                }
+
+                return (false, error_content);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Permission gatekeeper: evaluate guardrail permission BEFORE
     // executing the tool. Reads `default_permission`, per-tool overrides,
     // and `dangerous_auto_ask` from the hot-reloadable GuardrailConfig.
@@ -406,6 +461,19 @@ async fn execute_tool_call(
             &tc.arguments,
             container.agent_delegator.as_ref(),
             Some(session_uuid),
+        )
+        .await;
+    }
+
+    // Intercept plan mode tools -- route through `PlanModeOrchestrator`.
+    if tc.name == "EnterPlanMode" {
+        return crate::plan_mode_orchestrator::PlanModeOrchestrator::handle_enter(&tc.arguments);
+    }
+    if tc.name == "ExitPlanMode" {
+        return crate::plan_mode_orchestrator::PlanModeOrchestrator::handle_exit(
+            &tc.arguments,
+            container,
+            None, // No progress sender in this context; phase events use their own.
         )
         .await;
     }
