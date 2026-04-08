@@ -1,6 +1,6 @@
 //! Built-in prompt sections and default template.
 //!
-//! Provides factory functions for the 9 built-in prompt sections defined in
+//! Provides factory functions for the built-in prompt sections defined in
 //! `prompt-design.md` and a default `PromptTemplate` referencing them.
 //!
 //! Prompt content is loaded from `config/prompts/*.txt` at compile time via
@@ -31,6 +31,7 @@ const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.
 const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_planning.txt");
 const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
 const PROMPT_ORCHESTRATION: &str = include_str!("../../../config/prompts/core_orchestration.txt");
+const PROMPT_PLAN_MODE_ACTIVE: &str = include_str!("../../../config/prompts/plan_mode_active.txt");
 
 /// Mapping from section ID to (compiled default content, override filename,
 /// `token_budget`, priority, condition, category).
@@ -125,6 +126,15 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         SectionCategoryTag::Behavioral,
         ConditionTag::OrchestrationEnabled,
     ),
+    (
+        "core.plan_mode_active",
+        PROMPT_PLAN_MODE_ACTIVE,
+        "plan_mode_active.txt",
+        200,
+        435,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::PlanModeActive,
+    ),
 ];
 
 /// Internal tag for compact table — maps to `SectionCategory`.
@@ -159,6 +169,8 @@ enum ConditionTag {
     /// Set by `sync_dynamic_tool_defs` in `agent_service.rs` when `ToolSearch`
     /// activates workflow or schedule tools (~400 tokens saved otherwise).
     OrchestrationEnabled,
+    /// Include `core.plan_mode_active` only when the agent has entered plan mode.
+    PlanModeActive,
 }
 
 impl ConditionTag {
@@ -171,6 +183,7 @@ impl ConditionTag {
             Self::OrchestrationEnabled => {
                 SectionCondition::ConfigFlag("orchestration.enabled".into())
             }
+            Self::PlanModeActive => SectionCondition::ConfigFlag("plan_mode.active".into()),
         }
     }
 }
@@ -227,6 +240,7 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
     ("core_planning.txt", PROMPT_PLANNING),
     ("core_exploration.txt", PROMPT_EXPLORATION),
     ("core_orchestration.txt", PROMPT_ORCHESTRATION),
+    ("plan_mode_active.txt", PROMPT_PLAN_MODE_ACTIVE),
 ];
 
 /// Create the default `PromptTemplate` referencing the built-in sections.
@@ -245,6 +259,7 @@ pub fn default_template() -> PromptTemplate {
         section_ref("core.planning"),
         section_ref("core.exploration"),
         section_ref("core.orchestration"),
+        section_ref("core.plan_mode_active"),
     ];
 
     let mut mode_overlays = HashMap::new();
@@ -291,9 +306,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_store_has_10_sections() {
+    fn test_builtin_store_has_11_sections() {
         let store = builtin_section_store();
-        assert_eq!(store.len(), 10);
+        assert_eq!(store.len(), 11);
     }
 
     #[test]
@@ -310,6 +325,7 @@ mod tests {
             "core.planning",
             "core.exploration",
             "core.orchestration",
+            "core.plan_mode_active",
         ];
         for id in &ids {
             let content = store.load_content(id);
@@ -348,9 +364,9 @@ mod tests {
     fn test_default_template_general_mode() {
         let template = default_template();
         let sections = template.effective_sections("general");
-        // general mode: all 10 sections in template, no overlay excludes any
+        // general mode: all 11 sections in template, no overlay excludes any
         // (conditions are evaluated later by the provider, not by effective_sections)
-        assert_eq!(sections.len(), 10);
+        assert_eq!(sections.len(), 11);
     }
 
     #[test]

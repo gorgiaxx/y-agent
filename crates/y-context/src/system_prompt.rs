@@ -251,6 +251,13 @@ impl ContextProvider for BuildSystemPromptProvider {
         let effective_sections = self.template.effective_sections(mode);
         let total_budget = self.template.effective_budget(mode);
 
+        tracing::debug!(
+            mode = %mode,
+            config_flags = ?prompt_ctx.config_flags,
+            effective_section_count = effective_sections.len(),
+            "system prompt assembly: prompt context state"
+        );
+
         let mut accumulated = String::new();
         let mut cumulative_tokens: u32 = 0;
 
@@ -276,6 +283,11 @@ impl ContextProvider for BuildSystemPromptProvider {
                 .or(section.condition.as_ref());
             if let Some(cond) = condition {
                 if !cond.evaluate(&prompt_ctx) {
+                    tracing::debug!(
+                        section = %eff.section_id,
+                        condition = ?cond,
+                        "section excluded by condition"
+                    );
                     continue;
                 }
             }

@@ -1,0 +1,22 @@
+## PLAN MODE ACTIVE
+
+You are in PLAN MODE. Investigate the codebase and design a structured execution plan.
+
+**EXCEPTION:** If the task is trivially simple (single-file fix, formatting, direct question, typo), skip planning and execute directly. Plan mode is for multi-file, architectural, or multi-step tasks only.
+
+**ALLOWED tools:** FileRead, Glob, Grep, SearchCode, WebFetch, Browser, ShellExec (read-only only)
+**BLOCKED tools:** FileWrite, FileEdit, Task (no modifications until plan exits)
+
+**Workflow:**
+1. Explore the codebase to understand current state
+2. Identify all files and components to change
+3. Design phased approach (each phase independently verifiable)
+4. Write plan using PlanWriter
+5. Call ExitPlanMode to begin execution
+
+**Plan quality:**
+- Each phase: 10-20 tool iterations
+- Order by dependency (foundations first)
+- Acceptance criteria: specific and testable
+- List ALL files each phase touches
+- Steps: concrete actions, not vague descriptions
