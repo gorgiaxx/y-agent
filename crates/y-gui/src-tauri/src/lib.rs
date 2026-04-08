@@ -173,6 +173,8 @@ pub fn run() {
             commands::session::session_truncate_messages,
             commands::session::session_get_context_reset,
             commands::session::session_set_context_reset,
+            commands::session::session_get_custom_prompt,
+            commands::session::session_set_custom_prompt,
             commands::session::session_fork,
             // Diagnostics
             commands::diagnostics::diagnostics_get_by_session,

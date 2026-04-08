@@ -20,6 +20,7 @@ pub struct SessionInfo {
     pub created_at: String,
     pub updated_at: String,
     pub message_count: usize,
+    pub has_custom_prompt: bool,
 }
 
 /// A message in the session transcript.
@@ -61,14 +62,31 @@ pub async fn session_list(state: State<'_, AppState>) -> Result<Vec<SessionInfo>
         .await
         .map_err(|e| format!("Failed to list sessions: {e}"))?;
 
+    // Collect session IDs that have custom prompts.
+    let mut custom_prompt_ids = std::collections::HashSet::new();
+    for s in &sessions {
+        if let Ok(Some(_)) = state
+            .container
+            .session_manager
+            .get_custom_system_prompt(&s.id)
+            .await
+        {
+            custom_prompt_ids.insert(s.id.0.clone());
+        }
+    }
+
     let mut infos: Vec<SessionInfo> = sessions
         .into_iter()
-        .map(|s| SessionInfo {
-            id: s.id.0.clone(),
-            title: s.title.clone(),
-            created_at: s.created_at.to_rfc3339(),
-            updated_at: s.updated_at.to_rfc3339(),
-            message_count: s.message_count as usize,
+        .map(|s| {
+            let has_custom = custom_prompt_ids.contains(&s.id.0);
+            SessionInfo {
+                id: s.id.0.clone(),
+                title: s.title.clone(),
+                created_at: s.created_at.to_rfc3339(),
+                updated_at: s.updated_at.to_rfc3339(),
+                message_count: s.message_count as usize,
+                has_custom_prompt: has_custom,
+            }
         })
         .collect();
 
@@ -102,6 +120,7 @@ pub async fn session_create(
         created_at: session.created_at.to_rfc3339(),
         updated_at: session.updated_at.to_rfc3339(),
         message_count: 0,
+        has_custom_prompt: false,
     })
 }
 
@@ -241,6 +260,45 @@ pub async fn session_set_context_reset(
 }
 
 // ---------------------------------------------------------------------------
+// Per-session custom system prompt
+// ---------------------------------------------------------------------------
+
+/// Get the custom system prompt for a session.
+///
+/// Returns `null` if no custom prompt has been set (global prompt is used).
+#[tauri::command]
+pub async fn session_get_custom_prompt(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Option<String>, String> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .get_custom_system_prompt(&sid)
+        .await
+        .map_err(|e| format!("Failed to get custom prompt: {e}"))
+}
+
+/// Set or clear the custom system prompt for a session.
+///
+/// Pass `null` for `prompt` to clear (revert to global prompt).
+#[tauri::command]
+pub async fn session_set_custom_prompt(
+    state: State<'_, AppState>,
+    session_id: String,
+    prompt: Option<String>,
+) -> Result<(), String> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .set_custom_system_prompt(&sid, prompt)
+        .await
+        .map_err(|e| format!("Failed to set custom prompt: {e}"))
+}
+
+// ---------------------------------------------------------------------------
 // Fork (branch) session
 // ---------------------------------------------------------------------------
 
@@ -271,5 +329,6 @@ pub async fn session_fork(
         created_at: fork.created_at.to_rfc3339(),
         updated_at: fork.updated_at.to_rfc3339(),
         message_count: fork.message_count as usize,
+        has_custom_prompt: false,
     })
 }

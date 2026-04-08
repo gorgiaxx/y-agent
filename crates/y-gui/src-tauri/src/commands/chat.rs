@@ -186,18 +186,27 @@ pub async fn chat_send(
     let result_run_id = run_id.clone();
 
     // Resolve workspace path for this session and update prompt context.
-    // Also set active_skills if the user attached skills to this message.
+    // Also set active_skills if the user attached skills to this message,
+    // and load any per-session custom system prompt.
     {
         let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &sid.0);
+        let custom_prompt = state
+            .container
+            .session_manager
+            .get_custom_system_prompt(&sid)
+            .await
+            .unwrap_or(None);
         tracing::info!(
             session_id = %sid.0,
             workspace_path = ?workspace_path,
             skills = ?skills,
             knowledge_collections = ?knowledge_collections,
+            has_custom_prompt = custom_prompt.is_some(),
             "chat_send: resolved workspace path for session"
         );
         let mut ctx = state.container.prompt_context.write().await;
         ctx.working_directory = workspace_path;
+        ctx.custom_system_prompt = custom_prompt;
         if let Some(ref skill_names) = skills {
             ctx.active_skills.clone_from(skill_names);
         } else {
