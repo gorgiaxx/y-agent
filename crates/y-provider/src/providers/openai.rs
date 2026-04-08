@@ -802,6 +802,7 @@ struct OpenAiStreamToolCallFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sse::extract_sse_data;
     use y_core::provider::ToolCallingMode;
 
     #[test]
@@ -992,7 +993,7 @@ mod tests {
     #[test]
     fn test_extract_sse_event_simple() {
         let mut buf = "data: {\"id\":\"123\"}\n\n".to_string();
-        let event = extract_sse_event(&mut buf).unwrap();
+        let event = extract_sse_data(&mut buf).unwrap();
         assert_eq!(event, "{\"id\":\"123\"}");
         assert!(buf.is_empty());
     }
@@ -1000,22 +1001,22 @@ mod tests {
     #[test]
     fn test_extract_sse_event_done() {
         let mut buf = "data: [DONE]\n\n".to_string();
-        let event = extract_sse_event(&mut buf).unwrap();
+        let event = extract_sse_data(&mut buf).unwrap();
         assert_eq!(event, "[DONE]");
     }
 
     #[test]
     fn test_extract_sse_event_incomplete() {
         let mut buf = "data: partial".to_string();
-        assert!(extract_sse_event(&mut buf).is_none());
+        assert!(extract_sse_data(&mut buf).is_none());
     }
 
     #[test]
     fn test_extract_sse_event_multiple() {
         let mut buf = "data: first\n\ndata: second\n\n".to_string();
-        let e1 = extract_sse_event(&mut buf).unwrap();
+        let e1 = extract_sse_data(&mut buf).unwrap();
         assert_eq!(e1, "first");
-        let e2 = extract_sse_event(&mut buf).unwrap();
+        let e2 = extract_sse_data(&mut buf).unwrap();
         assert_eq!(e2, "second");
     }
 

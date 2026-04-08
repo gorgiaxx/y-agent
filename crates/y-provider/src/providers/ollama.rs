@@ -487,6 +487,7 @@ struct OllamaStreamMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sse::extract_json_line;
     use y_core::provider::ToolCallingMode;
 
     #[test]

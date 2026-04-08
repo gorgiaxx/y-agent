@@ -608,6 +608,7 @@ struct AzureStreamToolCallFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sse::extract_sse_data;
     use y_core::provider::ToolCallingMode;
 
     #[test]
@@ -703,7 +704,7 @@ mod tests {
     #[test]
     fn test_azure_sse_event_extraction() {
         let mut buffer = String::from("data: {\"id\":\"x\",\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n");
-        let event = extract_sse_event(&mut buffer);
+        let event = extract_sse_data(&mut buffer);
         assert!(event.is_some());
         let data = event.unwrap();
         assert!(data.contains("Hi"));
@@ -712,7 +713,7 @@ mod tests {
     #[test]
     fn test_azure_sse_done_signal() {
         let mut buffer = String::from("data: [DONE]\n\n");
-        let event = extract_sse_event(&mut buffer);
+        let event = extract_sse_data(&mut buffer);
         assert!(event.is_some());
         assert_eq!(event.unwrap().trim(), "[DONE]");
     }

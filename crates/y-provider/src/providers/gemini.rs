@@ -642,6 +642,7 @@ struct GeminiUsageMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sse::extract_sse_data;
     use y_core::provider::ToolCallingMode;
 
     #[test]

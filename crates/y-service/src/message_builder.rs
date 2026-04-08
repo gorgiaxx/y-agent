@@ -51,6 +51,7 @@ pub fn build_chat_messages(assembled: &AssembledContext, history: &[Message]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use y_context::ContextItem;
     use y_core::types::Role;
 
     fn system_item(content: &str) -> ContextItem {
