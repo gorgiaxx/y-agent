@@ -147,6 +147,10 @@ cast_precision_loss = "allow"
 # Fields sharing a common suffix (e.g. `_store`) is a natural naming convention
 # for dependency-injection structs. The lint adds no value here.
 struct_field_names = "allow"
+# Tauri command handlers receive each parameter directly from the frontend
+# invoke() call, making struct grouping impractical. Several commands naturally
+# exceed 10 parameters.
+too_many_arguments = "allow"
 undocumented_unsafe_blocks = "deny"
 
 [workspace.lints.rust]
