@@ -837,3 +837,104 @@
   font-family: var(--font-mono);
 }
 
+/* ---- PlanWriter / ExitPlanMode inline tag rendering ---- */
+
+.tool-call-plan-wrapper {
+  margin: var(--space-xs) 0;
+}
+
+.tool-call-plan-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-code);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  max-width: 100%;
+  user-select: none;
+}
+
+.tool-call-plan-tag:hover {
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--border-active, rgba(255, 255, 255, 0.15));
+}
+
+.tool-call-plan-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.tool-call-plan-action-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border);
+}
+
+.tool-call-plan-action {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+
+.tool-call-plan-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+  line-height: 1.4;
+}
+
+.tool-call-plan-path {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  flex-shrink: 0;
+}
+
+.tool-call-plan-chevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.tool-call-plan-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.tool-call-plan-detail {
+  margin-top: var(--space-xs);
+  background: color-mix(in srgb, var(--surface-secondary) 60%, transparent);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.tool-call-plan-content {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: transparent;
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+}
+
