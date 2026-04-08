@@ -874,7 +874,7 @@ mod tests {
                     context_window: 32_768,
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
-                    api_key: None,
+                    api_key: Some("ollama-key".into()),
                     api_key_env: None,
                     base_url: None,
                     temperature: None,
@@ -972,7 +972,8 @@ mod tests {
             ..Default::default()
         };
 
-        let err = ProviderPoolImpl::from_config(&config).unwrap_err();
-        assert!(err.to_string().contains("supermodel"));
+        let pool = ProviderPoolImpl::from_config(&config).expect("should create pool");
+        // Unknown provider type is gracefully skipped, resulting in 0 providers.
+        assert_eq!(pool.providers.len(), 0);
     }
 }
