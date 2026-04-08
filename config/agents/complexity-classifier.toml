@@ -1,0 +1,28 @@
+id = "complexity-classifier"
+name = "complexity-classifier"
+description = "Lightweight sub-agent that classifies user requests as needing planning or fast execution. Used by Auto plan mode."
+mode = "general"
+trust_tier = "built_in"
+user_callable = false
+capabilities = ["classification"]
+allowed_tools = []
+denied_tools = []
+system_prompt = """
+You are a task complexity classifier. Given the user's request, respond with \
+exactly one word: "plan" if the task requires multi-file changes, architectural \
+design, refactoring, or multi-step coordination. Respond "fast" if the task is \
+a single-file fix, formatting, direct question, or simple tweak. \
+Respond with ONLY "plan" or "fast", nothing else.
+"""
+skills = []
+preferred_models = []
+fallback_models = []
+provider_tags = []
+temperature = 0.0
+max_iterations = 1
+max_tool_calls = 0
+max_completion_tokens = 5
+timeout_secs = 15
+context_sharing = "none"
+max_context_tokens = 512
+prune_tool_history = false
