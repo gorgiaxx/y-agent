@@ -133,7 +133,7 @@ struct AgentSubDocOutput {
 /// A tool that the agent extracted from a hybrid skill.
 ///
 /// The actual script content is written by the agent to
-/// `{output_dir}/tools/{name}.{ext}` -- this struct holds only metadata.
+/// `{{OUTPUT_DIR}}/tools/{{NAME}}.{{EXT}}` -- this struct holds only metadata.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentExtractedTool {
     pub name: String,
@@ -145,13 +145,13 @@ pub struct AgentExtractedTool {
 /// Agent's decision on how to handle a companion file.
 ///
 /// For "transform" actions, the agent writes the transformed content to
-/// `{output_dir}/companions/{path}` via `FileWrite`.
+/// `{{OUTPUT_DIR}}/companions/{{PATH}}` via `FileWrite`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CompanionDecision {
     /// Relative path within the skill directory.
     pub path: String,
     /// Action: "keep" (copy as-is), "transform" (agent wrote transformed
-    /// content to `{output_dir}/companions/{path}`), or "discard" (skip).
+    /// content to `{{OUTPUT_DIR}}/companions/{{PATH}}`), or "discard" (skip).
     pub action: String,
     /// Reason for the decision.
     #[serde(default)]
@@ -224,22 +224,17 @@ impl SkillIngestionService {
     /// `skill-ingestion` agent (which writes files there via `FileWrite`),
     /// then reads back the generated files and registers the skill.
     pub async fn import(&self, path: &Path) -> Result<ImportResult, ImportError> {
-        // 1. Read source file
+        // 1. Validate source file exists
         if !path.exists() {
             return Err(ImportError::FileNotFound {
                 path: path.display().to_string(),
             });
         }
-        let source_content = tokio::fs::read_to_string(path)
-            .await
-            .map_err(|e| ImportError::IoError(e.to_string()))?;
 
-        // 2. Format detection (deterministic)
+        // 2. Resolve source path, format, and main file name
+        let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let format = FormatDetector::from_path(path);
         let format_str = format_to_str(format);
-
-        // 2b. Resolve source directory and main file name for agent tool calls
-        let source_dir = path.parent().map(|d| d.to_string_lossy().to_string());
         let main_file_name = path.file_name().and_then(|n| n.to_str()).map(String::from);
 
         // 3. Gather existing skills for dedup context
@@ -250,22 +245,30 @@ impl SkillIngestionService {
             .map_err(|e| ImportError::TempDirError(format!("failed to create temp dir: {e}")))?;
         let output_dir_path = output_dir.path().to_string_lossy().to_string();
 
-        // 5. Delegate to skill-ingestion agent
-        //    The agent writes generated files to output_dir via FileWrite
-        //    and returns only metadata in JSON.
-        let input = serde_json::json!({
-            "source_content": source_content,
-            "source_format": format_str,
-            "source_dir": source_dir,
-            "main_file_name": main_file_name,
-            "output_dir": output_dir_path,
-            "existing_skills": existing_skills,
-            "existing_tools": [],
-        });
+        // 5. Build markdown instruction for the agent.
+        //    The agent reads the source file itself via FileRead and detects
+        //    the format from the file extension.
+        let skills_list = if existing_skills.is_empty() {
+            "(none)".to_string()
+        } else {
+            existing_skills.join(", ")
+        };
+        let input = serde_json::Value::String(format!(
+            "## Skill Ingestion Request\n\n\
+             - **Source file**: `{source_path}`\n\
+             - **Main file name**: `{main_file}`\n\
+             - **Output directory**: `{output_dir}`\n\
+             - **Existing skills** (for dedup): {skills}\n\n\
+             Read the source file and any companion files in its directory, \
+             then analyze, classify, and transform the skill.",
+            source_path = source_path.display(),
+            main_file = main_file_name.as_deref().unwrap_or("unknown"),
+            output_dir = output_dir_path,
+            skills = skills_list,
+        ));
 
         info!(
             path = %path.display(),
-            format = format_str,
             output_dir = %output_dir_path,
             "Delegating skill ingestion to agent"
         );
@@ -489,7 +492,7 @@ impl SkillIngestionService {
     /// Process companion file decisions from the agent output.
     ///
     /// - "keep" copies from the original source directory
-    /// - "transform" copies from `{output_dir}/companions/{path}` (written by
+    /// - "transform" copies from `{{OUTPUT_DIR}}/companions/{{PATH}}` (written by
     ///   the agent via `FileWrite`)
     /// - "discard" logs and skips
     fn handle_companion_files(
@@ -633,7 +636,7 @@ mod tests {
     use y_core::agent::{AgentDelegator, DelegationError, DelegationOutput};
 
     // Mock delegator that returns configurable JSON output and writes
-    // files to the agent's output_dir (extracted from the input JSON).
+    // files to the agent's output_dir (extracted from the markdown input).
     #[derive(Debug)]
     struct MockDelegator {
         response: String,
@@ -655,6 +658,16 @@ mod tests {
                 output_files: files,
             }
         }
+
+        /// Extract the output directory path from the markdown input string.
+        fn extract_output_dir(input: &str) -> Option<String> {
+            for line in input.lines() {
+                if let Some(rest) = line.strip_prefix("- **Output directory**: `") {
+                    return rest.strip_suffix('`').map(String::from);
+                }
+            }
+            None
+        }
     }
 
     #[async_trait::async_trait]
@@ -667,8 +680,9 @@ mod tests {
             _session_id: Option<uuid::Uuid>,
         ) -> Result<DelegationOutput, DelegationError> {
             // Simulate agent writing files to output_dir
-            if let Some(output_dir) = input.get("output_dir").and_then(|v| v.as_str()) {
-                let output_path = Path::new(output_dir);
+            let input_str = input.as_str().unwrap_or_default();
+            if let Some(output_dir) = Self::extract_output_dir(input_str) {
+                let output_path = Path::new(&output_dir);
                 for (rel_path, content) in &self.output_files {
                     let file_path = output_path.join(rel_path);
                     if let Some(parent) = file_path.parent() {
@@ -939,7 +953,7 @@ mod tests {
         );
         files.insert(
             "details/general-engines.md".to_string(),
-            "# General Search Engines\n\n| Engine | URL Pattern | Notes |\n|--------|------------|-------|\n| Google | `https://google.com/search?q={query}` | Default engine |\n| Bing | `https://bing.com/search?q={query}` | Alternative |".to_string(),
+            "# General Search Engines\n\n| Engine | URL Pattern | Notes |\n|--------|------------|-------|\n| Google | `https://google.com/search?q={{QUERY}}` | Default engine |\n| Bing | `https://bing.com/search?q={{QUERY}}` | Alternative |".to_string(),
         );
         files
     }

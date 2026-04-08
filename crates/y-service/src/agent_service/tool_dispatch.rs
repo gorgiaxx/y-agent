@@ -356,27 +356,8 @@ pub(crate) async fn execute_and_record_tool(
     // AskUser interception: if the tool is AskUser, block until the
     // presentation layer delivers an answer via `PendingInteractions`.
     if tool_success && tc.name == "AskUser" {
-        if let Some(questions) = tc.arguments.get("questions") {
-            let interaction_id = uuid::Uuid::new_v4().to_string();
-            let (answer_tx, answer_rx) = tokio::sync::oneshot::channel::<serde_json::Value>();
-            {
-                let mut map = ctx.pending_interactions.lock().await;
-                map.insert(interaction_id.clone(), answer_tx);
-            }
-
-            if let Some(tx) = progress {
-                let _ = tx.send(TurnEvent::UserInteractionRequest {
-                    interaction_id: interaction_id.clone(),
-                    questions: questions.clone(),
-                });
-            }
-
-            // Block this iteration until the user answers.
-            if let Ok(answer) = answer_rx.await {
-                let answer_content =
-                    serde_json::to_string(&answer).unwrap_or_else(|_| answer.to_string());
-                return (true, answer_content);
-            }
+        if let Some(answer) = intercept_ask_user(tc, progress, ctx, config, tool_start).await {
+            return (true, answer);
         }
     }
 
@@ -386,6 +367,64 @@ pub(crate) async fn execute_and_record_tool(
     }
 
     (tool_success, result_content)
+}
+
+/// Block until the user answers an `AskUser` question, then update the
+/// `ToolCallRecord` and emit an updated `ToolResult` event with the real answer.
+///
+/// Returns `Some(answer_content)` if the user answered, `None` if the
+/// questions field is missing or the channel was dropped.
+async fn intercept_ask_user(
+    tc: &ToolCallRequest,
+    progress: Option<&TurnEventSender>,
+    ctx: &mut ToolExecContext,
+    config: &AgentExecutionConfig,
+    tool_start: std::time::Instant,
+) -> Option<String> {
+    let questions = tc.arguments.get("questions")?;
+
+    let interaction_id = uuid::Uuid::new_v4().to_string();
+    let (answer_tx, answer_rx) = tokio::sync::oneshot::channel::<serde_json::Value>();
+    {
+        let mut map = ctx.pending_interactions.lock().await;
+        map.insert(interaction_id.clone(), answer_tx);
+    }
+
+    if let Some(tx) = progress {
+        let _ = tx.send(TurnEvent::UserInteractionRequest {
+            interaction_id: interaction_id.clone(),
+            questions: questions.clone(),
+        });
+    }
+
+    // Block this iteration until the user answers.
+    let answer = answer_rx.await.ok()?;
+    let answer_content = serde_json::to_string(&answer).unwrap_or_else(|_| answer.to_string());
+
+    // Update the already-pushed ToolCallRecord with the real user answer so
+    // diagnostics and session persistence reflect the actual result instead
+    // of the echoed questions.
+    let total_ms = u64::try_from(tool_start.elapsed().as_millis()).unwrap_or(0);
+    if let Some(record) = ctx.tool_calls_executed.last_mut() {
+        record.result_content.clone_from(&answer_content);
+        record.duration_ms = total_ms;
+    }
+
+    // Emit an updated ToolResult event so the GUI can refresh the tool card
+    // with the real answer.
+    if let Some(tx) = progress {
+        let _ = tx.send(TurnEvent::ToolResult {
+            name: tc.name.clone(),
+            success: true,
+            duration_ms: total_ms,
+            input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+            result_preview: answer_content.clone(),
+            agent_name: config.agent_name.clone(),
+            url_meta: None,
+        });
+    }
+
+    Some(answer_content)
 }
 
 /// Resolve permission decision applying session-level overrides.
