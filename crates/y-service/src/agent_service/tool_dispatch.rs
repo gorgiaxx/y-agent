@@ -342,13 +342,12 @@ pub(crate) async fn execute_and_record_tool(
     // Limit must be large enough to keep structured JSON (e.g. Grep results)
     // intact -- matches the persisted metadata limit in build_tool_results_metadata.
     if let Some(tx) = progress {
-        let preview_len = result_content.floor_char_boundary(8000);
         let _ = tx.send(TurnEvent::ToolResult {
             name: tc.name.clone(),
             success: tool_success,
             duration_ms: tool_elapsed_ms,
             input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-            result_preview: result_content[..preview_len].to_string(),
+            result_preview: result_content.clone(),
             agent_name: config.agent_name.clone(),
             url_meta,
         });
