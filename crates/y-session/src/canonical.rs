@@ -347,6 +347,19 @@ mod tests {
         ) -> Result<(), SessionError> {
             Ok(())
         }
+        async fn get_custom_system_prompt(
+            &self,
+            _id: &SessionId,
+        ) -> Result<Option<String>, SessionError> {
+            Ok(None)
+        }
+        async fn set_custom_system_prompt(
+            &self,
+            _id: &SessionId,
+            _prompt: Option<String>,
+        ) -> Result<(), SessionError> {
+            Ok(())
+        }
     }
 
     #[async_trait::async_trait]
