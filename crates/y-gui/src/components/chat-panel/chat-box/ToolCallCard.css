@@ -938,3 +938,10 @@
   line-height: 1.55;
 }
 
+.tool-call-plan-reason {
+  padding: var(--space-sm) var(--space-md);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
