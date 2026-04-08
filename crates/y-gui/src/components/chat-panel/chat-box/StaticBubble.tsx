@@ -120,7 +120,7 @@ export function StaticBubble({ message }: StaticBubbleProps) {
   }, [message.metadata, historySegments, streamResult, effectiveContent]);
 
   return (
-    <AssistantMessageShell message={message} isStreaming={false} copyContent={copyContent}>
+    <AssistantMessageShell message={message} copyContent={copyContent}>
       {streamResult ? (
         /* Path 1: XML-parsed segments */
         <div className="message-content">

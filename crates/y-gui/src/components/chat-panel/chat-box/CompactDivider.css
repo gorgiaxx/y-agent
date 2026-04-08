@@ -8,7 +8,7 @@
 .compact-divider-line {
   flex: 1;
   height: 1px;
-  background: rgba(74, 222, 128, 0.3);
+  background: color-mix(in srgb, var(--success) 30%, transparent);
 }
 
 .compact-divider-label {
@@ -16,10 +16,10 @@
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  border: 1px dashed rgba(74, 222, 128, 0.4);
+  border: 1px dashed color-mix(in srgb, var(--success) 40%, transparent);
   border-radius: var(--radius-md);
-  background: rgba(74, 222, 128, 0.06);
-  color: rgba(74, 222, 128, 0.85);
+  background: color-mix(in srgb, var(--success) 6%, transparent);
+  color: var(--success);
   font-size: 11px;
   white-space: nowrap;
   user-select: none;

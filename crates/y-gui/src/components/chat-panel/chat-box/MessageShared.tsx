@@ -176,12 +176,10 @@ export function ActionBar({ content }: ActionBarProps) {
  */
 export function AssistantMessageShell({
   message,
-  isStreaming,
   copyContent,
   children,
 }: {
   message: Message;
-  isStreaming: boolean;
   /** Text to copy when the user clicks the copy button.
    *  When omitted, falls back to strippedContent of message.content. */
   copyContent?: string;

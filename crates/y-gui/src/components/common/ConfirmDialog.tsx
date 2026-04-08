@@ -21,8 +21,8 @@ interface ConfirmDialogProps {
 }
 
 const iconBgMap = {
-  danger: 'bg-[var(--error-subtle,rgba(239,68,68,0.12))] text-[var(--error,#f87171)]',
-  warning: 'bg-[rgba(251,191,36,0.12)] text-[#fbbf24]',
+  danger: 'bg-[var(--error-subtle)] text-[var(--error)]',
+  warning: 'bg-[var(--accent-subtle)] text-[var(--warning)]',
 };
 
 const confirmBtnMap = {
@@ -84,7 +84,7 @@ export function ConfirmDialog({
             variant={confirmBtnMap[variant]}
             className={[
               'flex-1',
-              variant === 'warning' ? 'bg-[#f59e0b] hover:bg-[#d97706] text-white border-transparent' : '',
+              variant === 'warning' ? 'bg-[var(--warning)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] border-transparent' : '',
             ].join(' ')}
             onClick={onConfirm}
             disabled={loading}

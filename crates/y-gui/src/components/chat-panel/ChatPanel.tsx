@@ -279,7 +279,7 @@ function ChatPanelInner({
       default:
         return null;
     }
-  }, [messages, isStreaming, onEditMessage, onUndoMessage, onResendMessage, onForkMessage, onRestoreBranch]);
+  }, [messages, isStreaming, onEditMessage, onUndoMessage, onResendMessage, onForkMessage, onRestoreBranch, getStreamSegments]);
 
   if (isLoading) {
     return (

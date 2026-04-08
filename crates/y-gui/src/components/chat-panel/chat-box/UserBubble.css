@@ -9,7 +9,7 @@
 /* ---- Avatar ---- */
 
 .message-bubble.user .message-avatar {
-  background: rgba(200, 181, 96, 0.10);
+  background: var(--accent-subtle);
   color: var(--accent);
 }
 
@@ -68,8 +68,8 @@
   align-items: center;
   gap: 3px;
   padding: 2px 7px;
-  background: rgba(200, 181, 96, 0.12);
-  border: 1px solid rgba(200, 181, 96, 0.22);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-subtle);
   border-radius: var(--radius-sm);
   font-size: 11px;
   font-weight: 500;
@@ -106,3 +106,7 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
+/* ---- Light theme overrides ---- */
+[data-theme="light"] .message-attachment-thumb:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10);
+}

@@ -352,11 +352,6 @@ export function ChatSidebarPanel({
     }
   }, [selectedIds, onDeleteSession]);
 
-  const clearSelection = useCallback(() => {
-    setSelectedIds(new Set());
-    lastClickedIdRef.current = null;
-  }, []);
-
   const getPreviewList = useCallback(
     (list: SessionInfo[]) => {
       if (!draggedSessionId || !dragOverSessionId || draggedSessionId === dragOverSessionId) {

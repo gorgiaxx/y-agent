@@ -56,7 +56,7 @@ export function AgentsSidebarPanel({
                   <Bot size={14} className="sidebar-item-icon" />
                   <span className="sidebar-item-name">{agent.name}</span>
                   {agent.is_overridden && (
-                    <span className="sidebar-item-badge" style={{ color: '#ffc107' }}>OVR</span>
+                    <span className="sidebar-item-badge" style={{ color: 'var(--warning)' }}>OVR</span>
                   )}
                 </div>
                 <p className="sidebar-item-desc">{agent.description}</p>

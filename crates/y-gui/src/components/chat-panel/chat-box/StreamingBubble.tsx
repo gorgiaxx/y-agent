@@ -62,7 +62,7 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
   }, [streamSegments, streamResult, effectiveContent]);
 
   return (
-    <AssistantMessageShell message={message} isStreaming={true} copyContent={copyContent}>
+    <AssistantMessageShell message={message} copyContent={copyContent}>
       {streamResult ? (
         /* XML-parsed segments (prompt-based mode) */
         <div className="message-content">

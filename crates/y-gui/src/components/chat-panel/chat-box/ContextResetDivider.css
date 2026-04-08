@@ -8,7 +8,7 @@
 .context-reset-divider-line {
   flex: 1;
   height: 1px;
-  background: rgba(251, 191, 36, 0.3);
+  background: color-mix(in srgb, var(--warning) 30%, transparent);
 }
 
 .context-reset-divider-label {
@@ -16,10 +16,10 @@
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  border: 1px dashed rgba(251, 191, 36, 0.4);
+  border: 1px dashed color-mix(in srgb, var(--warning) 40%, transparent);
   border-radius: var(--radius-md);
-  background: rgba(251, 191, 36, 0.06);
-  color: rgba(251, 191, 36, 0.8);
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+  color: var(--warning);
   font-size: 11px;
   white-space: nowrap;
   user-select: none;

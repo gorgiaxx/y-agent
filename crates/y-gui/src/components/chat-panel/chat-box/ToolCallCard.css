@@ -154,7 +154,7 @@
 
 .tool-call-url-open:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-hover);
 }
 
 .tool-call-url-detail {
@@ -325,7 +325,7 @@
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-hover);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 8px;
@@ -473,7 +473,7 @@
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-hover);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 8px;
@@ -486,7 +486,7 @@
 }
 
 .tool-call-glob-match:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-active);
   border-color: var(--border-active, rgba(255, 255, 255, 0.15));
 }
 
@@ -495,7 +495,7 @@
   font-size: 10px;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-hover);
   padding: 2px 6px;
   border-radius: var(--radius-sm);
 }
@@ -533,11 +533,11 @@
 }
 
 .tool-call-diff-stat-add {
-  color: #3fb950;
+  color: var(--success);
 }
 
 .tool-call-diff-stat-remove {
-  color: #f85149;
+  color: var(--error);
 }
 
 .tool-call-diff-empty {
@@ -566,7 +566,7 @@
 .tool-call-diff-separator {
   border-top: 1px dashed var(--border);
   border-bottom: 1px dashed var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-hover);
   min-height: 16px;
 }
 
@@ -581,11 +581,11 @@
 }
 
 .tool-call-diff-add .tool-call-diff-marker {
-  color: #3fb950;
+  color: var(--success);
 }
 
 .tool-call-diff-add .tool-call-diff-text {
-  color: #3fb950;
+  color: var(--success);
 }
 
 .tool-call-diff-remove {
@@ -593,11 +593,11 @@
 }
 
 .tool-call-diff-remove .tool-call-diff-marker {
-  color: #f85149;
+  color: var(--error);
 }
 
 .tool-call-diff-remove .tool-call-diff-text {
-  color: #f85149;
+  color: var(--error);
 }
 
 .tool-call-diff-context .tool-call-diff-marker,
@@ -615,4 +615,25 @@
 .tool-call-diff-text {
   flex: 1;
   min-width: 0;
+}
+
+/* ---- Light theme overrides ---- */
+[data-theme="light"] .tool-call-diff-stat-add,
+[data-theme="light"] .tool-call-diff-add .tool-call-diff-marker,
+[data-theme="light"] .tool-call-diff-add .tool-call-diff-text {
+  color: #1a7f37;
+}
+
+[data-theme="light"] .tool-call-diff-stat-remove,
+[data-theme="light"] .tool-call-diff-remove .tool-call-diff-marker,
+[data-theme="light"] .tool-call-diff-remove .tool-call-diff-text {
+  color: #cf222e;
+}
+
+[data-theme="light"] .tool-call-diff-add {
+  background: rgba(63, 185, 80, 0.10);
+}
+
+[data-theme="light"] .tool-call-diff-remove {
+  background: rgba(248, 81, 73, 0.10);
 }

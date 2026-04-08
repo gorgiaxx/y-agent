@@ -116,7 +116,6 @@ function extractContent(el: HTMLDivElement): { text: string; skills: string[] } 
     walk(child);
   }
 
-  console.debug('[InputArea] extractContent:', { text: text.trim(), skills });
   return { text, skills };
 }
 
@@ -414,7 +413,7 @@ export function InputArea({
     }
 
     sendingRef.current = true;
-    console.debug('[InputArea] handleSend:', { trimmed, extractedSkills, selectedKbCollections, thinkingEffort, attachmentCount: attachments.length });
+
     onSend(
       trimmed,
       extractedSkills.length > 0 ? extractedSkills : undefined,
@@ -457,6 +456,8 @@ export function InputArea({
     // Fallback: paste as plain text.
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
+    // NOTE: execCommand is deprecated but is the only API that inserts text
+    // into a contenteditable while preserving the native undo stack.
     document.execCommand('insertText', false, text);
   }, []);
 
@@ -529,8 +530,8 @@ export function InputArea({
   useEffect(() => {
     if (pendingEdit && editableRef.current) {
       editableRef.current.textContent = pendingEdit.content;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      exitCommandMode();
+      // Defer state update to avoid cascading render inside effect.
+      queueMicrotask(exitCommandMode);
       editableRef.current.focus();
       placeCursorAtEnd(editableRef.current);
       updateHasContent();
@@ -541,7 +542,8 @@ export function InputArea({
   useEffect(() => {
     if (rewindDraft && editableRef.current) {
       editableRef.current.textContent = rewindDraft;
-      exitCommandMode();
+      // Defer state update to avoid cascading render inside effect.
+      queueMicrotask(exitCommandMode);
       editableRef.current.focus();
       placeCursorAtEnd(editableRef.current);
       updateHasContent();
@@ -842,18 +844,6 @@ export function InputArea({
           </button>
         </div>
       </div>
-
-
-
-      {/* <div className="input-footer">
-        <div className="input-hint">
-          {commandMode
-            ? 'Up/Down to navigate, Enter to select, Esc to dismiss'
-            : sendOnEnter
-              ? 'Enter to send, Shift+Enter for newline'
-              : 'Shift+Enter to send'}
-        </div>
-      </div> */}
 
       <ConfirmDialog
         open={clearConfirmOpen}

@@ -21,14 +21,14 @@ const LAYER_GAP_X = 200;
 const NODE_GAP_Y = 70;
 const PADDING = 40;
 
-/** Color palette by node type. */
+/** Color palette by node type -- uses CSS custom properties for theme support. */
 const NODE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  task: { bg: '#1e293b', border: '#6366f1', text: '#e2e8f0' },
-  condition: { bg: '#1e293b', border: '#f59e0b', text: '#e2e8f0' },
-  parallel: { bg: '#1e293b', border: '#22c55e', text: '#e2e8f0' },
-  start: { bg: '#1e293b', border: '#06b6d4', text: '#e2e8f0' },
-  end: { bg: '#1e293b', border: '#ef4444', text: '#e2e8f0' },
-  default: { bg: '#1e293b', border: '#6366f1', text: '#e2e8f0' },
+  task: { bg: 'var(--surface-secondary)', border: 'var(--accent)', text: 'var(--text-primary)' },
+  condition: { bg: 'var(--surface-secondary)', border: 'var(--warning)', text: 'var(--text-primary)' },
+  parallel: { bg: 'var(--surface-secondary)', border: 'var(--success)', text: 'var(--text-primary)' },
+  start: { bg: 'var(--surface-secondary)', border: 'var(--info)', text: 'var(--text-primary)' },
+  end: { bg: 'var(--surface-secondary)', border: 'var(--error)', text: 'var(--text-primary)' },
+  default: { bg: 'var(--surface-secondary)', border: 'var(--accent)', text: 'var(--text-primary)' },
 };
 
 /** Assign layers to nodes based on topological order and edge dependencies. */
@@ -149,7 +149,7 @@ export function DagGraph({ dag, width, height }: DagGraphProps) {
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#64748b" />
+          <path d="M 0 0 L 10 3.5 L 0 7 z" fill="var(--text-muted)" />
         </marker>
         {/* Glow filter */}
         <filter id="dag-glow" x="-20%" y="-20%" width="140%" height="140%">
@@ -177,7 +177,7 @@ export function DagGraph({ dag, width, height }: DagGraphProps) {
             <path
               d={edgePath(sx, sy, tx, ty)}
               fill="none"
-              stroke="#475569"
+              stroke="var(--border)"
               strokeWidth={2}
               markerEnd="url(#dag-arrow)"
               className="dag-edge"
@@ -187,7 +187,7 @@ export function DagGraph({ dag, width, height }: DagGraphProps) {
                 x={(sx + tx) / 2}
                 y={(sy + ty) / 2 - 8}
                 textAnchor="middle"
-                fill="#94a3b8"
+                fill="var(--text-secondary)"
                 fontSize={11}
                 className="dag-edge-label"
               >

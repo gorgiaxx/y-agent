@@ -30,6 +30,6 @@
 .restore-divider-label:focus-visible {
   color: var(--accent);
   border-color: var(--accent);
-  background: rgba(200, 181, 96, 0.06);
+  background: var(--accent-subtle);
   outline: none;
 }

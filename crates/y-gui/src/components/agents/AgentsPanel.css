@@ -111,28 +111,28 @@
 }
 
 .agent-card-badge--build {
-  background: rgba(76, 175, 80, 0.15);
-  color: #4caf50;
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
 }
 
 .agent-card-badge--plan {
-  background: rgba(255, 152, 0, 0.15);
-  color: #ff9800;
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
 }
 
 .agent-card-badge--explore {
-  background: rgba(3, 169, 244, 0.15);
-  color: #03a9f4;
+  background: color-mix(in srgb, var(--info) 15%, transparent);
+  color: var(--info);
 }
 
 .agent-card-badge--general {
-  background: rgba(156, 39, 176, 0.15);
-  color: #9c27b0;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 
 .agent-card-badge--overridden {
-  background: rgba(255, 193, 7, 0.15);
-  color: #ffc107;
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
   margin-left: 4px;
 }
 
@@ -285,13 +285,13 @@
 }
 
 .agent-detail-tag--tool {
-  background: rgba(76, 175, 80, 0.12);
-  color: #4caf50;
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
 }
 
 .agent-detail-tag--denied {
-  background: rgba(244, 67, 54, 0.12);
-  color: #f44336;
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
 }
 
 .agent-detail-prompt {
@@ -347,7 +347,7 @@
 .agent-detail-btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 
 .agent-detail-btn--primary:hover {
@@ -355,13 +355,13 @@
 }
 
 .agent-detail-btn--warning {
-  color: #ffc107;
-  border-color: rgba(255, 193, 7, 0.3);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
 }
 
 .agent-detail-btn--warning:hover {
-  background: rgba(255, 193, 7, 0.1);
-  color: #ffd54f;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
 }
 
 /* ----- Edit textarea ----- */

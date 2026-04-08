@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { ChevronRight } from 'lucide-react';
+import { formatDuration } from '../../../utils/formatDuration';
 import './ThinkingCard.css';
 
 interface ThinkingCardProps {
@@ -22,18 +23,13 @@ interface ThinkingCardProps {
   durationMs?: number;
 }
 
-/** Format ms as human-readable duration. */
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const s = ms / 1000;
-  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
-}
+
 
 export function ThinkingCard({ content, isStreaming = false, durationMs }: ThinkingCardProps) {
   // Default collapsed -- user can expand manually.
   const [expanded, setExpanded] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const startRef = useRef<number>(Date.now());
+  const startRef = useRef<number>(0);
 
   // Live elapsed timer during streaming.
   useEffect(() => {
