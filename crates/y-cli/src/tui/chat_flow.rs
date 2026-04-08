@@ -8,7 +8,7 @@ use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::types::{Message, Role, SessionId};
 
 use crate::orchestrator::{self, TurnInput};
-use crate::tui::state::{AppState, ChatMessage, MessageRole, SessionListItem};
+use crate::tui::state::{AppState, ChatMessage, MessageRole, SessionListItem, ToolCallInfo};
 use crate::wire::AppServices;
 
 /// Events sent from the async LLM task back to the TUI event loop.
@@ -327,12 +327,14 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             success,
             duration_ms,
         } => {
-            // Append tool call info to the streaming assistant message content.
+            // Store structured tool call info for card rendering.
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
-                    let status = if success { "✓" } else { "✗" };
-                    let info = format!("[tool: {name}] {status} ({duration_ms}ms)\n");
-                    last.content.push_str(&info);
+                    last.tool_calls.push(ToolCallInfo {
+                        name,
+                        success,
+                        duration_ms,
+                    });
                 }
             }
         }
@@ -541,7 +543,7 @@ mod tests {
         assert_eq!(state.sessions[0].title, "Original");
     }
 
-    // T-TUI-TOOL-01: ToolCallExecuted events append to streaming message.
+    // T-TUI-TOOL-01: ToolCallExecuted events stored as structured data.
     #[test]
     fn test_apply_tool_call_executed() {
         let mut state = AppState::default();
@@ -567,8 +569,116 @@ mod tests {
         );
 
         let last = state.messages.last().unwrap();
-        assert!(last.content.contains("WebSearch"));
-        assert!(last.content.contains("✓"));
-        assert!(last.content.contains("120ms"));
+        assert_eq!(last.tool_calls.len(), 1);
+        assert_eq!(last.tool_calls[0].name, "WebSearch");
+        assert!(last.tool_calls[0].success);
+        assert_eq!(last.tool_calls[0].duration_ms, 120);
+    }
+
+    // T-TUI-TOOL-02: Multiple tool calls accumulate.
+    #[test]
+    fn test_apply_multiple_tool_calls() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+        });
+
+        apply_chat_event(
+            ChatEvent::ToolCallExecuted {
+                name: "WebSearch".into(),
+                success: true,
+                duration_ms: 120,
+            },
+            &mut state,
+        );
+        apply_chat_event(
+            ChatEvent::ToolCallExecuted {
+                name: "ShellExec".into(),
+                success: false,
+                duration_ms: 50,
+            },
+            &mut state,
+        );
+
+        let last = state.messages.last().unwrap();
+        assert_eq!(last.tool_calls.len(), 2);
+        assert_eq!(last.tool_calls[0].name, "WebSearch");
+        assert_eq!(last.tool_calls[1].name, "ShellExec");
+        assert!(!last.tool_calls[1].success);
+    }
+
+    // T-TUI-REASON-01: StreamReasoningDelta accumulates reasoning content.
+    #[test]
+    fn test_apply_stream_reasoning_delta() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+        });
+
+        apply_chat_event(
+            ChatEvent::StreamReasoningDelta {
+                content: "Let me think".into(),
+            },
+            &mut state,
+        );
+        apply_chat_event(
+            ChatEvent::StreamReasoningDelta {
+                content: " about this...".into(),
+            },
+            &mut state,
+        );
+
+        let last = state.messages.last().unwrap();
+        assert_eq!(last.reasoning_content, "Let me think about this...");
+        assert!(!last.reasoning_complete);
+    }
+
+    // T-TUI-REASON-02: reasoning_complete set on Response.
+    #[test]
+    fn test_reasoning_complete_on_response() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: "some reasoning".into(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+        });
+
+        apply_chat_event(
+            ChatEvent::Response {
+                content: "Answer".into(),
+                model: "test".into(),
+                input_tokens: 10,
+                output_tokens: 5,
+                last_input_tokens: 10,
+                context_window: 128_000,
+            },
+            &mut state,
+        );
+
+        let last = state.messages.last().unwrap();
+        assert!(last.reasoning_complete);
+        assert_eq!(last.reasoning_content, "some reasoning");
     }
 }
