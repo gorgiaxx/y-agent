@@ -71,6 +71,11 @@ pub async fn rollback_scope(
                         // Safe to restore.
                         if let Some(ref content) = entry.original_content {
                             if entry.storage_strategy == StorageStrategy::Inline {
+                                // Ensure parent directory exists (may have been
+                                // removed when the file was missing).
+                                if let Some(parent) = std::path::Path::new(&entry.path).parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
                                 std::fs::write(&entry.path, content).map_err(|e| {
                                     JournalError::StorageError {
                                         message: format!("failed to restore {}: {e}", entry.path),
