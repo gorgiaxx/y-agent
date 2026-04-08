@@ -84,6 +84,47 @@
   color: var(--error, #ef4444);
 }
 
+/* ---- Raw/Formatted toggle ---- */
+
+.tool-call-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xs);
+}
+
+.tool-call-label-row .tool-call-label {
+  margin-bottom: 0;
+}
+
+.tool-call-raw-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  user-select: none;
+  line-height: 1.6;
+}
+
+.tool-call-raw-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border-active, rgba(255, 255, 255, 0.15));
+  background: var(--surface-hover);
+}
+
+.tool-call-raw-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* ---- URL tag rendering for Browser/WebFetch tool calls ---- */
 
 .tool-call-url-wrapper {
@@ -160,9 +201,8 @@
 .tool-call-url-detail {
   margin-top: var(--space-xs);
   padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-code);
+  background: color-mix(in srgb, var(--surface-secondary) 60%, transparent);
+  border-radius: var(--radius-md);
 }
 
 /* ---- ShellExec inline tag rendering ---- */
@@ -222,9 +262,8 @@
 .tool-call-shell-detail {
   margin-top: var(--space-xs);
   padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-code);
+  background: color-mix(in srgb, var(--surface-secondary) 60%, transparent);
+  border-radius: var(--radius-md);
 }
 
 /* ---- ToolSearch inline tag rendering ---- */
@@ -293,9 +332,8 @@
 .tool-call-search-detail {
   margin-top: var(--space-xs);
   padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-code);
+  background: color-mix(in srgb, var(--surface-secondary) 60%, transparent);
+  border-radius: var(--radius-md);
 }
 
 .tool-call-search-group {
@@ -404,9 +442,9 @@
 
 .tool-call-file-detail {
   margin-top: var(--space-xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-code);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--surface-secondary) 60%, transparent);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -422,9 +460,8 @@
 
 .tool-call-glob-detail {
   margin-top: var(--space-xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-code);
+  background: color-mix(in srgb, var(--surface-secondary) 60%, transparent);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 

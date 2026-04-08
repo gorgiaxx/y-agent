@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Wrench, CheckCircle, XCircle, Loader, Globe, ExternalLink, SquareTerminal, ChevronRight, FilePenLine, FilePlus2, FileSearch, FolderSearch, Search } from 'lucide-react';
+import { Wrench, CheckCircle, XCircle, Loader, Globe, ExternalLink, SquareTerminal, ChevronRight, FilePenLine, FilePlus2, FileSearch, FolderSearch, Search, Code, FileText } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { ToolCallBrief } from '../../../types';
 import { CollapsibleCard } from './CollapsibleCard';
@@ -20,6 +20,7 @@ import {
   computeLineDiff,
   formatArguments,
   formatResult,
+  formatResultFormatted,
 } from './toolCallUtils';
 import type { FileToolType } from './toolCallUtils';
 import './ToolCallCard.css';
@@ -128,11 +129,15 @@ function DetailSections({
   displayResult,
   argsLabel = 'Arguments',
   resultLabel = 'Result',
+  showRaw,
+  onToggleRaw,
 }: {
   displayArgs?: string;
   displayResult?: { parts: Array<{ text: string; isStderr: boolean }> } | null;
   argsLabel?: string;
   resultLabel?: string;
+  showRaw?: boolean;
+  onToggleRaw?: () => void;
 }) {
   return (
     <>
@@ -144,7 +149,19 @@ function DetailSections({
       )}
       {displayResult && (
         <div className="tool-call-section">
-          <div className="tool-call-label">{resultLabel}</div>
+          <div className="tool-call-label-row">
+            <div className="tool-call-label">{resultLabel}</div>
+            {onToggleRaw && (
+              <button
+                className={`tool-call-raw-toggle ${showRaw ? 'active' : ''}`}
+                onClick={(e) => { e.stopPropagation(); onToggleRaw(); }}
+                title={showRaw ? 'Show formatted' : 'Show raw JSON'}
+              >
+                {showRaw ? <FileText size={11} /> : <Code size={11} />}
+                <span>{showRaw ? 'Formatted' : 'Raw'}</span>
+              </button>
+            )}
+          </div>
           <pre className="tool-call-code">
             {displayResult.parts.map((part, i) => (
               <span key={i} className={part.isStderr ? 'tool-result-stderr' : ''}>
@@ -167,6 +184,7 @@ const ACCENT_COLOR = 'var(--accent)';
 
 export function ToolCallCard({ toolCall, status = 'success', result, durationMs, urlMeta: urlMetaProp }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
 
   // Prefer the dedicated urlMeta prop (survives truncation) over parsing result.
   const urlMeta = useMemo(() => {
@@ -207,6 +225,14 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
     () => (result ? formatResult(toolCall.name, result) : null),
     [toolCall.name, result],
   );
+
+  const displayResultFormatted = useMemo(
+    () => (result ? formatResultFormatted(toolCall.name, result, toolCall.arguments) : null),
+    [toolCall.name, result, toolCall.arguments],
+  );
+
+  // Use formatted result by default, raw when toggled
+  const activeResult = showRaw ? displayResult : (displayResultFormatted ?? displayResult);
 
   const hasExpandable = displayArgs || displayResult;
 
@@ -269,7 +295,7 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
         </div>
         {expanded && hasExpandable && (
           <div className="tool-call-url-detail">
-            <DetailSections displayArgs={displayArgs} displayResult={displayResult} />
+            <DetailSections displayArgs={displayArgs} displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />
           </div>
         )}
       </div>
@@ -297,7 +323,7 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
         </div>
         {expanded && hasExpandable && (
           <div className="tool-call-shell-detail">
-            <DetailSections displayArgs={displayArgs} displayResult={displayResult} argsLabel="Command" resultLabel="Output" />
+            <DetailSections displayArgs={displayArgs} displayResult={activeResult} argsLabel="Command" resultLabel="Output" showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />
           </div>
         )}
       </div>
@@ -342,7 +368,7 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
                 </div>
               ))
             ) : (
-              <DetailSections displayResult={displayResult} />
+              <DetailSections displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />
             )}
           </div>
         )}
@@ -399,7 +425,7 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
                 </div>
               </>
             ) : (
-              <DetailSections displayResult={displayResult} />
+              <DetailSections displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />
             )}
           </div>
         )}
@@ -485,7 +511,7 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
                 )}
               </>
             ) : (
-              <DetailSections displayResult={displayResult} />
+              <DetailSections displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />
             )}
           </div>
         )}
@@ -493,9 +519,11 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
     );
   }
 
-  // ---- FileEdit / FileWrite inline tag rendering ----
-  if (fileMeta) {
-    const fileName = basename(fileMeta.filePath);
+  // ---- FileEdit / FileWrite / FileRead inline tag rendering ----
+  // Also handle cases where fileMeta extraction fails (e.g. malformed args)
+  // but the tool name is still a file tool -- render as file-tag with fallback.
+  const isFileTool = toolCall.name === 'FileEdit' || toolCall.name === 'FileWrite' || toolCall.name === 'FileRead';
+  if (fileMeta || isFileTool) {
     const FILE_ICONS: Record<FileToolType, typeof FilePenLine> = {
       read: FileSearch,
       edit: FilePenLine,
@@ -506,19 +534,24 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
       edit: 'Update',
       write: 'Create',
     };
-    const FileIcon = FILE_ICONS[fileMeta.toolType];
-    const fileLabel = FILE_LABELS[fileMeta.toolType];
-    const hasDiff = fileMeta.toolType === 'edit' && fileMeta.oldString !== undefined && fileMeta.newString !== undefined;
+    const fallbackType: FileToolType = toolCall.name === 'FileEdit' ? 'edit'
+      : toolCall.name === 'FileRead' ? 'read' : 'write';
+    const toolType = fileMeta?.toolType ?? fallbackType;
+    const fileName = fileMeta ? basename(fileMeta.filePath) : toolCall.name;
+    const FileIcon = FILE_ICONS[toolType];
+    const fileLabel = FILE_LABELS[toolType];
+    const hasDiff = fileMeta?.toolType === 'edit' && fileMeta.oldString !== undefined && fileMeta.newString !== undefined;
     // When failed, show error result instead of diff
     const showDiff = hasDiff && status !== 'error';
-    const canExpand = showDiff || hasExpandable;
+    // On error, always allow expansion so the error detail is visible
+    const canExpand = showDiff || hasExpandable || status === 'error';
 
     return (
       <div className={`tool-call-file-wrapper ${statusClass}`}>
         <div
           className="tool-call-file-tag"
           onClick={() => canExpand && setExpanded(!expanded)}
-          title={fileMeta.filePath}
+          title={fileMeta?.filePath ?? toolCall.name}
         >
           <span className="tool-call-file-action-group">
             <FileIcon size={14} className="tool-call-file-icon" />
@@ -537,8 +570,8 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
         </div>
         {expanded && (
           <div className="tool-call-file-detail">
-            {showDiff && <FileDiffView oldString={fileMeta.oldString!} newString={fileMeta.newString!} />}
-            {!showDiff && <DetailSections displayResult={displayResult} />}
+            {showDiff && <FileDiffView oldString={fileMeta!.oldString!} newString={fileMeta!.newString!} />}
+            {!showDiff && <DetailSections displayArgs={displayArgs} displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />}
           </div>
         )}
       </div>
@@ -566,7 +599,7 @@ export function ToolCallCard({ toolCall, status = 'success', result, durationMs,
       headerRight={headerRight}
       className="tool-call-card"
     >
-      <DetailSections displayArgs={displayArgs} displayResult={displayResult} />
+      <DetailSections displayArgs={displayArgs} displayResult={activeResult} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} />
     </CollapsibleCard>
   );
 }

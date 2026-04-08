@@ -339,8 +339,10 @@ pub(crate) async fn execute_and_record_tool(
     // Emit ToolResult progress event.
     // Use the full (unstripped) result for url_meta extraction and GUI
     // preview, but the stripped version is what the LLM sees.
+    // Limit must be large enough to keep structured JSON (e.g. Grep results)
+    // intact -- matches the persisted metadata limit in build_tool_results_metadata.
     if let Some(tx) = progress {
-        let preview_len = result_content.floor_char_boundary(500);
+        let preview_len = result_content.floor_char_boundary(8000);
         let _ = tx.send(TurnEvent::ToolResult {
             name: tc.name.clone(),
             success: tool_success,

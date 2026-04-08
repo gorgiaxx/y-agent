@@ -446,7 +446,7 @@ export function formatArguments(name: string, raw: string): string {
   return JSON.stringify(obj, null, 2);
 }
 
-/** Format result for display based on tool name. */
+/** Format result for display based on tool name (raw mode -- shows all fields). */
 export function formatResult(name: string, raw: string): FormattedResult | null {
   if (!raw) return null;
   const obj = tryParseJson(raw);
@@ -471,4 +471,58 @@ export function formatResult(name: string, raw: string): FormattedResult | null 
 
   // Default: show raw result
   return { parts: [{ text: raw, isStderr: false }] };
+}
+
+/**
+ * Format result for formatted (non-raw) display.
+ * Extracts the most meaningful field per tool type:
+ * - ShellExec: stdout only
+ * - FileRead: content field only
+ * - FileWrite: content field from arguments (result has bytes_written)
+ * - FileEdit: content field only
+ * - Others: delegates to formatResult
+ */
+export function formatResultFormatted(
+  name: string,
+  raw: string,
+  argsRaw?: string,
+): FormattedResult | null {
+  if (!raw) return null;
+  const obj = tryParseJson(raw);
+
+  // ShellExec: show only stdout
+  if (obj && name === 'ShellExec') {
+    const stdout = typeof obj.stdout === 'string' ? obj.stdout : '';
+    if (stdout) return { parts: [{ text: stdout, isStderr: false }] };
+    // If stdout empty but stderr present, show nothing in formatted mode
+    // (stderr is noise in formatted view)
+    return null;
+  }
+
+  // FileRead: show only the content field
+  if (obj && name === 'FileRead') {
+    const content = typeof obj.content === 'string' ? obj.content : '';
+    if (content) return { parts: [{ text: content, isStderr: false }] };
+    return null;
+  }
+
+  // FileWrite: show the content from arguments (result only has bytes_written)
+  if (name === 'FileWrite' && argsRaw) {
+    const argsObj = tryParseJson(argsRaw);
+    if (argsObj) {
+      const content = typeof argsObj.content === 'string' ? argsObj.content : '';
+      if (content) return { parts: [{ text: content, isStderr: false }] };
+    }
+    return null;
+  }
+
+  // FileEdit: show the content field if present in result
+  if (obj && name === 'FileEdit') {
+    const content = typeof obj.content === 'string' ? obj.content : '';
+    if (content) return { parts: [{ text: content, isStderr: false }] };
+    // Fall through to default
+  }
+
+  // Others: use default formatting
+  return formatResult(name, raw);
 }
