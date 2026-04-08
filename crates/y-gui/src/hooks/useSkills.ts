@@ -22,9 +22,13 @@ export function useSkills() {
     }
   }, []);
 
+  // Initial load on mount.
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Expose refresh for external callers (e.g., view activation).
+  // This is the same stable reference returned in the hook result.
 
   const getSkillDetail = useCallback(async (name: string): Promise<SkillDetail | null> => {
     try {

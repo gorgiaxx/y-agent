@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 import { Sidebar } from '../components/Sidebar';
 import { DiagnosticsPanel } from '../components/observation/DiagnosticsPanel';
@@ -46,7 +46,15 @@ export function MainLayout() {
     timeRange: obsTimeRange,
   });
 
-
+  // Re-fetch skills whenever the skills view becomes active so newly
+  // imported skills appear immediately (the import runs asynchronously
+  // and the user may switch views during the long agent execution).
+  useEffect(() => {
+    if (navProps.activeView === 'skills') {
+      skillHooks.refresh();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navProps.activeView]);
 
   return (
     <div className="app">
