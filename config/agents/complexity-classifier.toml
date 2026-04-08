@@ -15,9 +15,9 @@ a single-file fix, formatting, direct question, or simple tweak. \
 Respond with ONLY "plan" or "fast", nothing else.
 """
 skills = []
-preferred_models = []
-fallback_models = []
-provider_tags = []
+preferred_models = ["gpt-4o", "claude-3-5-sonnet"]
+fallback_models = ["gpt-4o-mini"]
+provider_tags = ["general", "coding"]
 temperature = 0.0
 max_iterations = 1
 max_tool_calls = 0
