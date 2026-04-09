@@ -1,0 +1,78 @@
+:root {
+  /* Warm rust/orange brand colors */
+  --vp-c-brand-1: #e8590c;
+  --vp-c-brand-2: #d9480f;
+  --vp-c-brand-3: #c92a2a;
+  --vp-c-brand-soft: rgba(232, 89, 12, 0.14);
+}
+
+.dark {
+  --vp-c-brand-1: #ff6b2b;
+  --vp-c-brand-2: #e8590c;
+  --vp-c-brand-3: #d9480f;
+  --vp-c-brand-soft: rgba(255, 107, 43, 0.16);
+}
+
+/* Hero name gradient */
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(
+    120deg,
+    #e8590c 30%,
+    #ff922b
+  );
+
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    rgba(232, 89, 12, 0.3) 50%,
+    rgba(255, 146, 43, 0.3) 50%
+  );
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+.dark {
+  --vp-home-hero-name-background: -webkit-linear-gradient(
+    120deg,
+    #ff6b2b 30%,
+    #ffa94d
+  );
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    rgba(217, 72, 15, 0.25) 50%,
+    rgba(255, 107, 43, 0.25) 50%
+  );
+}
+
+/* Hero image styling */
+.VPHero .VPImage {
+  filter: drop-shadow(-2px 4px 6px rgba(0, 0, 0, 0.2));
+  padding: 18px;
+}
+
+:root .VPImage.image-src {
+  max-width: 240px;
+  max-height: 240px;
+}
+
+/* Feature card hover effect */
+.VPFeature {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.VPFeature:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+.dark .VPFeature:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+}
+
+/* Button styling */
+.VPButton.brand {
+  border-color: var(--vp-c-brand-1);
+  color: #fff;
+  background-color: var(--vp-c-brand-1);
+}
+.VPButton.brand:hover {
+  border-color: var(--vp-c-brand-2);
+  background-color: var(--vp-c-brand-2);
+}
