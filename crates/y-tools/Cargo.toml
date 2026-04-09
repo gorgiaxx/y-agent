@@ -19,7 +19,7 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 y-browser = { workspace = true }
 y-knowledge = { workspace = true }
-y-mcp = { version = "0.1.0", path = "../y-mcp" }
+y-mcp = { workspace = true }
 toml.workspace = true
 chardetng = { workspace = true }
 encoding_rs = { workspace = true }

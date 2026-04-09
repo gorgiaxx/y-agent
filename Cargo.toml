@@ -117,6 +117,7 @@ y-session = { path = "crates/y-session" }
 y-context = { path = "crates/y-context" }
 y-hooks = { path = "crates/y-hooks" }
 y-tools = { path = "crates/y-tools" }
+y-mcp = { path = "crates/y-mcp" }
 y-storage = { path = "crates/y-storage" }
 y-runtime = { path = "crates/y-runtime" }
 y-knowledge = { path = "crates/y-knowledge" }
