@@ -168,9 +168,10 @@ pub(crate) async fn call_llm(
     route: &RouteRequest,
     progress: Option<&TurnEventSender>,
     cancel: Option<&CancellationToken>,
+    agent_name: &str,
 ) -> Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError> {
     if progress.is_some() {
-        call_llm_streaming(pool, request, route, progress, cancel).await
+        call_llm_streaming(pool, request, route, progress, cancel, agent_name).await
     } else {
         let llm_future = pool.chat_completion(request, route);
         let response = if let Some(tok) = cancel {
@@ -199,6 +200,7 @@ async fn call_llm_streaming(
     route: &RouteRequest,
     progress: Option<&TurnEventSender>,
     cancel: Option<&CancellationToken>,
+    agent_name: &str,
 ) -> Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError> {
     use y_core::provider::{ChatResponse, FinishReason, ProviderError};
     use y_core::types::TokenUsage;
@@ -258,6 +260,7 @@ async fn call_llm_streaming(
                         if let Some(tx) = progress {
                             let _ = tx.send(TurnEvent::StreamDelta {
                                 content: delta.clone(),
+                                agent_name: agent_name.to_string(),
                             });
                         }
                     }
@@ -274,6 +277,7 @@ async fn call_llm_streaming(
                         if let Some(tx) = progress {
                             let _ = tx.send(TurnEvent::StreamReasoningDelta {
                                 content: reasoning.clone(),
+                                agent_name: agent_name.to_string(),
                             });
                         }
                     }

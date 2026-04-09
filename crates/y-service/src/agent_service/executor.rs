@@ -246,6 +246,7 @@ pub(crate) async fn execute_inner(
             &route,
             progress.as_ref(),
             cancel.as_ref(),
+            &config.agent_name,
         )
         .await;
 

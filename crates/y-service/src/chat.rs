@@ -50,6 +50,11 @@ pub struct ToolCallRecord {
     /// `favicon_url`). Extracted from the full result before stripping so
     /// base64 favicons survive for GUI rendering.
     pub url_meta: Option<String>,
+    /// Optional structured metadata for presentation layers.
+    ///
+    /// Tools can attach render hints or other non-LLM metadata here without
+    /// forcing frontends to infer meaning from `result_content`.
+    pub metadata: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +114,9 @@ pub enum TurnEvent {
         /// title, `favicon_url`). Extracted from the full result before
         /// truncation so base64 favicons survive. `None` for non-URL tools.
         url_meta: Option<String>,
+        /// Optional structured metadata for presentation layers.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
     },
     /// Emitted when the tool-call loop limit is hit.
     LoopLimitHit {
@@ -125,6 +133,8 @@ pub enum TurnEvent {
     StreamDelta {
         /// Incremental text content from the LLM.
         content: String,
+        /// Name of the agent that produced this delta.
+        agent_name: String,
     },
     /// Incremental reasoning/thinking delta from a thinking-mode LLM.
     ///
@@ -134,6 +144,8 @@ pub enum TurnEvent {
     StreamReasoningDelta {
         /// Incremental reasoning text from the LLM.
         content: String,
+        /// Name of the agent that produced this delta.
+        agent_name: String,
     },
     /// Emitted when an LLM call fails (API error, network error, etc.).
     ///
@@ -1157,6 +1169,9 @@ impl ChatService {
                     if let Ok(meta_val) = serde_json::from_str::<serde_json::Value>(meta_str) {
                         entry["url_meta"] = meta_val;
                     }
+                }
+                if let Some(ref meta) = tc.metadata {
+                    entry["metadata"] = meta.clone();
                 }
                 entry
             })

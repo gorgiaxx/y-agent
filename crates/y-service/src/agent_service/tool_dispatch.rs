@@ -92,6 +92,7 @@ pub(crate) async fn execute_and_record_tool(
                 duration_ms: 0,
                 result_content: error_content.clone(),
                 url_meta: None,
+                metadata: None,
             });
 
             if let Some(tx) = progress {
@@ -103,6 +104,7 @@ pub(crate) async fn execute_and_record_tool(
                     result_preview: error_content.clone(),
                     agent_name: config.agent_name.clone(),
                     url_meta: None,
+                    metadata: None,
                 });
             }
 
@@ -197,6 +199,7 @@ pub(crate) async fn execute_and_record_tool(
                         duration_ms: 0,
                         result_content: error_content.clone(),
                         url_meta: None,
+                        metadata: None,
                     });
 
                     if let Some(tx) = progress {
@@ -208,6 +211,7 @@ pub(crate) async fn execute_and_record_tool(
                             result_preview: error_content.clone(),
                             agent_name: config.agent_name.clone(),
                             url_meta: None,
+                            metadata: None,
                         });
                     }
 
@@ -256,7 +260,7 @@ pub(crate) async fn execute_and_record_tool(
     // ---------------------------------------------------------------
     // Actual tool execution
     // ---------------------------------------------------------------
-    let (tool_success, full_result, result_content) = match execute_tool_call(
+    let (tool_success, full_result, result_content, tool_metadata) = match execute_tool_call(
         container,
         tc,
         &ctx.session_id,
@@ -271,11 +275,12 @@ pub(crate) async fn execute_and_record_tool(
             // action, search_engine, navigation) before sending to the
             // LLM. Only keep text + url/title for context.
             let stripped = strip_url_tool_result(&tc.name, &output.content);
-            (true, full, stripped)
+            let metadata = (!output.metadata.is_null()).then_some(output.metadata);
+            (true, full, stripped, metadata)
         }
         Err(e) => {
             let msg = format!("{e}");
-            (false, msg.clone(), msg)
+            (false, msg.clone(), msg, None)
         }
     };
 
@@ -291,6 +296,7 @@ pub(crate) async fn execute_and_record_tool(
         duration_ms: tool_elapsed_ms,
         result_content: result_content.clone(),
         url_meta: url_meta.clone(),
+        metadata: tool_metadata.clone(),
     });
 
     // Emit ToolResult progress event.
@@ -307,6 +313,7 @@ pub(crate) async fn execute_and_record_tool(
             result_preview: result_content.clone(),
             agent_name: config.agent_name.clone(),
             url_meta,
+            metadata: tool_metadata,
         });
     }
 
@@ -378,6 +385,7 @@ async fn intercept_ask_user(
             result_preview: answer_content.clone(),
             agent_name: config.agent_name.clone(),
             url_meta: None,
+            metadata: None,
         });
     }
 

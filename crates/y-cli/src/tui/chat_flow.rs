@@ -208,10 +208,10 @@ pub fn submit_message(
         let progress_forwarder = tokio::spawn(async move {
             while let Some(event) = progress_rx.recv().await {
                 match event {
-                    y_service::TurnEvent::StreamDelta { content } => {
+                    y_service::TurnEvent::StreamDelta { content, .. } => {
                         let _ = tx_stream.send(ChatEvent::StreamDelta { content }).await;
                     }
-                    y_service::TurnEvent::StreamReasoningDelta { content } => {
+                    y_service::TurnEvent::StreamReasoningDelta { content, .. } => {
                         let _ = tx_stream
                             .send(ChatEvent::StreamReasoningDelta { content })
                             .await;
