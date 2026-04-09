@@ -54,8 +54,29 @@ pub enum SessionType {
     Branch,
     /// Temporary session that is not persisted long-term.
     Ephemeral,
+    /// Sub-agent session created during plan-mode or autonomous delegation.
+    ///
+    /// Similar to `Child` but signals that the session was created by the
+    /// orchestration layer for a specific sub-agent execution (e.g.,
+    /// `plan-writer`, `task-decomposer`, or a phase executor). GUI uses
+    /// this to render expandable sub-conversation cards.
+    SubAgent,
     /// Cross-channel canonical session.
     Canonical,
+}
+
+impl SessionType {
+    /// Whether this session type should be surfaced as a user-facing chat session.
+    #[must_use]
+    pub fn is_user_facing(&self) -> bool {
+        matches!(self, Self::Main | Self::Branch)
+    }
+
+    /// Whether this session type represents an internal orchestration/session-tree node.
+    #[must_use]
+    pub fn is_internal(&self) -> bool {
+        !self.is_user_facing()
+    }
 }
 
 /// Session lifecycle state.
@@ -247,6 +268,33 @@ pub trait DisplayTranscriptStore: Send + Sync {
         session_id: &SessionId,
         keep_count: usize,
     ) -> Result<usize, SessionError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SessionType;
+
+    #[test]
+    fn test_session_type_user_facing_boundary() {
+        assert!(SessionType::Main.is_user_facing());
+        assert!(SessionType::Branch.is_user_facing());
+
+        assert!(!SessionType::Child.is_user_facing());
+        assert!(!SessionType::Ephemeral.is_user_facing());
+        assert!(!SessionType::SubAgent.is_user_facing());
+        assert!(!SessionType::Canonical.is_user_facing());
+    }
+
+    #[test]
+    fn test_session_type_internal_boundary() {
+        assert!(!SessionType::Main.is_internal());
+        assert!(!SessionType::Branch.is_internal());
+
+        assert!(SessionType::Child.is_internal());
+        assert!(SessionType::Ephemeral.is_internal());
+        assert!(SessionType::SubAgent.is_internal());
+        assert!(SessionType::Canonical.is_internal());
+    }
 }
 
 // ---------------------------------------------------------------------------

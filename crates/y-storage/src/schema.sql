@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS session_metadata (
     depth           INTEGER NOT NULL DEFAULT 0,
     path            TEXT NOT NULL,
     session_type    TEXT NOT NULL CHECK (session_type IN (
-                        'main', 'child', 'branch', 'ephemeral', 'canonical'
+                        'main', 'child', 'branch', 'ephemeral', 'sub_agent', 'canonical'
                     )),
     state           TEXT NOT NULL DEFAULT 'active' CHECK (state IN (
                         'active', 'paused', 'archived', 'merged', 'tombstone'

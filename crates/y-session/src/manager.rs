@@ -256,6 +256,26 @@ impl SessionManager {
         Ok(self.session_store.ancestors(session_id).await?)
     }
 
+    /// Collect this session and all of its descendants within the same session tree.
+    pub async fn descendants_including_self(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<SessionNode>, SessionManagerError> {
+        let current = self.session_store.get(session_id).await?;
+        let all_in_tree = self
+            .session_store
+            .list(&SessionFilter {
+                root_id: Some(current.root_id.clone()),
+                ..Default::default()
+            })
+            .await?;
+
+        Ok(all_in_tree
+            .into_iter()
+            .filter(|node| node.id == current.id || node.path.contains(&current.id))
+            .collect())
+    }
+
     /// Update only the session title.
     #[instrument(skip(self), fields(session_id = %id))]
     pub async fn update_title(
@@ -901,5 +921,59 @@ mod tests {
 
         let result = mgr.fork_session(&session.id, 0, None).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_descendants_including_self_returns_only_subtree() {
+        let mgr = setup().await;
+        let root = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("root".into()),
+            })
+            .await
+            .unwrap();
+
+        let target = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: Some(root.id.clone()),
+                session_type: SessionType::SubAgent,
+                agent_id: None,
+                title: Some("target".into()),
+            })
+            .await
+            .unwrap();
+
+        let descendant = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: Some(target.id.clone()),
+                session_type: SessionType::SubAgent,
+                agent_id: None,
+                title: Some("descendant".into()),
+            })
+            .await
+            .unwrap();
+
+        let sibling = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: Some(root.id.clone()),
+                session_type: SessionType::SubAgent,
+                agent_id: None,
+                title: Some("sibling".into()),
+            })
+            .await
+            .unwrap();
+
+        let collected = mgr.descendants_including_self(&target.id).await.unwrap();
+        let collected_ids: Vec<_> = collected.into_iter().map(|node| node.id).collect();
+
+        assert_eq!(
+            collected_ids,
+            vec![target.id.clone(), descendant.id.clone()]
+        );
+        assert!(!collected_ids.contains(&root.id));
+        assert!(!collected_ids.contains(&sibling.id));
     }
 }

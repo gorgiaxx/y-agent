@@ -472,6 +472,7 @@ fn session_type_to_str(t: &SessionType) -> &'static str {
         SessionType::Child => "child",
         SessionType::Branch => "branch",
         SessionType::Ephemeral => "ephemeral",
+        SessionType::SubAgent => "sub_agent",
         SessionType::Canonical => "canonical",
     }
 }
@@ -482,6 +483,7 @@ fn str_to_session_type(s: &str) -> Result<SessionType, SessionError> {
         "child" => Ok(SessionType::Child),
         "branch" => Ok(SessionType::Branch),
         "ephemeral" => Ok(SessionType::Ephemeral),
+        "sub_agent" => Ok(SessionType::SubAgent),
         "canonical" => Ok(SessionType::Canonical),
         other => Err(SessionError::Other {
             message: format!("unknown session_type: {other}"),
