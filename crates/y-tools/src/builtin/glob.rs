@@ -1,15 +1,17 @@
 //! `Glob` built-in tool: fast file pattern matching.
 //!
-//! Uses ripgrep (`rg --files --glob`) under the hood for performant
-//! file discovery across any codebase size. Supports standard glob
-//! patterns (e.g. `**/*.rs`, `src/**/*.ts`) and returns matching file
-//! paths sorted by modification time.
+//! Uses the `ignore` and `globset` crates (from ripgrep) for performant,
+//! in-process file discovery. Supports standard glob patterns
+//! (e.g. `**/*.rs`, `src/**/*.ts`) and returns matching file paths
+//! sorted by modification time.
 //!
 //! Reference: cursor Glob.js tool implementation.
 
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use ignore::overrides::OverrideBuilder;
+use ignore::WalkBuilder;
 
 use y_core::runtime::RuntimeCapability;
 use y_core::tool::{
@@ -20,13 +22,13 @@ use y_core::types::ToolName;
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 100_000;
 
-/// Default timeout for the ripgrep subprocess (seconds).
+/// Default timeout for the search (seconds).
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
 /// Built-in Glob tool for file pattern matching.
 ///
 /// Accepts a glob `pattern` and an optional `path` (defaults to cwd).
-/// Delegates to ripgrep for fast, ignore-aware file discovery.
+/// Uses the `ignore` crate for fast, in-process file discovery.
 pub struct GlobTool {
     def: ToolDefinition,
 }
@@ -138,98 +140,61 @@ impl GlobTool {
         }
     }
 
-    /// Build the ripgrep argument list for file globbing.
-    fn build_rg_args(pattern: &str, no_ignore: bool, hidden: bool) -> Vec<String> {
-        let mut args = vec![
-            "--files".to_string(),
-            "--glob".to_string(),
-            pattern.to_string(),
-        ];
+    /// Execute the glob search using the `ignore` crate's `WalkBuilder`.
+    fn execute_walk(glob_pattern: &str, search_path: &str) -> Result<Vec<String>, ToolError> {
+        let search_dir = Path::new(search_path);
 
-        if no_ignore {
-            args.push("--no-ignore".to_string());
-        }
-        if hidden {
-            args.push("--hidden".to_string());
-        }
+        // Build an override matcher for the glob pattern.
+        let mut override_builder = OverrideBuilder::new(search_dir);
+        override_builder
+            .add(glob_pattern)
+            .map_err(|e| ToolError::RuntimeError {
+                name: "Glob".into(),
+                message: format!("invalid glob pattern '{glob_pattern}': {e}"),
+            })?;
+        let overrides = override_builder
+            .build()
+            .map_err(|e| ToolError::RuntimeError {
+                name: "Glob".into(),
+                message: format!("failed to build glob matcher: {e}"),
+            })?;
 
-        args
-    }
+        // Configure walker: show hidden files, ignore no ignore files.
+        let walker = WalkBuilder::new(search_dir)
+            .hidden(false) // show hidden files (equivalent to --hidden)
+            .standard_filters(false) // disable all ignore filters (equivalent to --no-ignore)
+            .overrides(overrides)
+            .build();
 
-    /// Build the full shell command string for ripgrep execution.
-    fn build_rg_command(rg_args: &[String], search_path: &str) -> String {
-        let args_str = rg_args
-            .iter()
-            .map(|a| shell_escape(a))
-            .collect::<Vec<_>>()
-            .join(" ");
-        format!("rg {args_str} {}", shell_escape(search_path))
-    }
-
-    /// Execute ripgrep via direct subprocess (fallback when no `CommandRunner`).
-    async fn execute_rg_direct(rg_args: &[String], search_path: &str) -> Result<String, ToolError> {
-        let mut cmd = tokio::process::Command::new("rg");
-        for arg in rg_args {
-            cmd.arg(arg);
-        }
-        cmd.arg(search_path);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
-        let result = tokio::time::timeout(timeout, cmd.output()).await;
-
-        match result {
-            Ok(Ok(output)) => {
-                // ripgrep exit codes:
-                //   0 = matches found
-                //   1 = no matches found
-                //   2 = partial errors (e.g. permission denied) but stdout still valid
-                let code = output.status.code().unwrap_or(-1);
-                if code <= 2 {
-                    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    Err(ToolError::RuntimeError {
-                        name: "Glob".into(),
-                        message: format!("rg exited with code {code}: {stderr}"),
-                    })
+        let mut entries: Vec<(String, std::time::SystemTime)> = Vec::new();
+        for result in walker {
+            match result {
+                Ok(entry) => {
+                    // Skip directories -- only collect files.
+                    if entry.file_type().is_none_or(|ft| ft.is_dir()) {
+                        continue;
+                    }
+                    let path = entry.into_path();
+                    let abs_path = if path.is_absolute() {
+                        path
+                    } else {
+                        search_dir.join(&path)
+                    };
+                    let mtime = abs_path
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    entries.push((abs_path.to_string_lossy().to_string(), mtime));
+                }
+                Err(e) => {
+                    tracing::debug!("Glob walk error (skipping): {e}");
                 }
             }
-            Ok(Err(e)) => Err(ToolError::RuntimeError {
-                name: "Glob".into(),
-                message: format!("failed to execute rg: {e}"),
-            }),
-            Err(_) => Err(ToolError::Timeout {
-                timeout_secs: DEFAULT_TIMEOUT_SECS,
-            }),
         }
-    }
-
-    /// Parse ripgrep stdout into a list of absolute file paths, sorted by mtime
-    /// (most recent first).
-    fn parse_and_sort_matches(raw_output: &str, search_path: &str) -> Vec<String> {
-        let base = Path::new(search_path);
-        let mut entries: Vec<(String, std::time::SystemTime)> = raw_output
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(|line| {
-                let p = if Path::new(line).is_absolute() {
-                    PathBuf::from(line)
-                } else {
-                    base.join(line)
-                };
-                let mtime = p
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                (p.to_string_lossy().to_string(), mtime)
-            })
-            .collect();
 
         // Sort newest first.
         entries.sort_by(|a, b| b.1.cmp(&a.1));
-        entries.into_iter().map(|(path, _)| path).collect()
+        Ok(entries.into_iter().map(|(path, _)| path).collect())
     }
 
     /// Truncate the result to fit within the character budget.
@@ -250,22 +215,6 @@ impl GlobTool {
         }
 
         (result, truncated)
-    }
-}
-
-/// Simple shell escaping: wrap in single quotes, escape inner quotes.
-fn shell_escape(s: &str) -> String {
-    if s.contains(' ')
-        || s.contains('\'')
-        || s.contains('"')
-        || s.contains('*')
-        || s.contains('?')
-        || s.contains('[')
-        || s.contains('{')
-    {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    } else {
-        s.to_string()
     }
 }
 
@@ -308,30 +257,26 @@ impl Tool for GlobTool {
             (p, pattern.to_string())
         };
 
-        // Build rg arguments (behavior defaults: no_ignore=true, hidden=true).
-        let rg_args = Self::build_rg_args(&glob_pattern, true, true);
+        tracing::debug!("Glob tool: pattern={glob_pattern:?}, search_path={resolved_path:?}");
 
-        tracing::debug!(
-            "Glob tool: pattern={glob_pattern:?}, search_path={resolved_path:?}, rg_args={rg_args:?}"
-        );
+        // Execute the walk in a blocking task with timeout.
+        let rp = resolved_path.clone();
+        let gp = glob_pattern.clone();
+        let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
+        let all_matches = tokio::time::timeout(
+            timeout,
+            tokio::task::spawn_blocking(move || Self::execute_walk(&gp, &rp)),
+        )
+        .await
+        .map_err(|_| ToolError::Timeout {
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+        })?
+        .map_err(|e| ToolError::RuntimeError {
+            name: "Glob".into(),
+            message: format!("search task failed: {e}"),
+        })??;
 
-        // Execute ripgrep -- prefer CommandRunner if available, fall back to direct.
-        let raw_output = if let Some(ref runner) = input.command_runner {
-            let cmd = Self::build_rg_command(&rg_args, &resolved_path);
-            let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
-            let result = runner.run_command(&cmd, None, timeout).await.map_err(|e| {
-                ToolError::RuntimeError {
-                    name: "Glob".into(),
-                    message: format!("{e}"),
-                }
-            })?;
-            String::from_utf8_lossy(&result.stdout).to_string()
-        } else {
-            Self::execute_rg_direct(&rg_args, &resolved_path).await?
-        };
-
-        // Parse, sort by mtime, and truncate.
-        let all_matches = Self::parse_and_sort_matches(&raw_output, &resolved_path);
+        // Truncate.
         let total_count = all_matches.len();
         let (matches, truncated) = Self::truncate_matches(all_matches);
 
@@ -422,15 +367,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn test_glob_rg_args_include_flags() {
-        let rg_args = GlobTool::build_rg_args("**/*.rs", true, true);
-        assert!(rg_args.contains(&"--files".to_string()));
-        assert!(rg_args.contains(&"--glob".to_string()));
-        assert!(rg_args.contains(&"--no-ignore".to_string()));
-        assert!(rg_args.contains(&"--hidden".to_string()));
-    }
-
     #[test]
     fn test_glob_definition() {
         let def = GlobTool::tool_definition();
@@ -481,12 +417,5 @@ mod tests {
         let (result, truncated) = GlobTool::truncate_matches(matches);
         assert!(!truncated);
         assert_eq!(result.len(), 10);
-    }
-
-    #[test]
-    fn test_shell_escape() {
-        assert_eq!(shell_escape("simple"), "simple");
-        assert_eq!(shell_escape("**/*.rs"), "'**/*.rs'");
-        assert_eq!(shell_escape("it's"), "'it'\\''s'");
     }
 }

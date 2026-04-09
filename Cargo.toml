@@ -98,6 +98,13 @@ base64 = "0.22"
 # JSON Schema validation
 jsonschema = "0.28"
 
+# ripgrep library crates (file search)
+ignore = "0.4"
+globset = "0.4"
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 dialoguer = "0.11"
