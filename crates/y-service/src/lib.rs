@@ -28,7 +28,7 @@ pub mod knowledge_service;
 pub mod message_builder;
 pub mod observability;
 pub mod orchestrator_dispatcher;
-pub mod plan_mode_orchestrator;
+pub mod plan_orchestrator;
 pub mod rewind;
 pub mod scheduler_service;
 pub mod skill_evolution;

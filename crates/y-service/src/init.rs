@@ -266,7 +266,28 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Lightweight struct to extract only `auto_update` from an agent TOML file.
+///
+/// Used during seeding to decide whether an existing file should be overwritten.
+/// Avoids the overhead of full `AgentDefinition` parsing.
+#[derive(serde::Deserialize)]
+struct AutoUpdateCheck {
+    #[serde(default = "default_auto_update")]
+    auto_update: bool,
+}
+
+const fn default_auto_update() -> bool {
+    true
+}
+
 /// Seed builtin agent definitions into `<config_dir>/agents/`.
+///
+/// Three-way sync logic for each builtin agent:
+/// 1. File does not exist -> write it (always seed missing agents).
+/// 2. File exists, `auto_update = false` in existing file -> skip (user opted out).
+/// 3. File exists, `auto_update = true` (default) -> compare content:
+///    - Content matches -> skip (no-op, idempotent).
+///    - Content differs -> overwrite with latest builtin version.
 fn seed_builtin_agents(config_dir: &Path) -> Result<Vec<String>> {
     use y_agent::agent::registry::AgentRegistry;
 
@@ -278,11 +299,42 @@ fn seed_builtin_agents(config_dir: &Path) -> Result<Vec<String>> {
 
     for (name, content) in AgentRegistry::builtin_toml_sources() {
         let dest = agents_dir.join(format!("{name}.toml"));
+
         if !dest.exists() {
+            // Case 1: file missing -- always write.
             std::fs::write(&dest, content)
                 .with_context(|| format!("writing {}", dest.display()))?;
             seeded.push(name.to_string());
+            continue;
         }
+
+        // File exists -- read it and decide whether to update.
+        let existing = std::fs::read_to_string(&dest)
+            .with_context(|| format!("reading {}", dest.display()))?;
+
+        // Case 3-a: content already matches -- skip (idempotent).
+        if existing == content {
+            continue;
+        }
+
+        // Parse only the `auto_update` flag from the existing file.
+        let auto_update = toml::from_str::<AutoUpdateCheck>(&existing)
+            .map(|c| c.auto_update)
+            .unwrap_or(true); // If parse fails, default to allowing update.
+
+        if !auto_update {
+            // Case 2: user opted out of auto-update -- skip.
+            info!(
+                agent = name,
+                "builtin agent has auto_update=false, skipping update"
+            );
+            continue;
+        }
+
+        // Case 3-b: auto_update=true and content differs -- overwrite.
+        std::fs::write(&dest, content).with_context(|| format!("updating {}", dest.display()))?;
+        info!(agent = name, "updated builtin agent to latest version");
+        seeded.push(name.to_string());
     }
 
     Ok(seeded)
@@ -464,5 +516,113 @@ mod tests {
         // Verify the custom content was preserved.
         let content = std::fs::read_to_string(persona_dir.join("SOUL.md")).unwrap();
         assert_eq!(content, "Custom soul");
+    }
+
+    #[test]
+    fn seed_builtin_agents_updates_when_content_differs() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_dir = tmp.path().join("config");
+        let agents_dir = config_dir.join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        // First seed: writes all builtin agents.
+        let seeded1 = seed_builtin_agents(&config_dir).unwrap();
+        assert!(!seeded1.is_empty());
+
+        // Modify one agent but keep auto_update = true.
+        let agent_path = agents_dir.join("title-generator.toml");
+        std::fs::write(
+            &agent_path,
+            "id = \"title-generator\"\nname = \"modified\"\ndescription = \"modified\"\n\
+             mode = \"explore\"\ntrust_tier = \"built_in\"\nauto_update = true\n\
+             system_prompt = \"modified\"\n",
+        )
+        .unwrap();
+
+        // Second seed: should update the modified agent.
+        let seeded2 = seed_builtin_agents(&config_dir).unwrap();
+        assert!(
+            seeded2.contains(&"title-generator".to_string()),
+            "modified agent with auto_update=true should be updated"
+        );
+
+        // Verify the content is now the builtin version.
+        let content = std::fs::read_to_string(&agent_path).unwrap();
+        assert!(
+            content.contains("title_generation"),
+            "content should be restored to builtin version"
+        );
+    }
+
+    #[test]
+    fn seed_builtin_agents_skips_when_auto_update_false() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_dir = tmp.path().join("config");
+        let agents_dir = config_dir.join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        // First seed.
+        seed_builtin_agents(&config_dir).unwrap();
+
+        // Modify one agent and set auto_update = false.
+        let agent_path = agents_dir.join("title-generator.toml");
+        let custom_content =
+            "id = \"title-generator\"\nname = \"custom\"\ndescription = \"custom\"\n\
+             mode = \"explore\"\ntrust_tier = \"built_in\"\nauto_update = false\n\
+             system_prompt = \"custom version\"\n";
+        std::fs::write(&agent_path, custom_content).unwrap();
+
+        // Second seed: should skip this agent.
+        let seeded2 = seed_builtin_agents(&config_dir).unwrap();
+        assert!(
+            !seeded2.contains(&"title-generator".to_string()),
+            "agent with auto_update=false should NOT be updated"
+        );
+
+        // Verify the custom content was preserved.
+        let content = std::fs::read_to_string(&agent_path).unwrap();
+        assert_eq!(content, custom_content);
+    }
+
+    #[test]
+    fn seed_builtin_agents_is_noop_when_content_matches() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_dir = tmp.path().join("config");
+        std::fs::create_dir_all(config_dir.join("agents")).unwrap();
+
+        // First seed.
+        let seeded1 = seed_builtin_agents(&config_dir).unwrap();
+        assert!(!seeded1.is_empty());
+
+        // Second seed with identical content: should be a no-op.
+        let seeded2 = seed_builtin_agents(&config_dir).unwrap();
+        assert!(
+            seeded2.is_empty(),
+            "no agents should be updated when content matches"
+        );
+    }
+
+    #[test]
+    fn seed_builtin_agents_writes_missing_on_second_init() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_dir = tmp.path().join("config");
+        let agents_dir = config_dir.join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        // First seed.
+        seed_builtin_agents(&config_dir).unwrap();
+
+        // Simulate a new builtin agent by deleting one.
+        let deleted = agents_dir.join("title-generator.toml");
+        std::fs::remove_file(&deleted).unwrap();
+        assert!(!deleted.exists());
+
+        // Second seed: should re-create the missing agent.
+        let seeded2 = seed_builtin_agents(&config_dir).unwrap();
+        assert!(
+            seeded2.contains(&"title-generator".to_string()),
+            "missing agent should be re-created"
+        );
+        assert!(deleted.exists());
     }
 }
