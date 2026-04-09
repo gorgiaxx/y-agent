@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
 use y_core::permission_types::PermissionMode;
 use y_core::runtime::CommandRunner;
 use y_core::tool::ToolInput;
@@ -24,60 +25,9 @@ pub(crate) async fn execute_and_record_tool(
 ) -> (bool, String) {
     let tool_start = std::time::Instant::now();
 
-    // ---------------------------------------------------------------
-    // Plan-mode tool blocking (defense in depth).
-    //
-    // Even if a blocked tool's schema was dynamically loaded via
-    // ToolSearch, reject it at execution time when plan mode is active.
-    // ---------------------------------------------------------------
-    {
-        let pctx = container.prompt_context.read().await;
-        let plan_active = pctx
-            .config_flags
-            .get("plan_mode.active")
-            .copied()
-            .unwrap_or(false);
-        if plan_active {
-            use crate::container::PLAN_MODE_BLOCKED_TOOLS;
-            if PLAN_MODE_BLOCKED_TOOLS.contains(&tc.name.as_str()) {
-                tracing::warn!(
-                    tool = %tc.name,
-                    "tool blocked by plan mode"
-                );
-                let error_content = format!(
-                    "[SYSTEM] Tool '{}' is blocked in plan mode. \
-                     Only read-only tools are allowed. Use FileRead, Grep, \
-                     Glob, SearchCode, WebFetch, or Browser instead. \
-                     Write your plan using PlanWriter, then call ExitPlanMode \
-                     to begin execution.",
-                    tc.name
-                );
-
-                ctx.tool_calls_executed.push(ToolCallRecord {
-                    name: tc.name.clone(),
-                    arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                    success: false,
-                    duration_ms: 0,
-                    result_content: error_content.clone(),
-                    url_meta: None,
-                });
-
-                if let Some(tx) = progress {
-                    let _ = tx.send(TurnEvent::ToolResult {
-                        name: tc.name.clone(),
-                        success: false,
-                        duration_ms: 0,
-                        input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                        result_preview: error_content.clone(),
-                        agent_name: config.agent_name.clone(),
-                        url_meta: None,
-                    });
-                }
-
-                return (false, error_content);
-            }
-        }
-    }
+    // (Plan-mode tool blocking removed -- the new Plan tool orchestrator
+    // handles all plan-mode logic via sub-agent delegation, no need to
+    // block tools at execution time.)
 
     // ---------------------------------------------------------------
     // Permission gatekeeper: evaluate guardrail permission BEFORE
@@ -306,21 +256,28 @@ pub(crate) async fn execute_and_record_tool(
     // ---------------------------------------------------------------
     // Actual tool execution
     // ---------------------------------------------------------------
-    let (tool_success, full_result, result_content) =
-        match execute_tool_call(container, tc, &ctx.session_id).await {
-            Ok(output) => {
-                let full = serde_json::to_string(&output.content).unwrap_or_default();
-                // For Browser/WebFetch: strip GUI-only fields (favicon_url,
-                // action, search_engine, navigation) before sending to the
-                // LLM. Only keep text + url/title for context.
-                let stripped = strip_url_tool_result(&tc.name, &output.content);
-                (true, full, stripped)
-            }
-            Err(e) => {
-                let msg = format!("{e}");
-                (false, msg.clone(), msg)
-            }
-        };
+    let (tool_success, full_result, result_content) = match execute_tool_call(
+        container,
+        tc,
+        &ctx.session_id,
+        progress,
+        ctx.cancel_token.as_ref(),
+    )
+    .await
+    {
+        Ok(output) => {
+            let full = serde_json::to_string(&output.content).unwrap_or_default();
+            // For Browser/WebFetch: strip GUI-only fields (favicon_url,
+            // action, search_engine, navigation) before sending to the
+            // LLM. Only keep text + url/title for context.
+            let stripped = strip_url_tool_result(&tc.name, &output.content);
+            (true, full, stripped)
+        }
+        Err(e) => {
+            let msg = format!("{e}");
+            (false, msg.clone(), msg)
+        }
+    };
 
     let tool_elapsed_ms = u64::try_from(tool_start.elapsed().as_millis()).unwrap_or(0);
 
@@ -474,6 +431,8 @@ async fn execute_tool_call(
     container: &ServiceContainer,
     tc: &ToolCallRequest,
     session_id: &SessionId,
+    progress: Option<&TurnEventSender>,
+    cancel: Option<&CancellationToken>,
 ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
     // Intercept ToolSearch calls -- unified search across tools, skills, and agents.
     if tc.name == "ToolSearch" {
@@ -505,16 +464,19 @@ async fn execute_tool_call(
         .await;
     }
 
-    // Intercept plan mode tools -- route through `PlanModeOrchestrator`.
-    if tc.name == "EnterPlanMode" {
-        return crate::plan_mode_orchestrator::PlanModeOrchestrator::handle_enter(&tc.arguments);
-    }
-    if tc.name == "ExitPlanMode" {
-        return crate::plan_mode_orchestrator::PlanModeOrchestrator::handle_exit(
+    // Intercept Plan tool -- route through PlanOrchestrator.
+    // Box::pin breaks the recursive async cycle:
+    // execute_tool_call -> PlanOrchestrator::handle -> AgentService::execute
+    // -> execute_inner -> tool_handling -> execute_and_record_tool -> execute_tool_call
+    if tc.name == "Plan" {
+        let session_id_clone = session_id.clone();
+        return Box::pin(crate::plan_orchestrator::PlanOrchestrator::handle(
             &tc.arguments,
             container,
-            None, // No progress sender in this context; phase events use their own.
-        )
+            &session_id_clone,
+            progress,
+            cancel.cloned(),
+        ))
         .await;
     }
 

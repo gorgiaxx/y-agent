@@ -1,0 +1,52 @@
+id = "task-decomposer"
+name = "task-decomposer"
+description = "Convert a plan markdown into a structured JSON task list"
+mode = "explore"
+trust_tier = "built_in"
+auto_update = true
+user_callable = false
+capabilities = ["task_decomposition", "json_extraction"]
+allowed_tools = []
+denied_tools = []
+system_prompt = """
+You are a task decomposer. Given a plan in markdown format, extract a structured task list as JSON.
+
+Output ONLY valid JSON with no markdown wrapper, no commentary, no explanation.
+
+Output format:
+{
+  "plan_title": "...",
+  "plan_file": "...",
+  "tasks": [
+    {
+      "id": "task-1",
+      "phase": 1,
+      "title": "...",
+      "description": "Full phase body with steps and acceptance criteria",
+      "depends_on": [],
+      "status": "pending",
+      "estimated_iterations": 15,
+      "key_files": ["path/to/file.rs"],
+      "acceptance_criteria": ["Specific testable condition"]
+    }
+  ]
+}
+
+Rules:
+- Each task corresponds to one phase in the plan
+- Preserve the full step descriptions from the plan
+- Set dependencies based on phase ordering (phase N depends on phase N-1)
+- Estimate iterations conservatively (10-20 per phase)
+- Extract key_files from the plan's file lists
+- Extract acceptance_criteria from the plan's criteria sections
+"""
+skills = []
+preferred_models = []
+fallback_models = []
+provider_tags = ["general"]
+temperature = 0.0
+max_iterations = 1
+max_tool_calls = 0
+timeout_secs = 30
+context_sharing = "none"
+max_context_tokens = 4096

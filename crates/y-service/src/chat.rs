@@ -853,7 +853,7 @@ impl ChatService {
                     tracing::info!("plan_mode.active flag SET in prompt context");
                 }
                 "auto" => {
-                    let needs_plan = crate::plan_mode_orchestrator::assess_complexity(
+                    let needs_plan = crate::plan_orchestrator::assess_complexity(
                         container,
                         input.user_input,
                         input.provider_id.as_deref(),
@@ -876,7 +876,7 @@ impl ChatService {
             }
         }
 
-        // 1c. Filter and augment tool definitions for plan mode.
+        // 1c. Inject Plan tool schema when plan mode is active.
         Self::apply_plan_mode_tool_adjustments(container, &mut tool_defs).await;
 
         // 2. Construct execution config for the root agent.
@@ -1165,20 +1165,14 @@ impl ChatService {
 
     /// Adjust tool definitions for plan mode.
     ///
-    /// When `plan_mode.active` is set in the prompt context:
-    /// 1. **Remove** blocked tools (`FileWrite`, `FileEdit`, `Task`) so the
-    ///    LLM physically cannot call them.
-    /// 2. **Inject** `PlanWriter` and `ExitPlanMode` schemas so the LLM can
-    ///    write and finalize a plan. These tools are not in
-    ///    `ESSENTIAL_TOOL_NAMES` and would otherwise be missing.
-    ///
-    /// No-op when plan mode is inactive.
+    /// When `plan_mode.active` is set in the prompt context, injects the
+    /// `Plan` tool schema so the LLM can trigger the planning workflow.
+    /// Unlike the old system, no tools are blocked -- the Plan tool
+    /// orchestrator handles everything via sub-agent delegation.
     async fn apply_plan_mode_tool_adjustments(
         container: &ServiceContainer,
         tool_defs: &mut Vec<serde_json::Value>,
     ) {
-        use crate::container::PLAN_MODE_BLOCKED_TOOLS;
-
         let is_active = {
             let pctx = container.prompt_context.read().await;
             pctx.config_flags
@@ -1190,53 +1184,32 @@ impl ChatService {
             return;
         }
 
-        // --- Remove blocked tools ---
-        let before = tool_defs.len();
-        tool_defs.retain(|def| {
-            let name = def
-                .get("function")
+        // Inject Plan tool schema if not already present.
+        let already_present = tool_defs.iter().any(|def| {
+            def.get("function")
                 .and_then(|f| f.get("name"))
                 .and_then(|n| n.as_str())
-                .unwrap_or("");
-            !PLAN_MODE_BLOCKED_TOOLS.contains(&name)
+                == Some("Plan")
         });
-        tracing::info!(
-            before,
-            after = tool_defs.len(),
-            "plan mode: filtered blocked tools from API schemas"
-        );
+        if already_present {
+            return;
+        }
 
-        // --- Inject plan mode tools ---
-        // PlanWriter and ExitPlanMode are needed for the LLM to write and
-        // finalize a plan. EnterPlanMode is omitted because the session
-        // has already entered plan mode via the user's mode selection.
-        for tool_name in &["PlanWriter", "ExitPlanMode"] {
-            // Skip if already present (e.g. activated via ToolSearch).
-            let already_present = tool_defs.iter().any(|def| {
-                def.get("function")
-                    .and_then(|f| f.get("name"))
-                    .and_then(|n| n.as_str())
-                    == Some(tool_name)
-            });
-            if already_present {
-                continue;
-            }
-            let tn = y_core::types::ToolName::from_string(*tool_name);
-            if let Some(def) = container.tool_registry.get_definition(&tn).await {
-                tool_defs.push(serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": def.name.as_str(),
-                        "description": def.description,
-                        "parameters": def.parameters,
-                    }
-                }));
-            }
+        let tn = y_core::types::ToolName::from_string("Plan");
+        if let Some(def) = container.tool_registry.get_definition(&tn).await {
+            tool_defs.push(serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": def.name.as_str(),
+                    "description": def.description,
+                    "parameters": def.parameters,
+                }
+            }));
         }
 
         tracing::info!(
             final_count = tool_defs.len(),
-            "plan mode: injected PlanWriter + ExitPlanMode schemas"
+            "plan mode: injected Plan tool schema"
         );
     }
 

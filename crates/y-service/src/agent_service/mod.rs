@@ -268,6 +268,8 @@ pub(crate) struct ToolExecContext {
     pub(crate) pending_interactions: crate::chat::PendingInteractions,
     /// Pending permission-approval channels for HITL permission requests.
     pub(crate) pending_permissions: crate::chat::PendingPermissions,
+    /// Shared cancellation token for the execution subtree rooted at this agent.
+    pub(crate) cancel_token: Option<tokio_util::sync::CancellationToken>,
 }
 
 /// Per-iteration LLM response data bundle.

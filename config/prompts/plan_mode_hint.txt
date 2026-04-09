@@ -1,0 +1,13 @@
+## Plan Mode
+
+The user has enabled plan mode for this task. You MUST use the `Plan` tool
+to create and execute a structured plan before making any changes.
+
+Call Plan with the user's request. The Plan tool will:
+1. Explore the codebase via a dedicated sub-agent
+2. Generate a phased execution plan
+3. Decompose the plan into structured tasks
+4. Execute each phase in sequence via sub-agents
+5. Return consolidated results
+
+Do NOT attempt to execute the task directly. Use the Plan tool.
