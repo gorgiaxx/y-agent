@@ -6,7 +6,7 @@
  */
 
 import type { Message } from '../../../types';
-import type { ToolResultRecord } from '../../../hooks/useChat';
+import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../../hooks/useInterleavedSegments';
 import { StreamingBubble } from './StreamingBubble';
 import { StaticBubble } from './StaticBubble';

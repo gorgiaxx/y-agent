@@ -122,6 +122,8 @@ export interface ToolResultEvent {
   agent_name?: string;
   /** Compact URL metadata (JSON) for Browser/WebFetch tools. */
   url_meta?: string;
+  /** Optional structured metadata for presentation layers. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface LoopLimitEvent {
@@ -139,12 +141,16 @@ export interface StreamDeltaEvent {
   type: 'stream_delta';
   /** Incremental text content from the LLM. */
   content: string;
+  /** Name of the agent that produced this delta. */
+  agent_name?: string;
 }
 
 export interface StreamReasoningDeltaEvent {
   type: 'stream_reasoning_delta';
   /** Incremental reasoning/thinking text from the LLM. */
   content: string;
+  /** Name of the agent that produced this delta. */
+  agent_name?: string;
 }
 
 export interface LlmErrorEvent {
@@ -557,4 +563,3 @@ export interface Attachment {
   base64_data: string;
   size: number;
 }
-

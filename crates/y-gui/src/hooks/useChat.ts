@@ -30,6 +30,11 @@ import {
   withSessionLock,
   findCheckpointForMessage,
 } from './chatHelpers';
+import {
+  shouldDisplayStreamingAgent,
+  type ToolResultRecord,
+} from './chatStreamTypes';
+import { upsertToolResultRecord, upsertToolResultSegment } from './toolResultUpdates';
 import type { InterleavedSegment } from './useInterleavedSegments';
 
 // Re-export ChatBusEvent for consumers that need the union type.
@@ -54,18 +59,6 @@ export type ChatOpStatus =
   | 'resending'
   | 'restoring'
   | 'compacting';
-
-/** Tracked tool result from a progress event. */
-export interface ToolResultRecord {
-  name: string;
-  /** Serialised tool arguments (JSON string). Available from persisted metadata. */
-  arguments?: string;
-  success: boolean;
-  durationMs: number;
-  resultPreview: string;
-  /** Compact URL metadata JSON (url, title, favicon_url) for Browser/WebFetch. */
-  urlMeta?: string;
-}
 
 interface UseChatReturn {
   messages: Message[];
@@ -123,6 +116,68 @@ export interface CompactInfo {
   messagesCompacted: number;
   tokensSaved: number;
   summary: string;
+}
+
+function toToolResultMetadata(records: ToolResultRecord[]): Array<Record<string, unknown>> {
+  return records.map((tr) => {
+    const entry: Record<string, unknown> = {
+      name: tr.name,
+      arguments: tr.arguments ?? '',
+      success: tr.success,
+      duration_ms: tr.durationMs,
+      result_preview: tr.resultPreview,
+    };
+    if (tr.urlMeta) {
+      try {
+        entry.url_meta = JSON.parse(tr.urlMeta) as Record<string, unknown>;
+      } catch {
+        entry.url_meta = tr.urlMeta;
+      }
+    }
+    if (tr.metadata) {
+      entry.metadata = tr.metadata;
+    }
+    return entry;
+  });
+}
+
+function mergeToolResultMetadata(
+  backend: unknown,
+  streamed: ToolResultRecord[] | undefined,
+): Array<Record<string, unknown>> | undefined {
+  const backendRecords = Array.isArray(backend)
+    ? backend.filter(
+      (entry): entry is Record<string, unknown> =>
+        entry != null && typeof entry === 'object',
+    )
+    : [];
+  const streamRecords = streamed ? toToolResultMetadata(streamed) : [];
+
+  if (backendRecords.length === 0) {
+    return streamRecords.length > 0 ? streamRecords : undefined;
+  }
+  if (streamRecords.length === 0) {
+    return backendRecords;
+  }
+
+  const merged: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+
+  for (const entry of [...streamRecords, ...backendRecords]) {
+    const metadata = entry.metadata;
+    const metadataKey = metadata == null ? '' : JSON.stringify(metadata);
+    const key = [
+      String(entry.name ?? ''),
+      String(entry.arguments ?? ''),
+      String(entry.result_preview ?? ''),
+      metadataKey,
+    ].join('::');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(entry);
+  }
+
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +345,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
         console.log('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
       } else if (event.type === 'stream_delta') {
+        if (!shouldDisplayStreamingAgent(event.agent_name)) {
+          return;
+        }
         const sid = event.session_id;
         // Append to event-ordered segments (text segment).
         const segs = streamSegsRef.current.get(sid);
@@ -342,6 +400,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         });
         syncVisible(sid);
       } else if (event.type === 'stream_reasoning_delta') {
+        if (!shouldDisplayStreamingAgent(event.agent_name)) {
+          return;
+        }
         const sid = event.session_id;
         console.log(`[chat] stream_reasoning_delta: session=${sid}, len=${event.content.length}`);
         // Push/extend a reasoning segment in event-ordered segments.
@@ -421,11 +482,12 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               const cachedMessages = getCachedMessages(sessionMessagesRef.current, sessionId);
               const streamingMsg = cachedMessages.find((m) => m.id === streamingId);
               const accumulatedContent = streamingMsg?.content ?? '';
+              const snapToolResults = toolResultsRef.current.get(sessionId);
 
               // If there was accumulated streaming content and the backend
               // has a final assistant message, check if the streaming content
               // carries extra text from prior tool-call iterations.
-              if (accumulatedContent && mergedMsgs.length > 0) {
+              if (mergedMsgs.length > 0) {
                 const lastMsg = mergedMsgs[mergedMsgs.length - 1];
                 if (lastMsg.role === 'assistant') {
                   // Merge streaming reasoning metadata (timing info is
@@ -443,6 +505,14 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                     if (!mergedMeta.reasoning_content && streamMeta.reasoning_content) {
                       mergedMeta.reasoning_content = streamMeta.reasoning_content;
                     }
+                  }
+
+                  const mergedToolResults = mergeToolResultMetadata(
+                    mergedMeta.tool_results,
+                    snapToolResults,
+                  );
+                  if (mergedToolResults) {
+                    mergedMeta.tool_results = mergedToolResults;
                   }
 
                   if (accumulatedContent.length > lastMsg.content.length) {
@@ -491,6 +561,12 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                   tokens: { input: payload.input_tokens, output: payload.output_tokens },
                   cost: payload.cost_usd,
                   context_window: payload.context_window,
+                  metadata: {
+                    tool_results: mergeToolResultMetadata(
+                      [],
+                      toolResultsRef.current.get(sessionId),
+                    ) ?? [],
+                  },
                 };
                 if (filtered.some((m) => m.id === newMsg.id)) return filtered;
                 return [...filtered, newMsg];
@@ -557,13 +633,12 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               return prev.map((m) => {
                 if (m.id === streamingId && m.content) {
                   const meta = { ...(m.metadata ?? {}) };
-                  if (snapToolResults && snapToolResults.length > 0 && !meta.tool_results) {
-                    meta.tool_results = snapToolResults.map((tr) => ({
-                      name: tr.name,
-                      success: tr.success,
-                      duration_ms: tr.durationMs,
-                      result_preview: tr.resultPreview,
-                    }));
+                  const mergedToolResults = mergeToolResultMetadata(
+                    meta.tool_results,
+                    snapToolResults,
+                  );
+                  if (mergedToolResults) {
+                    meta.tool_results = mergedToolResults;
                   }
                   return {
                     ...m,
@@ -608,13 +683,12 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               return prev.map((m) => {
                 if (m.id === streamingId && m.content) {
                   const meta = { ...(m.metadata ?? {}) };
-                  if (snapToolResultsErr && snapToolResultsErr.length > 0 && !meta.tool_results) {
-                    meta.tool_results = snapToolResultsErr.map((tr) => ({
-                      name: tr.name,
-                      success: tr.success,
-                      duration_ms: tr.durationMs,
-                      result_preview: tr.resultPreview,
-                    }));
+                  const mergedToolResults = mergeToolResultMetadata(
+                    meta.tool_results,
+                    snapToolResultsErr,
+                  );
+                  if (mergedToolResults) {
+                    meta.tool_results = mergedToolResults;
                   }
                   return {
                     ...m,
@@ -676,16 +750,18 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           durationMs: event.duration_ms,
           resultPreview: event.result_preview,
           urlMeta: event.url_meta,
+          metadata: event.metadata,
         };
         const existing = toolResultsRef.current.get(sid) ?? [];
-        existing.push(record);
-        toolResultsRef.current.set(sid, existing);
+        const nextToolResults = upsertToolResultRecord(existing, record);
+        toolResultsRef.current.set(sid, nextToolResults.records);
         if (sid === activeSessionIdRef.current) {
-          setVisibleToolResults([...existing]);
+          setVisibleToolResults(nextToolResults.records);
         }
-        // Push tool_result segment and bump version to force re-render.
+        // Push or replace a tool_result segment and bump version to force re-render.
         const segs = streamSegsRef.current.get(sid);
         if (segs) {
+          let preparedSegs = segs;
           // When a tool result arrives, mark any in-progress reasoning segment
           // as done. This handles the case where the LLM thinks and then
           // directly issues tool calls without emitting any text content
@@ -693,12 +769,15 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           // stay in "Thinking..." state indefinitely.
           const lastSeg = segs[segs.length - 1];
           if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
-            lastSeg.isStreaming = false;
-            if (lastSeg._startTs) {
-              lastSeg.durationMs = Date.now() - lastSeg._startTs;
-            }
+            preparedSegs = [...segs];
+            preparedSegs[preparedSegs.length - 1] = {
+              ...lastSeg,
+              isStreaming: false,
+              durationMs: lastSeg._startTs ? Date.now() - lastSeg._startTs : lastSeg.durationMs,
+            };
           }
-          segs.push({ type: 'tool_result', record });
+          const nextSegments = upsertToolResultSegment(preparedSegs, record);
+          streamSegsRef.current.set(sid, nextSegments.segments);
           setStreamSegsVersion((v) => v + 1);
         }
       }

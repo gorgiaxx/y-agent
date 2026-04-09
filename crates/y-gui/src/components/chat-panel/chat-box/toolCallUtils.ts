@@ -18,6 +18,10 @@ export function tryParseJson(raw: string): Record<string, unknown> | null {
   }
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === 'object' ? value as Record<string, unknown> : null;
+}
+
 /** Extract hostname from a URL, returning the raw string on failure. */
 export function extractDomain(url: string): string {
   try {
@@ -672,4 +676,172 @@ export function extractEnterPlanModeMeta(argsRaw: string): EnterPlanModeMeta | n
   const title = typeof obj.title === 'string' ? obj.title : '';
   if (!title) return null;
   return { reason, title };
+}
+
+export interface PlanRequestMeta {
+  request: string;
+  context: string;
+}
+
+export interface PlanTaskDisplay {
+  id: string;
+  phase: number;
+  title: string;
+  description: string;
+  dependsOn: string[];
+  status: string;
+  estimatedIterations: number;
+  keyFiles: string[];
+  acceptanceCriteria: string[];
+}
+
+export interface PlanWriterStageDisplay {
+  kind: 'plan_stage';
+  stage: 'plan_writer';
+  planTitle: string;
+  planFile: string;
+  planContent: string;
+}
+
+export interface TaskDecomposerStageDisplay {
+  kind: 'plan_stage';
+  stage: 'task_decomposer';
+  planTitle: string;
+  planFile: string;
+  tasks: PlanTaskDisplay[];
+}
+
+export interface PlanExecutionDisplay {
+  kind: 'plan_execution';
+  planTitle: string;
+  planFile: string;
+  totalPhases: number;
+  completed: number;
+  failed: number;
+  tasks: PlanTaskDisplay[];
+  phases: Array<Record<string, unknown>>;
+}
+
+export type PlanDisplayMeta =
+  | PlanWriterStageDisplay
+  | TaskDecomposerStageDisplay
+  | PlanExecutionDisplay;
+
+export function extractPlanRequestMeta(argsRaw: string): PlanRequestMeta | null {
+  const obj = tryParseJson(argsRaw);
+  if (!obj) return null;
+  const request = typeof obj.request === 'string' ? obj.request : '';
+  if (!request) return null;
+  return {
+    request,
+    context: typeof obj.context === 'string' ? obj.context : '',
+  };
+}
+
+function parsePlanTask(value: unknown): PlanTaskDisplay | null {
+  const obj = asObject(value);
+  if (!obj) return null;
+  const title = typeof obj.title === 'string' ? obj.title : '';
+  if (!title) return null;
+  return {
+    id: typeof obj.id === 'string' ? obj.id : '',
+    phase: typeof obj.phase === 'number' ? obj.phase : 0,
+    title,
+    description: typeof obj.description === 'string' ? obj.description : '',
+    dependsOn: Array.isArray(obj.depends_on)
+      ? obj.depends_on.map((dep) => String(dep))
+      : [],
+    status: typeof obj.status === 'string' ? obj.status : 'pending',
+    estimatedIterations: typeof obj.estimated_iterations === 'number'
+      ? obj.estimated_iterations
+      : 0,
+    keyFiles: Array.isArray(obj.key_files)
+      ? obj.key_files.map((file) => String(file))
+      : [],
+    acceptanceCriteria: Array.isArray(obj.acceptance_criteria)
+      ? obj.acceptance_criteria.map((item) => String(item))
+      : [],
+  };
+}
+
+function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta | null {
+  const kind = typeof obj.kind === 'string' ? obj.kind : '';
+
+  if (kind === 'plan_stage') {
+    const stage = typeof obj.stage === 'string' ? obj.stage : '';
+    const planTitle = typeof obj.plan_title === 'string' ? obj.plan_title : '';
+    const planFile = typeof obj.plan_file === 'string' ? obj.plan_file : '';
+
+    if (stage === 'plan_writer') {
+      return {
+        kind: 'plan_stage',
+        stage,
+        planTitle,
+        planFile,
+        planContent: typeof obj.plan_content === 'string' ? obj.plan_content : '',
+      };
+    }
+
+    if (stage === 'task_decomposer') {
+      const tasks = Array.isArray(obj.tasks)
+        ? obj.tasks.map(parsePlanTask).filter((task): task is PlanTaskDisplay => task != null)
+        : [];
+      return {
+        kind: 'plan_stage',
+        stage,
+        planTitle,
+        planFile,
+        tasks,
+      };
+    }
+  }
+
+  if (kind === 'plan_execution') {
+    const hasPlanFields = typeof obj.plan_title === 'string'
+      || typeof obj.plan_file === 'string'
+      || typeof obj.total_phases === 'number';
+    if (!hasPlanFields) return null;
+
+    const tasks = Array.isArray(obj.tasks)
+      ? obj.tasks.map(parsePlanTask).filter((task): task is PlanTaskDisplay => task != null)
+      : [];
+    const phases = Array.isArray(obj.phases)
+      ? obj.phases.filter((phase): phase is Record<string, unknown> => phase != null && typeof phase === 'object')
+      : [];
+
+    return {
+      kind: 'plan_execution',
+      planTitle: typeof obj.plan_title === 'string' ? obj.plan_title : '',
+      planFile: typeof obj.plan_file === 'string' ? obj.plan_file : '',
+      totalPhases: typeof obj.total_phases === 'number' ? obj.total_phases : tasks.length,
+      completed: typeof obj.completed === 'number' ? obj.completed : 0,
+      failed: typeof obj.failed === 'number' ? obj.failed : 0,
+      tasks,
+      phases,
+    };
+  }
+
+  return null;
+}
+
+export function extractPlanDisplayMeta(
+  metadata: unknown,
+  resultRaw?: string,
+): PlanDisplayMeta | null {
+  const metaObj = asObject(metadata);
+  const displayObj = asObject(metaObj?.display);
+  if (displayObj) {
+    const display = parsePlanDisplayObject(displayObj);
+    if (display) return display;
+  }
+
+  const resultObj = resultRaw ? tryParseJson(resultRaw) : null;
+  if (resultObj) {
+    return parsePlanDisplayObject({
+      kind: 'plan_execution',
+      ...resultObj,
+    });
+  }
+
+  return null;
 }

@@ -12,6 +12,8 @@ interface ToolCallCardProps {
   durationMs?: number;
   /** Compact URL metadata JSON from the backend (survives truncation). */
   urlMeta?: string;
+  /** Optional structured metadata for tool-specific renderers. */
+  metadata?: Record<string, unknown>;
 }
 
 export function ToolCallCard({
@@ -20,6 +22,7 @@ export function ToolCallCard({
   result,
   durationMs,
   urlMeta,
+  metadata,
 }: ToolCallCardProps) {
   const statusIcon = {
     running: <Loader size={13} className="collapsible-card-spinner" />,
@@ -53,6 +56,7 @@ export function ToolCallCard({
       result={result}
       durationMs={durationMs}
       urlMeta={urlMeta}
+      metadata={metadata}
       statusIcon={statusIcon}
       statusClass={statusClass}
       displayArgs={displayArgs}

@@ -10,7 +10,7 @@
 import { useMemo } from 'react';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import type { ToolResultRecord } from '../../../hooks/useChat';
+import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import { makeMarkdownComponents } from './messageUtils';
 import { processStreamContent, type StreamContentResult } from '../../../hooks/useStreamContent';
 import { useResolvedTheme } from '../../../hooks/useTheme';

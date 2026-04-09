@@ -9,6 +9,7 @@ import { GrepRenderer } from './GrepRenderer';
 import { FileToolRenderer } from './FileToolRenderer';
 import { EnterPlanModeRenderer } from './EnterPlanModeRenderer';
 import { PlanWriterRenderer } from './PlanWriterRenderer';
+import { PlanRenderer } from './PlanRenderer';
 import { ExitPlanModeRenderer } from './ExitPlanModeRenderer';
 import { AskUserRenderer } from './AskUserRenderer';
 
@@ -29,6 +30,7 @@ export const TOOL_RENDERERS: Record<string, ComponentType<ToolRendererProps>> = 
   FileEdit: FileToolRenderer,
   FileWrite: FileToolRenderer,
   FileRead: FileToolRenderer,
+  Plan: PlanRenderer,
   EnterPlanMode: EnterPlanModeRenderer,
   PlanWriter: PlanWriterRenderer,
   ExitPlanMode: ExitPlanModeRenderer,

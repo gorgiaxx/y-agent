@@ -5,7 +5,7 @@
  * and StaticBubble (history segments built from iteration_texts).
  */
 
-import type { ToolResultRecord } from './useChat';
+import type { ToolResultRecord } from './chatStreamTypes';
 
 /** A display segment: text, tool result card, or reasoning card. */
 export type InterleavedSegment =

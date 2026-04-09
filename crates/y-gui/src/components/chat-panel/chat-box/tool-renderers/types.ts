@@ -9,6 +9,8 @@ export interface ToolRendererProps {
   durationMs?: number;
   /** Compact URL metadata JSON from the backend (survives truncation). */
   urlMeta?: string;
+  /** Optional structured metadata for tool-specific renderers. */
+  metadata?: Record<string, unknown>;
   statusIcon: ReactNode;
   statusClass: string;
   displayArgs: string;

@@ -12,7 +12,7 @@
 
 import { useMemo } from 'react';
 import type { Message } from '../../../types';
-import type { ToolResultRecord } from '../../../hooks/useChat';
+import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import {
   buildHistorySegments,
   extractFinalAnswer,
@@ -47,6 +47,9 @@ export function StaticBubble({ message }: StaticBubbleProps) {
       durationMs: Number(tr.duration_ms ?? 0),
       resultPreview: String(tr.result_preview ?? ''),
       urlMeta: tr.url_meta != null ? JSON.stringify(tr.url_meta) : undefined,
+      metadata: tr.metadata && typeof tr.metadata === 'object'
+        ? tr.metadata as Record<string, unknown>
+        : undefined,
     }));
   }, [message.metadata]);
 
@@ -152,6 +155,7 @@ export function StaticBubble({ message }: StaticBubbleProps) {
                   result={result?.resultPreview}
                   durationMs={result?.durationMs}
                   urlMeta={result?.urlMeta}
+                  metadata={result?.metadata}
                 />
               );
             }
@@ -195,6 +199,7 @@ export function StaticBubble({ message }: StaticBubbleProps) {
                   result={seg.record.resultPreview}
                   durationMs={seg.record.durationMs}
                   urlMeta={seg.record.urlMeta}
+                  metadata={seg.record.metadata}
                 />
               );
             }

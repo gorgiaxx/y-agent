@@ -12,7 +12,7 @@
 
 import { useMemo } from 'react';
 import type { Message } from '../../../types';
-import type { ToolResultRecord } from '../../../hooks/useChat';
+import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../../hooks/useInterleavedSegments';
 import { extractFinalAnswer } from '../../../hooks/useInterleavedSegments';
 import { extractXmlFinalAnswer } from '../../../hooks/useStreamContent';
@@ -96,6 +96,7 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
                   result={result?.resultPreview}
                   durationMs={result?.durationMs}
                   urlMeta={result?.urlMeta}
+                  metadata={result?.metadata}
                 />
               );
             }
@@ -147,6 +148,7 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
                   result={seg.record.resultPreview}
                   durationMs={seg.record.durationMs}
                   urlMeta={seg.record.urlMeta}
+                  metadata={seg.record.metadata}
                 />
               );
             }

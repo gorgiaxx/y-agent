@@ -949,3 +949,90 @@
   line-height: 1.5;
 }
 
+.tool-call-plan-summary {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.tool-call-plan-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: var(--space-sm);
+}
+
+.tool-call-plan-stat {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--toolcall-tag-background-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.tool-call-plan-stat--error {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, var(--border));
+}
+
+.tool-call-plan-task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tool-call-plan-task {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-code) 80%, transparent);
+  padding: 10px 12px;
+}
+
+.tool-call-plan-task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tool-call-plan-task-phase {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.tool-call-plan-task-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tool-call-plan-task-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.tool-call-plan-task-meta {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.tool-call-plan-task-meta-label {
+  display: inline-block;
+  min-width: 56px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.tool-call-plan-empty {
+  padding: var(--space-sm) var(--space-md);
+  font-size: 12px;
+  color: var(--text-muted);
+}

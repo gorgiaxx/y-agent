@@ -32,9 +32,9 @@ export type ChatBusEvent =
   | { type: 'started'; run_id: string; session_id: string }
   | { type: 'complete'; payload: ChatCompletePayload }
   | { type: 'error'; payload: ChatErrorPayload }
-  | { type: 'stream_delta'; run_id: string; session_id: string; content: string }
-  | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string }
-  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string };
+  | { type: 'stream_delta'; run_id: string; session_id: string; content: string; agent_name?: string }
+  | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string; agent_name?: string }
+  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown> };
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -113,6 +113,7 @@ async function initialiseChatBus() {
           run_id,
           session_id,
           content: event.content,
+          agent_name: event.agent_name,
         });
       }
     } else if (event.type === 'stream_reasoning_delta') {
@@ -123,6 +124,7 @@ async function initialiseChatBus() {
           run_id,
           session_id,
           content: event.content,
+          agent_name: event.agent_name,
         });
       }
     } else if (event.type === 'tool_result') {
@@ -137,6 +139,7 @@ async function initialiseChatBus() {
           input_preview: event.input_preview ?? '',
           result_preview: event.result_preview,
           url_meta: event.url_meta ?? undefined,
+          metadata: event.metadata ?? undefined,
         });
       }
     }
