@@ -208,7 +208,7 @@ skills = ["code-analysis"]
 preferred_models = ["gpt-4o"]
 fallback_models = ["gpt-4o-mini"]
 temperature = 0.3
-max_iterations = 10
+max_iterations = 20
 context_sharing = "summary"
 max_context_tokens = 8192
 "#
