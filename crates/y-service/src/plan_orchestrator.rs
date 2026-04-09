@@ -197,6 +197,13 @@ impl PlanOrchestrator {
             .iter()
             .filter(|r| r["status"] == "failed")
             .count();
+        let metadata = build_plan_execution_metadata(
+            &plan_path,
+            &structured_plan,
+            completed,
+            failed,
+            &phase_results,
+        );
 
         Ok(ToolOutput {
             success: failed == 0,
@@ -209,9 +216,7 @@ impl PlanOrchestrator {
                 "phases": phase_results,
             }),
             warnings: vec![],
-            metadata: serde_json::json!({
-                "action": "plan_executed",
-            }),
+            metadata,
         })
     }
 
@@ -319,6 +324,7 @@ impl PlanOrchestrator {
                 result_preview: format!("Plan written to {}", plan_path.display()),
                 agent_name: "plan-orchestrator".into(),
                 url_meta: None,
+                metadata: Some(build_plan_writer_stage_metadata(plan_path, &plan_content)),
             });
         }
 
@@ -434,6 +440,7 @@ impl PlanOrchestrator {
                 result_preview: format!("{} tasks extracted", plan.tasks.len()),
                 agent_name: "plan-orchestrator".into(),
                 url_meta: None,
+                metadata: Some(build_task_decomposer_stage_metadata(plan_path, &plan)),
             });
         }
 
@@ -613,6 +620,91 @@ fn extract_json_from_response(text: &str) -> String {
         }
     }
     trimmed.to_string()
+}
+
+fn extract_plan_title(plan_content: &str) -> Option<String> {
+    let trimmed = plan_content.trim();
+
+    if let Some(rest) = trimmed.strip_prefix("---") {
+        for line in rest.lines() {
+            let line = line.trim();
+            if line == "---" {
+                break;
+            }
+            if let Some(title) = line.strip_prefix("title:") {
+                let title = title.trim().trim_matches('"').trim_matches('\'');
+                if !title.is_empty() {
+                    return Some(title.to_string());
+                }
+            }
+        }
+    }
+
+    trimmed.lines().find_map(|line| {
+        let heading = line.trim().trim_start_matches('#').trim();
+        if heading.is_empty() || heading == line.trim() {
+            None
+        } else {
+            Some(heading.to_string())
+        }
+    })
+}
+
+fn build_plan_writer_stage_metadata(
+    plan_path: &std::path::Path,
+    plan_content: &str,
+) -> serde_json::Value {
+    let plan_title = extract_plan_title(plan_content).unwrap_or_else(|| "Plan".to_string());
+    serde_json::json!({
+        "display": {
+            "kind": "plan_stage",
+            "stage": "plan_writer",
+            "plan_title": plan_title,
+            "plan_file": plan_path.display().to_string(),
+            "plan_content": plan_content,
+        }
+    })
+}
+
+fn build_task_decomposer_stage_metadata(
+    plan_path: &std::path::Path,
+    plan: &StructuredPlan,
+) -> serde_json::Value {
+    serde_json::json!({
+        "display": {
+            "kind": "plan_stage",
+            "stage": "task_decomposer",
+            "plan_title": plan.plan_title,
+            "plan_file": if plan.plan_file.is_empty() {
+                plan_path.display().to_string()
+            } else {
+                plan.plan_file.clone()
+            },
+            "tasks": plan.tasks,
+        }
+    })
+}
+
+fn build_plan_execution_metadata(
+    plan_path: &std::path::Path,
+    plan: &StructuredPlan,
+    completed: usize,
+    failed: usize,
+    phase_results: &[serde_json::Value],
+) -> serde_json::Value {
+    serde_json::json!({
+        "action": "plan_executed",
+        "display": {
+            "kind": "plan_execution",
+            "plan_title": plan.plan_title,
+            "plan_file": plan_path.display().to_string(),
+            "total_phases": plan.tasks.len(),
+            "completed": completed,
+            "failed": failed,
+            "tasks": plan.tasks,
+            "phases": phase_results,
+        }
+    })
 }
 
 fn cancelled_tool_error() -> ToolError {
@@ -805,6 +897,55 @@ mod tests {
     fn test_extract_json_from_response_generic_block() {
         let input = "```\n{\"a\": 1}\n```";
         assert_eq!(extract_json_from_response(input), "{\"a\": 1}");
+    }
+
+    #[test]
+    fn test_extract_plan_title_prefers_frontmatter_title() {
+        let plan = r#"---
+title: GUI Plan Stream Fix
+status: pending
+---
+
+## Overview
+Fix the plan stream rendering.
+"#;
+
+        assert_eq!(
+            extract_plan_title(plan).as_deref(),
+            Some("GUI Plan Stream Fix")
+        );
+    }
+
+    #[test]
+    fn test_build_task_decomposer_stage_metadata_includes_tasks() {
+        let plan = StructuredPlan {
+            plan_title: "GUI Plan Stream Fix".into(),
+            plan_file: "/tmp/gui-plan.md".into(),
+            tasks: vec![PlanTask {
+                id: "task-1".into(),
+                phase: 1,
+                title: "Render task decomposer output".into(),
+                description: "Use structured metadata instead of raw JSON".into(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 12,
+                key_files: vec![
+                    "crates/y-gui/src/components/chat-panel/chat-box/ToolCallCard.tsx".into(),
+                ],
+                acceptance_criteria: vec!["Task list is rendered as a dedicated component".into()],
+            }],
+        };
+
+        let meta =
+            build_task_decomposer_stage_metadata(std::path::Path::new("/tmp/gui-plan.md"), &plan);
+
+        assert_eq!(meta["display"]["kind"], "plan_stage");
+        assert_eq!(meta["display"]["stage"], "task_decomposer");
+        assert_eq!(meta["display"]["plan_title"], "GUI Plan Stream Fix");
+        assert_eq!(
+            meta["display"]["tasks"][0]["title"],
+            "Render task decomposer output"
+        );
     }
 
     #[test]
