@@ -3,6 +3,7 @@ name = "pattern-extractor"
 description = "Extracts reusable patterns from agent experience records. Identifies successful strategies, common workflows, and recurring solutions for skill evolution."
 mode = "plan"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["pattern_recognition", "experience_analysis", "skill_evolution"]
 allowed_tools = ["FileRead", "SearchCode", "Grep"]
 denied_tools = ["FileWrite", "ShellExec"]

@@ -3,6 +3,7 @@ name = "knowledge-summarizer"
 description = "LLM-driven document summarizer that uses FileRead to progressively read large files, generating high-quality L0 summaries and L1 section overviews."
 mode = "build"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["knowledge_summarization", "document_analysis"]
 allowed_tools = ["FileRead", "ShellExec"]
 denied_tools = []

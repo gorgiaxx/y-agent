@@ -3,6 +3,7 @@ name = "knowledge-metadata"
 description = "Extracts multi-dimensional document metadata from L0 summary and L1 section content. Produces structured classification across document type, industry, sub-category, and contextual title."
 mode = "build"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["knowledge_classification", "metadata_extraction"]
 allowed_tools = []
 denied_tools = []

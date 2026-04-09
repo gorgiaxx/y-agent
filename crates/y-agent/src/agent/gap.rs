@@ -195,6 +195,7 @@ mod tests {
             max_completion_tokens: None,
             user_callable: false,
             prune_tool_history: false,
+            auto_update: true,
         };
         registry.register(def).unwrap();
         registry

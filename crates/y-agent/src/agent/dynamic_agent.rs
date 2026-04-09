@@ -483,6 +483,7 @@ pub fn make_dynamic_agent(
         max_completion_tokens: None,
         user_callable: false,
         prune_tool_history: false,
+        auto_update: true,
     };
 
     let effective_permissions = EffectivePermissions::compute(&definition, creator_snapshot);
@@ -564,6 +565,7 @@ mod tests {
             max_completion_tokens: None,
             user_callable: false,
             prune_tool_history: false,
+            auto_update: true,
         };
 
         let creator = CreatorPermissionSnapshot {

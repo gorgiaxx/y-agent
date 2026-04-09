@@ -3,6 +3,7 @@ name = "translator"
 description = "Translates text to a target language specified by {{TRANSLATE_TARGET_LANGUAGE}}"
 mode = "explore"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["translation"]
 allowed_tools = []
 denied_tools = []

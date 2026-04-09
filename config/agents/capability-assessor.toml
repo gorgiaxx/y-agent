@@ -3,6 +3,7 @@ name = "capability-assessor"
 description = "Assesses agent capabilities against task requirements. Identifies capability gaps and recommends agent creation or tool acquisition."
 mode = "plan"
 trust_tier = "built_in"
+auto_update = true
 user_callable = true
 capabilities = ["capability_analysis", "gap_detection", "agent_recommendation"]
 allowed_tools = ["FileRead", "SearchCode"]

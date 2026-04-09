@@ -3,6 +3,7 @@ name = "complexity-classifier"
 description = "Lightweight sub-agent that classifies user requests as needing planning or fast execution. Used by Auto plan mode."
 mode = "general"
 trust_tier = "built_in"
+auto_update = true
 user_callable = false
 capabilities = ["classification"]
 allowed_tools = []

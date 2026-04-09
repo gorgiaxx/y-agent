@@ -3,6 +3,7 @@ name = "skill-security-check"
 description = "Screens third-party skills for security risks: prompt injection, privilege escalation, data exfiltration, and insecure patterns."
 mode = "explore"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["security_screening", "content_analysis"]
 allowed_tools = ["FileRead", "FileWrite", "ShellExec"]
 denied_tools = []

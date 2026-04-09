@@ -3,6 +3,7 @@ name = "title-generator"
 description = "Generates concise, descriptive titles for sessions based on conversation content. Used for automatic session titling."
 mode = "explore"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["summarization", "title_generation"]
 allowed_tools = []
 denied_tools = []

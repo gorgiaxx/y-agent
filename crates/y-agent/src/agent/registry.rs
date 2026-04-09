@@ -589,6 +589,30 @@ impl AgentRegistry {
                 "pruning-summarizer",
                 include_str!("../../../../config/agents/pruning-summarizer.toml"),
             ),
+            (
+                "complexity-classifier",
+                include_str!("../../../../config/agents/complexity-classifier.toml"),
+            ),
+            (
+                "knowledge-metadata",
+                include_str!("../../../../config/agents/knowledge-metadata.toml"),
+            ),
+            (
+                "knowledge-summarizer",
+                include_str!("../../../../config/agents/knowledge-summarizer.toml"),
+            ),
+            (
+                "translator",
+                include_str!("../../../../config/agents/translator.toml"),
+            ),
+            (
+                "plan-writer",
+                include_str!("../../../../config/agents/plan-writer.toml"),
+            ),
+            (
+                "task-decomposer",
+                include_str!("../../../../config/agents/task-decomposer.toml"),
+            ),
         ]
     }
 }
@@ -629,6 +653,7 @@ mod tests {
             max_completion_tokens: None,
             user_callable: false,
             prune_tool_history: false,
+            auto_update: true,
         }
     }
 
@@ -671,11 +696,12 @@ mod tests {
             max_completion_tokens: None,
             user_callable: false,
             prune_tool_history: false,
+            auto_update: true,
         };
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 12); // 10 built-in + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 18); // 16 built-in + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -800,7 +826,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 10);
+        assert_eq!(builtins.len(), 16);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
         assert_eq!(user_defs.len(), 1);
@@ -869,6 +895,7 @@ mod tests {
             max_completion_tokens: None,
             user_callable: false,
             prune_tool_history: false,
+            auto_update: true,
         };
         registry.register_dynamic(dyn_def).unwrap();
         assert_eq!(registry.count(), 2);
@@ -883,7 +910,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 10);
+        assert_eq!(builtins.len(), 16);
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
@@ -985,7 +1012,7 @@ mod tests {
         assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
     }
 
-    /// T-MA-P4-13: Registry loads all 8 built-in agents at startup.
+    /// T-MA-P4-13: Registry loads all 16 built-in agents at startup.
     #[test]
     fn test_registry_loads_all_builtin_agents() {
         let registry = AgentRegistry::new();
@@ -1000,6 +1027,12 @@ mod tests {
             "skill-ingestion",
             "skill-security-check",
             "pruning-summarizer",
+            "complexity-classifier",
+            "knowledge-metadata",
+            "knowledge-summarizer",
+            "translator",
+            "plan-writer",
+            "task-decomposer",
         ];
 
         for id in expected_ids {
@@ -1011,7 +1044,7 @@ mod tests {
             assert!(!def.system_prompt.is_empty());
         }
 
-        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 10);
+        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 16);
     }
 
     /// Override a built-in agent with `register_or_override`.

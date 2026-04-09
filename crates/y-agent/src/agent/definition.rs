@@ -138,6 +138,15 @@ pub struct AgentDefinition {
     /// Default: `false` -- all tool call history is preserved.
     #[serde(default)]
     pub prune_tool_history: bool,
+
+    // -- Auto-update --
+    /// Whether this agent's seed file should be auto-updated on startup when
+    /// a newer builtin version is available.
+    ///
+    /// Default: `true`. Set to `false` in the user's agents directory to
+    /// preserve local customizations across y-agent upgrades.
+    #[serde(default = "default_auto_update")]
+    pub auto_update: bool,
 }
 
 const fn default_max_iterations() -> usize {
@@ -151,6 +160,9 @@ const fn default_timeout_secs() -> u64 {
 }
 const fn default_max_context_tokens() -> usize {
     4096
+}
+const fn default_auto_update() -> bool {
+    true
 }
 
 impl AgentDefinition {
@@ -283,6 +295,7 @@ system_prompt = ""
             max_completion_tokens: None,
             user_callable: false,
             prune_tool_history: false,
+            auto_update: true,
         };
         assert!(def.validate().is_err());
     }

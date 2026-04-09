@@ -3,6 +3,7 @@ name = "task-intent-analyzer"
 description = "Analyzes user messages to determine task intent, complexity, required capabilities, and optimal agent routing. Used for intelligent delegation decisions."
 mode = "plan"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["intent_analysis", "task_decomposition", "routing"]
 allowed_tools = []
 denied_tools = []

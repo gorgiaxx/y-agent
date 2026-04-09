@@ -3,6 +3,7 @@ name = "pruning-summarizer"
 description = "Summarizes completed multi-step tool workflows for context pruning. Produces compact summaries preserving key results, file paths, URLs, decisions, and final outcomes."
 mode = "explore"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["summarization", "context_pruning"]
 allowed_tools = []
 denied_tools = []

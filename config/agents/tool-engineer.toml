@@ -3,6 +3,7 @@ name = "tool-engineer"
 description = "Designs and implements new tools based on capability requirements. Specializes in creating well-defined tool interfaces with proper parameter validation."
 mode = "build"
 trust_tier = "built_in"
+auto_update = true
 user_callable = true
 capabilities = ["tool_design", "code_generation", "api_integration"]
 allowed_tools = ["FileRead", "FileWrite", "SearchCode", "ShellExec"]

@@ -3,6 +3,7 @@ name = "compaction-summarizer"
 description = "Summarizes conversation history for context compaction. Produces concise summaries preserving key decisions, action items, and technical details."
 mode = "explore"
 trust_tier = "built_in"
+auto_update = true
 capabilities = ["summarization", "context_compaction"]
 allowed_tools = []
 denied_tools = []
