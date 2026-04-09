@@ -281,7 +281,20 @@ fn spawn_llm_worker(
 
             // Check whether title generation should actually fire for this turn.
             let do_title = if should_generate_title {
-                ChatService::should_generate_title(&container, &prepared.history)
+                match container.session_manager.get_session(&sid_clone).await {
+                    Ok(session) if session.session_type.is_user_facing() => {
+                        ChatService::should_generate_title(&container, &prepared.history)
+                    }
+                    Ok(_) => false,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            session_id = %sid_clone.0,
+                            "failed to resolve session type for title generation"
+                        );
+                        false
+                    }
+                }
             } else {
                 false
             };

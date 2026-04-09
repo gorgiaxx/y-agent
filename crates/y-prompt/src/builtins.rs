@@ -31,11 +31,20 @@ const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.
 const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_planning.txt");
 const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
 const PROMPT_ORCHESTRATION: &str = include_str!("../../../config/prompts/core_orchestration.txt");
-const PROMPT_PLAN_MODE_ACTIVE: &str = include_str!("../../../config/prompts/plan_mode_active.txt");
+const PROMPT_PLAN_MODE_ACTIVE: &str = include_str!("../../../config/prompts/plan_mode_hint.txt");
 
 /// Mapping from section ID to (compiled default content, override filename,
 /// `token_budget`, priority, condition, category).
 const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, ConditionTag)] = &[
+    (
+        "core.plan_mode_active",
+        PROMPT_PLAN_MODE_ACTIVE,
+        "plan_mode_hint.txt",
+        200,
+        50,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::PlanModeActive,
+    ),
     (
         "core.identity",
         PROMPT_IDENTITY,
@@ -125,15 +134,6 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         425,
         SectionCategoryTag::Behavioral,
         ConditionTag::OrchestrationEnabled,
-    ),
-    (
-        "core.plan_mode_active",
-        PROMPT_PLAN_MODE_ACTIVE,
-        "plan_mode_active.txt",
-        200,
-        275,
-        SectionCategoryTag::Behavioral,
-        ConditionTag::PlanModeActive,
     ),
 ];
 
@@ -240,7 +240,7 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
     ("core_planning.txt", PROMPT_PLANNING),
     ("core_exploration.txt", PROMPT_EXPLORATION),
     ("core_orchestration.txt", PROMPT_ORCHESTRATION),
-    ("plan_mode_active.txt", PROMPT_PLAN_MODE_ACTIVE),
+    ("plan_mode_hint.txt", PROMPT_PLAN_MODE_ACTIVE),
 ];
 
 /// Create the default `PromptTemplate` referencing the built-in sections.
@@ -249,11 +249,11 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
 /// `prompt-design.md`.
 pub fn default_template() -> PromptTemplate {
     let sections = vec![
+        section_ref("core.plan_mode_active"),
         section_ref("core.identity"),
         section_ref("core.datetime"),
         section_ref("core.environment"),
         section_ref("core.persona"),
-        section_ref("core.plan_mode_active"),
         section_ref("core.guidelines"),
         section_ref("core.security"),
         section_ref("core.tool_protocol"),

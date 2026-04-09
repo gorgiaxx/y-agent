@@ -23,6 +23,10 @@ pub struct SessionInfo {
     pub has_custom_prompt: bool,
 }
 
+fn is_user_visible_session(session_type: &SessionType) -> bool {
+    session_type.is_user_facing()
+}
+
 /// A message in the session transcript.
 #[derive(Debug, Serialize, Clone)]
 pub struct MessageInfo {
@@ -77,6 +81,7 @@ pub async fn session_list(state: State<'_, AppState>) -> Result<Vec<SessionInfo>
 
     let mut infos: Vec<SessionInfo> = sessions
         .into_iter()
+        .filter(|session| is_user_visible_session(&session.session_type))
         .map(|s| {
             let has_custom = custom_prompt_ids.contains(&s.id.0);
             SessionInfo {

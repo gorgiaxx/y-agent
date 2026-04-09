@@ -104,6 +104,59 @@ pub(crate) fn build_iteration_data(
     }
 }
 
+fn build_streaming_raw_response(
+    model_name: &str,
+    content: &str,
+    tool_calls: &[y_core::types::ToolCallRequest],
+    finish_reason: &y_core::provider::FinishReason,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> serde_json::Value {
+    let finish_reason_str = match finish_reason {
+        y_core::provider::FinishReason::Length => "length",
+        y_core::provider::FinishReason::ToolUse => "tool_calls",
+        y_core::provider::FinishReason::ContentFilter => "content_filter",
+        y_core::provider::FinishReason::Unknown | y_core::provider::FinishReason::Stop => "stop",
+    };
+
+    let tool_calls_json: Vec<serde_json::Value> = tool_calls
+        .iter()
+        .map(|tool_call| {
+            serde_json::json!({
+                "id": tool_call.id,
+                "type": "function",
+                "function": {
+                    "name": tool_call.name,
+                    "arguments": tool_call.arguments,
+                }
+            })
+        })
+        .collect();
+
+    let mut message = serde_json::json!({
+        "role": "assistant",
+        "content": content,
+    });
+    if !tool_calls_json.is_empty() {
+        message["tool_calls"] = serde_json::Value::Array(tool_calls_json);
+    }
+
+    serde_json::json!({
+        "id": "",
+        "object": "chat.completion",
+        "model": model_name,
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": finish_reason_str,
+        }],
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+        }
+    })
+}
+
 /// Dispatch to streaming or non-streaming LLM call.
 ///
 /// Returns `(ChatResponse, Option<reasoning_duration_ms>)`. The duration
@@ -246,29 +299,14 @@ async fn call_llm_streaming(
     }
 
     // Build synthetic raw response for diagnostics.
-    let finish_reason_str = match finish_reason {
-        FinishReason::Length => "length",
-        FinishReason::ToolUse => "tool_calls",
-        FinishReason::ContentFilter => "content_filter",
-        FinishReason::Unknown | FinishReason::Stop => "stop",
-    };
-    let raw_response = serde_json::json!({
-        "id": "",
-        "object": "chat.completion",
-        "model": model_name,
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": content,
-            },
-            "finish_reason": finish_reason_str,
-        }],
-        "usage": {
-            "prompt_tokens": usage.input_tokens,
-            "completion_tokens": usage.output_tokens,
-        }
-    });
+    let raw_response = build_streaming_raw_response(
+        &model_name,
+        &content,
+        &tool_calls,
+        &finish_reason,
+        u64::from(usage.input_tokens),
+        u64::from(usage.output_tokens),
+    );
 
     // If reasoning ended without any content delta (e.g. model produced
     // only reasoning), finalize the duration now.
@@ -297,4 +335,40 @@ async fn call_llm_streaming(
         provider_id,
     };
     Ok((response, reasoning_duration_ms))
+}
+
+#[cfg(test)]
+mod tests {
+    use y_core::provider::FinishReason;
+    use y_core::types::ToolCallRequest;
+
+    use super::build_streaming_raw_response;
+
+    #[test]
+    fn test_build_streaming_raw_response_includes_tool_calls() {
+        let raw = build_streaming_raw_response(
+            "gpt-test",
+            "working",
+            &[ToolCallRequest {
+                id: "call_123".into(),
+                name: "Plan".into(),
+                arguments: serde_json::json!({
+                    "request": "Create a plan",
+                }),
+            }],
+            &FinishReason::ToolUse,
+            123,
+            45,
+        );
+
+        assert_eq!(raw["choices"][0]["finish_reason"], "tool_calls");
+        assert_eq!(
+            raw["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
+            "Plan"
+        );
+        assert_eq!(
+            raw["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]["request"],
+            "Create a plan"
+        );
+    }
 }

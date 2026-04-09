@@ -99,6 +99,7 @@ pub async fn run(action: &AgentAction, services: &AppServices, mode: OutputMode)
                 max_completion_tokens: None,
                 user_callable: false,
                 prune_tool_history: false,
+                auto_update: true,
             };
 
             let mut registry = services.agent_registry.lock().await;

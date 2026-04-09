@@ -269,21 +269,6 @@ pub(crate) async fn sync_dynamic_tool_defs(
 
     let essential: std::collections::HashSet<&str> = ESSENTIAL_TOOL_NAMES.iter().copied().collect();
 
-    // When plan mode is active, also exclude blocked tools from dynamic defs.
-    let plan_active = {
-        let pctx = container.prompt_context.read().await;
-        pctx.config_flags
-            .get("plan_mode.active")
-            .copied()
-            .unwrap_or(false)
-    };
-    let blocked: std::collections::HashSet<&str> = if plan_active {
-        use crate::container::PLAN_MODE_BLOCKED_TOOLS;
-        PLAN_MODE_BLOCKED_TOOLS.iter().copied().collect()
-    } else {
-        std::collections::HashSet::new()
-    };
-
     let set = container.tool_activation_set.read().await;
     let active = set.active_definitions();
 
@@ -291,7 +276,7 @@ pub(crate) async fn sync_dynamic_tool_defs(
         .iter()
         .filter(|def| {
             let name = def.name.as_str();
-            !essential.contains(name) && !blocked.contains(name)
+            !essential.contains(name)
         })
         .map(|def| {
             serde_json::json!({

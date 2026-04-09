@@ -209,9 +209,13 @@ async function reloadSessionHistory(sessionId: string) {
       for (const e of existing) {
         const ev = e.event;
         if (ev.type === 'llm_response') {
-          existingFingerprints.add(`llm:${ev.iteration}:${ev.model}:${ev.input_tokens}:${ev.output_tokens}`);
+          existingFingerprints.add(
+            `llm:${ev.agent_name ?? 'unknown'}:${ev.iteration}:${ev.model}:${ev.input_tokens}:${ev.output_tokens}:${ev.tool_calls_requested.join(',')}`,
+          );
         } else if (ev.type === 'tool_result') {
-          existingFingerprints.add(`tool:${ev.name}:${ev.success}:${ev.duration_ms}`);
+          existingFingerprints.add(
+            `tool:${ev.agent_name ?? 'unknown'}:${ev.name}:${ev.success}:${ev.duration_ms}`,
+          );
         } else if (ev.type === 'user_message') {
           existingFingerprints.add(`user:${ev.content}`);
         }
@@ -224,9 +228,9 @@ async function reloadSessionHistory(sessionId: string) {
         const ev = e.event;
         let fp = '';
         if (ev.type === 'llm_response') {
-          fp = `llm:${ev.iteration}:${ev.model}:${ev.input_tokens}:${ev.output_tokens}`;
+          fp = `llm:${ev.agent_name ?? 'unknown'}:${ev.iteration}:${ev.model}:${ev.input_tokens}:${ev.output_tokens}:${ev.tool_calls_requested.join(',')}`;
         } else if (ev.type === 'tool_result') {
-          fp = `tool:${ev.name}:${ev.success}:${ev.duration_ms}`;
+          fp = `tool:${ev.agent_name ?? 'unknown'}:${ev.name}:${ev.success}:${ev.duration_ms}`;
         } else if (ev.type === 'user_message') {
           fp = `user:${ev.content}`;
         }

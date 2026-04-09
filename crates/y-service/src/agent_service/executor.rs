@@ -133,6 +133,7 @@ pub(crate) async fn execute_inner(
         dynamic_tool_defs: Vec::new(),
         pending_interactions: container.pending_interactions.clone(),
         pending_permissions: container.pending_permissions.clone(),
+        cancel_token: cancel.clone(),
     };
     #[allow(unused_assignments)]
     let mut final_model = String::new();

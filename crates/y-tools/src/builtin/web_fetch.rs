@@ -163,6 +163,7 @@ impl Tool for WebFetchTool {
                     }
                 })?;
                 let search_engine = input.arguments["search_engine"].as_str();
+                let engine_name = search_engine.unwrap_or("google");
                 let wait_ms = input.arguments["wait_ms"].as_u64().or(Some(2000));
 
                 let text = self
@@ -172,12 +173,20 @@ impl Tool for WebFetchTool {
                 // Best-effort page metadata for GUI rendering.
                 let (title, favicon) = self.browser.fetch_page_meta().await;
 
+                // Build the actual search URL so the GUI can render a clickable
+                // URL tag (favicon + open-in-browser button). Best-effort for
+                // display only -- the real navigation is done inside BrowserTool.
+                let search_url = y_browser::tool::build_search_url(engine_name, query)
+                    .ok()
+                    .unwrap_or_default();
+
                 Ok(ToolOutput {
                     success: true,
                     content: serde_json::json!({
                         "action": "search",
                         "query": query,
-                        "search_engine": search_engine.unwrap_or("google"),
+                        "url": search_url,
+                        "search_engine": engine_name,
                         "title": title,
                         "favicon_url": favicon,
                         "text": text,

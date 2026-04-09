@@ -11,6 +11,7 @@ const defaultConfig: GuiConfig = {
   window_width: 1200,
   window_height: 800,
   setup_completed: false,
+  translate_target_language: '',
 };
 
 interface UseConfigReturn {

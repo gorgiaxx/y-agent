@@ -24,8 +24,12 @@ pub async fn diagnostics_get_by_session(
     session_id: String,
     limit: Option<usize>,
 ) -> Result<Vec<HistoricalEntry>, String> {
-    let store = state.container.diagnostics.store();
-    DiagnosticsService::get_session_history(store, &session_id, limit.unwrap_or(50)).await
+    DiagnosticsService::get_session_history_including_descendants(
+        &state.container,
+        &session_id,
+        limit.unwrap_or(50),
+    )
+    .await
 }
 
 /// Fetch all subagent traces regardless of session, ordered by time.

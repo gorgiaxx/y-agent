@@ -654,7 +654,7 @@ impl BrowserTool {
 }
 
 /// Build a search engine URL from engine name and query text.
-fn build_search_url(engine: &str, query: &str) -> Result<String, ToolError> {
+pub fn build_search_url(engine: &str, query: &str) -> Result<String, ToolError> {
     let encoded_query = urlencoding::encode(query);
     let url = match engine {
         "google" => format!("https://www.google.com/search?q={encoded_query}"),

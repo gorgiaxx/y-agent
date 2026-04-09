@@ -37,9 +37,6 @@ fn estimate_tokens(text: &str) -> u32 {
     u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
 }
 
-/// Tools blocked during plan mode -- excluded from the prompt tool list.
-const PLAN_MODE_BLOCKED_TOOLS: &[&str] = &["FileWrite", "FileEdit", "Task"];
-
 /// `InjectTools` -- injects tool discovery info into the context.
 ///
 /// Runs at priority 500 (`INJECT_TOOLS`).
@@ -168,19 +165,6 @@ impl InjectTools {
         }
         self.mode
     }
-
-    /// Check whether plan mode is currently active.
-    async fn is_plan_mode_active(&self) -> bool {
-        if let Some(ref ctx) = self.prompt_context {
-            let pctx = ctx.read().await;
-            return pctx
-                .config_flags
-                .get("plan_mode.active")
-                .copied()
-                .unwrap_or(false);
-        }
-        false
-    }
 }
 
 #[async_trait]
@@ -195,10 +179,9 @@ impl ContextProvider for InjectTools {
 
     async fn provide(&self, ctx: &mut AssembledContext) -> Result<(), ContextPipelineError> {
         let mode = self.resolve_mode().await;
-        let plan_mode_active = self.is_plan_mode_active().await;
         match mode {
             ToolCallingMode::PromptBased => self.provide_prompt_based(ctx),
-            ToolCallingMode::Native => self.provide_native(ctx, plan_mode_active),
+            ToolCallingMode::Native => self.provide_native(ctx),
         }
         Ok(())
     }
@@ -258,16 +241,13 @@ impl InjectTools {
     }
 
     /// Native mode: inject flat tool name list + `ToolSearch`.
-    fn provide_native(&self, ctx: &mut AssembledContext, plan_mode_active: bool) {
+    fn provide_native(&self, ctx: &mut AssembledContext) {
         if self.tool_names.is_empty() {
             return;
         }
 
         let mut index = String::from("## Available Tools\n\n");
         for name in &self.tool_names {
-            if plan_mode_active && PLAN_MODE_BLOCKED_TOOLS.contains(&name.as_str()) {
-                continue;
-            }
             let _ = writeln!(index, "- {name}");
         }
 

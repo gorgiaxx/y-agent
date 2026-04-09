@@ -28,6 +28,9 @@ export function useSessions(): UseSessionsReturn {
     try {
       const list = await invoke<SessionInfo[]>('session_list');
       setSessions(list);
+      setActiveSessionId((current) => (
+        current && !list.some((session) => session.id === current) ? null : current
+      ));
     } catch (e) {
       console.error('Failed to load sessions:', e);
     } finally {

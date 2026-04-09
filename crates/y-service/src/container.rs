@@ -1179,17 +1179,6 @@ pub(crate) const ESSENTIAL_TOOL_NAMES: &[&str] = &[
     "AskUser",
 ];
 
-/// Tools blocked during plan mode.
-///
-/// When `plan_mode.active` is set, these tools are:
-/// 1. Removed from `ChatRequest.tools` (API schemas not sent)
-/// 2. Removed from the "Available Tools" prompt list
-/// 3. Rejected at execution time (defense in depth)
-///
-/// This ensures the LLM physically cannot call write/mutation tools
-/// during the planning phase, rather than relying on text instructions.
-pub(crate) const PLAN_MODE_BLOCKED_TOOLS: &[&str] = &["FileWrite", "FileEdit", "Task"];
-
 /// Tools pre-activated as always-active (never LRU-evicted) but NOT in
 /// `ChatRequest.tools` by default. The LLM sees them in "Available Tools"
 /// and can use `ToolSearch` to load full schemas on demand.
