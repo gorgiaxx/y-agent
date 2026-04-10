@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::error::JournalError;
+use crate::hash::compute_sha256_hex;
 use crate::storage::{FileOperation, JournalEntry, JournalStore, ScopeType, StorageStrategy};
 
 /// List of core tools known to mutate the filesystem.
@@ -81,7 +82,7 @@ impl FileJournalMiddleware {
                     path: file_path.to_string(),
                     message: e.to_string(),
                 })?;
-                let hash = compute_hash(&content);
+                let hash = compute_sha256_hex(&content);
 
                 let strategy_content = Some(content);
 
@@ -125,27 +126,13 @@ impl FileJournalMiddleware {
     }
 }
 
-/// Compute SHA-256 hash of byte content.
-fn compute_hash(content: &[u8]) -> String {
-    use std::fmt::Write;
-    // Simple hash using a basic checksum for now.
-    // In production, use sha2 crate. For this phase, use a fast hash.
-    let mut hash = 0u64;
-    for (i, byte) in content.iter().enumerate() {
-        hash = hash.wrapping_add(u64::from(*byte).wrapping_mul((i as u64).wrapping_add(1)));
-    }
-    let mut s = String::with_capacity(16);
-    let _ = write!(s, "{hash:016x}");
-    s
-}
-
 /// Compute hash from a file path.
 fn compute_hash_from_path(path: &std::path::Path) -> Result<String, JournalError> {
     let content = std::fs::read(path).map_err(|e| JournalError::CaptureFailed {
         path: path.display().to_string(),
         message: e.to_string(),
     })?;
-    Ok(compute_hash(&content))
+    Ok(compute_sha256_hex(&content))
 }
 
 #[cfg(test)]
@@ -232,9 +219,18 @@ mod tests {
     #[test]
     fn test_compute_hash_deterministic() {
         let data = b"hello world";
-        let hash1 = compute_hash(data);
-        let hash2 = compute_hash(data);
+        let hash1 = compute_sha256_hex(data);
+        let hash2 = compute_sha256_hex(data);
         assert_eq!(hash1, hash2);
-        assert_eq!(hash1.len(), 16);
+        assert_eq!(hash1.len(), 64);
+    }
+
+    #[test]
+    fn test_compute_hash_matches_sha256() {
+        let hash = compute_sha256_hex(b"hello world");
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
     }
 }

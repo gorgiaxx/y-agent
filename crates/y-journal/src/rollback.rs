@@ -168,16 +168,7 @@ mod tests {
         std::fs::write(&path, original).unwrap();
 
         // Compute hash of original to match what middleware would store.
-        let hash = {
-            use std::fmt::Write;
-            let mut h = 0u64;
-            for (i, byte) in original.iter().enumerate() {
-                h = h.wrapping_add(u64::from(*byte).wrapping_mul((i as u64).wrapping_add(1)));
-            }
-            let mut s = String::with_capacity(16);
-            let _ = write!(s, "{h:016x}");
-            s
-        };
+        let hash = crate::hash::compute_sha256_hex(original);
 
         let store = make_store();
         {

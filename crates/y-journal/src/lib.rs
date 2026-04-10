@@ -22,6 +22,7 @@
 pub mod conflict;
 pub mod error;
 pub mod file_history;
+mod hash;
 pub mod middleware;
 pub mod rollback;
 pub mod storage;

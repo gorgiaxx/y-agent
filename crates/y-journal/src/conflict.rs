@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::hash::compute_sha256_hex;
 use crate::storage::JournalEntry;
 
 /// Result of a conflict check.
@@ -29,10 +30,9 @@ pub fn detect_conflict(entry: &JournalEntry) -> ConflictStatus {
         return ConflictStatus::NoHashAvailable;
     };
 
-    // Compute current hash.
     match std::fs::read(path) {
         Ok(content) => {
-            let current_hash = compute_hash(&content);
+            let current_hash = compute_sha256_hex(&content);
             if current_hash == *expected_hash {
                 ConflictStatus::Safe
             } else {
@@ -41,18 +41,6 @@ pub fn detect_conflict(entry: &JournalEntry) -> ConflictStatus {
         }
         Err(_) => ConflictStatus::FileMissing,
     }
-}
-
-/// Compute a hash for conflict detection (same algorithm as middleware).
-fn compute_hash(content: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut hash = 0u64;
-    for (i, byte) in content.iter().enumerate() {
-        hash = hash.wrapping_add(u64::from(*byte).wrapping_mul((i as u64).wrapping_add(1)));
-    }
-    let mut s = String::with_capacity(16);
-    let _ = write!(s, "{hash:016x}");
-    s
 }
 
 #[cfg(test)]
@@ -102,7 +90,7 @@ mod tests {
         let content = b"safe content";
         std::fs::write(&path, content).unwrap();
 
-        let hash = compute_hash(content);
+        let hash = compute_sha256_hex(content);
         let entry = make_entry(path.to_str().unwrap(), Some(hash));
         assert_eq!(detect_conflict(&entry), ConflictStatus::Safe);
     }
@@ -115,7 +103,7 @@ mod tests {
         // Write original.
         let original = b"original content";
         std::fs::write(&path, original).unwrap();
-        let original_hash = compute_hash(original);
+        let original_hash = compute_sha256_hex(original);
 
         // Modify the file (third-party).
         std::fs::write(&path, b"modified by someone else").unwrap();
