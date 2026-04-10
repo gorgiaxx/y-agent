@@ -1,12 +1,21 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
+  AlertCircle,
+  CheckCircle2,
   ClipboardList,
   ChevronRight,
+  Circle,
   ListTodo,
+  Loader2,
   Play,
 } from 'lucide-react';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
+import { useResolvedTheme } from '../../../../hooks/useTheme';
 import { formatDuration } from '../../../../utils/formatDuration';
+import { MarkdownSegment } from '../MessageShared';
+import { makeMarkdownComponents } from '../messageUtils';
 import {
   basename,
   extractPlanDisplayMeta,
@@ -15,6 +24,41 @@ import {
 } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
+
+function formatPlanTaskStatus(status: string): string {
+  if (status === 'completed') return 'Completed';
+  if (status === 'failed') return 'Failed';
+  if (status === 'in_progress') return 'In Progress';
+  return 'Pending';
+}
+
+function PlanTaskStatusIcon({ status }: { status: string }) {
+  if (status === 'completed') {
+    return <CheckCircle2 size={14} className="tool-call-plan-task-status-icon" />;
+  }
+  if (status === 'failed') {
+    return <AlertCircle size={14} className="tool-call-plan-task-status-icon" />;
+  }
+  if (status === 'in_progress') {
+    return <Loader2 size={14} className="tool-call-plan-task-status-icon tool-call-plan-task-status-icon--spinning" />;
+  }
+  return <Circle size={14} className="tool-call-plan-task-status-icon" />;
+}
+
+function PlanMarkdownContent({ content }: { content: string }) {
+  const resolvedTheme = useResolvedTheme();
+  const codeThemeStyle = resolvedTheme === 'light' ? oneLight : oneDark;
+  const markdownComponents = useMemo(
+    () => makeMarkdownComponents(codeThemeStyle),
+    [codeThemeStyle],
+  );
+
+  return (
+    <div className="tool-call-plan-markdown markdown-body">
+      <MarkdownSegment text={content} components={markdownComponents} />
+    </div>
+  );
+}
 
 function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
   if (tasks.length === 0) {
@@ -28,6 +72,14 @@ function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
           <div className="tool-call-plan-task-head">
             <span className="tool-call-plan-task-phase">Phase {task.phase || '?'}</span>
             <span className="tool-call-plan-task-title">{task.title}</span>
+            <span
+              className={`tool-call-plan-task-status tool-call-plan-task-status--${task.status}`}
+              title={formatPlanTaskStatus(task.status)}
+              aria-label={formatPlanTaskStatus(task.status)}
+            >
+              <PlanTaskStatusIcon status={task.status} />
+              <span>{formatPlanTaskStatus(task.status)}</span>
+            </span>
           </div>
           {task.description && (
             <div className="tool-call-plan-task-desc">{task.description}</div>
@@ -56,8 +108,6 @@ export function PlanRenderer({
   durationMs,
   result,
   metadata,
-  statusIcon,
-  statusClass,
   displayArgs,
   displayResult,
   displayResultFormatted,
@@ -71,9 +121,23 @@ export function PlanRenderer({
     [toolCall.arguments],
   );
 
-  const defaultExpanded = meta?.kind === 'plan_stage' && meta.stage === 'task_decomposer';
+  const defaultExpanded = meta?.kind === 'plan_stage' || meta?.kind === 'plan_execution';
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [showRaw, setShowRaw] = useState(false);
+
+  const effectiveStatus = meta?.kind === 'plan_execution'
+    && (
+      meta.tasks.some((task) => task.status === 'in_progress')
+      || (meta.completed + meta.failed) < (meta.totalPhases || meta.tasks.length)
+    )
+    ? 'running'
+    : status;
+  const effectiveStatusIcon = {
+    running: <Loader2 size={13} className="collapsible-card-spinner" />,
+    success: <CheckCircle2 size={13} />,
+    error: <AlertCircle size={13} />,
+  }[effectiveStatus];
+  const effectiveStatusClass = `tool-status-${effectiveStatus}`;
 
   const activeResult = showRaw ? displayResult : (displayResultFormatted ?? displayResult);
 
@@ -88,7 +152,7 @@ export function PlanRenderer({
     title = meta.planTitle || title;
     path = meta.planFile;
     detail = meta.planContent ? (
-      <pre className="tool-call-plan-content">{meta.planContent}</pre>
+      <PlanMarkdownContent content={meta.planContent} />
     ) : null;
   } else if (meta?.kind === 'plan_stage' && meta.stage === 'task_decomposer') {
     action = 'Tasks';
@@ -130,7 +194,7 @@ export function PlanRenderer({
   const canExpand = detail != null || !!displayArgs || !!displayResult;
 
   return (
-    <div className={`tool-call-plan-wrapper ${statusClass}`}>
+    <div className={`tool-call-plan-wrapper ${effectiveStatusClass}`}>
       <div
         className="tool-call-plan-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
@@ -144,9 +208,9 @@ export function PlanRenderer({
         {path && (
           <span className="tool-call-plan-path">{basename(path)}</span>
         )}
-        <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
-        <span className={`tool-call-status ${statusClass}`}>
-          {{ running: 'Running...', success: 'Done', error: 'Failed' }[status]}
+        <span className={`tool-call-status-icon ${effectiveStatusClass}`}>{effectiveStatusIcon}</span>
+        <span className={`tool-call-status ${effectiveStatusClass}`}>
+          {{ running: 'Running...', success: 'Done', error: 'Failed' }[effectiveStatus]}
         </span>
         {durationMs !== undefined && (
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>

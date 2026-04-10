@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Plus,
@@ -11,6 +12,11 @@ import {
 } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
 import { WorkspaceDialog } from './WorkspaceDialog';
+import {
+  calculateFloatingMenuPosition,
+  calculateWorkspaceOptionsMaxHeight,
+  getSessionPaneLayout,
+} from './chatSidebarLayout';
 import './ChatSidebarPanel.css';
 
 interface ChatSidebarPanelProps {
@@ -44,6 +50,11 @@ function formatRelativeTime(iso: string, isStreaming: boolean): string {
   return `${days}d`;
 }
 
+type OpenMenuState =
+  | { kind: 'workspace'; id: string }
+  | { kind: 'session'; id: string }
+  | null;
+
 export function ChatSidebarPanel({
   sessions,
   activeSessionId,
@@ -67,13 +78,14 @@ export function ChatSidebarPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<WorkspaceInfo | null>(null);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
+  const [openMenu, setOpenMenu] = useState<OpenMenuState>(null);
+  const [menuPosition, setMenuPosition] = useState<ReturnType<typeof calculateFloatingMenuPosition> | null>(null);
 
   // -- Multi-select state --
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const lastClickedIdRef = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuAnchorRef = useRef<HTMLElement | null>(null);
 
   // -- Mouse-based reorder state (HTML5 DnD is blocked by Tauri webview) --
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
@@ -241,20 +253,51 @@ export function ChatSidebarPanel({
     [commitReorder],
   );
 
+  const closeOpenMenu = useCallback(() => {
+    setOpenMenu(null);
+    setMenuPosition(null);
+    menuAnchorRef.current = null;
+  }, []);
+
+  const toggleMenu = useCallback(
+    (nextMenu: NonNullable<OpenMenuState>, anchorElement: HTMLElement) => {
+      if (openMenu?.kind === nextMenu.kind && openMenu.id === nextMenu.id) {
+        closeOpenMenu();
+        return;
+      }
+
+      menuAnchorRef.current = anchorElement;
+      setMenuPosition(null);
+      setOpenMenu(nextMenu);
+    },
+    [closeOpenMenu, openMenu],
+  );
+
   // Close menus when clicking outside.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpenMenuId(null);
-        setOpenSessionMenuId(null);
+      const target = e.target as Node;
+      const clickedMenu = menuRef.current?.contains(target) ?? false;
+      const clickedAnchor = menuAnchorRef.current?.contains(target) ?? false;
+      if (!clickedMenu && !clickedAnchor) {
+        closeOpenMenu();
       }
     };
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeOpenMenu();
+      }
+    };
+
     document.addEventListener('mousedown', handler);
+    document.addEventListener('keydown', handleEscape);
     return () => {
       document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', handleEscape);
       document.body.classList.remove('y-gui-dragging');
     };
-  }, []);
+  }, [closeOpenMenu]);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return sessions;
@@ -278,6 +321,16 @@ export function ChatSidebarPanel({
     return { groups: g, ungrouped: u };
   }, [sortedWorkspaces, filtered, sessionWorkspaceMap, sortByUserOrder]);
 
+  const sessionPaneLayout = useMemo(
+    () => getSessionPaneLayout({
+      workspaceSectionCount: groups.length,
+      ungroupedCount: ungrouped.length,
+    }),
+    [groups.length, ungrouped.length],
+  );
+
+  const workspaceMaxHeight = `${sessionPaneLayout.workspaceMaxHeightRatio * 100}%`;
+
   // Flat ordered list of all visible session IDs (for shift-range selection).
   const flatVisibleIds = useMemo(() => {
     const ids: string[] = [];
@@ -299,6 +352,56 @@ export function ChatSidebarPanel({
       return next;
     });
   }, [sessions]);
+
+  useEffect(() => {
+    if (!openMenu) return;
+
+    const updateMenuPosition = () => {
+      const anchor = menuAnchorRef.current;
+      const menuElement = menuRef.current;
+      if (!anchor || !anchor.isConnected || !menuElement) {
+        closeOpenMenu();
+        return;
+      }
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const menuRect = menuElement.getBoundingClientRect();
+      const nextPosition = calculateFloatingMenuPosition({
+        anchorRect: {
+          top: anchorRect.top,
+          right: anchorRect.right,
+          bottom: anchorRect.bottom,
+          left: anchorRect.left,
+        },
+        menuHeight: menuRect.height,
+        menuWidth: menuRect.width,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
+      });
+
+      setMenuPosition((prev) => {
+        if (
+          prev
+          && prev.top === nextPosition.top
+          && prev.left === nextPosition.left
+          && prev.maxHeight === nextPosition.maxHeight
+          && prev.direction === nextPosition.direction
+        ) {
+          return prev;
+        }
+        return nextPosition;
+      });
+    };
+
+    updateMenuPosition();
+    window.addEventListener('resize', updateMenuPosition);
+    window.addEventListener('scroll', updateMenuPosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updateMenuPosition);
+      window.removeEventListener('scroll', updateMenuPosition, true);
+    };
+  }, [closeOpenMenu, openMenu]);
 
   // Session item click handler with shift/ctrl multi-select.
   const handleSessionClick = useCallback(
@@ -372,12 +475,27 @@ export function ChatSidebarPanel({
     [draggedSessionId, dragOverSessionId, dragOverPosition]
   );
 
+  const sessionById = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session])),
+    [sessions],
+  );
+  const workspaceById = useMemo(
+    () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
+    [workspaces],
+  );
+
+  const openSession = openMenu?.kind === 'session' ? sessionById.get(openMenu.id) ?? null : null;
+  const openWorkspace = openMenu?.kind === 'workspace' ? workspaceById.get(openMenu.id) ?? null : null;
+  const openSessionWorkspace = openSession
+    ? sortedWorkspaces.find((workspace) => workspace.id === sessionWorkspaceMap[openSession.id]) ?? null
+    : null;
+  const workspaceOptionsMaxHeight = calculateWorkspaceOptionsMaxHeight(menuPosition?.maxHeight ?? 0);
+
   const renderSessionItem = (session: SessionInfo, groupSessionIds: string[]) => {
     const isStreaming = streamingSessionIds.has(session.id);
     const isActive = session.id === activeSessionId;
     const isSelected = selectedIds.has(session.id);
     const timeLabel = formatRelativeTime(session.updated_at, isStreaming);
-    const assignedWs = workspaces.find((w) => w.id === sessionWorkspaceMap[session.id]);
     const isDragging = draggedSessionId === session.id;
 
     return (
@@ -416,79 +534,144 @@ export function ChatSidebarPanel({
             className="btn-session-action"
             onClick={(e) => {
               e.stopPropagation();
-              setOpenSessionMenuId(openSessionMenuId === session.id ? null : session.id);
+              toggleMenu({ kind: 'session', id: session.id }, e.currentTarget);
             }}
             title="Session actions"
           >
             <MoreHorizontal size={12} />
           </button>
         </div>
-
-        {/* Session context menu */}
-        {openSessionMenuId === session.id && (
-          <div className="session-context-menu" ref={menuRef} onClick={(e) => e.stopPropagation()}>
-            {workspaces.length > 0 && (
-              <>
-                <div className="context-menu-section">Move to workspace</div>
-                {workspaces.map((ws) => (
-                  <button
-                    key={ws.id}
-                    className="context-menu-item"
-                    onClick={() => {
-                      onAssignSession(ws.id, session.id);
-                      setOpenSessionMenuId(null);
-                    }}
-                  >
-                    <FolderOpen size={11} />
-                    {ws.name}
-                    {assignedWs?.id === ws.id && <span className="context-menu-check">*</span>}
-                  </button>
-                ))}
-                {assignedWs && (
-                  <button
-                    className="context-menu-item"
-                    onClick={() => {
-                      onUnassignSession(session.id);
-                      setOpenSessionMenuId(null);
-                    }}
-                  >
-                    <X size={11} />
-                    Remove from workspace
-                  </button>
-                )}
-                <hr className="context-menu-divider" />
-              </>
-            )}
-            {onForkSession && (
-              <>
-                <button
-                  className="context-menu-item"
-                  onClick={() => {
-                    onForkSession(session.id);
-                    setOpenSessionMenuId(null);
-                  }}
-                >
-                  <GitBranch size={11} />
-                  Fork session
-                </button>
-                <hr className="context-menu-divider" />
-              </>
-            )}
-            <button
-              className="context-menu-item context-menu-item--danger"
-              onClick={() => {
-                onDeleteSession(session.id);
-                setOpenSessionMenuId(null);
-              }}
-            >
-              <Trash2 size={11} />
-              Delete session
-            </button>
-          </div>
-        )}
       </div>
     );
   };
+
+  const floatingMenu = (() => {
+    if (!openMenu || typeof document === 'undefined') {
+      return null;
+    }
+
+    const menuClassName = openMenu.kind === 'workspace'
+      ? 'workspace-context-menu'
+      : 'session-context-menu';
+
+    let menuBody: ReactElement | null = null;
+    if (openMenu.kind === 'workspace' && openWorkspace) {
+      menuBody = (
+        <>
+          <button
+            className="context-menu-item"
+            onClick={() => {
+              setEditingWorkspace(openWorkspace);
+              closeOpenMenu();
+            }}
+          >
+            <Pencil size={11} />
+            Rename
+          </button>
+          <button
+            className="context-menu-item context-menu-item--danger"
+            onClick={() => {
+              onDeleteWorkspace(openWorkspace.id);
+              closeOpenMenu();
+            }}
+          >
+            <Trash2 size={11} />
+            Delete workspace
+          </button>
+        </>
+      );
+    }
+
+    if (openMenu.kind === 'session' && openSession) {
+      menuBody = (
+        <>
+          {sortedWorkspaces.length > 0 && (
+            <>
+              <div className="context-menu-section">Move to workspace</div>
+              <div
+                className="context-menu-scroll-area"
+                style={{ maxHeight: workspaceOptionsMaxHeight > 0 ? `${workspaceOptionsMaxHeight}px` : undefined }}
+              >
+                {sortedWorkspaces.map((workspace) => (
+                  <button
+                    key={workspace.id}
+                    className="context-menu-item"
+                    onClick={() => {
+                      onAssignSession(workspace.id, openSession.id);
+                      closeOpenMenu();
+                    }}
+                  >
+                    <FolderOpen size={11} />
+                    {workspace.name}
+                    {openSessionWorkspace?.id === workspace.id && <span className="context-menu-check">*</span>}
+                  </button>
+                ))}
+              </div>
+              {openSessionWorkspace && (
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    onUnassignSession(openSession.id);
+                    closeOpenMenu();
+                  }}
+                >
+                  <X size={11} />
+                  Remove from workspace
+                </button>
+              )}
+              <hr className="context-menu-divider" />
+            </>
+          )}
+          {onForkSession && (
+            <>
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  onForkSession(openSession.id);
+                  closeOpenMenu();
+                }}
+              >
+                <GitBranch size={11} />
+                Fork session
+              </button>
+              <hr className="context-menu-divider" />
+            </>
+          )}
+          <button
+            className="context-menu-item context-menu-item--danger"
+            onClick={() => {
+              onDeleteSession(openSession.id);
+              closeOpenMenu();
+            }}
+          >
+            <Trash2 size={11} />
+            Delete session
+          </button>
+        </>
+      );
+    }
+
+    if (!menuBody) {
+      return null;
+    }
+
+    return createPortal(
+      <div
+        className={`${menuClassName} ${menuPosition?.direction === 'up' ? 'context-menu--up' : 'context-menu--down'}`}
+        ref={menuRef}
+        style={{
+          top: menuPosition?.top ?? 0,
+          left: menuPosition?.left ?? 0,
+          maxHeight: menuPosition ? `${menuPosition.maxHeight}px` : undefined,
+          visibility: menuPosition ? 'visible' : 'hidden',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {menuBody}
+      </div>,
+      document.body,
+    );
+  })();
 
   return (
     <>
@@ -520,114 +703,101 @@ export function ChatSidebarPanel({
 
       {/* Session list grouped by workspace */}
       <div className="session-list">
-        {/* Workspace sections */}
-        {groups.map(({ workspace, sessions: originalWsSessions }) => {
-          if (!workspace) return null;
-          const isCollapsed = collapsedIds.has(workspace.id);
-          const wsSessions = getPreviewList(originalWsSessions);
-          return (
-            <div key={workspace.id} className="workspace-section">
-              <div
-                className="workspace-label"
-                onMouseLeave={() => setOpenMenuId(null)}
-              >
-                <button
-                  className="btn-workspace-collapse"
-                  onClick={() => toggleCollapsed(workspace.id)}
-                  title={isCollapsed ? 'Expand' : 'Collapse'}
-                  aria-expanded={!isCollapsed}
-                >
-                  <ChevronRight
-                    size={12}
-                    className={`workspace-chevron ${isCollapsed ? '' : 'workspace-chevron--open'}`}
-                  />
-                </button>
-                <FolderOpen size={11} className="workspace-icon" />
-                <span
-                  className="workspace-name"
-                  title={workspace.path}
-                  onClick={() => toggleCollapsed(workspace.id)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {workspace.name}
-                </span>
-                <button
-                  className="btn-workspace-menu"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNewChatInWorkspace(workspace.id);
-                  }}
-                  title="New session in this workspace"
-                >
-                  <Plus size={12} />
-                </button>
-                <button
-                  className="btn-workspace-menu"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setOpenMenuId(openMenuId === workspace.id ? null : workspace.id);
-                  }}
-                  title="Workspace options"
-                >
-                  <MoreHorizontal size={12} />
-                </button>
-                {openMenuId === workspace.id && (
-                  <div className="workspace-context-menu" ref={menuRef}>
-                    <button
-                      className="context-menu-item"
-                      onClick={() => {
-                        setEditingWorkspace(workspace);
-                        setOpenMenuId(null);
-                      }}
-                    >
-                      <Pencil size={11} />
-                      Rename
-                    </button>
-                    <button
-                      className="context-menu-item context-menu-item--danger"
-                      onClick={() => {
-                        onDeleteWorkspace(workspace.id);
-                        setOpenMenuId(null);
-                      }}
-                    >
-                      <Trash2 size={11} />
-                      Delete workspace
-                    </button>
+        <div className="session-list-sections">
+          {sessionPaneLayout.showWorkspacePane && (
+            <div className="workspace-session-groups" style={{ maxHeight: workspaceMaxHeight }}>
+              {groups.map(({ workspace, sessions: originalWsSessions }) => {
+                if (!workspace) return null;
+                const isCollapsed = collapsedIds.has(workspace.id);
+                const wsSessions = getPreviewList(originalWsSessions);
+                return (
+                  <div key={workspace.id} className="workspace-section">
+                    <div className="workspace-label">
+                      <button
+                        className="btn-workspace-collapse"
+                        onClick={() => toggleCollapsed(workspace.id)}
+                        title={isCollapsed ? 'Expand' : 'Collapse'}
+                        aria-expanded={!isCollapsed}
+                      >
+                        <ChevronRight
+                          size={12}
+                          className={`workspace-chevron ${isCollapsed ? '' : 'workspace-chevron--open'}`}
+                        />
+                      </button>
+                      <FolderOpen size={11} className="workspace-icon" />
+                      <span
+                        className="workspace-name"
+                        title={workspace.path}
+                        onClick={() => toggleCollapsed(workspace.id)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        {workspace.name}
+                      </span>
+                      <button
+                        className="btn-workspace-menu"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onNewChatInWorkspace(workspace.id);
+                        }}
+                        title="New session in this workspace"
+                      >
+                        <Plus size={12} />
+                      </button>
+                      <button
+                        className="btn-workspace-menu"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
+                        }}
+                        title="Workspace options"
+                      >
+                        <MoreHorizontal size={12} />
+                      </button>
+                    </div>
+                    {!isCollapsed && wsSessions.map((session) => renderSessionItem(session, originalWsSessions.map((item) => item.id)))}
                   </div>
-                )}
-              </div>
-              {!isCollapsed && wsSessions.map((s) => renderSessionItem(s, originalWsSessions.map((x) => x.id)))}
+                );
+              })}
             </div>
-          );
-        })}
+          )}
 
-        {/* Ungrouped sessions */}
-        {ungrouped.length > 0 && (
-          <div className="workspace-section">
-            {workspaces.length > 0 && (
-              <div className="workspace-label workspace-label--general">
-                <span className="workspace-name">General</span>
-                <button
-                  className="btn-workspace-menu"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNewChat();
-                  }}
-                  title="New session in General"
-                >
-                  <Plus size={12} />
-                </button>
-              </div>
-            )}
-            {getPreviewList(ungrouped).map((s) => renderSessionItem(s, ungrouped.map((x) => x.id)))}
-          </div>
-        )}
+          {sessionPaneLayout.showGeneralPane && (
+            <div className={`general-session-groups${sessionPaneLayout.showWorkspacePane ? ' general-session-groups--split' : ''}`}>
+              {(ungrouped.length > 0 || workspaces.length > 0) && (
+                <div className="workspace-section">
+                  {workspaces.length > 0 && (
+                    <div className="workspace-label workspace-label--general">
+                      <span className="workspace-name">General</span>
+                      <button
+                        className="btn-workspace-menu"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onNewChat();
+                        }}
+                        title="New session in General"
+                      >
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                  )}
+                  {getPreviewList(ungrouped).map((session) => renderSessionItem(session, ungrouped.map((item) => item.id)))}
+                </div>
+              )}
 
-        {filtered.length === 0 && (
-          <div className="session-empty">
-            {searchQuery ? 'No matching sessions' : 'No sessions yet'}
-          </div>
-        )}
+              {filtered.length === 0 && (
+                <div className="session-empty">
+                  {searchQuery ? 'No matching sessions' : 'No sessions yet'}
+                </div>
+              )}
+            </div>
+          )}
+
+          {filtered.length === 0 && !sessionPaneLayout.showGeneralPane && (
+            <div className="session-empty">
+              {searchQuery ? 'No matching sessions' : 'No sessions yet'}
+            </div>
+          )}
+        </div>
 
         {/* Batch action bar */}
         {selectedIds.size > 0 && (
@@ -643,6 +813,8 @@ export function ChatSidebarPanel({
           </div>
         )}
       </div>
+
+      {floatingMenu}
 
       {/* Workspace creation dialog */}
       {wsDialogOpen && (

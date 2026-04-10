@@ -94,4 +94,127 @@ describe('toolResultUpdates', () => {
     expect(updated.records).toHaveLength(2);
     expect(updated.records[1]).toEqual(second);
   });
+
+  it('replaces the latest plan execution progress update for the same plan file', () => {
+    const taskDecomposer = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: true,
+      durationMs: 8,
+      resultPreview: '2 tasks extracted',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'task_decomposer',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          tasks: [],
+        },
+      },
+    };
+
+    const firstExecution = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: true,
+      durationMs: 15,
+      resultPreview: 'Phase 1 completed',
+      metadata: {
+        display: {
+          kind: 'plan_execution',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          total_phases: 2,
+          completed: 1,
+          failed: 0,
+          tasks: [],
+          phases: [{ task_id: 'task-1', status: 'completed' }],
+        },
+      },
+    };
+
+    const secondExecution = {
+      ...firstExecution,
+      durationMs: 30,
+      resultPreview: 'Phase 2 completed',
+      metadata: {
+        display: {
+          kind: 'plan_execution',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          total_phases: 2,
+          completed: 2,
+          failed: 0,
+          tasks: [],
+          phases: [
+            { task_id: 'task-1', status: 'completed' },
+            { task_id: 'task-2', status: 'completed' },
+          ],
+        },
+      },
+    };
+
+    const updated = upsertToolResultRecord(
+      [taskDecomposer, firstExecution],
+      secondExecution,
+    );
+
+    expect(updated.replacedIndex).toBe(1);
+    expect(updated.records).toHaveLength(2);
+    expect(updated.records[1]).toEqual(secondExecution);
+  });
+
+  it('replaces a task decomposer stage with plan execution progress for the same plan', () => {
+    const taskDecomposer = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: true,
+      durationMs: 8,
+      resultPreview: '2 tasks extracted',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'task_decomposer',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          tasks: [],
+        },
+      },
+    };
+
+    const execution = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: true,
+      durationMs: 15,
+      resultPreview: 'Phase 1 completed',
+      metadata: {
+        display: {
+          kind: 'plan_execution',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          total_phases: 2,
+          completed: 1,
+          failed: 0,
+          tasks: [],
+          phases: [{ task_id: 'task-1', status: 'completed' }],
+        },
+      },
+    };
+
+    const updatedRecords = upsertToolResultRecord([taskDecomposer], execution);
+
+    expect(updatedRecords.replacedIndex).toBe(0);
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0]).toEqual(execution);
+
+    const updatedSegments = upsertToolResultSegment(
+      [{ type: 'tool_result', record: taskDecomposer }],
+      execution,
+    );
+
+    expect(updatedSegments.replacedIndex).toBe(0);
+    expect(updatedSegments.segments).toHaveLength(1);
+    expect(updatedSegments.segments[0]).toEqual({ type: 'tool_result', record: execution });
+  });
 });

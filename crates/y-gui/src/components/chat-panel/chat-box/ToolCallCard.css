@@ -928,18 +928,20 @@
   overflow: hidden;
 }
 
-.tool-call-plan-content {
+.tool-call-plan-markdown {
   margin: 0;
   padding: var(--space-sm) var(--space-md);
-  font-size: 12px;
-  font-family: var(--font-mono);
-  color: var(--text-primary);
   background: transparent;
   max-height: 400px;
   overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.55;
+}
+
+.tool-call-plan-markdown > :first-child {
+  margin-top: 0;
+}
+
+.tool-call-plan-markdown > :last-child {
+  margin-bottom: 0;
 }
 
 .tool-call-plan-reason {
@@ -991,6 +993,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 6px;
 }
 
@@ -1008,6 +1011,49 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.tool-call-plan-task-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.tool-call-plan-task-status--completed {
+  color: var(--success);
+}
+
+.tool-call-plan-task-status--failed {
+  color: var(--error);
+}
+
+.tool-call-plan-task-status--in_progress {
+  color: var(--accent);
+}
+
+.tool-call-plan-task-status-icon {
+  flex-shrink: 0;
+}
+
+.tool-call-plan-task-status-icon--spinning {
+  animation: rotate 1s linear infinite;
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tool-call-plan-task-desc {

@@ -23,6 +23,7 @@ import {
   processedCancelledRuns,
   type ChatBusSubscriber,
 } from './chatBus';
+import { hasPendingRunForSession } from './chatRunState';
 import {
   getCachedMessages,
   setCachedMessages,
@@ -460,7 +461,15 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         // Resolve session: prefer payload (always available from backend),
         // fall back to bus mapping for older event formats.
         const sessionId = payload.session_id || chatBusState.runToSession[payload.run_id] || undefined;
+        const sessionStillActive = sessionId
+          ? hasPendingRunForSession(chatBusState, sessionId)
+          : false;
         console.log(`[chat] complete: run_id=${payload.run_id}, session=${sessionId}, opStatus=${opStatusRef.current}`);
+
+        if (sessionStillActive) {
+          setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+          return;
+        }
 
         if (sessionId) {
           // Merge streaming content with backend messages.
@@ -576,7 +585,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
               // Transition to idle AFTER the cache is updated, not before.
               // Use session-aware setter so a background session's completion
               // does not reset the active session's input state.
-              setOpForSession(sessionId, 'idle');
+              if (!sessionStillActive) {
+                setOpForSession(sessionId, 'idle');
+              }
             }
           })();
 
@@ -598,7 +609,15 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         // Resolve session: prefer payload, fall back to bus mapping.
         // For cancels the backend sends empty string, so the fallback is needed.
         const sessionId = payload.session_id || chatBusState.runToSession[payload.run_id] || undefined;
+        const sessionStillActive = sessionId
+          ? hasPendingRunForSession(chatBusState, sessionId)
+          : false;
         const isCancelled = payload.error === 'Cancelled';
+
+        if (sessionStillActive) {
+          setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+          return;
+        }
 
         // Deduplicate cancel events: `chat_cancel` emits one immediately,
         // and the spawned LLM task emits another when it detects the
@@ -736,7 +755,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
         // Return to idle on error too.
         if (sessionId) {
-          setOpForSession(sessionId, 'idle');
+          if (!sessionStillActive) {
+            setOpForSession(sessionId, 'idle');
+          }
         } else if (opStatusRef.current !== 'idle') {
           setOp('idle');
         }

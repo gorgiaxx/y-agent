@@ -15,6 +15,11 @@ import type {
   ChatStartedPayload,
   ProgressPayload,
 } from '../types';
+import {
+  applyRunStarted,
+  applyRunTerminal,
+  createChatRunState,
+} from './chatRunState';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,11 +47,7 @@ export type ChatBusEvent =
 
 let chatBusInitialised = false;
 
-export const chatBusState: ChatBusState = {
-  runToSession: {},
-  streamingSessions: new Set(),
-  pendingRuns: new Set(),
-};
+export const chatBusState: ChatBusState = createChatRunState();
 
 export const chatBusSubscribers = new Set<ChatBusSubscriber>();
 const chatUnlistenFns: UnlistenFn[] = [];
@@ -76,29 +77,27 @@ async function initialiseChatBus() {
 
   const u0 = await listen<ChatStartedPayload>('chat:started', (e) => {
     const { run_id, session_id } = e.payload;
-    chatBusState.runToSession[run_id] = session_id;
-    chatBusState.pendingRuns.add(run_id);
-    chatBusState.streamingSessions.add(session_id);
+    Object.assign(chatBusState, applyRunStarted(chatBusState, run_id, session_id));
     notifyChatSubscribers({ type: 'started', run_id, session_id });
   });
   chatUnlistenFns.push(u0);
 
   const u1 = await listen<ChatCompletePayload>('chat:complete', (e) => {
     const { run_id } = e.payload;
-    // Prefer session_id from payload (always available), then fallback to mapping.
-    const session_id = e.payload.session_id || chatBusState.runToSession[run_id];
-    chatBusState.pendingRuns.delete(run_id);
-    if (session_id) chatBusState.streamingSessions.delete(session_id);
+    Object.assign(
+      chatBusState,
+      applyRunTerminal(chatBusState, run_id, e.payload.session_id),
+    );
     notifyChatSubscribers({ type: 'complete', payload: e.payload });
   });
   chatUnlistenFns.push(u1);
 
   const u2 = await listen<ChatErrorPayload>('chat:error', (e) => {
     const { run_id } = e.payload;
-    // Prefer session_id from payload (may be empty for cancels), then fallback to mapping.
-    const session_id = e.payload.session_id || chatBusState.runToSession[run_id];
-    chatBusState.pendingRuns.delete(run_id);
-    if (session_id) chatBusState.streamingSessions.delete(session_id);
+    Object.assign(
+      chatBusState,
+      applyRunTerminal(chatBusState, run_id, e.payload.session_id),
+    );
     notifyChatSubscribers({ type: 'error', payload: e.payload });
   });
   chatUnlistenFns.push(u2);

@@ -764,6 +764,40 @@ function parsePlanTask(value: unknown): PlanTaskDisplay | null {
   };
 }
 
+function mergeExecutionTaskStatuses(
+  tasks: PlanTaskDisplay[],
+  phases: Array<Record<string, unknown>>,
+): PlanTaskDisplay[] {
+  if (tasks.length === 0 || phases.length === 0) return tasks;
+
+  const statusByTaskId = new Map<string, string>();
+  const statusByPhase = new Map<number, string>();
+  const statusByTitle = new Map<string, string>();
+
+  for (const phase of phases) {
+    const status = typeof phase.status === 'string' ? phase.status : '';
+    if (!status) continue;
+
+    if (typeof phase.task_id === 'string' && phase.task_id) {
+      statusByTaskId.set(phase.task_id, status);
+    }
+    if (typeof phase.phase === 'number') {
+      statusByPhase.set(phase.phase, status);
+    }
+    if (typeof phase.title === 'string' && phase.title) {
+      statusByTitle.set(phase.title, status);
+    }
+  }
+
+  return tasks.map((task) => ({
+    ...task,
+    status: statusByTaskId.get(task.id)
+      ?? statusByPhase.get(task.phase)
+      ?? statusByTitle.get(task.title)
+      ?? task.status,
+  }));
+}
+
 function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta | null {
   const kind = typeof obj.kind === 'string' ? obj.kind : '';
 
@@ -808,6 +842,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
     const phases = Array.isArray(obj.phases)
       ? obj.phases.filter((phase): phase is Record<string, unknown> => phase != null && typeof phase === 'object')
       : [];
+    const mergedTasks = mergeExecutionTaskStatuses(tasks, phases);
 
     return {
       kind: 'plan_execution',
@@ -816,7 +851,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
       totalPhases: typeof obj.total_phases === 'number' ? obj.total_phases : tasks.length,
       completed: typeof obj.completed === 'number' ? obj.completed : 0,
       failed: typeof obj.failed === 'number' ? obj.failed : 0,
-      tasks,
+      tasks: mergedTasks,
       phases,
     };
   }

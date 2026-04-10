@@ -6,8 +6,12 @@
 /* ---- Session list ---- */
 .session-list {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
   padding: var(--space-xs) var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -15,6 +19,34 @@
 .session-list * {
   -webkit-user-select: none;
   user-select: none;
+}
+
+.session-list-sections {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-session-groups,
+.general-session-groups {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.workspace-session-groups {
+  flex: 0 1 auto;
+}
+
+.general-session-groups {
+  flex: 1 1 auto;
+}
+
+.general-session-groups--split {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
 }
 
 /* ---- Workspace sections ---- */
@@ -86,29 +118,37 @@
 /* ---- Context menus ---- */
 .workspace-context-menu,
 .session-context-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 2px);
+  position: fixed;
   background: var(--surface-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  z-index: 100;
-  min-width: 160px;
+  z-index: 500;
+  min-width: 180px;
+  max-width: min(280px, calc(100vw - 16px));
   padding: 4px;
+  overflow: auto;
   animation: ws-fade-in 0.1s ease;
 }
 
 @keyframes ws-fade-in {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-2px);
   }
 
   to {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.context-menu--up {
+  transform-origin: bottom right;
+}
+
+.context-menu--down {
+  transform-origin: top right;
 }
 
 .context-menu-section {
@@ -154,6 +194,10 @@
   border: none;
   border-top: 1px solid var(--border);
   margin: 4px 0;
+}
+
+.context-menu-scroll-area {
+  overflow-y: auto;
 }
 
 /* ---- Session item ---- */
@@ -287,8 +331,6 @@ body.y-gui-dragging * {
 
 /* ---- Batch action bar ---- */
 .batch-action-bar {
-  position: sticky;
-  bottom: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -296,7 +338,7 @@ body.y-gui-dragging * {
   background: var(--surface-primary);
   border-top: 1px solid var(--border);
   animation: batch-bar-slide-in 0.15s ease;
-  z-index: 10;
+  flex-shrink: 0;
 }
 
 @keyframes batch-bar-slide-in {
