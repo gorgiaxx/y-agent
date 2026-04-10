@@ -1,6 +1,6 @@
 //! Freeze/thaw manager with adaptive durations.
 
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 /// Tracks freeze state and adaptive backoff for a single provider.
@@ -44,13 +44,29 @@ impl FreezeManager {
         }
     }
 
+    fn read_state(&self) -> RwLockReadGuard<'_, FreezeState> {
+        match self.state.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("recovering from poisoned provider freeze read lock");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn write_state(&self) -> RwLockWriteGuard<'_, FreezeState> {
+        match self.state.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("recovering from poisoned provider freeze write lock");
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Check if the provider is currently frozen.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal state lock is poisoned.
     pub fn is_frozen(&self) -> bool {
-        let state = self.state.read().expect("lock poisoned");
+        let state = self.read_state();
 
         if !state.frozen {
             return false;
@@ -73,12 +89,8 @@ impl FreezeManager {
     ///
     /// If duration is `None`, the adaptive duration is calculated based
     /// on consecutive freezes.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal state lock is poisoned.
     pub fn freeze(&self, reason: String, duration: Option<Duration>) {
-        let mut state = self.state.write().expect("lock poisoned");
+        let mut state = self.write_state();
         state.frozen = true;
         state.reason = Some(reason);
         state.frozen_at = Some(Instant::now());
@@ -95,12 +107,8 @@ impl FreezeManager {
     }
 
     /// Freeze permanently (e.g., authentication failure).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal state lock is poisoned.
     pub fn freeze_permanent(&self, reason: String) {
-        let mut state = self.state.write().expect("lock poisoned");
+        let mut state = self.write_state();
         state.frozen = true;
         state.reason = Some(reason);
         state.frozen_at = Some(Instant::now());
@@ -109,12 +117,8 @@ impl FreezeManager {
     }
 
     /// Manually thaw the provider.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal state lock is poisoned.
     pub fn thaw(&self) {
-        let mut state = self.state.write().expect("lock poisoned");
+        let mut state = self.write_state();
         state.frozen = false;
         state.reason = None;
         state.frozen_at = None;
@@ -129,12 +133,8 @@ impl FreezeManager {
     }
 
     /// Get freeze status information.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal state lock is poisoned.
     pub fn status(&self) -> FreezeStatus {
-        let state = self.state.read().expect("lock poisoned");
+        let state = self.read_state();
         FreezeStatus {
             is_frozen: state.frozen,
             reason: state.reason.clone(),
@@ -155,7 +155,7 @@ impl FreezeManager {
     /// Try to auto-thaw if the freeze duration has expired.
     /// Returns `false` if thawed, `true` if still frozen.
     fn try_auto_thaw(&self) -> bool {
-        let mut state = self.state.write().expect("lock poisoned");
+        let mut state = self.write_state();
         if state.permanent {
             return true;
         }
@@ -186,6 +186,8 @@ pub struct FreezeStatus {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     #[test]
@@ -288,5 +290,22 @@ mod tests {
 
         let status = fm.status();
         assert_eq!(status.consecutive_freezes, 2);
+    }
+
+    #[test]
+    fn test_freeze_manager_recovers_from_poisoned_lock() {
+        let fm = Arc::new(FreezeManager::new(30, 3600));
+        let poisoned = Arc::clone(&fm);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.state.write().unwrap();
+            panic!("poison freeze lock");
+        })
+        .join();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fm.freeze("after poison".into(), None);
+            fm.is_frozen()
+        }));
+        assert!(matches!(result, Ok(true)));
     }
 }

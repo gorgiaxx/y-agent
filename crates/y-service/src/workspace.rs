@@ -72,7 +72,7 @@ impl WorkspaceService {
             name,
             path,
         };
-        let mut data = self.read_workspaces();
+        let mut data = self.read_workspaces_result()?;
         data.workspaces.push(record.clone());
         self.write_workspaces(&data)?;
         Ok(record)
@@ -80,7 +80,7 @@ impl WorkspaceService {
 
     /// Update an existing workspace's name and/or path.
     pub fn update(&self, id: &str, name: String, path: String) -> anyhow::Result<()> {
-        let mut data = self.read_workspaces();
+        let mut data = self.read_workspaces_result()?;
         let entry = data
             .workspaces
             .iter_mut()
@@ -93,12 +93,12 @@ impl WorkspaceService {
 
     /// Delete a workspace and remove all its session assignments.
     pub fn delete(&self, id: &str) -> anyhow::Result<()> {
-        let mut data = self.read_workspaces();
+        let mut data = self.read_workspaces_result()?;
         data.workspaces.retain(|w| w.id != id);
         self.write_workspaces(&data)?;
 
         // Remove all session assignments for the deleted workspace.
-        let mut sw = self.read_session_workspaces();
+        let mut sw = self.read_session_workspaces_result()?;
         sw.assignments.retain(|_, wid| wid != id);
         self.write_session_workspaces(&sw)
     }
@@ -112,14 +112,14 @@ impl WorkspaceService {
 
     /// Assign a session to a workspace (overwrites any previous assignment).
     pub fn assign_session(&self, workspace_id: String, session_id: String) -> anyhow::Result<()> {
-        let mut sw = self.read_session_workspaces();
+        let mut sw = self.read_session_workspaces_result()?;
         sw.assignments.insert(session_id, workspace_id);
         self.write_session_workspaces(&sw)
     }
 
     /// Remove a session's workspace assignment.
     pub fn unassign_session(&self, session_id: &str) -> anyhow::Result<()> {
-        let mut sw = self.read_session_workspaces();
+        let mut sw = self.read_session_workspaces_result()?;
         sw.assignments.remove(session_id);
         self.write_session_workspaces(&sw)
     }
@@ -150,12 +150,21 @@ impl WorkspaceService {
     }
 
     fn read_workspaces(&self) -> WorkspacesFile {
+        self.read_workspaces_result().unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "failed to load workspaces; using empty set");
+            WorkspacesFile::default()
+        })
+    }
+
+    fn read_workspaces_result(&self) -> anyhow::Result<WorkspacesFile> {
         let path = self.workspaces_path();
         if !path.exists() {
-            return WorkspacesFile::default();
+            return Ok(WorkspacesFile::default());
         }
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
-        toml::from_str(&content).unwrap_or_default()
+        let content = std::fs::read_to_string(&path)
+            .map_err(|error| anyhow::anyhow!("failed to read {}: {error}", path.display()))?;
+        toml::from_str(&content)
+            .map_err(|error| anyhow::anyhow!("failed to parse {}: {error}", path.display()))
     }
 
     fn write_workspaces(&self, data: &WorkspacesFile) -> anyhow::Result<()> {
@@ -166,12 +175,25 @@ impl WorkspaceService {
     }
 
     fn read_session_workspaces(&self) -> SessionWorkspacesFile {
+        self.read_session_workspaces_result()
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    error = %error,
+                    "failed to load session workspace assignments; using empty set"
+                );
+                SessionWorkspacesFile::default()
+            })
+    }
+
+    fn read_session_workspaces_result(&self) -> anyhow::Result<SessionWorkspacesFile> {
         let path = self.session_workspaces_path();
         if !path.exists() {
-            return SessionWorkspacesFile::default();
+            return Ok(SessionWorkspacesFile::default());
         }
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
-        toml::from_str(&content).unwrap_or_default()
+        let content = std::fs::read_to_string(&path)
+            .map_err(|error| anyhow::anyhow!("failed to read {}: {error}", path.display()))?;
+        toml::from_str(&content)
+            .map_err(|error| anyhow::anyhow!("failed to parse {}: {error}", path.display()))
     }
 
     fn write_session_workspaces(&self, data: &SessionWorkspacesFile) -> anyhow::Result<()> {
@@ -267,5 +289,32 @@ mod tests {
         let (svc, _dir) = make_service();
         let result = svc.update("nonexistent", "N".into(), "/p".into());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_fails_when_workspaces_file_is_invalid() {
+        let (svc, dir) = make_service();
+        let path = dir.path().join("workspaces.toml");
+        std::fs::write(&path, "invalid = [").unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+
+        let result = svc.create("Broken".into(), "/tmp/broken".into());
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn test_assign_session_fails_when_assignment_file_is_invalid() {
+        let (svc, dir) = make_service();
+        let ws = svc.create("WS".into(), "/tmp/ws".into()).unwrap();
+        let path = dir.path().join("session_workspaces.toml");
+        std::fs::write(&path, "assignments = { broken").unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+
+        let result = svc.assign_session(ws.id, "session-1".into());
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     }
 }

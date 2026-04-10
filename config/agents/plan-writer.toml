@@ -7,7 +7,7 @@ auto_update = true
 user_callable = false
 prune_tool_history = true
 capabilities = ["planning", "code_analysis"]
-allowed_tools = ["FileRead", "Glob", "Grep", "SearchCode", "WebFetch", "Browser", "ShellExec", "FileWrite"]
+allowed_tools = ["FileRead", "Glob", "Grep", "Search", "WebFetch", "Browser", "ShellExec", "FileWrite"]
 denied_tools = ["FileEdit", "Task", "EnterPlanMode", "ExitPlanMode", "PlanWriter"]
 system_prompt = """
 You are a plan writer. Given a user's request and optional codebase context, your job is to:

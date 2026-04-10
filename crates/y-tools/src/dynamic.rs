@@ -7,11 +7,12 @@
 //! and run through the same validation/middleware pipeline as built-in tools.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use y_core::runtime::RuntimeCapability;
+use y_core::runtime::{NetworkCapability, ProcessCapability, RuntimeCapability};
 use y_core::tool::{
     Tool, ToolCategory, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolType,
 };
@@ -89,9 +90,28 @@ fn default_version() -> u32 {
     1
 }
 
+const DEFAULT_DYNAMIC_SCRIPT_TIMEOUT_SECS: u64 = 30;
+const SCRIPT_HEREDOC_MARKER: &str = "__Y_AGENT_DYNAMIC_SCRIPT__";
+const INPUT_HEREDOC_MARKER: &str = "__Y_AGENT_DYNAMIC_INPUT__";
+
 impl DynamicToolDef {
     /// Convert to a `ToolDefinition` for registry insertion.
     pub fn to_tool_definition(&self) -> ToolDefinition {
+        let capabilities = match &self.kind {
+            DynamicToolKind::Script { .. } => RuntimeCapability {
+                process: ProcessCapability {
+                    shell: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            DynamicToolKind::HttpApi { .. } => RuntimeCapability {
+                network: NetworkCapability::Full,
+                ..Default::default()
+            },
+            DynamicToolKind::Composite { .. } => RuntimeCapability::default(),
+        };
+
         ToolDefinition {
             name: self.name.clone(),
             description: self.description.clone(),
@@ -100,10 +120,97 @@ impl DynamicToolDef {
             result_schema: None,
             category: ToolCategory::Custom,
             tool_type: ToolType::Dynamic,
-            capabilities: RuntimeCapability::default(),
+            capabilities,
             is_dangerous: false,
         }
     }
+}
+
+fn validation_error(message: impl Into<String>) -> ToolError {
+    ToolError::ValidationError {
+        message: message.into(),
+    }
+}
+
+fn validate_dynamic_tool(def: &DynamicToolDef) -> Result<(), ToolError> {
+    if def.description.trim().is_empty() {
+        return Err(validation_error(format!(
+            "dynamic tool '{}' must have a non-empty description",
+            def.name.as_str()
+        )));
+    }
+
+    if def.created_by.trim().is_empty() {
+        return Err(validation_error(format!(
+            "dynamic tool '{}' must record its creator",
+            def.name.as_str()
+        )));
+    }
+
+    if !def.parameters.is_object() {
+        return Err(validation_error(format!(
+            "dynamic tool '{}' parameters must be a JSON object schema",
+            def.name.as_str()
+        )));
+    }
+
+    match &def.kind {
+        DynamicToolKind::Script {
+            interpreter,
+            source,
+        } => {
+            if interpreter.trim().is_empty() {
+                return Err(validation_error(format!(
+                    "dynamic tool '{}' script interpreter must be non-empty",
+                    def.name.as_str()
+                )));
+            }
+
+            if source.trim().is_empty() {
+                return Err(validation_error(format!(
+                    "dynamic tool '{}' script source must be non-empty",
+                    def.name.as_str()
+                )));
+            }
+
+            Ok(())
+        }
+        DynamicToolKind::HttpApi { .. } => Err(validation_error(format!(
+            "dynamic tool '{}' uses HttpApi, which is not enabled in the current phase; only Script tools are supported",
+            def.name.as_str()
+        ))),
+        DynamicToolKind::Composite { .. } => Err(validation_error(format!(
+            "dynamic tool '{}' uses Composite, which is not enabled in the current phase; only Script tools are supported",
+            def.name.as_str()
+        ))),
+    }
+}
+
+#[cfg(not(windows))]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(not(windows))]
+fn build_script_command(interpreter: &str, source: &str, input_json: &str) -> String {
+    format!(
+        "set -eu\n\
+tmp_script=\"$(mktemp)\"\n\
+tmp_input=\"$(mktemp)\"\n\
+trap 'rm -f \"$tmp_script\" \"$tmp_input\"' EXIT\n\
+cat > \"$tmp_script\" <<'{script_marker}'\n\
+{source}\n\
+{script_marker}\n\
+cat > \"$tmp_input\" <<'{input_marker}'\n\
+{input_json}\n\
+{input_marker}\n\
+{interpreter} \"$tmp_script\" < \"$tmp_input\"",
+        script_marker = SCRIPT_HEREDOC_MARKER,
+        input_marker = INPUT_HEREDOC_MARKER,
+        source = source,
+        input_json = input_json,
+        interpreter = shell_quote(interpreter),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +266,7 @@ impl DynamicToolManager {
     ///
     /// Returns an error if a tool with the same name already exists.
     pub async fn create_tool(&self, def: DynamicToolDef) -> Result<ToolDefinition, ToolError> {
+        validate_dynamic_tool(&def)?;
         let mut defs = self.definitions.write().await;
 
         if defs.contains_key(&def.name) {
@@ -184,6 +292,7 @@ impl DynamicToolManager {
     ///
     /// Increments the version number automatically.
     pub async fn update_tool(&self, mut def: DynamicToolDef) -> Result<ToolDefinition, ToolError> {
+        validate_dynamic_tool(&def)?;
         let mut defs = self.definitions.write().await;
 
         let existing = defs.get(&def.name).ok_or_else(|| ToolError::NotFound {
@@ -289,9 +398,9 @@ impl Default for DynamicToolManager {
 
 /// A wrapper that makes a `DynamicToolDef` executable as a `Tool`.
 ///
-/// Currently provides structural scaffolding. Actual execution backends
-/// (script interpreter, HTTP client, composite chaining) will be
-/// implemented in Phase 4 when the runtime adapter is ready.
+/// The current phase supports runtime-backed Script execution only.
+/// `HttpApi` and Composite definitions are kept for forward compatibility
+/// but are rejected until their later implementation phases.
 pub struct DynamicToolAdapter {
     def: DynamicToolDef,
     /// Cached tool definition for zero-alloc access from `definition()`.
@@ -317,27 +426,80 @@ impl DynamicToolAdapter {
 impl Tool for DynamicToolAdapter {
     async fn execute(&self, input: ToolInput) -> Result<ToolOutput, ToolError> {
         match &self.def.kind {
-            DynamicToolKind::Script { .. } => {
-                // TODO: Execute script via RuntimeAdapter (Phase 4).
-                Err(ToolError::Other {
-                    message: "Script execution not yet implemented".into(),
-                })
+            DynamicToolKind::Script {
+                interpreter,
+                source,
+            } => {
+                let runner =
+                    input
+                        .command_runner
+                        .as_ref()
+                        .ok_or_else(|| ToolError::RuntimeError {
+                            name: self.def.name.as_str().to_string(),
+                            message: "dynamic script execution requires a runtime command runner"
+                                .into(),
+                        })?;
+
+                #[cfg(windows)]
+                {
+                    let _ = interpreter;
+                    let _ = source;
+                    let _ = runner;
+                    return Err(ToolError::RuntimeError {
+                        name: self.def.name.as_str().to_string(),
+                        message: "dynamic script execution is not yet supported on Windows".into(),
+                    });
+                }
+
+                #[cfg(not(windows))]
+                {
+                    let serialized_input =
+                        serde_json::to_string(&input.arguments).map_err(|e| {
+                            ToolError::RuntimeError {
+                                name: self.def.name.as_str().to_string(),
+                                message: format!("failed to serialize dynamic tool input: {e}"),
+                            }
+                        })?;
+
+                    let command = build_script_command(interpreter, source, &serialized_input);
+                    let result = runner
+                        .run_command(
+                            &command,
+                            None,
+                            Duration::from_secs(DEFAULT_DYNAMIC_SCRIPT_TIMEOUT_SECS),
+                        )
+                        .await
+                        .map_err(|e| ToolError::RuntimeError {
+                            name: self.def.name.as_str().to_string(),
+                            message: format!("{e}"),
+                        })?;
+
+                    Ok(ToolOutput {
+                        success: result.success(),
+                        content: serde_json::json!({
+                            "exit_code": result.exit_code,
+                            "stdout": result.stdout_string(),
+                            "stderr": result.stderr_string(),
+                        }),
+                        warnings: vec![],
+                        metadata: serde_json::json!({
+                            "dynamic_tool_kind": "script",
+                        }),
+                    })
+                }
             }
-            DynamicToolKind::HttpApi { .. } => {
-                // TODO: Execute HTTP API call via reqwest (Phase 4).
-                Err(ToolError::Other {
-                    message: "HTTP API execution not yet implemented".into(),
-                })
-            }
+            DynamicToolKind::HttpApi { .. } => Err(validation_error(
+                "HttpApi dynamic tools are not enabled in the current phase",
+            )),
             DynamicToolKind::Composite { steps } => {
-                tracing::info!(
+                tracing::warn!(
                     tool = %input.name.as_str(),
                     steps = steps.len(),
-                    "composite tool execution not yet implemented"
+                    "composite dynamic tools are not enabled in the current phase"
                 );
-                Err(ToolError::Other {
-                    message: "Composite tool execution not yet implemented".into(),
-                })
+                Err(validation_error(
+                    "Composite dynamic tools are not enabled in the current phase",
+                ))
             }
         }
     }
@@ -359,7 +521,65 @@ pub fn make_dynamic_tool(def: DynamicToolDef) -> Arc<dyn Tool> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc as StdArc, Mutex};
+    use std::time::Duration;
+
+    use y_core::runtime::{CommandRunner, ExecutionResult, ResourceUsage, RuntimeError};
+    use y_core::types::SessionId;
+
     use super::*;
+
+    #[derive(Debug)]
+    struct RecordingRunner {
+        commands: Mutex<Vec<String>>,
+        result: ExecutionResult,
+    }
+
+    impl RecordingRunner {
+        fn succeed(stdout: &str) -> Self {
+            Self {
+                commands: Mutex::new(Vec::new()),
+                result: ExecutionResult {
+                    exit_code: 0,
+                    stdout: stdout.as_bytes().to_vec(),
+                    stderr: Vec::new(),
+                    duration: Duration::from_millis(10),
+                    resource_usage: ResourceUsage::default(),
+                },
+            }
+        }
+
+        fn commands(&self) -> Vec<String> {
+            self.commands.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for RecordingRunner {
+        async fn run_command(
+            &self,
+            command: &str,
+            _working_dir: Option<&str>,
+            _timeout: Duration,
+        ) -> Result<ExecutionResult, RuntimeError> {
+            self.commands.lock().unwrap().push(command.to_string());
+            Ok(self.result.clone())
+        }
+    }
+
+    fn make_input(
+        name: &str,
+        args: serde_json::Value,
+        command_runner: Option<StdArc<dyn CommandRunner>>,
+    ) -> ToolInput {
+        ToolInput {
+            call_id: "call_001".into(),
+            name: ToolName::from_string(name),
+            arguments: args,
+            session_id: SessionId::new(),
+            command_runner,
+        }
+    }
 
     fn sample_script_def(name: &str) -> DynamicToolDef {
         DynamicToolDef {
@@ -528,7 +748,7 @@ mod tests {
     async fn test_audit_log_filter_by_tool() {
         let mgr = DynamicToolManager::new();
         mgr.create_tool(sample_script_def("tool_a")).await.unwrap();
-        mgr.create_tool(sample_http_def("tool_b")).await.unwrap();
+        mgr.create_tool(sample_script_def("tool_b")).await.unwrap();
 
         let name_a = ToolName::from_string("tool_a");
         let filtered = mgr.audit_log(Some(&name_a)).await;
@@ -598,6 +818,7 @@ mod tests {
         assert_eq!(tool_def.tool_type, ToolType::Dynamic);
         assert_eq!(tool_def.category, ToolCategory::Custom);
         assert!(!tool_def.is_dangerous);
+        assert!(tool_def.capabilities.process.shell);
     }
 
     #[test]
@@ -606,5 +827,69 @@ mod tests {
         let json = serde_json::to_string(&def.kind).unwrap();
         assert!(json.contains("\"type\":\"composite\""));
         assert!(json.contains("step1"));
+    }
+
+    #[tokio::test]
+    async fn test_create_http_dynamic_tool_rejected_in_current_phase() {
+        let mgr = DynamicToolManager::new();
+        let err = mgr
+            .create_tool(sample_http_def("http_tool"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ToolError::ValidationError { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_update_composite_dynamic_tool_rejected_in_current_phase() {
+        let mgr = DynamicToolManager::new();
+        mgr.create_tool(sample_script_def("updatable"))
+            .await
+            .unwrap();
+
+        let err = mgr
+            .update_tool(sample_composite_def("updatable"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ToolError::ValidationError { .. }));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_script_dynamic_tool_executes_via_command_runner() {
+        let tool = DynamicToolAdapter::new(sample_script_def("script_tool"));
+        let runner = StdArc::new(RecordingRunner::succeed("hello from dynamic tool"));
+        let output = tool
+            .execute(make_input(
+                "script_tool",
+                serde_json::json!({ "city": "Taipei" }),
+                Some(runner.clone()),
+            ))
+            .await
+            .unwrap();
+
+        assert!(output.success);
+        assert_eq!(output.content["exit_code"], 0);
+        assert_eq!(output.content["stdout"], "hello from dynamic tool");
+
+        let commands = runner.commands();
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].contains("bash"));
+        assert!(commands[0].contains("echo hello"));
+        assert!(commands[0].contains("\"city\":\"Taipei\""));
+    }
+
+    #[tokio::test]
+    async fn test_script_dynamic_tool_requires_command_runner() {
+        let tool = DynamicToolAdapter::new(sample_script_def("script_tool"));
+        let err = tool
+            .execute(make_input(
+                "script_tool",
+                serde_json::json!({ "city": "Taipei" }),
+                None,
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ToolError::RuntimeError { .. }));
     }
 }

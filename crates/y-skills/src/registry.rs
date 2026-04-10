@@ -75,7 +75,7 @@ impl SkillRegistryImpl {
             let mut inner = registry.inner.write().await;
 
             // Load disabled-skills state from the store directory.
-            inner.disabled = Self::load_disabled_from_path(store.base_path());
+            inner.disabled = Self::load_disabled_from_path(store.base_path())?;
 
             for manifest in manifests {
                 let skill_id = manifest.id.to_string();
@@ -155,17 +155,31 @@ impl SkillRegistryImpl {
     }
 
     /// Load the disabled set from a `disabled_skills.json` file next to the store.
-    fn load_disabled_from_path(base_path: &Path) -> std::collections::HashSet<String> {
+    fn load_disabled_from_path(
+        base_path: &Path,
+    ) -> Result<std::collections::HashSet<String>, SkillModuleError> {
         let path = base_path.join("disabled_skills.json");
-        if path.exists() {
-            let content = std::fs::read_to_string(&path).unwrap_or_default();
-            serde_json::from_str::<Vec<String>>(&content)
-                .unwrap_or_default()
-                .into_iter()
-                .collect()
-        } else {
-            std::collections::HashSet::new()
+        if !path.exists() {
+            return Ok(std::collections::HashSet::new());
         }
+
+        let content = std::fs::read_to_string(&path).map_err(|error| SkillModuleError::Other {
+            message: format!(
+                "failed to read disabled skills file {}: {error}",
+                path.display()
+            ),
+        })?;
+
+        let disabled = serde_json::from_str::<Vec<String>>(&content).map_err(|error| {
+            SkillModuleError::Other {
+                message: format!(
+                    "failed to parse disabled skills file {}: {error}",
+                    path.display()
+                ),
+            }
+        })?;
+
+        Ok(disabled.into_iter().collect())
     }
 
     /// Persist the disabled set to `disabled_skills.json`.
@@ -352,6 +366,7 @@ impl SkillRegistry for SkillRegistryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
     use y_core::skill::{SkillManifest, SkillVersion, SubDocumentRef};
     use y_core::types::{now, SkillId};
 
@@ -462,5 +477,16 @@ mod tests {
 
         let current = registry.get_manifest(&id).await.unwrap();
         assert_eq!(current.root_content, "root content for testing");
+    }
+
+    #[tokio::test]
+    async fn test_with_store_rejects_invalid_disabled_skills_file() {
+        let dir = TempDir::new().unwrap();
+        let store = FilesystemSkillStore::new(dir.path()).unwrap();
+        std::fs::write(dir.path().join("disabled_skills.json"), "{not valid json").unwrap();
+
+        let result = SkillRegistryImpl::with_store(store).await;
+
+        assert!(result.is_err());
     }
 }

@@ -497,13 +497,20 @@ fn load_settings_from_file(path: &Path) -> Result<PermissionSettings, GuardrailE
 fn save_settings_to_file(path: &Path, settings: &PermissionSettings) -> Result<(), GuardrailError> {
     // Read existing TOML or start with empty.
     let existing = if path.exists() {
-        std::fs::read_to_string(path).unwrap_or_default()
+        std::fs::read_to_string(path).map_err(|e| GuardrailError::Other {
+            message: format!("failed to read '{}': {}", path.display(), e),
+        })?
     } else {
         String::new()
     };
 
-    let mut config: toml::Value =
-        toml::from_str(&existing).unwrap_or(toml::Value::Table(toml::map::Map::new()));
+    let mut config: toml::Value = if existing.trim().is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        toml::from_str(&existing).map_err(|e| GuardrailError::Other {
+            message: format!("failed to parse '{}': {}", path.display(), e),
+        })?
+    };
 
     // Serialize the permissions section.
     let perm_value = toml::Value::try_from(settings).map_err(|e| GuardrailError::Other {
@@ -601,6 +608,19 @@ mod tests {
         assert_eq!(loaded.deny, settings.deny);
         assert_eq!(loaded.ask, settings.ask);
         assert_eq!(loaded.default_mode, settings.default_mode);
+    }
+
+    #[test]
+    fn test_save_settings_to_file_rejects_invalid_existing_toml() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("y-agent.toml");
+        std::fs::write(&path, "invalid = [").unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+
+        let result = save_settings_to_file(&path, &PermissionSettings::default());
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     }
 
     // -- PermissionRuleStore --

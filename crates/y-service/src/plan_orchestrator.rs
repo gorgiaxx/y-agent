@@ -7,13 +7,16 @@
 //! `Plan` tool calls and routes them here.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use y_agent::AgentDefinition;
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::tool::{ToolError, ToolOutput};
-use y_core::types::SessionId;
+use y_core::trust::TrustTier;
+use y_core::types::{Message, SessionId};
 
 use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentService};
 use crate::chat::{TurnEvent, TurnEventSender};
@@ -64,6 +67,19 @@ pub struct StructuredPlan {
 
 /// Orchestrates the plan-mode workflow triggered by the `Plan` tool.
 pub struct PlanOrchestrator;
+
+#[derive(Debug, Clone)]
+struct ResolvedAgentConfig {
+    system_prompt: String,
+    max_iterations: usize,
+    preferred_models: Vec<String>,
+    provider_tags: Vec<String>,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
+    trust_tier: Option<TrustTier>,
+    allowed_tools: Vec<String>,
+    prune_tool_history: bool,
+}
 
 impl PlanOrchestrator {
     /// Handle a `Plan` tool call.
@@ -147,6 +163,23 @@ impl PlanOrchestrator {
                 "plan orchestrator: executing phase"
             );
 
+            if let Some(tx) = progress {
+                let mut progress_snapshot = phase_results.clone();
+                progress_snapshot.push(serde_json::json!({
+                    "task_id": task.id,
+                    "phase": task.phase,
+                    "title": task.title,
+                    "status": "in_progress",
+                }));
+                emit_plan_execution_progress(
+                    tx,
+                    &plan_path,
+                    &structured_plan,
+                    &progress_snapshot,
+                    format!("Executing phase {}: {}", task.phase, task.title),
+                );
+            }
+
             match Self::run_phase(
                 container,
                 parent_session_id,
@@ -167,6 +200,15 @@ impl PlanOrchestrator {
                         "status": "completed",
                         "summary": summary,
                     }));
+                    if let Some(tx) = progress {
+                        emit_plan_execution_progress(
+                            tx,
+                            &plan_path,
+                            &structured_plan,
+                            &phase_results,
+                            format!("Completed phase {}: {}", task.phase, task.title),
+                        );
+                    }
                 }
                 Err(e) => {
                     if is_cancelled_tool_error(&e) {
@@ -184,6 +226,15 @@ impl PlanOrchestrator {
                         "status": "failed",
                         "error": e.to_string(),
                     }));
+                    if let Some(tx) = progress {
+                        emit_plan_execution_progress(
+                            tx,
+                            &plan_path,
+                            &structured_plan,
+                            &phase_results,
+                            format!("Failed phase {}: {}", task.phase, task.title),
+                        );
+                    }
                     // Continue with remaining phases despite failure.
                 }
             }
@@ -247,6 +298,32 @@ impl PlanOrchestrator {
         let child_uuid =
             Uuid::parse_str(child_session.id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
 
+        let settings = Self::resolve_agent_config(
+            container,
+            "plan-writer",
+            ResolvedAgentConfig {
+                system_prompt: String::new(),
+                max_iterations: 30,
+                preferred_models: vec![],
+                provider_tags: vec!["general".to_string()],
+                temperature: Some(0.3),
+                max_tokens: None,
+                trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
+                allowed_tools: vec![
+                    "FileRead".into(),
+                    "Glob".into(),
+                    "Grep".into(),
+                    "SearchCode".into(),
+                    "WebFetch".into(),
+                    "Browser".into(),
+                    "ShellExec".into(),
+                    "FileWrite".into(),
+                ],
+                prune_tool_history: true,
+            },
+        )
+        .await;
+
         // Build the user message for the plan-writer.
         let mut user_msg = format!("Create an execution plan for the following task:\n\n{request}");
         if !context.is_empty() {
@@ -254,50 +331,32 @@ impl PlanOrchestrator {
         }
         let _ = write!(user_msg, "\n\nWrite the plan to: {}", plan_path.display());
 
-        let messages = vec![y_core::types::Message {
-            message_id: y_core::types::generate_message_id(),
-            role: y_core::types::Role::User,
-            content: user_msg,
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: serde_json::Value::Null,
-        }];
-
-        // Load agent definition for tool schemas.
-        let tool_defs = Self::load_agent_tool_schemas(container, "plan-writer").await;
+        let messages = build_subagent_messages(&settings.system_prompt, user_msg);
+        let tool_defs =
+            Self::load_tool_schemas_for_allowed_tools(container, &settings.allowed_tools).await;
 
         let exec_config = AgentExecutionConfig {
             agent_name: "plan-writer".to_string(),
-            system_prompt: String::new(), // Uses context pipeline.
-            max_iterations: 30,
+            system_prompt: settings.system_prompt.clone(),
+            max_iterations: settings.max_iterations,
             tool_definitions: tool_defs,
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
             messages,
             provider_id: None,
-            preferred_models: vec![],
-            provider_tags: vec!["general".to_string()],
-            temperature: Some(0.3),
-            max_tokens: None,
+            preferred_models: settings.preferred_models.clone(),
+            provider_tags: settings.provider_tags.clone(),
+            temperature: settings.temperature,
+            max_tokens: settings.max_tokens,
             thinking: None,
             session_id: Some(child_session.id.clone()),
             session_uuid: child_uuid,
             knowledge_collections: vec![],
-            use_context_pipeline: false, // Sub-agent uses its own system prompt.
+            use_context_pipeline: false,
             user_query: request.to_string(),
             external_trace_id: None,
-            trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
-            agent_allowed_tools: vec![
-                "FileRead".into(),
-                "Glob".into(),
-                "Grep".into(),
-                "SearchCode".into(),
-                "WebFetch".into(),
-                "Browser".into(),
-                "ShellExec".into(),
-                "FileWrite".into(),
-            ],
-            prune_tool_history: true,
+            trust_tier: settings.trust_tier,
+            agent_allowed_tools: settings.allowed_tools.clone(),
+            prune_tool_history: settings.prune_tool_history,
         };
 
         let result =
@@ -357,48 +416,40 @@ impl PlanOrchestrator {
         let child_uuid =
             Uuid::parse_str(child_session.id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
 
-        // Load the agent's system prompt from registry.
-        let system_prompt = {
-            let registry = container.agent_registry.lock().await;
-            registry
-                .get("task-decomposer")
-                .map(|d| d.system_prompt.clone())
-                .unwrap_or_default()
-        };
+        let settings = Self::resolve_agent_config(
+            container,
+            "task-decomposer",
+            ResolvedAgentConfig {
+                system_prompt: String::new(),
+                max_iterations: 1,
+                preferred_models: vec![],
+                provider_tags: vec!["general".to_string()],
+                temperature: Some(0.0),
+                max_tokens: None,
+                trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
+                allowed_tools: vec![],
+                prune_tool_history: false,
+            },
+        )
+        .await;
 
-        let messages = vec![
-            y_core::types::Message {
-                message_id: y_core::types::generate_message_id(),
-                role: y_core::types::Role::System,
-                content: system_prompt,
-                tool_call_id: None,
-                tool_calls: vec![],
-                timestamp: y_core::types::now(),
-                metadata: serde_json::Value::Null,
-            },
-            y_core::types::Message {
-                message_id: y_core::types::generate_message_id(),
-                role: y_core::types::Role::User,
-                content: format!("Plan file: {}\n\n{}", plan_path.display(), plan_content),
-                tool_call_id: None,
-                tool_calls: vec![],
-                timestamp: y_core::types::now(),
-                metadata: serde_json::Value::Null,
-            },
-        ];
+        let messages = build_subagent_messages(
+            &settings.system_prompt,
+            format!("Plan file: {}\n\n{}", plan_path.display(), plan_content),
+        );
 
         let exec_config = AgentExecutionConfig {
             agent_name: "task-decomposer".to_string(),
-            system_prompt: String::new(),
-            max_iterations: 1,
+            system_prompt: settings.system_prompt.clone(),
+            max_iterations: settings.max_iterations,
             tool_definitions: vec![],
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
             messages,
             provider_id: None,
-            preferred_models: vec![],
-            provider_tags: vec!["general".to_string()],
-            temperature: Some(0.0),
-            max_tokens: None,
+            preferred_models: settings.preferred_models.clone(),
+            provider_tags: settings.provider_tags.clone(),
+            temperature: settings.temperature,
+            max_tokens: settings.max_tokens,
             thinking: None,
             session_id: Some(child_session.id.clone()),
             session_uuid: child_uuid,
@@ -406,9 +457,9 @@ impl PlanOrchestrator {
             use_context_pipeline: false,
             user_query: "decompose plan into tasks".to_string(),
             external_trace_id: None,
-            trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
-            agent_allowed_tools: vec![],
-            prune_tool_history: false,
+            trust_tier: settings.trust_tier,
+            agent_allowed_tools: settings.allowed_tools.clone(),
+            prune_tool_history: settings.prune_tool_history,
         };
 
         let result =
@@ -538,25 +589,45 @@ impl PlanOrchestrator {
         Ok(result.content)
     }
 
-    /// Load tool schemas for a given agent from its definition.
-    async fn load_agent_tool_schemas(
+    async fn resolve_agent_config(
         container: &ServiceContainer,
         agent_name: &str,
-    ) -> Vec<serde_json::Value> {
-        let allowed_tools = {
-            let registry = container.agent_registry.lock().await;
-            registry
-                .get(agent_name)
-                .map(|d| d.allowed_tools.clone())
-                .unwrap_or_default()
+        fallback: ResolvedAgentConfig,
+    ) -> ResolvedAgentConfig {
+        let registry = container.agent_registry.lock().await;
+        let Some(def) = registry.get(agent_name) else {
+            return fallback;
         };
 
+        Self::config_from_definition(def)
+    }
+
+    fn config_from_definition(def: &AgentDefinition) -> ResolvedAgentConfig {
+        ResolvedAgentConfig {
+            system_prompt: def.system_prompt.clone(),
+            max_iterations: def.max_iterations,
+            preferred_models: def.preferred_models.clone(),
+            provider_tags: def.provider_tags.clone(),
+            temperature: def.temperature,
+            max_tokens: def
+                .max_completion_tokens
+                .and_then(|value| u32::try_from(value).ok()),
+            trust_tier: Some(def.trust_tier),
+            allowed_tools: def.allowed_tools.clone(),
+            prune_tool_history: def.prune_tool_history,
+        }
+    }
+
+    async fn load_tool_schemas_for_allowed_tools(
+        container: &ServiceContainer,
+        allowed_tools: &[String],
+    ) -> Vec<serde_json::Value> {
         if allowed_tools.is_empty() {
             return vec![];
         }
 
         let mut defs = Vec::new();
-        for tool_name in &allowed_tools {
+        for tool_name in allowed_tools {
             let tn = y_core::types::ToolName::from_string(tool_name);
             if let Some(def) = container.tool_registry.get_definition(&tn).await {
                 defs.push(serde_json::json!({
@@ -620,6 +691,31 @@ fn extract_json_from_response(text: &str) -> String {
         }
     }
     trimmed.to_string()
+}
+
+fn build_subagent_messages(system_prompt: &str, user_content: String) -> Vec<Message> {
+    let mut messages = Vec::with_capacity(if system_prompt.is_empty() { 1 } else { 2 });
+    if !system_prompt.is_empty() {
+        messages.push(Message {
+            message_id: y_core::types::generate_message_id(),
+            role: y_core::types::Role::System,
+            content: system_prompt.to_string(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        });
+    }
+    messages.push(Message {
+        message_id: y_core::types::generate_message_id(),
+        role: y_core::types::Role::User,
+        content: user_content,
+        tool_call_id: None,
+        tool_calls: vec![],
+        timestamp: y_core::types::now(),
+        metadata: serde_json::Value::Null,
+    });
+    messages
 }
 
 fn extract_plan_title(plan_content: &str) -> Option<String> {
@@ -686,12 +782,14 @@ fn build_task_decomposer_stage_metadata(
 }
 
 fn build_plan_execution_metadata(
-    plan_path: &std::path::Path,
+    plan_path: &Path,
     plan: &StructuredPlan,
     completed: usize,
     failed: usize,
     phase_results: &[serde_json::Value],
 ) -> serde_json::Value {
+    let tasks = build_execution_tasks(plan, phase_results);
+
     serde_json::json!({
         "action": "plan_executed",
         "display": {
@@ -701,10 +799,86 @@ fn build_plan_execution_metadata(
             "total_phases": plan.tasks.len(),
             "completed": completed,
             "failed": failed,
-            "tasks": plan.tasks,
+            "tasks": tasks,
             "phases": phase_results,
         }
     })
+}
+
+fn build_execution_tasks(
+    plan: &StructuredPlan,
+    phase_results: &[serde_json::Value],
+) -> Vec<PlanTask> {
+    plan.tasks
+        .iter()
+        .cloned()
+        .map(|mut task| {
+            task.status = resolve_task_status(&task, phase_results);
+            task
+        })
+        .collect()
+}
+
+fn resolve_task_status(task: &PlanTask, phase_results: &[serde_json::Value]) -> TaskStatus {
+    let mut status = task.status;
+
+    for phase in phase_results {
+        let task_id = phase.get("task_id").and_then(|value| value.as_str());
+        let phase_num = phase.get("phase").and_then(serde_json::Value::as_u64);
+        let title = phase.get("title").and_then(|value| value.as_str());
+
+        let matches_task = task_id == Some(task.id.as_str())
+            || phase_num == Some(task.phase as u64)
+            || title == Some(task.title.as_str());
+        if !matches_task {
+            continue;
+        }
+
+        status = match phase.get("status").and_then(|value| value.as_str()) {
+            Some("completed") => TaskStatus::Completed,
+            Some("failed") => TaskStatus::Failed,
+            Some("in_progress") => TaskStatus::InProgress,
+            Some("pending") => TaskStatus::Pending,
+            _ => status,
+        };
+    }
+
+    status
+}
+
+fn count_phase_results(phase_results: &[serde_json::Value], status: &str) -> usize {
+    phase_results
+        .iter()
+        .filter(|phase| phase.get("status").and_then(|value| value.as_str()) == Some(status))
+        .count()
+}
+
+fn emit_plan_execution_progress(
+    tx: &TurnEventSender,
+    plan_path: &Path,
+    plan: &StructuredPlan,
+    phase_results: &[serde_json::Value],
+    result_preview: String,
+) {
+    let completed = count_phase_results(phase_results, "completed");
+    let failed = count_phase_results(phase_results, "failed");
+
+    let _ = tx.send(TurnEvent::ToolResult {
+        name: "Plan".into(),
+        success: failed == 0,
+        duration_ms: 0,
+        input_preview: "plan execution progress".into(),
+        result_preview,
+        agent_name: "plan-orchestrator".into(),
+        url_meta: None,
+        metadata: Some(build_plan_execution_metadata(
+            plan_path,
+            plan,
+            completed,
+            failed,
+            phase_results,
+        )),
+    });
 }
 
 fn cancelled_tool_error() -> ToolError {
@@ -900,6 +1074,16 @@ mod tests {
     }
 
     #[test]
+    fn test_build_subagent_messages_prepends_system_prompt() {
+        let messages = build_subagent_messages("system rules", "user task".into());
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, y_core::types::Role::System);
+        assert_eq!(messages[0].content, "system rules");
+        assert_eq!(messages[1].role, y_core::types::Role::User);
+        assert_eq!(messages[1].content, "user task");
+    }
+
+    #[test]
     fn test_extract_plan_title_prefers_frontmatter_title() {
         let plan = r#"---
 title: GUI Plan Stream Fix
@@ -946,6 +1130,59 @@ Fix the plan stream rendering.
             meta["display"]["tasks"][0]["title"],
             "Render task decomposer output"
         );
+    }
+
+    #[test]
+    fn test_build_plan_execution_metadata_updates_task_statuses() {
+        let plan = StructuredPlan {
+            plan_title: "GUI Plan Stream Fix".into(),
+            plan_file: "/tmp/gui-plan.md".into(),
+            tasks: vec![
+                PlanTask {
+                    id: "task-1".into(),
+                    phase: 1,
+                    title: "Render markdown output".into(),
+                    description: "Use markdown rendering for plan output.".into(),
+                    depends_on: vec![],
+                    status: TaskStatus::Pending,
+                    estimated_iterations: 8,
+                    key_files: vec![
+                        "crates/y-gui/src/components/chat-panel/chat-box/tool-renderers/PlanRenderer.tsx"
+                            .into(),
+                    ],
+                    acceptance_criteria: vec!["Plan content renders as markdown".into()],
+                },
+                PlanTask {
+                    id: "task-2".into(),
+                    phase: 2,
+                    title: "Keep execution state visible".into(),
+                    description: "Do not drop the running indicator during plan execution.".into(),
+                    depends_on: vec!["task-1".into()],
+                    status: TaskStatus::Pending,
+                    estimated_iterations: 10,
+                    key_files: vec!["crates/y-gui/src/hooks/useChat.ts".into()],
+                    acceptance_criteria: vec!["Stop button stays visible".into()],
+                },
+            ],
+        };
+
+        let phase_results = vec![serde_json::json!({
+            "task_id": "task-1",
+            "phase": 1,
+            "title": "Render markdown output",
+            "status": "completed",
+        })];
+
+        let meta = build_plan_execution_metadata(
+            std::path::Path::new("/tmp/gui-plan.md"),
+            &plan,
+            1,
+            0,
+            &phase_results,
+        );
+
+        assert_eq!(meta["display"]["tasks"][0]["status"], "completed");
+        assert_eq!(meta["display"]["tasks"][1]["status"], "pending");
     }
 
     #[test]
@@ -1021,5 +1258,58 @@ Fix the plan stream rendering.
             error,
             ToolError::RuntimeError { ref message, .. } if message == PLAN_CANCELLED_MESSAGE
         ));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_agent_config_uses_plan_writer_definition() {
+        let (container, _tmpdir) = make_test_container().await;
+        let config = PlanOrchestrator::resolve_agent_config(
+            &container,
+            "plan-writer",
+            ResolvedAgentConfig {
+                system_prompt: String::new(),
+                max_iterations: 1,
+                preferred_models: vec![],
+                provider_tags: vec![],
+                temperature: None,
+                max_tokens: None,
+                trust_tier: None,
+                allowed_tools: vec![],
+                prune_tool_history: false,
+            },
+        )
+        .await;
+
+        assert!(config.system_prompt.contains("You are a plan writer"));
+        assert_eq!(config.max_iterations, 60);
+        assert_eq!(config.provider_tags, vec!["general"]);
+        assert!(config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
+        assert!(config.prune_tool_history);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_agent_config_uses_task_decomposer_definition() {
+        let (container, _tmpdir) = make_test_container().await;
+        let config = PlanOrchestrator::resolve_agent_config(
+            &container,
+            "task-decomposer",
+            ResolvedAgentConfig {
+                system_prompt: String::new(),
+                max_iterations: 1,
+                preferred_models: vec![],
+                provider_tags: vec![],
+                temperature: None,
+                max_tokens: None,
+                trust_tier: None,
+                allowed_tools: vec!["FallbackTool".into()],
+                prune_tool_history: true,
+            },
+        )
+        .await;
+
+        assert!(config.system_prompt.contains("Output ONLY valid JSON"));
+        assert_eq!(config.max_iterations, 50);
+        assert_eq!(config.allowed_tools, Vec::<String>::new());
+        assert!(!config.prune_tool_history);
     }
 }
