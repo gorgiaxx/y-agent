@@ -16,13 +16,20 @@ export function hasPendingRunForSession(
   state: ChatRunState,
   sessionId: string,
 ): boolean {
+  return getPendingRunIdForSession(state, sessionId) !== null;
+}
+
+export function getPendingRunIdForSession(
+  state: ChatRunState,
+  sessionId: string,
+): string | null {
   for (const runId of state.pendingRuns) {
     if (state.runToSession[runId] === sessionId) {
-      return true;
+      return runId;
     }
   }
 
-  return false;
+  return null;
 }
 
 export function applyRunStarted(
