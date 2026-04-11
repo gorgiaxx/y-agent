@@ -23,7 +23,8 @@ import {
   processedCancelledRuns,
   type ChatBusSubscriber,
 } from './chatBus';
-import { hasPendingRunForSession } from './chatRunState';
+import { CHAT_STUCK_TIMEOUT_MS, hasSessionActivityTimedOut } from './chatActivity';
+import { getPendingRunIdForSession, hasPendingRunForSession } from './chatRunState';
 import {
   getCachedMessages,
   setCachedMessages,
@@ -136,6 +137,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   );
   const [error, setError] = useState<string | null>(null);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const sessionActivityRef = useRef(new Map<string, number>());
   const activeRunIdRef = useRef<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
@@ -201,6 +203,30 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   const compactMapRef = useRef(new Map<string, CompactInfo[]>());
   const [compactPoints, setCompactPoints] = useState<CompactInfo[]>([]);
 
+  const markSessionActivity = useCallback((sessionId: string, at: number = Date.now()) => {
+    sessionActivityRef.current.set(sessionId, at);
+  }, []);
+
+  const syncSessionRunUi = useCallback((sessionId: string | null) => {
+    if (!sessionId) {
+      activeRunIdRef.current = null;
+      setActiveRunId(null);
+      setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+      return null;
+    }
+
+    const pendingRunId = getPendingRunIdForSession(chatBusState, sessionId);
+    if (pendingRunId) {
+      chatBusState.streamingSessions.add(sessionId);
+    }
+
+    activeRunIdRef.current = pendingRunId;
+    setActiveRunId(pendingRunId);
+    setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+
+    return pendingRunId;
+  }, []);
+
   // Keep a ref in sync with activeSessionId.
   const activeSessionIdRef = useRef<string | null>(activeSessionId);
   useEffect(() => {
@@ -212,9 +238,14 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     // Restore the new session's opStatus (default: idle).
     // This prevents a running session's status from leaking into
     // an idle session's InputArea, which would leave it disabled.
-    const restoredOp = activeSessionId
+    const pendingRunId = syncSessionRunUi(activeSessionId);
+    let restoredOp = activeSessionId
       ? (opStatusMapRef.current.get(activeSessionId) ?? 'idle')
       : 'idle';
+    if (activeSessionId && pendingRunId && restoredOp === 'idle') {
+      restoredOp = 'sending';
+      opStatusMapRef.current.set(activeSessionId, restoredOp);
+    }
     opStatusRef.current = restoredOp;
     setOpStatus(restoredOp);
     // Restore tool results for the new session.
@@ -257,7 +288,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       setCompactPoints([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId]);
+  }, [activeSessionId, syncSessionRunUi]);
 
   // Flush visible messages from cache for the given session.
   const syncVisible = useCallback((sessionId: string) => {
@@ -274,6 +305,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
     const handler: ChatBusSubscriber = (event) => {
       if (event.type === 'started') {
+        markSessionActivity(event.session_id);
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
         activeRunIdRef.current = event.run_id;
         setActiveRunId(event.run_id);
@@ -289,6 +321,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           return;
         }
         const sid = event.session_id;
+        markSessionActivity(sid);
         // Append to event-ordered segments (text segment).
         const segs = streamSegsRef.current.get(sid);
         if (segs) {
@@ -344,6 +377,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
           return;
         }
         const sid = event.session_id;
+        markSessionActivity(sid);
         console.log(`[chat] stream_reasoning_delta: session=${sid}, len=${event.content.length}`);
         // Push/extend a reasoning segment in event-ordered segments.
         const segs = streamSegsRef.current.get(sid);
@@ -400,6 +434,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         // Resolve session: prefer payload (always available from backend),
         // fall back to bus mapping for older event formats.
         const sessionId = payload.session_id || chatBusState.runToSession[payload.run_id] || undefined;
+        if (sessionId) {
+          markSessionActivity(sessionId);
+        }
         const sessionStillActive = sessionId
           ? hasPendingRunForSession(chatBusState, sessionId)
           : false;
@@ -548,6 +585,9 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         // Resolve session: prefer payload, fall back to bus mapping.
         // For cancels the backend sends empty string, so the fallback is needed.
         const sessionId = payload.session_id || chatBusState.runToSession[payload.run_id] || undefined;
+        if (sessionId) {
+          markSessionActivity(sessionId);
+        }
         const sessionStillActive = sessionId
           ? hasPendingRunForSession(chatBusState, sessionId)
           : false;
@@ -703,6 +743,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       } else if (event.type === 'tool_result') {
         // Accumulate tool results for inline card rendering.
         const sid = event.session_id;
+        markSessionActivity(sid);
         const record: ToolResultRecord = {
           name: event.name,
           arguments: event.input_preview,
@@ -747,7 +788,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
     return () => {
       chatBusSubscribers.delete(handler);
     };
-  }, [syncVisible, setOp, setOpForSession]);
+  }, [markSessionActivity, syncVisible, setOp, setOpForSession]);
 
   // ------------------------------------------------------------------
   // Safety timeout: if opStatus stays non-idle for too long without any
@@ -759,27 +800,34 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   useEffect(() => {
     if (opStatus === 'idle') return;
 
-    const STUCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-    const timer = setTimeout(() => {
-      if (opStatusRef.current !== 'idle') {
-        console.warn(
-          `[chat] safety timeout: opStatus=${opStatusRef.current} stuck for ${STUCK_TIMEOUT_MS}ms, forcing idle`,
-        );
-        setOp('idle');
-        // Also clear streaming state for the active session so the UI
-        // no longer shows the streaming indicator.
-        const sid = activeSessionIdRef.current;
-        if (sid) {
-          chatBusState.streamingSessions.delete(sid);
-          setStreamingSessionIds(new Set(chatBusState.streamingSessions));
-        }
+    const SAFETY_POLL_MS = 15_000;
+    const checkForStuckSession = () => {
+      const sid = activeSessionIdRef.current;
+      if (!sid || opStatusRef.current === 'idle') {
+        return;
+      }
+
+      const lastActivityAt = sessionActivityRef.current.get(sid);
+      if (!hasSessionActivityTimedOut(lastActivityAt, Date.now(), CHAT_STUCK_TIMEOUT_MS)) {
+        return;
+      }
+
+      console.warn(
+        `[chat] safety timeout: session=${sid} opStatus=${opStatusRef.current} inactive for ${CHAT_STUCK_TIMEOUT_MS}ms, forcing idle`,
+      );
+      setOpForSession(sid, 'idle');
+      chatBusState.streamingSessions.delete(sid);
+      setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+      if (activeRunIdRef.current && chatBusState.runToSession[activeRunIdRef.current] === sid) {
         activeRunIdRef.current = null;
         setActiveRunId(null);
       }
-    }, STUCK_TIMEOUT_MS);
+    };
 
-    return () => clearTimeout(timer);
-  }, [opStatus, setOp]);
+    checkForStuckSession();
+    const timer = setInterval(checkForStuckSession, SAFETY_POLL_MS);
+    return () => clearInterval(timer);
+  }, [opStatus, setOpForSession]);
 
   // ------------------------------------------------------------------
   // Core operations
@@ -962,6 +1010,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
       setError(null);
       setOp('sending');
       activeSessionIdRef.current = sessionId;
+      markSessionActivity(sessionId);
 
       // Optimistic user message.
       const userMsg: Message = {
@@ -1010,7 +1059,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         sendingRef.current = false;
       }
     },
-    [syncVisible, setOp],
+    [markSessionActivity, syncVisible, setOp],
   );
 
   // ------------------------------------------------------------------
@@ -1048,6 +1097,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
       setOp('editing');
       setError(null);
+      markSessionActivity(sessionId);
 
       return withSessionLock(sessionId, async () => {
         try {
@@ -1155,7 +1205,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
       });
     },
-    [pendingEdit, syncVisible, setOp, loadMessages, invalidateStaleContextResets],
+    [pendingEdit, syncVisible, setOp, loadMessages, invalidateStaleContextResets, markSessionActivity],
   );
 
   // ------------------------------------------------------------------
@@ -1172,6 +1222,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
       setOp('undoing');
       setError(null);
+      markSessionActivity(sessionId);
 
       return withSessionLock(sessionId, async () => {
         try {
@@ -1231,7 +1282,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
       });
     },
-    [loadMessages, setOp, invalidateStaleContextResets],
+    [loadMessages, setOp, invalidateStaleContextResets, markSessionActivity],
   );
 
   // ------------------------------------------------------------------
@@ -1248,6 +1299,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
       setOp('resending');
       setError(null);
+      markSessionActivity(sessionId);
 
       return withSessionLock(sessionId, async () => {
         try {
@@ -1342,7 +1394,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
       });
     },
-    [syncVisible, setOp, loadMessages, invalidateStaleContextResets],
+    [syncVisible, setOp, loadMessages, invalidateStaleContextResets, markSessionActivity],
   );
 
   // ------------------------------------------------------------------
@@ -1358,6 +1410,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
 
       setOp('restoring');
       setError(null);
+      markSessionActivity(sessionId);
 
       return withSessionLock(sessionId, async () => {
         try {
@@ -1376,7 +1429,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
       });
     },
-    [loadMessages, setOp],
+    [loadMessages, setOp, markSessionActivity],
   );
 
   // ------------------------------------------------------------------
