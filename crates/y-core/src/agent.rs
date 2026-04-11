@@ -181,8 +181,10 @@ pub struct AgentRunConfig {
     pub trace_id: Option<uuid::Uuid>,
     /// Whether to prune historical tool call pairs from `working_history`.
     ///
-    /// When `true`, old assistant+tool message pairs are removed between
-    /// iterations, keeping only the most recent batch.
+    /// This is only safe for agents whose prompt guarantees a non-empty
+    /// rolling summary in every tool-calling assistant message. Otherwise,
+    /// deleting old tool results would destroy context needed for later
+    /// iterations.
     pub prune_tool_history: bool,
 }
 

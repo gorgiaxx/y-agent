@@ -6,7 +6,7 @@
 /// This is configurable but the default provides a reasonable estimate
 /// that is within 10% for English text.
 pub fn estimate_tokens(text: &str) -> u32 {
-    let tokens = text.len().div_ceil(4);
+    let tokens = text.chars().count().div_ceil(4);
     u32::try_from(tokens).unwrap_or(u32::MAX)
 }
 
@@ -20,21 +20,28 @@ pub fn truncate_to_budget(text: &str, max_tokens: u32) -> (String, bool) {
         return (text.to_string(), false);
     }
 
-    // Estimate the character limit from the token budget.
-    let char_limit = (max_tokens as usize) * 4;
     let marker = "\n[truncated]";
-    let effective_limit = char_limit.saturating_sub(marker.len());
+    let char_limit = usize::try_from(max_tokens)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(4);
+    let marker_chars = marker.chars().count();
+
+    if char_limit == 0 || char_limit < marker_chars {
+        return (String::new(), true);
+    }
+
+    let effective_limit = char_limit.saturating_sub(marker_chars);
 
     // Truncate at a char boundary.
-    let truncated = if effective_limit >= text.len() {
+    let text_chars = text.chars().count();
+    let truncated = if effective_limit >= text_chars {
         text.to_string()
     } else {
-        // Find the nearest char boundary.
+        // Convert the retained character count back into a UTF-8 byte boundary.
         let boundary = text
             .char_indices()
-            .take_while(|(i, _)| *i <= effective_limit)
-            .last()
-            .map_or(0, |(i, c)| i + c.len_utf8());
+            .nth(effective_limit)
+            .map_or(text.len(), |(i, _)| i);
         format!("{}{marker}", &text[..boundary])
     };
 
@@ -61,6 +68,12 @@ mod tests {
     }
 
     #[test]
+    fn test_estimate_tokens_counts_multibyte_as_characters() {
+        assert_eq!(estimate_tokens("你好你好"), 1); // 4 chars, not 12 UTF-8 bytes
+        assert_eq!(estimate_tokens("你好你好你"), 2); // 5 chars
+    }
+
+    #[test]
     fn test_truncate_within_budget() {
         let text = "Hello, world!"; // 13 chars → ~4 tokens.
         let (result, truncated) = truncate_to_budget(text, 10);
@@ -83,6 +96,22 @@ mod tests {
         let text = "Some content here.";
         let (result, truncated) = truncate_to_budget(text, 0);
         assert!(truncated);
-        assert!(result.contains("[truncated]") || result.is_empty());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_truncate_result_stays_within_budget() {
+        let text = "a".repeat(200); // 50 tokens.
+        let (result, truncated) = truncate_to_budget(&text, 2);
+        assert!(truncated);
+        assert!(estimate_tokens(&result) <= 2);
+    }
+
+    #[test]
+    fn test_truncate_multibyte_text_stays_within_budget() {
+        let text = "你好".repeat(100);
+        let (result, truncated) = truncate_to_budget(&text, 10);
+        assert!(truncated);
+        assert!(estimate_tokens(&result) <= 10);
     }
 }

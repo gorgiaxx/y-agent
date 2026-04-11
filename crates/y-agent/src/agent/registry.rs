@@ -610,6 +610,10 @@ impl AgentRegistry {
                 include_str!("../../../../config/agents/plan-writer.toml"),
             ),
             (
+                "plan-phase-executor",
+                include_str!("../../../../config/agents/plan-phase-executor.toml"),
+            ),
+            (
                 "task-decomposer",
                 include_str!("../../../../config/agents/task-decomposer.toml"),
             ),
@@ -701,7 +705,7 @@ mod tests {
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 18); // 16 built-in + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 19); // 17 built-in + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -826,7 +830,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 16);
+        assert_eq!(builtins.len(), 17);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
         assert_eq!(user_defs.len(), 1);
@@ -910,7 +914,7 @@ mod tests {
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 16);
+        assert_eq!(builtins.len(), 17);
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
@@ -1012,7 +1016,20 @@ mod tests {
         assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
     }
 
-    /// T-MA-P4-13: Registry loads all 16 built-in agents at startup.
+    /// T-MA-P4-13: Plan phase executor parses from TOML with build settings.
+    #[test]
+    fn test_builtin_agent_plan_phase_executor() {
+        let registry = AgentRegistry::new();
+        let def = registry.get("plan-phase-executor").unwrap();
+        assert_eq!(def.mode, AgentMode::Build);
+        assert_eq!(def.trust_tier, TrustTier::BuiltIn);
+        assert_eq!(def.max_iterations, 30);
+        assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
+        assert!(def.allowed_tools.contains(&"ToolSearch".to_string()));
+        assert!(def.denied_tools.contains(&"Task".to_string()));
+    }
+
+    /// T-MA-P4-14: Registry loads all 17 built-in agents at startup.
     #[test]
     fn test_registry_loads_all_builtin_agents() {
         let registry = AgentRegistry::new();
@@ -1032,6 +1049,7 @@ mod tests {
             "knowledge-summarizer",
             "translator",
             "plan-writer",
+            "plan-phase-executor",
             "task-decomposer",
         ];
 
@@ -1044,7 +1062,7 @@ mod tests {
             assert!(!def.system_prompt.is_empty());
         }
 
-        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 16);
+        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 17);
     }
 
     /// Override a built-in agent with `register_or_override`.

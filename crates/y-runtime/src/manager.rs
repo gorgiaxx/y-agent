@@ -4,7 +4,7 @@
 //! - **Concurrency limiter**: global Semaphore (default 10) prevents overloading.
 //! - **Resource quota**: `ResourceMonitor` checks block execution when thresholds exceeded.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -96,6 +96,46 @@ impl RuntimeManager {
         mgr
     }
 
+    fn read_config(&self) -> RwLockReadGuard<'_, RuntimeConfig> {
+        match self.config.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("recovering from poisoned runtime config read lock");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn write_config(&self) -> RwLockWriteGuard<'_, RuntimeConfig> {
+        match self.config.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("recovering from poisoned runtime config write lock");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn read_security_policy(&self) -> RwLockReadGuard<'_, SecurityPolicy> {
+        match self.security_policy.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("recovering from poisoned runtime security read lock");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn write_security_policy(&self) -> RwLockWriteGuard<'_, SecurityPolicy> {
+        match self.security_policy.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("recovering from poisoned runtime security write lock");
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Get a reference to the resource monitor.
     pub fn resource_monitor(&self) -> &Arc<ResourceMonitor> {
         &self.resource_monitor
@@ -113,13 +153,10 @@ impl RuntimeManager {
     /// not rebuilt, but the security-relevant checks (`allow_shell`,
     /// `default_backend`, etc.) all read from the shared `self.config`.
     ///
-    /// # Panics
-    ///
-    /// Panics if the internal `SecurityPolicy` or `RuntimeConfig` `RwLock` is poisoned.
     pub fn reload_config(&self, new_config: RuntimeConfig) {
         let new_policy = SecurityPolicy::from_config(&new_config);
-        *self.security_policy.write().unwrap() = new_policy;
-        *self.config.write().unwrap() = new_config;
+        *self.write_security_policy() = new_policy;
+        *self.write_config() = new_config;
         tracing::info!("Runtime config hot-reloaded");
     }
 
@@ -141,7 +178,7 @@ impl RuntimeManager {
         }
 
         // Fall back to configured default.
-        self.config.read().unwrap().default_backend.clone()
+        self.read_config().default_backend.clone()
     }
 
     /// Get the backend adapter for the given backend type.
@@ -177,14 +214,14 @@ impl RuntimeAdapter for RuntimeManager {
     #[instrument(skip(self, request), fields(command = %request.command))]
     async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError> {
         // Step 1: Validate capabilities against policy.
-        let config = self.config.read().unwrap().clone();
+        let config = self.read_config().clone();
         let checker = CapabilityChecker::new(&config);
         let _capped_caps = checker
             .validate(&request)
             .map_err(|e| -> RuntimeError { e.into() })?;
 
         // Step 2: Enforce security policy.
-        self.security_policy.read().unwrap().enforce(&request)?;
+        self.read_security_policy().enforce(&request)?;
 
         // Step 3: Check resource quota.
         self.check_resource_quota().await?;
@@ -258,14 +295,14 @@ impl RuntimeAdapter for RuntimeManager {
         }
 
         Ok(RuntimeHealth {
-            backend: self.config.read().unwrap().default_backend.clone(),
+            backend: self.read_config().default_backend.clone(),
             available: false,
             message: Some("No runtime backends available".into()),
         })
     }
 
     fn backend(&self) -> RuntimeBackend {
-        self.config.read().unwrap().default_backend.clone()
+        self.read_config().default_backend.clone()
     }
 
     async fn cleanup(&self) -> Result<(), RuntimeError> {
@@ -293,7 +330,7 @@ impl CommandRunner for RuntimeManager {
         // When the default backend is Docker, use the configured default image
         // so that callers don't need to specify it per-request.
         let image = {
-            let cfg = self.config.read().unwrap();
+            let cfg = self.read_config();
             if cfg.default_backend == RuntimeBackend::Docker {
                 cfg.docker.default_image.clone()
             } else {
@@ -335,6 +372,7 @@ impl CommandRunner for RuntimeManager {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::sync::Arc as StdArc;
 
     use y_core::runtime::{ProcessCapability, RuntimeCapability};
 
@@ -510,5 +548,40 @@ mod tests {
         let req = make_request(None, RuntimeCapability::default());
         let result = mgr.execute(req).await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_backend_recovers_from_poisoned_config_lock() {
+        let mgr = StdArc::new(RuntimeManager::new(RuntimeConfig::default(), None));
+        let poisoned = StdArc::clone(&mgr);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.config.write().unwrap();
+            panic!("poison config lock");
+        })
+        .join();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mgr.backend()));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_reload_config_recovers_from_poisoned_security_lock() {
+        let mgr = StdArc::new(RuntimeManager::new(RuntimeConfig::default(), None));
+        let poisoned = StdArc::clone(&mgr);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.security_policy.write().unwrap();
+            panic!("poison security lock");
+        })
+        .join();
+
+        let new_config = RuntimeConfig {
+            default_backend: RuntimeBackend::Docker,
+            ..RuntimeConfig::default()
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mgr.reload_config(new_config)
+        }));
+        assert!(result.is_ok());
+        assert_eq!(mgr.backend(), RuntimeBackend::Docker);
     }
 }

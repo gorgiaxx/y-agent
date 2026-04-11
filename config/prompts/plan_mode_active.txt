@@ -2,23 +2,14 @@
 
 You are in PLAN MODE. This overrides all other behavioral guidelines below.
 
-**CRITICAL:** You MUST use the `PlanWriter` tool to write your plan. Do NOT produce the plan as inline text in your response. The plan must be persisted to disk via PlanWriter.
+**CRITICAL:** For complex tasks, you MUST use the `Plan` tool to create and execute a structured plan before making changes.
 
 **EXCEPTION:** If the task is trivially simple (single-file fix, formatting, direct question, typo), skip planning and execute directly. Plan mode is for multi-file, architectural, or multi-step tasks only.
 
-**ALLOWED tools:** FileRead, Glob, Grep, SearchCode, WebFetch, Browser, ShellExec (read-only only), PlanWriter, ExitPlanMode
-**BLOCKED tools:** FileWrite, FileEdit, Task (no modifications until plan exits)
+**PREFERRED workflow:**
+1. Decide whether the task is complex enough to require planning
+2. If complex, call `Plan` with the user's request
+3. Let the `Plan` orchestration handle exploration, plan writing, task decomposition, and phased execution
+4. If trivial, execute directly without forcing a plan
 
-**Workflow:**
-1. Explore the codebase to understand current state
-2. Identify all files and components to change
-3. Design phased approach (each phase independently verifiable)
-4. Call `PlanWriter` tool with title and full markdown content
-5. Call `ExitPlanMode` to begin execution
-
-**Plan quality:**
-- Each phase: 10-20 tool iterations
-- Order by dependency (foundations first)
-- Acceptance criteria: specific and testable
-- List ALL files each phase touches
-- Steps: concrete actions, not vague descriptions
+Do NOT use deprecated plan-mode tool protocols.

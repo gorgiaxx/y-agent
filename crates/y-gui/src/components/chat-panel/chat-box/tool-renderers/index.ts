@@ -7,10 +7,8 @@ import { ToolSearchRenderer } from './ToolSearchRenderer';
 import { GlobRenderer } from './GlobRenderer';
 import { GrepRenderer } from './GrepRenderer';
 import { FileToolRenderer } from './FileToolRenderer';
-import { EnterPlanModeRenderer } from './EnterPlanModeRenderer';
 import { PlanWriterRenderer } from './PlanWriterRenderer';
 import { PlanRenderer } from './PlanRenderer';
-import { ExitPlanModeRenderer } from './ExitPlanModeRenderer';
 import { AskUserRenderer } from './AskUserRenderer';
 
 export type { ToolRendererProps } from './types';
@@ -31,8 +29,6 @@ export const TOOL_RENDERERS: Record<string, ComponentType<ToolRendererProps>> = 
   FileWrite: FileToolRenderer,
   FileRead: FileToolRenderer,
   Plan: PlanRenderer,
-  EnterPlanMode: EnterPlanModeRenderer,
   PlanWriter: PlanWriterRenderer,
-  ExitPlanMode: ExitPlanModeRenderer,
   AskUser: AskUserRenderer,
 };

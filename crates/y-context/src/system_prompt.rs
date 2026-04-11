@@ -267,10 +267,12 @@ impl ContextProvider for BuildSystemPromptProvider {
         // (datetime, environment, tool_protocol, planning, exploration,
         // orchestration, plan_mode_active) are preserved.
         if let Some(ref custom) = prompt_ctx.custom_system_prompt {
-            accumulated.push_str(custom);
-            cumulative_tokens = estimate_tokens(custom);
+            let (custom, truncated) = truncate_to_budget(custom, total_budget);
+            accumulated.push_str(&custom);
+            cumulative_tokens = estimate_tokens(&custom);
             tracing::debug!(
                 tokens = cumulative_tokens,
+                truncated,
                 "custom system prompt injected, replacing built-in behavioral sections"
             );
         }
@@ -648,6 +650,66 @@ mod tests {
 
         assert_eq!(ctx.items.len(), 1);
         assert_eq!(ctx.items[0].content, "Fallback prompt only.");
+    }
+
+    #[tokio::test]
+    async fn test_custom_prompt_replaces_behavioral_sections_but_keeps_functional_sections() {
+        let mut prompt_ctx = general_ctx();
+        prompt_ctx.custom_system_prompt = Some("Custom session rules.".into());
+
+        let provider = make_provider(prompt_ctx, SystemPromptConfig::default());
+        let mut ctx = AssembledContext::default();
+        provider.provide(&mut ctx).await.unwrap();
+
+        let content = &ctx.items[0].content;
+        assert!(content.contains("Custom session rules."));
+        assert!(!content.contains("Guidelines"));
+        assert!(!content.contains("Security rules"));
+        assert!(content.contains("Tool Usage Protocol"));
+    }
+
+    #[tokio::test]
+    async fn test_custom_prompt_respects_total_budget() {
+        let mut store = SectionStore::new();
+        store.register(y_prompt::PromptSection {
+            id: "tool_protocol".into(),
+            content_source: y_prompt::ContentSource::Inline("protocol".into()),
+            token_budget: 50,
+            priority: 200,
+            condition: Some(y_prompt::SectionCondition::Always),
+            category: y_prompt::SectionCategory::Behavioral,
+        });
+
+        let template = y_prompt::PromptTemplate {
+            id: "test".into(),
+            parent: None,
+            sections: vec![y_prompt::SectionRef {
+                section_id: "tool_protocol".into(),
+                priority_override: None,
+                condition_override: None,
+                enabled: true,
+            }],
+            mode_overlays: std::collections::HashMap::new(),
+            total_token_budget: 20,
+        };
+
+        let prompt_ctx = PromptContext {
+            custom_system_prompt: Some("X".repeat(500)),
+            ..general_ctx()
+        };
+
+        let provider = BuildSystemPromptProvider::new(
+            template,
+            store,
+            Arc::new(RwLock::new(prompt_ctx)),
+            SystemPromptConfig::default(),
+        );
+
+        let mut ctx = AssembledContext::default();
+        provider.provide(&mut ctx).await.unwrap();
+
+        assert!(ctx.items[0].content.contains("[truncated]"));
+        assert!(ctx.items[0].token_estimate <= 20);
     }
 
     #[tokio::test]

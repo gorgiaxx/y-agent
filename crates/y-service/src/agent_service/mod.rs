@@ -105,8 +105,9 @@ pub struct AgentExecutionConfig {
     pub agent_allowed_tools: Vec<String>,
     /// Whether to prune historical tool call pairs from `working_history`.
     ///
-    /// When `true`, old assistant+tool message pairs (all except the most
-    /// recent batch) are removed between iterations.
+    /// This must only be enabled for agents that emit a non-empty rolling
+    /// summary in every tool-calling assistant message. Otherwise, removing
+    /// old tool results would discard context instead of compressing it.
     pub prune_tool_history: bool,
 }
 

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useMemo, memo } from 'react';
+import { useRef, useEffect, useCallback, useMemo, memo, type UIEvent } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { Sparkles, AlertTriangle } from 'lucide-react';
 import type { Message } from '../../types';
@@ -10,6 +10,7 @@ import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import { RestoreDivider } from './chat-box/RestoreDivider';
 import { ContextResetDivider } from './chat-box/ContextResetDivider';
 import { CompactDivider } from './chat-box/CompactDivider';
+import { isNearBottom, resolveAutoScrollBehavior } from './chatAutoScroll';
 import './ChatPanel.css';
 
 /** A tombstoned segment for rendering restore dividers. */
@@ -168,10 +169,10 @@ function ChatPanelInner({
   compactPoints,
 }: ChatPanelProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  /** Whether the user is near the bottom of the scroll area. */
-  const isAtBottomRef = useRef(true);
-  /** Track previous message count to detect new messages. */
-  const prevMessageCountRef = useRef(0);
+  /** Whether auto-scroll should remain enabled for new output. */
+  const shouldAutoScrollRef = useRef(true);
+  /** Track display item count so new items can animate while streaming growth stays instant. */
+  const prevDisplayItemCountRef = useRef(0);
 
   // Pre-compute the flat display item list.
   const displayItems = useMemo(
@@ -179,22 +180,32 @@ function ChatPanelInner({
     [messages, tombstonedSegments, contextResetPoints, compactPoints, toolResults, isStreaming, error],
   );
 
-  // Auto-scroll on new messages (count changes) or streaming updates (if near bottom).
+  // Keep following new output only while the user stays near the bottom.
   useEffect(() => {
-    const messageCountChanged = messages.length !== prevMessageCountRef.current;
-    prevMessageCountRef.current = messages.length;
+    const behavior = resolveAutoScrollBehavior({
+      shouldAutoScroll: shouldAutoScrollRef.current,
+      previousItemCount: prevDisplayItemCountRef.current,
+      nextItemCount: displayItems.length,
+    });
+    prevDisplayItemCountRef.current = displayItems.length;
 
-    if (messageCountChanged || isAtBottomRef.current) {
-      virtuosoRef.current?.scrollToIndex({
-        index: displayItems.length - 1,
-        behavior: messageCountChanged ? 'smooth' : 'auto',
-        align: 'end',
-      });
+    if (!behavior) {
+      return;
     }
-  }, [messages.length, displayItems.length]);
 
-  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
-    isAtBottomRef.current = atBottom;
+    virtuosoRef.current?.scrollToIndex({
+      index: displayItems.length - 1,
+      behavior,
+      align: 'end',
+    });
+  }, [displayItems.length, messages, toolResults, getStreamSegments, isStreaming, error]);
+
+  const handleScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    shouldAutoScrollRef.current = isNearBottom({
+      scrollHeight: event.currentTarget.scrollHeight,
+      scrollTop: event.currentTarget.scrollTop,
+      clientHeight: event.currentTarget.clientHeight,
+    });
   }, []);
 
   // Render a single display item.
@@ -327,8 +338,7 @@ function ChatPanelInner({
             return 'unknown';
           }}
           itemContent={renderItem}
-          atBottomStateChange={handleAtBottomStateChange}
-          atBottomThreshold={150}
+          onScroll={handleScroll}
           overscan={600}
           increaseViewportBy={{ top: 400, bottom: 400 }}
           initialTopMostItemIndex={Math.max(0, displayItems.length - 1)}

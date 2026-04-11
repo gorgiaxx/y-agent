@@ -1,7 +1,7 @@
 id = "skill-ingestion"
 name = "skill-ingestion"
 description = "Analyzes, classifies, and transforms third-party skills into y-agent's proprietary format. Handles format detection, content decomposition, and tool/script separation."
-mode = "build"
+mode = "plan"
 trust_tier = "built_in"
 auto_update = true
 capabilities = ["skill_analysis", "content_transformation"]

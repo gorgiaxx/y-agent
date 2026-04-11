@@ -140,6 +140,10 @@ function WrapToggle({ wrapped, onToggle }: { wrapped: boolean; onToggle: () => v
   );
 }
 
+function AgentLabel({ agentName }: { agentName?: string }) {
+  if (!agentName) return null;
+  return <span className="diag-entry-agent">{agentName}</span>;
+}
 
 function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -186,6 +190,7 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
             LLM Call #{event.iteration}
           </span>
           <span className="diag-entry-model">{event.model}</span>
+          <AgentLabel agentName={event.agent_name} />
         </div>
         <div className="diag-entry-badges">
           <span className="diag-badge diag-badge-tokens">
@@ -368,6 +373,7 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
         </div>
         <div className="diag-entry-main">
           <span className="diag-entry-title">{event.name}</span>
+          <AgentLabel agentName={event.agent_name} />
           <span className={`diag-status-dot ${event.success ? 'success' : 'error'}`} />
         </div>
         <div className="diag-entry-badges">
@@ -571,6 +577,7 @@ function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: 
             LLM Call #{event.iteration}
           </span>
           {event.model && <span className="diag-entry-model">{event.model}</span>}
+          <AgentLabel agentName={event.agent_name} />
         </div>
         <div className="diag-entry-badges">
           <span className="diag-badge diag-badge-err">FAIL</span>

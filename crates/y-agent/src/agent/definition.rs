@@ -228,7 +228,7 @@ max_context_tokens = 8192
         assert_eq!(def.skills, vec!["code-analysis"]);
         assert_eq!(def.preferred_models, vec!["gpt-4o"]);
         assert_eq!(def.temperature, Some(0.3));
-        assert_eq!(def.max_iterations, 10);
+        assert_eq!(def.max_iterations, 20);
         assert_eq!(def.context_sharing, ContextStrategy::Summary);
         assert_eq!(def.max_context_tokens, 8192);
     }

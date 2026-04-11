@@ -303,6 +303,7 @@ fn spawn_llm_worker(
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let app_progress = app.clone();
             let run_id_progress = run_id_clone.clone();
+            let session_id_progress = sid_clone.0.clone();
             let progress_task = tokio::spawn(async move {
                 while let Some(event) = rx.recv().await {
                     // Intercept AskUser events and emit a dedicated event
@@ -316,6 +317,7 @@ fn spawn_llm_worker(
                             "chat:AskUser",
                             AskUserPayload {
                                 run_id: run_id_progress.clone(),
+                                session_id: session_id_progress.clone(),
                                 interaction_id: interaction_id.clone(),
                                 questions: questions.clone(),
                             },
@@ -336,6 +338,7 @@ fn spawn_llm_worker(
                             "chat:PermissionRequest",
                             PermissionRequestPayload {
                                 run_id: run_id_progress.clone(),
+                                session_id: session_id_progress.clone(),
                                 request_id: request_id.clone(),
                                 tool_name: tool_name.clone(),
                                 action_description: action_description.clone(),
@@ -1000,6 +1003,7 @@ pub async fn context_compact(
 #[derive(Debug, Serialize, Clone)]
 pub struct AskUserPayload {
     pub run_id: String,
+    pub session_id: String,
     pub interaction_id: String,
     pub questions: serde_json::Value,
 }
@@ -1040,6 +1044,7 @@ pub async fn chat_answer_question(
 #[derive(Debug, Serialize, Clone)]
 pub struct PermissionRequestPayload {
     pub run_id: String,
+    pub session_id: String,
     pub request_id: String,
     pub tool_name: String,
     pub action_description: String,

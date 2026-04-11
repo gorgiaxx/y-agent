@@ -9,145 +9,23 @@ use crate::container::ServiceContainer;
 
 use super::{strip_think_tags, ToolExecContext};
 
-/// Estimate token count for a message (content + role overhead).
-pub(crate) fn estimate_msg_tokens(msg: &Message) -> u32 {
-    estimate_msg_tokens_from_str(&msg.content) + 4 // role/separator overhead
-}
-
-/// Estimate token count from text.
+/// Legacy mid-loop hard truncation hook.
 ///
-/// Uses `chars().count()` rather than `len()` (byte count) so multi-byte
-/// scripts (Chinese, Japanese, Korean) produce accurate estimates instead
-/// of being inflated by UTF-8 encoding overhead.
-fn estimate_msg_tokens_from_str(text: &str) -> u32 {
-    u32::try_from(text.chars().count().div_ceil(4)).unwrap_or(u32::MAX)
-}
-
-/// Mid-loop context pruning: truncates large tool result messages from
-/// previous iterations when total `working_history` tokens exceed the
-/// configured pruning threshold.
+/// This path used to rewrite large historical tool/user result payloads in
+/// place with a `"... content truncated"` marker. In practice that damaged
+/// useful context and conflicted with the designed intra-turn pruning model,
+/// which should only remove retry noise (failed/empty/repeated branches).
 ///
-/// Operates entirely in-memory on `working_history` -- no
-/// `ChatMessageStore` dependency. This is correct because the agentic
-/// loop builds LLM requests from `working_history`, not from persistent
-/// storage.
-///
-/// Only called for the root chat agent (`use_context_pipeline == true`).
-///
-/// Strategy:
-/// 1. Estimate total tokens in `working_history`
-/// 2. If total exceeds threshold, find tool/user result messages from
-///    *previous* iterations (protect current iteration's messages)
-/// 3. Sort candidates by token size descending
-/// 4. Truncate the largest messages until total is under the threshold
+/// The call sites are retained so the execution flow stays stable, but the
+/// hard-truncation behavior is intentionally disabled.
 pub(crate) fn prune_working_history_mid_loop(
-    container: &ServiceContainer,
-    ctx: &mut ToolExecContext,
-    msgs_before: usize,
+    _container: &ServiceContainer,
+    _ctx: &mut ToolExecContext,
+    _msgs_before: usize,
 ) {
-    let config = container.pruning_engine.config();
-    if !config.enabled {
-        return;
-    }
-
-    // Per-message token limit: individual tool results larger than this
-    // are truncated immediately. Uses the pruning token_threshold as the
-    // per-message cap (default 2000 tokens = ~8K chars).
-    let per_message_limit = config.token_threshold;
-
-    // Overall context budget: when total working_history exceeds this,
-    // the largest old tool results are truncated greedily.
-    // Default: 10x the per-message limit = 20K tokens.
-    let context_budget = per_message_limit.saturating_mul(10);
-
-    // Estimate total tokens in working_history.
-    let total_tokens: u32 = ctx.working_history.iter().map(estimate_msg_tokens).sum();
-
-    if total_tokens < context_budget {
-        // Total is under budget; skip the overall truncation pass but still
-        // check individual large messages below.
-    }
-
-    // Collect IDs of messages added in the current iteration -- protected.
-    let current_iteration_ids: std::collections::HashSet<String> = ctx.new_messages[msgs_before..]
-        .iter()
-        .map(|m| m.message_id.clone())
-        .collect();
-
-    // Build candidate list: any non-system, non-assistant message from
-    // previous iterations.
-    let mut candidates: Vec<(usize, u32)> = ctx
-        .working_history
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| {
-            !current_iteration_ids.contains(&m.message_id)
-                && m.role != Role::System
-                && m.role != Role::Assistant
-        })
-        .map(|(idx, m)| (idx, estimate_msg_tokens(m)))
-        .filter(|(_, tokens)| *tokens > 200) // Only truncate messages worth truncating
-        .collect();
-
-    // Sort by token count descending so we truncate the largest first.
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
-
-    let mut truncated_count = 0u32;
-    let mut tokens_saved = 0u32;
-    let over_budget = total_tokens > context_budget;
-
-    for (idx, original_tokens) in &candidates {
-        // Two conditions to truncate:
-        // 1. Per-message: message exceeds per_message_limit (always truncate)
-        // 2. Budget: total working_history exceeds context_budget
-        if *original_tokens <= per_message_limit && !over_budget {
-            continue;
-        }
-        // If we're in budget mode only (not per-message), stop once we've
-        // reclaimed enough.
-        if *original_tokens <= per_message_limit
-            && tokens_saved >= total_tokens.saturating_sub(context_budget)
-        {
-            break;
-        }
-
-        let msg = &ctx.working_history[*idx];
-        let content = &msg.content;
-
-        // Keep first 200 and last 100 chars, replace the rest with a marker.
-        let keep_head = 200.min(content.len());
-        let keep_tail = 100.min(content.len().saturating_sub(keep_head));
-
-        if content.len() <= keep_head + keep_tail + 50 {
-            continue;
-        }
-
-        let head = &content[..content.floor_char_boundary(keep_head)];
-        let tail_start = content.ceil_char_boundary(content.len() - keep_tail);
-        let tail = &content[tail_start..];
-        let truncated = format!(
-            "{head}\n\n[... content truncated ({original_tokens} tokens -> ~100 tokens) ...]\n\n{tail}"
-        );
-
-        let new_tokens = estimate_msg_tokens_from_str(&truncated);
-        let saved = original_tokens.saturating_sub(new_tokens);
-
-        ctx.working_history[*idx].content = truncated;
-        tokens_saved += saved;
-        truncated_count += 1;
-    }
-
-    if truncated_count > 0 {
-        tracing::info!(
-            session_id = %ctx.session_id,
-            total_tokens_before = total_tokens,
-            per_message_limit,
-            context_budget,
-            messages_truncated = truncated_count,
-            tokens_saved,
-            "mid-loop pruning: truncated large tool results in working_history"
-        );
-    }
+    // Intentionally disabled. The designed `IntraTurnPruner` already runs
+    // before each iteration and handles retry-noise without rewriting
+    // potentially useful historical content.
 }
 
 // -----------------------------------------------------------------------
@@ -172,6 +50,10 @@ pub(crate) fn prune_working_history_mid_loop(
 /// assistant message (with the accumulated rolling summary) and **one**
 /// tool result (the most recent chunk). System and User messages are
 /// never removed.
+///
+/// Safety rule: if any historical tool-calling assistant message does not
+/// contain a non-empty rolling summary, pruning is skipped. Deleting tool
+/// results without a surviving summary would destroy context.
 pub(crate) fn prune_old_tool_results(working_history: &mut Vec<Message>) -> usize {
     let last_assistant_idx = working_history
         .iter()
@@ -193,9 +75,10 @@ pub(crate) fn prune_old_tool_results(working_history: &mut Vec<Message>) -> usiz
             Role::Assistant if !msg.tool_calls.is_empty() => {
                 let stripped = strip_think_tags(&msg.content);
                 let trimmed = stripped.trim();
-                if !trimmed.is_empty() {
-                    old_summaries.push(trimmed.to_string());
+                if trimmed.is_empty() {
+                    return 0;
                 }
+                old_summaries.push(trimmed.to_string());
                 indices_to_remove.push(i);
             }
             Role::Tool => {
@@ -256,6 +139,183 @@ pub(crate) fn strip_historical_thinking(working_history: &mut [Message]) {
         // 2. Remove reasoning_content from metadata.
         if let Some(obj) = msg.metadata.as_object_mut() {
             obj.remove("reasoning_content");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::Mutex;
+
+    use super::*;
+    use crate::agent_service::ToolExecContext;
+    use crate::chat::{PendingInteractions, PendingPermissions};
+    use crate::config::ServiceConfig;
+    use crate::container::ServiceContainer;
+    use tempfile::TempDir;
+    use y_core::types::{Role, SessionId, ToolCallRequest};
+
+    async fn make_test_container() -> (ServiceContainer, TempDir) {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let mut config = ServiceConfig::default();
+        config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: tmpdir.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let container = ServiceContainer::from_config(&config)
+            .await
+            .expect("test container should build");
+        (container, tmpdir)
+    }
+
+    fn pending_interactions() -> PendingInteractions {
+        Arc::new(Mutex::new(std::collections::HashMap::new()))
+    }
+
+    fn pending_permissions() -> PendingPermissions {
+        Arc::new(Mutex::new(std::collections::HashMap::new()))
+    }
+
+    fn make_msg(role: Role, content: impl Into<String>) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn make_tool_msg(content: impl Into<String>) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Tool,
+            content: content.into(),
+            tool_call_id: Some("tc_1".to_string()),
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn make_assistant_tool_msg(content: impl Into<String>, tool_call_id: &str) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: vec![ToolCallRequest {
+                id: tool_call_id.to_string(),
+                name: "FileRead".to_string(),
+                arguments: serde_json::json!({ "path": "/tmp/test.txt" }),
+            }],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn make_ctx(working_history: Vec<Message>) -> ToolExecContext {
+        ToolExecContext {
+            iteration: 1,
+            last_gen_id: None,
+            tool_calls_executed: vec![],
+            new_messages: vec![],
+            cumulative_input_tokens: 0,
+            cumulative_output_tokens: 0,
+            cumulative_cost: 0.0,
+            last_input_tokens: 0,
+            trace_id: None,
+            session_id: SessionId("test-session".into()),
+            working_history,
+            accumulated_content: String::new(),
+            iteration_texts: vec![],
+            iteration_reasonings: vec![],
+            iteration_reasoning_durations_ms: vec![],
+            iteration_tool_counts: vec![],
+            dynamic_tool_defs: vec![],
+            pending_interactions: pending_interactions(),
+            pending_permissions: pending_permissions(),
+            cancel_token: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn mid_loop_pruning_does_not_truncate_large_historical_tool_results() {
+        let (container, _tmpdir) = make_test_container().await;
+        let large_tool_output = "A".repeat(9_000);
+        let mut original_history = vec![
+            make_msg(Role::System, "system prompt"),
+            make_msg(Role::User, "user asks for a large read"),
+            make_tool_msg(large_tool_output.clone()),
+        ];
+        let mut ctx = make_ctx(original_history.clone());
+
+        prune_working_history_mid_loop(&container, &mut ctx, 0);
+
+        assert_eq!(ctx.working_history.len(), original_history.len());
+        for (actual, expected) in ctx.working_history.iter().zip(original_history.drain(..)) {
+            assert_eq!(actual.role, expected.role);
+            assert_eq!(actual.content, expected.content);
+            assert_eq!(actual.tool_call_id, expected.tool_call_id);
+        }
+    }
+
+    #[test]
+    fn prune_old_tool_results_merges_nonempty_historical_summaries() {
+        let mut history = vec![
+            make_msg(Role::System, "system prompt"),
+            make_msg(Role::User, "read two chunks"),
+            make_assistant_tool_msg("CHUNK [0-99] | notes: first chunk", "tc_1"),
+            make_tool_msg("first chunk raw output"),
+            make_assistant_tool_msg("CHUNK [100-199] | notes: second chunk", "tc_2"),
+            make_tool_msg("second chunk raw output"),
+        ];
+
+        let removed = prune_old_tool_results(&mut history);
+
+        assert_eq!(removed, 2);
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[0].role, Role::System);
+        assert_eq!(history[1].role, Role::User);
+        assert_eq!(history[2].role, Role::Assistant);
+        assert_eq!(history[3].role, Role::Tool);
+        assert!(history[2]
+            .content
+            .contains("CHUNK [0-99] | notes: first chunk"));
+        assert!(history[2]
+            .content
+            .contains("CHUNK [100-199] | notes: second chunk"));
+        assert_eq!(history[3].content, "second chunk raw output");
+    }
+
+    #[test]
+    fn prune_old_tool_results_skips_when_historical_summary_is_missing() {
+        let mut history = vec![
+            make_msg(Role::System, "system prompt"),
+            make_msg(Role::User, "inspect files"),
+            make_assistant_tool_msg("", "tc_1"),
+            make_tool_msg("first raw output"),
+            make_assistant_tool_msg("current rolling note", "tc_2"),
+            make_tool_msg("second raw output"),
+        ];
+        let original = history.clone();
+
+        let removed = prune_old_tool_results(&mut history);
+
+        assert_eq!(removed, 0);
+        assert_eq!(history.len(), original.len());
+        for (actual, expected) in history.iter().zip(original.iter()) {
+            assert_eq!(actual.role, expected.role);
+            assert_eq!(actual.content, expected.content);
+            assert_eq!(actual.tool_calls.len(), expected.tool_calls.len());
+            assert_eq!(actual.tool_call_id, expected.tool_call_id);
         }
     }
 }

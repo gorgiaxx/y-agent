@@ -44,10 +44,10 @@
   flex: 1 1 auto;
 }
 
-.general-session-groups--split {
+/* .general-session-groups--split {
   border-top: 1px solid var(--border);
   padding-top: 6px;
-}
+} */
 
 /* ---- Workspace sections ---- */
 .workspace-section {

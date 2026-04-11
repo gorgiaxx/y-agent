@@ -57,14 +57,18 @@ impl DiagnosticsProviderPool {
             serde_json::from_str(fallback_input).unwrap_or(serde_json::Value::Null)
         });
         let diag_output = response.raw_response.clone().unwrap_or_else(|| {
-            serde_json::json!({
+            let mut output = serde_json::json!({
                 "content": response.content.clone().unwrap_or_default(),
                 "model": response.model,
                 "usage": {
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens,
                 }
-            })
+            });
+            if let Some(reasoning) = response.reasoning_content.as_ref() {
+                output["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+            }
+            output
         });
 
         let cost = crate::cost::CostService::compute_cost(
@@ -102,6 +106,23 @@ impl DiagnosticsProviderPool {
             || fallback_input.to_string(),
             std::string::ToString::to_string,
         );
+        let response_text = response.raw_response.as_ref().map_or_else(
+            || {
+                let mut output = serde_json::json!({
+                    "content": response.content.clone().unwrap_or_default(),
+                    "model": response.model,
+                    "usage": {
+                        "input_tokens": response.usage.input_tokens,
+                        "output_tokens": response.usage.output_tokens,
+                    }
+                });
+                if let Some(reasoning) = response.reasoning_content.as_ref() {
+                    output["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+                }
+                output.to_string()
+            },
+            std::string::ToString::to_string,
+        );
 
         // Emit real-time event.
         let _ = self.broadcast_tx.send(DiagnosticsEvent::LlmCallCompleted {
@@ -117,7 +138,7 @@ impl DiagnosticsProviderPool {
             cost_usd: cost,
             tool_calls_requested,
             prompt_preview,
-            response_text: response.content.clone().unwrap_or_default(),
+            response_text,
             context_window: 0,
         });
 

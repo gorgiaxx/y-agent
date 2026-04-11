@@ -14,7 +14,29 @@ import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
+import {
+  clearSessionInteractionById,
+  getSessionInteraction,
+  setSessionInteraction,
+} from '../utils/sessionInteractionState';
 import type { ThinkingEffort } from '../types';
+
+interface AskUserDialogState {
+  interactionId: string;
+  questions: Array<{
+    question: string;
+    options: string[];
+    multi_select?: boolean;
+  }>;
+}
+
+interface PermissionDialogState {
+  requestId: string;
+  toolName: string;
+  actionDescription: string;
+  reason: string;
+  contentPreview: string | null;
+}
 
 export function ChatView() {
   const chatHooks = useChatContext();
@@ -33,37 +55,27 @@ export function ChatView() {
 
   // AskUser interaction state.
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
-  const [askUserData, setAskUserData] = useState<{
-    interactionId: string;
-    questions: Array<{
-      question: string;
-      options: string[];
-      multi_select?: boolean;
-    }>;
-  } | null>(null);
+  const [askUserBySession, setAskUserBySession] = useState<Record<string, AskUserDialogState>>({});
 
   // PermissionRequest interaction state.
-  const [permissionData, setPermissionData] = useState<{
-    requestId: string;
-    toolName: string;
-    actionDescription: string;
-    reason: string;
-    contentPreview?: string | null;
-  } | null>(null);
+  const [permissionBySession, setPermissionBySession] = useState<Record<string, PermissionDialogState>>({});
+
+  const askUserData = getSessionInteraction(askUserBySession, sessionHooks.activeSessionId);
+  const permissionData = getSessionInteraction(permissionBySession, sessionHooks.activeSessionId);
 
   // Listen for AskUser events from the backend.
   useEffect(() => {
     const unlisten = listen<{
       run_id: string;
+      session_id: string;
       interaction_id: string;
       questions: unknown;
     }>('chat:AskUser', (event) => {
-      const { interaction_id, questions } = event.payload;
-      setAskUserData({
+      const { session_id, interaction_id, questions } = event.payload;
+      setAskUserBySession((prev) => setSessionInteraction(prev, session_id, {
         interactionId: interaction_id,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        questions: questions as any,
-      });
+        questions: questions as AskUserDialogState['questions'],
+      }));
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
@@ -72,7 +84,10 @@ export function ChatView() {
     interactionId: string,
     answers: Record<string, string>,
   ) => {
-    setAskUserData(null);
+    setAskUserBySession((prev) => clearSessionInteractionById(
+      prev,
+      (interaction) => interaction.interactionId === interactionId,
+    ));
     invoke('chat_answer_question', {
       interactionId,
       answers: { answers },
@@ -80,7 +95,10 @@ export function ChatView() {
   }, []);
 
   const handleAskUserDismiss = useCallback((interactionId: string) => {
-    setAskUserData(null);
+    setAskUserBySession((prev) => clearSessionInteractionById(
+      prev,
+      (interaction) => interaction.interactionId === interactionId,
+    ));
     invoke('chat_answer_question', {
       interactionId,
       answers: { answers: {} },
@@ -91,26 +109,30 @@ export function ChatView() {
   useEffect(() => {
     const unlisten = listen<{
       run_id: string;
+      session_id: string;
       request_id: string;
       tool_name: string;
       action_description: string;
       reason: string;
       content_preview: string | null;
     }>('chat:PermissionRequest', (event) => {
-      const { request_id, tool_name, action_description, reason, content_preview } = event.payload;
-      setPermissionData({
+      const { session_id, request_id, tool_name, action_description, reason, content_preview } = event.payload;
+      setPermissionBySession((prev) => setSessionInteraction(prev, session_id, {
         requestId: request_id,
         toolName: tool_name,
         actionDescription: action_description,
         reason,
         contentPreview: content_preview,
-      });
+      }));
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
   const handlePermissionApprove = useCallback((requestId: string) => {
-    setPermissionData(null);
+    setPermissionBySession((prev) => clearSessionInteractionById(
+      prev,
+      (interaction) => interaction.requestId === requestId,
+    ));
     invoke('chat_answer_permission', {
       requestId,
       decision: 'approve',
@@ -118,7 +140,10 @@ export function ChatView() {
   }, []);
 
   const handlePermissionDeny = useCallback((requestId: string) => {
-    setPermissionData(null);
+    setPermissionBySession((prev) => clearSessionInteractionById(
+      prev,
+      (interaction) => interaction.requestId === requestId,
+    ));
     invoke('chat_answer_permission', {
       requestId,
       decision: 'deny',
@@ -126,7 +151,10 @@ export function ChatView() {
   }, []);
 
   const handlePermissionAllowAllForSession = useCallback((requestId: string) => {
-    setPermissionData(null);
+    setPermissionBySession((prev) => clearSessionInteractionById(
+      prev,
+      (interaction) => interaction.requestId === requestId,
+    ));
     invoke('chat_answer_permission', {
       requestId,
       decision: 'allow_all_for_session',

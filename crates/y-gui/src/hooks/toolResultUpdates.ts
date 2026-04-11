@@ -1,5 +1,6 @@
 import type { InterleavedSegment } from './useInterleavedSegments';
 import type { ToolResultRecord } from './chatStreamTypes';
+import { parseToolResultStatus } from './toolResultMetadata';
 
 interface ToolResultRecordUpdate {
   records: ToolResultRecord[];
@@ -11,15 +12,6 @@ interface ToolResultSegmentUpdate {
   replacedIndex: number | null;
 }
 
-function parseStatus(resultPreview: string): string | null {
-  try {
-    const parsed = JSON.parse(resultPreview) as Record<string, unknown>;
-    return typeof parsed.status === 'string' ? parsed.status : null;
-  } catch {
-    return null;
-  }
-}
-
 function shouldReplacePendingAskUser(
   current: ToolResultRecord,
   next: ToolResultRecord,
@@ -27,8 +19,8 @@ function shouldReplacePendingAskUser(
   if (current.name !== 'AskUser' || next.name !== 'AskUser') return false;
   if ((current.arguments ?? '') !== (next.arguments ?? '')) return false;
 
-  const currentStatus = parseStatus(current.resultPreview);
-  const nextStatus = parseStatus(next.resultPreview);
+  const currentStatus = parseToolResultStatus(current.name, current.resultPreview);
+  const nextStatus = parseToolResultStatus(next.name, next.resultPreview);
 
   return currentStatus === 'pending' && nextStatus !== null && nextStatus !== 'pending';
 }

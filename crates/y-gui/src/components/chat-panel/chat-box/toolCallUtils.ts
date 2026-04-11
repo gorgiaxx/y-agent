@@ -589,16 +589,24 @@ export interface AskUserResult {
 
 /** Extract AskUser metadata from the tool call arguments or result JSON. */
 export function extractAskUserMeta(argsRaw: string, resultRaw?: string): AskUserMeta | null {
-  // Try result first (it contains the full payload), then fall back to args.
-  const source = resultRaw ? tryParseJson(resultRaw) : tryParseJson(argsRaw);
-  if (!source) return null;
+  // Prefer result metadata when it includes the questions, otherwise fall back
+  // to the original tool arguments so answered AskUser cards still retain
+  // their question structure in streaming mode.
+  const resultSource = resultRaw ? tryParseJson(resultRaw) : null;
+  const resultQuestions = resultSource?.questions;
+  const argsSource = tryParseJson(argsRaw);
+  const argsQuestions = argsSource?.questions;
+  const questions = Array.isArray(resultQuestions) && resultQuestions.length > 0
+    ? resultQuestions
+    : argsQuestions;
 
-  const questions = source.questions;
   if (!Array.isArray(questions) || questions.length === 0) return null;
 
   return {
     questions: questions as AskUserQuestion[],
-    status: typeof source.status === 'string' ? source.status : 'pending',
+    status: typeof resultSource?.status === 'string'
+      ? resultSource.status
+      : (resultSource?.answers && typeof resultSource.answers === 'object' ? 'answered' : 'pending'),
   };
 }
 
@@ -615,7 +623,7 @@ export function parseAskUserResult(raw: string): AskUserResult | null {
 }
 
 // ---------------------------------------------------------------------------
-// PlanWriter / ExitPlanMode helpers
+// PlanWriter helpers
 // ---------------------------------------------------------------------------
 
 export interface PlanWriterMeta {
@@ -626,11 +634,6 @@ export interface PlanWriterMeta {
 export interface PlanWriterResult {
   path: string;
   title: string;
-}
-
-export interface ExitPlanModeMeta {
-  planFile: string;
-  totalPhases: number;
 }
 
 /** Extract PlanWriter metadata from tool call arguments. */
@@ -653,31 +656,6 @@ export function parsePlanWriterResult(raw: string): PlanWriterResult | null {
   return { path, title };
 }
 
-/** Extract ExitPlanMode metadata from tool call arguments. */
-export function extractExitPlanModeMeta(argsRaw: string): ExitPlanModeMeta | null {
-  const obj = tryParseJson(argsRaw);
-  if (!obj) return null;
-  const planFile = typeof obj.plan_file === 'string' ? obj.plan_file : '';
-  const totalPhases = typeof obj.total_phases === 'number' ? obj.total_phases : 0;
-  if (!planFile) return null;
-  return { planFile, totalPhases };
-}
-
-export interface EnterPlanModeMeta {
-  reason: string;
-  title: string;
-}
-
-/** Extract EnterPlanMode metadata from tool call arguments. */
-export function extractEnterPlanModeMeta(argsRaw: string): EnterPlanModeMeta | null {
-  const obj = tryParseJson(argsRaw);
-  if (!obj) return null;
-  const reason = typeof obj.reason === 'string' ? obj.reason : '';
-  const title = typeof obj.title === 'string' ? obj.title : '';
-  if (!title) return null;
-  return { reason, title };
-}
-
 export interface PlanRequestMeta {
   request: string;
   context: string;
@@ -698,6 +676,7 @@ export interface PlanTaskDisplay {
 export interface PlanWriterStageDisplay {
   kind: 'plan_stage';
   stage: 'plan_writer';
+  stageStatus: string;
   planTitle: string;
   planFile: string;
   planContent: string;
@@ -706,6 +685,7 @@ export interface PlanWriterStageDisplay {
 export interface TaskDecomposerStageDisplay {
   kind: 'plan_stage';
   stage: 'task_decomposer';
+  stageStatus: string;
   planTitle: string;
   planFile: string;
   tasks: PlanTaskDisplay[];
@@ -803,6 +783,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
 
   if (kind === 'plan_stage') {
     const stage = typeof obj.stage === 'string' ? obj.stage : '';
+    const stageStatus = typeof obj.stage_status === 'string' ? obj.stage_status : 'completed';
     const planTitle = typeof obj.plan_title === 'string' ? obj.plan_title : '';
     const planFile = typeof obj.plan_file === 'string' ? obj.plan_file : '';
 
@@ -810,6 +791,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
       return {
         kind: 'plan_stage',
         stage,
+        stageStatus,
         planTitle,
         planFile,
         planContent: typeof obj.plan_content === 'string' ? obj.plan_content : '',
@@ -823,6 +805,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
       return {
         kind: 'plan_stage',
         stage,
+        stageStatus,
         planTitle,
         planFile,
         tasks,

@@ -58,6 +58,25 @@ describe('toolResultUpdates', () => {
     expect(updated.records[0]).toEqual(answered);
   });
 
+  it('replaces a pending AskUser result when the answered payload only contains answers', () => {
+    const pending = makeAskUserResult('pending');
+    const answered = {
+      ...pending,
+      durationMs: 96,
+      resultPreview: JSON.stringify({
+        answers: {
+          'Which library?': 'React',
+        },
+      }),
+    };
+
+    const updated = upsertToolResultRecord([pending], answered);
+
+    expect(updated.replacedIndex).toBe(0);
+    expect(updated.records).toHaveLength(1);
+    expect(updated.records[0]).toEqual(answered);
+  });
+
   it('replaces the existing AskUser tool_result segment instead of appending', () => {
     const pending = makeAskUserResult('pending');
     const answered = makeAskUserResult('answered');
@@ -162,6 +181,50 @@ describe('toolResultUpdates', () => {
     expect(updated.replacedIndex).toBe(1);
     expect(updated.records).toHaveLength(2);
     expect(updated.records[1]).toEqual(secondExecution);
+  });
+
+  it('replaces an initial running plan stage with the completed plan-writer stage', () => {
+    const started = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: 'Starting plan generation',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'running',
+          plan_title: '',
+          plan_file: '/tmp/gui-plan.md',
+          plan_content: '',
+        },
+      },
+    };
+
+    const completed = {
+      name: 'Plan',
+      arguments: 'plan-writer completed',
+      success: true,
+      durationMs: 25,
+      resultPreview: 'Plan written to /tmp/gui-plan.md',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'completed',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          plan_content: '# Implementation Plan',
+        },
+      },
+    };
+
+    const updated = upsertToolResultRecord([started], completed);
+
+    expect(updated.replacedIndex).toBe(0);
+    expect(updated.records).toHaveLength(1);
+    expect(updated.records[0]).toEqual(completed);
   });
 
   it('replaces a task decomposer stage with plan execution progress for the same plan', () => {

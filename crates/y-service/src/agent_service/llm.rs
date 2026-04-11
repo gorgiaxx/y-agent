@@ -81,15 +81,18 @@ pub(crate) fn build_iteration_data(
 
     let response_text_raw = response.raw_response.as_ref().map_or_else(
         || {
-            serde_json::json!({
+            let mut response_json = serde_json::json!({
                 "content": response.content.clone().unwrap_or_default(),
                 "model": response.model,
                 "usage": {
                     "input_tokens": resp_input_tokens,
                     "output_tokens": resp_output_tokens,
                 }
-            })
-            .to_string()
+            });
+            if let Some(reasoning) = response.reasoning_content.as_ref() {
+                response_json["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+            }
+            response_json.to_string()
         },
         std::string::ToString::to_string,
     );
@@ -107,6 +110,7 @@ pub(crate) fn build_iteration_data(
 fn build_streaming_raw_response(
     model_name: &str,
     content: &str,
+    reasoning_content: Option<&str>,
     tool_calls: &[y_core::types::ToolCallRequest],
     finish_reason: &y_core::provider::FinishReason,
     input_tokens: u64,
@@ -137,6 +141,9 @@ fn build_streaming_raw_response(
         "role": "assistant",
         "content": content,
     });
+    if let Some(reasoning) = reasoning_content.filter(|value| !value.is_empty()) {
+        message["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
+    }
     if !tool_calls_json.is_empty() {
         message["tool_calls"] = serde_json::Value::Array(tool_calls_json);
     }
@@ -306,6 +313,7 @@ async fn call_llm_streaming(
     let raw_response = build_streaming_raw_response(
         &model_name,
         &content,
+        (!reasoning_content.is_empty()).then_some(reasoning_content.as_str()),
         &tool_calls,
         &finish_reason,
         u64::from(usage.input_tokens),
@@ -343,16 +351,135 @@ async fn call_llm_streaming(
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+    use futures::stream;
+    use tokio::sync::mpsc;
+    use y_core::provider::{
+        ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, ProviderError,
+        ProviderMetadata, ProviderPool, ProviderStatus, ProviderType, RoutePriority, RouteRequest,
+        ToolCallingMode,
+    };
+    use y_core::types::{Message, ProviderId, Role, TokenUsage};
+
     use y_core::provider::FinishReason;
     use y_core::types::ToolCallRequest;
 
-    use super::build_streaming_raw_response;
+    use super::{build_streaming_raw_response, call_llm, TurnEvent};
+
+    struct MockStreamingPool {
+        provider_id: ProviderId,
+        metadata: ProviderMetadata,
+    }
+
+    impl MockStreamingPool {
+        fn new() -> Self {
+            let provider_id = ProviderId::from_string("mock-stream");
+            Self {
+                provider_id: provider_id.clone(),
+                metadata: ProviderMetadata {
+                    id: provider_id,
+                    provider_type: ProviderType::OpenAi,
+                    model: "gpt-test".into(),
+                    tags: vec!["reasoning".into()],
+                    max_concurrency: 1,
+                    context_window: 128_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    tool_calling_mode: ToolCallingMode::Native,
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ProviderPool for MockStreamingPool {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            panic!("chat_completion should not be called in streaming tests");
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            let chunks = vec![
+                Ok(ChatStreamChunk {
+                    delta_content: None,
+                    delta_reasoning_content: Some("step by step".into()),
+                    delta_tool_calls: vec![],
+                    usage: None,
+                    finish_reason: None,
+                }),
+                Ok(ChatStreamChunk {
+                    delta_content: Some("Final answer".into()),
+                    delta_reasoning_content: None,
+                    delta_tool_calls: vec![],
+                    usage: Some(TokenUsage {
+                        input_tokens: 12,
+                        output_tokens: 5,
+                        cache_read_tokens: None,
+                        cache_write_tokens: None,
+                        ..Default::default()
+                    }),
+                    finish_reason: Some(FinishReason::Stop),
+                }),
+            ];
+
+            Ok(ChatStreamResponse {
+                stream: Box::pin(stream::iter(chunks)),
+                raw_request: Some(serde_json::json!({ "messages": [] })),
+                provider_id: Some(self.provider_id.clone()),
+                model: self.metadata.model.clone(),
+                context_window: self.metadata.context_window,
+            })
+        }
+
+        fn report_error(&self, _provider_id: &ProviderId, _error: &ProviderError) {}
+
+        async fn provider_statuses(&self) -> Vec<ProviderStatus> {
+            vec![]
+        }
+
+        async fn freeze(&self, _provider_id: &ProviderId, _reason: String) {}
+
+        async fn thaw(&self, _provider_id: &ProviderId) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    fn test_request() -> ChatRequest {
+        ChatRequest {
+            messages: vec![Message {
+                message_id: "msg-1".into(),
+                role: Role::User,
+                content: "Explain it".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: chrono::Utc::now(),
+                metadata: serde_json::Value::Null,
+            }],
+            model: None,
+            max_tokens: Some(128),
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+        }
+    }
 
     #[test]
     fn test_build_streaming_raw_response_includes_tool_calls() {
         let raw = build_streaming_raw_response(
             "gpt-test",
             "working",
+            None,
             &[ToolCallRequest {
                 id: "call_123".into(),
                 name: "Plan".into(),
@@ -373,6 +500,38 @@ mod tests {
         assert_eq!(
             raw["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]["request"],
             "Create a plan"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_streaming_preserves_reasoning_in_raw_response() {
+        let pool = MockStreamingPool::new();
+        let request = test_request();
+        let route = RouteRequest {
+            priority: RoutePriority::Normal,
+            ..Default::default()
+        };
+        let (tx, _rx) = mpsc::unbounded_channel::<TurnEvent>();
+
+        let (response, reasoning_duration_ms) =
+            call_llm(&pool, &request, &route, Some(&tx), None, "chat-turn")
+                .await
+                .expect("streaming call should succeed");
+
+        assert_eq!(response.reasoning_content.as_deref(), Some("step by step"));
+        assert_eq!(response.content.as_deref(), Some("Final answer"));
+        assert!(reasoning_duration_ms.is_some());
+
+        let raw_response = response
+            .raw_response
+            .expect("streaming call should synthesize raw response");
+        assert_eq!(
+            raw_response["choices"][0]["message"]["reasoning_content"].as_str(),
+            Some("step by step")
+        );
+        assert_eq!(
+            raw_response["choices"][0]["message"]["content"].as_str(),
+            Some("Final answer")
         );
     }
 }

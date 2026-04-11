@@ -112,14 +112,18 @@ pub(crate) async fn record_generation_diagnostics(
         serde_json::from_str(prompt_preview_fallback).unwrap_or(serde_json::Value::Null)
     });
     let diag_output = response.raw_response.clone().unwrap_or_else(|| {
-        serde_json::json!({
+        let mut output = serde_json::json!({
             "content": response.content.clone().unwrap_or_default(),
             "model": response.model,
             "usage": {
                 "input_tokens": data.resp_input_tokens,
                 "output_tokens": data.resp_output_tokens,
             }
-        })
+        });
+        if let Some(reasoning) = response.reasoning_content.as_ref() {
+            output["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+        }
+        output
     });
 
     let gen_id = container

@@ -35,6 +35,7 @@ import {
   shouldDisplayStreamingAgent,
   type ToolResultRecord,
 } from './chatStreamTypes';
+import { mergeToolResultMetadata } from './toolResultMetadata';
 import { upsertToolResultRecord, upsertToolResultSegment } from './toolResultUpdates';
 import type { InterleavedSegment } from './useInterleavedSegments';
 
@@ -117,68 +118,6 @@ export interface CompactInfo {
   messagesCompacted: number;
   tokensSaved: number;
   summary: string;
-}
-
-function toToolResultMetadata(records: ToolResultRecord[]): Array<Record<string, unknown>> {
-  return records.map((tr) => {
-    const entry: Record<string, unknown> = {
-      name: tr.name,
-      arguments: tr.arguments ?? '',
-      success: tr.success,
-      duration_ms: tr.durationMs,
-      result_preview: tr.resultPreview,
-    };
-    if (tr.urlMeta) {
-      try {
-        entry.url_meta = JSON.parse(tr.urlMeta) as Record<string, unknown>;
-      } catch {
-        entry.url_meta = tr.urlMeta;
-      }
-    }
-    if (tr.metadata) {
-      entry.metadata = tr.metadata;
-    }
-    return entry;
-  });
-}
-
-function mergeToolResultMetadata(
-  backend: unknown,
-  streamed: ToolResultRecord[] | undefined,
-): Array<Record<string, unknown>> | undefined {
-  const backendRecords = Array.isArray(backend)
-    ? backend.filter(
-      (entry): entry is Record<string, unknown> =>
-        entry != null && typeof entry === 'object',
-    )
-    : [];
-  const streamRecords = streamed ? toToolResultMetadata(streamed) : [];
-
-  if (backendRecords.length === 0) {
-    return streamRecords.length > 0 ? streamRecords : undefined;
-  }
-  if (streamRecords.length === 0) {
-    return backendRecords;
-  }
-
-  const merged: Array<Record<string, unknown>> = [];
-  const seen = new Set<string>();
-
-  for (const entry of [...streamRecords, ...backendRecords]) {
-    const metadata = entry.metadata;
-    const metadataKey = metadata == null ? '' : JSON.stringify(metadata);
-    const key = [
-      String(entry.name ?? ''),
-      String(entry.arguments ?? ''),
-      String(entry.result_preview ?? ''),
-      metadataKey,
-    ].join('::');
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(entry);
-  }
-
-  return merged;
 }
 
 // ---------------------------------------------------------------------------

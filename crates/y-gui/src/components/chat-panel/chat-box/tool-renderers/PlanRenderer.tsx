@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -60,29 +60,70 @@ function PlanMarkdownContent({ content }: { content: string }) {
   );
 }
 
-function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
-  if (tasks.length === 0) {
-    return <div className="tool-call-plan-empty">No tasks were extracted.</div>;
-  }
+function renderMultilineText(content: string): ReactNode {
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+
+  return lines.map((line, index) => (
+    <Fragment key={`${index}-${line}`}>
+      {index > 0 && <br />}
+      {line}
+    </Fragment>
+  ));
+}
+
+export function PlanTaskItem({
+  task,
+  defaultExpanded = false,
+}: {
+  task: PlanTaskDisplay;
+  defaultExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const statusLabel = formatPlanTaskStatus(task.status);
+  const hasDetail = !!task.description || task.keyFiles.length > 0 || task.acceptanceCriteria.length > 0;
+
+  const headerContent = (
+    <>
+      <span
+        className={`tool-call-plan-task-status tool-call-plan-task-status-column tool-call-plan-task-status--${task.status}`}
+        title={statusLabel}
+        aria-label={statusLabel}
+      >
+        <PlanTaskStatusIcon status={task.status} />
+        <span className="tool-call-plan-task-status-text">{statusLabel}</span>
+      </span>
+      <span className="tool-call-plan-task-main">
+        <span className="tool-call-plan-task-phase">Phase {task.phase || '?'}</span>
+        <span className="tool-call-plan-task-title">{task.title}</span>
+      </span>
+      {hasDetail && (
+        <span className={`tool-call-plan-task-chevron ${expanded ? 'expanded' : ''}`}>
+          <ChevronRight size={12} />
+        </span>
+      )}
+    </>
+  );
 
   return (
-    <div className="tool-call-plan-task-list">
-      {tasks.map((task) => (
-        <div key={task.id || `${task.phase}-${task.title}`} className="tool-call-plan-task">
-          <div className="tool-call-plan-task-head">
-            <span className="tool-call-plan-task-phase">Phase {task.phase || '?'}</span>
-            <span className="tool-call-plan-task-title">{task.title}</span>
-            <span
-              className={`tool-call-plan-task-status tool-call-plan-task-status--${task.status}`}
-              title={formatPlanTaskStatus(task.status)}
-              aria-label={formatPlanTaskStatus(task.status)}
-            >
-              <PlanTaskStatusIcon status={task.status} />
-              <span>{formatPlanTaskStatus(task.status)}</span>
-            </span>
-          </div>
+    <div className={`tool-call-plan-task ${expanded ? 'expanded' : ''}`}>
+      {hasDetail ? (
+        <button
+          type="button"
+          className="tool-call-plan-task-toggle"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+        >
+          {headerContent}
+        </button>
+      ) : (
+        <div className="tool-call-plan-task-static">{headerContent}</div>
+      )}
+      {expanded && hasDetail && (
+        <div className="tool-call-plan-task-detail">
           {task.description && (
-            <div className="tool-call-plan-task-desc">{task.description}</div>
+            <div className="tool-call-plan-task-desc">
+              {renderMultilineText(task.description)}
+            </div>
           )}
           {task.keyFiles.length > 0 && (
             <div className="tool-call-plan-task-meta">
@@ -97,6 +138,23 @@ function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
+  if (tasks.length === 0) {
+    return <div className="tool-call-plan-empty">No tasks were extracted.</div>;
+  }
+
+  return (
+    <div className="tool-call-plan-task-list">
+      {tasks.map((task) => (
+        <PlanTaskItem
+          key={task.id || `${task.phase}-${task.title}`}
+          task={task}
+        />
       ))}
     </div>
   );
@@ -125,13 +183,15 @@ export function PlanRenderer({
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [showRaw, setShowRaw] = useState(false);
 
-  const effectiveStatus = meta?.kind === 'plan_execution'
-    && (
-      meta.tasks.some((task) => task.status === 'in_progress')
-      || (meta.completed + meta.failed) < (meta.totalPhases || meta.tasks.length)
-    )
+  const effectiveStatus = meta?.kind === 'plan_stage' && meta.stageStatus === 'running'
     ? 'running'
-    : status;
+    : meta?.kind === 'plan_execution'
+      && (
+        meta.tasks.some((task) => task.status === 'in_progress')
+        || (meta.completed + meta.failed) < (meta.totalPhases || meta.tasks.length)
+      )
+      ? 'running'
+      : status;
   const effectiveStatusIcon = {
     running: <Loader2 size={13} className="collapsible-card-spinner" />,
     success: <CheckCircle2 size={13} />,

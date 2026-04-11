@@ -42,12 +42,18 @@ export function buildHistorySegments(
   iterationToolCounts?: number[],
 ): InterleavedSegment[] {
   if (!toolResults.length && !iterationTexts.length) {
-    // No tool calls, no iterations -- plain text handled by caller.
-    // But we may still have reasoning to show.
+    const segments: InterleavedSegment[] = [];
     if (finalReasoning) {
-      return [{ type: 'reasoning', content: finalReasoning, durationMs: finalReasoningDuration ?? undefined }];
+      segments.push({
+        type: 'reasoning',
+        content: finalReasoning,
+        durationMs: finalReasoningDuration ?? undefined,
+      });
     }
-    return [];
+    if (finalResponse && finalResponse.trim()) {
+      segments.push({ type: 'text', text: finalResponse });
+    }
+    return segments;
   }
 
   const segments: InterleavedSegment[] = [];

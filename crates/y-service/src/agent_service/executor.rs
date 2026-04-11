@@ -9,9 +9,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use y_context::pruning::IntraTurnPruner;
-use y_context::{AssembledContext, ContextCategory, ContextRequest};
+use y_context::{AssembledContext, ContextRequest};
 use y_core::provider::{ProviderPool, ToolCallingMode};
-use y_core::types::SessionId;
+use y_core::types::{Role, SessionId};
 use y_tools::parse_tool_calls;
 
 use crate::container::ServiceContainer;
@@ -71,13 +71,17 @@ pub(crate) async fn init_context_and_trace(
         Some(eid)
     } else {
         // Start a new trace for this execution.
-        let user_input: String = assembled
-            .items
-            .iter()
-            .filter(|i| i.category == ContextCategory::SystemPrompt)
-            .map(|i| i.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        let user_input = if config.user_query.trim().is_empty() {
+            config
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == Role::User)
+                .map(|m| m.content.clone())
+                .unwrap_or_default()
+        } else {
+            config.user_query.clone()
+        };
         let tid = container
             .diagnostics
             .on_trace_start(config.session_uuid, &config.agent_name, &user_input)
@@ -88,6 +92,72 @@ pub(crate) async fn init_context_and_trace(
     let owns_trace = config.external_trace_id.is_none();
 
     (assembled, trace_id, owns_trace)
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::agent_service::AgentExecutionConfig;
+    use crate::config::ServiceConfig;
+
+    async fn make_test_container() -> (ServiceContainer, TempDir) {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let mut config = ServiceConfig::default();
+        config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: tmpdir.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let container = ServiceContainer::from_config(&config)
+            .await
+            .expect("test container should build");
+        (container, tmpdir)
+    }
+
+    #[tokio::test]
+    async fn init_context_and_trace_records_actual_user_query_in_trace() {
+        let (container, _tmpdir) = make_test_container().await;
+        let config = AgentExecutionConfig {
+            agent_name: "chat-turn".to_string(),
+            system_prompt: String::new(),
+            max_iterations: 1,
+            tool_definitions: vec![],
+            tool_calling_mode: ToolCallingMode::Native,
+            messages: vec![],
+            provider_id: None,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            session_id: Some(SessionId("trace-session".into())),
+            session_uuid: Uuid::new_v4(),
+            knowledge_collections: vec![],
+            use_context_pipeline: true,
+            user_query: "real user question".to_string(),
+            external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+        };
+
+        let (_assembled, trace_id, owns_trace) = init_context_and_trace(&container, &config).await;
+
+        assert!(owns_trace);
+        let trace_id = trace_id.expect("trace should be created");
+        let trace = container
+            .diagnostics
+            .store()
+            .get_trace(trace_id)
+            .await
+            .expect("trace should be readable");
+
+        assert_eq!(trace.user_input.as_deref(), Some("real user question"));
+    }
 }
 
 /// Inner execution loop, optionally running inside a `DIAGNOSTICS_CTX` scope.
