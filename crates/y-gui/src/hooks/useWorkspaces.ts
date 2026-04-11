@@ -2,18 +2,29 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 import type { WorkspaceInfo } from '../types';
 
 interface UseWorkspacesReturn {
   workspaces: WorkspaceInfo[];
   sessionWorkspaceMap: Record<string, string>;
-  createWorkspace: () => Promise<WorkspaceInfo | null>;
+  createWorkspace: (name: string, path: string) => Promise<WorkspaceInfo | null>;
   updateWorkspace: (id: string, name: string, path: string) => Promise<void>;
   deleteWorkspace: (id: string) => Promise<void>;
   assignSession: (workspaceId: string, sessionId: string) => Promise<void>;
   unassignSession: (sessionId: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
+}
+
+export async function createWorkspaceRecord(
+  name: string,
+  path: string,
+): Promise<WorkspaceInfo | null> {
+  try {
+    return await invoke<WorkspaceInfo>('workspace_create', { name, path });
+  } catch (e) {
+    console.error('Failed to create workspace:', e);
+    return null;
+  }
 }
 
 export function useWorkspaces(): UseWorkspacesReturn {
@@ -38,26 +49,11 @@ export function useWorkspaces(): UseWorkspacesReturn {
     refreshWorkspaces();
   }, [refreshWorkspaces]);
 
-  const createWorkspace = useCallback(async (): Promise<WorkspaceInfo | null> => {
-    // Open native folder picker.
-    const selected = await open({ directory: true, multiple: false }).catch(() => null);
-    if (!selected || typeof selected !== 'string') return null;
-
-    // Derive a default name from the folder base name.
-    const parts = selected.replace(/\\/g, '/').split('/');
-    const defaultName = parts[parts.length - 1] || 'Workspace';
-
-    try {
-      const ws = await invoke<WorkspaceInfo>('workspace_create', {
-        name: defaultName,
-        path: selected,
-      });
-      setWorkspaces((prev) => [...prev, ws]);
-      return ws;
-    } catch (e) {
-      console.error('Failed to create workspace:', e);
-      return null;
-    }
+  const createWorkspace = useCallback(async (name: string, path: string): Promise<WorkspaceInfo | null> => {
+    const ws = await createWorkspaceRecord(name, path);
+    if (!ws) return null;
+    setWorkspaces((prev) => [...prev, ws]);
+    return ws;
   }, []);
 
   const updateWorkspace = useCallback(async (id: string, name: string, path: string) => {

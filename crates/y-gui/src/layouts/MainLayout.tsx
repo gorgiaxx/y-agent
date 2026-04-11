@@ -96,8 +96,8 @@ export function MainLayout() {
              // Fork the entire session (use max index to copy all messages).
              await sessionHooks.forkSession(sessionId, Number.MAX_SAFE_INTEGER);
           },
-          onCreateWorkspace: async () => {
-             await workspaceHooks.createWorkspace();
+          onCreateWorkspace: async (name, path) => {
+             await workspaceHooks.createWorkspace(name, path);
           },
           onUpdateWorkspace: async (id, name, path) => {
              await workspaceHooks.updateWorkspace(id, name, path);
