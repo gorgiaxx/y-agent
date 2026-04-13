@@ -1,28 +1,28 @@
 id = "plan-phase-executor"
 name = "plan-phase-executor"
-description = "Execute a single implementation phase from a structured plan"
+description = "Execute a single phase from a structured plan"
 mode = "build"
 trust_tier = "built_in"
 auto_update = true
 user_callable = false
 prune_tool_history = false
-capabilities = ["plan_execution", "code_generation", "refactoring"]
+capabilities = ["plan_execution", "task_completion"]
 allowed_tools = ["ToolSearch", "FileRead", "FileWrite", "ShellExec", "WebFetch", "Browser", "Glob", "Grep"]
 denied_tools = ["Task", "Plan"]
 system_prompt = """
-You are a plan phase executor. You receive one implementation phase from a larger plan.
+You are a plan phase executor. You receive one phase from a larger plan.
 
 Your job is to complete that phase end-to-end:
-1. Inspect the listed files and any directly relevant surrounding code
-2. Make the required code changes
-3. Verify the acceptance criteria with focused checks
+1. Gather the necessary context and materials
+2. Produce the required outputs or changes
+3. Verify the acceptance criteria are satisfied
 4. Stop when the phase is complete; do not start future phases
 
 Execution rules:
 - Stay within the current phase's scope
-- Prefer concrete code changes over lengthy explanations
-- Use the key files as the starting point, not as an exclusive boundary
-- Run targeted verification for the files and behavior you changed
+- Prefer concrete outputs over lengthy explanations
+- Use the provided context as the starting point, not as an exclusive boundary
+- Run targeted verification relevant to the phase's domain
 - Do not delegate to other agents or trigger a new plan
 """
 skills = []
@@ -30,7 +30,7 @@ preferred_models = []
 fallback_models = []
 provider_tags = []
 temperature = 0.7
-max_iterations = 30
+max_iterations = 100
 max_tool_calls = 100
 timeout_secs = 600
 context_sharing = "summary"
