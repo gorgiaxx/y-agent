@@ -84,20 +84,239 @@ export interface UrlToolMeta {
   domain: string;
 }
 
+export interface BrowserActionSummary {
+  action: string;
+  label: string;
+  detail?: string;
+}
+
+const KNOWN_TOOL_NAMES = [
+  'AskUser',
+  'Browser',
+  'FileEdit',
+  'FileRead',
+  'FileWrite',
+  'Glob',
+  'Grep',
+  'Plan',
+  'PlanWriter',
+  'ShellExec',
+  'ToolSearch',
+  'WebFetch',
+];
+
+const BROWSER_INPUT_FIELDS = new Set([
+  'action',
+  'url',
+  'query',
+  'search_engine',
+  'wait_ms',
+  'selector',
+  'text',
+  'expression',
+  'full_page',
+  'format',
+  'interactive_only',
+  'key',
+  'direction',
+  'pixels',
+  'ms',
+  'limit',
+  'max_text_chars',
+  'quality',
+]);
+
+const WEBFETCH_INPUT_FIELDS = new Set([
+  'action',
+  'url',
+  'query',
+  'search_engine',
+  'wait_ms',
+]);
+
+function pickFields(
+  source: Record<string, unknown>,
+  allowedFields: Set<string>,
+): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    if (allowedFields.has(key)) {
+      filtered[key] = value;
+    }
+  }
+
+  return filtered;
+}
+
+function sanitizeToolArguments(
+  toolName: string,
+  source: Record<string, unknown>,
+): Record<string, unknown> {
+  if (toolName === 'Browser') {
+    return pickFields(source, BROWSER_INPUT_FIELDS);
+  }
+  if (toolName === 'WebFetch') {
+    return pickFields(source, WEBFETCH_INPUT_FIELDS);
+  }
+  return source;
+}
+
+export function canonicalToolName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+
+  const lowered = trimmed.toLowerCase();
+  const canonical = KNOWN_TOOL_NAMES.find((candidate) => candidate.toLowerCase() === lowered);
+  return canonical ?? trimmed;
+}
+
+function extractLooseStringField(raw: string | undefined, key: string): string | undefined {
+  if (!raw) return undefined;
+
+  const patterns = [
+    new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`),
+    new RegExp(`<${key}>\\s*([^<]+?)\\s*</${key}>`, 'i'),
+    new RegExp(`<parameter=${key}>\\s*([^<]+?)\\s*</parameter>`, 'i'),
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const value = match?.[1]?.trim();
+    if (value) return value;
+  }
+
+  return undefined;
+}
+
+function summarizeBrowserText(value: unknown, maxLength = 48): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength - 1)}…`;
+}
+
+function titleCaseAction(action: string): string {
+  return action
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function valueEquals(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function extractBrowserActionSummary(
+  argsRaw: string,
+  resultRaw?: string,
+): BrowserActionSummary | null {
+  const args = tryParseJson(argsRaw);
+  const result = resultRaw ? tryParseJson(resultRaw) : null;
+  const source = args ?? result;
+  const action = typeof source?.action === 'string'
+    ? source.action
+    : (
+      extractLooseStringField(argsRaw, 'action')
+      ?? extractLooseStringField(resultRaw, 'action')
+      ?? ''
+    );
+
+  if (!action) return null;
+
+  let detail: string | undefined;
+
+  switch (action) {
+    case 'click':
+    case 'getText':
+    case 'type':
+      detail = summarizeBrowserText(source?.selector)
+        ?? extractLooseStringField(argsRaw, 'selector');
+      break;
+    case 'pressKey':
+      detail = summarizeBrowserText(source?.key)
+        ?? extractLooseStringField(argsRaw, 'key');
+      break;
+    case 'scroll': {
+      const direction = summarizeBrowserText(source?.direction)
+        ?? extractLooseStringField(argsRaw, 'direction')
+        ?? 'down';
+      const pixels = typeof source?.pixels === 'number' ? `${source.pixels}px` : undefined;
+      detail = pixels ? `${direction} ${pixels}` : direction;
+      break;
+    }
+    case 'wait':
+      detail = summarizeBrowserText(source?.selector)
+        ?? extractLooseStringField(argsRaw, 'selector')
+        ?? (typeof source?.ms === 'number' ? `${source.ms} ms` : undefined);
+      break;
+    case 'snapshot':
+      detail = summarizeBrowserText(source?.format)
+        ?? extractLooseStringField(argsRaw, 'format')
+        ?? (source?.interactive_only === true ? 'interactive' : undefined);
+      break;
+    case 'screenshot':
+      detail = source?.full_page === true ? 'full page' : 'viewport';
+      break;
+    case 'evaluate':
+      detail = summarizeBrowserText(source?.expression)
+        ?? extractLooseStringField(argsRaw, 'expression');
+      break;
+    case 'search':
+      detail = summarizeBrowserText(source?.query)
+        ?? extractLooseStringField(argsRaw, 'query');
+      break;
+    case 'navigate':
+      detail = summarizeBrowserText(source?.url)
+        ?? extractLooseStringField(argsRaw, 'url');
+      break;
+    default:
+      detail = summarizeBrowserText(source?.selector)
+        ?? extractLooseStringField(argsRaw, 'selector')
+        ?? summarizeBrowserText(source?.url)
+        ?? extractLooseStringField(argsRaw, 'url')
+        ?? summarizeBrowserText(source?.query)
+        ?? extractLooseStringField(argsRaw, 'query');
+      break;
+  }
+
+  return {
+    action,
+    label: titleCaseAction(action),
+    detail,
+  };
+}
+
 /** Extract URL metadata from Browser/WebFetch tool calls. */
 export function extractUrlMeta(
   toolName: string,
   argsRaw: string,
   resultRaw?: string,
 ): UrlToolMeta | null {
+  toolName = canonicalToolName(toolName);
   const parsedArgs = tryParseJson(argsRaw);
   const parsedResult = resultRaw ? tryParseJson(resultRaw) : null;
 
   if (toolName === 'Browser') {
     // Detect navigate/search from arguments or from result action field
-    const action = String(parsedArgs?.action ?? parsedResult?.action ?? '');
+    const action = String(
+      parsedArgs?.action
+      ?? parsedResult?.action
+      ?? extractLooseStringField(argsRaw, 'action')
+      ?? extractLooseStringField(resultRaw, 'action')
+      ?? '',
+    );
     if (action === 'navigate' || action === 'search') {
-      const url = String(parsedResult?.url ?? parsedArgs?.url ?? parsedArgs?.query ?? '');
+      const url = String(
+        parsedResult?.url
+        ?? parsedArgs?.url
+        ?? parsedArgs?.query
+        ?? extractLooseStringField(argsRaw, 'url')
+        ?? extractLooseStringField(argsRaw, 'query')
+        ?? '',
+      );
       if (!url) return null;
       return {
         url,
@@ -118,7 +337,14 @@ export function extractUrlMeta(
   }
 
   if (toolName === 'WebFetch') {
-    const url = String(parsedResult?.url ?? parsedArgs?.url ?? parsedArgs?.query ?? '');
+    const url = String(
+      parsedResult?.url
+      ?? parsedArgs?.url
+      ?? parsedArgs?.query
+      ?? extractLooseStringField(argsRaw, 'url')
+      ?? extractLooseStringField(argsRaw, 'query')
+      ?? '',
+    );
     if (!url) return null;
     return {
       url,
@@ -473,6 +699,7 @@ function stripUrlMetaFields(raw: string): string {
 
 /** Format arguments for display based on tool name. */
 export function formatArguments(name: string, raw: string): string {
+  name = canonicalToolName(name);
   if (!raw) return '';
   const obj = tryParseJson(raw);
   if (!obj) return raw;
@@ -482,12 +709,17 @@ export function formatArguments(name: string, raw: string): string {
     return obj.command;
   }
 
+  if (name === 'Browser' || name === 'WebFetch') {
+    return JSON.stringify(sanitizeToolArguments(name, obj), null, 2);
+  }
+
   // Default: pretty-print JSON
   return JSON.stringify(obj, null, 2);
 }
 
 /** Format result for display based on tool name (raw mode -- shows all fields). */
 export function formatResult(name: string, raw: string): FormattedResult | null {
+  name = canonicalToolName(name);
   if (!raw) return null;
   const obj = tryParseJson(raw);
 
@@ -527,6 +759,7 @@ export function formatResultFormatted(
   raw: string,
   argsRaw?: string,
 ): FormattedResult | null {
+  name = canonicalToolName(name);
   if (!raw) return null;
   const obj = tryParseJson(raw);
 
@@ -561,6 +794,39 @@ export function formatResultFormatted(
     const content = typeof obj.content === 'string' ? obj.content : '';
     if (content) return { parts: [{ text: content, isStderr: false }] };
     // Fall through to default
+  }
+
+  if (obj && name === 'Browser') {
+    const args = argsRaw ? tryParseJson(argsRaw) : null;
+    const meaningful: Record<string, unknown> = { ...obj };
+
+    delete meaningful.action;
+
+    if (args) {
+      const sanitizedArgs = sanitizeToolArguments(name, args);
+      for (const [key, value] of Object.entries(sanitizedArgs)) {
+        if (key in meaningful && valueEquals(meaningful[key], value)) {
+          delete meaningful[key];
+        }
+      }
+    }
+
+    if (typeof meaningful.text === 'string' && meaningful.text.trim()) {
+      return { parts: [{ text: meaningful.text, isStderr: false }] };
+    }
+
+    if (
+      Object.keys(meaningful).length === 1
+      && meaningful.ok === true
+    ) {
+      return { parts: [{ text: 'Success', isStderr: false }] };
+    }
+
+    if (Object.keys(meaningful).length > 0) {
+      return {
+        parts: [{ text: JSON.stringify(meaningful, null, 2), isStderr: false }],
+      };
+    }
   }
 
   // Others: use default formatting

@@ -178,7 +178,8 @@ export function BrowserTab({
             </label>
             <span className="pf-hint">
               Use your Chrome profile (bookmarks, cookies, extensions, login sessions) instead of a clean temporary profile.
-              Note: Chrome locks its profile directory -- close other Chrome instances before enabling this.
+              Note: Chrome 136+ ignores remote debugging on the default profile, so y-agent will fall back to its own persistent profile under ~/.config/y-agent/browser-profiles/.
+              Older Chrome versions can still fail if another Chrome instance is already using the same profile.
             </span>
           </div>
         </div>

@@ -4,9 +4,9 @@
 //! and manages its lifecycle. Used when `launch_mode` is `AutoLaunchHeadless`
 //! or `AutoLaunchVisible` in `BrowserConfig`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::process::{Child, Command};
 use tokio::sync::watch;
@@ -31,6 +31,7 @@ pub enum LaunchError {
 pub struct ChromeLauncher {
     child: Child,
     port: u16,
+    temp_profile_dir: Option<PathBuf>,
 }
 
 impl ChromeLauncher {
@@ -76,21 +77,66 @@ impl ChromeLauncher {
             port
         };
 
-        // Determine user-data-dir: real profile or isolated temp.
-        let user_data_dir = if use_user_profile {
-            let profile_dir = detect_user_profile();
-            info!(
-                path = %profile_dir.display(),
-                "using system user Chrome profile"
-            );
-            profile_dir
+        let browser_flavor = BrowserFlavor::from_executable_path(&exe);
+
+        let force_isolated_profile = should_force_isolated_profile(&exe, browser_flavor);
+        let use_real_user_profile = use_user_profile && !force_isolated_profile;
+
+        // Determine user-data-dir: real browser profile, managed persistent
+        // profile, or an isolated temp dir.
+        let (user_data_dir, temp_profile_dir) = if use_real_user_profile {
+            if let Some(profile_dir) = detect_user_profile(&exe) {
+                info!(
+                    browser = browser_flavor.display_name(),
+                    path = %profile_dir.display(),
+                    "using system browser profile"
+                );
+                (profile_dir, None)
+            } else {
+                let profile_dir = create_managed_profile_dir(browser_flavor)?;
+                warn!(
+                    browser = browser_flavor.display_name(),
+                    path = %profile_dir.display(),
+                    "browser-specific user profile not found, using managed persistent browser profile"
+                );
+                info!(
+                    browser = browser_flavor.display_name(),
+                    path = %profile_dir.display(),
+                    "using managed persistent browser profile"
+                );
+                (profile_dir, None)
+            }
         } else {
-            let tmp_dir = std::env::temp_dir().join(format!("y-agent-chrome-{actual_port}"));
-            std::fs::create_dir_all(&tmp_dir).ok();
-            tmp_dir
+            if use_user_profile && force_isolated_profile {
+                let profile_dir = create_managed_profile_dir(browser_flavor)?;
+                warn!(
+                    browser = browser_flavor.display_name(),
+                    path = %profile_dir.display(),
+                    "Chrome 136+ ignores remote debugging on the default user profile; using a managed persistent browser profile instead"
+                );
+                info!(
+                    browser = browser_flavor.display_name(),
+                    path = %profile_dir.display(),
+                    "using managed persistent browser profile"
+                );
+                (profile_dir, None)
+            } else {
+                let profile_dir = create_isolated_profile_dir(browser_flavor, actual_port)?;
+                info!(
+                    browser = browser_flavor.display_name(),
+                    path = %profile_dir.display(),
+                    "using isolated browser profile"
+                );
+                (profile_dir.clone(), Some(profile_dir))
+            }
         };
 
-        info!(path = %exe.display(), port = actual_port, "launching Chrome");
+        info!(
+            browser = browser_flavor.display_name(),
+            path = %exe.display(),
+            port = actual_port,
+            "launching Chrome"
+        );
 
         let mut cmd = Command::new(&exe);
         if headless {
@@ -100,18 +146,18 @@ impl ChromeLauncher {
             .arg(format!("--user-data-dir={}", user_data_dir.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
-            .arg("--disable-gpu")
+            // .arg("--disable-gpu")
             .arg("--disable-background-networking")
             .arg("--disable-sync")
             .arg("--disable-translate")
-            .arg("--disable-session-crashed-bubble")
-            .arg("--hide-crash-restore-bubble")
+            // .arg("--disable-session-crashed-bubble")
+            // .arg("--hide-crash-restore-bubble")
             .arg("--mute-audio");
 
         // When NOT using the user profile, disable extensions for a clean env.
         // When using the user profile, keep extensions so the user's installed
         // extensions are available.
-        if !use_user_profile {
+        if !use_real_user_profile {
             cmd.arg("--disable-extensions");
         }
 
@@ -128,6 +174,7 @@ impl ChromeLauncher {
         let mut launcher = Self {
             child,
             port: actual_port,
+            temp_profile_dir,
         };
 
         // Wait for CDP to become ready.
@@ -141,13 +188,18 @@ impl ChromeLauncher {
     async fn wait_ready(&mut self, timeout: Duration) -> Result<(), LaunchError> {
         let url = format!("http://127.0.0.1:{}/json/version", self.port);
         let deadline = tokio::time::Instant::now() + timeout;
+        let mut exited_early = None;
 
         loop {
-            // Check that the child hasn't exited.
             if let Some(status) = self.child.try_wait().ok().flatten() {
-                return Err(LaunchError::SpawnFailed(std::io::Error::other(format!(
-                    "Chrome exited early with status: {status}"
-                ))));
+                if exited_early.is_none() {
+                    warn!(
+                        port = self.port,
+                        ?status,
+                        "Chrome launcher process exited before CDP became ready; waiting briefly for a detached browser handoff"
+                    );
+                    exited_early = Some(status);
+                }
             }
 
             if let Ok(resp) = reqwest::get(&url).await {
@@ -159,10 +211,16 @@ impl ChromeLauncher {
             if tokio::time::Instant::now() >= deadline {
                 // Kill the process since it never became ready.
                 self.shutdown().await;
-                return Err(LaunchError::NotReady(timeout.as_secs()));
+                return if let Some(status) = exited_early {
+                    Err(LaunchError::SpawnFailed(std::io::Error::other(format!(
+                        "Chrome exited before CDP became ready (status: {status})"
+                    ))))
+                } else {
+                    Err(LaunchError::NotReady(timeout.as_secs()))
+                };
             }
 
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(timeouts::LAUNCH_READY_POLL).await;
         }
     }
 
@@ -218,6 +276,7 @@ impl ChromeLauncher {
         }
 
         let _ = self.child.wait().await;
+        self.cleanup_temp_profile_dir();
     }
 
     /// Spawn a background task that waits for the Chrome process to exit
@@ -301,7 +360,105 @@ impl Drop for ChromeLauncher {
             }
             let _ = pid; // suppress unused warning on non-unix
         }
+
+        self.cleanup_temp_profile_dir();
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserFlavor {
+    GoogleChrome,
+    ChromeCanary,
+    Chromium,
+    MicrosoftEdge,
+    Brave,
+    Unknown,
+}
+
+impl BrowserFlavor {
+    fn from_executable_path(path: &Path) -> Self {
+        let normalized = path.to_string_lossy().to_ascii_lowercase();
+
+        if normalized.contains("brave") {
+            Self::Brave
+        } else if normalized.contains("chrome canary") || normalized.contains("chrome sxs") {
+            Self::ChromeCanary
+        } else if normalized.contains("microsoft edge") || normalized.contains("msedge") {
+            Self::MicrosoftEdge
+        } else if normalized.contains("chromium") {
+            Self::Chromium
+        } else if normalized.contains("google chrome")
+            || normalized.ends_with("/chrome")
+            || normalized.ends_with("\\chrome.exe")
+            || normalized == "google-chrome"
+            || normalized == "google-chrome-stable"
+        {
+            Self::GoogleChrome
+        } else {
+            Self::Unknown
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::GoogleChrome => "Google Chrome",
+            Self::ChromeCanary => "Google Chrome Canary",
+            Self::Chromium => "Chromium",
+            Self::MicrosoftEdge => "Microsoft Edge",
+            Self::Brave => "Brave Browser",
+            Self::Unknown => "Chromium browser",
+        }
+    }
+
+    fn slug(self) -> &'static str {
+        match self {
+            Self::GoogleChrome => "google-chrome",
+            Self::ChromeCanary => "chrome-canary",
+            Self::Chromium => "chromium",
+            Self::MicrosoftEdge => "microsoft-edge",
+            Self::Brave => "brave-browser",
+            Self::Unknown => "chromium-browser",
+        }
+    }
+}
+
+fn should_force_isolated_profile(exe: &Path, flavor: BrowserFlavor) -> bool {
+    should_force_isolated_profile_for_version(flavor, browser_major_version(exe))
+}
+
+fn should_force_isolated_profile_for_version(
+    flavor: BrowserFlavor,
+    major_version: Option<u32>,
+) -> bool {
+    matches!(
+        flavor,
+        BrowserFlavor::GoogleChrome | BrowserFlavor::ChromeCanary
+    ) && major_version.is_some_and(|version| version >= 136)
+}
+
+fn browser_major_version(exe: &Path) -> Option<u32> {
+    let output = std::process::Command::new(exe)
+        .arg("--version")
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_browser_major_version(&stdout)
+}
+
+fn parse_browser_major_version(version_output: &str) -> Option<u32> {
+    version_output.split_whitespace().find_map(|token| {
+        token
+            .chars()
+            .next()
+            .filter(char::is_ascii_digit)
+            .and_then(|_| token.split('.').next())
+            .and_then(|major| major.parse::<u32>().ok())
+    })
 }
 
 /// Auto-detect Chrome/Chromium executable from well-known locations.
@@ -469,40 +626,300 @@ pub enum PortStatus {
 ///
 /// Falls back to a temp directory if the platform-specific path cannot be
 /// determined (e.g. missing HOME env var).
-fn detect_user_profile() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            let path = PathBuf::from(&home).join("Library/Application Support/Google/Chrome");
-            if path.exists() {
-                return path;
+fn detect_user_profile(exe: &Path) -> Option<PathBuf> {
+    let profile_dir = default_user_profile_dir(BrowserFlavor::from_executable_path(exe))?;
+    profile_dir.exists().then_some(profile_dir)
+}
+
+#[cfg(target_os = "macos")]
+fn default_user_profile_dir(flavor: BrowserFlavor) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(macos_user_profile_dir(flavor, Path::new(&home)))
+}
+
+#[cfg(target_os = "windows")]
+fn default_user_profile_dir(flavor: BrowserFlavor) -> Option<PathBuf> {
+    let local = std::env::var_os("LOCALAPPDATA")?;
+    Some(windows_user_profile_dir(flavor, Path::new(&local)))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn default_user_profile_dir(flavor: BrowserFlavor) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(linux_user_profile_dir(flavor, Path::new(&home)))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_user_profile_dir(flavor: BrowserFlavor, home: &Path) -> PathBuf {
+    match flavor {
+        BrowserFlavor::GoogleChrome | BrowserFlavor::Unknown => {
+            home.join("Library/Application Support/Google/Chrome")
+        }
+        BrowserFlavor::ChromeCanary => {
+            home.join("Library/Application Support/Google/Chrome Canary")
+        }
+        BrowserFlavor::Chromium => home.join("Library/Application Support/Chromium"),
+        BrowserFlavor::MicrosoftEdge => home.join("Library/Application Support/Microsoft Edge"),
+        BrowserFlavor::Brave => {
+            home.join("Library/Application Support/BraveSoftware/Brave-Browser")
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_user_profile_dir(flavor: BrowserFlavor, local_app_data: &Path) -> PathBuf {
+    match flavor {
+        BrowserFlavor::GoogleChrome | BrowserFlavor::Unknown => {
+            local_app_data.join(r"Google\Chrome\User Data")
+        }
+        BrowserFlavor::ChromeCanary => local_app_data.join(r"Google\Chrome SxS\User Data"),
+        BrowserFlavor::Chromium => local_app_data.join(r"Chromium\User Data"),
+        BrowserFlavor::MicrosoftEdge => local_app_data.join(r"Microsoft\Edge\User Data"),
+        BrowserFlavor::Brave => local_app_data.join(r"BraveSoftware\Brave-Browser\User Data"),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn linux_user_profile_dir(flavor: BrowserFlavor, home: &Path) -> PathBuf {
+    match flavor {
+        BrowserFlavor::GoogleChrome | BrowserFlavor::Unknown => home.join(".config/google-chrome"),
+        BrowserFlavor::ChromeCanary => home.join(".config/google-chrome-unstable"),
+        BrowserFlavor::Chromium => home.join(".config/chromium"),
+        BrowserFlavor::MicrosoftEdge => home.join(".config/microsoft-edge"),
+        BrowserFlavor::Brave => home.join(".config/BraveSoftware/Brave-Browser"),
+    }
+}
+
+fn create_isolated_profile_dir(flavor: BrowserFlavor, port: u16) -> Result<PathBuf, LaunchError> {
+    let base = std::env::temp_dir();
+
+    for attempt in 0..10 {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = base.join(format!(
+            "y-agent-{}-{port}-{nonce}-{attempt}",
+            flavor.slug()
+        ));
+
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(LaunchError::SpawnFailed(err)),
+        }
+    }
+
+    Err(LaunchError::SpawnFailed(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!(
+            "failed to allocate a unique browser profile directory for {}",
+            flavor.display_name()
+        ),
+    )))
+}
+
+fn create_managed_profile_dir(flavor: BrowserFlavor) -> Result<PathBuf, LaunchError> {
+    let path = managed_profile_dir(flavor).ok_or_else(|| {
+        LaunchError::SpawnFailed(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "could not resolve home directory for managed browser profile",
+        ))
+    })?;
+    std::fs::create_dir_all(&path).map_err(LaunchError::SpawnFailed)?;
+    Ok(path)
+}
+
+fn managed_profile_dir(flavor: BrowserFlavor) -> Option<PathBuf> {
+    let home = home_dir()?;
+    Some(managed_profile_dir_from_home(&home, flavor))
+}
+
+fn managed_profile_dir_from_home(home: &Path, flavor: BrowserFlavor) -> PathBuf {
+    home.join(".config")
+        .join("y-agent")
+        .join("browser-profiles")
+        .join(flavor.slug())
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+}
+
+impl ChromeLauncher {
+    fn cleanup_temp_profile_dir(&mut self) {
+        if let Some(path) = self.temp_profile_dir.take() {
+            if let Err(error) = std::fs::remove_dir_all(&path) {
+                warn!(
+                    path = %path.display(),
+                    %error,
+                    "failed to clean up temporary browser profile directory"
+                );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_browser_flavor_detects_known_executables() {
+        assert_eq!(
+            BrowserFlavor::from_executable_path(Path::new(
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            )),
+            BrowserFlavor::GoogleChrome
+        );
+        assert_eq!(
+            BrowserFlavor::from_executable_path(Path::new(
+                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+            )),
+            BrowserFlavor::Brave
+        );
+        assert_eq!(
+            BrowserFlavor::from_executable_path(Path::new(
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+            )),
+            BrowserFlavor::MicrosoftEdge
+        );
+        assert_eq!(
+            BrowserFlavor::from_executable_path(Path::new(
+                "/Applications/Chromium.app/Contents/MacOS/Chromium"
+            )),
+            BrowserFlavor::Chromium
+        );
+    }
+
+    #[test]
+    fn test_parse_browser_major_version_reads_chrome_and_brave_formats() {
+        assert_eq!(
+            parse_browser_major_version("Google Chrome 147.0.7727.56"),
+            Some(147)
+        );
+        assert_eq!(
+            parse_browser_major_version("Brave Browser 147.1.89.132"),
+            Some(147)
+        );
+        assert_eq!(parse_browser_major_version("Chromium"), None);
+    }
+
+    #[test]
+    fn test_force_isolated_profile_only_for_modern_google_chrome_variants() {
+        assert!(should_force_isolated_profile_for_version(
+            BrowserFlavor::GoogleChrome,
+            Some(147)
+        ));
+        assert!(should_force_isolated_profile_for_version(
+            BrowserFlavor::ChromeCanary,
+            Some(136)
+        ));
+        assert!(!should_force_isolated_profile_for_version(
+            BrowserFlavor::GoogleChrome,
+            Some(135)
+        ));
+        assert!(!should_force_isolated_profile_for_version(
+            BrowserFlavor::Brave,
+            Some(147)
+        ));
+        assert!(!should_force_isolated_profile_for_version(
+            BrowserFlavor::GoogleChrome,
+            None
+        ));
+    }
+
+    #[test]
+    fn test_create_isolated_profile_dir_is_unique_and_browser_scoped() {
+        let brave_dir = create_isolated_profile_dir(BrowserFlavor::Brave, 9222).unwrap();
+        let chrome_dir = create_isolated_profile_dir(BrowserFlavor::GoogleChrome, 9222).unwrap();
+
+        assert_ne!(brave_dir, chrome_dir);
+        assert!(brave_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("brave-browser"));
+        assert!(chrome_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("google-chrome"));
+
+        std::fs::remove_dir_all(brave_dir).unwrap();
+        std::fs::remove_dir_all(chrome_dir).unwrap();
+    }
+
+    #[test]
+    fn test_managed_profile_dir_uses_y_agent_config_root() {
+        let home = Path::new("/Users/tester");
+
+        assert_eq!(
+            managed_profile_dir_from_home(home, BrowserFlavor::GoogleChrome),
+            PathBuf::from("/Users/tester/.config/y-agent/browser-profiles/google-chrome")
+        );
+        assert_eq!(
+            managed_profile_dir_from_home(home, BrowserFlavor::Brave),
+            PathBuf::from("/Users/tester/.config/y-agent/browser-profiles/brave-browser")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_macos_user_profile_dirs_match_browser_brand() {
+        let home = Path::new("/Users/tester");
+
+        assert_eq!(
+            macos_user_profile_dir(BrowserFlavor::GoogleChrome, home),
+            PathBuf::from("/Users/tester/Library/Application Support/Google/Chrome")
+        );
+        assert_eq!(
+            macos_user_profile_dir(BrowserFlavor::Brave, home),
+            PathBuf::from("/Users/tester/Library/Application Support/BraveSoftware/Brave-Browser")
+        );
+        assert_eq!(
+            macos_user_profile_dir(BrowserFlavor::MicrosoftEdge, home),
+            PathBuf::from("/Users/tester/Library/Application Support/Microsoft Edge")
+        );
     }
 
     #[cfg(target_os = "windows")]
-    {
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            let path = PathBuf::from(&local).join(r"Google\Chrome\User Data");
-            if path.exists() {
-                return path;
-            }
-        }
+    #[test]
+    fn test_windows_user_profile_dirs_match_browser_brand() {
+        let local = Path::new(r"C:\Users\tester\AppData\Local");
+
+        assert_eq!(
+            windows_user_profile_dir(BrowserFlavor::GoogleChrome, local),
+            PathBuf::from(r"C:\Users\tester\AppData\Local\Google\Chrome\User Data")
+        );
+        assert_eq!(
+            windows_user_profile_dir(BrowserFlavor::Brave, local),
+            PathBuf::from(r"C:\Users\tester\AppData\Local\BraveSoftware\Brave-Browser\User Data")
+        );
+        assert_eq!(
+            windows_user_profile_dir(BrowserFlavor::MicrosoftEdge, local),
+            PathBuf::from(r"C:\Users\tester\AppData\Local\Microsoft\Edge\User Data")
+        );
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            let path = PathBuf::from(&home).join(".config/google-chrome");
-            if path.exists() {
-                return path;
-            }
-        }
-    }
+    #[test]
+    fn test_linux_user_profile_dirs_match_browser_brand() {
+        let home = Path::new("/home/tester");
 
-    // Fallback: create an isolated profile in temp.
-    warn!("could not detect Chrome user profile directory, using temp dir");
-    let fallback = std::env::temp_dir().join("y-agent-chrome-user-profile");
-    std::fs::create_dir_all(&fallback).ok();
-    fallback
+        assert_eq!(
+            linux_user_profile_dir(BrowserFlavor::GoogleChrome, home),
+            PathBuf::from("/home/tester/.config/google-chrome")
+        );
+        assert_eq!(
+            linux_user_profile_dir(BrowserFlavor::Brave, home),
+            PathBuf::from("/home/tester/.config/BraveSoftware/Brave-Browser")
+        );
+        assert_eq!(
+            linux_user_profile_dir(BrowserFlavor::MicrosoftEdge, home),
+            PathBuf::from("/home/tester/.config/microsoft-edge")
+        );
+    }
 }

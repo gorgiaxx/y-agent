@@ -1,7 +1,12 @@
 import { useMemo } from 'react';
 import { CheckCircle, XCircle, Loader } from 'lucide-react';
 import type { ToolCallBrief } from '../../../types';
-import { formatArguments, formatResult, formatResultFormatted } from './toolCallUtils';
+import {
+  canonicalToolName,
+  formatArguments,
+  formatResult,
+  formatResultFormatted,
+} from './toolCallUtils';
 import { TOOL_RENDERERS, DefaultRenderer } from './tool-renderers';
 import './ToolCallCard.css';
 
@@ -24,6 +29,15 @@ export function ToolCallCard({
   urlMeta,
   metadata,
 }: ToolCallCardProps) {
+  const canonicalName = useMemo(
+    () => canonicalToolName(toolCall.name),
+    [toolCall.name],
+  );
+  const normalizedToolCall = useMemo(
+    () => ({ ...toolCall, name: canonicalName }),
+    [canonicalName, toolCall],
+  );
+
   const statusIcon = {
     running: <Loader size={13} className="collapsible-card-spinner" />,
     success: <CheckCircle size={13} />,
@@ -33,25 +47,25 @@ export function ToolCallCard({
   const statusClass = `tool-status-${status}`;
 
   const displayArgs = useMemo(
-    () => formatArguments(toolCall.name, toolCall.arguments),
-    [toolCall.name, toolCall.arguments],
+    () => formatArguments(canonicalName, toolCall.arguments),
+    [canonicalName, toolCall.arguments],
   );
 
   const displayResult = useMemo(
-    () => (result ? formatResult(toolCall.name, result) : null),
-    [toolCall.name, result],
+    () => (result ? formatResult(canonicalName, result) : null),
+    [canonicalName, result],
   );
 
   const displayResultFormatted_ = useMemo(
-    () => (result ? formatResultFormatted(toolCall.name, result, toolCall.arguments) : null),
-    [toolCall.name, result, toolCall.arguments],
+    () => (result ? formatResultFormatted(canonicalName, result, toolCall.arguments) : null),
+    [canonicalName, result, toolCall.arguments],
   );
 
-  const Renderer = TOOL_RENDERERS[toolCall.name] ?? DefaultRenderer;
+  const Renderer = TOOL_RENDERERS[canonicalName] ?? DefaultRenderer;
 
   return (
     <Renderer
-      toolCall={toolCall}
+      toolCall={normalizedToolCall}
       status={status}
       result={result}
       durationMs={durationMs}

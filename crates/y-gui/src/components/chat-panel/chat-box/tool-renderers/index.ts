@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import type { ToolRendererProps } from './types';
 
+import { BrowserRenderer } from './BrowserRenderer';
 import { UrlRenderer } from './UrlRenderer';
 import { ShellExecRenderer } from './ShellExecRenderer';
 import { ToolSearchRenderer } from './ToolSearchRenderer';
@@ -19,7 +20,7 @@ export { DefaultRenderer } from './DefaultRenderer';
  * To add a new tool type: create a FooRenderer.tsx, then add an entry here.
  */
 export const TOOL_RENDERERS: Record<string, ComponentType<ToolRendererProps>> = {
-  Browser: UrlRenderer,
+  Browser: BrowserRenderer,
   WebFetch: UrlRenderer,
   ShellExec: ShellExecRenderer,
   ToolSearch: ToolSearchRenderer,

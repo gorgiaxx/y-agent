@@ -12,6 +12,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import { makeMarkdownComponents } from './messageUtils';
+import { canonicalToolName } from './toolCallUtils';
 import { processStreamContent, type StreamContentResult } from '../../../hooks/useStreamContent';
 import { useResolvedTheme } from '../../../hooks/useTheme';
 
@@ -72,7 +73,7 @@ export function useAssistantBubble(
       if (seg.type !== 'tool_call') return;
       for (let ri = 0; ri < toolResults.length; ri++) {
         if (consumed.has(ri)) continue;
-        if (toolResults[ri].name === seg.toolCall.name) {
+        if (canonicalToolName(toolResults[ri].name) === canonicalToolName(seg.toolCall.name)) {
           map.set(segIdx, toolResults[ri]);
           consumed.add(ri);
           break;

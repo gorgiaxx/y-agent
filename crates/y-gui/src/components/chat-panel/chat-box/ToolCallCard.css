@@ -198,6 +198,15 @@
   background: var(--toolcall-tag-background-hover);
 }
 
+.tool-call-browser-tag {
+  padding-right: 10px;
+}
+
+.tool-call-browser-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .tool-call-url-detail {
   margin-top: var(--space-xs);
   padding: var(--space-sm) var(--space-md);

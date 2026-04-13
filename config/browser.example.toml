@@ -34,10 +34,13 @@ local_cdp_port = 9222
 #   Windows: %LOCALAPPDATA%\Google\Chrome\User Data
 #   Linux:   ~/.config/google-chrome
 #
-# NOTE: Chrome locks its profile directory. If Chrome is already running
-# with the same profile, the auto-launched instance may fail. Close other
-# Chrome instances before enabling this.
-use_user_profile = true
+# NOTE:
+# - Chrome 136+ ignores --remote-debugging-port on the default profile.
+#   y-agent will automatically fall back to a managed persistent profile at
+#   ~/.config/y-agent/browser-profiles/<browser>/ so logins can persist.
+# - Even on older versions, Chrome locks its profile directory. If Chrome is
+#   already running with the same profile, the auto-launched instance may fail.
+use_user_profile = false
 
 # ---------- Remote CDP Mode ----------
 # Used when launch_mode = "remote".

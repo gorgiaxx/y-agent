@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { FilePenLine, FilePlus2, FileSearch, ChevronRight } from 'lucide-react';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -43,19 +43,14 @@ export function FileToolRenderer({
     && fileMeta.newString !== undefined;
   const showDiff = hasDiff && status !== 'error';
 
-  const fileContent = useMemo(() => {
-    if (toolType === 'write') {
-      const argsObj = tryParseJson(toolCall.arguments);
-      if (!argsObj) return null;
-      return typeof argsObj.content === 'string' ? argsObj.content : null;
-    }
-    if (toolType === 'read' && result) {
-      const resObj = tryParseJson(result);
-      if (!resObj) return null;
-      return typeof resObj.content === 'string' ? resObj.content : null;
-    }
-    return null;
-  }, [toolType, toolCall.arguments, result]);
+  let fileContent: string | null = null;
+  if (toolType === 'write') {
+    const argsObj = tryParseJson(toolCall.arguments);
+    fileContent = argsObj && typeof argsObj.content === 'string' ? argsObj.content : null;
+  } else if (toolType === 'read' && result) {
+    const resObj = tryParseJson(result);
+    fileContent = resObj && typeof resObj.content === 'string' ? resObj.content : null;
+  }
 
   const resolvedTheme = useResolvedTheme();
   const codeThemeStyle = resolvedTheme === 'light' ? oneLight : oneDark;

@@ -61,10 +61,13 @@ pub struct BrowserConfig {
     /// - Windows: `%LOCALAPPDATA%\Google\Chrome\User Data`
     /// - Linux: `~/.config/google-chrome`
     ///
-    /// NOTE: Chrome locks its profile directory while running. If Chrome is
-    /// already open with the same profile, the auto-launched instance may
-    /// fail or merge into the existing window. Close other Chrome instances
-    /// before enabling this option with auto-launch mode.
+    /// NOTE:
+    /// - Chrome 136+ ignores remote debugging on the default profile. In that
+    ///   case y-agent automatically falls back to a managed persistent profile
+    ///   under `~/.config/y-agent/browser-profiles/<browser>/`.
+    /// - Older Chrome versions still lock the default profile while running.
+    ///   If Chrome is already open with the same profile, auto-launch may fail
+    ///   or merge into the existing window.
     #[serde(default)]
     pub use_user_profile: bool,
 
