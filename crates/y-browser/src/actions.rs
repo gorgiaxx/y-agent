@@ -11,14 +11,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Serialize;
-use tokio::sync::Mutex;
-use tracing::debug;
-
 use crate::cdp_client::{CdpClient, CdpError, CdpEvent};
 use crate::snapshot::{
     format_aria_snapshot, AriaSnapshotNode, DomSnapshotNode, RawAxNode, SnapshotFormat,
 };
+use serde::Serialize;
+use tokio::sync::Mutex;
+use tracing::debug;
 
 /// Result of a navigate action.
 #[derive(Debug, Clone, Serialize)]
@@ -747,6 +746,19 @@ impl BrowserActions {
         Ok(result.value.as_str().unwrap_or_default().to_string())
     }
 
+    /// Get accessibility-tree text for the page.
+    ///
+    /// This is a convenience method that takes an accessibility snapshot
+    /// and returns just the text content, suitable for LLM reading.
+    pub async fn get_accessibility_text(
+        &self,
+        limit: usize,
+        interactive_only: bool,
+    ) -> Result<String, CdpError> {
+        let snapshot = self.snapshot_aria(limit, interactive_only).await?;
+        Ok(snapshot.text)
+    }
+
     /// Helper: resolve a ref id (e.g. "e1") to a CDP `RemoteObject` objectId.
     async fn resolve_ref_to_object_id(&self, ref_id: &str) -> Result<String, CdpError> {
         let registry = self.ref_registry.lock().await;
@@ -816,4 +828,23 @@ fn extract_console_text(event: &CdpEvent) -> String {
                 .join(" ")
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_accessibility_text_uses_snapshot_format() {
+        let snapshot = SnapshotResult {
+            format: SnapshotFormat::Aria,
+            nodes_count: 1,
+            aria_nodes: None,
+            dom_nodes: None,
+            text: "heading \"Search\" [ref=e1]".into(),
+        };
+
+        assert_eq!(snapshot.format, SnapshotFormat::Aria);
+        assert!(snapshot.text.contains("heading"));
+    }
 }

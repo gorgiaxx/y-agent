@@ -622,8 +622,8 @@ fn extract_url_meta(tool_name: &str, result_content: &str) -> Option<String> {
 /// Strip Browser/WebFetch results to only LLM-relevant fields.
 ///
 /// GUI-only fields (`favicon_url`, `navigation`) and echo fields (`action`,
-/// `search_engine`, `query`) are removed. The LLM receives only `text` (the
-/// page content) plus `url` and `title` for attribution context.
+/// `search_engine`, `query`) are removed. The LLM receives `text` (the page
+/// content) plus `url`, `title` when present.
 ///
 /// Non-URL tools pass through unchanged.
 fn strip_url_tool_result(tool_name: &str, content: &serde_json::Value) -> String {
@@ -649,4 +649,50 @@ fn strip_url_tool_result(tool_name: &str, content: &serde_json::Value) -> String
     }
 
     serde_json::to_string(&serde_json::Value::Object(stripped)).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_url_tool_result_removes_navigation_and_favicon() {
+        let content = serde_json::json!({
+            "action": "navigate",
+            "url": "https://example.com",
+            "title": "Example",
+            "favicon_url": "data:image/png;base64,abc",
+            "navigation": {
+                "frame_id": "frame-1"
+            }
+        });
+
+        let stripped = strip_url_tool_result("Browser", &content);
+        let stripped_json: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+
+        assert_eq!(stripped_json["url"], content["url"]);
+        assert_eq!(stripped_json["title"], content["title"]);
+        assert!(stripped_json.get("favicon_url").is_none());
+        assert!(stripped_json.get("navigation").is_none());
+    }
+
+    #[test]
+    fn test_strip_url_tool_result_keeps_search_text() {
+        let content = serde_json::json!({
+            "action": "search",
+            "query": "IGS Speed Driver 街机游戏 全系列",
+            "search_engine": "google",
+            "url": "https://www.google.com/search?q=IGS+Speed+Driver",
+            "title": "IGS Speed Driver - Google 搜索",
+            "text": "搜索结果页文本"
+        });
+
+        let stripped = strip_url_tool_result("WebFetch", &content);
+        let stripped_json: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+
+        assert_eq!(stripped_json["url"], content["url"]);
+        assert_eq!(stripped_json["title"], content["title"]);
+        assert_eq!(stripped_json["text"], content["text"]);
+        assert!(stripped_json.get("results").is_none());
+    }
 }
