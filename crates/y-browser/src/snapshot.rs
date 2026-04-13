@@ -130,6 +130,20 @@ const INTERACTIVE_ROLES: &[&str] = &[
     "treeitem",
 ];
 
+/// Named content roles that provide useful reading/navigation context.
+const CONTENT_ROLES: &[&str] = &[
+    "heading",
+    "article",
+    "region",
+    "main",
+    "navigation",
+    "listitem",
+    "cell",
+    "gridcell",
+    "columnheader",
+    "rowheader",
+];
+
 /// ARIA roles that are structural containers worth keeping as context
 /// to show hierarchy, even in interactive-only mode.
 #[allow(dead_code)]
@@ -154,6 +168,12 @@ fn is_interactive_role(role: &str) -> bool {
     INTERACTIVE_ROLES.iter().any(|&ir| r == ir)
 }
 
+/// Check if a role carries useful content for LLM reading/navigation.
+fn is_content_role(role: &str) -> bool {
+    let r = role.to_lowercase();
+    CONTENT_ROLES.iter().any(|&cr| r == cr)
+}
+
 /// Check if a role is structural (useful container).
 #[allow(dead_code)]
 fn is_structural_role(role: &str) -> bool {
@@ -163,8 +183,9 @@ fn is_structural_role(role: &str) -> bool {
 
 /// Format raw AX nodes from CDP into a flat ARIA snapshot.
 ///
-/// When `interactive_only` is true, only interactive elements and their
-/// structural ancestors are included — dramatically reducing token usage.
+/// When `interactive_only` is true, interactive nodes plus named content
+/// nodes (for example headings) and their structural ancestors are included.
+/// This keeps the snapshot actionable while preserving reading context.
 ///
 /// Walks the tree depth-first up to `limit` nodes.
 pub fn format_aria_snapshot(
@@ -201,8 +222,8 @@ pub fn format_aria_snapshot(
         return vec![];
     };
 
-    // If interactive_only, first pass: collect IDs of interactive nodes
-    // and all their ancestors so we can show structural context.
+    // If interactive_only, first pass: collect IDs of interactive or useful
+    // content nodes and all their ancestors so we can show structural context.
     let keep_ids: Option<HashSet<&str>> = if interactive_only {
         // Build parent map
         let mut parent_map: HashMap<&str, &str> = HashMap::new();
@@ -221,7 +242,10 @@ pub fn format_aria_snapshot(
                 continue;
             };
             let role = node.role.as_ref().map_or_else(String::new, AxValue::as_str);
-            if is_interactive_role(&role) {
+            let name = node.name.as_ref().map_or_else(String::new, AxValue::as_str);
+            let keep_self =
+                is_interactive_role(&role) || (is_content_role(&role) && !name.trim().is_empty());
+            if keep_self {
                 // Mark this node and all ancestors
                 let mut current = Some(node_id);
                 while let Some(id) = current {
@@ -268,11 +292,25 @@ pub fn format_aria_snapshot(
             }
         }
 
-        // Skip generic/noise roles with empty names
+        let has_text = !name.trim().is_empty()
+            || node
+                .value
+                .as_ref()
+                .map(AxValue::as_str)
+                .is_some_and(|v| !v.trim().is_empty())
+            || node
+                .description
+                .as_ref()
+                .map(AxValue::as_str)
+                .is_some_and(|v| !v.trim().is_empty());
+
+        // Skip generic/noise roles with empty names for interactive-only snapshots.
+        // For full-page snapshots, keep text-bearing nodes even if the role is generic.
         if matches!(
             role.as_str(),
             "none" | "generic" | "GenericContainer" | "InlineTextBox" | "LineBreak"
-        ) {
+        ) && (interactive_only || !has_text)
+        {
             let children: Vec<&str> = node
                 .child_ids
                 .iter()
@@ -381,6 +419,7 @@ pub fn truncate_output(content: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_aria_snapshot_to_text() {
@@ -426,5 +465,105 @@ mod tests {
         assert!(is_interactive_role("link"));
         assert!(!is_interactive_role("document"));
         assert!(!is_interactive_role("generic"));
+    }
+
+    #[test]
+    fn test_content_roles() {
+        assert!(is_content_role("heading"));
+        assert!(is_content_role("article"));
+        assert!(!is_content_role("button"));
+    }
+
+    #[test]
+    fn test_interactive_snapshot_keeps_named_heading_context() {
+        let nodes = vec![
+            RawAxNode {
+                node_id: Some("1".into()),
+                role: Some(AxValue {
+                    value: Some(json!("RootWebArea")),
+                }),
+                name: Some(AxValue {
+                    value: Some(json!("Example")),
+                }),
+                value: None,
+                description: None,
+                child_ids: vec!["2".into(), "3".into()],
+                backend_dom_node_id: Some(1),
+                properties: vec![],
+            },
+            RawAxNode {
+                node_id: Some("2".into()),
+                role: Some(AxValue {
+                    value: Some(json!("heading")),
+                }),
+                name: Some(AxValue {
+                    value: Some(json!("欢迎")),
+                }),
+                value: None,
+                description: None,
+                child_ids: vec![],
+                backend_dom_node_id: Some(2),
+                properties: vec![],
+            },
+            RawAxNode {
+                node_id: Some("3".into()),
+                role: Some(AxValue {
+                    value: Some(json!("button")),
+                }),
+                name: Some(AxValue {
+                    value: Some(json!("提交")),
+                }),
+                value: None,
+                description: None,
+                child_ids: vec![],
+                backend_dom_node_id: Some(3),
+                properties: vec![],
+            },
+        ];
+
+        let snapshot = format_aria_snapshot(&nodes, 20, true);
+        let roles: Vec<&str> = snapshot.iter().map(|node| node.role.as_str()).collect();
+
+        assert!(roles.contains(&"heading"));
+        assert!(roles.contains(&"button"));
+    }
+
+    #[test]
+    fn test_format_aria_snapshot_keeps_inline_text_for_full_snapshot() {
+        let nodes = vec![
+            RawAxNode {
+                node_id: Some("root".into()),
+                role: Some(AxValue {
+                    value: Some(json!("document")),
+                }),
+                name: Some(AxValue {
+                    value: Some(json!("Root")),
+                }),
+                value: None,
+                description: None,
+                child_ids: vec!["text1".into()],
+                backend_dom_node_id: None,
+                properties: vec![],
+            },
+            RawAxNode {
+                node_id: Some("text1".into()),
+                role: Some(AxValue {
+                    value: Some(json!("InlineTextBox")),
+                }),
+                name: Some(AxValue {
+                    value: Some(json!("Hello world")),
+                }),
+                value: None,
+                description: None,
+                child_ids: vec![],
+                backend_dom_node_id: None,
+                properties: vec![],
+            },
+        ];
+
+        let snapshot = format_aria_snapshot(&nodes, 20, false);
+        let text = aria_snapshot_to_text(&snapshot);
+
+        assert!(text.contains("InlineTextBox \"Hello world\""));
     }
 }
