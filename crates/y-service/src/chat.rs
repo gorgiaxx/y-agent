@@ -41,9 +41,9 @@ pub struct ToolCallRecord {
     pub duration_ms: u64,
     /// Result content (serialised JSON string).
     ///
-    /// For Browser/WebFetch tools, this is the **stripped** result that only
-    /// contains LLM-relevant fields (`url`, `title`, `text`). GUI-only
-    /// metadata (`favicon_url`, `navigation`, `action`, etc.) is removed
+    /// For Browser/WebFetch tools, this is usually the stripped result that
+    /// only contains LLM-relevant fields (`url`, `title`, `text`).
+    /// GUI-only metadata (for example `favicon_url`, `navigation`) is stripped
     /// before this field is set.
     pub result_content: String,
     /// Compact URL metadata for Browser/WebFetch tools (JSON with url, title,
