@@ -27,7 +27,7 @@ const MAX_OUTPUT_CHARS: usize = 50_000;
 
 /// Supported browser actions (parsed from tool input).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum BrowserAction {
     Navigate,
     Search,
@@ -51,48 +51,49 @@ impl BrowserAction {
     fn from_str(s: &str) -> Option<Self> {
         match s {
             // Navigation
-            "navigate" | "open" | "goto" | "go" | "load" | "visit" | "open_url" | "go_to" => {
+            "navigate" | "open" | "goto" | "go" | "load" | "visit" | "openUrl" | "goTo" => {
                 Some(Self::Navigate)
             }
             // Search via search engine
             "search" | "WebSearch" | "google" | "find" | "lookup" | "query" => Some(Self::Search),
             // Screenshot
-            "screenshot" | "capture" | "screen" | "take_screenshot" | "capture_screenshot" => {
+            "screenshot" | "capture" | "screen" | "takeScreenshot" | "captureScreenshot" => {
                 Some(Self::Screenshot)
             }
             // Snapshot (accessibility tree)
-            "snapshot" | "inspect" | "get_elements" | "list_elements" | "dom" | "get_dom"
-            | "get_html" | "html" | "accessibility" | "a11y" => Some(Self::Snapshot),
+            "snapshot" | "inspect" | "getElements" | "listElements" | "dom" | "getDom"
+            | "getHtml" | "html" | "accessibility" | "a11y" => Some(Self::Snapshot),
             // Click
-            "click" | "tap" | "press_button" | "click_element" => Some(Self::Click),
+            "click" | "tap" | "pressButton" | "clickElement" => Some(Self::Click),
             // Type / fill text
-            "type" | "type_text" | "fill" | "input" | "enter_text" | "set_value" | "fill_text"
-            | "input_text" | "write" => Some(Self::Type),
+            "type" | "typeText" | "fill" | "input" | "enterText" | "setValue" | "fillText"
+            | "inputText" | "write" => Some(Self::Type),
             // Get element text
-            "get_text" | "read_text" | "text" | "element_text" | "get_element_text"
-            | "extract_text" => Some(Self::GetText),
+            "getText" | "readText" | "text" | "elementText" | "getElementText" | "extractText" => {
+                Some(Self::GetText)
+            }
             // Get title
-            "get_title" | "title" | "page_title" => Some(Self::GetTitle),
+            "getTitle" | "title" | "pageTitle" => Some(Self::GetTitle),
             // Get URL
-            "get_url" | "url" | "current_url" | "page_url" => Some(Self::GetUrl),
+            "getUrl" | "url" | "currentUrl" | "pageUrl" => Some(Self::GetUrl),
             // Evaluate JS
-            "evaluate" | "eval" | "execute" | "exec" | "run_js" | "javascript" | "js"
-            | "execute_script" | "run_script" | "eval_js" => Some(Self::Evaluate),
+            "evaluate" | "eval" | "execute" | "exec" | "runJs" | "javascript" | "js"
+            | "executeScript" | "runScript" | "evalJs" => Some(Self::Evaluate),
             // Wait
-            "wait" | "sleep" | "delay" | "wait_for" | "pause" => Some(Self::Wait),
+            "wait" | "sleep" | "delay" | "waitFor" | "pause" => Some(Self::Wait),
             // Press key
-            "press_key" | "press" | "key" | "keypress" | "send_key" | "keyboard" => {
+            "pressKey" | "press" | "key" | "keypress" | "sendKey" | "keyboard" => {
                 Some(Self::PressKey)
             }
             // Scroll
-            "scroll" | "scroll_page" | "scroll_down" | "scroll_up" => Some(Self::Scroll),
+            "scroll" | "scrollPage" | "scrollDown" | "scrollUp" => Some(Self::Scroll),
             // Get full page text
-            "get_page_text" | "page_text" | "get_content" | "get_page_content" | "read_page"
-            | "page_content" | "body_text" | "get_body" | "read" | "read_content" | "extract"
+            "getPageText" | "pageText" | "getContent" | "getPageContent" | "readPage"
+            | "pageContent" | "bodyText" | "getBody" | "read" | "readContent" | "extract"
             | "scrape" => Some(Self::GetPageText),
             // Console logs
-            "get_console_logs" | "console" | "console_logs" | "logs" | "get_logs"
-            | "get_errors" | "errors" => Some(Self::GetConsoleLogs),
+            "getConsoleLogs" | "console" | "consoleLogs" | "logs" | "getLogs" | "getErrors"
+            | "errors" => Some(Self::GetConsoleLogs),
             // Close
             "close" | "quit" | "exit" | "disconnect" | "stop" => Some(Self::Close),
             _ => None,
@@ -101,9 +102,9 @@ impl BrowserAction {
 
     /// All valid action names, for error messages.
     fn all_names() -> &'static str {
-        "navigate, search, screenshot, snapshot, click, type, get_text, get_title, \
-         get_url, evaluate, wait, press_key, scroll, get_page_text, \
-         get_console_logs, close"
+        "navigate, search, screenshot, snapshot, click, type, getText, getTitle, \
+         getUrl, evaluate, wait, pressKey, scroll, getPageText, \
+         getConsoleLogs, close"
     }
 }
 
@@ -155,7 +156,8 @@ impl BrowserTool {
                     "Actions:\n",
                     "- navigate: Open a URL. Args: url (required)\n",
                     "- search: Search via search engine. Args: query (required), ",
-                    "search_engine ('google'|'bing'|'duckduckgo'|'baidu', default 'google')\n",
+                    "search_engine ('google'|'bing'|'duckduckgo'|'baidu', default 'google'), ",
+                    "wait_ms (optional, default 2000). Returns AX snapshot text.\n",
                     "- snapshot: Get page elements with @eN refs. Use these refs for click/type. ",
                     "Args: format ('aria'|'dom'), interactive_only (bool, default true)\n",
                     "- click: Click an element. Args: selector ('@e1' ref from snapshot, ",
@@ -163,17 +165,17 @@ impl BrowserTool {
                     "- type: Type text into an input. Args: selector ('@e1' ref or CSS), ",
                     "text (required)\n",
                     "- screenshot: Capture page image. Args: full_page (bool)\n",
-                    "- get_text: Get element text. Args: selector ('@e1' ref or CSS)\n",
-                    "- get_title: Get page title\n",
-                    "- get_url: Get current URL\n",
+                    "- getText: Get element text. Args: selector ('@e1' ref or CSS)\n",
+                    "- getTitle: Get page title\n",
+                    "- getUrl: Get current URL\n",
                     "- evaluate: Run JavaScript. Args: expression (required)\n",
                     "- wait: Wait for condition. Args: selector (CSS to wait for) ",
                     "or ms (milliseconds)\n",
-                    "- press_key: Press keyboard key. Args: key ('Enter', 'Tab', 'Escape', etc.)\n",
+                    "- pressKey: Press keyboard key. Args: key ('Enter', 'Tab', 'Escape', etc.)\n",
                     "- scroll: Scroll page. Args: direction ('up'|'down'|'left'|'right'), ",
                     "pixels (default 300)\n",
-                    "- get_page_text: Get all visible page text\n",
-                    "- get_console_logs: Get browser console output (errors, warnings, logs)\n",
+                    "- getPageText: Get accessibility-tree page text for LLM reading\n",
+                    "- getConsoleLogs: Get browser console output (errors, warnings, logs)\n",
                     "- close: Close browser\n\n",
                     "IMPORTANT: After 'snapshot', use the @eN refs (e.g. @e3) for click/type ",
                     "-- do NOT guess CSS selectors.",
@@ -187,9 +189,9 @@ impl BrowserTool {
                         "type": "string",
                         "enum": [
                             "navigate", "search", "screenshot", "snapshot",
-                            "click", "type", "get_text", "get_title", "get_url",
-                            "evaluate", "wait", "press_key", "scroll",
-                            "get_page_text", "get_console_logs", "close"
+                            "click", "type", "getText", "getTitle", "getUrl",
+                            "evaluate", "wait", "pressKey", "scroll",
+                            "getPageText", "getConsoleLogs", "close"
                         ],
                         "description": "Browser action to perform"
                     },
@@ -205,6 +207,10 @@ impl BrowserTool {
                         "type": "string",
                         "enum": ["google", "bing", "duckduckgo", "baidu"],
                         "description": "Search engine to use (default: 'google')"
+                    },
+                    "wait_ms": {
+                        "type": "integer",
+                        "description": "Milliseconds to wait for page rendering after navigate/search (default: 2000 for search)"
                     },
                     "selector": {
                         "type": "string",
@@ -301,7 +307,7 @@ impl BrowserTool {
         let text = self
             .session
             .actions()
-            .get_page_text()
+            .get_accessibility_text(800, false)
             .await
             .map_err(cdp_to_tool_error)?;
 
@@ -366,7 +372,7 @@ impl BrowserTool {
         let text = self
             .session
             .actions()
-            .get_page_text()
+            .get_accessibility_text(400, true)
             .await
             .map_err(cdp_to_tool_error)?;
 
@@ -386,40 +392,22 @@ impl BrowserTool {
             || self.session.config().default_search_engine.clone(),
             String::from,
         );
+        let wait_ms = input.arguments["wait_ms"].as_u64().or(Some(2000));
 
         let search_url = build_search_url(&engine, query)?;
+        let text = self
+            .search_page_text(query, Some(engine.as_str()), wait_ms)
+            .await?;
+        let (title, favicon) = self.fetch_page_meta().await;
 
-        self.session
-            .security()
-            .validate_url(&search_url)
-            .map_err(|e| ToolError::PermissionDenied {
-                name: "browser".into(),
-                reason: e.to_string(),
-            })?;
-
-        let nav = self
-            .session
-            .actions()
-            .navigate(&search_url)
-            .await
-            .map_err(cdp_to_tool_error)?;
-        // Best-effort page metadata for GUI rendering.
-        let title = self.session.actions().get_title().await.unwrap_or_default();
-        let favicon = self
-            .session
-            .actions()
-            .get_favicon()
-            .await
-            .unwrap_or_default();
-        Ok(serde_json::json!({
-            "action": "search",
-            "query": query,
-            "search_engine": engine,
-            "url": search_url,
-            "title": title,
-            "favicon_url": favicon,
-            "navigation": serde_json::to_value(&nav).unwrap_or_default(),
-        }))
+        Ok(build_search_result(
+            query,
+            &engine,
+            &search_url,
+            &title,
+            &favicon,
+            &text,
+        ))
     }
 
     /// Dispatch a browser action and return its JSON result.
@@ -545,7 +533,7 @@ impl BrowserTool {
             BrowserAction::GetText => {
                 let selector = require_str(&input.arguments, "selector").map_err(|_| {
                     ToolError::ValidationError {
-                        message: "Missing 'selector' for get_text. Use an @ref \
+                        message: "Missing 'selector' for getText. Use an @ref \
                         (e.g. '@e5') or CSS selector."
                             .into(),
                     }
@@ -596,13 +584,13 @@ impl BrowserTool {
             BrowserAction::PressKey => {
                 let key = require_str(&input.arguments, "key").map_err(|_| {
                     ToolError::ValidationError {
-                        message: "Missing 'key' for press_key. Example: \
-                        {\"action\": \"press_key\", \"key\": \"Enter\"}"
+                        message: "Missing 'key' for pressKey. Example: \
+                        {\"action\": \"pressKey\", \"key\": \"Enter\"}"
                             .into(),
                     }
                 })?;
                 actions.press_key(key).await.map_err(cdp_to_tool_error)?;
-                Ok(serde_json::json!({"action": "press_key", "key": key, "ok": true}))
+                Ok(serde_json::json!({"action": "pressKey", "key": key, "ok": true}))
             }
 
             BrowserAction::Scroll => {
@@ -671,6 +659,26 @@ pub fn build_search_url(engine: &str, query: &str) -> Result<String, ToolError> 
         }
     };
     Ok(url)
+}
+
+/// Build a consistent search result payload for Browser/WebFetch.
+pub fn build_search_result(
+    query: &str,
+    engine: &str,
+    url: &str,
+    title: &str,
+    favicon_url: &str,
+    text: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "action": "search",
+        "query": query,
+        "search_engine": engine,
+        "url": url,
+        "title": title,
+        "favicon_url": favicon_url,
+        "text": text,
+    })
 }
 
 impl Default for BrowserTool {
@@ -776,5 +784,35 @@ fn cdp_to_tool_error(e: crate::cdp_client::CdpError) -> ToolError {
             name: "browser".into(),
             message: other.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_definition_search_supports_wait_ms() {
+        let definition = BrowserTool::tool_definition();
+        let wait_ms = &definition.parameters["properties"]["wait_ms"];
+
+        assert_eq!(wait_ms["type"], "integer");
+    }
+
+    #[test]
+    fn test_build_search_result_includes_text_for_llm() {
+        let result = build_search_result(
+            "明天海淀区天气",
+            "google",
+            "https://www.google.com/search?q=%E6%98%8E%E5%A4%A9%E6%B5%B7%E6%B7%80%E5%8C%BA%E5%A4%A9%E6%B0%94",
+            "天气 - Google Search",
+            "data:image/png;base64,abc",
+            "天气结果正文",
+        );
+
+        assert_eq!(result["action"], "search");
+        assert_eq!(result["query"], "明天海淀区天气");
+        assert_eq!(result["search_engine"], "google");
+        assert_eq!(result["text"], "天气结果正文");
     }
 }
