@@ -29,4 +29,4 @@ pub use config::BrowserConfig;
 pub use launcher::ChromeLauncher;
 pub use security::SecurityPolicy;
 pub use session::BrowserSession;
-pub use tool::BrowserTool;
+pub use tool::{build_search_result, build_search_url, BrowserTool};

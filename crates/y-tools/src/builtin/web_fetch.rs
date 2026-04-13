@@ -43,11 +43,11 @@ impl WebFetchTool {
             help: Some(
                 concat!(
                     "Actions:\n",
-                    "- fetch (default): Navigate to a URL and return visible text. ",
+                    "- fetch (default): Navigate to a URL and return accessibility-tree text. ",
                     "Args: url (required), wait_ms (optional, default 1000)\n",
                     "- search: Search the web via a search engine. ",
                     "Args: query (required), search_engine ('google'|'bing'|'duckduckgo'|'baidu', ",
-                    "default 'google'), wait_ms (optional, default 2000)\n\n",
+                    "default 'google'), wait_ms (optional, default 2000). Returns AX snapshot text.\n\n",
                     "Aliases: web_search, search, read_url, fetch_url, scrape",
                 )
                 .into(),
@@ -176,21 +176,20 @@ impl Tool for WebFetchTool {
                 // Build the actual search URL so the GUI can render a clickable
                 // URL tag (favicon + open-in-browser button). Best-effort for
                 // display only -- the real navigation is done inside BrowserTool.
-                let search_url = y_browser::tool::build_search_url(engine_name, query)
+                let search_url = y_browser::build_search_url(engine_name, query)
                     .ok()
                     .unwrap_or_default();
 
                 Ok(ToolOutput {
                     success: true,
-                    content: serde_json::json!({
-                        "action": "search",
-                        "query": query,
-                        "url": search_url,
-                        "search_engine": engine_name,
-                        "title": title,
-                        "favicon_url": favicon,
-                        "text": text,
-                    }),
+                    content: y_browser::build_search_result(
+                        query,
+                        engine_name,
+                        &search_url,
+                        &title,
+                        &favicon,
+                        &text,
+                    ),
                     warnings: vec![],
                     metadata: serde_json::json!({}),
                 })
