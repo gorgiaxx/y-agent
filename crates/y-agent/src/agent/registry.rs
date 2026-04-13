@@ -1023,7 +1023,7 @@ mod tests {
         let def = registry.get("plan-phase-executor").unwrap();
         assert_eq!(def.mode, AgentMode::Build);
         assert_eq!(def.trust_tier, TrustTier::BuiltIn);
-        assert_eq!(def.max_iterations, 30);
+        assert_eq!(def.max_iterations, 60);
         assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
         assert!(def.allowed_tools.contains(&"ToolSearch".to_string()));
         assert!(def.denied_tools.contains(&"Task".to_string()));
