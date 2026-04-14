@@ -1405,7 +1405,7 @@ function ScheduleCreateForm({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {workflows.length === 0 && <SelectItem value="" disabled>No workflows available</SelectItem>}
+                {workflows.length === 0 && <SelectItem value="__none__" disabled>No workflows available</SelectItem>}
                 {workflows.map((w) => (
                   <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
                 ))}

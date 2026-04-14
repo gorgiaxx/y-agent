@@ -21,7 +21,6 @@ function detailToToml(d: AgentDetail): string {
   lines.push(`trust_tier = "user_defined"`);
   lines.push(`capabilities = [${d.capabilities.map(c => JSON.stringify(c)).join(', ')}]`);
   lines.push(`allowed_tools = [${d.allowed_tools.map(t => JSON.stringify(t)).join(', ')}]`);
-  lines.push(`denied_tools = [${d.denied_tools.map(t => JSON.stringify(t)).join(', ')}]`);
   lines.push(`system_prompt = ${JSON.stringify(d.system_prompt)}`);
   lines.push(`skills = [${d.skills.map(s => JSON.stringify(s)).join(', ')}]`);
   lines.push(`preferred_models = [${d.preferred_models.map(m => JSON.stringify(m)).join(', ')}]`);
@@ -278,18 +277,6 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
             <div className="agent-detail-tags">
               {detail.allowed_tools.map((tool) => (
                 <span key={tool} className="agent-detail-tag agent-detail-tag--tool">{tool}</span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Denied Tools */}
-        {detail.denied_tools.length > 0 && (
-          <div className="agent-detail-section">
-            <div className="agent-detail-section-title">Denied Tools</div>
-            <div className="agent-detail-tags">
-              {detail.denied_tools.map((tool) => (
-                <span key={tool} className="agent-detail-tag agent-detail-tag--denied">{tool}</span>
               ))}
             </div>
           </div>

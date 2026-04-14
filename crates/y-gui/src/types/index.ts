@@ -6,6 +6,7 @@
 
 export interface SessionInfo {
   id: string;
+  agent_id?: string | null;
   title: string | null;
   created_at: string;
   updated_at: string;
