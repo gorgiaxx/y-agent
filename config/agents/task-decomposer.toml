@@ -7,7 +7,6 @@ auto_update = true
 user_callable = false
 capabilities = ["task_decomposition", "json_extraction"]
 allowed_tools = []
-denied_tools = []
 system_prompt = """
 You are a task decomposer. Given a plan in markdown format, extract a structured task list as JSON.
 

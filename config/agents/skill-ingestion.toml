@@ -14,7 +14,6 @@ allowed_tools = [
   "Glob",
   "Grep",
 ]
-denied_tools = []
 system_prompt = """
 You are a Skill Ingestion Agent for the y-agent framework. Your job is to analyze an external skill document and transform it into y-agent's proprietary format.
 

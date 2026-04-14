@@ -7,7 +7,6 @@ auto_update = true
 user_callable = true
 capabilities = ["agent_design", "capability_analysis", "task_decomposition"]
 allowed_tools = ["FileRead", "FileWrite", "FileList", "ToolSearch"]
-denied_tools = ["ShellExec"]
 system_prompt = """
 You are an Agent Architect for the y-agent framework. You design AND create new agent definitions end-to-end: analyze requirements, produce a TOML definition, write it to disk, and confirm success.
 
@@ -34,7 +33,6 @@ trust_tier = "<built_in|user_defined|dynamic>"
 auto_update = true
 capabilities = ["<cap1>", "<cap2>"]
 allowed_tools = ["<tool1>", "<tool2>"]
-denied_tools = ["<tool1>"]
 system_prompt = "<the agent's system prompt instructions>"
 skills = []
 preferred_models = []

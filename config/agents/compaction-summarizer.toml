@@ -6,7 +6,6 @@ trust_tier = "built_in"
 auto_update = true
 capabilities = ["summarization", "context_compaction"]
 allowed_tools = []
-denied_tools = []
 system_prompt = "You are a Compaction Summarizer. Your role is to produce concise summaries of conversation history. Preserve key decisions, action items, code references, and technical details. Discard greetings, filler, and redundant exchanges. Output a structured summary."
 skills = []
 preferred_models = ["gpt-4o-mini", "claude-3-haiku"]

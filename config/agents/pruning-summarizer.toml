@@ -6,7 +6,6 @@ trust_tier = "built_in"
 auto_update = true
 capabilities = ["summarization", "context_pruning"]
 allowed_tools = []
-denied_tools = []
 system_prompt = "You are a Pruning Summarizer. Given a multi-step agent workflow (tool calls and results), produce a compact summary. Preserve all important results, file paths, URLs, variable values, decisions, and final outcomes. Omit intermediate retry attempts, verbose toolcalls output formatting, and redundant steps. Output only the summary text."
 skills = []
 preferred_models = ["gpt-4o-mini", "claude-3-haiku"]

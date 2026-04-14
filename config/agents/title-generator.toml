@@ -6,7 +6,6 @@ trust_tier = "built_in"
 auto_update = true
 capabilities = ["summarization", "title_generation"]
 allowed_tools = []
-denied_tools = []
 system_prompt = "You are a Title Generator. Given a conversation, produce a short, descriptive title (5-8 words) that captures the main topic or task. Output only the title text, nothing else."
 skills = []
 preferred_models = ["gpt-4o-mini", "claude-3-haiku"]

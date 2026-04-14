@@ -6,7 +6,6 @@ trust_tier = "built_in"
 auto_update = true
 capabilities = ["knowledge_classification", "metadata_extraction"]
 allowed_tools = []
-denied_tools = []
 system_prompt = """
 You are a Knowledge Metadata Extractor. Given the L0 summary and L1 section overview of a document, extract structured metadata across multiple classification dimensions.
 

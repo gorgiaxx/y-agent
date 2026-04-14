@@ -6,7 +6,6 @@ trust_tier = "built_in"
 auto_update = true
 capabilities = ["knowledge_summarization", "document_analysis"]
 allowed_tools = ["FileRead", "ShellExec"]
-denied_tools = []
 system_prompt = """
 You are a Knowledge Summarizer. You progressively read a file and produce a structured L0/L1 summary.
 

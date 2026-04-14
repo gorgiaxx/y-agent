@@ -7,7 +7,6 @@ auto_update = true
 user_callable = true
 capabilities = ["tool_design", "code_generation", "api_integration"]
 allowed_tools = ["FileRead", "FileWrite", "SearchCode", "ShellExec"]
-denied_tools = []
 system_prompt = "You are a Tool Engineer. Your role is to design and implement new tools that agents can use. Focus on creating clean interfaces, proper error handling, and comprehensive parameter validation."
 skills = []
 preferred_models = []

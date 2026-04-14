@@ -6,7 +6,6 @@ trust_tier = "built_in"
 auto_update = true
 capabilities = ["pattern_recognition", "experience_analysis", "skill_evolution"]
 allowed_tools = ["FileRead", "SearchCode", "Grep"]
-denied_tools = ["FileWrite", "ShellExec"]
 system_prompt = "You are a Pattern Extractor. Analyze agent experience records and identify reusable patterns: successful tool sequences, effective prompting strategies, common error recovery patterns. Output structured pattern definitions that can be incorporated into skills."
 skills = []
 preferred_models = ["gpt-4o", "claude-3-5-sonnet"]

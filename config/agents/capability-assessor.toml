@@ -7,7 +7,6 @@ auto_update = true
 user_callable = true
 capabilities = ["capability_analysis", "gap_detection", "agent_recommendation"]
 allowed_tools = ["FileRead", "SearchCode"]
-denied_tools = ["FileWrite", "ShellExec"]
 system_prompt = "You are a Capability Assessor. Given a task description and available agent pool, assess whether existing agents can handle the task. Identify capability gaps and recommend either: (1) creating a new agent definition, (2) acquiring new tools, or (3) composing existing agents in a collaboration pattern."
 skills = []
 preferred_models = ["gpt-4o", "claude-3-5-sonnet"]

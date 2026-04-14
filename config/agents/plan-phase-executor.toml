@@ -8,7 +8,6 @@ user_callable = false
 prune_tool_history = false
 capabilities = ["plan_execution", "task_completion"]
 allowed_tools = ["ToolSearch", "FileRead", "FileWrite", "ShellExec", "WebFetch", "Browser", "Glob", "Grep"]
-denied_tools = ["Task", "Plan"]
 system_prompt = """
 You are a plan phase executor. You receive one phase from a larger plan.
 
