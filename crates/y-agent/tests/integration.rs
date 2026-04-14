@@ -88,7 +88,6 @@ fn test_permission_inheritance_e2e() {
     let store = DynamicAgentStore::new();
     let creator = CreatorPermissionSnapshot {
         tools_allowed: vec!["FileRead".to_string(), "SearchCode".to_string()],
-        tools_denied: vec!["ShellExec".to_string()],
         max_iterations: 50,
         max_tool_calls: 100,
         max_tokens: 8192,
@@ -113,7 +112,6 @@ fn test_permission_inheritance_e2e() {
     // Create child using parent's permissions (depth 2 → effective depth 1)
     let child_creator = CreatorPermissionSnapshot {
         tools_allowed: parent.effective_permissions.tools_allowed.clone(),
-        tools_denied: parent.effective_permissions.tools_denied.clone(),
         max_iterations: parent.effective_permissions.max_iterations,
         max_tool_calls: parent.effective_permissions.max_tool_calls,
         max_tokens: parent.effective_permissions.max_tokens,
@@ -133,7 +131,6 @@ fn test_permission_inheritance_e2e() {
     // Grandchild (depth 1 → effective depth 0) → should be rejected by validation
     let grandchild_creator = CreatorPermissionSnapshot {
         tools_allowed: child.effective_permissions.tools_allowed.clone(),
-        tools_denied: child.effective_permissions.tools_denied.clone(),
         max_iterations: child.effective_permissions.max_iterations,
         max_tool_calls: child.effective_permissions.max_tool_calls,
         max_tokens: child.effective_permissions.max_tokens,

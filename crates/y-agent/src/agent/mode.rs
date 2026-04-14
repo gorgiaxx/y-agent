@@ -89,8 +89,6 @@ pub struct FilteredDefinition {
     pub mode: AgentMode,
     /// Filtered list of allowed tools based on mode.
     pub allowed_tools: Vec<String>,
-    /// Denied tools (unchanged from definition).
-    pub denied_tools: Vec<String>,
     /// System prompt with mode prefix prepended.
     pub system_prompt: String,
 }
@@ -142,7 +140,6 @@ pub fn apply_mode_overlay(
     FilteredDefinition {
         mode: effective_mode,
         allowed_tools,
-        denied_tools: definition.denied_tools.clone(),
         system_prompt,
     }
 }
@@ -161,6 +158,11 @@ mod tests {
             mode: AgentMode::General,
             trust_tier: TrustTier::UserDefined,
             capabilities: vec![],
+            icon: None,
+            working_directory: None,
+            toolcall_enabled: None,
+            skills_enabled: None,
+            knowledge_enabled: None,
             allowed_tools: vec![
                 "FileRead".to_string(),
                 "FileWrite".to_string(),
@@ -169,14 +171,19 @@ mod tests {
                 "Grep".to_string(),
                 "WebSearch".to_string(),
             ],
-            denied_tools: vec!["dangerous_tool".to_string()],
             system_prompt: "You are a helpful agent.".to_string(),
             skills: vec![],
+            knowledge_collections: vec![],
+            prompt_section_ids: vec![],
+            provider_id: None,
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
             temperature: None,
             top_p: None,
+            plan_mode: None,
+            thinking_effort: None,
+            permission_mode: None,
             max_iterations: 20,
             max_tool_calls: 50,
             timeout_secs: 300,
@@ -276,13 +283,5 @@ mod tests {
         assert!(filtered.system_prompt.contains("BUILD mode"));
         // Should not have double newlines from empty original
         assert!(!filtered.system_prompt.contains("\n\n"));
-    }
-
-    /// Denied tools are preserved unchanged.
-    #[test]
-    fn test_denied_tools_preserved() {
-        let def = full_definition();
-        let filtered = apply_mode_overlay(&def, Some(AgentMode::Plan));
-        assert_eq!(filtered.denied_tools, def.denied_tools);
     }
 }

@@ -54,15 +54,12 @@ pub enum AgentStatus {
 /// Design reference: agent-autonomy-design.md §Permission Inheritance
 ///
 /// - `tools_allowed`: intersection of declared tools and creator's allowed tools.
-/// - `tools_denied`: union of declared denied tools and creator's denied tools.
 /// - Numeric limits are `min(declared, creator)`.
 /// - `delegation_depth`: `creator.depth - 1` (clamped to 0).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EffectivePermissions {
     /// Tools the agent is permitted to use (intersection with creator).
     pub tools_allowed: Vec<String>,
-    /// Tools the agent is denied (union with creator).
-    pub tools_denied: Vec<String>,
     /// Maximum iterations (min of declared and creator).
     pub max_iterations: u32,
     /// Maximum tool calls (min of declared and creator).
@@ -77,7 +74,6 @@ pub struct EffectivePermissions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatorPermissionSnapshot {
     pub tools_allowed: Vec<String>,
-    pub tools_denied: Vec<String>,
     pub max_iterations: u32,
     pub max_tool_calls: u32,
     pub max_tokens: u64,
@@ -89,7 +85,6 @@ impl EffectivePermissions {
     ///
     /// Rules:
     /// - `tools_allowed` = `intersection(declared.allowed_tools`, `creator.tools_allowed`)
-    /// - `tools_denied` = `union(declared.denied_tools`, `creator.tools_denied`)
     /// - Numeric limits = min(declared, creator)
     /// - `delegation_depth` = `creator.delegation_depth.saturating_sub(1)`
     pub fn compute(declared: &AgentDefinition, creator: &CreatorPermissionSnapshot) -> Self {
@@ -100,16 +95,8 @@ impl EffectivePermissions {
             .cloned()
             .collect();
 
-        let mut tools_denied = declared.denied_tools.clone();
-        for tool in &creator.tools_denied {
-            if !tools_denied.contains(tool) {
-                tools_denied.push(tool.clone());
-            }
-        }
-
         Self {
             tools_allowed,
-            tools_denied,
             max_iterations: u32::try_from(declared.max_iterations)
                 .unwrap_or(u32::MAX)
                 .min(creator.max_iterations),
@@ -238,19 +225,11 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
     }
 
     // Stage 3: Security screening
-    // Detect dangerous tool combinations: having dangerous tools with no denied_tools
-    let has_dangerous = def
+    let _has_dangerous = def
         .definition
         .allowed_tools
         .iter()
         .any(|t| DANGEROUS_TOOLS.contains(&t.as_str()));
-    let has_no_denied = def.effective_permissions.tools_denied.is_empty();
-
-    if has_dangerous && has_no_denied {
-        return Err(ValidationError::SecurityViolation {
-            reason: "dangerous tools present with no denied tools configured".to_string(),
-        });
-    }
 
     // Detect system prompt injection patterns
     let prompt_lower = def.definition.system_prompt.to_lowercase();
@@ -466,15 +445,25 @@ pub fn make_dynamic_agent(
         mode: AgentMode::General,
         trust_tier: TrustTier::Dynamic,
         capabilities: vec![],
+        icon: None,
+        working_directory: None,
+        toolcall_enabled: None,
+        skills_enabled: None,
+        knowledge_enabled: None,
         allowed_tools: allowed_tools.to_vec(),
-        denied_tools: vec![],
         system_prompt: String::new(),
         skills: vec![],
+        knowledge_collections: vec![],
+        prompt_section_ids: vec![],
+        provider_id: None,
         preferred_models: vec![],
         fallback_models: vec![],
         provider_tags: vec![],
         temperature: None,
         top_p: None,
+        plan_mode: None,
+        thinking_effort: None,
+        permission_mode: None,
         max_iterations: 20,
         max_tool_calls: 50,
         timeout_secs: 300,
@@ -517,7 +506,6 @@ mod tests {
                 "WebSearch".to_string(),
                 "SearchCode".to_string(),
             ],
-            tools_denied: vec!["ShellExec".to_string()],
             max_iterations: 50,
             max_tool_calls: 100,
             max_tokens: 8192,
@@ -535,7 +523,7 @@ mod tests {
         )
     }
 
-    /// T-MA-R1-02: `EffectivePermissions::compute` intersection/union/min logic.
+    /// T-MA-R1-02: `EffectivePermissions::compute` applies intersection/min logic.
     #[test]
     fn test_effective_permissions_compute() {
         let definition = AgentDefinition {
@@ -545,18 +533,28 @@ mod tests {
             mode: AgentMode::General,
             trust_tier: TrustTier::Dynamic,
             capabilities: vec![],
+            icon: None,
+            working_directory: None,
+            toolcall_enabled: None,
+            skills_enabled: None,
+            knowledge_enabled: None,
             allowed_tools: vec![
                 "FileRead".to_string(),
                 "ShellExec".to_string(), // not in creator's allowed
             ],
-            denied_tools: vec!["network_request".to_string()],
             system_prompt: String::new(),
             skills: vec![],
+            knowledge_collections: vec![],
+            prompt_section_ids: vec![],
+            provider_id: None,
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
             temperature: None,
             top_p: None,
+            plan_mode: None,
+            thinking_effort: None,
+            permission_mode: None,
             max_iterations: 30,
             max_tool_calls: 80,
             timeout_secs: 300,
@@ -570,7 +568,6 @@ mod tests {
 
         let creator = CreatorPermissionSnapshot {
             tools_allowed: vec!["FileRead".to_string(), "WebSearch".to_string()],
-            tools_denied: vec!["file_delete".to_string()],
             max_iterations: 20,
             max_tool_calls: 50,
             max_tokens: 8192,
@@ -581,9 +578,6 @@ mod tests {
 
         // Intersection: only FileRead is in both
         assert_eq!(ep.tools_allowed, vec!["FileRead"]);
-        // Union: network_request (declared) + file_delete (creator)
-        assert!(ep.tools_denied.contains(&"network_request".to_string()));
-        assert!(ep.tools_denied.contains(&"file_delete".to_string()));
         // Min
         assert_eq!(ep.max_iterations, 20); // min(30, 20)
         assert_eq!(ep.max_tool_calls, 50); // min(80, 50)
@@ -597,7 +591,6 @@ mod tests {
     fn test_delegation_depth_zero() {
         let creator = CreatorPermissionSnapshot {
             tools_allowed: vec!["FileRead".to_string()],
-            tools_denied: vec!["ShellExec".to_string()],
             max_iterations: 50,
             max_tool_calls: 100,
             max_tokens: 8192,
@@ -617,12 +610,11 @@ mod tests {
         assert_eq!(agent.effective_permissions.delegation_depth, 0);
     }
 
-    /// T-MA-R1-04: Security screening detects dangerous tool combinations.
+    /// T-MA-R1-04: Dangerous tools are allowed when explicitly allowlisted.
     #[test]
-    fn test_security_screening_dangerous_tools() {
+    fn test_security_screening_allowlisted_dangerous_tools() {
         let creator = CreatorPermissionSnapshot {
             tools_allowed: vec!["ShellExec".to_string(), "FileRead".to_string()],
-            tools_denied: vec![], // No denied tools
             max_iterations: 50,
             max_tool_calls: 100,
             max_tokens: 8192,
@@ -638,13 +630,7 @@ mod tests {
         );
 
         let result = validate_definition(&agent);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ValidationError::SecurityViolation { reason } => {
-                assert!(reason.contains("dangerous tools"));
-            }
-            other => panic!("expected SecurityViolation, got: {other}"),
-        }
+        assert!(result.is_ok());
     }
 
     /// Security screening detects prompt injection patterns.
@@ -750,7 +736,6 @@ mod tests {
         let store = DynamicAgentStore::new();
         let creator = CreatorPermissionSnapshot {
             tools_allowed: vec!["FileRead".to_string()],
-            tools_denied: vec!["ShellExec".to_string()],
             max_iterations: 50,
             max_tool_calls: 100,
             max_tokens: 8192,
@@ -804,7 +789,6 @@ mod tests {
     fn test_reject_creation_at_depth_zero() {
         let creator = CreatorPermissionSnapshot {
             tools_allowed: vec!["FileRead".to_string()],
-            tools_denied: vec!["ShellExec".to_string()],
             max_iterations: 50,
             max_tool_calls: 100,
             max_tokens: 8192,

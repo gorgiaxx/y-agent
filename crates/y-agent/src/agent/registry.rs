@@ -640,15 +640,25 @@ mod tests {
             mode: AgentMode::General,
             trust_tier: TrustTier::UserDefined,
             capabilities: vec!["code_review".to_string()],
+            icon: None,
+            working_directory: None,
+            toolcall_enabled: None,
+            skills_enabled: None,
+            knowledge_enabled: None,
             allowed_tools: vec!["FileRead".to_string()],
-            denied_tools: vec![],
             system_prompt: "You are a test agent.".to_string(),
             skills: vec![],
+            knowledge_collections: vec![],
+            prompt_section_ids: vec![],
+            provider_id: None,
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
             temperature: None,
             top_p: None,
+            plan_mode: None,
+            thinking_effort: None,
+            permission_mode: None,
             max_iterations: 20,
             max_tool_calls: 50,
             timeout_secs: 300,
@@ -683,15 +693,25 @@ mod tests {
             mode: AgentMode::Explore,
             trust_tier: TrustTier::Dynamic,
             capabilities: vec![],
+            icon: None,
+            working_directory: None,
+            toolcall_enabled: None,
+            skills_enabled: None,
+            knowledge_enabled: None,
             allowed_tools: vec!["FileRead".to_string()],
-            denied_tools: vec![],
             system_prompt: String::new(),
             skills: vec![],
+            knowledge_collections: vec![],
+            prompt_section_ids: vec![],
+            provider_id: None,
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
             temperature: None,
             top_p: None,
+            plan_mode: None,
+            thinking_effort: None,
+            permission_mode: None,
             max_iterations: 10,
             max_tool_calls: 20,
             timeout_secs: 120,
@@ -882,15 +902,25 @@ mod tests {
             mode: AgentMode::Explore,
             trust_tier: TrustTier::Dynamic,
             capabilities: vec![],
+            icon: None,
+            working_directory: None,
+            toolcall_enabled: None,
+            skills_enabled: None,
+            knowledge_enabled: None,
             allowed_tools: vec![],
-            denied_tools: vec![],
             system_prompt: String::new(),
             skills: vec![],
+            knowledge_collections: vec![],
+            prompt_section_ids: vec![],
+            provider_id: None,
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
             temperature: None,
             top_p: None,
+            plan_mode: None,
+            thinking_effort: None,
+            permission_mode: None,
             max_iterations: 10,
             max_tool_calls: 20,
             timeout_secs: 120,
@@ -1006,14 +1036,14 @@ mod tests {
         assert!(def.allowed_tools.contains(&"ShellExec".to_string()));
     }
 
-    /// T-MA-P4-12: Agent architect parses from TOML with `ShellExec` denied.
+    /// T-MA-P4-12: Agent architect excludes `ShellExec` from its allowlist.
     #[test]
     fn test_builtin_agent_agent_architect() {
         let registry = AgentRegistry::new();
         let def = registry.get("agent-architect").unwrap();
         assert_eq!(def.mode, AgentMode::Build);
-        assert!(def.denied_tools.contains(&"ShellExec".to_string()));
         assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
+        assert!(!def.allowed_tools.contains(&"ShellExec".to_string()));
     }
 
     /// T-MA-P4-13: Plan phase executor parses from TOML with build settings.
@@ -1026,7 +1056,7 @@ mod tests {
         assert_eq!(def.max_iterations, 60);
         assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
         assert!(def.allowed_tools.contains(&"ToolSearch".to_string()));
-        assert!(def.denied_tools.contains(&"Task".to_string()));
+        assert!(!def.allowed_tools.contains(&"Task".to_string()));
     }
 
     /// T-MA-P4-14: Registry loads all 17 built-in agents at startup.

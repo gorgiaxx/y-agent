@@ -34,9 +34,6 @@ pub struct AgentCreateParams {
     /// Tools the agent is allowed to use.
     #[serde(default)]
     pub allowed_tools: Vec<String>,
-    /// Tools the agent is explicitly denied.
-    #[serde(default)]
-    pub denied_tools: Vec<String>,
     /// System prompt for the agent.
     #[serde(default)]
     pub system_prompt: String,
@@ -169,12 +166,8 @@ pub fn agent_create(
     let mut agent = agent;
     agent.definition.mode = params.mode;
     agent.definition.capabilities = params.capabilities;
-    agent.definition.denied_tools = params.denied_tools;
     agent.definition.system_prompt = params.system_prompt;
     agent.definition.context_sharing = params.context_sharing;
-
-    // Re-compute effective permissions with the updated denied_tools
-    // (the helper already computed them, but denied_tools may have changed)
 
     match store.create(agent) {
         Ok(created) => MetaToolResult::success(
@@ -264,7 +257,6 @@ mod tests {
                 "FileWrite".to_string(),
                 "SearchCode".to_string(),
             ],
-            tools_denied: vec!["ShellExec".to_string()],
             max_iterations: 50,
             max_tool_calls: 100,
             max_tokens: 8192,
@@ -284,7 +276,6 @@ mod tests {
                 mode: AgentMode::General,
                 capabilities: vec!["code_review".to_string()],
                 allowed_tools: vec!["FileRead".to_string()],
-                denied_tools: vec![],
                 system_prompt: "Help the user.".to_string(),
                 context_sharing: ContextStrategy::None,
             },
@@ -311,7 +302,6 @@ mod tests {
                 mode: AgentMode::Build,
                 capabilities: vec![],
                 allowed_tools: vec!["ShellExec".to_string()], // not in creator's allowed
-                denied_tools: vec![],
                 system_prompt: String::new(),
                 context_sharing: ContextStrategy::None,
             },
@@ -337,7 +327,6 @@ mod tests {
                 mode: AgentMode::General,
                 capabilities: vec![],
                 allowed_tools: vec!["FileRead".to_string()],
-                denied_tools: vec![],
                 system_prompt: String::new(),
                 context_sharing: ContextStrategy::None,
             },
@@ -380,7 +369,6 @@ mod tests {
                 mode: AgentMode::Plan,
                 capabilities: vec![],
                 allowed_tools: vec!["FileRead".to_string()],
-                denied_tools: vec![],
                 system_prompt: String::new(),
                 context_sharing: ContextStrategy::None,
             },
@@ -396,7 +384,6 @@ mod tests {
                 mode: AgentMode::Build,
                 capabilities: vec![],
                 allowed_tools: vec!["FileRead".to_string()],
-                denied_tools: vec![],
                 system_prompt: String::new(),
                 context_sharing: ContextStrategy::None,
             },
@@ -446,7 +433,6 @@ mod tests {
                 mode: AgentMode::General,
                 capabilities: vec![],
                 allowed_tools: vec!["FileRead".to_string()],
-                denied_tools: vec![],
                 system_prompt: String::new(),
                 context_sharing: ContextStrategy::None,
             },

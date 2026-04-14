@@ -403,7 +403,6 @@ mod tests {
             trust_tier = "user_defined"
             capabilities = []
             allowed_tools = []
-            denied_tools = []
             system_prompt = "You are tiny."
             skills = []
             preferred_models = []
