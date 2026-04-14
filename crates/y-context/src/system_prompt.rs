@@ -249,7 +249,15 @@ impl ContextProvider for BuildSystemPromptProvider {
         let prompt_ctx = self.prompt_context.read().await;
         let has_custom_prompt = prompt_ctx.custom_system_prompt.is_some();
         let mode = &prompt_ctx.agent_mode;
-        let effective_sections = self.template.effective_sections(mode);
+        let selected_sections = prompt_ctx.selected_prompt_sections.as_ref();
+        let effective_sections = self
+            .template
+            .effective_sections(mode)
+            .into_iter()
+            .filter(|section| {
+                selected_sections.is_none_or(|selected| selected.contains(&section.section_id))
+            })
+            .collect::<Vec<_>>();
         let total_budget = self.template.effective_budget(mode);
 
         tracing::debug!(
@@ -436,6 +444,7 @@ mod tests {
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
             custom_system_prompt: None,
+            selected_prompt_sections: None,
         }
     }
 
@@ -477,6 +486,7 @@ mod tests {
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
             custom_system_prompt: None,
+            selected_prompt_sections: None,
         };
         let provider = make_provider(plan_ctx, SystemPromptConfig::default());
         let mut ctx = AssembledContext::default();
@@ -593,6 +603,7 @@ mod tests {
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
             custom_system_prompt: None,
+            selected_prompt_sections: None,
         };
 
         // Template where every section has a condition that won't match.
@@ -722,6 +733,7 @@ mod tests {
             config_flags: std::collections::HashMap::new(),
             working_directory: None,
             custom_system_prompt: None,
+            selected_prompt_sections: None,
         };
         let provider = make_provider(explore_ctx, SystemPromptConfig::default());
         let mut ctx = AssembledContext::default();
@@ -730,6 +742,23 @@ mod tests {
         let content = &ctx.items[0].content;
         assert!(!content.contains("Security rules"));
         assert!(content.contains("exploration mode"));
+    }
+
+    #[tokio::test]
+    async fn test_selected_prompt_sections_filter_builtins() {
+        let mut prompt_ctx = general_ctx();
+        prompt_ctx.selected_prompt_sections =
+            Some(vec!["core.identity".into(), "core.tool_protocol".into()]);
+
+        let provider = make_provider(prompt_ctx, SystemPromptConfig::default());
+        let mut ctx = AssembledContext::default();
+        provider.provide(&mut ctx).await.unwrap();
+
+        let content = &ctx.items[0].content;
+        assert!(content.contains("You are y-agent"));
+        assert!(content.contains("Tool Usage Protocol"));
+        assert!(!content.contains("Guidelines"));
+        assert!(!content.contains("Security rules"));
     }
 
     #[tokio::test]

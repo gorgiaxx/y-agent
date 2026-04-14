@@ -86,6 +86,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
         config_flags: HashMap::new(),
         working_directory: None,
         custom_system_prompt: None,
+        selected_prompt_sections: None,
     };
     *services.prompt_context.write().await = initial_ctx;
 
@@ -153,6 +154,17 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 knowledge_collections: vec![],
                 thinking: None,
                 plan_mode: None,
+                agent_name: "chat-turn".to_string(),
+                toolcall_enabled: true,
+                preferred_models: vec![],
+                provider_tags: vec![],
+                temperature: None,
+                max_completion_tokens: None,
+                max_iterations: None,
+                max_tool_calls: None,
+                trust_tier: None,
+                agent_allowed_tools: vec![],
+                prune_tool_history: false,
             };
 
             match orchestrator::execute_turn(services, &turn_input).await {

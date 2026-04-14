@@ -76,6 +76,11 @@ pub struct PromptContext {
     /// while preserving dynamic/functional sections (tool protocol, plan mode,
     /// datetime, environment, orchestration).
     pub custom_system_prompt: Option<String>,
+    /// Explicit built-in prompt sections selected for the current request.
+    ///
+    /// When `Some`, only sections whose IDs are listed here are considered
+    /// during template assembly. Dynamic conditions still apply.
+    pub selected_prompt_sections: Option<Vec<String>>,
 }
 
 impl SectionCondition {
@@ -128,6 +133,7 @@ mod tests {
             },
             working_directory: None,
             custom_system_prompt: None,
+            selected_prompt_sections: None,
         }
     }
 

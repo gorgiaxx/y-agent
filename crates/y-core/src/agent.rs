@@ -163,8 +163,6 @@ pub struct AgentRunConfig {
     /// Tools the agent is allowed to use (from `AgentDefinition`).
     /// Empty = no tool calling (single-turn mode).
     pub allowed_tools: Vec<String>,
-    /// Tools explicitly denied (from `AgentDefinition`).
-    pub denied_tools: Vec<String>,
     /// Maximum agent loop iterations (tool-call loop limit).
     pub max_iterations: usize,
     /// Trust tier of the agent (for permission bypass decisions).
@@ -345,7 +343,6 @@ mod tests {
             max_tokens: Some(30),
             timeout_secs: 30,
             allowed_tools: vec![],
-            denied_tools: vec![],
             max_iterations: 1,
             trust_tier: None,
             trace_id: None,

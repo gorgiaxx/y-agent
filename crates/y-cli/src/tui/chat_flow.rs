@@ -197,6 +197,17 @@ pub fn submit_message(
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,
+            agent_name: "chat-turn".to_string(),
+            toolcall_enabled: true,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            temperature: None,
+            max_completion_tokens: None,
+            max_iterations: None,
+            max_tool_calls: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
         };
 
         // Set up a progress channel to receive streaming deltas.
