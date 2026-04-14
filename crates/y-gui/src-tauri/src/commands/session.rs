@@ -16,6 +16,7 @@ use crate::state::AppState;
 #[derive(Debug, Serialize, Clone)]
 pub struct SessionInfo {
     pub id: String,
+    pub agent_id: Option<String>,
     pub title: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -57,8 +58,14 @@ pub struct ToolCallBrief {
 
 /// List all sessions, sorted by last updated.
 #[tauri::command]
-pub async fn session_list(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
-    let filter = SessionFilter::default();
+pub async fn session_list(
+    state: State<'_, AppState>,
+    agent_id: Option<String>,
+) -> Result<Vec<SessionInfo>, String> {
+    let filter = SessionFilter {
+        agent_id: agent_id.map(y_core::types::AgentId::from_string),
+        ..SessionFilter::default()
+    };
     let sessions = state
         .container
         .session_manager
@@ -86,6 +93,7 @@ pub async fn session_list(state: State<'_, AppState>) -> Result<Vec<SessionInfo>
             let has_custom = custom_prompt_ids.contains(&s.id.0);
             SessionInfo {
                 id: s.id.0.clone(),
+                agent_id: s.agent_id.as_ref().map(|id| id.0.clone()),
                 title: s.title.clone(),
                 created_at: s.created_at.to_rfc3339(),
                 updated_at: s.updated_at.to_rfc3339(),
@@ -106,6 +114,7 @@ pub async fn session_list(state: State<'_, AppState>) -> Result<Vec<SessionInfo>
 pub async fn session_create(
     state: State<'_, AppState>,
     title: Option<String>,
+    agent_id: Option<String>,
 ) -> Result<SessionInfo, String> {
     let session = state
         .container
@@ -113,7 +122,7 @@ pub async fn session_create(
         .create_session(CreateSessionOptions {
             parent_id: None,
             session_type: SessionType::Main,
-            agent_id: None,
+            agent_id: agent_id.map(y_core::types::AgentId::from_string),
             title,
         })
         .await
@@ -121,6 +130,7 @@ pub async fn session_create(
 
     Ok(SessionInfo {
         id: session.id.0.clone(),
+        agent_id: session.agent_id.as_ref().map(|id| id.0.clone()),
         title: session.title.clone(),
         created_at: session.created_at.to_rfc3339(),
         updated_at: session.updated_at.to_rfc3339(),
@@ -330,6 +340,7 @@ pub async fn session_fork(
 
     Ok(SessionInfo {
         id: fork.id.0.clone(),
+        agent_id: fork.agent_id.as_ref().map(|id| id.0.clone()),
         title: fork.title.clone(),
         created_at: fork.created_at.to_rfc3339(),
         updated_at: fork.updated_at.to_rfc3339(),

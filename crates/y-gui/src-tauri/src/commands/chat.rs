@@ -185,34 +185,7 @@ pub async fn chat_send(
     let result_sid = sid.0.clone();
     let result_run_id = run_id.clone();
 
-    // Resolve workspace path for this session and update prompt context.
-    // Also set active_skills if the user attached skills to this message,
-    // and load any per-session custom system prompt.
-    {
-        let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &sid.0);
-        let custom_prompt = state
-            .container
-            .session_manager
-            .get_custom_system_prompt(&sid)
-            .await
-            .unwrap_or(None);
-        tracing::info!(
-            session_id = %sid.0,
-            workspace_path = ?workspace_path,
-            skills = ?skills,
-            knowledge_collections = ?knowledge_collections,
-            has_custom_prompt = custom_prompt.is_some(),
-            "chat_send: resolved workspace path for session"
-        );
-        let mut ctx = state.container.prompt_context.write().await;
-        ctx.working_directory = workspace_path;
-        ctx.custom_system_prompt = custom_prompt;
-        if let Some(ref skill_names) = skills {
-            ctx.active_skills.clone_from(skill_names);
-        } else {
-            ctx.active_skills.clear();
-        }
-    }
+    apply_prepared_prompt_context(&state, &sid, &prepared).await;
 
     // Emit chat:started so the frontend can map run_id -> session_id
     // before any chat:progress events arrive.
@@ -500,6 +473,79 @@ fn spawn_llm_worker(
     });
 }
 
+async fn apply_prepared_prompt_context(
+    state: &AppState,
+    session_id: &SessionId,
+    prepared: &PreparedTurn,
+) {
+    let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &session_id.0);
+    let session_custom_prompt = state
+        .container
+        .session_manager
+        .get_custom_system_prompt(session_id)
+        .await
+        .unwrap_or(None);
+
+    let (agent_mode, working_directory, available_tools, agent_prompt, prompt_sections, permission) =
+        prepared.agent_config.as_ref().map_or_else(
+            || {
+                (
+                    String::new(),
+                    workspace_path.clone(),
+                    Vec::new(),
+                    None,
+                    None,
+                    None,
+                )
+            },
+            |config| {
+                (
+                    config.agent_mode.clone(),
+                    config
+                        .working_directory
+                        .clone()
+                        .or_else(|| workspace_path.clone()),
+                    if !config.features.toolcall || config.allowed_tools.is_empty() {
+                        Vec::new()
+                    } else {
+                        config.allowed_tools.clone()
+                    },
+                    config.system_prompt.clone(),
+                    (!config.prompt_section_ids.is_empty())
+                        .then(|| config.prompt_section_ids.clone()),
+                    config.permission_mode,
+                )
+            },
+        );
+
+    tracing::info!(
+        session_id = %session_id.0,
+        working_directory = ?working_directory,
+        skills = ?prepared.skills,
+        knowledge_collections = ?prepared.knowledge_collections,
+        has_custom_prompt = session_custom_prompt.is_some() || agent_prompt.is_some(),
+        agent_mode = %agent_mode,
+        "applied prompt context for prepared turn"
+    );
+
+    {
+        let mut ctx = state.container.prompt_context.write().await;
+        ctx.agent_mode = agent_mode;
+        ctx.working_directory = working_directory;
+        ctx.custom_system_prompt = session_custom_prompt.or(agent_prompt);
+        ctx.active_skills.clone_from(&prepared.skills);
+        ctx.available_tools = available_tools;
+        ctx.selected_prompt_sections = prompt_sections;
+    }
+
+    if let Some(default_permission) = permission {
+        let mut modes = state.container.session_permission_modes.write().await;
+        modes
+            .entry(session_id.clone())
+            .or_insert(default_permission);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cancel command
 // ---------------------------------------------------------------------------
@@ -687,6 +733,8 @@ pub async fn chat_resend(
     let run_id = uuid::Uuid::new_v4().to_string();
     let result_sid = session_id.clone();
     let result_run_id = run_id.clone();
+
+    apply_prepared_prompt_context(&state, &prepared.session_id, &prepared).await;
 
     let _ = app.emit(
         "chat:started",

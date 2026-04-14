@@ -254,9 +254,13 @@ pub fn run() {
             // Agents
             commands::agents::agent_list,
             commands::agents::agent_get,
+            commands::agents::agent_source_get,
+            commands::agents::agent_toml_parse,
             commands::agents::agent_save,
             commands::agents::agent_reset,
             commands::agents::agent_reload,
+            commands::agents::agent_tool_list,
+            commands::agents::agent_prompt_section_list,
             commands::agents::translate_text,
             // Automation: Workflows
             commands::automation::workflow_list,
