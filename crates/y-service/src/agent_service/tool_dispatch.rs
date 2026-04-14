@@ -25,6 +25,33 @@ pub(crate) async fn execute_and_record_tool(
 ) -> (bool, String) {
     let tool_start = std::time::Instant::now();
 
+    if ctx.tool_calls_executed.len() >= config.max_tool_calls {
+        let error_content = format!(
+            "[SYSTEM] Tool call limit ({}) reached. Do NOT request more tools. \
+             Finish with the information already available.",
+            config.max_tool_calls
+        );
+        tracing::warn!(
+            agent = %config.agent_name,
+            tool = %tc.name,
+            max_tool_calls = config.max_tool_calls,
+            "tool execution blocked by max_tool_calls limit"
+        );
+        if let Some(tx) = progress {
+            let _ = tx.send(TurnEvent::ToolResult {
+                name: tc.name.clone(),
+                success: false,
+                duration_ms: 0,
+                input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                result_preview: error_content.clone(),
+                agent_name: config.agent_name.clone(),
+                url_meta: None,
+                metadata: None,
+            });
+        }
+        return (false, error_content);
+    }
+
     // (Plan-mode tool blocking removed -- the new Plan tool orchestrator
     // handles all plan-mode logic via sub-agent delegation, no need to
     // block tools at execution time.)
