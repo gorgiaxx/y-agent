@@ -17,11 +17,15 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use y_agent::agent::definition::AgentDefinition;
 use y_context::AssembledContext;
-use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore};
+use y_core::permission_types::PermissionMode;
+use y_core::provider::{ThinkingConfig, ToolCallingMode};
+use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore, SessionNode};
+use y_core::trust::TrustTier;
 use y_core::types::{Message, Role, SessionId};
 
-use crate::agent_service::AgentExecutionError;
+use crate::agent_service::{AgentExecutionConfig, AgentExecutionError};
 use crate::container::ServiceContainer;
 
 // ---------------------------------------------------------------------------
@@ -281,6 +285,12 @@ pub enum TurnError {
         /// Maximum allowed iterations.
         max_iterations: usize,
     },
+    /// Tool-call count limit exceeded.
+    #[error("Tool call limit ({max_tool_calls}) exceeded")]
+    ToolCallLimitExceeded {
+        /// Maximum allowed tool calls.
+        max_tool_calls: usize,
+    },
     /// The turn was explicitly cancelled by the caller.
     #[error("Cancelled")]
     Cancelled,
@@ -293,6 +303,9 @@ impl From<AgentExecutionError> for TurnError {
             AgentExecutionError::ContextError(msg) => TurnError::ContextError(msg),
             AgentExecutionError::ToolLoopLimitExceeded { max_iterations } => {
                 TurnError::ToolLoopLimitExceeded { max_iterations }
+            }
+            AgentExecutionError::ToolCallLimitExceeded { max_tool_calls } => {
+                TurnError::ToolCallLimitExceeded { max_tool_calls }
             }
             AgentExecutionError::Cancelled { .. } => TurnError::Cancelled,
         }
@@ -321,8 +334,64 @@ pub struct TurnInput<'a> {
     /// Controls whether plan-mode prompts are injected and whether a
     /// complexity-assessment sub-agent runs before the main turn.
     pub plan_mode: Option<String>,
+    /// Human-readable execution label for diagnostics and progress events.
+    pub agent_name: String,
+    /// Whether tool calling is enabled for this turn.
+    pub toolcall_enabled: bool,
+    /// Preferred model identifiers for provider routing.
+    pub preferred_models: Vec<String>,
+    /// Provider routing tags for provider selection.
+    pub provider_tags: Vec<String>,
+    /// Temperature override for the turn.
+    pub temperature: Option<f64>,
+    /// Maximum completion tokens for the turn.
+    pub max_completion_tokens: Option<u32>,
+    /// Agent-specific maximum loop iterations.
+    pub max_iterations: Option<usize>,
+    /// Agent-specific maximum tool calls.
+    pub max_tool_calls: Option<usize>,
+    /// Trust tier of the bound agent, if any.
+    pub trust_tier: Option<TrustTier>,
+    /// Tools allowed by the bound agent.
+    pub agent_allowed_tools: Vec<String>,
+    /// Whether to prune historical tool results for the bound agent.
+    pub prune_tool_history: bool,
 }
 pub type TurnCancellationToken = CancellationToken;
+
+/// Session-bound agent settings resolved from an `AgentDefinition`.
+#[derive(Debug, Clone)]
+pub struct SessionAgentFeatures {
+    pub toolcall: bool,
+    pub skills: bool,
+    pub knowledge: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionAgentConfig {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub agent_mode: String,
+    pub working_directory: Option<String>,
+    pub features: SessionAgentFeatures,
+    pub allowed_tools: Vec<String>,
+    pub preset_skills: Vec<String>,
+    pub knowledge_collections: Vec<String>,
+    pub prompt_section_ids: Vec<String>,
+    pub system_prompt: Option<String>,
+    pub provider_id: Option<String>,
+    pub preferred_models: Vec<String>,
+    pub provider_tags: Vec<String>,
+    pub temperature: Option<f64>,
+    pub max_completion_tokens: Option<u32>,
+    pub thinking: Option<ThinkingConfig>,
+    pub plan_mode: Option<String>,
+    pub permission_mode: Option<PermissionMode>,
+    pub max_iterations: usize,
+    pub max_tool_calls: usize,
+    pub trust_tier: TrustTier,
+    pub prune_tool_history: bool,
+}
 
 // ---------------------------------------------------------------------------
 // Turn preparation (session resolve + message persist + TurnInput assembly)
@@ -381,11 +450,19 @@ pub struct PreparedTurn {
     pub thinking: Option<y_core::provider::ThinkingConfig>,
     /// Plan mode: `"fast"`, `"auto"`, or `"plan"` (`None` = `"fast"`).
     pub plan_mode: Option<String>,
+    /// Effective skills active for this turn.
+    pub skills: Vec<String>,
+    /// Bound session-agent settings, if this session belongs to an agent preset.
+    pub agent_config: Option<SessionAgentConfig>,
 }
 
 impl PreparedTurn {
     /// Build a borrowing [`TurnInput`] from this prepared turn.
     pub fn as_turn_input(&self) -> TurnInput<'_> {
+        let agent_name = self.agent_config.as_ref().map_or_else(
+            || "chat-turn".to_string(),
+            |config| config.agent_name.clone(),
+        );
         TurnInput {
             user_input: &self.user_input,
             session_id: self.session_id.clone(),
@@ -396,6 +473,44 @@ impl PreparedTurn {
             knowledge_collections: self.knowledge_collections.clone(),
             thinking: self.thinking.clone(),
             plan_mode: self.plan_mode.clone(),
+            agent_name,
+            toolcall_enabled: self
+                .agent_config
+                .as_ref()
+                .is_none_or(|config| config.features.toolcall),
+            preferred_models: self
+                .agent_config
+                .as_ref()
+                .map_or_else(Vec::new, |config| config.preferred_models.clone()),
+            provider_tags: self
+                .agent_config
+                .as_ref()
+                .map_or_else(Vec::new, |config| config.provider_tags.clone()),
+            temperature: self
+                .agent_config
+                .as_ref()
+                .and_then(|config| config.temperature),
+            max_completion_tokens: self
+                .agent_config
+                .as_ref()
+                .and_then(|config| config.max_completion_tokens),
+            max_iterations: self
+                .agent_config
+                .as_ref()
+                .map(|config| config.max_iterations),
+            max_tool_calls: self
+                .agent_config
+                .as_ref()
+                .map(|config| config.max_tool_calls),
+            trust_tier: self.agent_config.as_ref().map(|config| config.trust_tier),
+            agent_allowed_tools: self
+                .agent_config
+                .as_ref()
+                .map_or_else(Vec::new, |config| config.allowed_tools.clone()),
+            prune_tool_history: self
+                .agent_config
+                .as_ref()
+                .is_some_and(|config| config.prune_tool_history),
         }
     }
 }
@@ -415,6 +530,12 @@ pub enum PrepareTurnError {
     /// Failed to read the session transcript.
     #[error("failed to read transcript: {0}")]
     TranscriptReadFailed(String),
+    /// A session-bound agent could not be resolved.
+    #[error("session agent not found: {0}")]
+    SessionAgentNotFound(String),
+    /// Session exceeded the configured user-turn limit for its bound agent.
+    #[error("session turn limit reached for agent '{agent_id}' ({max_turns} turns)")]
+    SessionTurnLimitReached { agent_id: String, max_turns: usize },
 }
 
 // ---------------------------------------------------------------------------
@@ -452,6 +573,9 @@ pub enum ResendTurnError {
     /// Failed to read the session transcript.
     #[error("failed to read transcript: {0}")]
     TranscriptReadFailed(String),
+    /// A session-bound agent could not be resolved.
+    #[error("session agent not found: {0}")]
+    SessionAgentNotFound(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -517,6 +641,137 @@ impl ChatService {
         Self::execute_turn_inner(container, input, Some(progress), cancel).await
     }
 
+    fn build_execution_config(
+        input: &TurnInput<'_>,
+        tool_defs: Vec<serde_json::Value>,
+        tool_calling_mode: ToolCallingMode,
+        max_tool_iterations: usize,
+    ) -> AgentExecutionConfig {
+        let max_iterations = input
+            .max_iterations
+            .map_or(max_tool_iterations, |value| value.min(max_tool_iterations));
+
+        AgentExecutionConfig {
+            agent_name: input.agent_name.clone(),
+            system_prompt: String::new(), // Uses context pipeline instead
+            max_iterations,
+            max_tool_calls: input.max_tool_calls.unwrap_or(usize::MAX),
+            tool_definitions: tool_defs,
+            tool_calling_mode,
+            messages: input.history.to_vec(),
+            provider_id: input.provider_id.clone(),
+            preferred_models: input.preferred_models.clone(),
+            provider_tags: input.provider_tags.clone(),
+            temperature: input.temperature,
+            max_tokens: input.max_completion_tokens,
+            thinking: input.thinking.clone(),
+            session_id: Some(input.session_id.clone()),
+            session_uuid: input.session_uuid,
+            knowledge_collections: input.knowledge_collections.clone(),
+            use_context_pipeline: true,
+            user_query: input.user_input.to_string(),
+            external_trace_id: None,
+            trust_tier: input.trust_tier,
+            agent_allowed_tools: input.agent_allowed_tools.clone(),
+            prune_tool_history: input.prune_tool_history,
+        }
+    }
+
+    fn session_agent_config_from_definition(definition: &AgentDefinition) -> SessionAgentConfig {
+        SessionAgentConfig {
+            agent_id: definition.id.clone(),
+            agent_name: definition.id.clone(),
+            agent_mode: format!("{:?}", definition.mode).to_lowercase(),
+            working_directory: definition.working_directory.clone(),
+            features: SessionAgentFeatures {
+                toolcall: definition.toolcall_enabled_resolved(),
+                skills: definition.skills_enabled_resolved(),
+                knowledge: definition.knowledge_enabled_resolved(),
+            },
+            allowed_tools: definition.allowed_tools.clone(),
+            preset_skills: definition.skills.clone(),
+            knowledge_collections: definition.knowledge_collections.clone(),
+            prompt_section_ids: definition.prompt_section_ids.clone(),
+            system_prompt: (!definition.system_prompt.trim().is_empty())
+                .then(|| definition.system_prompt.clone()),
+            provider_id: definition.provider_id.clone(),
+            preferred_models: definition.preferred_models.clone(),
+            provider_tags: definition.provider_tags.clone(),
+            temperature: definition.temperature,
+            max_completion_tokens: definition
+                .max_completion_tokens
+                .map(|value| u32::try_from(value).unwrap_or(u32::MAX)),
+            thinking: definition.thinking_config(),
+            plan_mode: definition.plan_mode.clone(),
+            permission_mode: definition.permission_mode,
+            max_iterations: definition.max_iterations,
+            max_tool_calls: definition.max_tool_calls,
+            trust_tier: definition.trust_tier,
+            prune_tool_history: definition.prune_tool_history,
+        }
+    }
+
+    async fn resolve_session_agent_config(
+        container: &ServiceContainer,
+        session: &SessionNode,
+    ) -> Result<Option<SessionAgentConfig>, String> {
+        let Some(agent_id) = session.agent_id.as_ref() else {
+            return Ok(None);
+        };
+
+        let registry = container.agent_registry.lock().await;
+        let definition = registry
+            .get(agent_id.as_str())
+            .ok_or_else(|| agent_id.as_str().to_string())?;
+        Ok(Some(Self::session_agent_config_from_definition(definition)))
+    }
+
+    fn resolve_turn_skills(
+        requested_skills: Option<Vec<String>>,
+        agent_config: Option<&SessionAgentConfig>,
+        inject_preset_skills: bool,
+    ) -> Vec<String> {
+        let mut resolved = if agent_config.is_some_and(|config| !config.features.skills) {
+            Vec::new()
+        } else if inject_preset_skills {
+            agent_config.map_or_else(Vec::new, |config| config.preset_skills.clone())
+        } else {
+            Vec::new()
+        };
+
+        if agent_config.is_some_and(|config| !config.features.skills) {
+            return resolved;
+        }
+
+        for skill in requested_skills.unwrap_or_default() {
+            if !resolved.contains(&skill) {
+                resolved.push(skill);
+            }
+        }
+
+        resolved
+    }
+
+    fn resolve_turn_knowledge(
+        requested_collections: Option<Vec<String>>,
+        agent_config: Option<&SessionAgentConfig>,
+    ) -> Vec<String> {
+        let Some(config) = agent_config else {
+            return requested_collections.unwrap_or_default();
+        };
+
+        if !config.features.knowledge {
+            return Vec::new();
+        }
+
+        let requested = requested_collections.unwrap_or_default();
+        if requested.is_empty() {
+            config.knowledge_collections.clone()
+        } else {
+            requested
+        }
+    }
+
     /// Prepare a turn: resolve/create session, persist user message, read
     /// transcript, compute turn number, and assemble all data needed for
     /// `execute_turn()`.
@@ -532,13 +787,13 @@ impl ChatService {
         use y_core::types::{generate_message_id, now};
 
         // 1. Resolve or create session.
-        let (session_id, session_created) = if let Some(sid) = request.session_id {
-            container
+        let (session, session_created) = if let Some(sid) = request.session_id {
+            let session = container
                 .session_manager
                 .get_session(&sid)
                 .await
                 .map_err(|e| PrepareTurnError::SessionNotFound(e.to_string()))?;
-            (sid, false)
+            (session, false)
         } else {
             let session = container
                 .session_manager
@@ -550,16 +805,58 @@ impl ChatService {
                 })
                 .await
                 .map_err(|e| PrepareTurnError::SessionCreationFailed(e.to_string()))?;
-            (session.id, true)
+            (session, true)
         };
+        let session_id = session.id.clone();
+        let agent_config = Self::resolve_session_agent_config(container, &session)
+            .await
+            .map_err(PrepareTurnError::SessionAgentNotFound)?;
+        let existing_user_turns = container
+            .session_manager
+            .read_display_transcript(&session_id)
+            .await
+            .map_err(|e| PrepareTurnError::TranscriptReadFailed(e.to_string()))?
+            .into_iter()
+            .filter(|message| message.role == Role::User)
+            .count();
+
+        if let Some(config) = agent_config.as_ref() {
+            if existing_user_turns >= config.max_iterations {
+                return Err(PrepareTurnError::SessionTurnLimitReached {
+                    agent_id: config.agent_id.clone(),
+                    max_turns: config.max_iterations,
+                });
+            }
+        }
+
+        let skills = Self::resolve_turn_skills(
+            request.skills,
+            agent_config.as_ref(),
+            existing_user_turns == 0,
+        );
+        let knowledge_collections =
+            Self::resolve_turn_knowledge(request.knowledge_collections, agent_config.as_ref());
+        let provider_id = request.provider_id.or_else(|| {
+            agent_config
+                .as_ref()
+                .and_then(|config| config.provider_id.clone())
+        });
+        let thinking = request.thinking.or_else(|| {
+            agent_config
+                .as_ref()
+                .and_then(|config| config.thinking.clone())
+        });
+        let plan_mode = request.plan_mode.or_else(|| {
+            agent_config
+                .as_ref()
+                .and_then(|config| config.plan_mode.clone())
+        });
 
         // 2. Build and persist the user message.
         let metadata = {
             let mut meta = serde_json::Map::new();
-            if let Some(skills) = &request.skills {
-                if !skills.is_empty() {
-                    meta.insert("skills".into(), serde_json::json!(skills));
-                }
+            if !skills.is_empty() {
+                meta.insert("skills".into(), serde_json::json!(skills));
             }
             if let Some(extra) = &request.user_message_metadata {
                 if let Some(obj) = extra.as_object() {
@@ -652,11 +949,13 @@ impl ChatService {
             history,
             turn_number,
             user_input: request.user_input,
-            provider_id: request.provider_id,
+            provider_id,
             session_created,
-            knowledge_collections: request.knowledge_collections.unwrap_or_default(),
-            thinking: request.thinking,
-            plan_mode: request.plan_mode,
+            knowledge_collections,
+            thinking,
+            plan_mode,
+            skills,
+            agent_config,
         })
     }
 
@@ -670,6 +969,15 @@ impl ChatService {
         container: &ServiceContainer,
         request: ResendTurnRequest,
     ) -> Result<PreparedTurn, ResendTurnError> {
+        let session = container
+            .session_manager
+            .get_session(&request.session_id)
+            .await
+            .map_err(|e| ResendTurnError::TranscriptReadFailed(e.to_string()))?;
+        let agent_config = Self::resolve_session_agent_config(container, &session)
+            .await
+            .map_err(ResendTurnError::SessionAgentNotFound)?;
+
         // 1. Load the checkpoint to find message_count_before.
         let checkpoint = container
             .chat_checkpoint_manager
@@ -727,6 +1035,37 @@ impl ChatService {
                 last_msg.role
             )));
         }
+        let requested_skills = last_msg
+            .metadata
+            .get("skills")
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            });
+        let user_turns = history
+            .iter()
+            .filter(|message| message.role == Role::User)
+            .count();
+        let skills =
+            Self::resolve_turn_skills(requested_skills, agent_config.as_ref(), user_turns == 1);
+        let knowledge_collections =
+            Self::resolve_turn_knowledge(request.knowledge_collections, agent_config.as_ref());
+        let provider_id = request.provider_id.or_else(|| {
+            agent_config
+                .as_ref()
+                .and_then(|config| config.provider_id.clone())
+        });
+        let thinking = request.thinking.or_else(|| {
+            agent_config
+                .as_ref()
+                .and_then(|config| config.thinking.clone())
+        });
+        let plan_mode = agent_config
+            .as_ref()
+            .and_then(|config| config.plan_mode.clone());
         let user_input = last_msg.content.clone();
 
         // Derive turn number from display transcript (never compacted) for
@@ -747,11 +1086,13 @@ impl ChatService {
             history,
             turn_number,
             user_input,
-            provider_id: request.provider_id,
+            provider_id,
             session_created: false,
-            knowledge_collections: request.knowledge_collections.unwrap_or_default(),
-            thinking: request.thinking,
-            plan_mode: None,
+            knowledge_collections,
+            thinking,
+            plan_mode,
+            skills,
+            agent_config,
         })
     }
 
@@ -817,8 +1158,7 @@ impl ChatService {
         progress: Option<TurnEventSender>,
         cancel: Option<TurnCancellationToken>,
     ) -> Result<TurnResult, TurnError> {
-        use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentService};
-        use y_core::provider::ToolCallingMode;
+        use crate::agent_service::AgentService;
 
         // 1. Build tool definitions (all tools for root agent).
         //
@@ -844,7 +1184,19 @@ impl ChatService {
                     .map_or(ToolCallingMode::default(), |m| m.tool_calling_mode)
             }
         };
-        let mut tool_defs = Self::build_essential_tool_definitions(container).await;
+        let mut tool_defs = if input.toolcall_enabled {
+            if input.trust_tier.is_none() && input.agent_allowed_tools.is_empty() {
+                Self::build_essential_tool_definitions(container).await
+            } else {
+                crate::agent_service::AgentService::build_filtered_tool_definitions(
+                    container,
+                    &input.agent_allowed_tools,
+                )
+                .await
+            }
+        } else {
+            vec![]
+        };
 
         // 1b. Inject plan_mode.active config flag based on the user's mode selection.
         //
@@ -893,29 +1245,8 @@ impl ChatService {
 
         // 2. Construct execution config for the root agent.
         let max_tool_iterations = container.guardrail_manager.config().max_tool_iterations;
-        let exec_config = AgentExecutionConfig {
-            agent_name: "chat-turn".to_string(),
-            system_prompt: String::new(), // Uses context pipeline instead
-            max_iterations: max_tool_iterations,
-            tool_definitions: tool_defs,
-            tool_calling_mode,
-            messages: input.history.to_vec(),
-            provider_id: input.provider_id.clone(),
-            preferred_models: vec![],
-            provider_tags: vec![],
-            temperature: Some(0.7),
-            max_tokens: None,
-            thinking: input.thinking.clone(),
-            session_id: Some(input.session_id.clone()),
-            session_uuid: input.session_uuid,
-            knowledge_collections: input.knowledge_collections.clone(),
-            use_context_pipeline: true,
-            user_query: input.user_input.to_string(),
-            external_trace_id: None,
-            trust_tier: None,
-            agent_allowed_tools: vec![],
-            prune_tool_history: false,
-        };
+        let exec_config =
+            Self::build_execution_config(input, tool_defs, tool_calling_mode, max_tool_iterations);
 
         // 3. Delegate to AgentService.
         let result = match AgentService::execute(container, &exec_config, progress, cancel).await {
@@ -1481,6 +1812,68 @@ mod tests {
             .contains("10"));
     }
 
+    #[test]
+    fn test_build_execution_config_preserves_none_temperature() {
+        let history = make_history();
+        let input = TurnInput {
+            user_input: "hello",
+            session_id: SessionId::from_string("session-1"),
+            session_uuid: Uuid::new_v4(),
+            history: &history,
+            turn_number: 2,
+            provider_id: None,
+            knowledge_collections: vec![],
+            thinking: None,
+            plan_mode: None,
+            agent_name: "chat-turn".into(),
+            toolcall_enabled: true,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            temperature: None,
+            max_completion_tokens: None,
+            max_iterations: None,
+            max_tool_calls: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+        };
+
+        let config =
+            ChatService::build_execution_config(&input, vec![], ToolCallingMode::default(), 8);
+        assert_eq!(config.temperature, None);
+    }
+
+    #[test]
+    fn test_build_execution_config_preserves_explicit_temperature() {
+        let history = make_history();
+        let input = TurnInput {
+            user_input: "hello",
+            session_id: SessionId::from_string("session-1"),
+            session_uuid: Uuid::new_v4(),
+            history: &history,
+            turn_number: 2,
+            provider_id: None,
+            knowledge_collections: vec![],
+            thinking: None,
+            plan_mode: None,
+            agent_name: "chat-turn".into(),
+            toolcall_enabled: true,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            temperature: Some(1.0),
+            max_completion_tokens: None,
+            max_iterations: None,
+            max_tool_calls: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+        };
+
+        let config =
+            ChatService::build_execution_config(&input, vec![], ToolCallingMode::default(), 8);
+        assert_eq!(config.temperature, Some(1.0));
+    }
+
     // -----------------------------------------------------------------------
     // prepare_turn tests
     // -----------------------------------------------------------------------
@@ -1658,5 +2051,221 @@ mod tests {
             .unwrap();
         assert_eq!(p2.turn_number, p2.history.len() as u32);
         assert!(p2.turn_number > p1.turn_number);
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_agent_session_applies_agent_defaults() {
+        use y_agent::agent::definition::AgentDefinition;
+        use y_core::provider::ThinkingEffort;
+        use y_core::session::{CreateSessionOptions, SessionType};
+        use y_core::types::AgentId;
+
+        let (container, _tmp) = make_test_container().await;
+        let definition = AgentDefinition::from_toml(
+            r#"
+id = "agent-session"
+name = "Agent Session"
+description = "Preset-backed chat session"
+mode = "general"
+trust_tier = "user_defined"
+system_prompt = "You are the bound agent."
+provider_id = "preset-provider"
+skills = ["workspace-skill"]
+knowledge_enabled = true
+knowledge_collections = ["project-notes"]
+plan_mode = "plan"
+thinking_effort = "high"
+"#,
+        )
+        .expect("agent definition should parse");
+        container
+            .agent_registry
+            .lock()
+            .await
+            .register_user_defined(definition)
+            .expect("agent should register");
+
+        let session = container
+            .session_manager
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: Some(AgentId::from_string("agent-session")),
+                title: None,
+            })
+            .await
+            .expect("session should create");
+
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: Some(session.id),
+                user_input: "hello".into(),
+                provider_id: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+            },
+        )
+        .await
+        .expect("agent session prepare_turn should succeed");
+
+        assert_eq!(prepared.provider_id.as_deref(), Some("preset-provider"));
+        assert_eq!(prepared.skills, vec!["workspace-skill"]);
+        assert_eq!(prepared.knowledge_collections, vec!["project-notes"]);
+        assert_eq!(prepared.plan_mode.as_deref(), Some("plan"));
+        assert_eq!(
+            prepared.thinking.as_ref().map(|config| config.effort),
+            Some(ThinkingEffort::High)
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_agent_session_injects_preset_skills_only_on_first_turn() {
+        use y_agent::agent::definition::AgentDefinition;
+        use y_core::session::{CreateSessionOptions, SessionType};
+        use y_core::types::AgentId;
+
+        let (container, _tmp) = make_test_container().await;
+        let definition = AgentDefinition::from_toml(
+            r#"
+id = "skill-agent"
+name = "Skill Agent"
+description = "Injects preset skills only once"
+mode = "general"
+trust_tier = "user_defined"
+system_prompt = "Use the preset skill."
+skills = ["workspace-skill"]
+"#,
+        )
+        .expect("agent definition should parse");
+        container
+            .agent_registry
+            .lock()
+            .await
+            .register_user_defined(definition)
+            .expect("agent should register");
+
+        let session = container
+            .session_manager
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: Some(AgentId::from_string("skill-agent")),
+                title: None,
+            })
+            .await
+            .expect("session should create");
+
+        let first = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: Some(session.id.clone()),
+                user_input: "first".into(),
+                provider_id: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+            },
+        )
+        .await
+        .expect("first turn should succeed");
+        assert_eq!(first.skills, vec!["workspace-skill"]);
+
+        let second = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: Some(session.id),
+                user_input: "second".into(),
+                provider_id: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+            },
+        )
+        .await
+        .expect("second turn should succeed");
+        assert!(second.skills.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_agent_session_uses_max_iterations_as_turn_limit() {
+        use y_agent::agent::definition::AgentDefinition;
+        use y_core::session::{CreateSessionOptions, SessionType};
+        use y_core::types::AgentId;
+
+        let (container, _tmp) = make_test_container().await;
+        let definition = AgentDefinition::from_toml(
+            r#"
+id = "limited-agent"
+name = "Limited Agent"
+description = "Single-turn session agent"
+mode = "general"
+trust_tier = "user_defined"
+system_prompt = "One turn only."
+max_iterations = 1
+"#,
+        )
+        .expect("agent definition should parse");
+        container
+            .agent_registry
+            .lock()
+            .await
+            .register_user_defined(definition)
+            .expect("agent should register");
+
+        let session = container
+            .session_manager
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: Some(AgentId::from_string("limited-agent")),
+                title: None,
+            })
+            .await
+            .expect("session should create");
+
+        ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: Some(session.id.clone()),
+                user_input: "first".into(),
+                provider_id: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+            },
+        )
+        .await
+        .expect("first turn should succeed");
+
+        let err = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: Some(session.id),
+                user_input: "second".into(),
+                provider_id: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+            },
+        )
+        .await
+        .expect_err("second turn should hit the session turn limit");
+
+        assert!(matches!(
+            err,
+            PrepareTurnError::SessionTurnLimitReached { .. }
+        ));
     }
 }
