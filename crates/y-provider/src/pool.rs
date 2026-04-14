@@ -40,6 +40,8 @@ struct ProviderEntry {
     freeze_manager: Arc<FreezeManager>,
     semaphore: Arc<tokio::sync::Semaphore>,
     max_concurrency: usize,
+    default_temperature: Option<f64>,
+    default_top_p: Option<f64>,
     metrics: SharedMetrics,
     /// Explicit counter for active in-flight requests (including streaming).
     /// The semaphore is released when `chat_completion_stream` returns, but
@@ -76,10 +78,20 @@ impl ProviderPoolImpl {
         providers: Vec<Arc<dyn LlmProvider>>,
         config: &ProviderPoolConfig,
     ) -> Self {
+        let sampling_defaults = config
+            .providers
+            .iter()
+            .map(|provider| (provider.id.as_str(), (provider.temperature, provider.top_p)))
+            .collect::<std::collections::HashMap<_, _>>();
+
         let entries: Vec<ProviderEntry> = providers
             .into_iter()
             .map(|p| {
                 let max_conc = p.metadata().max_concurrency;
+                let (default_temperature, default_top_p) = sampling_defaults
+                    .get(p.metadata().id.as_str())
+                    .copied()
+                    .unwrap_or((None, None));
                 ProviderEntry {
                     provider: p,
                     freeze_manager: Arc::new(FreezeManager::new(
@@ -88,6 +100,8 @@ impl ProviderPoolImpl {
                     )),
                     semaphore: Arc::new(tokio::sync::Semaphore::new(max_conc)),
                     max_concurrency: max_conc,
+                    default_temperature,
+                    default_top_p,
                     metrics: Arc::new(ProviderMetrics::new()),
                     active_requests: Arc::new(AtomicUsize::new(0)),
                 }
@@ -246,6 +260,14 @@ impl ProviderPoolImpl {
             .find(|e| e.provider.metadata().id == *provider_id)
     }
 
+    /// Apply provider-level sampling defaults without overriding explicit request values.
+    fn apply_request_defaults(request: &ChatRequest, entry: &ProviderEntry) -> ChatRequest {
+        let mut effective_request = request.clone();
+        effective_request.temperature = effective_request.temperature.or(entry.default_temperature);
+        effective_request.top_p = effective_request.top_p.or(entry.default_top_p);
+        effective_request
+    }
+
     /// Get metrics for a specific provider.
     pub fn provider_metrics(&self, provider_id: &ProviderId) -> Option<SharedMetrics> {
         self.find_entry(provider_id).map(|e| Arc::clone(&e.metrics))
@@ -354,8 +376,9 @@ impl ProviderPool for ProviderPoolImpl {
 
         // Track active request for observability.
         entry.active_requests.fetch_add(1, Ordering::Relaxed);
+        let effective_request = Self::apply_request_defaults(request, entry);
 
-        let result = entry.provider.chat_completion(request).await;
+        let result = entry.provider.chat_completion(&effective_request).await;
 
         // Decrement active counter after request completes.
         entry.active_requests.fetch_sub(1, Ordering::Relaxed);
@@ -411,13 +434,17 @@ impl ProviderPool for ProviderPoolImpl {
         // fully consumed or dropped, via ActiveRequestGuard).
         entry.active_requests.fetch_add(1, Ordering::Relaxed);
         let guard = ActiveRequestGuard(Arc::clone(&entry.active_requests));
+        let effective_request = Self::apply_request_defaults(request, entry);
 
         // Streaming metrics are tracked at the caller level when the stream
         // completes or errors. We do NOT record a premature success here
         // because the stream has not started consuming yet.
 
         let meta = entry.provider.metadata();
-        let stream_result = entry.provider.chat_completion_stream(request).await;
+        let stream_result = entry
+            .provider
+            .chat_completion_stream(&effective_request)
+            .await;
 
         match stream_result {
             Ok(mut stream_response) => {
@@ -556,41 +583,55 @@ mod tests {
     struct MockProvider {
         meta: ProviderMetadata,
         should_fail: bool,
+        recorded_request: Arc<std::sync::Mutex<Option<ChatRequest>>>,
     }
 
     impl MockProvider {
+        fn new_provider(
+            id: &str,
+            tags: Vec<&str>,
+            should_fail: bool,
+        ) -> (
+            Arc<dyn LlmProvider>,
+            Arc<std::sync::Mutex<Option<ChatRequest>>>,
+        ) {
+            let recorded_request = Arc::new(std::sync::Mutex::new(None));
+            (
+                Arc::new(Self {
+                    meta: ProviderMetadata {
+                        id: ProviderId::from_string(id),
+                        provider_type: ProviderType::OpenAi,
+                        model: "test-model".into(),
+                        tags: tags.into_iter().map(String::from).collect(),
+                        max_concurrency: 5,
+                        context_window: 128_000,
+                        cost_per_1k_input: 0.01,
+                        cost_per_1k_output: 0.03,
+                        tool_calling_mode: ToolCallingMode::default(),
+                    },
+                    should_fail,
+                    recorded_request: Arc::clone(&recorded_request),
+                }),
+                recorded_request,
+            )
+        }
+
         fn ok(id: &str, tags: Vec<&str>) -> Arc<dyn LlmProvider> {
-            Arc::new(Self {
-                meta: ProviderMetadata {
-                    id: ProviderId::from_string(id),
-                    provider_type: ProviderType::OpenAi,
-                    model: "test-model".into(),
-                    tags: tags.into_iter().map(String::from).collect(),
-                    max_concurrency: 5,
-                    context_window: 128_000,
-                    cost_per_1k_input: 0.01,
-                    cost_per_1k_output: 0.03,
-                    tool_calling_mode: ToolCallingMode::default(),
-                },
-                should_fail: false,
-            })
+            Self::new_provider(id, tags, false).0
         }
 
         fn failing(id: &str, tags: Vec<&str>) -> Arc<dyn LlmProvider> {
-            Arc::new(Self {
-                meta: ProviderMetadata {
-                    id: ProviderId::from_string(id),
-                    provider_type: ProviderType::OpenAi,
-                    model: "test-model".into(),
-                    tags: tags.into_iter().map(String::from).collect(),
-                    max_concurrency: 5,
-                    context_window: 128_000,
-                    cost_per_1k_input: 0.01,
-                    cost_per_1k_output: 0.03,
-                    tool_calling_mode: ToolCallingMode::default(),
-                },
-                should_fail: true,
-            })
+            Self::new_provider(id, tags, true).0
+        }
+
+        fn ok_with_recorder(
+            id: &str,
+            tags: Vec<&str>,
+        ) -> (
+            Arc<dyn LlmProvider>,
+            Arc<std::sync::Mutex<Option<ChatRequest>>>,
+        ) {
+            Self::new_provider(id, tags, false)
         }
     }
 
@@ -598,8 +639,9 @@ mod tests {
     impl LlmProvider for MockProvider {
         async fn chat_completion(
             &self,
-            _request: &ChatRequest,
+            request: &ChatRequest,
         ) -> Result<ChatResponse, ProviderError> {
+            *self.recorded_request.lock().expect("mock mutex poisoned") = Some(request.clone());
             if self.should_fail {
                 return Err(ProviderError::ServerError {
                     provider: self.meta.id.to_string(),
@@ -647,6 +689,30 @@ mod tests {
             health_check_interval_secs: 60,
             selection_strategy: Default::default(),
             max_global_concurrency: None,
+        }
+    }
+
+    fn provider_config_with_temperature(id: &str, temperature: Option<f64>) -> ProviderPoolConfig {
+        ProviderPoolConfig {
+            providers: vec![crate::config::ProviderConfig {
+                id: id.to_string(),
+                provider_type: "openai".into(),
+                model: "test-model".into(),
+                enabled: true,
+                tags: vec!["gen".into()],
+                max_concurrency: 5,
+                context_window: 128_000,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                api_key: None,
+                api_key_env: None,
+                base_url: None,
+                temperature,
+                top_p: None,
+                tool_calling_mode: None,
+                icon: None,
+            }],
+            ..test_config()
         }
     }
 
@@ -785,6 +851,53 @@ mod tests {
         // Now p1 should be frozen from the error report.
         let result = pool.chat_completion(&test_request(), &route).await;
         assert!(result.is_ok(), "should route to p2 after p1 is frozen");
+    }
+
+    #[tokio::test]
+    async fn test_provider_temperature_default_applies_when_request_omits_temperature() {
+        let (provider, recorded_request) = MockProvider::ok_with_recorder("p1", vec!["gen"]);
+        let config = provider_config_with_temperature("p1", Some(1.0));
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &config);
+
+        let route = RouteRequest {
+            required_tags: vec!["gen".into()],
+            ..Default::default()
+        };
+
+        let result = pool.chat_completion(&test_request(), &route).await;
+        assert!(result.is_ok());
+
+        let recorded_temperature = recorded_request
+            .lock()
+            .expect("mock mutex poisoned")
+            .as_ref()
+            .and_then(|request| request.temperature);
+        assert_eq!(recorded_temperature, Some(1.0));
+    }
+
+    #[tokio::test]
+    async fn test_explicit_request_temperature_overrides_provider_default() {
+        let (provider, recorded_request) = MockProvider::ok_with_recorder("p1", vec!["gen"]);
+        let config = provider_config_with_temperature("p1", Some(1.0));
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &config);
+
+        let route = RouteRequest {
+            required_tags: vec!["gen".into()],
+            ..Default::default()
+        };
+
+        let mut request = test_request();
+        request.temperature = Some(0.2);
+
+        let result = pool.chat_completion(&request, &route).await;
+        assert!(result.is_ok());
+
+        let recorded_temperature = recorded_request
+            .lock()
+            .expect("mock mutex poisoned")
+            .as_ref()
+            .and_then(|captured| captured.temperature);
+        assert_eq!(recorded_temperature, Some(0.2));
     }
 
     #[tokio::test]
