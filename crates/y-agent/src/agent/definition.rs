@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::error::MultiAgentError;
 use crate::agent::trust::TrustTier;
+use y_core::permission_types::PermissionMode;
+use y_core::provider::{ThinkingConfig, ThinkingEffort};
 
 /// Behavioral mode governing tool availability and system prompt focus.
 ///
@@ -59,20 +61,49 @@ pub struct AgentDefinition {
     // -- Capabilities & tools --
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Optional emoji or short icon used by presentation layers.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Preferred working directory for user-facing agent sessions.
+    #[serde(default)]
+    pub working_directory: Option<String>,
+    /// Whether tool calling is enabled for user-facing sessions of this agent.
+    ///
+    /// `None` preserves legacy behavior for older definitions.
+    #[serde(default)]
+    pub toolcall_enabled: Option<bool>,
+    /// Whether skill injection is enabled for user-facing sessions of this agent.
+    ///
+    /// `None` preserves legacy behavior for older definitions.
+    #[serde(default)]
+    pub skills_enabled: Option<bool>,
+    /// Whether knowledge injection is enabled for user-facing sessions of this agent.
+    ///
+    /// `None` preserves legacy behavior for older definitions.
+    #[serde(default)]
+    pub knowledge_enabled: Option<bool>,
     /// Tools the agent is allowed to use.
     #[serde(default)]
     pub allowed_tools: Vec<String>,
-    /// Tools explicitly denied (even if otherwise available at workspace level).
-    #[serde(default)]
-    pub denied_tools: Vec<String>,
     pub system_prompt: String,
 
     // -- Skills --
     /// Activated skills from the Skill Registry.
     #[serde(default)]
     pub skills: Vec<String>,
+    /// Knowledge collections injected into the context pipeline for this agent.
+    #[serde(default)]
+    pub knowledge_collections: Vec<String>,
+    /// Explicit built-in prompt sections to include for user-facing sessions.
+    ///
+    /// Empty means use the default template-driven section selection.
+    #[serde(default)]
+    pub prompt_section_ids: Vec<String>,
 
     // -- Model preferences --
+    /// Preferred provider identifier for user-facing chat sessions.
+    #[serde(default)]
+    pub provider_id: Option<String>,
     /// Preferred model identifiers (tried in order).
     #[serde(default)]
     pub preferred_models: Vec<String>,
@@ -89,6 +120,15 @@ pub struct AgentDefinition {
     /// Top-p (nucleus sampling) setting for LLM calls.
     #[serde(default)]
     pub top_p: Option<f64>,
+    /// Default plan-mode preference for GUI sessions (`fast`, `auto`, `plan`).
+    #[serde(default)]
+    pub plan_mode: Option<String>,
+    /// Default thinking-effort preference for GUI sessions.
+    #[serde(default)]
+    pub thinking_effort: Option<String>,
+    /// Default permission mode for this agent's sessions.
+    #[serde(default)]
+    pub permission_mode: Option<PermissionMode>,
 
     // -- Limits --
     /// Maximum agent loop iterations before forced termination.
@@ -187,6 +227,35 @@ impl AgentDefinition {
         }
         Ok(())
     }
+
+    #[must_use]
+    pub fn toolcall_enabled_resolved(&self) -> bool {
+        self.toolcall_enabled
+            .unwrap_or(!self.allowed_tools.is_empty())
+    }
+
+    #[must_use]
+    pub fn skills_enabled_resolved(&self) -> bool {
+        self.skills_enabled.unwrap_or(!self.skills.is_empty())
+    }
+
+    #[must_use]
+    pub fn knowledge_enabled_resolved(&self) -> bool {
+        self.knowledge_enabled
+            .unwrap_or(!self.knowledge_collections.is_empty())
+    }
+
+    #[must_use]
+    pub fn thinking_config(&self) -> Option<ThinkingConfig> {
+        let effort = match self.thinking_effort.as_deref()? {
+            "low" => ThinkingEffort::Low,
+            "medium" => ThinkingEffort::Medium,
+            "high" => ThinkingEffort::High,
+            "max" => ThinkingEffort::Max,
+            _ => return None,
+        };
+        Some(ThinkingConfig { effort })
+    }
 }
 
 #[cfg(test)]
@@ -202,7 +271,6 @@ mode = "plan"
 trust_tier = "user_defined"
 capabilities = ["code_review", "static_analysis"]
 allowed_tools = ["FileRead", "SearchCode"]
-denied_tools = ["ShellExec"]
 system_prompt = "You are a code reviewer."
 skills = ["code-analysis"]
 preferred_models = ["gpt-4o"]
@@ -224,7 +292,6 @@ max_context_tokens = 8192
         assert_eq!(def.mode, AgentMode::Plan);
         assert_eq!(def.trust_tier, TrustTier::UserDefined);
         assert_eq!(def.capabilities.len(), 2);
-        assert_eq!(def.denied_tools, vec!["ShellExec"]);
         assert_eq!(def.skills, vec!["code-analysis"]);
         assert_eq!(def.preferred_models, vec!["gpt-4o"]);
         assert_eq!(def.temperature, Some(0.3));
@@ -278,15 +345,25 @@ system_prompt = ""
             mode: AgentMode::General,
             trust_tier: TrustTier::Dynamic,
             capabilities: vec![],
+            icon: None,
+            working_directory: None,
+            toolcall_enabled: None,
+            skills_enabled: None,
+            knowledge_enabled: None,
             allowed_tools: vec![],
-            denied_tools: vec![],
             system_prompt: String::new(),
             skills: vec![],
+            knowledge_collections: vec![],
+            prompt_section_ids: vec![],
+            provider_id: None,
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
             temperature: None,
             top_p: None,
+            plan_mode: None,
+            thinking_effort: None,
+            permission_mode: None,
             max_iterations: 20,
             max_tool_calls: 50,
             timeout_secs: 300,
@@ -313,10 +390,20 @@ system_prompt = "Hello"
 "#;
         let def = AgentDefinition::from_toml(toml_str).unwrap();
         assert!(def.allowed_tools.is_empty());
-        assert!(def.denied_tools.is_empty());
         assert!(def.skills.is_empty());
+        assert!(def.knowledge_collections.is_empty());
+        assert!(def.prompt_section_ids.is_empty());
+        assert_eq!(def.icon, None);
+        assert_eq!(def.working_directory, None);
+        assert_eq!(def.toolcall_enabled, None);
+        assert_eq!(def.skills_enabled, None);
+        assert_eq!(def.knowledge_enabled, None);
+        assert_eq!(def.provider_id, None);
         assert!(def.preferred_models.is_empty());
         assert_eq!(def.temperature, None);
+        assert_eq!(def.plan_mode, None);
+        assert_eq!(def.thinking_effort, None);
+        assert_eq!(def.permission_mode, None);
         assert_eq!(def.max_iterations, 20);
         assert_eq!(def.max_tool_calls, 50);
         assert_eq!(def.timeout_secs, 300);
@@ -349,5 +436,69 @@ context_sharing = "{val}"
             let def = AgentDefinition::from_toml(&toml_str).unwrap();
             assert_eq!(def.context_sharing, expected);
         }
+    }
+
+    #[test]
+    fn test_definition_parse_user_facing_profile_fields() {
+        let toml = r#"
+id = "workspace-coder"
+name = "Workspace Coder"
+description = "General coding assistant for a repository"
+mode = "build"
+trust_tier = "user_defined"
+user_callable = true
+icon = "tool"
+working_directory = "/tmp/project"
+toolcall_enabled = true
+skills_enabled = true
+knowledge_enabled = true
+skills = ["rust-review", "repo-map"]
+knowledge_collections = ["engineering", "product"]
+allowed_tools = ["FileRead", "FileWrite", "ShellExec"]
+system_prompt = "You are a coding assistant."
+prompt_section_ids = ["core.identity", "core.guidelines", "core.tool_protocol"]
+provider_id = "local-main"
+preferred_models = ["gpt-4o"]
+fallback_models = ["gpt-4o-mini"]
+provider_tags = ["coding"]
+plan_mode = "plan"
+thinking_effort = "high"
+permission_mode = "accept_edits"
+temperature = 0.2
+top_p = 0.9
+max_iterations = 12
+max_tool_calls = 24
+timeout_secs = 180
+context_sharing = "summary"
+max_context_tokens = 8192
+max_completion_tokens = 2048
+"#;
+
+        let def = AgentDefinition::from_toml(toml).unwrap();
+
+        assert_eq!(def.icon.as_deref(), Some("tool"));
+        assert_eq!(def.working_directory.as_deref(), Some("/tmp/project"));
+        assert_eq!(def.toolcall_enabled, Some(true));
+        assert_eq!(def.skills_enabled, Some(true));
+        assert_eq!(def.knowledge_enabled, Some(true));
+        assert_eq!(
+            def.knowledge_collections,
+            vec!["engineering".to_string(), "product".to_string()]
+        );
+        assert_eq!(
+            def.prompt_section_ids,
+            vec![
+                "core.identity".to_string(),
+                "core.guidelines".to_string(),
+                "core.tool_protocol".to_string()
+            ]
+        );
+        assert_eq!(def.provider_id.as_deref(), Some("local-main"));
+        assert_eq!(def.plan_mode.as_deref(), Some("plan"));
+        assert_eq!(def.thinking_effort.as_deref(), Some("high"));
+        assert_eq!(
+            def.permission_mode,
+            Some(y_core::permission_types::PermissionMode::AcceptEdits)
+        );
     }
 }
