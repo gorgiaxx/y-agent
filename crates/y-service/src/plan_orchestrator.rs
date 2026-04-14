@@ -6,7 +6,6 @@
 //! `ToolSearchOrchestrator` -- the `tool_dispatch` layer intercepts
 //! `Plan` tool calls and routes them here.
 
-use std::fmt::Write as _;
 use std::path::Path;
 
 use tokio_util::sync::CancellationToken;
@@ -83,6 +82,7 @@ pub struct PlanOrchestrator;
 struct ResolvedAgentConfig {
     system_prompt: String,
     max_iterations: usize,
+    max_tool_calls: usize,
     preferred_models: Vec<String>,
     provider_tags: Vec<String>,
     temperature: Option<f64>,
@@ -331,33 +331,26 @@ impl PlanOrchestrator {
             "plan-writer",
             ResolvedAgentConfig {
                 system_prompt: String::new(),
-                max_iterations: 30,
+                max_iterations: 12,
+                max_tool_calls: 8,
                 preferred_models: vec![],
                 provider_tags: vec!["general".to_string()],
                 temperature: Some(0.3),
                 max_tokens: None,
                 trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
-                allowed_tools: vec![
-                    "FileRead".into(),
-                    "Glob".into(),
-                    "Grep".into(),
-                    "SearchCode".into(),
-                    "WebFetch".into(),
-                    "Browser".into(),
-                    "ShellExec".into(),
-                    "FileWrite".into(),
-                ],
+                allowed_tools: vec!["FileRead".into(), "Glob".into(), "Grep".into()],
                 prune_tool_history: false,
             },
         )
         .await;
 
-        // Build the user message for the plan-writer.
-        let mut user_msg = format!("Create an execution plan for the following task:\n\n{request}");
-        if !context.is_empty() {
-            let _ = write!(user_msg, "\n\nAdditional context:\n{context}");
-        }
-        let _ = write!(user_msg, "\n\nWrite the plan to: {}", plan_path.display());
+        // Build the user message for the plan-writer as structured JSON.
+        let user_msg = serde_json::json!({
+            "task": request,
+            "context": context,
+            "plan_path": plan_path.display().to_string(),
+        })
+        .to_string();
 
         let messages = build_subagent_messages(&settings.system_prompt, user_msg);
         let tool_defs =
@@ -367,6 +360,7 @@ impl PlanOrchestrator {
             agent_name: "plan-writer".to_string(),
             system_prompt: settings.system_prompt.clone(),
             max_iterations: settings.max_iterations,
+            max_tool_calls: settings.max_tool_calls,
             tool_definitions: tool_defs,
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
             messages,
@@ -405,6 +399,10 @@ impl PlanOrchestrator {
                     }
                 })
                 .unwrap_or_else(|| result.content.clone());
+
+        if let Err(error) = persist_plan_content(plan_path, &plan_content).await {
+            tracing::warn!(path = %plan_path.display(), %error, "failed to persist generated plan");
+        }
 
         if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::ToolResult {
@@ -454,6 +452,7 @@ impl PlanOrchestrator {
             ResolvedAgentConfig {
                 system_prompt: String::new(),
                 max_iterations: 1,
+                max_tool_calls: 0,
                 preferred_models: vec![],
                 provider_tags: vec!["general".to_string()],
                 temperature: Some(0.0),
@@ -474,6 +473,7 @@ impl PlanOrchestrator {
             agent_name: "task-decomposer".to_string(),
             system_prompt: settings.system_prompt.clone(),
             max_iterations: settings.max_iterations,
+            max_tool_calls: settings.max_tool_calls,
             tool_definitions: vec![],
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
             messages,
@@ -564,6 +564,7 @@ impl PlanOrchestrator {
             ResolvedAgentConfig {
                 system_prompt: String::new(),
                 max_iterations: task.estimated_iterations.max(10),
+                max_tool_calls: task.estimated_iterations.max(10) * 2,
                 preferred_models: vec![],
                 provider_tags: vec![],
                 temperature: Some(0.7),
@@ -618,6 +619,7 @@ impl PlanOrchestrator {
         ResolvedAgentConfig {
             system_prompt: def.system_prompt.clone(),
             max_iterations: def.max_iterations,
+            max_tool_calls: def.max_tool_calls,
             preferred_models: def.preferred_models.clone(),
             provider_tags: def.provider_tags.clone(),
             temperature: def.temperature,
@@ -730,6 +732,10 @@ fn build_subagent_messages(system_prompt: &str, user_content: String) -> Vec<Mes
     messages
 }
 
+async fn persist_plan_content(plan_path: &Path, plan_content: &str) -> std::io::Result<()> {
+    tokio::fs::write(plan_path, plan_content).await
+}
+
 fn build_phase_user_message(
     task: &PlanTask,
     plan_title: &str,
@@ -771,6 +777,7 @@ fn build_phase_execution_config(
         agent_name: PHASE_EXECUTOR_AGENT_ID.to_string(),
         system_prompt: settings.system_prompt.clone(),
         max_iterations: settings.max_iterations,
+        max_tool_calls: settings.max_tool_calls,
         tool_definitions,
         tool_calling_mode: y_core::provider::ToolCallingMode::Native,
         messages,
@@ -1094,6 +1101,7 @@ pub async fn assess_complexity(
         agent_name: CLASSIFIER_AGENT_ID.to_string(),
         system_prompt: String::new(),
         max_iterations,
+        max_tool_calls: usize::MAX,
         tool_definitions: vec![],
         tool_calling_mode: y_core::provider::ToolCallingMode::Native,
         messages,
@@ -1141,13 +1149,15 @@ mod tests {
 
     async fn make_test_container() -> (crate::container::ServiceContainer, TempDir) {
         let tmpdir = tempfile::TempDir::new().unwrap();
-        let mut config = crate::config::ServiceConfig::default();
-        config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: tmpdir.path().join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let config = crate::config::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: tmpdir.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..crate::config::ServiceConfig::default()
         };
         let container = crate::container::ServiceContainer::from_config(&config)
             .await
@@ -1197,14 +1207,14 @@ mod tests {
 
     #[test]
     fn test_extract_plan_title_prefers_frontmatter_title() {
-        let plan = r#"---
+        let plan = r"---
 title: GUI Plan Stream Fix
 status: pending
 ---
 
 ## Overview
 Fix the plan stream rendering.
-"#;
+";
 
         assert_eq!(
             extract_plan_title(plan).as_deref(),
@@ -1249,6 +1259,19 @@ Fix the plan stream rendering.
         );
 
         assert_eq!(content.as_deref(), Some("# GUI Plan Stream Fix"));
+    }
+
+    #[tokio::test]
+    async fn test_persist_plan_content_writes_plan_file() {
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let plan_path = tmpdir.path().join("gui-plan.md");
+
+        persist_plan_content(&plan_path, "# GUI Plan Stream Fix")
+            .await
+            .unwrap();
+
+        let content = tokio::fs::read_to_string(&plan_path).await.unwrap();
+        assert_eq!(content, "# GUI Plan Stream Fix");
     }
 
     #[test]
@@ -1351,6 +1374,7 @@ Fix the plan stream rendering.
         let settings = ResolvedAgentConfig {
             system_prompt: "Execute the phase".into(),
             max_iterations: 30,
+            max_tool_calls: 60,
             preferred_models: vec!["test-model".into()],
             provider_tags: vec!["coding".into()],
             temperature: Some(0.7),
@@ -1384,6 +1408,7 @@ Fix the plan stream rendering.
 
         assert_eq!(config.agent_name, PHASE_EXECUTOR_AGENT_ID);
         assert_eq!(config.max_iterations, 30);
+        assert_eq!(config.max_tool_calls, 60);
         assert_eq!(
             config.agent_allowed_tools,
             vec!["FileWrite".to_string(), "ShellExec".to_string()]
@@ -1477,6 +1502,7 @@ Fix the plan stream rendering.
             ResolvedAgentConfig {
                 system_prompt: String::new(),
                 max_iterations: 1,
+                max_tool_calls: 1,
                 preferred_models: vec![],
                 provider_tags: vec![],
                 temperature: None,
@@ -1489,9 +1515,19 @@ Fix the plan stream rendering.
         .await;
 
         assert!(config.system_prompt.contains("You are a plan writer"));
-        assert_eq!(config.max_iterations, 200);
+        assert_eq!(config.max_iterations, 12);
+        assert_eq!(config.max_tool_calls, 8);
         assert_eq!(config.provider_tags, vec!["general"]);
-        assert!(config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
+        assert_eq!(
+            config.allowed_tools,
+            vec![
+                "FileRead".to_string(),
+                "Glob".to_string(),
+                "Grep".to_string()
+            ]
+        );
+        assert!(!config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
+        assert!(!config.allowed_tools.iter().any(|tool| tool == "ShellExec"));
         assert!(!config.prune_tool_history);
     }
 
@@ -1504,6 +1540,7 @@ Fix the plan stream rendering.
             ResolvedAgentConfig {
                 system_prompt: String::new(),
                 max_iterations: 1,
+                max_tool_calls: 1,
                 preferred_models: vec![],
                 provider_tags: vec![],
                 temperature: None,
@@ -1517,6 +1554,7 @@ Fix the plan stream rendering.
 
         assert!(config.system_prompt.contains("Output ONLY valid JSON"));
         assert_eq!(config.max_iterations, 50);
+        assert_eq!(config.max_tool_calls, 0);
         assert_eq!(config.allowed_tools, Vec::<String>::new());
         assert!(!config.prune_tool_history);
     }
@@ -1530,6 +1568,7 @@ Fix the plan stream rendering.
             ResolvedAgentConfig {
                 system_prompt: String::new(),
                 max_iterations: 12,
+                max_tool_calls: 24,
                 preferred_models: vec![],
                 provider_tags: vec!["fallback".into()],
                 temperature: None,
@@ -1542,7 +1581,8 @@ Fix the plan stream rendering.
         .await;
 
         assert!(config.system_prompt.contains("plan phase executor"));
-        assert_eq!(config.max_iterations, 30);
+        assert_eq!(config.max_iterations, 60);
+        assert_eq!(config.max_tool_calls, 100);
         assert!(config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
         assert!(config.allowed_tools.iter().any(|tool| tool == "ToolSearch"));
         assert!(!config.prune_tool_history);

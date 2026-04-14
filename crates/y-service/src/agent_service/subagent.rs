@@ -78,15 +78,11 @@ impl AgentRunner for ServiceAgentRunner {
     async fn run(&self, config: AgentRunConfig) -> Result<AgentRunOutput, DelegationError> {
         let start = std::time::Instant::now();
 
-        // Filter tool definitions from allowed_tools/denied_tools.
+        // Filter tool definitions from the agent allowlist.
         // When allowed_tools is non-empty, agents can make tool calls across
         // multiple iterations (e.g. skill-ingestion reading companion files).
-        let filtered_defs = AgentService::filter_tool_definitions(
-            &self.container,
-            &config.allowed_tools,
-            &config.denied_tools,
-        )
-        .await;
+        let filtered_defs =
+            AgentService::filter_tool_definitions(&self.container, &config.allowed_tools).await;
 
         // Convert filtered definitions to OpenAI function-calling JSON.
         let tool_definitions: Vec<serde_json::Value> = filtered_defs
@@ -160,6 +156,7 @@ impl AgentRunner for ServiceAgentRunner {
             agent_name: config.agent_name.clone(),
             system_prompt,
             max_iterations,
+            max_tool_calls: usize::MAX,
             tool_definitions,
             tool_calling_mode,
             messages,

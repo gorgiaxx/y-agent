@@ -140,6 +140,7 @@ impl BotService {
             agent_name: format!("bot-{}", persona.name()),
             system_prompt,
             max_iterations: persona.config.persona.tools.max_tool_iterations,
+            max_tool_calls: usize::MAX,
             tool_definitions: tool_defs,
             tool_calling_mode,
             messages: prepared.history.clone(),

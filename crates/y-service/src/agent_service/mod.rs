@@ -56,6 +56,8 @@ pub struct AgentExecutionConfig {
     pub system_prompt: String,
     /// Maximum LLM iterations (tool-call loop limit).
     pub max_iterations: usize,
+    /// Maximum number of tool calls permitted during the execution.
+    pub max_tool_calls: usize,
     /// Tool definitions in `OpenAI` function-calling JSON format.
     /// Empty = no tool calling.
     pub tool_definitions: Vec<serde_json::Value>,
@@ -187,6 +189,11 @@ pub enum AgentExecutionError {
         /// Maximum allowed iterations.
         max_iterations: usize,
     },
+    /// Tool-call count limit exceeded.
+    ToolCallLimitExceeded {
+        /// Maximum allowed tool calls.
+        max_tool_calls: usize,
+    },
     /// The execution was explicitly cancelled by the caller.
     ///
     /// Carries partial messages accumulated from successful iterations before
@@ -226,6 +233,9 @@ impl std::fmt::Display for AgentExecutionError {
             AgentExecutionError::ContextError(msg) => write!(f, "Context error: {msg}"),
             AgentExecutionError::ToolLoopLimitExceeded { max_iterations } => {
                 write!(f, "Tool call loop limit ({max_iterations}) exceeded")
+            }
+            AgentExecutionError::ToolCallLimitExceeded { max_tool_calls } => {
+                write!(f, "Tool call limit ({max_tool_calls}) exceeded")
             }
             AgentExecutionError::Cancelled { .. } => write!(f, "Cancelled"),
         }
@@ -365,7 +375,7 @@ impl AgentService {
         crate::message_builder::build_chat_messages(assembled, history)
     }
 
-    /// Filter tool definitions by an agent's allowed/denied tool lists.
+    /// Filter tool definitions by an agent's allowlist.
     ///
     /// Returns the raw [`ToolDefinition`](y_core::tool::ToolDefinition)s so
     /// callers can both build JSON tool schemas and generate a tools summary
@@ -373,11 +383,9 @@ impl AgentService {
     ///
     /// - `"*"` in `allowed` means all tools in the registry.
     /// - Empty `allowed` means no tools (returns empty vec).
-    /// - `denied` overrides `allowed`.
     pub(crate) async fn filter_tool_definitions(
         container: &ServiceContainer,
         allowed: &[String],
-        denied: &[String],
     ) -> Vec<y_core::tool::ToolDefinition> {
         if allowed.is_empty() {
             return vec![];
@@ -389,23 +397,20 @@ impl AgentService {
         defs.into_iter()
             .filter(|def| {
                 let name = def.name.as_str();
-                let is_allowed = allow_all || allowed.iter().any(|a| a == name);
-                let is_denied = denied.iter().any(|d| d == name);
-                is_allowed && !is_denied
+                allow_all || allowed.iter().any(|a| a == name)
             })
             .collect()
     }
 
-    /// Build tool definitions filtered by an agent's allowed/denied tool lists.
+    /// Build tool definitions filtered by an agent's allowlist.
     ///
     /// Returns `OpenAI` function-calling JSON format. Delegates filtering to
     /// `filter_tool_definitions`.
     pub async fn build_filtered_tool_definitions(
         container: &ServiceContainer,
         allowed: &[String],
-        denied: &[String],
     ) -> Vec<serde_json::Value> {
-        Self::filter_tool_definitions(container, allowed, denied)
+        Self::filter_tool_definitions(container, allowed)
             .await
             .iter()
             .map(|def| {
