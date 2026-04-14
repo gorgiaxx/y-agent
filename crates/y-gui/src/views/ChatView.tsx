@@ -1,6 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { useState, useCallback } from 'react';
 import { ChatPanel } from '../components/chat-panel/ChatPanel';
 import { WelcomePage } from '../components/WelcomePage';
 import { InputArea } from '../components/chat-panel/input-area/InputArea';
@@ -12,31 +10,10 @@ import { useRewind } from '../hooks/useRewind';
 import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useNavigationContext } from '../providers/AppContexts';
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
+import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
-import {
-  clearSessionInteractionById,
-  getSessionInteraction,
-  setSessionInteraction,
-} from '../utils/sessionInteractionState';
 import type { ThinkingEffort } from '../types';
-
-interface AskUserDialogState {
-  interactionId: string;
-  questions: Array<{
-    question: string;
-    options: string[];
-    multi_select?: boolean;
-  }>;
-}
-
-interface PermissionDialogState {
-  requestId: string;
-  toolName: string;
-  actionDescription: string;
-  reason: string;
-  contentPreview: string | null;
-}
 
 export function ChatView() {
   const chatHooks = useChatContext();
@@ -53,113 +30,16 @@ export function ChatView() {
   // Draft text to populate in the input box after rewind/undo.
   const [rewindDraft, setRewindDraft] = useState<string | null>(null);
 
-  // AskUser interaction state.
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
-  const [askUserBySession, setAskUserBySession] = useState<Record<string, AskUserDialogState>>({});
-
-  // PermissionRequest interaction state.
-  const [permissionBySession, setPermissionBySession] = useState<Record<string, PermissionDialogState>>({});
-
-  const askUserData = getSessionInteraction(askUserBySession, sessionHooks.activeSessionId);
-  const permissionData = getSessionInteraction(permissionBySession, sessionHooks.activeSessionId);
-
-  // Listen for AskUser events from the backend.
-  useEffect(() => {
-    const unlisten = listen<{
-      run_id: string;
-      session_id: string;
-      interaction_id: string;
-      questions: unknown;
-    }>('chat:AskUser', (event) => {
-      const { session_id, interaction_id, questions } = event.payload;
-      setAskUserBySession((prev) => setSessionInteraction(prev, session_id, {
-        interactionId: interaction_id,
-        questions: questions as AskUserDialogState['questions'],
-      }));
-    });
-    return () => { unlisten.then(fn => fn()); };
-  }, []);
-
-  const handleAskUserSubmit = useCallback((
-    interactionId: string,
-    answers: Record<string, string>,
-  ) => {
-    setAskUserBySession((prev) => clearSessionInteractionById(
-      prev,
-      (interaction) => interaction.interactionId === interactionId,
-    ));
-    invoke('chat_answer_question', {
-      interactionId,
-      answers: { answers },
-    }).catch(console.error);
-  }, []);
-
-  const handleAskUserDismiss = useCallback((interactionId: string) => {
-    setAskUserBySession((prev) => clearSessionInteractionById(
-      prev,
-      (interaction) => interaction.interactionId === interactionId,
-    ));
-    invoke('chat_answer_question', {
-      interactionId,
-      answers: { answers: {} },
-    }).catch(console.error);
-  }, []);
-
-  // Listen for PermissionRequest events from the backend.
-  useEffect(() => {
-    const unlisten = listen<{
-      run_id: string;
-      session_id: string;
-      request_id: string;
-      tool_name: string;
-      action_description: string;
-      reason: string;
-      content_preview: string | null;
-    }>('chat:PermissionRequest', (event) => {
-      const { session_id, request_id, tool_name, action_description, reason, content_preview } = event.payload;
-      setPermissionBySession((prev) => setSessionInteraction(prev, session_id, {
-        requestId: request_id,
-        toolName: tool_name,
-        actionDescription: action_description,
-        reason,
-        contentPreview: content_preview,
-      }));
-    });
-    return () => { unlisten.then(fn => fn()); };
-  }, []);
-
-  const handlePermissionApprove = useCallback((requestId: string) => {
-    setPermissionBySession((prev) => clearSessionInteractionById(
-      prev,
-      (interaction) => interaction.requestId === requestId,
-    ));
-    invoke('chat_answer_permission', {
-      requestId,
-      decision: 'approve',
-    }).catch(console.error);
-  }, []);
-
-  const handlePermissionDeny = useCallback((requestId: string) => {
-    setPermissionBySession((prev) => clearSessionInteractionById(
-      prev,
-      (interaction) => interaction.requestId === requestId,
-    ));
-    invoke('chat_answer_permission', {
-      requestId,
-      decision: 'deny',
-    }).catch(console.error);
-  }, []);
-
-  const handlePermissionAllowAllForSession = useCallback((requestId: string) => {
-    setPermissionBySession((prev) => clearSessionInteractionById(
-      prev,
-      (interaction) => interaction.requestId === requestId,
-    ));
-    invoke('chat_answer_permission', {
-      requestId,
-      decision: 'allow_all_for_session',
-    }).catch(console.error);
-  }, []);
+  const {
+    askUserData,
+    permissionData,
+    handleAskUserSubmit,
+    handleAskUserDismiss,
+    handlePermissionApprove,
+    handlePermissionDeny,
+    handlePermissionAllowAllForSession,
+  } = useSessionInteractions(sessionHooks.activeSessionId);
 
   const diagnosticsScope = resolveDiagnosticsScope(navProps.activeView, sessionHooks.activeSessionId);
   const { entries, isActive, addUserMessage } = useDiagnostics(diagnosticsScope.sessionId);
@@ -224,10 +104,17 @@ export function ChatView() {
     isDiagnosticsActive: isActive,
   });
 
-  const handleForkMessage = useCallback((messageIndex: number) => {
+  const handleForkMessage = useCallback(async (messageIndex: number) => {
     if (!sessionHooks.activeSessionId) return;
-    sessionHooks.forkSession(sessionHooks.activeSessionId, messageIndex);
-  }, [sessionHooks]);
+    const fork = await sessionHooks.forkSession(sessionHooks.activeSessionId, messageIndex);
+    // If the original session belongs to a workspace, assign the fork to the same workspace.
+    if (fork) {
+      const workspaceId = workspaceHooks.sessionWorkspaceMap[sessionHooks.activeSessionId];
+      if (workspaceId) {
+        await workspaceHooks.assignSession(workspaceId, fork.id);
+      }
+    }
+  }, [sessionHooks, workspaceHooks]);
 
   return (
     <>

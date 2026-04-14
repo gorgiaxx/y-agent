@@ -36,6 +36,12 @@ interface InputAreaProps {
   thinkingEffort?: ThinkingEffort | null;
   /** Callback when user changes thinking effort. */
   onThinkingEffortChange?: (effort: ThinkingEffort | null) => void;
+  /** Controlled plan-mode value. When omitted, InputArea uses local state. */
+  planMode?: PlanMode;
+  /** Callback when user changes plan mode. Enables controlled usage. */
+  onPlanModeChange?: (mode: PlanMode) => void;
+  /** Persist uncontrolled plan mode to localStorage. Defaults to true. */
+  persistPlanMode?: boolean;
   /** Pending AskUser interaction data. */
   askUserData?: {
     interactionId: string;
@@ -200,6 +206,9 @@ export function InputArea({
   providerIcons,
   thinkingEffort,
   onThinkingEffortChange,
+  planMode: controlledPlanMode,
+  onPlanModeChange,
+  persistPlanMode = true,
   askUserData,
   onAskUserSubmit,
   onAskUserDismiss,
@@ -231,19 +240,24 @@ export function InputArea({
   const [translating, setTranslating] = useState(false);
   const [inputHasText, setInputHasText] = useState(false);
 
-  // Plan mode: global preference persisted in localStorage.
-  const [planMode, setPlanMode] = useState<PlanMode>(() => {
+  // Plan mode: defaults to a global preference, but can be controlled by a caller.
+  const [uncontrolledPlanMode, setUncontrolledPlanMode] = useState<PlanMode>(() => {
     const stored = localStorage.getItem('y-agent-plan-mode');
     if (stored === 'fast' || stored === 'auto' || stored === 'plan') return stored;
     return 'fast';
   });
+  const planMode = controlledPlanMode ?? uncontrolledPlanMode;
   const cyclePlanMode = useCallback(() => {
-    setPlanMode((prev) => {
-      const next: PlanMode = prev === 'fast' ? 'auto' : prev === 'auto' ? 'plan' : 'fast';
+    const next: PlanMode = planMode === 'fast' ? 'auto' : planMode === 'auto' ? 'plan' : 'fast';
+    if (controlledPlanMode !== undefined) {
+      onPlanModeChange?.(next);
+      return;
+    }
+    setUncontrolledPlanMode(next);
+    if (persistPlanMode) {
       localStorage.setItem('y-agent-plan-mode', next);
-      return next;
-    });
-  }, []);
+    }
+  }, [controlledPlanMode, onPlanModeChange, persistPlanMode, planMode]);
 
   // Close provider dropdown on outside click.
   useEffect(() => {

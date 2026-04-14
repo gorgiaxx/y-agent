@@ -75,7 +75,7 @@ export const SelectContent = forwardRef<
         'border border-solid border-[var(--border)]',
         'rounded-[var(--radius-md)]',
         'shadow-[0_8px_24px_rgba(0,0,0,0.25)]',
-        'z-200',
+        'z-[10000]',
         'min-w-[var(--radix-select-trigger-width)]',
         'max-h-[300px]',
         'animate-[selectIn_0.1s_ease-out]',

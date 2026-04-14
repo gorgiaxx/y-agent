@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { DiagnosticsPanel } from '../components/observation/DiagnosticsPanel';
 import { ObservabilityPanel } from '../components/observation/ObservabilityPanel';
-import { Activity, Eye } from 'lucide-react';
+import { Activity, ArrowLeft, Eye } from 'lucide-react';
 
 import { ChatView } from '../views/ChatView';
 import { SkillsView } from '../views/SkillsView';
@@ -56,6 +56,22 @@ export function MainLayout() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navProps.activeView]);
 
+  const selectedAgentName = navProps.activeAgentId
+    ? agentHooks.agents.find((agent) => agent.id === navProps.activeAgentId)?.name ?? navProps.activeAgentId
+    : null;
+  const showAgentBack = navProps.activeView === 'agents' && !!navProps.activeAgentId;
+  const headerTitle = navProps.activeView === 'skills'
+    ? 'Skills'
+    : navProps.activeView === 'knowledge'
+      ? 'Knowledge Base'
+      : navProps.activeView === 'agents'
+        ? selectedAgentName ?? 'Agents'
+        : navProps.activeView === 'automation'
+          ? 'Automation'
+          : sessionHooks.activeSessionId
+            ? sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)?.title || 'Untitled'
+            : 'y-agent';
+
   return (
     <div className="app">
       <Sidebar
@@ -94,7 +110,14 @@ export function MainLayout() {
           },
           onForkSession: async (sessionId) => {
              // Fork the entire session (use max index to copy all messages).
-             await sessionHooks.forkSession(sessionId, Number.MAX_SAFE_INTEGER);
+             const fork = await sessionHooks.forkSession(sessionId, Number.MAX_SAFE_INTEGER);
+             // If the original session belongs to a workspace, assign the fork to the same workspace.
+             if (fork) {
+               const workspaceId = workspaceHooks.sessionWorkspaceMap[sessionId];
+               if (workspaceId) {
+                 await workspaceHooks.assignSession(workspaceId, fork.id);
+               }
+             }
           },
           onCreateWorkspace: async (name, path) => {
              await workspaceHooks.createWorkspace(name, path);
@@ -129,11 +152,6 @@ export function MainLayout() {
           onClearIngestStatus: knowledgeHooks.clearIngestStatus,
           onCancelIngest: knowledgeHooks.cancelIngest,
         }}
-        agents={{
-          agents: agentHooks.agents,
-          activeAgentId: navProps.activeAgentId,
-          onSelectAgent: navProps.setActiveAgentId,
-        }}
         automation={{
           workflows: autoHooks.workflows,
           schedules: autoHooks.schedules,
@@ -165,19 +183,19 @@ export function MainLayout() {
       <main className="main-panel">
         {navProps.activeView !== 'settings' && (
         <header className="main-header">
-          <h1 className="app-title">
-            {navProps.activeView === 'skills'
-              ? 'Skills'
-              : navProps.activeView === 'knowledge'
-                ? 'Knowledge Base'
-              : navProps.activeView === 'agents'
-              ? 'Agents'
-              : navProps.activeView === 'automation'
-              ? 'Automation'
-              : sessionHooks.activeSessionId
-                ? sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)?.title || 'Untitled'
-                : 'y-agent'}
-          </h1>
+          <div className="main-header-start">
+            {showAgentBack && (
+              <button
+                className="btn-header"
+                onClick={() => navProps.setActiveAgentId(null)}
+                title="Back to agents"
+                aria-label="Back to agents"
+              >
+                <ArrowLeft size={16} />
+              </button>
+            )}
+            <h1 className="app-title">{headerTitle}</h1>
+          </div>
           <div className="header-actions">
             <button
               className={`btn-header ${navProps.diagOpen ? 'active' : ''}`}

@@ -33,6 +33,8 @@ interface UseStatusBarMetaParams {
   diagnosticEntries: DiagnosticsEntry[];
   /** Whether a diagnostics run is active. */
   isDiagnosticsActive: boolean;
+  /** Agent names considered root-turn events for live token updates. */
+  rootAgentNames?: string[];
 }
 
 export function useStatusBarMeta({
@@ -42,6 +44,7 @@ export function useStatusBarMeta({
   isLoadingMessages,
   diagnosticEntries,
   isDiagnosticsActive,
+  rootAgentNames = ['chat-turn'],
 }: UseStatusBarMetaParams): StatusBarMeta {
   const [meta, setMeta] = useState<StatusBarMeta>({});
 
@@ -115,7 +118,7 @@ export function useStatusBarMeta({
     // Find the last llm_response entry from the root agent only.
     for (let i = diagnosticEntries.length - 1; i >= 0; i--) {
       const ev = diagnosticEntries[i].event;
-      if (ev.type === 'llm_response' && (!ev.agent_name || ev.agent_name === 'chat-turn')) {
+      if (ev.type === 'llm_response' && (!ev.agent_name || rootAgentNames.includes(ev.agent_name))) {
         startTransition(() => {
           setMeta((prev) => ({
             ...prev,
@@ -129,7 +132,7 @@ export function useStatusBarMeta({
         break;
       }
     }
-  }, [diagnosticEntries, isDiagnosticsActive]);
+  }, [diagnosticEntries, isDiagnosticsActive, rootAgentNames]);
 
   // Fallback: extract status bar meta from loaded messages (session switch,
   // page reload). Only runs if there are backend-loaded messages that

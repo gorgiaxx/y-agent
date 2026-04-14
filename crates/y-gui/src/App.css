@@ -26,6 +26,13 @@
   user-select: none;
 }
 
+.main-header-start {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
 .app-title {
   font-family: var(--font-display);
   font-size: 17px;

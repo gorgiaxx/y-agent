@@ -9,7 +9,7 @@ interface UseSessionsReturn {
   sessions: SessionInfo[];
   activeSessionId: string | null;
   loading: boolean;
-  createSession: (title?: string) => Promise<SessionInfo | null>;
+  createSession: (title?: string, options?: { agentId?: string | null }) => Promise<SessionInfo | null>;
   selectSession: (id: string) => void;
   deleteSession: (id: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
@@ -19,14 +19,16 @@ interface UseSessionsReturn {
 // Polling interval in ms -- keeps session titles and new sessions from the TUI in sync.
 const SESSION_POLL_INTERVAL_MS = 5_000;
 
-export function useSessions(): UseSessionsReturn {
+export function useSessions(agentId?: string | null): UseSessionsReturn {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refreshSessions = useCallback(async () => {
     try {
-      const list = await invoke<SessionInfo[]>('session_list');
+      const list = await invoke<SessionInfo[]>('session_list', {
+        agentId: agentId ?? null,
+      });
       setSessions(list);
       setActiveSessionId((current) => (
         current && !list.some((session) => session.id === current) ? null : current
@@ -36,7 +38,7 @@ export function useSessions(): UseSessionsReturn {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [agentId]);
 
   // Initial load.
   useEffect(() => {
@@ -81,10 +83,11 @@ export function useSessions(): UseSessionsReturn {
   }, []);
 
   const createSession = useCallback(
-    async (title?: string): Promise<SessionInfo | null> => {
+    async (title?: string, options?: { agentId?: string | null }): Promise<SessionInfo | null> => {
       try {
         const session = await invoke<SessionInfo>('session_create', {
           title: title ?? null,
+          agentId: options?.agentId ?? agentId ?? null,
         });
         setSessions((prev) => [session, ...prev]);
         setActiveSessionId(session.id);
@@ -94,7 +97,7 @@ export function useSessions(): UseSessionsReturn {
         return null;
       }
     },
-    [],
+    [agentId],
   );
 
   const selectSession = useCallback((id: string) => {

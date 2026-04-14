@@ -14,7 +14,6 @@ import type { WorkflowInfo, ScheduleInfo } from '../hooks/useAutomation';
 import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
 import { SkillsSidebarPanel } from './skills/SkillsSidebarPanel';
 import { KnowledgeSidebarPanel } from './knowledge/KnowledgeSidebarPanel';
-import { AgentsSidebarPanel } from './agents/AgentsSidebarPanel';
 import { AutomationSidebarPanel } from './automation/AutomationSidebarPanel';
 import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
 import './Sidebar.css';
@@ -68,13 +67,6 @@ export interface KnowledgeSidebarPropsGroup {
   onCancelIngest: () => void;
 }
 
-/** Agents domain props. */
-export interface AgentsSidebarPropsGroup {
-  agents: { id: string; name: string; description: string; mode: string; trust_tier: string; is_overridden: boolean }[];
-  activeAgentId: string | null;
-  onSelectAgent: (id: string) => void;
-}
-
 /** Automation domain props. */
 export interface AutomationSidebarPropsGroup {
   workflows: WorkflowInfo[];
@@ -103,12 +95,11 @@ interface SidebarProps {
   chat: ChatSidebarProps;
   skills: SkillsSidebarPropsGroup;
   knowledge: KnowledgeSidebarPropsGroup;
-  agents: AgentsSidebarPropsGroup;
   automation: AutomationSidebarPropsGroup;
   nav: NavSidebarPropsGroup;
 }
 
-export function Sidebar({ chat, skills, knowledge, agents, automation, nav }: SidebarProps) {
+export function Sidebar({ chat, skills, knowledge, automation, nav }: SidebarProps) {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
   // Handle icon bar clicks: toggle panel collapse when clicking the active view,
@@ -116,6 +107,11 @@ export function Sidebar({ chat, skills, knowledge, agents, automation, nav }: Si
   const handleIconClick = (view: ViewType) => {
     if (view === 'settings') {
       // Settings panel is always visible -- no collapse toggle
+      nav.onSelectView(view);
+      setPanelCollapsed(false);
+      return;
+    }
+    if (view === 'agents') {
       nav.onSelectView(view);
       setPanelCollapsed(false);
       return;
@@ -181,7 +177,9 @@ export function Sidebar({ chat, skills, knowledge, agents, automation, nav }: Si
       </div>
 
       {/* Sidebar panel content */}
-      <div className={`sidebar-panel ${panelCollapsed ? 'sidebar-panel--collapsed' : ''} ${nav.activeView === 'settings' ? 'sidebar-panel--settings' : ''}`}>
+      <div
+        className={`sidebar-panel ${panelCollapsed || nav.activeView === 'agents' ? 'sidebar-panel--collapsed' : ''} ${nav.activeView === 'settings' ? 'sidebar-panel--settings' : ''}`}
+      >
 
       {/* Sessions content (only when chat view is active) */}
       {nav.activeView === 'chat' && (
@@ -215,15 +213,6 @@ export function Sidebar({ chat, skills, knowledge, agents, automation, nav }: Si
           onSelectSchedule={automation.onSelectSchedule}
           onCreateWorkflow={automation.onCreateWorkflow}
           onCreateSchedule={automation.onCreateSchedule}
-        />
-      )}
-
-      {/* Agents view -- agent list */}
-      {nav.activeView === 'agents' && (
-        <AgentsSidebarPanel
-          agents={agents.agents}
-          activeAgentId={agents.activeAgentId}
-          onSelectAgent={agents.onSelectAgent}
         />
       )}
 
