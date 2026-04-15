@@ -1515,8 +1515,8 @@ Fix the plan stream rendering.
         .await;
 
         assert!(config.system_prompt.contains("You are a plan writer"));
-        assert_eq!(config.max_iterations, 12);
-        assert_eq!(config.max_tool_calls, 8);
+        assert_eq!(config.max_iterations, 50);
+        assert_eq!(config.max_tool_calls, 50);
         assert_eq!(config.provider_tags, vec!["general"]);
         assert_eq!(
             config.allowed_tools,
