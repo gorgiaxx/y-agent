@@ -23,17 +23,21 @@ export interface ChatDeps {
 
   // Chat deps
   sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode) => Promise<ChatStarted | null>;
-  editAndResend: (sessionId: string, newContent: string, providerId?: string) => Promise<ChatStarted | null>;
+  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode) => Promise<ChatStarted | null>;
   editMessage: (messageId: string, content: string) => void;
   cancelEdit: () => void;
   undoToMessage: (sessionId: string, messageId: string) => Promise<unknown>;
-  resendLastTurn: (sessionId: string, messageId: string, content: string, providerId?: string) => Promise<unknown>;
+  resendLastTurn: (sessionId: string, messageId: string, content: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode) => Promise<unknown>;
   restoreBranch: (sessionId: string, checkpointId: string) => Promise<unknown>;
   pendingEdit: { messageId: string; content: string } | null;
   loadMessages: (sessionId: string) => Promise<void>;
 
   // Provider
   selectedProviderId: string;
+
+  // Thinking / Plan mode
+  thinkingEffort: ThinkingEffort | null;
+  planMode: PlanMode;
 
   // Workspace
   welcomeWorkspaceId: string | null;
@@ -93,6 +97,8 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     pendingEdit,
     loadMessages,
     selectedProviderId,
+    thinkingEffort,
+    planMode,
     welcomeWorkspaceId,
     assignSession,
     refreshWorkspaces,
@@ -126,7 +132,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
       // If in edit mode, use the transactional editAndResend.
       if (pendingEdit) {
         addUserMessage(message, sid);
-        const result = await editAndResend(sid, message, providerArg);
+        const result = await editAndResend(sid, message, providerArg, thinkingEffort, planMode);
         if (result) {
           if (result.session_id !== activeSessionId) {
             selectSession(result.session_id);
@@ -198,9 +204,9 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     async (content: string, messageId: string) => {
       if (!activeSessionId) return;
       const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
-      await resendLastTurn(activeSessionId, messageId, content, providerArg);
+      await resendLastTurn(activeSessionId, messageId, content, providerArg, thinkingEffort, planMode);
     },
-    [activeSessionId, resendLastTurn, selectedProviderId],
+    [activeSessionId, resendLastTurn, selectedProviderId, thinkingEffort, planMode],
   );
 
   const handleClearSession = useCallback(async () => {

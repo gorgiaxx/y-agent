@@ -23,6 +23,8 @@ pub struct ChatRequest {
     pub message: String,
     /// Session ID to continue. Auto-creates a new session if omitted.
     pub session_id: Option<String>,
+    /// Thinking effort level: "low", "medium", "high", or "max".
+    pub thinking_effort: Option<String>,
 }
 
 /// Successful chat response.
@@ -67,6 +69,19 @@ async fn chat_turn(
         return Err(ApiError::BadRequest("message must not be empty".into()));
     }
 
+    // Convert thinking_effort string to ThinkingConfig.
+    let thinking = body.thinking_effort.and_then(|e| {
+        use y_core::provider::{ThinkingConfig, ThinkingEffort};
+        let effort = match e.as_str() {
+            "low" => ThinkingEffort::Low,
+            "medium" => ThinkingEffort::Medium,
+            "high" => ThinkingEffort::High,
+            "max" => ThinkingEffort::Max,
+            _ => return None,
+        };
+        Some(ThinkingConfig { effort })
+    });
+
     // Prepare turn: resolve/create session, persist user message, read transcript.
     let prepared = ChatService::prepare_turn(
         &state.container,
@@ -76,7 +91,7 @@ async fn chat_turn(
             provider_id: None,
             skills: None,
             knowledge_collections: None,
-            thinking: None,
+            thinking,
             user_message_metadata: None,
             plan_mode: None,
         },

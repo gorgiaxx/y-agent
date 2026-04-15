@@ -1498,4 +1498,65 @@ mod tests {
         assert_eq!(content[1]["type"], "text");
         assert_eq!(content[1]["text"], "What is in this image?");
     }
+
+    #[test]
+    fn test_anthropic_request_with_thinking_includes_output_config() {
+        use y_core::provider::{ThinkingConfig, ThinkingEffort};
+        use y_core::types::{Message, Role};
+
+        let request = ChatRequest {
+            messages: vec![Message {
+                message_id: "test-1".into(),
+                role: Role::User,
+                content: "Think carefully".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            }],
+            model: None,
+            max_tokens: None,
+            temperature: Some(0.7),
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: Some(ThinkingConfig {
+                effort: ThinkingEffort::Max,
+            }),
+        };
+
+        let provider = AnthropicProvider::new(
+            "test-anthropic",
+            "claude-3-5-sonnet-20241022",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            3,
+            200_000,
+            ToolCallingMode::default(),
+        );
+        let body = provider.build_request_body(&request, false);
+        let json = serde_json::to_value(&body).unwrap();
+
+        // Thinking mode: adaptive + output_config.effort = "max".
+        assert_eq!(json["thinking"]["type"], "adaptive");
+        assert_eq!(json["output_config"]["effort"], "max");
+        // Temperature must be null when thinking is enabled.
+        assert!(json["temperature"].is_null());
+
+        // Without thinking: no thinking/output_config fields, temperature preserved.
+        let request_no_thinking = ChatRequest {
+            thinking: None,
+            temperature: Some(0.7),
+            ..request.clone()
+        };
+        let body_no = provider.build_request_body(&request_no_thinking, false);
+        let json_no = serde_json::to_value(&body_no).unwrap();
+        assert!(json_no["thinking"].is_null());
+        assert!(json_no["output_config"].is_null());
+        assert_eq!(json_no["temperature"], 0.7);
+    }
 }

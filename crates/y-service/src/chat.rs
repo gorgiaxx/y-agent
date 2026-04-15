@@ -556,6 +556,8 @@ pub struct ResendTurnRequest {
     pub knowledge_collections: Option<Vec<String>>,
     /// Thinking/reasoning configuration (`None` = use model defaults).
     pub thinking: Option<y_core::provider::ThinkingConfig>,
+    /// Plan mode: `"fast"`, `"auto"`, or `"plan"` (`None` = fall back to agent config).
+    pub plan_mode: Option<String>,
 }
 
 /// Errors that can occur during resend-turn preparation.
@@ -1063,9 +1065,11 @@ impl ChatService {
                 .as_ref()
                 .and_then(|config| config.thinking.clone())
         });
-        let plan_mode = agent_config
-            .as_ref()
-            .and_then(|config| config.plan_mode.clone());
+        let plan_mode = request.plan_mode.or_else(|| {
+            agent_config
+                .as_ref()
+                .and_then(|config| config.plan_mode.clone())
+        });
         let user_input = last_msg.content.clone();
 
         // Derive turn number from display transcript (never compacted) for

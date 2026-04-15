@@ -715,7 +715,21 @@ pub async fn chat_resend(
     checkpoint_id: String,
     provider_id: Option<String>,
     knowledge_collections: Option<Vec<String>>,
+    thinking_effort: Option<String>,
+    plan_mode: Option<String>,
 ) -> Result<ChatStarted, String> {
+    let thinking = thinking_effort.and_then(|e| {
+        use y_core::provider::{ThinkingConfig, ThinkingEffort};
+        let effort = match e.as_str() {
+            "low" => ThinkingEffort::Low,
+            "medium" => ThinkingEffort::Medium,
+            "high" => ThinkingEffort::High,
+            "max" => ThinkingEffort::Max,
+            _ => return None,
+        };
+        Some(ThinkingConfig { effort })
+    });
+
     // Delegate domain logic to the service layer.
     let prepared = ChatService::prepare_resend_turn(
         &state.container,
@@ -724,7 +738,8 @@ pub async fn chat_resend(
             checkpoint_id,
             provider_id,
             knowledge_collections,
-            thinking: None,
+            thinking,
+            plan_mode,
         },
     )
     .await
