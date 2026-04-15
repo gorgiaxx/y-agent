@@ -12,6 +12,7 @@ import type { ProviderFormData } from './settingsTypes';
 import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
+import { Input } from '../ui';
 
 // ---------------------------------------------------------------------------
 // ProviderTabPanel -- flat form for a single provider (shown in tab view)
@@ -143,8 +144,7 @@ function ProviderTabPanel({
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">ID</label>
-          <input
-            className="pf-input"
+          <Input
             value={provider.id}
             onChange={(e) => update({ id: e.target.value })}
             placeholder="e.g. openai-gpt4"
@@ -211,8 +211,8 @@ function ProviderTabPanel({
         <div className="pf-field">
           <label className="pf-label">Model ID</label>
           <div className="pf-model-group">
-            <input
-              className="pf-input"
+            <Input
+              className="flex-1 min-w-0 pr-[30px]"
               value={provider.model}
               onChange={(e) => update({ model: e.target.value })}
               placeholder="e.g. gpt-4o"
@@ -240,8 +240,7 @@ function ProviderTabPanel({
         </div>
         <div className="pf-field">
           <label className="pf-label">Base URL</label>
-          <input
-            className="pf-input"
+          <Input
             value={provider.base_url ?? ''}
             onChange={(e) => update({ base_url: e.target.value || null })}
             placeholder={
@@ -264,8 +263,8 @@ function ProviderTabPanel({
         <div className="pf-field pf-field-key">
           <label className="pf-label">API Key</label>
           <div className="pf-key-group">
-            <input
-              className="pf-input"
+            <Input
+              className="flex-1 min-w-0 pr-[30px]"
               type={showKey ? 'text' : 'password'}
               value={provider.api_key ?? ''}
               onChange={(e) => update({ api_key: e.target.value || null })}
@@ -283,8 +282,7 @@ function ProviderTabPanel({
         </div>
         <div className="pf-field">
           <label className="pf-label">API Key Env Var</label>
-          <input
-            className="pf-input"
+          <Input
             value={provider.api_key_env ?? ''}
             onChange={(e) => update({ api_key_env: e.target.value || null })}
             placeholder="e.g. OPENAI_API_KEY"
@@ -308,8 +306,8 @@ function ProviderTabPanel({
       <div className="pf-row pf-row-quad">
         <div className="pf-field">
           <label className="pf-label">Max Concurrency</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={1}
             max={2}
@@ -319,8 +317,8 @@ function ProviderTabPanel({
         </div>
         <div className="pf-field">
           <label className="pf-label">Context Window</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={1}
             max={2}
@@ -330,8 +328,8 @@ function ProviderTabPanel({
         </div>
         <div className="pf-field">
           <label className="pf-label">Temperature</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             step={0.1}
             min={0}
@@ -343,8 +341,8 @@ function ProviderTabPanel({
         </div>
         <div className="pf-field">
           <label className="pf-label">Top P</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             step={0.05}
             min={0}
@@ -360,8 +358,8 @@ function ProviderTabPanel({
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">Cost / 1k Input Tokens</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             step={0.0001}
             min={0}
@@ -371,8 +369,8 @@ function ProviderTabPanel({
         </div>
         <div className="pf-field">
           <label className="pf-label">Cost / 1k Output Tokens</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             step={0.0001}
             min={0}

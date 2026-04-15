@@ -9,6 +9,7 @@ import { jsonToHooks } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { HOOKS_SCHEMA } from '../../utils/settingsSchemas';
+import { Input } from '../ui';
 
 interface HooksTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -101,8 +102,8 @@ export function HooksTab({
         <div className="pf-row pf-row-quad">
           <div className="pf-field">
             <label className="pf-label">Middleware Timeout (ms)</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={1000}
               step={1000}
@@ -113,8 +114,8 @@ export function HooksTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Event Channel Capacity</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={64}
               step={256}
@@ -125,8 +126,8 @@ export function HooksTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Max Subscribers</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={1}
               max={1024}

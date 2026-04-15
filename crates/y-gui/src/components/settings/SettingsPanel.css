@@ -465,7 +465,6 @@
   letter-spacing: 0.06em;
 }
 
-.pf-input,
 .pf-select {
   padding: 6px var(--space-sm);
   font-size: 12px;
@@ -478,17 +477,8 @@
   transition: border-color 0.15s ease;
 }
 
-.pf-input:focus,
 .pf-select:focus {
   border-color: var(--border-focus);
-}
-
-.pf-input::placeholder {
-  color: var(--text-muted);
-}
-
-.pf-input-num {
-  font-variant-numeric: tabular-nums;
 }
 
 .pf-hint {
@@ -514,12 +504,6 @@
   position: relative;
   display: flex;
   align-items: center;
-}
-
-.pf-key-group .pf-input {
-  flex: 1;
-  min-width: 0;
-  padding-right: 30px;
 }
 
 .pf-key-toggle {
@@ -1015,12 +999,6 @@
   position: relative;
   display: flex;
   align-items: center;
-}
-
-.pf-model-group .pf-input {
-  flex: 1;
-  min-width: 0;
-  padding-right: 30px;
 }
 
 .pf-model-search-btn {

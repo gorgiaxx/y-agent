@@ -10,7 +10,7 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { GUARDRAILS_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox } from '../ui';
+import { Checkbox, Input } from '../ui';
 
 interface GuardrailsTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -121,8 +121,8 @@ export function GuardrailsTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Max Tool Iterations</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={1}
               max={500}
@@ -151,8 +151,8 @@ export function GuardrailsTab({
         <div className="pf-row pf-row-quad">
           <div className="pf-field">
             <label className="pf-label">Max Iterations</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={1}
               value={guardrailsForm.loop_guard_max_iterations}
@@ -161,8 +161,8 @@ export function GuardrailsTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Similarity Threshold</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={0}
               max={1}
@@ -180,8 +180,8 @@ export function GuardrailsTab({
         <div className="pf-row pf-row-quad">
           <div className="pf-field">
             <label className="pf-label">High Risk Threshold</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={0}
               max={1}

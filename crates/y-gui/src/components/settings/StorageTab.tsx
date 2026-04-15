@@ -9,7 +9,7 @@ import { jsonToStorage } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { STORAGE_SCHEMA } from '../../utils/settingsSchemas';
-import { Checkbox } from '../ui';
+import { Checkbox, Input } from '../ui';
 
 interface StorageTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -103,8 +103,7 @@ export function StorageTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">Database Path</label>
-            <input
-              className="pf-input"
+            <Input
               value={storageForm.db_path}
               onChange={(e) => { setStorageForm({ ...storageForm, db_path: e.target.value }); setDirtyStorage(true); }}
               placeholder="data/y-agent.db"
@@ -115,8 +114,8 @@ export function StorageTab({
         <div className="pf-row pf-row-quad">
           <div className="pf-field">
             <label className="pf-label">Pool Size</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={1}
               max={100}
@@ -126,8 +125,8 @@ export function StorageTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Busy Timeout (ms)</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={100}
               step={500}
@@ -151,8 +150,7 @@ export function StorageTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">Transcript Directory</label>
-            <input
-              className="pf-input"
+            <Input
               value={storageForm.transcript_dir}
               onChange={(e) => { setStorageForm({ ...storageForm, transcript_dir: e.target.value }); setDirtyStorage(true); }}
               placeholder="data/transcripts"

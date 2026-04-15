@@ -9,7 +9,7 @@ import { jsonToTools } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { TOOLS_SCHEMA } from '../../utils/settingsSchemas';
-import { Checkbox } from '../ui';
+import { Checkbox, Input } from '../ui';
 
 interface ToolsTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -102,8 +102,8 @@ export function ToolsTab({
         <div className="pf-row pf-row-quad">
           <div className="pf-field">
             <label className="pf-label">Max Active Tools</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={1}
               max={200}
@@ -114,8 +114,8 @@ export function ToolsTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Search Limit</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={1}
               max={100}

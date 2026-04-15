@@ -10,7 +10,7 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { SESSION_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox } from '../ui';
+import { Checkbox, Input } from '../ui';
 
 interface SessionTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -102,8 +102,8 @@ export function SessionTab({
       <div className="pf-row pf-row-quad">
         <div className="pf-field">
           <label className="pf-label">Max Tree Depth</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={1}
             value={sessionForm.max_depth}
@@ -112,8 +112,8 @@ export function SessionTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">Max Active per Root</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={1}
             value={sessionForm.max_active_per_root}
@@ -122,8 +122,8 @@ export function SessionTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">Compaction Threshold (%)</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={50}
             max={95}
@@ -179,8 +179,8 @@ export function SessionTab({
       <div className="pf-row pf-row-quad">
         <div className="pf-field">
           <label className="pf-label">Token Threshold</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={500}
             step={500}
@@ -191,8 +191,8 @@ export function SessionTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">Max Retries</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={0}
             max={10}

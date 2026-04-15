@@ -10,7 +10,7 @@ import type { McpServerFormData } from './settingsTypes';
 import { emptyMcpServer, jsonToMcpServers, mcpServersToJson } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox } from '../ui';
+import { Checkbox, Input } from '../ui';
 
 // ---------------------------------------------------------------------------
 // McpServerTabPanel -- form for a single MCP server (shown in tab view)
@@ -35,8 +35,7 @@ function McpServerTabPanel({
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">Server Name</label>
-          <input
-            className="pf-input"
+          <Input
             value={server.name}
             onChange={(e) => update({ name: e.target.value })}
             placeholder="e.g. my-local-server"
@@ -65,8 +64,7 @@ function McpServerTabPanel({
           <div className="pf-row">
             <div className="pf-field pf-field-full">
               <label className="pf-label">Command</label>
-              <input
-                className="pf-input"
+              <Input
                 value={server.command}
                 onChange={(e) => update({ command: e.target.value })}
                 placeholder="e.g. node, python, npx"
@@ -90,8 +88,7 @@ function McpServerTabPanel({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {Object.entries(server.env).map(([k, v], i) => (
                   <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                    <input
-                      className="pf-input"
+                    <Input
                       style={{ flex: 1 }}
                       value={k}
                       onChange={(e) => {
@@ -102,8 +99,7 @@ function McpServerTabPanel({
                       placeholder="KEY"
                     />
                     <span style={{ color: 'var(--text-secondary)' }}>=</span>
-                    <input
-                      className="pf-input"
+                    <Input
                       style={{ flex: 2 }}
                       value={v}
                       onChange={(e) => {
@@ -142,8 +138,7 @@ function McpServerTabPanel({
           <div className="pf-row">
             <div className="pf-field pf-field-full">
               <label className="pf-label">Server URL</label>
-              <input
-                className="pf-input"
+              <Input
                 value={server.url}
                 onChange={(e) => update({ url: e.target.value })}
                 placeholder="https://your-server-url.com/mcp"
@@ -157,8 +152,7 @@ function McpServerTabPanel({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {Object.entries(server.headers).map(([k, v], i) => (
                   <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                    <input
-                      className="pf-input"
+                    <Input
                       style={{ flex: 1 }}
                       value={k}
                       onChange={(e) => {
@@ -169,8 +163,7 @@ function McpServerTabPanel({
                       placeholder="Header-Name"
                     />
                     <span style={{ color: 'var(--text-secondary)' }}>:</span>
-                    <input
-                      className="pf-input"
+                    <Input
                       style={{ flex: 2 }}
                       value={v}
                       onChange={(e) => {

@@ -11,7 +11,7 @@ import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { KNOWLEDGE_SCHEMA } from '../../utils/settingsSchemas';
 import { Eye, EyeOff } from 'lucide-react';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox } from '../ui';
+import { Checkbox, Input } from '../ui';
 
 interface KnowledgeTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -109,8 +109,8 @@ export function KnowledgeTab({
         <div className="pf-row pf-row-quad">
           <div className="pf-field">
             <label className="pf-label">L0 Max Tokens</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={50}
               value={knowledgeForm.l0_max_tokens}
@@ -120,8 +120,8 @@ export function KnowledgeTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">L1 Max Tokens</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={100}
               value={knowledgeForm.l1_max_tokens}
@@ -131,8 +131,8 @@ export function KnowledgeTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">L2 Max Tokens</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={100}
               value={knowledgeForm.l2_max_tokens}
@@ -142,8 +142,8 @@ export function KnowledgeTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Max Chunks / Entry</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={100}
               step={500}
@@ -155,8 +155,7 @@ export function KnowledgeTab({
         <div className="pf-row">
           <div className="pf-field">
             <label className="pf-label">Default Collection</label>
-            <input
-              className="pf-input"
+            <Input
               value={knowledgeForm.default_collection}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, default_collection: e.target.value }); setDirtyKnowledge(true); }}
               placeholder="default"
@@ -164,8 +163,8 @@ export function KnowledgeTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Min Similarity Threshold</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={0}
               max={1}
@@ -196,8 +195,7 @@ export function KnowledgeTab({
         <div className="pf-row">
           <div className="pf-field" style={{ flex: 2 }}>
             <label className="pf-label">Embedding Model</label>
-            <input
-              className="pf-input"
+            <Input
               value={knowledgeForm.embedding_model}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_model: e.target.value }); setDirtyKnowledge(true); }}
               placeholder="text-embedding-3-small"
@@ -205,8 +203,8 @@ export function KnowledgeTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Dimensions</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={64}
               value={knowledgeForm.embedding_dimensions}
@@ -217,8 +215,7 @@ export function KnowledgeTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">Embedding Base URL</label>
-            <input
-              className="pf-input"
+            <Input
               value={knowledgeForm.embedding_base_url}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_base_url: e.target.value }); setDirtyKnowledge(true); }}
               placeholder="https://api.openai.com/v1"
@@ -228,8 +225,7 @@ export function KnowledgeTab({
         <div className="pf-row">
           <div className="pf-field">
             <label className="pf-label">API Key Env Variable</label>
-            <input
-              className="pf-input"
+            <Input
               value={knowledgeForm.embedding_api_key_env}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_api_key_env: e.target.value }); setDirtyKnowledge(true); }}
               placeholder="OPENAI_API_KEY"
@@ -238,8 +234,8 @@ export function KnowledgeTab({
           <div className="pf-field">
             <label className="pf-label">API Key (direct)</label>
             <div className="pf-key-group">
-              <input
-                className="pf-input"
+              <Input
+                className="flex-1 min-w-0 pr-[30px]"
                 type={showApiKey ? 'text' : 'password'}
                 value={knowledgeForm.embedding_api_key}
                 onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_api_key: e.target.value }); setDirtyKnowledge(true); }}
@@ -260,8 +256,8 @@ export function KnowledgeTab({
         <div className="pf-row pf-row-quad">
           <div className="pf-field">
             <label className="pf-label">Embedding Max Tokens</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={0}
               step={128}
@@ -295,8 +291,8 @@ export function KnowledgeTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">BM25 Weight</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={0}
               step={0.1}
@@ -306,8 +302,8 @@ export function KnowledgeTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Vector Weight</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={0}
               step={0.1}

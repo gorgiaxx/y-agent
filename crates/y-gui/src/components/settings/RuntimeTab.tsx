@@ -11,7 +11,7 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { RUNTIME_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox } from '../ui';
+import { Checkbox, Input } from '../ui';
 
 interface RuntimeTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -120,8 +120,7 @@ export function RuntimeTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">Default Timeout</label>
-          <input
-            className="pf-input"
+          <Input
             value={runtimeForm.default_timeout}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, default_timeout: e.target.value }); setDirtyRuntime(true); }}
             placeholder="e.g. 30s, 5m"
@@ -129,8 +128,8 @@ export function RuntimeTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">Memory Limit (bytes)</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={0}
             step={1048576}
@@ -167,8 +166,7 @@ export function RuntimeTab({
       <div className="pf-row pf-row-triple">
         <div className="pf-field">
           <label className="pf-label">Host</label>
-          <input
-            className="pf-input"
+          <Input
             value={runtimeForm.ssh_host}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_host: e.target.value }); setDirtyRuntime(true); }}
             placeholder="localhost"
@@ -176,8 +174,8 @@ export function RuntimeTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">Port</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={1}
             max={65535}
@@ -187,8 +185,7 @@ export function RuntimeTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">User</label>
-          <input
-            className="pf-input"
+          <Input
             value={runtimeForm.ssh_user}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_user: e.target.value }); setDirtyRuntime(true); }}
             placeholder="root"
@@ -214,8 +211,7 @@ export function RuntimeTab({
         {runtimeForm.ssh_auth_method === 'password' ? (
           <div className="pf-field">
             <label className="pf-label">Password</label>
-            <input
-              className="pf-input"
+            <Input
               type="password"
               value={runtimeForm.ssh_password}
               onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_password: e.target.value }); setDirtyRuntime(true); }}
@@ -225,8 +221,7 @@ export function RuntimeTab({
         ) : (
           <div className="pf-field">
             <label className="pf-label">Private Key Path</label>
-            <input
-              className="pf-input"
+            <Input
               value={runtimeForm.ssh_private_key_path}
               onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_private_key_path: e.target.value }); setDirtyRuntime(true); }}
               placeholder="~/.ssh/id_rsa"
@@ -238,8 +233,7 @@ export function RuntimeTab({
         <div className="pf-row">
           <div className="pf-field">
             <label className="pf-label">Passphrase</label>
-            <input
-              className="pf-input"
+            <Input
               type="password"
               value={runtimeForm.ssh_passphrase}
               onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_passphrase: e.target.value }); setDirtyRuntime(true); }}
@@ -248,8 +242,7 @@ export function RuntimeTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Known Hosts Path</label>
-            <input
-              className="pf-input"
+            <Input
               value={runtimeForm.ssh_known_hosts_path}
               onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_known_hosts_path: e.target.value }); setDirtyRuntime(true); }}
               placeholder="~/.ssh/known_hosts"
@@ -265,8 +258,7 @@ export function RuntimeTab({
       <div className="pf-row">
         <div className="pf-field pf-field-full">
           <label className="pf-label">Default Image</label>
-          <input
-            className="pf-input"
+          <Input
             value={runtimeForm.docker_default_image}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_default_image: e.target.value }); setDirtyRuntime(true); }}
             placeholder="e.g. python:3.12-slim, ubuntu:24.04"
@@ -293,8 +285,7 @@ export function RuntimeTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">Container User</label>
-          <input
-            className="pf-input"
+          <Input
             value={runtimeForm.docker_user}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_user: e.target.value }); setDirtyRuntime(true); }}
             placeholder="e.g. 1000:1000"
@@ -365,8 +356,7 @@ export function RuntimeTab({
           <div className="pf-kv-list">
             {Object.entries(runtimeForm.docker_default_env).map(([k, v], i) => (
               <div key={i} className="pf-kv-row">
-                <input
-                  className="pf-input"
+                <Input
                   style={{ flex: 1 }}
                   value={k}
                   onChange={(e) => {
@@ -378,8 +368,7 @@ export function RuntimeTab({
                   placeholder="KEY"
                 />
                 <span className="pf-kv-sep">=</span>
-                <input
-                  className="pf-input"
+                <Input
                   style={{ flex: 2 }}
                   value={v}
                   onChange={(e) => {
@@ -423,8 +412,7 @@ export function RuntimeTab({
           <div className="pf-kv-list">
             {runtimeForm.docker_default_volumes.map((vol, i) => (
               <div key={i} className="pf-kv-row">
-                <input
-                  className="pf-input"
+                <Input
                   style={{ flex: 2 }}
                   value={vol.host_path}
                   onChange={(e) => {
@@ -436,8 +424,7 @@ export function RuntimeTab({
                   placeholder="Host path"
                 />
                 <span className="pf-kv-sep">-&gt;</span>
-                <input
-                  className="pf-input"
+                <Input
                   style={{ flex: 2 }}
                   value={vol.container_path}
                   onChange={(e) => {
@@ -511,8 +498,7 @@ export function RuntimeTab({
           <div className="pf-row">
             <div className="pf-field">
               <label className="pf-label">uv Binary Path</label>
-              <input
-                className="pf-input"
+              <Input
                 value={runtimeForm.python_uv_path}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_uv_path: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="uv"
@@ -520,8 +506,7 @@ export function RuntimeTab({
             </div>
             <div className="pf-field">
               <label className="pf-label">Python Version</label>
-              <input
-                className="pf-input"
+              <Input
                 value={runtimeForm.python_version}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_version: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="3.12"
@@ -531,8 +516,7 @@ export function RuntimeTab({
           <div className="pf-row">
             <div className="pf-field">
               <label className="pf-label">Venv Directory</label>
-              <input
-                className="pf-input"
+              <Input
                 value={runtimeForm.python_venv_dir}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_venv_dir: e.target.value }); setDirtyRuntime(true); }}
                 placeholder=".venv"
@@ -540,8 +524,7 @@ export function RuntimeTab({
             </div>
             <div className="pf-field">
               <label className="pf-label">Working Directory</label>
-              <input
-                className="pf-input"
+              <Input
                 value={runtimeForm.python_working_dir}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_working_dir: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="(uses current dir)"
@@ -572,8 +555,7 @@ export function RuntimeTab({
           <div className="pf-row">
             <div className="pf-field">
               <label className="pf-label">bun Binary Path</label>
-              <input
-                className="pf-input"
+              <Input
                 value={runtimeForm.bun_path}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_path: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="bun"
@@ -581,8 +563,7 @@ export function RuntimeTab({
             </div>
             <div className="pf-field">
               <label className="pf-label">Bun Version</label>
-              <input
-                className="pf-input"
+              <Input
                 value={runtimeForm.bun_version}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_version: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="latest"
@@ -592,8 +573,7 @@ export function RuntimeTab({
           <div className="pf-row">
             <div className="pf-field pf-field-full">
               <label className="pf-label">Working Directory</label>
-              <input
-                className="pf-input"
+              <Input
                 value={runtimeForm.bun_working_dir}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_working_dir: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="(uses current dir)"

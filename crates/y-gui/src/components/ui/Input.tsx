@@ -3,13 +3,17 @@ import { type InputHTMLAttributes, forwardRef } from 'react'
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   /** Visual variant */
   variant?: 'default' | 'mono'
+  /** Use tabular-nums for numeric fields */
+  numeric?: boolean
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ variant = 'default', className = '', ...props }, ref) => {
+  ({ variant = 'default', numeric = false, className = '', ...props }, ref) => {
     const monoClass = variant === 'mono'
       ? "font-[SF_Mono,Fira_Code,Consolas,monospace]"
       : 'font-sans'
+
+    const numClass = numeric ? 'font-variant-numeric-tabular-nums' : ''
 
     return (
       <input
@@ -19,9 +23,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           'px-2 py-1.5',
           'text-12px',
           monoClass,
+          numClass,
           'border border-solid border-[var(--border)]',
           'rounded-[var(--radius-sm)]',
-          'bg-[var(--surface-secondary)]',
+          'bg-[var(--surface-primary)]',
           'text-[var(--text-primary)]',
           'outline-none',
           'transition-colors duration-150',

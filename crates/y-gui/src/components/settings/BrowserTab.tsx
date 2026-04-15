@@ -11,7 +11,7 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { BROWSER_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox } from '../ui';
+import { Checkbox, Input } from '../ui';
 
 interface BrowserTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -147,8 +147,7 @@ export function BrowserTab({
         <div className="pf-row pf-row-2-1">
           <div className="pf-field">
             <label className="pf-label">Chrome Path</label>
-            <input
-              className="pf-input"
+            <Input
               value={browserForm.chrome_path}
               onChange={(e) => { setBrowserForm({ ...browserForm, chrome_path: e.target.value }); setDirtyBrowser(true); }}
               placeholder="Auto-detect (leave empty)"
@@ -157,8 +156,8 @@ export function BrowserTab({
           </div>
           <div className="pf-field">
             <label className="pf-label">Debug Port</label>
-            <input
-              className="pf-input pf-input-num"
+            <Input
+              numeric
               type="number"
               min={1024}
               max={65535}
@@ -189,8 +188,7 @@ export function BrowserTab({
         <div className="pf-row">
           <div className="pf-field pf-field-full">
             <label className="pf-label">CDP Endpoint URL</label>
-            <input
-              className="pf-input"
+            <Input
               value={browserForm.cdp_url}
               onChange={(e) => { setBrowserForm({ ...browserForm, cdp_url: e.target.value }); setDirtyBrowser(true); }}
               placeholder="http://127.0.0.1:9222"
@@ -207,8 +205,8 @@ export function BrowserTab({
       <div className="pf-row">
         <div className="pf-field">
           <label className="pf-label">Timeout (ms)</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={1000}
             step={1000}
@@ -218,8 +216,8 @@ export function BrowserTab({
         </div>
         <div className="pf-field">
           <label className="pf-label">Max Screenshot Dimension (px)</label>
-          <input
-            className="pf-input pf-input-num"
+          <Input
+            numeric
             type="number"
             min={256}
             step={256}

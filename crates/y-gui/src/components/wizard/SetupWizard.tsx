@@ -26,6 +26,13 @@ import {
 } from 'lucide-react';
 import { ProviderIconImg } from '../common/ProviderIconPicker';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '../ui/Select';
 import type { GuiConfig } from '../../types';
 import {
   type ProviderFormData,
@@ -602,16 +609,17 @@ export function SetupWizard({
 
       <div className="wizard-field">
         <label className="wizard-field-label">Default Permission</label>
-        <select
-          className="wizard-select"
-          value={defaultPermission}
-          onChange={(e) => setDefaultPermission(e.target.value)}
-        >
-          <option value="allow">Allow -- execute without asking</option>
-          <option value="notify">Notify -- execute and notify user</option>
-          <option value="ask">Ask -- ask for permission before execution</option>
-          <option value="deny">Deny -- block execution by default</option>
-        </select>
+        <Select value={defaultPermission} onValueChange={setDefaultPermission}>
+          <SelectTrigger className="wizard-select">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="allow">Allow -- execute without asking</SelectItem>
+            <SelectItem value="notify">Notify -- execute and notify user</SelectItem>
+            <SelectItem value="ask">Ask -- ask for permission before execution</SelectItem>
+            <SelectItem value="deny">Deny -- block execution by default</SelectItem>
+          </SelectContent>
+        </Select>
         <span className="wizard-field-hint">
           How tool executions are handled when no specific rule matches.
           &quot;Notify&quot; is recommended for most use cases.
