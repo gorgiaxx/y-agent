@@ -76,13 +76,22 @@ impl AnthropicProvider {
         format!("{}/{}", self.base_url.trim_end_matches('/'), endpoint)
     }
 
-    /// Extract the system message from the request, if any.
-    fn extract_system(request: &ChatRequest) -> Option<String> {
+    /// Extract the system message from the request as an array of content blocks
+    /// with `cache_control` for prompt caching.
+    fn extract_system(request: &ChatRequest) -> Option<Vec<AnthropicSystemContent>> {
         request
             .messages
             .iter()
             .find(|m| m.role == y_core::types::Role::System)
-            .map(|m| m.content.clone())
+            .map(|m| {
+                vec![AnthropicSystemContent {
+                    content_type: "text".to_string(),
+                    text: m.content.clone(),
+                    cache_control: Some(AnthropicCacheControl {
+                        cache_type: "ephemeral".to_string(),
+                    }),
+                }]
+            })
     }
 
     /// Build Anthropic messages from a `ChatRequest` (excluding system messages).
@@ -243,9 +252,8 @@ impl AnthropicProvider {
             model: model.to_string(),
             messages,
             system,
-            max_tokens: request.max_tokens.unwrap_or(4096),
+            max_tokens: request.max_tokens.unwrap_or(32000),
             temperature,
-            top_p: request.top_p,
             stream,
             tools,
             stop_sequences: if request.stop.is_empty() {
@@ -880,12 +888,10 @@ struct AnthropicRequest {
     model: String,
     messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
+    system: Option<Vec<AnthropicSystemContent>>,
     max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    top_p: Option<f64>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<AnthropicToolDef>>,
@@ -906,6 +912,24 @@ struct AnthropicThinking {
 #[derive(Debug, Serialize)]
 struct AnthropicOutputConfig {
     effort: String,
+}
+
+/// A content block in the `system` array, supporting `cache_control` for
+/// prompt caching.
+#[derive(Debug, Serialize)]
+struct AnthropicSystemContent {
+    #[serde(rename = "type")]
+    content_type: String,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<AnthropicCacheControl>,
+}
+
+/// Cache control directive for Anthropic system content blocks.
+#[derive(Debug, Serialize)]
+struct AnthropicCacheControl {
+    #[serde(rename = "type")]
+    cache_type: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1056,10 +1080,15 @@ mod tests {
                 role: "user".into(),
                 content: AnthropicContent::Text("Hello".into()),
             }],
-            system: Some("You are a helpful assistant.".into()),
+            system: Some(vec![AnthropicSystemContent {
+                content_type: "text".to_string(),
+                text: "You are a helpful assistant.".to_string(),
+                cache_control: Some(AnthropicCacheControl {
+                    cache_type: "ephemeral".to_string(),
+                }),
+            }]),
             max_tokens: 4096,
             temperature: Some(0.7),
-            top_p: None,
             stream: false,
             tools: None,
             stop_sequences: None,
@@ -1069,9 +1098,15 @@ mod tests {
 
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["model"], "claude-3-5-sonnet-20241022");
-        assert_eq!(json["system"], "You are a helpful assistant.");
+        let system = json["system"].as_array().unwrap();
+        assert_eq!(system.len(), 1);
+        assert_eq!(system[0]["type"], "text");
+        assert_eq!(system[0]["text"], "You are a helpful assistant.");
+        assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
         assert_eq!(json["max_tokens"], 4096);
         assert!(!json["stream"].as_bool().unwrap());
+        // top_p should not be present.
+        assert!(json.get("top_p").is_none());
     }
 
     #[test]
@@ -1172,7 +1207,15 @@ mod tests {
         };
 
         let system = AnthropicProvider::extract_system(&request);
-        assert_eq!(system, Some("You are helpful.".into()));
+        assert!(system.is_some());
+        let system_content = system.unwrap();
+        assert_eq!(system_content.len(), 1);
+        assert_eq!(system_content[0].text, "You are helpful.");
+        assert!(system_content[0].cache_control.is_some());
+        assert_eq!(
+            system_content[0].cache_control.as_ref().unwrap().cache_type,
+            "ephemeral"
+        );
 
         let messages = AnthropicProvider::build_messages(&request);
         assert_eq!(messages.len(), 1); // System excluded.
