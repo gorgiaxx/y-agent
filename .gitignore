@@ -80,3 +80,6 @@ data/
 *.db
 *.db-shm
 *.db-wal
+
+### Test Artifacts
+crates/y-service/file-history/
