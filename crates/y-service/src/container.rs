@@ -347,10 +347,18 @@ impl ServiceContainer {
             file_history_managers: crate::rewind::create_file_history_managers(),
             data_dir: {
                 let db_path = std::path::Path::new(&config.storage.db_path);
-                db_path
-                    .parent()
-                    .unwrap_or(std::path::Path::new("."))
-                    .to_path_buf()
+                // For :memory: databases, use transcript_dir's parent as data_dir
+                // to ensure file-history is created in a temp directory during tests.
+                if db_path.parent().is_none_or(|p| p.as_os_str().is_empty()) {
+                    config
+                        .storage
+                        .transcript_dir
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .to_path_buf()
+                } else {
+                    db_path.parent().unwrap().to_path_buf()
+                }
             },
         })
     }
@@ -619,10 +627,18 @@ tools = ["ToolSearch"]
     ) {
         let knowledge_data_dir = {
             let db_path = std::path::Path::new(&config.storage.db_path);
-            db_path
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join("knowledge")
+            // For :memory: databases, use transcript_dir's parent as base
+            // to ensure knowledge data is created in a temp directory during tests.
+            let base_dir = if db_path.parent().is_none_or(|p| p.as_os_str().is_empty()) {
+                config
+                    .storage
+                    .transcript_dir
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+            } else {
+                db_path.parent().unwrap()
+            };
+            base_dir.join("knowledge")
         };
 
         let embedding_provider: Option<Arc<dyn y_core::embedding::EmbeddingProvider>> = if config
