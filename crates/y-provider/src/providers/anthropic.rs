@@ -112,12 +112,10 @@ impl AnthropicProvider {
                     if let Some(ref tool_call_id) = m.tool_call_id {
                         return AnthropicMessage {
                             role: role.to_string(),
-                            content: AnthropicContent::Blocks(vec![
-                                AnthropicContentBlock::ToolResult {
-                                    tool_use_id: tool_call_id.clone(),
-                                    content: m.content.clone(),
-                                },
-                            ]),
+                            content: AnthropicContent(vec![AnthropicContentBlock::ToolResult {
+                                tool_use_id: tool_call_id.clone(),
+                                content: m.content.clone(),
+                            }]),
                         };
                     }
                 }
@@ -138,7 +136,7 @@ impl AnthropicProvider {
                     }));
                     return AnthropicMessage {
                         role: role.to_string(),
-                        content: AnthropicContent::Blocks(blocks),
+                        content: AnthropicContent(blocks),
                     };
                 }
 
@@ -169,7 +167,7 @@ impl AnthropicProvider {
                                 }
                                 return AnthropicMessage {
                                     role: role.to_string(),
-                                    content: AnthropicContent::Blocks(blocks),
+                                    content: AnthropicContent(blocks),
                                 };
                             }
                         }
@@ -178,7 +176,9 @@ impl AnthropicProvider {
 
                 AnthropicMessage {
                     role: role.to_string(),
-                    content: AnthropicContent::Text(m.content.clone()),
+                    content: AnthropicContent(vec![AnthropicContentBlock::Text {
+                        text: m.content.clone(),
+                    }]),
                 }
             })
             .collect()
@@ -949,13 +949,9 @@ struct AnthropicMessage {
     content: AnthropicContent,
 }
 
-/// Anthropic content can be a string or an array of content blocks.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-enum AnthropicContent {
-    Text(String),
-    Blocks(Vec<AnthropicContentBlock>),
-}
+/// Anthropic message content is always an array of content blocks.
+#[derive(Debug, Serialize)]
+struct AnthropicContent(Vec<AnthropicContentBlock>);
 
 /// A single content block in an Anthropic response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1089,7 +1085,9 @@ mod tests {
             model: "claude-3-5-sonnet-20241022".into(),
             messages: vec![AnthropicMessage {
                 role: "user".into(),
-                content: AnthropicContent::Text("Hello".into()),
+                content: AnthropicContent(vec![AnthropicContentBlock::Text {
+                    text: "Hello".into(),
+                }]),
             }],
             system: Some(vec![AnthropicSystemContent {
                 content_type: "text".to_string(),
@@ -1289,7 +1287,7 @@ mod tests {
         assert_eq!(messages[2].role, "user");
 
         match &messages[1].content {
-            AnthropicContent::Blocks(blocks) => {
+            AnthropicContent(blocks) => {
                 assert_eq!(blocks.len(), 2);
                 assert!(matches!(
                     &blocks[0],
@@ -1303,13 +1301,10 @@ mod tests {
                             && input == &serde_json::json!({ "command": "uname -a" })
                 ));
             }
-            AnthropicContent::Text(_) => {
-                panic!("assistant tool call should be serialized as blocks")
-            }
         }
 
         match &messages[2].content {
-            AnthropicContent::Blocks(blocks) => {
+            AnthropicContent(blocks) => {
                 assert_eq!(blocks.len(), 1);
                 assert!(matches!(
                     &blocks[0],
@@ -1317,7 +1312,6 @@ mod tests {
                         if tool_use_id == "call_123" && content == "{\"stdout\":\"Darwin\"}"
                 ));
             }
-            AnthropicContent::Text(_) => panic!("tool result should be serialized as blocks"),
         }
     }
 
