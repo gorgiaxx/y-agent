@@ -92,11 +92,11 @@ interface UseChatReturn {
   cancelEdit: () => void;
   /** Execute edit and resend: undo to checkpoint then send new content.
    *  This is the transactional compound operation called from handleSend. */
-  editAndResend: (sessionId: string, newContent: string, providerId?: string) => Promise<ChatStarted | null>;
+  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode) => Promise<ChatStarted | null>;
   /** Undo to a specific message: rolls back all state to before that message was sent. */
   undoToMessage: (sessionId: string, messageId: string) => Promise<UndoResult | null>;
   /** Resend: keep user message, remove assistant reply, re-run LLM. */
-  resendLastTurn: (sessionId: string, messageId: string, content: string, providerId?: string) => Promise<ChatStarted | null>;
+  resendLastTurn: (sessionId: string, messageId: string, content: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode) => Promise<ChatStarted | null>;
   /** Restore a tombstoned branch. */
   restoreBranch: (sessionId: string, checkpointId: string) => Promise<RestoreResult | null>;
   /** All context reset points for the active session (empty = no resets). */
@@ -125,7 +125,10 @@ export interface CompactInfo {
 // Hook
 // ---------------------------------------------------------------------------
 
-export function useChat(activeSessionId: string | null): UseChatReturn {
+export function useChat(
+  activeSessionId: string | null,
+  rootAgentNames: string[] = ['chat-turn'],
+): UseChatReturn {
   // Per-session message cache -- survives session switches.
   const sessionMessagesRef = useRef(new Map<string, Message[]>());
 
@@ -202,6 +205,12 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   // Per-session compaction points (divider + summary info after /compact completes).
   const compactMapRef = useRef(new Map<string, CompactInfo[]>());
   const [compactPoints, setCompactPoints] = useState<CompactInfo[]>([]);
+
+  const rootAgentNamesRef = useRef<string[]>(['chat-turn']);
+  useEffect(() => {
+    const names = rootAgentNames.filter(Boolean);
+    rootAgentNamesRef.current = names.length > 0 ? names : ['chat-turn'];
+  }, [rootAgentNames]);
 
   const markSessionActivity = useCallback((sessionId: string, at: number = Date.now()) => {
     sessionActivityRef.current.set(sessionId, at);
@@ -317,7 +326,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         }
         console.log('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
       } else if (event.type === 'stream_delta') {
-        if (!shouldDisplayStreamingAgent(event.agent_name)) {
+        if (!shouldDisplayStreamingAgent(event.agent_name, rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -373,7 +382,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
         });
         syncVisible(sid);
       } else if (event.type === 'stream_reasoning_delta') {
-        if (!shouldDisplayStreamingAgent(event.agent_name)) {
+        if (!shouldDisplayStreamingAgent(event.agent_name, rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -1083,7 +1092,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   // ------------------------------------------------------------------
 
   const editAndResend = useCallback(
-    async (sessionId: string, newContent: string, providerId?: string): Promise<ChatStarted | null> => {
+    async (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode): Promise<ChatStarted | null> => {
       if (opStatusRef.current !== 'idle') {
         console.warn(`[chat] editAndResend blocked: opStatus=${opStatusRef.current}`);
         return null;
@@ -1149,6 +1158,8 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                 message: newContent,
                 sessionId,
                 providerId: providerId ?? null,
+                thinkingEffort: thinkingEffort ?? null,
+                planMode: planMode ?? null,
               });
               return result;
             }
@@ -1191,6 +1202,8 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             message: newContent,
             sessionId,
             providerId: providerId ?? null,
+            thinkingEffort: thinkingEffort ?? null,
+            planMode: planMode ?? null,
           });
           // opStatus transitions to idle on chat:complete/chat:error via the bus handler.
           return result;
@@ -1290,7 +1303,7 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
   // ------------------------------------------------------------------
 
   const resendLastTurn = useCallback(
-    async (sessionId: string, messageId: string, content: string, providerId?: string): Promise<ChatStarted | null> => {
+    async (sessionId: string, messageId: string, content: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode): Promise<ChatStarted | null> => {
       console.log(`[chat] resendLastTurn called, opStatus=${opStatusRef.current}, sessionId=${sessionId}, messageId=${messageId}`);
       if (opStatusRef.current !== 'idle') {
         console.warn(`[chat] resendLastTurn blocked: opStatus=${opStatusRef.current}`);
@@ -1354,6 +1367,8 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
                 message: content,
                 sessionId,
                 providerId: providerId ?? null,
+                thinkingEffort: thinkingEffort ?? null,
+                planMode: planMode ?? null,
               });
               console.log('[chat] resendLastTurn: fallback chat_send result', result);
               return result;
@@ -1380,6 +1395,8 @@ export function useChat(activeSessionId: string | null): UseChatReturn {
             sessionId,
             checkpointId: checkpoint.checkpoint_id,
             providerId: providerId ?? null,
+            thinkingEffort: thinkingEffort ?? null,
+            planMode: planMode ?? null,
           });
           console.log('[chat] resendLastTurn: chat_resend result', result);
           // opStatus transitions to idle on chat:complete/chat:error via the bus handler.

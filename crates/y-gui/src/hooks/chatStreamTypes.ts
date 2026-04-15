@@ -11,6 +11,19 @@ export interface ToolResultRecord {
   metadata?: Record<string, unknown>;
 }
 
-export function shouldDisplayStreamingAgent(agentName?: string): boolean {
-  return agentName == null || agentName === '' || agentName === 'chat-turn';
+export function shouldDisplayStreamingAgent(
+  agentName?: string,
+  rootAgentNames: Iterable<string> = ['chat-turn'],
+): boolean {
+  if (agentName == null || agentName === '') {
+    return true;
+  }
+
+  for (const rootAgentName of rootAgentNames) {
+    if (agentName === rootAgentName) {
+      return true;
+    }
+  }
+
+  return false;
 }
