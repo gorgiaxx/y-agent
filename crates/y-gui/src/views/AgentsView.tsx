@@ -4,7 +4,6 @@ import { AgentEditorDialog } from '../components/agents/AgentEditorDialog';
 import { AgentOverview } from '../components/agents/AgentOverview';
 import { AgentStudio } from '../components/agents/AgentStudio';
 import {
-  useChatContext,
   useNavigationContext,
   useAgentsContext,
   useProvidersContext,
@@ -13,6 +12,7 @@ import {
   useKnowledgeContext,
   useWorkspacesContext,
 } from '../providers/AppContexts';
+import { useChat } from '../hooks/useChat';
 import { useSessions } from '../hooks/useSessions';
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
@@ -26,7 +26,6 @@ import './AgentsView.css';
 
 export function AgentsView() {
   const nav = useNavigationContext();
-  const chatHooks = useChatContext();
   const {
     agents,
     tools,
@@ -50,7 +49,12 @@ export function AgentsView() {
     selectSession: selectAgentSession,
     refreshSessions: refreshAgentSessions,
   } = sessionHooks;
-  const { loadMessages, clearMessages } = chatHooks;
+  const agentRootNames = useMemo(
+    () => (nav.activeAgentId ? [nav.activeAgentId] : ['chat-turn']),
+    [nav.activeAgentId],
+  );
+  const agentChatHooks = useChat(agentActiveSessionId, agentRootNames);
+  const { loadMessages, clearMessages } = agentChatHooks;
 
   const [selectedAgentDetail, setSelectedAgentDetail] = useState<AgentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -116,12 +120,12 @@ export function AgentsView() {
   const diagnostics = useDiagnostics(sessionHooks.activeSessionId);
   const statusBarMeta = useStatusBarMeta({
     activeSessionId: sessionHooks.activeSessionId,
-    messages: chatHooks.messages,
-    isStreaming: chatHooks.isStreaming,
-    isLoadingMessages: chatHooks.isLoadingMessages,
+    messages: agentChatHooks.messages,
+    isStreaming: agentChatHooks.isStreaming,
+    isLoadingMessages: agentChatHooks.isLoadingMessages,
     diagnosticEntries: diagnostics.entries,
     isDiagnosticsActive: diagnostics.isActive,
-    rootAgentNames: nav.activeAgentId ? [nav.activeAgentId] : ['chat-turn'],
+    rootAgentNames: agentRootNames,
   });
   const interactions = useSessionInteractions(sessionHooks.activeSessionId);
 
@@ -295,9 +299,9 @@ export function AgentsView() {
   }, [sessionHooks, workspaceHooks]);
 
   const inputDisabled = detailLoading
-    || chatHooks.isStreaming
-    || chatHooks.opStatus === 'compacting'
-    || (chatHooks.opStatus !== 'idle' && chatHooks.opStatus !== 'sending');
+    || agentChatHooks.isStreaming
+    || agentChatHooks.opStatus === 'compacting'
+    || (agentChatHooks.opStatus !== 'idle' && agentChatHooks.opStatus !== 'sending');
 
   const chatHandlers = useChatHandlers({
     activeSessionId: sessionHooks.activeSessionId,
@@ -305,27 +309,29 @@ export function AgentsView() {
     selectSession: sessionHooks.selectSession,
     deleteSession: sessionHooks.deleteSession,
     refreshSessions: sessionHooks.refreshSessions,
-    clearMessages: chatHooks.clearMessages,
-    sendMessage: chatHooks.sendMessage,
-    editAndResend: chatHooks.editAndResend,
-    editMessage: chatHooks.editMessage,
-    cancelEdit: chatHooks.cancelEdit,
-    undoToMessage: chatHooks.undoToMessage,
-    resendLastTurn: chatHooks.resendLastTurn,
-    restoreBranch: chatHooks.restoreBranch,
-    pendingEdit: chatHooks.pendingEdit,
-    loadMessages: chatHooks.loadMessages,
+    clearMessages: agentChatHooks.clearMessages,
+    sendMessage: agentChatHooks.sendMessage,
+    editAndResend: agentChatHooks.editAndResend,
+    editMessage: agentChatHooks.editMessage,
+    cancelEdit: agentChatHooks.cancelEdit,
+    undoToMessage: agentChatHooks.undoToMessage,
+    resendLastTurn: agentChatHooks.resendLastTurn,
+    restoreBranch: agentChatHooks.restoreBranch,
+    pendingEdit: agentChatHooks.pendingEdit,
+    loadMessages: agentChatHooks.loadMessages,
     selectedProviderId,
+    thinkingEffort,
+    planMode,
     welcomeWorkspaceId: null,
     assignSession: async () => {},
     refreshWorkspaces: async () => {},
     addUserMessage: diagnostics.addUserMessage,
-    addCompactPoint: chatHooks.addCompactPoint,
-    setOp: chatHooks.setOp,
+    addCompactPoint: agentChatHooks.addCompactPoint,
+    setOp: agentChatHooks.setOp,
     setActiveView: nav.setActiveView,
     setDiagOpen: (fn) => nav.setDiagOpen(fn(nav.diagOpen)),
     setObsOpen: (fn) => nav.setObsOpen(fn(nav.obsOpen)),
-    messages: chatHooks.messages,
+    messages: agentChatHooks.messages,
     onSetRewindDraft: setRewindDraft,
   });
 
@@ -431,14 +437,16 @@ export function AgentsView() {
                 detailLoading={detailLoading}
                 sessions={sessionHooks.sessions}
                 activeSessionId={sessionHooks.activeSessionId}
-                messages={chatHooks.messages}
-                isStreaming={chatHooks.isStreaming}
-                isLoadingMessages={chatHooks.isLoadingMessages}
-                error={chatHooks.error}
-                toolResults={chatHooks.toolResults}
-                getStreamSegments={chatHooks.getStreamSegments}
-                contextResetPoints={chatHooks.contextResetPoints}
-                compactPoints={chatHooks.compactPoints}
+                sessionsLoading={sessionHooks.loading}
+                streamingSessionIds={agentChatHooks.streamingSessionIds}
+                messages={agentChatHooks.messages}
+                isStreaming={agentChatHooks.isStreaming}
+                isLoadingMessages={agentChatHooks.isLoadingMessages}
+                error={agentChatHooks.error}
+                toolResults={agentChatHooks.toolResults}
+                getStreamSegments={agentChatHooks.getStreamSegments}
+                contextResetPoints={agentChatHooks.contextResetPoints}
+                compactPoints={agentChatHooks.compactPoints}
                 providerCount={providerHooks.systemStatus?.provider_count ?? 0}
                 version={providerHooks.systemStatus?.version ?? 'debug'}
                 activeModel={statusBarMeta.provider}
@@ -461,8 +469,8 @@ export function AgentsView() {
                 visibleSkills={visibleSkills}
                 visibleKnowledge={visibleKnowledge}
                 inputExpanded={nav.inputExpanded}
-                pendingEdit={chatHooks.pendingEdit}
-                isCompacting={chatHooks.opStatus === 'compacting'}
+                pendingEdit={agentChatHooks.pendingEdit}
+                isCompacting={agentChatHooks.opStatus === 'compacting'}
                 hasCustomPrompt={sessionHooks.sessions.find((session) => session.id === sessionHooks.activeSessionId)?.has_custom_prompt ?? false}
                 rewindDraft={rewindDraft}
                 askUserData={interactions.askUserData}
@@ -473,7 +481,7 @@ export function AgentsView() {
                 onDeleteSession={(id) => void sessionHooks.deleteSession(id)}
                 onForkMessage={(messageIndex) => void handleForkMessage(messageIndex)}
                 onSend={chatHandlers.handleSend}
-                onStop={chatHooks.cancelRun}
+                onStop={agentChatHooks.cancelRun}
                 onCommand={chatHandlers.handleCommand}
                 onSelectProvider={setSelectedProviderId}
                 onThinkingEffortChange={setThinkingEffort}
@@ -481,7 +489,7 @@ export function AgentsView() {
                 onExpandChange={nav.setInputExpanded}
                 onCancelEdit={chatHandlers.handleCancelEdit}
                 onClearSession={() => void chatHandlers.handleClearSession()}
-                onAddContextReset={chatHooks.addContextReset}
+                onAddContextReset={agentChatHooks.addContextReset}
                 onEditMessage={chatHandlers.handleEditMessage}
                 onUndoMessage={chatHandlers.handleUndoMessage}
                 onResendMessage={chatHandlers.handleResendMessage}
