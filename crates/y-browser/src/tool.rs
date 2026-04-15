@@ -307,7 +307,7 @@ impl BrowserTool {
         let text = self
             .session
             .actions()
-            .get_accessibility_text(800, false)
+            .get_page_text()
             .await
             .map_err(cdp_to_tool_error)?;
 
