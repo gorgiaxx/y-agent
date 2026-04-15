@@ -61,6 +61,7 @@ coverage/
 .DS_Store?
 .cursor/
 .claude/
+.opencode/
 .turbo/
 .parcel-cache/
 .eslintcache
