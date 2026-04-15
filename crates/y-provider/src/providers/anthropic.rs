@@ -210,9 +210,20 @@ impl AnthropicProvider {
                                     .get("description")
                                     .and_then(|d| d.as_str())
                                     .map(String::from),
-                                input_schema: func.get("parameters").cloned().unwrap_or(
-                                    serde_json::json!({"type": "object", "properties": {}}),
-                                ),
+                                input_schema: {
+                                    let mut schema = func.get("parameters").cloned().unwrap_or(
+                                        serde_json::json!({"type": "object", "properties": {}}),
+                                    );
+                                    if let Some(obj) = schema.as_object_mut() {
+                                        obj.insert(
+                                            "$schema".to_string(),
+                                            serde_json::json!(
+                                                "https://json-schema.org/draft/2020-12/schema"
+                                            ),
+                                        );
+                                    }
+                                    schema
+                                },
                             })
                         })
                         .collect();
@@ -1345,6 +1356,7 @@ mod tests {
             name: "get_weather".into(),
             description: Some("Get the weather".into()),
             input_schema: serde_json::json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
                     "city": {"type": "string"}
@@ -1355,6 +1367,10 @@ mod tests {
         let json = serde_json::to_value(&tool).unwrap();
         assert_eq!(json["name"], "get_weather");
         assert_eq!(json["input_schema"]["type"], "object");
+        assert_eq!(
+            json["input_schema"]["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
     }
 
     #[test]
