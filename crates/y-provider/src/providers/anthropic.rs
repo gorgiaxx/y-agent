@@ -113,6 +113,26 @@ impl AnthropicProvider {
                     }
                 }
 
+                if m.role == y_core::types::Role::Assistant && !m.tool_calls.is_empty() {
+                    let mut blocks = Vec::with_capacity(1 + m.tool_calls.len());
+                    if !m.content.is_empty() {
+                        blocks.push(AnthropicContentBlock::Text {
+                            text: m.content.clone(),
+                        });
+                    }
+                    blocks.extend(m.tool_calls.iter().map(|tool_call| {
+                        AnthropicContentBlock::ToolUse {
+                            id: tool_call.id.clone(),
+                            name: tool_call.name.clone(),
+                            input: tool_call.arguments.clone(),
+                        }
+                    }));
+                    return AnthropicMessage {
+                        role: role.to_string(),
+                        content: AnthropicContent::Blocks(blocks),
+                    };
+                }
+
                 // Check for image attachments in metadata (multimodal).
                 if m.role == y_core::types::Role::User {
                     if let Some(attachments) = m.metadata.get("attachments") {
@@ -1157,6 +1177,94 @@ mod tests {
         let messages = AnthropicProvider::build_messages(&request);
         assert_eq!(messages.len(), 1); // System excluded.
         assert_eq!(messages[0].role, "user");
+    }
+
+    #[test]
+    fn test_build_messages_restores_assistant_tool_use_before_tool_result() {
+        use y_core::types::{Message, Role, ToolCallRequest};
+
+        let tool_call = ToolCallRequest {
+            id: "call_123".into(),
+            name: "ShellExec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        };
+        let request = ChatRequest {
+            messages: vec![
+                Message {
+                    message_id: String::new(),
+                    role: Role::User,
+                    content: "Check system info".into(),
+                    tool_call_id: None,
+                    tool_calls: vec![],
+                    timestamp: chrono::Utc::now(),
+                    metadata: serde_json::Value::Null,
+                },
+                Message {
+                    message_id: String::new(),
+                    role: Role::Assistant,
+                    content: "I'll inspect the machine.\n".into(),
+                    tool_call_id: None,
+                    tool_calls: vec![tool_call.clone()],
+                    timestamp: chrono::Utc::now(),
+                    metadata: serde_json::Value::Null,
+                },
+                Message {
+                    message_id: String::new(),
+                    role: Role::Tool,
+                    content: "{\"stdout\":\"Darwin\"}".into(),
+                    tool_call_id: Some(tool_call.id.clone()),
+                    tool_calls: vec![],
+                    timestamp: chrono::Utc::now(),
+                    metadata: serde_json::Value::Null,
+                },
+            ],
+            model: None,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: ToolCallingMode::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+        };
+
+        let messages = AnthropicProvider::build_messages(&request);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[2].role, "user");
+
+        match &messages[1].content {
+            AnthropicContent::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 2);
+                assert!(matches!(
+                    &blocks[0],
+                    AnthropicContentBlock::Text { text } if text == "I'll inspect the machine.\n"
+                ));
+                assert!(matches!(
+                    &blocks[1],
+                    AnthropicContentBlock::ToolUse { id, name, input }
+                        if id == "call_123"
+                            && name == "ShellExec"
+                            && input == &serde_json::json!({ "command": "uname -a" })
+                ));
+            }
+            AnthropicContent::Text(_) => {
+                panic!("assistant tool call should be serialized as blocks")
+            }
+        }
+
+        match &messages[2].content {
+            AnthropicContent::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 1);
+                assert!(matches!(
+                    &blocks[0],
+                    AnthropicContentBlock::ToolResult { tool_use_id, content }
+                        if tool_use_id == "call_123" && content == "{\"stdout\":\"Darwin\"}"
+                ));
+            }
+            AnthropicContent::Text(_) => panic!("tool result should be serialized as blocks"),
+        }
     }
 
     #[test]
