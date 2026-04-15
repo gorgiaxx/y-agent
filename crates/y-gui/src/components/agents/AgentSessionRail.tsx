@@ -1,15 +1,15 @@
-import { Plus, Settings2, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Settings2, Trash2 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { ScrollArea } from '../ui/ScrollArea';
+import type { SessionInfo } from '../../types';
+import { formatSessionRelativeTime } from '../chat-panel/sessionListActivity';
 
 interface AgentSessionRailProps {
-  sessions: Array<{
-    id: string;
-    title: string | null;
-    message_count: number;
-  }>;
+  sessions: SessionInfo[];
   activeSessionId: string | null;
+  loading: boolean;
+  streamingSessionIds: Set<string>;
   onEdit: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
@@ -19,6 +19,8 @@ interface AgentSessionRailProps {
 export function AgentSessionRail({
   sessions,
   activeSessionId,
+  loading,
+  streamingSessionIds,
   onEdit,
   onNewSession,
   onSelectSession,
@@ -37,19 +39,40 @@ export function AgentSessionRail({
 
       <div className="agents-session-list-header">
         <span>Sessions</span>
-        <Badge variant="outline">{sessions.length}</Badge>
+        <div className="agents-session-list-header-meta">
+          {loading && (
+            <span className="agents-session-list-loading" aria-label="Loading sessions">
+              <Loader2 size={12} className="agents-spin" />
+            </span>
+          )}
+          <Badge variant="outline">{sessions.length}</Badge>
+        </div>
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
         <div className="agents-session-list">
+          {loading && sessions.length === 0 && (
+            <div className="agents-session-empty">
+              <Loader2 size={14} className="agents-spin" />
+              <span>Loading sessions...</span>
+            </div>
+          )}
+
           {sessions.map((session) => (
             <div
               key={session.id}
               className={[
                 'agents-session-item',
                 session.id === activeSessionId ? 'agents-session-item--active' : '',
+                streamingSessionIds.has(session.id) ? 'agents-session-item--streaming' : '',
               ].filter(Boolean).join(' ')}
             >
+              {streamingSessionIds.has(session.id) ? (
+                <span className="agents-session-item-spinner" aria-hidden="true" />
+              ) : (
+                <span className="agents-session-item-spinner-placeholder" aria-hidden="true" />
+              )}
+
               <button
                 type="button"
                 className="agents-session-item-main"
@@ -63,6 +86,15 @@ export function AgentSessionRail({
                 </span>
               </button>
 
+              <span
+                className={[
+                  'agents-session-item-time',
+                  streamingSessionIds.has(session.id) ? 'agents-session-item-time--now' : '',
+                ].filter(Boolean).join(' ')}
+              >
+                {formatSessionRelativeTime(session.updated_at, streamingSessionIds.has(session.id))}
+              </span>
+
               <Button
                 variant="icon"
                 size="sm"
@@ -74,7 +106,7 @@ export function AgentSessionRail({
             </div>
           ))}
 
-          {sessions.length === 0 && (
+          {!loading && sessions.length === 0 && (
             <div className="agents-session-empty">No sessions yet.</div>
           )}
         </div>
