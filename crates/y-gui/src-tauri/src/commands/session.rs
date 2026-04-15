@@ -3,7 +3,7 @@
 use serde::Serialize;
 use tauri::State;
 
-use y_core::session::{CreateSessionOptions, SessionFilter, SessionType};
+use y_core::session::{CreateSessionOptions, SessionFilter, SessionState, SessionType};
 use y_core::types::SessionId;
 
 use crate::state::AppState;
@@ -24,8 +24,8 @@ pub struct SessionInfo {
     pub has_custom_prompt: bool,
 }
 
-fn is_user_visible_session(session_type: &SessionType) -> bool {
-    session_type.is_user_facing()
+fn is_user_visible_session(session_type: &SessionType, state: &SessionState) -> bool {
+    session_type.is_user_facing() && *state == SessionState::Active
 }
 
 /// A message in the session transcript.
@@ -64,6 +64,7 @@ pub async fn session_list(
 ) -> Result<Vec<SessionInfo>, String> {
     let filter = SessionFilter {
         agent_id: agent_id.map(y_core::types::AgentId::from_string),
+        state: Some(SessionState::Active),
         ..SessionFilter::default()
     };
     let sessions = state
@@ -88,7 +89,7 @@ pub async fn session_list(
 
     let mut infos: Vec<SessionInfo> = sessions
         .into_iter()
-        .filter(|session| is_user_visible_session(&session.session_type))
+        .filter(|session| is_user_visible_session(&session.session_type, &session.state))
         .map(|s| {
             let has_custom = custom_prompt_ids.contains(&s.id.0);
             SessionInfo {
@@ -107,6 +108,37 @@ pub async fn session_list(
     infos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     Ok(infos)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_user_visible_session;
+    use y_core::session::{SessionState, SessionType};
+
+    #[test]
+    fn test_user_visible_session_requires_active_state() {
+        assert!(is_user_visible_session(
+            &SessionType::Main,
+            &SessionState::Active
+        ));
+        assert!(is_user_visible_session(
+            &SessionType::Branch,
+            &SessionState::Active
+        ));
+
+        assert!(!is_user_visible_session(
+            &SessionType::Main,
+            &SessionState::Archived
+        ));
+        assert!(!is_user_visible_session(
+            &SessionType::Main,
+            &SessionState::Tombstone
+        ));
+        assert!(!is_user_visible_session(
+            &SessionType::SubAgent,
+            &SessionState::Active
+        ));
+    }
 }
 
 /// Create a new session.
@@ -190,10 +222,10 @@ pub async fn session_get_messages(
         .collect())
 }
 
-/// Hard-delete a session from the database.
+/// Delete a session from the GUI list.
 ///
-/// This permanently removes the session metadata and clears its transcript.
-/// Any in-progress runs for this session should have completed before calling this.
+/// Backend semantics are a soft-delete: mark the session tombstone and clear
+/// transcript content. This keeps referential integrity for internal tables.
 #[tauri::command]
 pub async fn session_delete(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     let sid = SessionId(session_id);

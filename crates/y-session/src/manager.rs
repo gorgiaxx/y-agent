@@ -287,17 +287,49 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Hard-delete a session: removes the metadata row, clears both transcripts.
+    /// Delete a session and clear transcript content.
     ///
-    /// This is irreversible. Any in-progress runs for this session should have
-    /// completed or been cancelled before calling this.
+    /// Preferred path is hard-delete of metadata row.
+    /// If hard-delete is blocked by foreign-key dependencies, fallback to
+    /// soft-delete (mark session as tombstone) to preserve referential integrity.
     #[instrument(skip(self), fields(session_id = %id))]
     pub async fn delete_session(&self, id: &SessionId) -> Result<(), SessionManagerError> {
-        // Remove message transcripts first (best-effort; continue if they fail).
-        let _ = self.display_transcript_store.truncate(id, 0).await;
-        let _ = self.transcript_store.truncate(id, 0).await;
-        // Hard-delete the session metadata row.
-        self.session_store.delete(id).await?;
+        let session = self.session_store.get(id).await?;
+
+        let hard_deleted = match self.session_store.delete(id).await {
+            Ok(()) => true,
+            Err(e) if is_foreign_key_delete_error(&e) => {
+                tracing::warn!(
+                    session_id = %id,
+                    error = %e,
+                    "hard-delete blocked by foreign key, falling back to tombstone"
+                );
+                false
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        if !hard_deleted {
+            if session.state != SessionState::Tombstone {
+                StateMachine::validate_transition(&session.state, &SessionState::Tombstone)?;
+                self.session_store
+                    .set_state(id, SessionState::Tombstone)
+                    .await?;
+            }
+            if let Err(e) = self.session_store.update_metadata(id, None, 0, 0).await {
+                tracing::warn!(session_id = %id, error = %e, "failed to reset session counters");
+            }
+        }
+
+        // Best-effort cleanup: deletion should still succeed even if transcript
+        // files are missing/corrupted.
+        if let Err(e) = self.display_transcript_store.truncate(id, 0).await {
+            tracing::warn!(session_id = %id, error = %e, "failed to clear display transcript");
+        }
+        if let Err(e) = self.transcript_store.truncate(id, 0).await {
+            tracing::warn!(session_id = %id, error = %e, "failed to clear context transcript");
+        }
+
         Ok(())
     }
 
@@ -540,6 +572,14 @@ impl std::fmt::Debug for SessionManager {
             .field("config", &*self.config.read().unwrap())
             .finish_non_exhaustive()
     }
+}
+
+fn is_foreign_key_delete_error(error: &y_core::session::SessionError) -> bool {
+    matches!(
+        error,
+        y_core::session::SessionError::StorageError { message }
+            if message.contains("FOREIGN KEY constraint failed")
+    )
 }
 
 #[cfg(test)]
@@ -975,5 +1015,45 @@ mod tests {
         );
         assert!(!collected_ids.contains(&root.id));
         assert!(!collected_ids.contains(&sibling.id));
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_tombstones_and_clears_transcripts() {
+        let mgr = setup().await;
+        let parent = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("parent".into()),
+            })
+            .await
+            .unwrap();
+
+        let _child = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: Some(parent.id.clone()),
+                session_type: SessionType::SubAgent,
+                agent_id: None,
+                title: Some("child".into()),
+            })
+            .await
+            .unwrap();
+
+        mgr.append_message(&parent.id, &test_msg("to be deleted"))
+            .await
+            .unwrap();
+
+        mgr.delete_session(&parent.id).await.unwrap();
+
+        let parent_after = mgr.get_session(&parent.id).await.unwrap();
+        assert_eq!(parent_after.state, SessionState::Tombstone);
+        assert_eq!(parent_after.message_count, 0);
+        assert_eq!(parent_after.token_count, 0);
+
+        let context_msgs = mgr.read_transcript(&parent.id).await.unwrap();
+        let display_msgs = mgr.read_display_transcript(&parent.id).await.unwrap();
+        assert!(context_msgs.is_empty());
+        assert!(display_msgs.is_empty());
     }
 }
