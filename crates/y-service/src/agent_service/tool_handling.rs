@@ -173,7 +173,7 @@ pub(crate) async fn handle_prompt_based_tool_calls(
         .tool_calls
         .iter()
         .map(|ptc| ToolCallRequest {
-            id: format!("prompt_{}", uuid::Uuid::new_v4()),
+            id: format!("call_{}", &uuid::Uuid::new_v4().simple().to_string()[..24]),
             name: ptc.name.clone(),
             arguments: ptc.arguments.clone(),
         })

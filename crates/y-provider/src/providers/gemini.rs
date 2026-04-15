@@ -232,7 +232,7 @@ impl GeminiProvider {
                 }
                 GeminiPart::FunctionCall { function_call } => {
                     tool_calls.push(ToolCallRequest {
-                        id: format!("call_{}", uuid::Uuid::new_v4()),
+                        id: format!("call_{}", &uuid::Uuid::new_v4().simple().to_string()[..24]),
                         name: function_call.name.clone(),
                         arguments: function_call.args.clone(),
                     });
@@ -500,7 +500,7 @@ fn map_gemini_stream_chunk(resp: &GeminiResponse, _model: &str) -> ChatStreamChu
                 }
                 GeminiPart::FunctionCall { function_call } => {
                     delta_tool_calls.push(ToolCallRequest {
-                        id: format!("call_{}", uuid::Uuid::new_v4()),
+                        id: format!("call_{}", &uuid::Uuid::new_v4().simple().to_string()[..24]),
                         name: function_call.name.clone(),
                         arguments: function_call.args.clone(),
                     });
