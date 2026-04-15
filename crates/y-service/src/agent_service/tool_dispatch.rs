@@ -302,6 +302,13 @@ pub(crate) async fn execute_and_record_tool(
             // action, search_engine, navigation) before sending to the
             // LLM. Only keep text + url/title for context.
             let stripped = strip_url_tool_result(&tc.name, &output.content);
+            // Global safety net: ensure no tool result exceeds 10K chars in
+            // the LLM path. Per-tool truncation handles most cases, but this
+            // catches MCP tools, meta-tools, or any tool that slips through.
+            let stripped = y_prompt::budget::truncate_tool_result(
+                &stripped,
+                y_prompt::budget::MAX_TOOL_RESULT_CHARS,
+            );
             let metadata = (!output.metadata.is_null()).then_some(output.metadata);
             (true, full, stripped, metadata)
         }
@@ -391,6 +398,10 @@ async fn intercept_ask_user(
     // Block this iteration until the user answers.
     let answer = answer_rx.await.ok()?;
     let answer_content = serde_json::to_string(&answer).unwrap_or_else(|_| answer.to_string());
+    let answer_content = y_prompt::budget::truncate_tool_result(
+        &answer_content,
+        y_prompt::budget::MAX_TOOL_RESULT_CHARS,
+    );
 
     // Update the already-pushed ToolCallRecord with the real user answer so
     // diagnostics and session persistence reflect the actual result instead
