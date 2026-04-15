@@ -126,7 +126,7 @@ export function AgentsSidebarPanel({
                         onClick={() => onSelectAgent(agent.id)}
                       >
                         <div className="agents-sidebar-item-glyph">
-                          <AgentGlyph icon={agent.icon} name={agent.name} size={15} />
+                          <AgentGlyph id={agent.id} name={agent.name} size={15} />
                         </div>
 
                         <div className="agents-sidebar-item-body">
