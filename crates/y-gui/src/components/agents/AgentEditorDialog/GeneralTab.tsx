@@ -1,7 +1,6 @@
 import { Input, Textarea } from '../../ui/Input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/Select';
 import { Checkbox } from '../../ui/Checkbox';
-import { AGENT_ICON_OPTIONS } from '../agentDisplay';
 import type { AgentDraft } from '../types';
 
 interface GeneralTabProps {
@@ -47,38 +46,6 @@ export function GeneralTab({ mode, draft, agents, onChange, onApplyTemplate }: G
           placeholder="Code Reviewer"
         />
       </label>
-      <div className="col-span-2 flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Icon Token</span>
-        <div className="flex items-center gap-2">
-          <Input
-            value={draft.icon}
-            onChange={(event) => onChange((prev) => ({ ...prev, icon: event.target.value }))}
-            placeholder="bot"
-            className="flex-1"
-          />
-        </div>
-        <span className="text-10px text-[var(--text-muted)]">
-          Use a token such as <code>bot</code> or <code>knowledge</code> to keep the UI icon system consistent.
-        </span>
-        <div className="flex flex-wrap gap-1.5">
-          {AGENT_ICON_OPTIONS.map((option) => (
-            <button
-              key={option.label}
-              className={[
-                'flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-sm)] border border-solid',
-                'text-10px transition-colors duration-150',
-                draft.icon === option.value
-                  ? 'border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]'
-                  : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-focus)] hover:text-[var(--text-secondary)]',
-              ].join(' ')}
-              onClick={() => onChange((prev) => ({ ...prev, icon: option.value }))}
-            >
-              <option.Icon size={12} />
-              <span>{option.label}</span>
-            </button>
-          ))}
-        </div>
-      </div>
       <label className="col-span-2 flex flex-col gap-1.5">
         <span className="text-11px text-[var(--text-secondary)]">Description</span>
         <Textarea

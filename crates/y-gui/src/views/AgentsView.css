@@ -183,7 +183,6 @@
 .agents-sidebar-item:hover {
   border-color: var(--border);
   background: var(--surface-hover);
-  transform: translateY(-1px);
 }
 
 .agents-sidebar-item--active {

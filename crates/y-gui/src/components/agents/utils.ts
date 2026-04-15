@@ -30,7 +30,6 @@ export function buildDraft(detail?: AgentDetail | null): AgentDraft {
   return {
     id: detail?.id ?? '',
     name: detail?.name ?? '',
-    icon: detail?.icon ?? '',
     description: detail?.description ?? '',
     mode: detail?.mode ?? 'general',
     working_directory: detail?.working_directory ?? '',
@@ -88,7 +87,6 @@ export function serializeAgentDraft(draft: AgentDraft): string {
     `user_callable = ${draft.user_callable}`,
   ];
 
-  if (draft.icon.trim()) lines.push(`icon = ${JSON.stringify(draft.icon.trim())}`);
   if (draft.working_directory.trim()) lines.push(`working_directory = ${JSON.stringify(draft.working_directory.trim())}`);
   if (draft.provider_id.trim()) lines.push(`provider_id = ${JSON.stringify(draft.provider_id.trim())}`);
   if (draft.temperature.trim()) lines.push(`temperature = ${Number.parseFloat(draft.temperature)}`);

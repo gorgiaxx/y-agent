@@ -4,7 +4,6 @@ export type EditorSurface = 'form' | 'raw';
 export interface AgentDraft {
   id: string;
   name: string;
-  icon: string;
   description: string;
   mode: string;
   working_directory: string;
