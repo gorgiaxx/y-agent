@@ -27,7 +27,7 @@ use y_core::tool::{
 use y_core::types::ToolName;
 
 /// Maximum result size in characters returned to the LLM.
-const MAX_RESULT_SIZE_CHARS: usize = 20_000;
+const MAX_RESULT_SIZE_CHARS: usize = 10_000;
 
 /// Default `head_limit` when unspecified.
 const DEFAULT_HEAD_LIMIT: u64 = 250;

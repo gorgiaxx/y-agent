@@ -18,6 +18,12 @@ use y_core::types::ToolName;
 use y_knowledge::middleware::{InjectKnowledge, KnowledgeContextItem};
 use y_knowledge::tokenizer::SimpleTokenizer;
 
+/// Maximum result size in characters returned to the LLM.
+const MAX_RESULT_SIZE_CHARS: usize = 10_000;
+
+/// Maximum characters for a single knowledge chunk's content before truncation.
+const MAX_CHUNK_CONTENT_CHARS: usize = 2_000;
+
 /// Built-in tool for searching the knowledge base.
 pub struct KnowledgeSearchTool {
     def: ToolDefinition,
@@ -103,9 +109,10 @@ impl KnowledgeSearchTool {
         let results: Vec<serde_json::Value> = items
             .iter()
             .map(|item| {
+                let content = truncate_chunk_content(&item.content);
                 let mut obj = serde_json::json!({
                     "title": item.title,
-                    "content": item.content,
+                    "content": content,
                     "relevance": format!("{:.2}", item.relevance),
                     "chunk_id": item.chunk_id,
                 });
@@ -126,10 +133,31 @@ impl KnowledgeSearchTool {
             })
             .collect();
 
-        serde_json::json!({
+        let mut result = serde_json::json!({
             "results": results,
             "count": results.len(),
-        })
+        });
+
+        // If the overall serialized result exceeds the limit, truncate
+        // the results array by dropping items from the end.
+        let serialized = serde_json::to_string(&result).unwrap_or_default();
+        if serialized.len() > MAX_RESULT_SIZE_CHARS {
+            let mut truncated_results: Vec<serde_json::Value> = Vec::new();
+            let mut total_chars = 0usize;
+            for val in result["results"].as_array().unwrap_or(&Vec::new()) {
+                let entry_len = serde_json::to_string(val).map(|s| s.len()).unwrap_or(0);
+                if total_chars + entry_len > MAX_RESULT_SIZE_CHARS {
+                    break;
+                }
+                total_chars += entry_len;
+                truncated_results.push(val.clone());
+            }
+            result["results"] = serde_json::json!(truncated_results);
+            result["count"] = serde_json::json!(items.len()); // original count
+            result["truncated"] = serde_json::json!(true);
+        }
+
+        result
     }
 }
 
@@ -201,6 +229,22 @@ impl Tool for KnowledgeSearchTool {
     fn is_read_only(&self) -> bool {
         true
     }
+}
+
+/// Truncate a single knowledge chunk's content to `MAX_CHUNK_CONTENT_CHARS`.
+fn truncate_chunk_content(content: &str) -> String {
+    if content.len() <= MAX_CHUNK_CONTENT_CHARS {
+        return content.to_string();
+    }
+    let mut end = MAX_CHUNK_CONTENT_CHARS;
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    let total_chars = content.chars().count();
+    format!(
+        "{}\n[chunk truncated: {total_chars} chars total, showing first {end}]",
+        &content[..end]
+    )
 }
 
 #[cfg(test)]

@@ -9,6 +9,9 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
+/// Maximum result size in characters returned to the LLM.
+const MAX_RESULT_SIZE_CHARS: usize = 10_000;
+
 /// Built-in tool for reading files.
 pub struct FileReadTool {
     def: ToolDefinition,
@@ -108,15 +111,22 @@ impl Tool for FileReadTool {
         let sliced_content = lines[start..end].join("\n");
         let line_count = end - start;
 
+        let (content, truncated) = truncate_content(&sliced_content);
+
+        let mut result = serde_json::json!({
+            "path": canonical.display().to_string(),
+            "content": content,
+            "lines": line_count,
+            "total_lines": total_lines,
+            "encoding": encoding,
+        });
+        if truncated {
+            result["truncated"] = serde_json::json!(true);
+        }
+
         Ok(ToolOutput {
             success: true,
-            content: serde_json::json!({
-                "path": canonical.display().to_string(),
-                "content": sliced_content,
-                "lines": line_count,
-                "total_lines": total_lines,
-                "encoding": encoding,
-            }),
+            content: result,
             warnings: vec![],
             metadata: serde_json::json!({}),
         })
@@ -164,6 +174,25 @@ async fn read_file_as_utf8_impl(
     );
 
     Ok((cow.into_owned(), actual_encoding.name()))
+}
+
+/// Truncate content to `MAX_RESULT_SIZE_CHARS`, returning (content, `was_truncated`).
+fn truncate_content(content: &str) -> (String, bool) {
+    if content.len() <= MAX_RESULT_SIZE_CHARS {
+        return (content.to_string(), false);
+    }
+    let mut end = MAX_RESULT_SIZE_CHARS;
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    let total_chars = content.chars().count();
+    (
+        format!(
+            "{}\n[output truncated: {total_chars} chars total, showing first {end}]",
+            &content[..end]
+        ),
+        true,
+    )
 }
 
 #[cfg(test)]
@@ -257,5 +286,29 @@ mod tests {
         assert_eq!(def.name.as_str(), "FileRead");
         assert_eq!(def.category, ToolCategory::FileSystem);
         assert!(!def.is_dangerous);
+    }
+
+    #[test]
+    fn test_truncate_content_short() {
+        let (result, truncated) = truncate_content("hello");
+        assert_eq!(result, "hello");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_truncate_content_exceeds_limit() {
+        let s = "a".repeat(15_000);
+        let (result, truncated) = truncate_content(&s);
+        assert!(truncated);
+        assert!(result.contains("[output truncated:"));
+        assert!(result.len() < 10_200);
+    }
+
+    #[test]
+    fn test_truncate_content_multibyte() {
+        let s = "你好".repeat(10_000);
+        let (result, truncated) = truncate_content(&s);
+        assert!(truncated);
+        assert!(result.contains("[output truncated:"));
     }
 }

@@ -13,7 +13,7 @@ use y_core::types::ToolName;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
 /// Maximum output size (bytes) to return to the LLM.
-const MAX_OUTPUT_BYTES: usize = 100_000;
+const MAX_OUTPUT_BYTES: usize = 10_000;
 
 /// Built-in tool for executing shell commands.
 pub struct ShellExecTool {

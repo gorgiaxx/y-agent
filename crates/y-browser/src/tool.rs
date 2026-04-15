@@ -23,7 +23,7 @@ use crate::session::BrowserSession;
 use crate::snapshot::{truncate_output, SnapshotFormat};
 
 /// Maximum output characters before truncation.
-const MAX_OUTPUT_CHARS: usize = 50_000;
+const MAX_OUTPUT_CHARS: usize = 10_000;
 
 /// Supported browser actions (parsed from tool input).
 #[derive(Debug, Clone, Serialize, Deserialize)]

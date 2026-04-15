@@ -20,7 +20,7 @@ use y_core::tool::{
 use y_core::types::ToolName;
 
 /// Maximum result size in characters returned to the LLM.
-const MAX_RESULT_SIZE_CHARS: usize = 100_000;
+const MAX_RESULT_SIZE_CHARS: usize = 10_000;
 
 /// Default timeout for the search (seconds).
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
