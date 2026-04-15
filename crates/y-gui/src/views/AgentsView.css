@@ -525,7 +525,7 @@
 
 .agents-studio {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }
@@ -696,6 +696,7 @@
 }
 
 .agents-session-item-title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -705,6 +706,7 @@
 }
 
 .agents-session-item-meta {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -800,7 +802,7 @@
   }
 
   .agents-studio {
-    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
   }
 
   .agents-metrics-grid {
