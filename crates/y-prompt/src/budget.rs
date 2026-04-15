@@ -1,4 +1,11 @@
-//! Token budget enforcement for prompt sections.
+//! Token budget enforcement for prompt sections and tool results.
+
+/// Maximum character length for tool results sent to the LLM.
+///
+/// Results exceeding this are truncated with a marker suffix. 10K chars is
+/// approximately 2.5K tokens (at 4 chars/token), a reasonable cap for any
+/// single tool result that preserves LLM context for reasoning.
+pub const MAX_TOOL_RESULT_CHARS: usize = 10_000;
 
 /// Estimate the number of tokens in a text string.
 ///
@@ -46,6 +53,30 @@ pub fn truncate_to_budget(text: &str, max_tokens: u32) -> (String, bool) {
     };
 
     (truncated, true)
+}
+
+/// Truncate a tool result string to a maximum character count.
+///
+/// Returns the (possibly truncated) string. When truncated, appends a marker
+/// like `\n[... truncated: N chars total, showing first 10000]`.
+///
+/// Character-based (not token-based) because tool results are already
+/// serialized strings and character counting is deterministic.
+pub fn truncate_tool_result(content: &str, max_chars: usize) -> String {
+    if content.len() <= max_chars {
+        return content.to_string();
+    }
+    // Find safe UTF-8 boundary.
+    let mut end = max_chars;
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    let total_chars = content.chars().count();
+    format!(
+        "{}\n[... truncated: {} chars total, showing first {end}]",
+        &content[..end],
+        total_chars,
+    )
 }
 
 #[cfg(test)]
@@ -113,5 +144,34 @@ mod tests {
         let (result, truncated) = truncate_to_budget(&text, 10);
         assert!(truncated);
         assert!(estimate_tokens(&result) <= 10);
+    }
+
+    #[test]
+    fn test_truncate_tool_result_short() {
+        let s = "short result";
+        let result = truncate_tool_result(s, 10_000);
+        assert_eq!(result, s);
+    }
+
+    #[test]
+    fn test_truncate_tool_result_exceeds_limit() {
+        let s = "x".repeat(15_000);
+        let result = truncate_tool_result(&s, 10_000);
+        assert!(result.contains("[... truncated:"));
+        assert!(result.len() < 10_200); // 10K + marker overhead
+    }
+
+    #[test]
+    fn test_truncate_tool_result_multibyte() {
+        let s = "你好".repeat(10_000); // 20K chars, each 3 bytes
+        let result = truncate_tool_result(&s, 10_000);
+        assert!(result.contains("[... truncated:"));
+        // No panic on char boundary -- the key invariant.
+        assert!(result.chars().count() <= 10_050);
+    }
+
+    #[test]
+    fn test_max_tool_result_chars_constant() {
+        assert_eq!(MAX_TOOL_RESULT_CHARS, 10_000);
     }
 }

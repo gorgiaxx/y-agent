@@ -26,7 +26,9 @@ pub mod store;
 pub mod template;
 
 // Re-export primary types.
-pub use budget::{estimate_tokens, truncate_to_budget};
+pub use budget::{
+    estimate_tokens, truncate_to_budget, truncate_tool_result, MAX_TOOL_RESULT_CHARS,
+};
 pub use builtins::{
     builtin_section_store, builtin_section_store_with_overrides, default_template,
     BUILTIN_PROMPT_FILES, PROMPT_TOOL_PROTOCOL,
