@@ -18,6 +18,8 @@ interface AgentStudioProps {
   detailLoading: boolean;
   sessions: SessionInfo[];
   activeSessionId: string | null;
+  sessionsLoading: boolean;
+  streamingSessionIds: Set<string>;
   messages: Message[];
   isStreaming: boolean;
   isLoadingMessages: boolean;
@@ -86,6 +88,8 @@ export function AgentStudio({
   detailLoading,
   sessions,
   activeSessionId,
+  sessionsLoading,
+  streamingSessionIds,
   messages,
   isStreaming,
   isLoadingMessages,
@@ -150,6 +154,8 @@ export function AgentStudio({
       <AgentSessionRail
         sessions={sessions}
         activeSessionId={activeSessionId}
+        loading={sessionsLoading}
+        streamingSessionIds={streamingSessionIds}
         onEdit={onEdit}
         onNewSession={onNewSession}
         onSelectSession={onSelectSession}

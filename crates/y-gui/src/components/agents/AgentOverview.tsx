@@ -3,8 +3,8 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { ScrollArea } from '../ui/ScrollArea';
 import type { AgentInfo } from '../../hooks/useAgents';
+import { AgentGlyph } from './AgentGlyph';
 import {
-  AgentGlyph,
   formatAgentModeLabel,
   formatAgentTierLabel,
   getAgentModeBadgeVariant,

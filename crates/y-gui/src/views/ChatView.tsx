@@ -13,7 +13,7 @@ import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
-import type { ThinkingEffort } from '../types';
+import type { ThinkingEffort, PlanMode } from '../types';
 
 export function ChatView() {
   const chatHooks = useChatContext();
@@ -72,6 +72,8 @@ export function ChatView() {
     loadMessages: chatHooks.loadMessages,
     messages: chatHooks.messages,
     selectedProviderId: providerHooks.selectedProviderId,
+    thinkingEffort,
+    planMode: 'fast' as PlanMode,
     welcomeWorkspaceId: navProps.welcomeWorkspaceId,
     assignSession: workspaceHooks.assignSession,
     refreshWorkspaces: workspaceHooks.refreshWorkspaces,

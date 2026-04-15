@@ -4,9 +4,9 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { ScrollArea } from '../ui/ScrollArea';
+import { AgentGlyph } from './AgentGlyph';
 import {
   AGENT_TIER_ORDER,
-  AgentGlyph,
   formatAgentModeLabel,
   formatAgentTierHint,
   formatAgentTierLabel,
