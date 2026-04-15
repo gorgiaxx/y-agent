@@ -42,10 +42,16 @@
 
 .agents-sidebar-panel {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--surface-secondary);
+  overflow: hidden;
+}
+
+.agents-sidebar-panel > .scroll-area {
+  min-width: 0;
 }
 
 .agents-sidebar-panel-header {
@@ -54,6 +60,7 @@
   gap: 10px;
   padding: var(--space-md);
   border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 
 .agents-sidebar-header-row {
@@ -118,6 +125,8 @@
   flex-direction: column;
   gap: var(--space-md);
   padding: 10px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .agents-sidebar-group {
@@ -150,6 +159,8 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .agents-sidebar-item {
@@ -157,6 +168,7 @@
   align-items: flex-start;
   gap: 10px;
   width: 100%;
+  min-width: 0;
   padding: 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -165,6 +177,7 @@
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  overflow: hidden;
 }
 
 .agents-sidebar-item:hover {
@@ -392,17 +405,17 @@
 
 .agents-gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: var(--space-md);
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-sm);
 }
 
 .agents-preset-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--surface-secondary) 80%, transparent);
   box-shadow: var(--shadow-sm);
   cursor: pointer;
@@ -412,10 +425,15 @@
 .agents-preset-card:hover {
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
+  transform: translateY(-1px);
 }
 
-.agents-preset-card-top,
+.agents-preset-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .agents-preset-card-title-row,
 .agents-session-summary-top,
 .agents-session-list-header {
@@ -425,7 +443,14 @@
   gap: var(--space-sm);
 }
 
+.agents-preset-card-top .agents-preset-card-badges {
+  flex: 1;
+  min-width: 0;
+}
+
 .agents-preset-card-top .button--icon {
+  flex-shrink: 0;
+  margin-left: auto;
   border: none;
   background: transparent;
   opacity: 0.6;
@@ -443,8 +468,8 @@
 
 .agents-preset-card-glyph,
 .agents-session-summary-glyph {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
 }
 
 .agents-preset-card-badges,
@@ -452,13 +477,13 @@
 .agents-session-summary-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .agents-preset-card-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -469,7 +494,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -483,12 +508,12 @@
 
 .agents-preset-card-description {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--text-secondary);
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   overflow: hidden;
 }
 
@@ -496,7 +521,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-sm);
+  gap: 4px;
 }
 
 .agents-studio {
@@ -508,12 +533,18 @@
 
 .agents-session-rail {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
   gap: 12px;
   padding: var(--space-md);
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-secondary) 92%, transparent);
+  overflow: hidden;
+}
+
+.agents-session-rail > .scroll-area {
+  min-width: 0;
 }
 
 .agents-session-rail-actions {
@@ -591,6 +622,8 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .agents-session-item {
@@ -598,9 +631,11 @@
   align-items: center;
   gap: 8px;
   padding: 8px;
+  min-width: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
+  overflow: hidden;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
@@ -636,6 +671,9 @@
 }
 
 .agents-session-item-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--text-secondary);
 }

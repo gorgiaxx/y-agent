@@ -73,7 +73,7 @@ function AgentPresetCard({ agent, onOpen, onEdit }: AgentPresetCardProps) {
     <article className="agents-preset-card" onClick={onOpen}>
       <div className="agents-preset-card-top">
         <div className="agents-preset-card-glyph">
-          <AgentGlyph icon={agent.icon} name={agent.name} size={18} />
+          <AgentGlyph icon={agent.icon} name={agent.name} size={16} />
         </div>
         <div className="agents-preset-card-badges">
           <Badge variant={getAgentModeBadgeVariant(agent.mode)}>

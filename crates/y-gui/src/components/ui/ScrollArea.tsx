@@ -12,7 +12,7 @@ export const ScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(
       className={['overflow-hidden', className].join(' ')}
       {...props}
     >
-      <ScrollAreaPrimitive.Viewport className="w-full h-full">
+      <ScrollAreaPrimitive.Viewport className="w-full max-w-full h-full min-w-0">
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollAreaPrimitive.Scrollbar
