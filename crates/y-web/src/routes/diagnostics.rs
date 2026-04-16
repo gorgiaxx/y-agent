@@ -1,4 +1,7 @@
 //! Diagnostics trace endpoints.
+//!
+//! Mirrors both the existing trace-level endpoints and the GUI's
+//! session-based/subagent diagnostics commands.
 
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
@@ -19,9 +22,13 @@ use crate::state::AppState;
 /// Query params for `GET /api/v1/diagnostics/traces`.
 #[derive(Debug, Deserialize)]
 pub struct ListTracesQuery {
-    /// Filter by session ID.
     pub session_id: Option<String>,
-    /// Maximum number of traces (default 20).
+    pub limit: Option<usize>,
+}
+
+/// Query params for session-based and subagent diagnostics.
+#[derive(Debug, Deserialize)]
+pub struct DiagnosticsQuery {
     pub limit: Option<usize>,
 }
 
@@ -78,9 +85,48 @@ async fn get_trace(
     Ok(Json(detail))
 }
 
+/// `GET /api/v1/diagnostics/sessions/:session_id` -- session-based diagnostics.
+async fn get_by_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Query(query): Query<DiagnosticsQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let entries = DiagnosticsService::get_session_history_including_descendants(
+        &state.container,
+        &session_id,
+        query.limit.unwrap_or(50),
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
+    Ok(Json(serde_json::to_value(entries).unwrap_or_default()))
+}
+
+/// `GET /api/v1/diagnostics/subagents` -- subagent history.
+async fn get_subagent_history(
+    State(state): State<AppState>,
+    Query(query): Query<DiagnosticsQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let store = state.container.diagnostics.store();
+    let entries = DiagnosticsService::get_subagent_history(store, query.limit.unwrap_or(50))
+        .await
+        .map_err(ApiError::Internal)?;
+
+    Ok(Json(serde_json::to_value(entries).unwrap_or_default()))
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
 /// Diagnostics route group.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/diagnostics/traces", get(list_traces))
         .route("/api/v1/diagnostics/traces/{trace_id}", get(get_trace))
+        .route(
+            "/api/v1/diagnostics/sessions/{session_id}",
+            get(get_by_session),
+        )
+        .route("/api/v1/diagnostics/subagents", get(get_subagent_history))
 }

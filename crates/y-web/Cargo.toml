@@ -11,16 +11,27 @@ y-bot = { workspace = true }
 y-service = { workspace = true }
 y-session = { workspace = true }
 y-diagnostics = { workspace = true }
+y-agent = { workspace = true }
+y-knowledge = { workspace = true }
+y-skills = { workspace = true }
+y-prompt = { workspace = true }
+y-scheduler = { workspace = true }
 
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+toml = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
+futures = { workspace = true }
+async-stream = { workspace = true }
 
 [features]
 default = []

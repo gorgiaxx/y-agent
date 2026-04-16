@@ -7,6 +7,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
+use y_service::scheduler_service::SchedulerService;
 use y_service::workflow_service::{
     CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowService, WorkflowServiceError,
 };
@@ -117,6 +118,19 @@ async fn get_dag(
     Ok(Json(serde_json::to_value(dag).unwrap_or_default()))
 }
 
+/// `POST /api/v1/workflows/:id/execute` -- manually execute a workflow.
+async fn execute_workflow(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let wf = WorkflowService::get(&state.container.workflow_store, &id).await?;
+    let execution =
+        SchedulerService::execute_workflow(&state.container.scheduler_manager, &wf.id, &wf.name)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::to_value(execution).unwrap_or_default()))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -136,4 +150,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/workflows/validate", post(validate_definition))
         .route("/api/v1/workflows/{workflow_id}/dag", get(get_dag))
+        .route(
+            "/api/v1/workflows/{workflow_id}/execute",
+            post(execute_workflow),
+        )
 }

@@ -126,6 +126,38 @@ async fn resume_schedule(
 }
 
 // ---------------------------------------------------------------------------
+// Execution history handlers
+// ---------------------------------------------------------------------------
+
+/// `GET /api/v1/schedules/:id/executions`
+async fn execution_history(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let list = SchedulerService::execution_history(&state.container.scheduler_manager, &id).await;
+    Ok(Json(serde_json::to_value(list).unwrap_or_default()))
+}
+
+/// `GET /api/v1/schedules/executions/:execution_id`
+async fn get_execution(
+    State(state): State<AppState>,
+    Path(execution_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let execution =
+        SchedulerService::get_execution(&state.container.scheduler_manager, &execution_id).await?;
+    Ok(Json(serde_json::to_value(execution).unwrap_or_default()))
+}
+
+/// `POST /api/v1/schedules/:id/trigger`
+async fn trigger_now(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let execution = SchedulerService::trigger_now(&state.container.scheduler_manager, &id).await?;
+    Ok(Json(serde_json::to_value(execution).unwrap_or_default()))
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -135,6 +167,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/v1/schedules",
             get(list_schedules).post(create_schedule),
+        )
+        .route(
+            "/api/v1/schedules/executions/{execution_id}",
+            get(get_execution),
         )
         .route(
             "/api/v1/schedules/{schedule_id}",
@@ -150,4 +186,9 @@ pub fn router() -> Router<AppState> {
             "/api/v1/schedules/{schedule_id}/resume",
             post(resume_schedule),
         )
+        .route(
+            "/api/v1/schedules/{schedule_id}/executions",
+            get(execution_history),
+        )
+        .route("/api/v1/schedules/{schedule_id}/trigger", post(trigger_now))
 }

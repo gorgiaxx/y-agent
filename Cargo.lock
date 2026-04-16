@@ -9024,21 +9024,31 @@ dependencies = [
 name = "y-web"
 version = "0.2.7"
 dependencies = [
+ "async-stream",
  "axum 0.8.8",
+ "base64 0.22.1",
  "chrono",
+ "futures",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
+ "toml 0.8.2",
  "tower 0.5.3",
  "tower-http",
  "tracing",
  "uuid",
+ "y-agent",
  "y-bot",
  "y-core",
  "y-diagnostics",
+ "y-knowledge",
+ "y-prompt",
+ "y-scheduler",
  "y-service",
  "y-session",
+ "y-skills",
  "y-test-utils",
 ]
 
