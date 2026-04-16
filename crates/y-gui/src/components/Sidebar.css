@@ -264,6 +264,7 @@
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  word-break: break-word;
 }
 
 .sidebar-item-tags {
@@ -295,9 +296,22 @@
 }
 
 .workspace-label--general {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-secondary);
   margin-top: 4px;
-  border-top: 1px solid var(--border);
   padding-top: 8px;
+}
+
+.workspace-label--general::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
 }
 
 .workspace-name {

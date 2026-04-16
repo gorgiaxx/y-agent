@@ -60,7 +60,7 @@
 .session-item-title {
   min-width: 0;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -94,4 +94,19 @@
 .session-item-time--now {
   color: var(--text-primary);
   font-weight: 500;
+}
+
+/* ---- Drag-and-drop feedback ---- */
+body.y-gui-dragging,
+body.y-gui-dragging * {
+  cursor: grabbing !important;
+}
+
+.session-item--dragging {
+  opacity: 0.35;
+  transform: scale(0.97);
+  border: 1px dashed var(--border);
+  user-select: none;
+  cursor: grabbing;
+  pointer-events: none;
 }
