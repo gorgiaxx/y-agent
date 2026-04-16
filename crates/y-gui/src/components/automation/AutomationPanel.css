@@ -865,41 +865,8 @@
 }
 
 /* ============================================================================
-   Workflow Editor Tabs + Structured Task Cards
+   Workflow Editor Structured Task Cards
    ============================================================================ */
-
-.wf-editor-tabs {
-  display: flex;
-  gap: 2px;
-  background: var(--surface-secondary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 3px;
-  margin-bottom: 4px;
-}
-
-.wf-editor-tab {
-  flex: 1;
-  padding: 7px 14px;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.wf-editor-tab:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-.wf-editor-tab.active {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
 
 .wf-task-cards {
   display: flex;
