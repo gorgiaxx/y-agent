@@ -346,6 +346,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         let result = execute("clear", &mut state);
@@ -368,6 +369,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         let result = execute("new", &mut state);
@@ -429,6 +431,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
         let result = execute("reset", &mut state);
         assert!(matches!(result, CommandResult::Ok(Some(_))));

@@ -8,7 +8,9 @@ use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::types::{Message, Role, SessionId};
 
 use crate::orchestrator::{self, TurnInput};
-use crate::tui::state::{AppState, ChatMessage, MessageRole, SessionListItem, ToolCallInfo};
+use crate::tui::state::{
+    AppState, ChatMessage, MessageRole, SessionListItem, StreamSegment, ToolCallInfo,
+};
 use crate::wire::AppServices;
 
 /// Events sent from the async LLM task back to the TUI event loop.
@@ -71,6 +73,7 @@ pub fn submit_message(
         reasoning_content: String::new(),
         reasoning_complete: false,
         tool_calls: Vec::new(),
+        segments: Vec::new(),
     });
 
     // Track user message count for title summarization trigger.
@@ -134,6 +137,7 @@ pub fn submit_message(
         reasoning_content: String::new(),
         reasoning_complete: false,
         tool_calls: Vec::new(),
+        segments: Vec::new(),
     });
 
     // Spawn async task for LLM call.
@@ -227,6 +231,20 @@ pub fn submit_message(
                             .send(ChatEvent::StreamReasoningDelta { content })
                             .await;
                     }
+                    y_service::TurnEvent::ToolResult {
+                        name,
+                        success,
+                        duration_ms,
+                        ..
+                    } => {
+                        let _ = tx_stream
+                            .send(ChatEvent::ToolCallExecuted {
+                                name,
+                                success,
+                                duration_ms,
+                            })
+                            .await;
+                    }
                     _ => {}
                 }
             }
@@ -235,18 +253,9 @@ pub fn submit_message(
         match orchestrator::execute_turn_streaming(&services, &turn_input, progress_tx).await {
             Ok(result) => {
                 // Wait for the progress forwarder to finish before emitting
-                // the final Response so all deltas arrive first.
+                // the final Response so all deltas (and tool-call events)
+                // arrive first.
                 let _ = progress_forwarder.await;
-                // Emit tool call events for TUI display.
-                for tc in &result.tool_calls_executed {
-                    let _ = tx
-                        .send(ChatEvent::ToolCallExecuted {
-                            name: tc.name.clone(),
-                            success: tc.success,
-                            duration_ms: tc.duration_ms,
-                        })
-                        .await;
-                }
 
                 let _ = tx
                     .send(ChatEvent::Response {
@@ -348,11 +357,13 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             // Store structured tool call info for card rendering.
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
-                    last.tool_calls.push(ToolCallInfo {
+                    let tc = ToolCallInfo {
                         name,
                         success,
                         duration_ms,
-                    });
+                    };
+                    last.tool_calls.push(tc.clone());
+                    last.segments.push(StreamSegment::ToolCall(tc));
                 }
             }
         }
@@ -361,6 +372,12 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
                     last.content.push_str(&content);
+                    // Maintain event-ordered segments for interleaved rendering.
+                    if let Some(StreamSegment::Text(ref mut text)) = last.segments.last_mut() {
+                        text.push_str(&content);
+                    } else {
+                        last.segments.push(StreamSegment::Text(content));
+                    }
                 }
             }
         }
@@ -452,6 +469,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         apply_chat_event(
@@ -486,6 +504,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         apply_chat_event(ChatEvent::Error("connection refused".into()), &mut state);
@@ -510,6 +529,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         cancel_streaming(&mut state);
@@ -575,6 +595,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         apply_chat_event(
@@ -607,6 +628,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         apply_chat_event(
@@ -647,6 +669,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         apply_chat_event(
@@ -681,6 +704,7 @@ mod tests {
             reasoning_content: "some reasoning".into(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
 
         apply_chat_event(

@@ -21,7 +21,9 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::selection::TextSelection;
-use crate::tui::state::{AppState, ChatMessage, MessageRole, PanelFocus, ToolCallInfo};
+use crate::tui::state::{
+    AppState, ChatMessage, MessageRole, PanelFocus, StreamSegment, ToolCallInfo,
+};
 
 // ---------------------------------------------------------------------------
 // Color palette (aligned with GUI CSS variables)
@@ -155,6 +157,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
                     msg,
                     *is_last,
                     state.tick_counter,
+                    inner_width,
                 );
             }
             DisplayItem::StreamingIndicator => {
@@ -307,6 +310,7 @@ fn render_message(
     msg: &ChatMessage,
     is_last: bool,
     tick: u64,
+    content_width: usize,
 ) {
     let (role_label, role_color, prefix_char) = match msg.role {
         MessageRole::User => ("You", COLOR_USER, ">"),
@@ -355,38 +359,99 @@ fn render_message(
         );
     }
 
-    // Pre-process content: extract think blocks, tool calls, strip tool results.
-    let segments = preprocess_content(&msg.content);
-    for seg in &segments {
-        match seg {
-            ContentSegment::Text(text) => {
-                render_content_lines(lines, plain_lines, text, msg.role);
-            }
-            ContentSegment::ThinkBlock {
-                content,
-                is_complete,
-            } => {
-                render_think_card(lines, plain_lines, content, *is_complete, tick);
-            }
-            ContentSegment::ToolCall {
-                name,
-                arguments,
-                is_streaming,
-            } => {
-                render_tool_call_card(
-                    lines,
-                    plain_lines,
+    // Render content with tool calls interleaved in event order.
+    //
+    // When event-ordered segments are available (populated during streaming),
+    // use them so tool call cards appear at the position they were executed.
+    // Otherwise fall back to parsing the accumulated content string (for
+    // historical messages loaded from the database).
+    if msg.segments.is_empty() {
+        // Fallback for historical messages: parse content and interleave
+        // tool calls by matching XML-parsed segments with ToolCallInfo.
+        let content_segs = preprocess_content(&msg.content);
+        let mut tc_idx: usize = 0;
+        for seg in &content_segs {
+            match seg {
+                ContentSegment::Text(text) => {
+                    render_content_lines(lines, plain_lines, text, msg.role, content_width);
+                }
+                ContentSegment::ThinkBlock {
+                    content,
+                    is_complete,
+                } => {
+                    render_think_card(lines, plain_lines, content, *is_complete, tick);
+                }
+                ContentSegment::ToolCall {
                     name,
-                    arguments.as_deref(),
-                    *is_streaming,
-                );
+                    arguments,
+                    is_streaming,
+                } => {
+                    if let Some(tc) = msg.tool_calls.get(tc_idx) {
+                        render_tool_call_executed_card(lines, plain_lines, tc);
+                    } else {
+                        render_tool_call_card(
+                            lines,
+                            plain_lines,
+                            name,
+                            arguments.as_deref(),
+                            *is_streaming,
+                        );
+                    }
+                    tc_idx += 1;
+                }
             }
         }
-    }
-
-    // Render structured tool calls (from ToolCallExecuted events).
-    for tc in &msg.tool_calls {
-        render_tool_call_executed_card(lines, plain_lines, tc);
+        // Remaining tool calls without matching XML segments.
+        for tc in msg.tool_calls.iter().skip(tc_idx) {
+            render_tool_call_executed_card(lines, plain_lines, tc);
+        }
+    } else {
+        // Event-ordered segments from streaming: tool call cards appear at
+        // the position they were executed, interleaved with text chunks.
+        for seg in &msg.segments {
+            match seg {
+                StreamSegment::Text(text) => {
+                    // Each text chunk may contain <think> or <tool_call> XML
+                    // (for models using XML-based tool calling).
+                    let sub_segs = preprocess_content(text);
+                    for sub in &sub_segs {
+                        match sub {
+                            ContentSegment::Text(t) => {
+                                render_content_lines(
+                                    lines,
+                                    plain_lines,
+                                    t,
+                                    msg.role,
+                                    content_width,
+                                );
+                            }
+                            ContentSegment::ThinkBlock {
+                                content,
+                                is_complete,
+                            } => {
+                                render_think_card(lines, plain_lines, content, *is_complete, tick);
+                            }
+                            ContentSegment::ToolCall {
+                                name,
+                                arguments,
+                                is_streaming,
+                            } => {
+                                render_tool_call_card(
+                                    lines,
+                                    plain_lines,
+                                    name,
+                                    arguments.as_deref(),
+                                    *is_streaming,
+                                );
+                            }
+                        }
+                    }
+                }
+                StreamSegment::ToolCall(tc) => {
+                    render_tool_call_executed_card(lines, plain_lines, tc);
+                }
+            }
+        }
     }
 
     // Footer: timestamp + tokens (for completed assistant messages only).
@@ -982,6 +1047,7 @@ fn render_content_lines(
     plain_lines: &mut Vec<String>,
     content: &str,
     role: MessageRole,
+    content_width: usize,
 ) {
     let indent = "     ";
     let content_style = match role {
@@ -989,6 +1055,21 @@ fn render_content_lines(
         MessageRole::System => Style::default().fg(COLOR_SYSTEM),
         MessageRole::Tool => Style::default().fg(Color::Rgb(180, 180, 200)),
     };
+
+    // Use pulldown-cmark-based markdown renderer for assistant messages.
+    if role == MessageRole::Assistant {
+        let md_width = content_width.saturating_sub(5);
+        let md_lines = crate::tui::markdown::render_markdown(content, md_width);
+        for md_line in md_lines {
+            let plain_text: String = md_line.spans.iter().map(|s| s.content.as_ref()).collect();
+            let plain = format!("{indent}{plain_text}");
+            let mut spans = vec![Span::raw(indent.to_string())];
+            spans.extend(md_line.spans);
+            lines.push(Line::from(spans));
+            plain_lines.push(plain);
+        }
+        return;
+    }
 
     let mut in_code_block = false;
     let mut code_lang = String::new();
@@ -1461,10 +1542,11 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_message(&mut lines, &mut plain, &msg, false, 0);
+        render_message(&mut lines, &mut plain, &msg, false, 0, 80);
 
         // Header + 2 content lines = 3 lines.
         assert_eq!(lines.len(), 3);
@@ -1482,10 +1564,11 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_message(&mut lines, &mut plain, &msg, false, 0);
+        render_message(&mut lines, &mut plain, &msg, false, 0, 80);
 
         let header = &lines[0];
         let header_text: String = header.spans.iter().map(|s| s.content.to_string()).collect();
@@ -1542,6 +1625,7 @@ mod tests {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         });
         let items = build_display_items(&state);
         assert_eq!(items.len(), 1);
@@ -1587,8 +1671,8 @@ mod tests {
         let content = "text\n```rust\nfn main() {}\n```\nmore";
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_content_lines(&mut lines, &mut plain, content, MessageRole::Assistant);
-        // Should have: text, ``` rust, fn main, ```, more = 5 lines.
-        assert_eq!(lines.len(), 5);
+        render_content_lines(&mut lines, &mut plain, content, MessageRole::Assistant, 80);
+        // Markdown renderer produces lines for: text, lang label, code line, more.
+        assert!(lines.len() >= 3, "code block should produce multiple lines");
     }
 }

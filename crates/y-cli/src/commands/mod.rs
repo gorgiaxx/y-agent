@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod chat;
+pub mod completion;
 pub mod config_cmd;
 pub mod diag;
 pub mod init;
@@ -85,12 +86,35 @@ pub enum Commands {
         action: kb::KbAction,
     },
 
+    /// Generate shell completions.
+    Completion(completion::CompletionArgs),
+
     /// Launch the TUI interface.
     #[cfg(feature = "tui")]
-    Tui,
+    Tui {
+        /// Session ID (or prefix) to resume.
+        #[arg(long)]
+        session: Option<String>,
+    },
 
     /// Start the Web API server.
     Serve(serve::ServeArgs),
+
+    /// Resume a previous session in TUI mode.
+    Resume {
+        /// Session ID (or prefix) to resume. Uses the most recent if omitted.
+        session: Option<String>,
+    },
+
+    /// Fork a previous session into a new session in TUI mode.
+    Fork {
+        /// Session ID (or prefix) to fork. Uses the most recent if omitted.
+        session: Option<String>,
+
+        /// Label for the forked session.
+        #[arg(long)]
+        label: Option<String>,
+    },
 }
 
 #[cfg(test)]

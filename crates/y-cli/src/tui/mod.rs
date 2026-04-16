@@ -13,6 +13,7 @@ pub mod commands;
 pub mod events;
 pub mod keys;
 pub mod layout;
+pub mod markdown;
 pub mod overlays;
 pub mod panels;
 pub mod selection;
@@ -121,6 +122,43 @@ impl TuiApp {
         })
     }
 
+    /// Resume a session by ID or ID prefix before entering the main loop.
+    ///
+    /// Called from `tui_cmd::run` when the user passes `--session` or uses
+    /// the `resume` subcommand.
+    pub async fn resume_session(&mut self, target: &str) {
+        use y_core::session::SessionFilter;
+
+        let nodes = match self
+            .services
+            .session_manager
+            .list_sessions(&SessionFilter::default())
+            .await
+        {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(error = %e, "failed to list sessions for resume");
+                return;
+            }
+        };
+
+        let target_lower = target.to_lowercase();
+        let matched = nodes.iter().find(|n| {
+            n.id.to_string().starts_with(target)
+                || n.title
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase().contains(&target_lower))
+        });
+
+        if let Some(node) = matched {
+            self.state.current_session_id = Some(node.id.to_string());
+            self.load_session_transcript(&node.id).await;
+            self.state.sync_selected_session_index();
+        } else {
+            warn!(target = target, "no session matching resume target");
+        }
+    }
+
     /// Run the TUI main loop.
     ///
     /// Returns when the user presses `Ctrl+Q`, `Ctrl+D`, or `Ctrl+C`.
@@ -149,7 +187,7 @@ impl TuiApp {
                         break;
                     }
                 }
-                AppEvent::Mouse(mouse) => self.handle_mouse_event(mouse),
+                AppEvent::Mouse(mouse) => self.handle_mouse_event(mouse).await,
                 AppEvent::Resize(_w, _h) => {}
                 AppEvent::Tick => self.handle_tick(),
             }
@@ -279,18 +317,51 @@ impl TuiApp {
                 self.palette = CommandPaletteState::new();
             }
             KeyAction::HistoryPrev => {
-                if let Some(entry) = self.state.history_prev() {
-                    self.textarea = TextArea::new(vec![entry.to_string()]);
+                let cursor_row = self.textarea.cursor().0;
+                let line_count = self.textarea.lines().len();
+                if line_count > 1 && cursor_row > 0 {
+                    // Multi-line with cursor not at first line: move within text.
+                    self.textarea.input(key);
+                } else {
+                    // Save draft if entering history for the first time.
+                    if self.state.history_index.is_none() {
+                        let current = self.textarea.lines().join("\n");
+                        self.state.input_draft = Some(current);
+                    }
+                    if let Some(entry) = self.state.history_prev() {
+                        self.textarea = TextArea::new(vec![entry.to_string()]);
+                    }
                 }
             }
-            KeyAction::HistoryNext => match self.state.history_next() {
-                Some(entry) => {
-                    self.textarea = TextArea::new(vec![entry.to_string()]);
+            KeyAction::HistoryNext => {
+                let cursor_row = self.textarea.cursor().0;
+                let line_count = self.textarea.lines().len();
+                let last_line = line_count.saturating_sub(1);
+                if line_count > 1 && cursor_row < last_line {
+                    // Multi-line with cursor not at last line: move within text.
+                    self.textarea.input(key);
+                } else {
+                    match self.state.history_next() {
+                        Some(entry) => {
+                            self.textarea = TextArea::new(vec![entry.to_string()]);
+                        }
+                        None => {
+                            // Restore draft if available.
+                            if let Some(draft) = self.state.input_draft.take() {
+                                if draft.is_empty() {
+                                    self.textarea = TextArea::default();
+                                } else {
+                                    let lines: Vec<String> =
+                                        draft.split('\n').map(String::from).collect();
+                                    self.textarea = TextArea::new(lines);
+                                }
+                            } else {
+                                self.textarea = TextArea::default();
+                            }
+                        }
+                    }
                 }
-                None => {
-                    self.textarea = TextArea::default();
-                }
-            },
+            }
             KeyAction::Consumed | KeyAction::Unhandled => {}
             KeyAction::SelectSessionItem => {
                 self.switch_to_selected_session().await;
@@ -300,7 +371,7 @@ impl TuiApp {
     }
 
     /// Process a mouse event.
-    fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
+    async fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
         use crossterm::event::{MouseButton, MouseEventKind};
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -317,6 +388,7 @@ impl TuiApp {
                         if contains(sb, x, y) {
                             self.state.set_focus(PanelFocus::Sidebar);
                             self.state.selection.reset();
+                            self.handle_sidebar_click(sb, y).await;
                         }
                     }
                 }
@@ -1061,6 +1133,21 @@ impl TuiApp {
         Ok(())
     }
 
+    /// Return the active session ID at exit time.
+    pub fn exit_session_id(&self) -> Option<String> {
+        self.state.current_session_id.clone()
+    }
+
+    /// Return cumulative input tokens at exit time.
+    pub fn exit_input_tokens(&self) -> u64 {
+        self.state.cumulative_input_tokens
+    }
+
+    /// Return cumulative output tokens at exit time.
+    pub fn exit_output_tokens(&self) -> u64 {
+        self.state.cumulative_output_tokens
+    }
+
     /// Load session list from storage into state.
     async fn load_sessions(&mut self) {
         use y_core::session::SessionFilter;
@@ -1124,6 +1211,7 @@ impl TuiApp {
                         reasoning_content: String::new(),
                         reasoning_complete: false,
                         tool_calls: Vec::new(),
+                        segments: Vec::new(),
                     })
                     .collect();
                 self.state.scroll_offset = 0;
@@ -1141,6 +1229,54 @@ impl TuiApp {
             Err(e) => {
                 warn!(error = %e, "failed to load transcript");
             }
+        }
+    }
+
+    /// Handle a left-click inside the sidebar area.
+    ///
+    /// Calculates which row was clicked and either creates a new session
+    /// ("+ New Session" row) or switches to the clicked session item.
+    async fn handle_sidebar_click(&mut self, sidebar_rect: ratatui::layout::Rect, click_y: u16) {
+        // Inner area excludes the 1-cell border on each side.
+        let inner_y = sidebar_rect.y + 1;
+        let inner_height = sidebar_rect.height.saturating_sub(2);
+        let click_row = click_y.saturating_sub(inner_y) as usize;
+
+        if click_row == 0 {
+            // "New Session" clicked.
+            self.state.messages.clear();
+            self.state.scroll_offset = 0;
+            self.state.current_session_id = None;
+            self.state.user_message_count = 0;
+            self.state.sync_selected_session_index();
+            self.state
+                .push_toast("New session started.".into(), ToastLevel::Info);
+            self.state.set_focus(PanelFocus::Input);
+            return;
+        }
+
+        // Sessions start at row 2 (row 1 is the separator).
+        if click_row < 2 || self.state.sessions.is_empty() {
+            return;
+        }
+
+        let session_row = click_row - 2;
+
+        // Reproduce the scroll offset logic from sidebar::render.
+        let visible_height = inner_height.saturating_sub(2) as usize;
+        let selected_idx = self.state.selected_session_index.unwrap_or(0);
+        let scroll_offset = if visible_height == 0 {
+            0
+        } else if selected_idx >= visible_height {
+            selected_idx - visible_height + 1
+        } else {
+            0
+        };
+
+        let clicked_idx = scroll_offset + session_row;
+        if clicked_idx < self.state.sessions.len() {
+            self.state.selected_session_index = Some(clicked_idx);
+            self.switch_to_selected_session().await;
         }
     }
 

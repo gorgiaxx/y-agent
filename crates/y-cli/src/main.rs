@@ -56,9 +56,15 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Handle init command early — it runs before config exists.
+    // Handle init command early -- it runs before config exists.
     if let Some(Commands::Init(ref args)) = cli.command {
         return commands::init::run(args).await;
+    }
+
+    // Handle completion early -- no config needed.
+    if let Some(Commands::Completion(ref args)) = cli.command {
+        commands::completion::run(args);
+        return Ok(());
     }
 
     // Build CLI overrides.
@@ -84,7 +90,10 @@ async fn main() -> Result<()> {
 
     // Determine if we are entering TUI mode.
     #[cfg(feature = "tui")]
-    let is_tui = matches!(cli.command, Some(Commands::Tui));
+    let is_tui = matches!(
+        cli.command,
+        Some(Commands::Tui { .. } | Commands::Resume { .. } | Commands::Fork { .. })
+    );
     #[cfg(not(feature = "tui"))]
     let is_tui = false;
 
@@ -188,10 +197,16 @@ async fn main() -> Result<()> {
         Some(Commands::Kb { ref action }) => {
             commands::kb::run(action, mode).await?;
         }
+        Some(Commands::Completion(_)) => {
+            // Already handled above before config loading.
+            unreachable!("completion is dispatched before config loading");
+        }
         #[cfg(feature = "tui")]
-        Some(Commands::Tui) => {
+        Some(Commands::Tui { ref session }) => {
             let services = wire::wire(&config).await?;
-            commands::tui_cmd::run(services, Some(toast_rx)).await?;
+            let exit_info =
+                commands::tui_cmd::run(services, Some(toast_rx), session.clone()).await?;
+            print_exit_summary(&exit_info);
         }
         Some(Commands::Init(_)) => {
             // Already handled above before config loading.
@@ -203,6 +218,24 @@ async fn main() -> Result<()> {
             services.start_background_services().await;
             commands::serve::run(services, args).await?;
         }
+        #[cfg(feature = "tui")]
+        Some(Commands::Resume { ref session }) => {
+            let services = wire::wire(&config).await?;
+            // Resume uses the most recent session if none specified.
+            let session_id = resolve_resume_session(session.clone(), &services).await;
+            let exit_info = commands::tui_cmd::run(services, Some(toast_rx), session_id).await?;
+            print_exit_summary(&exit_info);
+        }
+        #[cfg(feature = "tui")]
+        Some(Commands::Fork {
+            ref session,
+            ref label,
+        }) => {
+            let services = wire::wire(&config).await?;
+            let forked = fork_session(session.clone(), label.clone(), &services).await?;
+            let exit_info = commands::tui_cmd::run(services, Some(toast_rx), Some(forked)).await?;
+            print_exit_summary(&exit_info);
+        }
         None => {
             println!("y-agent v{}", env!("CARGO_PKG_VERSION"));
             println!("Use --help for available commands.");
@@ -210,4 +243,101 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Print a summary after the TUI exits, including token usage and a resume hint.
+#[cfg(feature = "tui")]
+fn print_exit_summary(exit_info: &commands::tui_cmd::ExitInfo) {
+    let total = exit_info.input_tokens + exit_info.output_tokens;
+    if total > 0 {
+        println!(
+            "Token usage: input={} output={} total={}",
+            exit_info.input_tokens, exit_info.output_tokens, total,
+        );
+    }
+    if let Some(ref sid) = exit_info.session_id {
+        let short_id = if sid.len() > 8 { &sid[..8] } else { sid };
+        println!("To continue this session, run: y-agent resume {short_id}");
+    }
+}
+
+/// Resolve a session ID for the resume subcommand.
+///
+/// If `session` is `Some`, use it as-is. Otherwise, find the most recent session.
+#[cfg(feature = "tui")]
+async fn resolve_resume_session(
+    session: Option<String>,
+    services: &wire::AppServices,
+) -> Option<String> {
+    use y_core::session::SessionFilter;
+
+    if session.is_some() {
+        return session;
+    }
+
+    // Find the most recent session.
+    match services
+        .session_manager
+        .list_sessions(&SessionFilter::default())
+        .await
+    {
+        Ok(mut nodes) => {
+            nodes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            nodes.first().map(|n| n.id.to_string())
+        }
+        Err(_) => None,
+    }
+}
+
+/// Fork a session and return the new session's ID string.
+#[cfg(feature = "tui")]
+async fn fork_session(
+    session: Option<String>,
+    label: Option<String>,
+    services: &wire::AppServices,
+) -> anyhow::Result<String> {
+    use y_core::session::SessionFilter;
+
+    // Resolve the source session.
+    let source_id = if let Some(ref target) = session {
+        let nodes = services
+            .session_manager
+            .list_sessions(&SessionFilter::default())
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let target_lower = target.to_lowercase();
+        let matched = nodes.iter().find(|n| {
+            n.id.to_string().starts_with(target.as_str())
+                || n.title
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase().contains(&target_lower))
+        });
+        matched
+            .map(|n| n.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("no session matching '{target}'"))?
+    } else {
+        // Use the most recent session.
+        let mut nodes = services
+            .session_manager
+            .list_sessions(&SessionFilter::default())
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        nodes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        nodes
+            .first()
+            .map(|n| n.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("no sessions to fork"))?
+    };
+
+    let fork = services
+        .session_manager
+        .fork_session(&source_id, usize::MAX, label)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let fork_id = fork.id.to_string();
+    let fork_title = fork.title.unwrap_or_else(|| fork_id[..8].to_string());
+    println!("Forked session: {fork_title} ({fork_id})");
+
+    Ok(fork_id)
 }

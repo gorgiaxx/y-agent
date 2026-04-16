@@ -70,6 +70,20 @@ pub struct ToolCallInfo {
     pub duration_ms: u64,
 }
 
+/// A segment in the event-ordered display stream.
+///
+/// During streaming, `StreamDelta` and `ToolCallExecuted` events arrive
+/// interleaved. This enum preserves that ordering so the renderer can
+/// display tool call cards at the correct position (between the text
+/// chunks that surround them), matching the GUI's event-ordered model.
+#[derive(Debug, Clone)]
+pub enum StreamSegment {
+    /// Accumulated text content (one or more `StreamDelta` events merged).
+    Text(String),
+    /// A tool call execution result.
+    ToolCall(ToolCallInfo),
+}
+
 /// A single message in the conversation transcript (display model).
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
@@ -89,6 +103,12 @@ pub struct ChatMessage {
     pub reasoning_complete: bool,
     /// Tool calls executed during this message's generation (structured).
     pub tool_calls: Vec<ToolCallInfo>,
+    /// Event-ordered display segments for interleaved rendering.
+    ///
+    /// Populated during streaming to preserve the arrival order of text
+    /// deltas and tool call events. Empty for historical messages (the
+    /// renderer falls back to `content` + `tool_calls` parsing).
+    pub segments: Vec<StreamSegment>,
 }
 
 impl ChatMessage {
@@ -103,6 +123,7 @@ impl ChatMessage {
             reasoning_content: String::new(),
             reasoning_complete: false,
             tool_calls: Vec::new(),
+            segments: Vec::new(),
         }
     }
 }
@@ -198,6 +219,8 @@ pub struct AppState {
     pub input_history: Vec<String>,
     /// Current index in input history (-1 = not browsing).
     pub history_index: Option<usize>,
+    /// Draft input saved when entering history navigation (restored on exit).
+    pub input_draft: Option<String>,
     /// Currently active model name (displayed in status bar).
     pub status_model: String,
     /// Token usage string (displayed in status bar).
@@ -249,6 +272,7 @@ impl Default for AppState {
             is_streaming: false,
             input_history: Vec::new(),
             history_index: None,
+            input_draft: None,
             status_model: String::new(),
             status_tokens: String::new(),
             toasts: VecDeque::new(),
@@ -448,6 +472,7 @@ impl AppState {
         }
         self.input_history.push(trimmed.to_string());
         self.history_index = None;
+        self.input_draft = None;
     }
 
     /// Navigate to the previous history entry. Returns the entry text.
