@@ -1,10 +1,12 @@
 openapi: "3.1.0"
 info:
   title: y-agent Web API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    RESTful API for y-agent — exposes the same business logic as CLI/TUI.
-    All endpoints return JSON. Errors follow RFC 7807 Problem Details.
+    RESTful API for y-agent -- exposes the same business logic as the CLI/TUI
+    and the Tauri desktop GUI.  All endpoints return JSON.  Real-time push
+    events are delivered via Server-Sent Events (SSE).
+    Errors follow RFC 7807 Problem Details.
   contact:
     name: y-agent team
   license:
@@ -16,20 +18,44 @@ servers:
 
 tags:
   - name: System
-    description: Health checks and system status
+    description: Health checks, system status, providers, and app paths
   - name: Sessions
     description: Session lifecycle management
   - name: Chat
-    description: Chat turn execution
+    description: Chat turns -- synchronous and async (SSE-streamed)
   - name: Agents
-    description: Agent registry queries
+    description: Agent registry CRUD, reload, tools, and prompt sections
   - name: Tools
     description: Tool registry queries
+  - name: Config
+    description: Configuration sections, reload, MCP, and prompt files
+  - name: Workspaces
+    description: Workspace CRUD and session mapping
+  - name: Skills
+    description: Skill management and file editing
+  - name: Knowledge
+    description: Knowledge-base collections, entries, search, and ingestion
+  - name: Observability
+    description: Live system state snapshots
+  - name: Rewind
+    description: Atomic rollback of conversation and filesystem state
+  - name: Attachments
+    description: File attachment reading
   - name: Diagnostics
-    description: Trace queries and health checks
+    description: Trace queries and diagnostics
+  - name: Workflows
+    description: Workflow CRUD, validation, DAG, and execution
+  - name: Schedules
+    description: Schedule CRUD, pause/resume, execution history, and triggers
+  - name: Events
+    description: Server-Sent Events for real-time push notifications
+  - name: Bots
+    description: Bot adapter webhooks (Feishu, Discord)
 
 paths:
-  # ──────────────── System ────────────────
+  # ================================================================
+  #  System
+  # ================================================================
   /health:
     get:
       operationId: healthCheck
@@ -58,19 +84,85 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthReport"
 
-  # ──────────────── Sessions ────────────────
+  /api/v1/providers:
+    get:
+      operationId: listProviders
+      tags: [System]
+      summary: List registered LLM providers
+      responses:
+        "200":
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/app-paths:
+    get:
+      operationId: appPaths
+      tags: [System]
+      summary: Return application directory paths
+      responses:
+        "200":
+          description: Application paths (config_dir, data_dir)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config_dir:
+                    type: string
+                  data_dir:
+                    type: string
+
+  # ================================================================
+  #  Events (SSE)
+  # ================================================================
+  /api/v1/events:
+    get:
+      operationId: eventStream
+      tags: [Events]
+      summary: SSE event stream
+      description: |
+        Server-Sent Events endpoint for real-time push notifications.
+        Replaces Tauri `app.emit()` for browser clients.
+        Events include: ChatStarted, ChatProgress, ChatComplete, ChatError,
+        AskUser, PermissionRequest, TitleUpdated, DiagnosticsEvent,
+        KbBatchProgress, KbEntryIngested.
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: string
+          description: Filter events to a specific session
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream: {}
+
+  # ================================================================
+  #  Sessions
+  # ================================================================
   /api/v1/sessions:
     get:
       operationId: listSessions
       tags: [Sessions]
-      summary: List all sessions
+      summary: List sessions (newest first)
       parameters:
         - name: state
           in: query
           schema:
             type: string
-            enum: [Active, Archived, All]
-          description: Filter sessions by state (default All)
+            enum: [Active, Archived]
+          description: Filter by state (default Active)
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+          description: Filter by agent ID
       responses:
         "200":
           description: List of sessions
@@ -114,6 +206,46 @@ paths:
                 $ref: "#/components/schemas/SessionInfo"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteSession
+      tags: [Sessions]
+      summary: Delete a session permanently
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/sessions/{session_id}/messages:
+    get:
+      operationId: listMessages
+      tags: [Sessions]
+      summary: List messages in a session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: last
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Return only the last N messages
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MessageInfo"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/sessions/{session_id}/archive:
     post:
@@ -150,45 +282,184 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionInfo"
+                type: object
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /api/v1/sessions/{session_id}/messages:
-    get:
-      operationId: listMessages
+  /api/v1/sessions/{session_id}/truncate:
+    post:
+      operationId: truncateMessages
       tags: [Sessions]
-      summary: List messages in a session
+      summary: Truncate session messages
       parameters:
         - $ref: "#/components/parameters/SessionId"
-        - name: last
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-          description: Return only the last N messages
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keep_count]
+              properties:
+                keep_count:
+                  type: integer
+                  minimum: 0
       responses:
         "200":
-          description: List of messages
+          description: Messages truncated
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Message"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/MessageResponse"
 
-  # ──────────────── Chat ────────────────
+  /api/v1/sessions/{session_id}/context-reset:
+    get:
+      operationId: getContextReset
+      tags: [Sessions]
+      summary: Get context reset index
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Context reset index
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  index:
+                    type: integer
+                    nullable: true
+    put:
+      operationId: setContextReset
+      tags: [Sessions]
+      summary: Set context reset index
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                index:
+                  type: integer
+                  nullable: true
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/sessions/{session_id}/custom-prompt:
+    get:
+      operationId: getCustomPrompt
+      tags: [Sessions]
+      summary: Get session custom system prompt
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Custom prompt (null if not set)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  prompt:
+                    type: string
+                    nullable: true
+    put:
+      operationId: setCustomPrompt
+      tags: [Sessions]
+      summary: Set session custom system prompt
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/sessions/{session_id}/fork:
+    post:
+      operationId: forkSession
+      tags: [Sessions]
+      summary: Fork a session at a specific message index
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_index]
+              properties:
+                message_index:
+                  type: integer
+                title:
+                  type: string
+                  nullable: true
+      responses:
+        "201":
+          description: Forked session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+
+  /api/v1/sessions/{session_id}/rename:
+    put:
+      operationId: renameSession
+      tags: [Sessions]
+      summary: Set or clear manual title
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ================================================================
+  #  Chat
+  # ================================================================
   /api/v1/chat:
     post:
       operationId: chatTurn
       tags: [Chat]
-      summary: Execute a single chat turn
+      summary: Synchronous single chat turn
       description: |
-        Sends a user message and returns the assistant response.
-        Handles tool calling internally. This is a synchronous (blocking)
-        endpoint — the response is returned after the full turn completes.
+        Sends a user message and blocks until the full turn completes.
+        Handles tool calling internally. For streaming, use `/chat/send` + SSE.
       requestBody:
         required: true
         content:
@@ -205,7 +476,284 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
-  # ──────────────── Agents ────────────────
+  /api/v1/chat/send:
+    post:
+      operationId: chatSend
+      tags: [Chat]
+      summary: Async chat turn with SSE streaming
+      description: |
+        Starts an async turn. Returns immediately with session_id and run_id.
+        Progress, completion, and errors are streamed via GET /api/v1/events.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatSendRequest"
+      responses:
+        "200":
+          description: Turn started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  run_id:
+                    type: string
+
+  /api/v1/chat/cancel:
+    post:
+      operationId: chatCancel
+      tags: [Chat]
+      summary: Cancel a running chat turn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id]
+              properties:
+                run_id:
+                  type: string
+      responses:
+        "200":
+          description: Cancelled (or not found)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/chat/undo:
+    post:
+      operationId: chatUndo
+      tags: [Chat]
+      summary: Undo to a checkpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, checkpoint_id]
+              properties:
+                session_id:
+                  type: string
+                checkpoint_id:
+                  type: string
+      responses:
+        "200":
+          description: Undo result
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/chat/resend:
+    post:
+      operationId: chatResend
+      tags: [Chat]
+      summary: Resend from a checkpoint (async, SSE-streamed)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, checkpoint_id]
+              properties:
+                session_id:
+                  type: string
+                checkpoint_id:
+                  type: string
+                agent_id:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Run started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  run_id:
+                    type: string
+
+  /api/v1/chat/checkpoints/{session_id}:
+    get:
+      operationId: listCheckpoints
+      tags: [Chat]
+      summary: List checkpoints for a session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Checkpoint list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChatCheckpointInfo"
+
+  /api/v1/chat/find-checkpoint:
+    post:
+      operationId: findCheckpoint
+      tags: [Chat]
+      summary: Find a checkpoint matching a user message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, user_message_content]
+              properties:
+                session_id:
+                  type: string
+                user_message_content:
+                  type: string
+                message_id:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Matched checkpoint (null if not found)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChatCheckpointInfo"
+                  - type: "null"
+
+  /api/v1/chat/messages-with-status/{session_id}:
+    get:
+      operationId: messagesWithStatus
+      tags: [Chat]
+      summary: Messages with active/tombstone branch status
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Messages with status metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/chat/restore-branch:
+    post:
+      operationId: restoreBranch
+      tags: [Chat]
+      summary: Swap active and tombstone branches
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id:
+                  type: string
+      responses:
+        "200":
+          description: Branch restored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/chat/compact/{session_id}:
+    post:
+      operationId: contextCompact
+      tags: [Chat]
+      summary: Run context compaction on a session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Compaction result
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/chat/answer-question:
+    post:
+      operationId: answerQuestion
+      tags: [Chat]
+      summary: Deliver an AskUser answer to a waiting turn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, answer]
+              properties:
+                session_id:
+                  type: string
+                answer:
+                  type: string
+      responses:
+        "200":
+          description: Answer delivered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/chat/answer-permission:
+    post:
+      operationId: answerPermission
+      tags: [Chat]
+      summary: Deliver a permission decision to a waiting turn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, granted]
+              properties:
+                session_id:
+                  type: string
+                granted:
+                  type: boolean
+      responses:
+        "200":
+          description: Permission decision delivered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/chat/last-turn-meta/{session_id}:
+    get:
+      operationId: lastTurnMeta
+      tags: [Chat]
+      summary: Get metadata for the last completed turn
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Turn metadata (provider, model, tokens)
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ================================================================
+  #  Agents
+  # ================================================================
   /api/v1/agents:
     get:
       operationId: listAgents
@@ -221,7 +769,198 @@ paths:
                 items:
                   $ref: "#/components/schemas/AgentInfo"
 
-  # ──────────────── Tools ────────────────
+  /api/v1/agents/{id}:
+    get:
+      operationId: getAgent
+      tags: [Agents]
+      summary: Get agent details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: saveAgent
+      tags: [Agents]
+      summary: Save (create or update) an agent definition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: Raw TOML source of the agent definition
+      responses:
+        "200":
+          description: Agent saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/agents/{id}/source:
+    get:
+      operationId: getAgentSource
+      tags: [Agents]
+      summary: Get the raw TOML source for an agent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent TOML source
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+
+  /api/v1/agents/{id}/reset:
+    post:
+      operationId: resetAgent
+      tags: [Agents]
+      summary: Reset an agent to its built-in defaults
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent reset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/agents/tools:
+    get:
+      operationId: listAgentTools
+      tags: [Agents]
+      summary: List all available agent tools
+      responses:
+        "200":
+          description: Tool list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/agents/prompt-sections:
+    get:
+      operationId: listPromptSections
+      tags: [Agents]
+      summary: List available prompt section identifiers
+      responses:
+        "200":
+          description: Prompt section list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /api/v1/agents/parse-toml:
+    post:
+      operationId: parseToml
+      tags: [Agents]
+      summary: Parse and validate agent TOML without saving
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+      responses:
+        "200":
+          description: Parsed agent definition
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/agents/reload:
+    post:
+      operationId: reloadAgents
+      tags: [Agents]
+      summary: Reload all agent definitions from disk
+      responses:
+        "200":
+          description: Reload result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  loaded:
+                    type: integer
+                  errored:
+                    type: integer
+
+  /api/v1/agents/translate:
+    post:
+      operationId: translateText
+      tags: [Agents]
+      summary: Translate text using the configured provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text, target_language]
+              properties:
+                text:
+                  type: string
+                target_language:
+                  type: string
+      responses:
+        "200":
+          description: Translated text
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  translated:
+                    type: string
+
+  # ================================================================
+  #  Tools
+  # ================================================================
   /api/v1/tools:
     get:
       operationId: listTools
@@ -237,7 +976,1047 @@ paths:
                 items:
                   $ref: "#/components/schemas/ToolInfo"
 
-  # ──────────────── Diagnostics ────────────────
+  # ================================================================
+  #  Config
+  # ================================================================
+  /api/v1/config:
+    get:
+      operationId: configGet
+      tags: [Config]
+      summary: Get the full configuration as JSON
+      description: Reads all section TOML files and merges them into a single JSON object.
+      responses:
+        "200":
+          description: Merged configuration
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/config/{section}:
+    get:
+      operationId: configGetSection
+      tags: [Config]
+      summary: Get a config section as raw TOML
+      parameters:
+        - name: section
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [providers, storage, session, runtime, hooks, tools, guardrails, browser, knowledge]
+      responses:
+        "200":
+          description: Section content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+    put:
+      operationId: configSaveSection
+      tags: [Config]
+      summary: Save a config section from raw TOML
+      parameters:
+        - name: section
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [providers, storage, session, runtime, hooks, tools, guardrails, browser, knowledge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: Raw TOML content
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/config/reload:
+    post:
+      operationId: configReload
+      tags: [Config]
+      summary: Hot-reload all configuration
+      description: |
+        Reloads providers, guardrails, session, runtime, browser, tools,
+        knowledge, hooks, prompts, and agents from disk.
+      responses:
+        "200":
+          description: Reload summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/config/mcp:
+    get:
+      operationId: mcpConfigGet
+      tags: [Config]
+      summary: Get MCP server configuration
+      responses:
+        "200":
+          description: MCP config
+          content:
+            application/json:
+              schema:
+                type: object
+    put:
+      operationId: mcpConfigSave
+      tags: [Config]
+      summary: Save MCP server configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/config/prompts:
+    get:
+      operationId: promptList
+      tags: [Config]
+      summary: List all prompt files
+      responses:
+        "200":
+          description: List of prompt filenames (*.txt)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /api/v1/config/prompts/{filename}:
+    get:
+      operationId: promptGet
+      tags: [Config]
+      summary: Read a prompt file
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Prompt content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+    put:
+      operationId: promptSave
+      tags: [Config]
+      summary: Save a prompt file
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/config/prompts/{filename}/default:
+    get:
+      operationId: promptGetDefault
+      tags: [Config]
+      summary: Get the built-in default content for a prompt file
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Default prompt content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/providers/test:
+    post:
+      operationId: providerTest
+      tags: [Config]
+      summary: Test a provider configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider_type, model, api_key, api_key_env]
+              properties:
+                provider_type:
+                  type: string
+                model:
+                  type: string
+                api_key:
+                  type: string
+                api_key_env:
+                  type: string
+                base_url:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Test result
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/providers/list-models:
+    post:
+      operationId: providerListModels
+      tags: [Config]
+      summary: Fetch available models from a provider endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_url, api_key, api_key_env]
+              properties:
+                base_url:
+                  type: string
+                api_key:
+                  type: string
+                api_key_env:
+                  type: string
+      responses:
+        "200":
+          description: Model list from provider
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ================================================================
+  #  Workspaces
+  # ================================================================
+  /api/v1/workspaces:
+    get:
+      operationId: listWorkspaces
+      tags: [Workspaces]
+      summary: List all workspaces
+      responses:
+        "200":
+          description: Workspace list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkspaceRecord"
+    post:
+      operationId: createWorkspace
+      tags: [Workspaces]
+      summary: Create a new workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, path]
+              properties:
+                name:
+                  type: string
+                path:
+                  type: string
+      responses:
+        "201":
+          description: Workspace created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceRecord"
+
+  /api/v1/workspaces/{id}:
+    put:
+      operationId: updateWorkspace
+      tags: [Workspaces]
+      summary: Update a workspace
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, path]
+              properties:
+                name:
+                  type: string
+                path:
+                  type: string
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+    delete:
+      operationId: deleteWorkspace
+      tags: [Workspaces]
+      summary: Delete a workspace
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/workspaces/session-map:
+    get:
+      operationId: workspaceSessionMap
+      tags: [Workspaces]
+      summary: Get session-to-workspace mapping
+      responses:
+        "200":
+          description: Map of session_id to workspace_id
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+
+  /api/v1/workspaces/assign:
+    post:
+      operationId: assignSession
+      tags: [Workspaces]
+      summary: Assign a session to a workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, session_id]
+              properties:
+                workspace_id:
+                  type: string
+                session_id:
+                  type: string
+      responses:
+        "200":
+          description: Assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/workspaces/unassign:
+    post:
+      operationId: unassignSession
+      tags: [Workspaces]
+      summary: Unassign a session from its workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id:
+                  type: string
+      responses:
+        "200":
+          description: Unassigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ================================================================
+  #  Skills
+  # ================================================================
+  /api/v1/skills:
+    get:
+      operationId: listSkills
+      tags: [Skills]
+      summary: List installed skills
+      responses:
+        "200":
+          description: Skill list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/skills/{name}:
+    get:
+      operationId: getSkill
+      tags: [Skills]
+      summary: Get skill details
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Skill detail
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: uninstallSkill
+      tags: [Skills]
+      summary: Uninstall a skill
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Uninstalled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/skills/{name}/enabled:
+    put:
+      operationId: setSkillEnabled
+      tags: [Skills]
+      summary: Enable or disable a skill
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/skills/{name}/files:
+    get:
+      operationId: getSkillFiles
+      tags: [Skills]
+      summary: List files in a skill directory (tree)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File tree
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SkillFileEntry"
+
+  /api/v1/skills/{name}/files/{path}:
+    get:
+      operationId: readSkillFile
+      tags: [Skills]
+      summary: Read a file within a skill directory
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+    put:
+      operationId: saveSkillFile
+      tags: [Skills]
+      summary: Save a file within a skill directory
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ================================================================
+  #  Knowledge
+  # ================================================================
+  /api/v1/knowledge/collections:
+    get:
+      operationId: kbCollectionList
+      tags: [Knowledge]
+      summary: List knowledge collections
+      responses:
+        "200":
+          description: Collection list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      operationId: kbCollectionCreate
+      tags: [Knowledge]
+      summary: Create a knowledge collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Collection created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/knowledge/collections/{name}:
+    delete:
+      operationId: kbCollectionDelete
+      tags: [Knowledge]
+      summary: Delete a knowledge collection
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/knowledge/collections/{name}/rename:
+    post:
+      operationId: kbCollectionRename
+      tags: [Knowledge]
+      summary: Rename a knowledge collection
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_name]
+              properties:
+                new_name:
+                  type: string
+      responses:
+        "200":
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/knowledge/collections/{name}/entries:
+    get:
+      operationId: kbEntryList
+      tags: [Knowledge]
+      summary: List entries in a collection
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Entry list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/knowledge/entries/{id}:
+    get:
+      operationId: kbEntryDetail
+      tags: [Knowledge]
+      summary: Get knowledge entry details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Entry detail
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: kbEntryDelete
+      tags: [Knowledge]
+      summary: Delete a knowledge entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/knowledge/entries/{id}/metadata:
+    patch:
+      operationId: kbEntryUpdateMetadata
+      tags: [Knowledge]
+      summary: Update knowledge entry metadata
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/knowledge/search:
+    post:
+      operationId: kbSearch
+      tags: [Knowledge]
+      summary: Semantic search across knowledge base
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                collection:
+                  type: string
+                  nullable: true
+                limit:
+                  type: integer
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/knowledge/ingest:
+    post:
+      operationId: kbIngest
+      tags: [Knowledge]
+      summary: Ingest a single document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection, source]
+              properties:
+                collection:
+                  type: string
+                source:
+                  type: string
+      responses:
+        "200":
+          description: Ingestion result
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/knowledge/ingest-batch:
+    post:
+      operationId: kbIngestBatch
+      tags: [Knowledge]
+      summary: Batch ingest documents (progress via SSE)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection, sources]
+              properties:
+                collection:
+                  type: string
+                sources:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Batch started
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/knowledge/expand-folder:
+    post:
+      operationId: kbExpandFolder
+      tags: [Knowledge]
+      summary: Expand a folder path into individual file paths
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: Expanded file list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /api/v1/knowledge/stats:
+    get:
+      operationId: kbStats
+      tags: [Knowledge]
+      summary: Get knowledge base statistics
+      responses:
+        "200":
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ================================================================
+  #  Observability
+  # ================================================================
+  /api/v1/observability/snapshot:
+    get:
+      operationId: observabilitySnapshot
+      tags: [Observability]
+      summary: Get a live system state snapshot
+      responses:
+        "200":
+          description: System snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/observability/history:
+    get:
+      operationId: observabilityHistory
+      tags: [Observability]
+      summary: Get system state with history
+      parameters:
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start of time range (RFC 3339)
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End of time range (RFC 3339)
+      responses:
+        "200":
+          description: Snapshot with history
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ================================================================
+  #  Rewind
+  # ================================================================
+  /api/v1/rewind/{session_id}/points:
+    get:
+      operationId: rewindListPoints
+      tags: [Rewind]
+      summary: List rewind points for a session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Rewind points (most recent first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RewindPointInfo"
+
+  /api/v1/rewind/{session_id}/execute:
+    post:
+      operationId: rewindExecute
+      tags: [Rewind]
+      summary: Execute a full three-phase rewind
+      description: |
+        Performs transcript truncation, file restoration, and checkpoint
+        invalidation. Rolls back to the state at the target message.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_message_id]
+              properties:
+                target_message_id:
+                  type: string
+      responses:
+        "200":
+          description: Rewind result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewindResult"
+
+  /api/v1/rewind/{session_id}/restore-files:
+    post:
+      operationId: rewindRestoreFiles
+      tags: [Rewind]
+      summary: Restore files only (no transcript truncation)
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_message_id]
+              properties:
+                target_message_id:
+                  type: string
+      responses:
+        "200":
+          description: File restoration report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restored:
+                    type: array
+                    items:
+                      type: string
+                  deleted:
+                    type: array
+                    items:
+                      type: string
+                  conflicts:
+                    type: array
+                    items:
+                      type: object
+
+  # ================================================================
+  #  Attachments
+  # ================================================================
+  /api/v1/attachments/read:
+    post:
+      operationId: attachmentReadFiles
+      tags: [Attachments]
+      summary: Read image files as base64
+      description: |
+        Reads files from the filesystem and returns base64-encoded data.
+        Only image types are allowed: png, jpg, jpeg, gif, webp.
+        Maximum file size: 20 MB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths]
+              properties:
+                paths:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Attachment data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AttachmentData"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  # ================================================================
+  #  Diagnostics
+  # ================================================================
   /api/v1/diagnostics/traces:
     get:
       operationId: listTraces
@@ -288,9 +2067,408 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-# ═══════════════════════════════════════════════
+  /api/v1/diagnostics/sessions/{session_id}:
+    get:
+      operationId: getDiagnosticsBySession
+      tags: [Diagnostics]
+      summary: Get diagnostics for a specific session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session diagnostics
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/diagnostics/subagents:
+    get:
+      operationId: getSubagentHistory
+      tags: [Diagnostics]
+      summary: Get sub-agent execution history
+      responses:
+        "200":
+          description: Sub-agent history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  # ================================================================
+  #  Workflows
+  # ================================================================
+  /api/v1/workflows:
+    get:
+      operationId: listWorkflows
+      tags: [Workflows]
+      summary: List workflows
+      responses:
+        "200":
+          description: Workflow list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      operationId: createWorkflow
+      tags: [Workflows]
+      summary: Create a workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Workflow created
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/workflows/{workflow_id}:
+    get:
+      operationId: getWorkflow
+      tags: [Workflows]
+      summary: Get workflow details
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workflow detail
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateWorkflow
+      tags: [Workflows]
+      summary: Update a workflow
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+    delete:
+      operationId: deleteWorkflow
+      tags: [Workflows]
+      summary: Delete a workflow
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/workflows/validate:
+    post:
+      operationId: validateWorkflow
+      tags: [Workflows]
+      summary: Validate a workflow definition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/workflows/{workflow_id}/dag:
+    get:
+      operationId: getWorkflowDag
+      tags: [Workflows]
+      summary: Get DAG visualization data
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: DAG structure
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/workflows/{workflow_id}/execute:
+    post:
+      operationId: executeWorkflow
+      tags: [Workflows]
+      summary: Execute a workflow
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ================================================================
+  #  Schedules
+  # ================================================================
+  /api/v1/schedules:
+    get:
+      operationId: listSchedules
+      tags: [Schedules]
+      summary: List schedules
+      responses:
+        "200":
+          description: Schedule list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      operationId: createSchedule
+      tags: [Schedules]
+      summary: Create a schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Schedule created
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/schedules/{schedule_id}:
+    get:
+      operationId: getSchedule
+      tags: [Schedules]
+      summary: Get schedule details
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Schedule detail
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateSchedule
+      tags: [Schedules]
+      summary: Update a schedule
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+    delete:
+      operationId: deleteSchedule
+      tags: [Schedules]
+      summary: Delete a schedule
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/schedules/{schedule_id}/pause:
+    post:
+      operationId: pauseSchedule
+      tags: [Schedules]
+      summary: Pause a schedule
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/schedules/{schedule_id}/resume:
+    post:
+      operationId: resumeSchedule
+      tags: [Schedules]
+      summary: Resume a schedule
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/schedules/{schedule_id}/executions:
+    get:
+      operationId: scheduleExecutionHistory
+      tags: [Schedules]
+      summary: Get execution history for a schedule
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Execution history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/schedules/executions/{execution_id}:
+    get:
+      operationId: getScheduleExecution
+      tags: [Schedules]
+      summary: Get a specific execution
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Execution detail
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/schedules/{schedule_id}/trigger:
+    post:
+      operationId: triggerSchedule
+      tags: [Schedules]
+      summary: Trigger a schedule immediately
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Triggered
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ================================================================
+  #  Bot Webhooks
+  # ================================================================
+  /api/v1/bots/feishu/webhook:
+    post:
+      operationId: feishuWebhook
+      tags: [Bots]
+      summary: Feishu bot webhook endpoint
+      responses:
+        "200":
+          description: Webhook processed
+
+  /api/v1/bots/discord/webhook:
+    post:
+      operationId: discordWebhook
+      tags: [Bots]
+      summary: Discord bot webhook endpoint
+      responses:
+        "200":
+          description: Webhook processed
+
+# ===================================================================
 # Components
-# ═══════════════════════════════════════════════
+# ===================================================================
 components:
   parameters:
     SessionId:
@@ -315,7 +2493,7 @@ components:
             $ref: "#/components/schemas/ApiError"
 
   schemas:
-    # ── Error ──
+    # -- Error --
     ApiError:
       type: object
       required: [error, message]
@@ -334,7 +2512,7 @@ components:
         message:
           type: string
 
-    # ── Health ──
+    # -- Health --
     HealthResponse:
       type: object
       required: [status, version]
@@ -382,32 +2560,39 @@ components:
         pg_feature_enabled:
           type: boolean
 
-    # ── Session ──
+    # -- Session --
     SessionInfo:
       type: object
       properties:
         id:
           type: string
-        state:
+        agent_id:
           type: string
-        session_type:
-          type: string
+          nullable: true
         title:
           type: string
           nullable: true
-        message_count:
-          type: integer
+        manual_title:
+          type: string
+          nullable: true
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+        message_count:
+          type: integer
+        has_custom_prompt:
+          type: boolean
 
     CreateSessionRequest:
       type: object
       properties:
         title:
+          type: string
+          nullable: true
+        agent_id:
           type: string
           nullable: true
 
@@ -418,25 +2603,43 @@ components:
           type: string
           nullable: true
 
-    # ── Message ──
-    Message:
+    # -- Message --
+    MessageInfo:
       type: object
       properties:
-        message_id:
+        id:
           type: string
         role:
           type: string
           enum: [system, user, assistant, tool]
         content:
           type: string
-        tool_call_id:
-          type: string
-          nullable: true
         timestamp:
           type: string
           format: date-time
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCallBrief"
+        metadata:
+          type: object
+        skills:
+          type: array
+          nullable: true
+          items:
+            type: string
 
-    # ── Chat ──
+    ToolCallBrief:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        arguments:
+          type: string
+
+    # -- Chat --
     ChatRequest:
       type: object
       required: [message]
@@ -449,13 +2652,25 @@ components:
           nullable: true
           description: Session ID to continue (auto-creates if omitted)
 
+    ChatSendRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        session_id:
+          type: string
+          nullable: true
+        agent_id:
+          type: string
+          nullable: true
+
     ChatResponse:
       type: object
       required: [content, model, session_id]
       properties:
         content:
           type: string
-          description: Assistant response text
         model:
           type: string
         session_id:
@@ -485,7 +2700,22 @@ components:
         result_content:
           type: string
 
-    # ── Agent ──
+    ChatCheckpointInfo:
+      type: object
+      properties:
+        checkpoint_id:
+          type: string
+        session_id:
+          type: string
+        turn_number:
+          type: integer
+        message_count_before:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    # -- Agent --
     AgentInfo:
       type: object
       properties:
@@ -497,8 +2727,45 @@ components:
           type: string
         description:
           type: string
+        icon:
+          type: string
+          nullable: true
 
-    # ── Tool ──
+    AgentDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mode:
+          type: string
+        description:
+          type: string
+        icon:
+          type: string
+          nullable: true
+        features:
+          type: object
+        knowledge_collections:
+          type: array
+          items:
+            type: string
+        prompt_section_ids:
+          type: array
+          items:
+            type: string
+        plan_mode:
+          type: string
+          nullable: true
+        thinking_effort:
+          type: string
+          nullable: true
+        permission_mode:
+          type: string
+          nullable: true
+
+    # -- Tool --
     ToolInfo:
       type: object
       properties:
@@ -509,7 +2776,92 @@ components:
         parameters:
           type: object
 
-    # ── Diagnostics ──
+    # -- Workspace --
+    WorkspaceRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+
+    # -- Skill --
+    SkillFileEntry:
+      type: object
+      properties:
+        path:
+          type: string
+        name:
+          type: string
+        is_dir:
+          type: boolean
+        size:
+          type: integer
+        children:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/SkillFileEntry"
+
+    # -- Rewind --
+    RewindPointInfo:
+      type: object
+      properties:
+        message_id:
+          type: string
+        turn_number:
+          type: integer
+        message_preview:
+          type: string
+        timestamp:
+          type: integer
+          description: Unix timestamp
+        diff_stats:
+          type: object
+
+    RewindResult:
+      type: object
+      properties:
+        target_message_id:
+          type: string
+        messages_removed:
+          type: integer
+        checkpoints_invalidated:
+          type: integer
+        file_report:
+          type: object
+          properties:
+            restored:
+              type: array
+              items:
+                type: string
+            deleted:
+              type: array
+              items:
+                type: string
+            conflicts:
+              type: array
+              items:
+                type: object
+
+    # -- Attachment --
+    AttachmentData:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        mime_type:
+          type: string
+        base64_data:
+          type: string
+        size:
+          type: integer
+
+    # -- Diagnostics --
     TraceInfo:
       type: object
       properties:
