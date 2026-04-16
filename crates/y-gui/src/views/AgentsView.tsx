@@ -18,10 +18,9 @@ import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
+import { useAgentEditor } from '../hooks/useAgentEditor';
 import type { AgentDetail } from '../hooks/useAgents';
 import type { PlanMode, ThinkingEffort } from '../types';
-import type { EditorTab, EditorSurface, AgentDraft } from '../components/agents/types';
-import { buildDraft, serializeAgentDraft, slugifyAgentId } from '../components/agents/utils';
 import './AgentsView.css';
 
 export function AgentsView() {
@@ -62,20 +61,18 @@ export function AgentsView() {
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
   const [planMode, setPlanMode] = useState<PlanMode>('fast');
   const [rewindDraft, setRewindDraft] = useState<string | null>(null);
-
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create');
-  const [editorTab, setEditorTab] = useState<EditorTab>('general');
-  const [editorSurface, setEditorSurface] = useState<EditorSurface>('form');
-  const [editorDraft, setEditorDraft] = useState<AgentDraft>(buildDraft());
-  const [editorRawToml, setEditorRawToml] = useState('');
-  const [editorRawPath, setEditorRawPath] = useState<string | null>(null);
-  const [editorRawUsesSourceFile, setEditorRawUsesSourceFile] = useState(false);
-  const [editorRawOrigin, setEditorRawOrigin] = useState<'form' | 'raw' | 'source'>('form');
-  const [editorRawError, setEditorRawError] = useState<string | null>(null);
-  const [editorSaving, setEditorSaving] = useState(false);
   const [agentQuery, setAgentQuery] = useState('');
   const [reloadingAgents, setReloadingAgents] = useState(false);
+
+  // Agent editor -- all editor state and logic extracted to a dedicated hook
+  const editor = useAgentEditor({
+    getAgentDetail,
+    getAgentSource,
+    parseAgentToml,
+    saveAgent,
+    resetAgent,
+    activeAgentId: nav.activeAgentId,
+  });
 
   const loadSelectedAgentDetail = useCallback(async (agentId: string) => {
     setDetailLoading(true);
@@ -128,150 +125,6 @@ export function AgentsView() {
     rootAgentNames: agentRootNames,
   });
   const interactions = useSessionInteractions(sessionHooks.activeSessionId);
-
-  const handleOpenCreate = useCallback(() => {
-    const draft = buildDraft();
-    setEditorMode('create');
-    setEditorTab('general');
-    setEditorSurface('form');
-    setEditorDraft(draft);
-    setEditorRawToml(serializeAgentDraft(draft));
-    setEditorRawPath(null);
-    setEditorRawUsesSourceFile(false);
-    setEditorRawOrigin('form');
-    setEditorRawError(null);
-    setEditorOpen(true);
-  }, []);
-
-  const handleOpenEdit = useCallback(async (agentId: string) => {
-    const [detail, source] = await Promise.all([
-      getAgentDetail(agentId),
-      getAgentSource(agentId),
-    ]);
-    if (!detail) return;
-    setEditorMode('edit');
-    setEditorTab('general');
-    setEditorSurface('form');
-    setEditorDraft(buildDraft(detail));
-    setEditorRawToml(source?.content ?? serializeAgentDraft(buildDraft(detail)));
-    setEditorRawPath(source?.path ?? null);
-    setEditorRawUsesSourceFile(source?.is_user_file ?? false);
-    setEditorRawOrigin(source ? 'source' : 'form');
-    setEditorRawError(null);
-    setEditorOpen(true);
-  }, [getAgentDetail, getAgentSource]);
-
-  const handleApplyTemplate = useCallback(async (agentId: string) => {
-    const detail = await getAgentDetail(agentId);
-    if (!detail) return;
-    const nextDraft = {
-      ...buildDraft(detail),
-      id: '',
-      name: `Copy ${detail.name}`,
-    };
-    setEditorDraft(nextDraft);
-    setEditorSurface('form');
-    setEditorRawToml(serializeAgentDraft(nextDraft));
-    setEditorRawPath(null);
-    setEditorRawUsesSourceFile(false);
-    setEditorRawOrigin('form');
-    setEditorRawError(null);
-  }, [getAgentDetail]);
-
-  const handleEditorDraftChange = useCallback((updater: (draft: AgentDraft) => AgentDraft) => {
-    setEditorRawOrigin('form');
-    setEditorRawError(null);
-    setEditorDraft((prev) => updater(prev));
-  }, []);
-
-  useEffect(() => {
-    if (!editorOpen || editorSurface !== 'form' || editorRawOrigin !== 'form') {
-      return;
-    }
-    setEditorRawToml(serializeAgentDraft(editorDraft));
-  }, [editorDraft, editorOpen, editorRawOrigin, editorSurface]);
-
-  const handleEditorSurfaceChange = useCallback(async (surface: EditorSurface) => {
-    if (surface === editorSurface) {
-      return;
-    }
-
-    setEditorRawError(null);
-
-    if (surface === 'raw') {
-      setEditorSurface('raw');
-      return;
-    }
-
-    const parsed = await parseAgentToml(editorRawToml);
-    if (!parsed) {
-      setEditorRawError('Raw TOML has syntax or schema errors. Fix it before returning to the form editor.');
-      return;
-    }
-
-    setEditorDraft(buildDraft(parsed));
-    setEditorRawOrigin('form');
-    setEditorSurface('form');
-  }, [editorRawToml, editorSurface, parseAgentToml]);
-
-  const handleSaveEditor = useCallback(async () => {
-    let nextId = editorMode === 'edit' ? editorDraft.id : (editorDraft.id.trim() || slugifyAgentId(editorDraft.name));
-    let nextContent = serializeAgentDraft({
-      ...editorDraft,
-      id: nextId,
-    });
-
-    if (editorSurface === 'raw') {
-      const parsed = await parseAgentToml(editorRawToml);
-      if (!parsed) {
-        setEditorRawError('Raw TOML has syntax or schema errors. Fix it before saving.');
-        return;
-      }
-
-      if (editorMode === 'edit') {
-        if (parsed.id.trim() && parsed.id.trim() !== editorDraft.id) {
-          setEditorRawError('Existing agent IDs cannot be changed in raw mode.');
-          return;
-        }
-        nextId = editorDraft.id;
-      } else {
-        nextId = parsed.id.trim();
-      }
-
-      if (!nextId || !parsed.name.trim()) {
-        setEditorRawError('Raw TOML must include both non-empty id and name fields before saving.');
-        return;
-      }
-
-      nextContent = editorRawToml;
-    } else if (!nextId || !editorDraft.name.trim()) {
-      return;
-    }
-
-    setEditorSaving(true);
-    const ok = await saveAgent(nextId, nextContent);
-    setEditorSaving(false);
-    if (!ok) return;
-
-    setEditorOpen(false);
-
-    if (nav.activeAgentId === nextId) {
-      await loadSelectedAgentDetail(nextId);
-    }
-  }, [editorDraft, editorMode, editorRawToml, editorSurface, loadSelectedAgentDetail, nav.activeAgentId, parseAgentToml, saveAgent]);
-
-  const handleResetEditor = useCallback(async () => {
-    if (editorMode !== 'edit') return;
-
-    const ok = await resetAgent(editorDraft.id);
-    if (!ok) return;
-
-    setEditorOpen(false);
-
-    if (nav.activeAgentId === editorDraft.id) {
-      await loadSelectedAgentDetail(editorDraft.id);
-    }
-  }, [editorDraft.id, editorMode, loadSelectedAgentDetail, nav.activeAgentId, resetAgent]);
 
   const handleReloadAgents = useCallback(async () => {
     setReloadingAgents(true);
@@ -380,36 +233,42 @@ export function AgentsView() {
   );
   const visibleKnowledge = selectedAgentSummary?.features.knowledge ? knowledgeHooks.collections : [];
 
-  const editorDialog = editorOpen ? (
+  const editorDialog = editor.editorOpen ? (
     <AgentEditorDialog
-      mode={editorMode}
-      draft={editorDraft}
-      tab={editorTab}
-      surface={editorSurface}
-      rawToml={editorRawToml}
-      rawPath={editorRawPath}
-      rawUsesSourceFile={editorRawUsesSourceFile}
-      rawError={editorRawError}
-      saving={editorSaving}
-      canReset={editorMode === 'edit' && !!selectedAgentDetail?.is_overridden}
+      mode={editor.editorMode}
+      draft={editor.editorDraft}
+      tab={editor.editorTab}
+      surface={editor.editorSurface}
+      rawToml={editor.editorRawToml}
+      rawPath={editor.editorRawPath}
+      rawUsesSourceFile={editor.editorRawUsesSourceFile}
+      rawError={editor.editorRawError}
+      saving={editor.editorSaving}
+      canReset={editor.editorMode === 'edit' && !!selectedAgentDetail?.is_overridden}
       agents={agents}
       tools={tools}
       promptSections={promptSections}
       availableSkills={availableSkills}
       knowledgeCollections={knowledgeCollectionNames}
       providerOptions={providerHooks.providers}
-      onChange={handleEditorDraftChange}
-      onTabChange={setEditorTab}
-      onSurfaceChange={(surface) => { void handleEditorSurfaceChange(surface); }}
-      onRawTomlChange={(content) => {
-        setEditorRawToml(content);
-        setEditorRawOrigin('raw');
-        setEditorRawError(null);
+      onChange={editor.handleEditorDraftChange}
+      onTabChange={editor.setEditorTab}
+      onSurfaceChange={(surface) => { void editor.handleEditorSurfaceChange(surface); }}
+      onRawTomlChange={editor.setEditorRawToml}
+      onApplyTemplate={editor.handleApplyTemplate}
+      onClose={editor.closeEditor}
+      onSave={async () => {
+        const ok = await editor.handleSaveEditor();
+        if (ok && nav.activeAgentId) {
+          await loadSelectedAgentDetail(nav.activeAgentId);
+        }
       }}
-      onApplyTemplate={handleApplyTemplate}
-      onClose={() => setEditorOpen(false)}
-      onSave={() => void handleSaveEditor()}
-      onReset={() => void handleResetEditor()}
+      onReset={async () => {
+        const ok = await editor.handleResetEditor();
+        if (ok && nav.activeAgentId) {
+          await loadSelectedAgentDetail(nav.activeAgentId);
+        }
+      }}
     />
   ) : null;
 
@@ -427,7 +286,7 @@ export function AgentsView() {
               onQueryChange={setAgentQuery}
               onSelectAgent={nav.setActiveAgentId}
               onReload={() => void handleReloadAgents()}
-              onNewAgent={handleOpenCreate}
+              onNewAgent={editor.handleOpenCreate}
             />
 
             <section className="agents-main-panel">
@@ -475,7 +334,7 @@ export function AgentsView() {
                 rewindDraft={rewindDraft}
                 askUserData={interactions.askUserData}
                 permissionData={interactions.permissionData}
-                onEdit={() => void handleOpenEdit(nav.activeAgentId!)}
+                onEdit={() => void editor.handleOpenEdit(nav.activeAgentId!)}
                 onNewSession={() => void chatHandlers.handleNewChat()}
                 onSelectSession={sessionHooks.selectSession}
                 onDeleteSession={(id) => void sessionHooks.deleteSession(id)}
@@ -509,7 +368,7 @@ export function AgentsView() {
               filteredAgents={filteredAgents}
               agentQuery={agentQuery}
               onSelectAgent={nav.setActiveAgentId}
-              onOpenEdit={(id) => void handleOpenEdit(id)}
+              onOpenEdit={(id) => void editor.handleOpenEdit(id)}
             />
         )}
       </div>

@@ -117,7 +117,6 @@ export function SetupWizard({
   const [useSameForTitle, setUseSameForTitle] = useState<boolean | null>(null);
 
   // Model discovery state
-  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelList, setModelList] = useState<ModelItem[]>([]);
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -156,7 +155,6 @@ export function SetupWizard({
 
   const handleModelSearch = useCallback(async () => {
     if (!provider.base_url) return;
-    setModelPickerOpen(true);
     setModelLoading(true);
     setModelError(null);
     setModelList([]);
@@ -377,23 +375,21 @@ export function SetupWizard({
               placeholder="e.g. gpt-4o"
             />
             {canDiscoverModels && (
-              <button
-                className="wizard-model-search-btn"
-                onClick={handleModelSearch}
-                title="Discover models from endpoint"
-                type="button"
-              >
-                <Search size={13} />
-              </button>
-            )}
-            {modelPickerOpen && (
               <ModelPickerDropdown
                 models={modelList}
                 loading={modelLoading}
                 error={modelError}
                 onSelect={(id) => updateProvider({ model: id })}
-                onClose={() => setModelPickerOpen(false)}
-              />
+              >
+                <button
+                  className="wizard-model-search-btn"
+                  onClick={handleModelSearch}
+                  title="Discover models from endpoint"
+                  type="button"
+                >
+                  <Search size={13} />
+                </button>
+              </ModelPickerDropdown>
             )}
           </div>
         </div>
