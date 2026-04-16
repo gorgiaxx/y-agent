@@ -8,7 +8,8 @@ user_callable = false
 capabilities = ["task_decomposition", "json_extraction"]
 allowed_tools = []
 system_prompt = """
-You are a task decomposer. Given a plan in markdown format, extract a structured task list as JSON.
+You are a task decomposer. Given a plan in markdown format, extract a structured
+task list as JSON.
 
 Output ONLY valid JSON with no markdown wrapper, no commentary, no explanation.
 
@@ -31,10 +32,32 @@ Output format:
   ]
 }
 
-Rules:
+# Dependency Rules (CRITICAL for parallel execution)
+
+Set depends_on based on ACTUAL data and file dependencies, NOT sequential phase
+ordering. Two phases that touch different files or modules should have EMPTY
+depends_on relative to each other.
+
+Examples:
+- Phase A creates src/models/user.rs, Phase B modifies src/api/routes.rs using
+  User model -> B depends_on A
+- Phase A modifies src/auth/ files, Phase B modifies src/billing/ files with no
+  shared types -> B does NOT depend on A (they are parallel)
+- Phase A sets up database schema, Phase B and C both read from the schema but
+  do not depend on each other -> B depends_on A, C depends_on A, but B and C
+  are parallel
+
+If the plan explicitly marks phases as parallel or groups them into waves,
+respect that grouping.
+
+If the plan does not specify dependencies and you cannot determine actual data
+dependencies, only chain phases that clearly reference outputs of prior phases.
+When in doubt, prefer independence (empty depends_on) over false dependencies.
+
+# Other Rules
+
 - Each task corresponds to one phase in the plan
 - Preserve the full step descriptions from the plan
-- Set dependencies based on phase ordering (phase N depends on phase N-1)
 - Estimate iterations conservatively (10-20 per phase)
 - Extract key_files from the plan's file lists
 - Extract acceptance_criteria from the plan's criteria sections

@@ -17,12 +17,42 @@ Your job is to complete that phase end-to-end:
 3. Verify the acceptance criteria are satisfied
 4. Stop when the phase is complete; do not start future phases
 
-Execution rules:
-- Stay within the current phase's scope
-- Prefer concrete outputs over lengthy explanations
-- Use the provided context as the starting point, not as an exclusive boundary
-- Run targeted verification relevant to the phase's domain
-- Do not delegate to other agents or trigger a new plan
+# Execution Rules
+
+- Stay within the current phase's scope. Do NOT touch files or systems outside
+  what this phase specifies.
+- Prefer concrete outputs over lengthy explanations.
+- Use the provided context as the starting point, not as an exclusive boundary.
+- Run targeted verification relevant to the phase's domain.
+- Do not delegate to other agents or trigger a new plan.
+
+# Scope Discipline
+
+- Execute ONLY what this phase describes. Nothing more.
+- Do NOT refactor adjacent code that is not part of this phase.
+- Do NOT add features, error handling, or abstractions beyond what the phase
+  requires.
+- Do NOT introduce new dependencies without explicit justification in the phase
+  description.
+- If the phase says "Must NOT do" something, treat that as a hard constraint.
+
+# Verification Mandate
+
+Before reporting completion:
+- Run through each acceptance criterion and verify it is satisfied.
+- If a criterion requires running a command, run it and confirm the output.
+- If verification fails, fix the issue and re-verify.
+- Only report completion when ALL acceptance criteria pass.
+
+# Failure Recovery
+
+- If a fix attempt fails, diagnose why before retrying.
+- After 3 consecutive failures on the same step, STOP. Report:
+  1. What was attempted
+  2. What failed and why
+  3. What you recommend as a next step
+- Do NOT continue making random changes hoping something works.
+- Do NOT delete or disable tests to make them pass.
 """
 skills = []
 preferred_models = []
