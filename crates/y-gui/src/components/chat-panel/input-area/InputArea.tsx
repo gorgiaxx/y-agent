@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Loader2, Zap, ScanSearch, ClipboardList, ScrollText, Languages } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
@@ -8,6 +8,7 @@ import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
 import { SessionPromptDialog } from '../SessionPromptDialog';
+import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, Attachment } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
@@ -83,109 +84,6 @@ interface InputAreaProps {
   onRewindDraftConsumed?: () => void;
 }
 
-/** Data attribute used to identify skill mention tokens in the contenteditable. */
-const SKILL_ATTR = 'data-skill-name';
-
-
-/**
- * Extract plain text and skill names from the contenteditable div.
- * Skill mentions are embedded as <span data-skill-name="..."> elements.
- * Recursively traverses all child nodes since browsers may wrap content
- * in <div> elements.
- */
-function extractContent(el: HTMLDivElement): { text: string; skills: string[] } {
-  const skills: string[] = [];
-  let text = '';
-
-  function walk(node: Node) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent || '';
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const element = node as HTMLElement;
-      const skillName = element.getAttribute(SKILL_ATTR);
-      if (skillName) {
-        if (!skills.includes(skillName)) {
-          skills.push(skillName);
-        }
-        return; // Don't descend into skill mention spans.
-      } else if (element.tagName === 'BR') {
-        text += '\n';
-      } else {
-        // Recurse into child elements (e.g. browser-inserted <div> wrappers).
-        if (element.tagName === 'DIV' && element !== el) {
-          // Browser wraps new lines in <div> — treat as newline.
-          if (text.length > 0 && !text.endsWith('\n')) {
-            text += '\n';
-          }
-        }
-        for (const child of Array.from(element.childNodes)) {
-          walk(child);
-        }
-      }
-    }
-  }
-
-  for (const child of Array.from(el.childNodes)) {
-    walk(child);
-  }
-
-  return { text, skills };
-}
-
-/** Get the plain text content (without skill tags) for command detection. */
-function getPlainText(el: HTMLDivElement): string {
-  let text = '';
-
-  function walk(node: Node) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent || '';
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const element = node as HTMLElement;
-      if (element.getAttribute(SKILL_ATTR)) {
-        // Skip mention tokens — they're not part of the text.
-      } else if (element.tagName === 'BR') {
-        text += '\n';
-      } else {
-        if (element.tagName === 'DIV' && element !== el) {
-          if (text.length > 0 && !text.endsWith('\n')) {
-            text += '\n';
-          }
-        }
-        for (const child of Array.from(element.childNodes)) {
-          walk(child);
-        }
-      }
-    }
-  }
-
-  for (const child of Array.from(el.childNodes)) {
-    walk(child);
-  }
-  return text;
-}
-
-/** Create a skill mention DOM element. */
-function createSkillMention(skillName: string): HTMLSpanElement {
-  const span = document.createElement('span');
-  span.setAttribute(SKILL_ATTR, skillName);
-  span.setAttribute('contenteditable', 'false');
-  span.className = 'skill-mention';
-  span.textContent = `@${skillName}`;
-  return span;
-}
-
-
-
-/** Place the cursor at the end of a contenteditable element. */
-function placeCursorAtEnd(el: HTMLElement) {
-  const range = document.createRange();
-  const sel = window.getSelection();
-  range.selectNodeContents(el);
-  range.collapse(false);
-  sel?.removeAllRanges();
-  sel?.addRange(range);
-}
-
 export function InputArea({
   onSend,
   onStop,
@@ -230,7 +128,7 @@ export function InputArea({
   const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
-  const editableRef = useRef<HTMLDivElement>(null);
+  const contentEditableRef = useRef<ContentEditableInputHandle>(null);
   const providerDropdownRef = useRef<HTMLDivElement>(null);
   const kbPickerRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
@@ -301,15 +199,12 @@ export function InputArea({
     : providers.find((p) => p.id === selectedProviderId)?.model || selectedProviderId;
 
   const updateHasContent = useCallback(() => {
-    if (!editableRef.current) return;
-    const text = getPlainText(editableRef.current).trim();
-    setInputHasText(text.length > 0);
+    const hasContent = contentEditableRef.current?.hasContent() ?? false;
+    setInputHasText(hasContent);
   }, []);
 
   const resetInput = useCallback(() => {
-    if (editableRef.current) {
-      editableRef.current.innerHTML = '';
-    }
+    contentEditableRef.current?.clear();
   }, []);
 
   const exitCommandMode = useCallback(() => {
@@ -324,11 +219,9 @@ export function InputArea({
         onCommand?.(cmd.name);
       } else {
         // For non-immediate commands, insert the command text.
-        if (editableRef.current) {
-          editableRef.current.textContent = `/${cmd.name} `;
-          placeCursorAtEnd(editableRef.current);
-          updateHasContent();
-        }
+        contentEditableRef.current?.setText(`/${cmd.name} `);
+        contentEditableRef.current?.placeCursorAtEnd();
+        updateHasContent();
       }
     },
     [onCommand, resetInput, exitCommandMode, updateHasContent],
@@ -337,48 +230,8 @@ export function InputArea({
   const handleSkillSelect = useCallback(
     (skillName: string) => {
       exitCommandMode();
-      if (!editableRef.current) return;
-
-      // Check if skill is already mentioned.
-      const existing = editableRef.current.querySelector(`[${SKILL_ATTR}="${skillName}"]`);
-      if (existing) {
-        // Already present — just clear the slash text and refocus.
-        // Remove any "/" text that was typed for command mode.
-        const textNodes = Array.from(editableRef.current.childNodes).filter(
-          (n) => n.nodeType === Node.TEXT_NODE,
-        );
-        for (const tn of textNodes) {
-          const t = tn.textContent || '';
-          if (t.startsWith('/')) {
-            tn.textContent = t.replace(/^\/\S*\s?/, '');
-          }
-        }
-        placeCursorAtEnd(editableRef.current);
-        updateHasContent();
-        return;
-      }
-
-      // Remove the slash command text that triggered command mode.
-      const textNodes = Array.from(editableRef.current.childNodes).filter(
-        (n) => n.nodeType === Node.TEXT_NODE,
-      );
-      for (const tn of textNodes) {
-        const t = tn.textContent || '';
-        if (t.startsWith('/')) {
-          tn.textContent = t.replace(/^\/\S*\s?/, '');
-        }
-      }
-
-      // Insert the skill mention token.
-      const mention = createSkillMention(skillName);
-      editableRef.current.appendChild(mention);
-
-      // Add a trailing space so the cursor has somewhere to go.
-      const space = document.createTextNode('\u00A0');
-      editableRef.current.appendChild(space);
-
-      placeCursorAtEnd(editableRef.current);
-      editableRef.current.focus();
+      contentEditableRef.current?.removeSlashCommandText();
+      contentEditableRef.current?.insertSkillMention(skillName);
       updateHasContent();
     },
     [exitCommandMode, updateHasContent],
@@ -393,24 +246,10 @@ export function InputArea({
   const handleKbCollectionSelect = useCallback(
     (collectionName: string) => {
       exitCommandMode();
-      if (!editableRef.current) return;
-
-      // Remove the slash command text that triggered command mode.
-      const textNodes = Array.from(editableRef.current.childNodes).filter(
-        (n) => n.nodeType === Node.TEXT_NODE,
-      );
-      for (const tn of textNodes) {
-        const t = tn.textContent || '';
-        if (t.startsWith('/')) {
-          tn.textContent = t.replace(/^\/\S*\s?/, '');
-        }
-      }
-
-      // Use the same toggle logic as the toolbar KB button.
+      contentEditableRef.current?.removeSlashCommandText();
       toggleKbCollection(collectionName);
-
-      placeCursorAtEnd(editableRef.current);
-      editableRef.current.focus();
+      contentEditableRef.current?.placeCursorAtEnd();
+      contentEditableRef.current?.focus();
     },
     [exitCommandMode, toggleKbCollection],
   );
@@ -420,11 +259,11 @@ export function InputArea({
   }, []);
 
   const handleSend = useCallback(() => {
-    if (!editableRef.current || disabled) return;
+    if (disabled) return;
     // Prevent double-send from rapid Enter key events (common on Windows).
     if (sendingRef.current) return;
 
-    const { text, skills: extractedSkills } = extractContent(editableRef.current);
+    const { text, skills: extractedSkills } = contentEditableRef.current?.extractContent() ?? { text: '', skills: [] };
     const trimmed = text.trim();
 
     if (!trimmed && extractedSkills.length === 0 && selectedKbCollections.length === 0 && attachments.length === 0) return;
@@ -516,15 +355,13 @@ export function InputArea({
       // fast and presses Enter before the CommandMenu search captures focus.
       if (sendOnEnter && e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (editableRef.current) {
-          const plainText = getPlainText(editableRef.current).trim();
-          if (plainText.startsWith('/')) {
-            const cmdName = plainText.slice(1).split(/\s+/)[0];
-            if (cmdName && onCommand?.(cmdName)) {
-              resetInput();
-              exitCommandMode();
-              return;
-            }
+        const plainText = contentEditableRef.current?.getPlainText().trim() ?? '';
+        if (plainText.startsWith('/')) {
+          const cmdName = plainText.slice(1).split(/\s+/)[0];
+          if (cmdName && onCommand?.(cmdName)) {
+            resetInput();
+            exitCommandMode();
+            return;
           }
         }
         // Fallback: treat as normal send (exits command mode via handleSend).
@@ -540,10 +377,7 @@ export function InputArea({
     }
   };
 
-  const handleInput = () => {
-    if (!editableRef.current) return;
-
-    const plainText = getPlainText(editableRef.current);
+  const handleInput = useCallback((plainText: string) => {
     updateHasContent();
 
     // Command mode detection: "/" at start, single-line only.
@@ -552,45 +386,43 @@ export function InputArea({
     } else {
       if (commandMode) exitCommandMode();
     }
-  };
+  }, [commandMode, exitCommandMode, updateHasContent]);
 
   // When entering edit mode, populate with the message content.
   useEffect(() => {
-    if (pendingEdit && editableRef.current) {
-      editableRef.current.textContent = pendingEdit.content;
+    if (pendingEdit) {
+      contentEditableRef.current?.setText(pendingEdit.content);
       // Defer state update to avoid cascading render inside effect.
       queueMicrotask(exitCommandMode);
-      editableRef.current.focus();
-      placeCursorAtEnd(editableRef.current);
+      contentEditableRef.current?.focus();
+      contentEditableRef.current?.placeCursorAtEnd();
       updateHasContent();
     }
   }, [pendingEdit, exitCommandMode, updateHasContent]);
 
   // Populate input with draft text from rewind/undo operations.
   useEffect(() => {
-    if (rewindDraft && editableRef.current) {
-      editableRef.current.textContent = rewindDraft;
+    if (rewindDraft) {
+      contentEditableRef.current?.setText(rewindDraft);
       // Defer state update to avoid cascading render inside effect.
       queueMicrotask(exitCommandMode);
-      editableRef.current.focus();
-      placeCursorAtEnd(editableRef.current);
+      contentEditableRef.current?.focus();
+      contentEditableRef.current?.placeCursorAtEnd();
       updateHasContent();
       onRewindDraftConsumed?.();
     }
   }, [rewindDraft, exitCommandMode, updateHasContent, onRewindDraftConsumed]);
 
   const handleTranslate = useCallback(async () => {
-    if (!editableRef.current || translating) return;
-    const { text } = extractContent(editableRef.current);
+    if (translating) return;
+    const { text } = contentEditableRef.current?.extractContent() ?? { text: '' };
     if (!text.trim()) return;
     setTranslating(true);
     try {
       const translated = await invoke<string>('translate_text', { text: text.trim() });
-      if (editableRef.current) {
-        editableRef.current.textContent = translated;
-        placeCursorAtEnd(editableRef.current);
-        updateHasContent();
-      }
+      contentEditableRef.current?.setText(translated);
+      contentEditableRef.current?.placeCursorAtEnd();
+      updateHasContent();
     } catch (e) {
       console.error('[InputArea] translation error:', e);
     } finally {
@@ -651,52 +483,21 @@ export function InputArea({
         )}
 
         {/* Editable div with inline skill mentions */}
-        <div className="input-content">
-          {/* Attachment preview strip */}
-          {attachments.length > 0 && (
-            <div className="attachment-preview-strip">
-              {attachments.map((att) => (
-                <div key={att.id} className="attachment-thumb">
-                  <img
-                    src={`data:${att.mime_type};base64,${att.base64_data}`}
-                    alt={att.filename}
-                    className="attachment-thumb-img"
-                  />
-                  <button
-                    className="attachment-remove-btn"
-                    onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
-                    title={`Remove ${att.filename}`}
-                    aria-label={`Remove ${att.filename}`}
-                  >
-                    <X size={10} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div
-            ref={editableRef}
-            className="input-editable"
-            contentEditable={!disabled && !translating}
-            onInput={handleInput}
-            onPaste={handlePaste}
-            onKeyDown={handleKeyDown}
-            onCompositionEnd={() => {
-              lastCompEndRef.current = Date.now();
-            }}
-            data-placeholder={isCompacting ? 'Compacting context, please wait...' : disabled ? 'Waiting for response...' : 'Type a message... (/ for commands), Enter to send, Shift+Enter for newline)'}
-            role="textbox"
-            aria-multiline="true"
-            suppressContentEditableWarning
-          />
-        </div>
-
-        {translating && (
-          <div className="translating-overlay" title="Translating...">
-            <Loader2 size={14} className="translating-spinner" />
-            <span className="translating-label">Translating...</span>
-          </div>
-        )}
+        <ContentEditableInput
+          ref={contentEditableRef}
+          disabled={disabled}
+          translating={translating}
+          isCompacting={isCompacting}
+          attachments={attachments}
+          onRemoveAttachment={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))}
+          onInput={handleInput}
+          onPaste={handlePaste}
+          onKeyDown={handleKeyDown}
+          onCompositionEnd={() => {
+            lastCompEndRef.current = Date.now();
+          }}
+          lastCompEndRef={lastCompEndRef}
+        />
 
         {isCompacting && (
           <div className="btn-compacting" title="Compacting context...">
