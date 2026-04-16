@@ -265,21 +265,6 @@
   color: var(--text-primary);
 }
 
-/* ---- Drag-and-drop feedback ---- */
-body.y-gui-dragging,
-body.y-gui-dragging * {
-  cursor: grabbing !important;
-}
-
-.session-item--dragging {
-  opacity: 0.35;
-  transform: scale(0.97);
-  border: 1px dashed var(--border);
-  user-select: none;
-  cursor: grabbing;
-  pointer-events: none;
-}
-
 /* ---- Batch action bar ---- */
 .batch-action-bar {
   display: flex;

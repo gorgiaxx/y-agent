@@ -2,12 +2,14 @@
 // Raw TOML editor components for settings sections.
 //
 // Exports:
-//   - RawTomlEditor: reusable textarea for embedding in form tabs (RAW mode)
+//   - RawTomlEditor: reusable Monaco editor for embedding in form tabs (RAW mode)
 //   - RawModeToggle: switch toggle between Form and Raw TOML editing
 // ---------------------------------------------------------------------------
 
+import { MonacoEditor } from '../ui/MonacoEditor';
+
 // ---------------------------------------------------------------------------
-// RawTomlEditor -- plain textarea, no loading/title management
+// RawTomlEditor -- Monaco editor, no loading/title management
 // ---------------------------------------------------------------------------
 
 interface RawTomlEditorProps {
@@ -19,11 +21,11 @@ interface RawTomlEditorProps {
 export function RawTomlEditor({ content, onChange, placeholder }: RawTomlEditorProps) {
   return (
     <div className="toml-editor-wrap">
-      <textarea
-        className="toml-editor"
+      <MonacoEditor
+        className="toml-editor-monaco"
         value={content}
-        onChange={(e) => onChange(e.target.value)}
-        spellCheck={false}
+        onChange={onChange}
+        language="toml"
         placeholder={placeholder ?? 'No content. Will be created on save.'}
       />
     </div>

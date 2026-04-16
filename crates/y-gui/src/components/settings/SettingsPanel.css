@@ -323,36 +323,30 @@
   min-height: 0;
 }
 
-.toml-editor {
-  width: 100%;
+.toml-editor-monaco {
+  flex: 1;
   min-height: 340px;
-  padding: var(--space-md);
-  font-size: 12px;
-  font-family: var(--font-mono);
-  line-height: 1.65;
-  background: var(--surface-primary);
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  color: var(--text-primary);
-  resize: vertical;
-  tab-size: 2;
-  outline: none;
-  transition: border-color 0.15s ease;
+  position: relative;
 }
 
-.toml-editor:focus {
-  border-color: var(--border-focus);
+.toml-editor-monaco > div {
+  position: absolute !important;
+  inset: 0;
 }
 
-.toml-editor[readonly] {
-  opacity: 0.75;
-  cursor: default;
+.toml-editor-monaco .monaco-editor,
+.toml-editor-monaco .monaco-editor .overflow-guard {
+  border-radius: var(--radius-md) !important;
 }
 
 /* Prompt editor (Monaco) */
 .prompt-editor-monaco {
   flex: 1;
-  min-height: 320px;
+  min-height: 280px;
+  max-height: 4000px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -372,32 +366,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-.toml-editor {
-  width: 100%;
-  min-height: 340px;
-  padding: var(--space-md);
-  font-size: 12px;
-  font-family: var(--font-mono);
-  line-height: 1.65;
-  background: var(--surface-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  resize: vertical;
-  tab-size: 2;
-  outline: none;
-  transition: border-color 0.15s ease;
-}
-
-.toml-editor:focus {
-  border-color: var(--border-focus);
-}
-
-.toml-editor[readonly] {
-  opacity: 0.75;
-  cursor: default;
 }
 
 /* Toast notification */
@@ -453,20 +421,6 @@
   padding: var(--space-xl);
   font-size: 13px;
   color: var(--text-muted);
-}
-
-/* Prompt editor (Monaco) */
-.prompt-editor-monaco {
-  min-height: 320px;
-  max-height: 4000px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.prompt-editor-monaco .monaco-editor,
-.prompt-editor-monaco .monaco-editor .overflow-guard {
-  border-radius: var(--radius-md) !important;
 }
 
 /* Prompt editor actions (Restore button) */

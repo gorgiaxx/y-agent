@@ -36,6 +36,119 @@ if (!globalSelf.MonacoEnvironment) {
 }
 
 // ---------------------------------------------------------------------------
+// TOML language registration (Monarch tokenizer)
+// ---------------------------------------------------------------------------
+
+let tomlRegistered = false;
+
+function registerTomlLanguage(monacoInstance: typeof Monaco): void {
+  if (tomlRegistered) return;
+  tomlRegistered = true;
+
+  monacoInstance.languages.register({ id: 'toml' });
+  monacoInstance.languages.setMonarchTokensProvider('toml', {
+    defaultToken: '',
+    tokenPostfix: '.toml',
+
+    escapes: /\\(?:[abfnrtv\\"']|x[0-9A-Fa-f]{1,4}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/,
+
+    tokenizer: {
+      root: [
+        // Comments
+        [/#.*$/, 'comment'],
+
+        // Table headers: [section], [[array_of_tables]]
+        [/(\[\[)([^\]]+?)(\]\])/, ['delimiter.bracket', 'type', 'delimiter.bracket']],
+        [/(\[)([^\]]+?)(\])/, ['delimiter.bracket', 'type', 'delimiter.bracket']],
+
+        // Key = value
+        [
+          /^(\s*)([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)(\s*=\s*)/,
+          ['', 'attribute.name', 'delimiter'],
+        ],
+
+        // Quoted keys
+        [/^(\s*)(")(.*?)(")(\s*=\s*)/, ['', 'string', 'attribute.name', 'string', 'delimiter']],
+
+        // Strings (multi-line basic, basic, literal, multi-line literal)
+        [/"""/, 'string', '@multiline_basic_string'],
+        [/'''/, 'string', '@multiline_literal_string'],
+        [/"([^"\\]|\\.)*$/, 'string.invalid'],
+        [/"/, 'string', '@basic_string'],
+        [/'([^']*)'$/, 'string'],
+        [/'/, 'string', '@literal_string'],
+
+        // Booleans
+        [/\b(true|false)\b/, 'keyword'],
+
+        // Date/time (ISO 8601 variants)
+        [
+          /\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?/,
+          'number',
+        ],
+
+        // Numbers (float then int to avoid partial match)
+        [/[+-]?\d+\.\d+(?:[eE][+-]?\d+)?/, 'number'],
+        [/[+-]?\d+(?:_\d+)*(?:[eE][+-]?\d+)?/, 'number'],
+        [/0x[0-9A-Fa-f]+/, 'number'],
+        [/0o[0-7]+/, 'number'],
+        [/0b[01]+/, 'number'],
+        [/\binf\b/, 'number'],
+        [/\bnan\b/, 'number'],
+      ],
+
+      basic_string: [
+        [/[^\\"]+/, 'string'],
+        [/@escapes/, 'string.escape'],
+        [/\\./, 'string.escape.invalid'],
+        [/"/, 'string', '@pop'],
+      ],
+
+      literal_string: [[/[^']+/, 'string'], [/'/, 'string', '@pop']],
+
+      multiline_basic_string: [
+        [/[^\\"]+/, 'string'],
+        [/@escapes/, 'string.escape'],
+        [/\\./, 'string.escape.invalid'],
+        [/"""/, 'string', '@pop'],
+        [/"/, 'string'],
+      ],
+
+      multiline_literal_string: [[/[^']+/, 'string'], [/'''/, 'string', '@pop'], [/'/, 'string']],
+    },
+  });
+
+  // Auto-closing pairs for TOML
+  monacoInstance.languages.setLanguageConfiguration('toml', {
+    comments: {
+      lineComment: '#',
+    },
+    brackets: [
+      ['[', ']'],
+      ['{', '}'],
+    ],
+    autoClosingPairs: [
+      { open: '[', close: ']' },
+      { open: '{', close: '}' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+    ],
+    surroundingPairs: [
+      { open: '[', close: ']' },
+      { open: '{', close: '}' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+    ],
+    folding: {
+      markers: {
+        start: /^\s*\[\[/,
+        end: /^\s*\[\[/,
+      },
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Theme definitions
 // ---------------------------------------------------------------------------
 
@@ -56,9 +169,11 @@ function registerThemes(monacoInstance: typeof Monaco): void {
       { token: 'comment', foreground: '6a9955' },
       { token: 'keyword', foreground: '569cd6' },
       { token: 'string', foreground: 'ce9178' },
+      { token: 'string.escape', foreground: 'd7ba7d' },
       { token: 'number', foreground: 'b5cea8' },
       { token: 'type', foreground: '4ec9b0' },
       { token: 'delimiter', foreground: 'd4d4d4' },
+      { token: 'delimiter.bracket', foreground: 'ffd700' },
       { token: 'tag', foreground: '569cd6' },
       { token: 'attribute.name', foreground: '9cdcfe' },
       { token: 'attribute.value', foreground: 'ce9178' },
@@ -88,9 +203,11 @@ function registerThemes(monacoInstance: typeof Monaco): void {
       { token: 'comment', foreground: '6a9955' },
       { token: 'keyword', foreground: '0000ff' },
       { token: 'string', foreground: 'a31515' },
+      { token: 'string.escape', foreground: 'e50000' },
       { token: 'number', foreground: '098658' },
       { token: 'type', foreground: '267f99' },
       { token: 'delimiter', foreground: '1a1917' },
+      { token: 'delimiter.bracket', foreground: '811f3f' },
       { token: 'tag', foreground: '800000' },
       { token: 'attribute.name', foreground: 'e50000' },
       { token: 'attribute.value', foreground: 'a31515' },
@@ -168,6 +285,7 @@ export function MonacoEditor({
       monacoRef.current = monacoInstance;
 
       registerThemes(monacoInstance);
+      registerTomlLanguage(monacoInstance);
       monacoInstance.editor.setTheme(resolvedTheme === 'dark' ? DARK_THEME : LIGHT_THEME);
 
       if (onSave) {

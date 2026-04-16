@@ -6,6 +6,7 @@ import {
   DialogTitle,
   Button,
 } from '../ui';
+import { MonacoEditor } from '../ui/MonacoEditor';
 
 interface SessionPromptDialogProps {
   sessionId: string;
@@ -91,13 +92,13 @@ export function SessionPromptDialog({
               Loading...
             </div>
           ) : (
-            <textarea
-              className="toml-editor prompt-editor"
+            <MonacoEditor
+              className="prompt-editor-monaco"
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              spellCheck={false}
+              onChange={(val) => setPrompt(val)}
+              language="plaintext"
               placeholder="Enter custom system prompt for this session..."
-              style={{ minHeight: '200px', maxHeight: '400px', resize: 'vertical' }}
+              height="280px"
             />
           )}
 
