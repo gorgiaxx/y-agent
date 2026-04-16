@@ -9,6 +9,7 @@ description = "Business/service layer for y-agent — shared by CLI, TUI, and fu
 y-core = { workspace = true }
 y-bot = { workspace = true }
 y-agent = { workspace = true }
+y-mcp = { workspace = true }
 y-provider = { workspace = true }
 y-session = { workspace = true }
 y-context = { workspace = true }

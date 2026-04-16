@@ -28,6 +28,7 @@ y-web = { workspace = true }
 axum = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
+clap_complete = { workspace = true }
 dialoguer = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -46,9 +47,14 @@ tui-textarea = { workspace = true, optional = true }
 unicode-width = { workspace = true, optional = true }
 arboard = { version = "3", optional = true, default-features = false }
 
+# Markdown rendering (optional, behind `tui` feature flag)
+pulldown-cmark = { workspace = true, optional = true }
+syntect = { workspace = true, optional = true }
+two-face = { workspace = true, optional = true }
+
 [features]
 default = ["tui"]
-tui = ["ratatui", "crossterm", "tui-textarea", "unicode-width", "arboard"]
+tui = ["ratatui", "crossterm", "tui-textarea", "unicode-width", "arboard", "pulldown-cmark", "syntect", "two-face"]
 hook_handlers = ["y-service/hook_handlers"]
 llm_hooks = ["y-service/llm_hooks"]
 
