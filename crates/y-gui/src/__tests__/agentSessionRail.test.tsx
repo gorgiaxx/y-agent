@@ -43,7 +43,7 @@ describe('AgentSessionRail', () => {
       />,
     );
 
-    expect(html).toContain('agents-session-item--streaming');
+    expect(html).toContain('session-item--streaming');
     expect(html).toContain('now');
   });
 });

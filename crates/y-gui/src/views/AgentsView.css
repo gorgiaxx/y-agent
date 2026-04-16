@@ -160,6 +160,13 @@
   gap: 4px;
   min-width: 0;
   overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.agents-sidebar-group-items * {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .agents-sidebar-item {
@@ -549,6 +556,11 @@
   overflow-x: hidden;
 }
 
+.agents-session-rail [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  min-width: 0 !important;
+}
+
 .agents-session-rail-actions {
   display: flex;
   align-items: center;
@@ -642,92 +654,13 @@
   gap: 6px;
   min-width: 0;
   overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-.agents-session-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px;
-  min-width: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  background: transparent;
-  overflow: hidden;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.agents-session-item:hover {
-  border-color: var(--border);
-  background: var(--surface-hover);
-}
-
-.agents-session-item--active {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: var(--accent-subtle);
-}
-
-.agents-session-item--streaming {
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
-}
-
-.agents-session-item-spinner,
-.agents-session-item-spinner-placeholder {
-  flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-}
-
-.agents-session-item-spinner {
-  border: 1.5px solid var(--border);
-  border-top-color: var(--text-primary);
-  border-radius: 50%;
-  animation: agents-spin 0.7s linear infinite;
-}
-
-.agents-session-item-main {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
-  border: none;
-  padding: 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.agents-session-item-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.agents-session-item-meta {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.agents-session-item-time {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.agents-session-item-time--now {
-  color: var(--text-primary);
-  font-weight: 500;
+.agents-session-list * {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .agents-session-empty {

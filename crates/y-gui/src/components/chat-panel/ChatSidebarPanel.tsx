@@ -11,6 +11,7 @@ import {
   GitBranch,
 } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
+import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import {
   calculateFloatingMenuPosition,
@@ -36,19 +37,6 @@ interface ChatSidebarPanelProps {
   onDeleteWorkspace: (id: string) => void;
   onAssignSession: (workspaceId: string, sessionId: string) => void;
   onUnassignSession: (sessionId: string) => void;
-}
-
-/** Return relative time string for a session item. */
-function formatRelativeTime(iso: string, isStreaming: boolean): string {
-  if (isStreaming) return 'now';
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return 'now';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
 }
 
 type OpenMenuState =
@@ -521,33 +509,17 @@ export function ChatSidebarPanel({
     const isStreaming = streamingSessionIds.has(session.id);
     const isActive = session.id === activeSessionId;
     const isSelected = selectedIds.has(session.id);
-    const timeLabel = formatRelativeTime(session.updated_at, isStreaming);
     const isDragging = draggedSessionId === session.id;
 
-    return (
-      <div
-        key={session.id}
-        data-session-id={session.id}
-        className={
-          `session-item`
-          + (isActive ? ' active' : '')
-          + (isStreaming ? ' streaming' : '')
-          + (isSelected ? ' session-item--selected' : '')
-          + (isDragging ? ' session-item--dragging' : '')
-        }
-        onClick={(e) => handleSessionClick(e, session.id)}
-        onMouseDown={(e) => handleMouseDown(e, session.id, groupSessionIds)}
-        onMouseMove={(e) => handleItemHover(e, session.id)}
-      >
-        {/* Left: spinner or spacer */}
-        {isStreaming ? (
-          <span className="session-spinner" aria-hidden="true" />
-        ) : (
-          <span className="session-spinner-placeholder" />
-        )}
-
-        {/* Title */}
-        {renamingSessionId === session.id ? (
+    // If renaming, render custom input instead of using SessionItem
+    if (renamingSessionId === session.id) {
+      return (
+        <div
+          key={session.id}
+          data-session-id={session.id}
+          className="session-item session-item--renaming"
+        >
+          <span className="session-item-spinner-placeholder" />
           <input
             ref={renameInputRef}
             className="session-rename-input"
@@ -565,34 +537,47 @@ export function ChatSidebarPanel({
             onBlur={commitRename}
             onClick={(e) => e.stopPropagation()}
           />
-        ) : (
-          <div
-            className="session-item-title"
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              startRename(session);
-            }}
-          >
-            {session.manual_title || session.title || 'Untitled Session'}
-          </div>
-        )}
-
-        {/* Right: timestamp + delete */}
-        <div className="session-item-right">
-          <span className={`session-time ${isStreaming ? 'session-time--now' : ''}`}>
-            {timeLabel}
-          </span>
-          <button
-            className="btn-session-action"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleMenu({ kind: 'session', id: session.id }, e.currentTarget);
-            }}
-            title="Session actions"
-          >
-            <MoreHorizontal size={12} />
-          </button>
         </div>
+      );
+    }
+
+    // Use shared SessionItem with Chat-specific features
+    return (
+      <div
+        key={session.id}
+        data-session-id={session.id}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          startRename(session);
+        }}
+      >
+        <SessionItem
+          session={{
+            ...session,
+            title: session.manual_title || session.title || 'Untitled Session',
+          }}
+          isActive={isActive}
+          isStreaming={isStreaming}
+          className={
+            (isSelected ? 'session-item--selected ' : '') +
+            (isDragging ? 'session-item--dragging' : '')
+          }
+          onClick={(e) => handleSessionClick(e, session.id)}
+          onMouseDown={(e) => handleMouseDown(e, session.id, groupSessionIds)}
+          onMouseMove={(e) => handleItemHover(e, session.id)}
+          actions={
+            <button
+              className="btn-session-action"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleMenu({ kind: 'session', id: session.id }, e.currentTarget);
+              }}
+              title="Session actions"
+            >
+              <MoreHorizontal size={12} />
+            </button>
+          }
+        />
       </div>
     );
   };

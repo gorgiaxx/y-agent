@@ -200,77 +200,30 @@
   overflow-y: auto;
 }
 
-/* ---- Session item ---- */
-.session-item {
+/* ---- Chat-specific session item styles ---- */
+
+/* Multi-select state */
+.session-item--selected {
+  background: var(--info-subtle) !important;
+}
+
+.session-item--selected:hover {
+  background: rgba(96, 165, 250, 0.18) !important;
+}
+
+.session-item--selected.session-item--active {
+  background: rgba(96, 165, 250, 0.15) !important;
+}
+
+/* Rename input */
+.session-item--renaming {
   position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px var(--space-sm);
   border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background-color 0.12s ease;
   margin-bottom: 1px;
-}
-
-.session-item:hover {
-  background: var(--surface-hover);
-}
-
-.session-item.active {
-  background: var(--surface-active);
-}
-
-.session-item--selected {
-  background: var(--info-subtle);
-}
-
-.session-item--selected:hover {
-  background: rgba(96, 165, 250, 0.18);
-}
-
-.session-item--selected.active {
-  background: rgba(96, 165, 250, 0.15);
-}
-
-/* ---- Spinner ---- */
-@keyframes session-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.session-spinner {
-  flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--border);
-  border-top-color: var(--text-primary);
-  border-radius: 50%;
-  animation: session-spin 0.7s linear infinite;
-}
-
-.session-spinner-placeholder {
-  flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-}
-
-/* ---- Title ---- */
-.session-item-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.4;
-}
-
-.session-item.active .session-item-title {
-  color: var(--text-primary);
 }
 
 .session-rename-input {
@@ -289,25 +242,7 @@
   user-select: text;
 }
 
-/* ---- Right side: time + action button ---- */
-.session-item-right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.session-time {
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.session-time--now {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
+/* Action button visibility */
 .btn-session-action {
   opacity: 0;
   background: none;
@@ -322,7 +257,7 @@
 }
 
 .session-item:hover .btn-session-action,
-.session-item.active .btn-session-action {
+.session-item--active .btn-session-action {
   opacity: 1;
 }
 
