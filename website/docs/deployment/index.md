@@ -4,7 +4,7 @@
 
 The included `docker-compose.yml` provisions three services:
 
-- **y-agent** -- Main application (port 8080)
+- **y-agent** -- Main application (port 8080 in container, mapped via `Y_AGENT_PORT`)
 - **PostgreSQL 16** -- Diagnostics & analytics
 - **Qdrant v1.8.4** -- Vector store for knowledge base & memory
 

@@ -6,9 +6,9 @@ The `y-bot` crate provides platform adapters that expose y-agent as a messaging 
 
 | Platform | Transport | Status |
 |----------|-----------|--------|
-| **Discord** | Interactions Endpoint (Ed25519 signature verification) | Implemented |
+| **Discord** | Gateway (WebSocket) + REST API + webhook | Implemented |
 | **Feishu (Lark)** | Event webhook | Implemented |
-| **Telegram** | Bot API webhook | Implemented |
+| **Telegram** | Bot API webhook | Interface defined |
 
 Bot adapters are wired into `y-web` and share the same `ServiceContainer`. Configure them in `config/bots.toml`.
 
@@ -41,7 +41,13 @@ webhook_url = "https://your-domain.com/api/v1/bots/telegram/webhook"
 All bot adapters follow the same pattern:
 
 ```
-Platform Webhook -> y-web Router -> Bot Handler -> y-service::BotService -> ChatService
+Discord Gateway (WS)  ->  MESSAGE_CREATE  ->  InboundMessage channel
+                                                    |
+Platform Webhook  ->  y-web Router  ->  BotPlatform::parse_event()
+                                                    |
+                                            BotService (y-service)
+                                                    |
+                                            BotPlatform::send_message()
 ```
 
 The bot handler:
@@ -52,10 +58,21 @@ The bot handler:
 
 ## Discord Setup
 
+Discord integration supports two modes: **Gateway** (persistent WebSocket) and **Webhook** (HTTP endpoint).
+
+### Gateway Mode (Recommended)
+
+The Gateway client maintains a persistent WebSocket connection to `wss://gateway.discord.gg` (v10), handling heartbeats, reconnection, and `MESSAGE_CREATE` events automatically.
+
 1. Create a Discord application at the [Discord Developer Portal](https://discord.com/developers/applications)
-2. Configure the Interactions Endpoint URL to point to your y-agent instance: `https://your-domain.com/api/v1/bots/discord/interactions`
-3. Set the public key and bot token in `config/bots.toml`
-4. Start y-agent with `y-agent serve`
+2. Enable the **Message Content** intent
+3. Set the bot token in `config/bots.toml`
+4. Start y-agent with `y-agent serve` -- the Gateway client connects automatically
+
+### Webhook Mode
+
+1. Configure the Interactions Endpoint URL to point to your y-agent instance: `https://your-domain.com/api/v1/bots/discord/webhook`
+2. Set the public key and bot token in `config/bots.toml`
 
 ## Feishu (Lark) Setup
 

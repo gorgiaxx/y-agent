@@ -10,8 +10,7 @@ This guide walks you through building, configuring, and running y-agent for the 
 | **Node.js 18+** | GUI only | [nodejs.org](https://nodejs.org) |
 | **SQLite 3.35+** | Embedded | Bundled, no action needed |
 | **Chrome / Chromium** | Optional | For the browser tool (auto-detected) |
-| PostgreSQL 14+ | Optional | For diagnostics / analytics |
-| Qdrant | Optional | For semantic vector search |
+| Qdrant | Optional | For semantic vector search (knowledge base, memory) |
 
 ## Build
 
@@ -55,7 +54,9 @@ This generates the configuration tree:
     hooks.example.toml         # Middleware timeouts, event bus capacity
     tools.example.toml         # Tool registry limits, MCP servers
     guardrails.example.toml    # Permission model, loop detection, risk scoring
-    agents/                    # TOML-based agent definitions
+    bots.toml                  # Bot adapter configuration (Discord, Feishu, Telegram)
+    agents/                    # TOML-based agent definitions (18 built-in)
+    persona/                   # Persona configuration
     prompts/                   # System prompt templates
   data/
     transcripts/               # Session transcript storage
@@ -106,11 +107,25 @@ y-agent chat
 # TUI mode (ratatui terminal UI)
 y-agent tui
 
-# Start the Web API server (axum, port 8080)
+# Start the Web API server (axum, default port 3000)
 y-agent serve
 
 # Or launch the GUI desktop app
 # (built via build-release.sh -- .app / .dmg / .AppImage in dist/)
+```
+
+### Other CLI Commands
+
+```bash
+y-agent status              # Show system status
+y-agent config show         # View/manage configuration
+y-agent session list        # Session management
+y-agent agent list          # Agent management
+y-agent tool list           # Tool management
+y-agent workflow list       # Workflow management
+y-agent skill list          # Skill management
+y-agent kb ingest --file .. # Knowledge base management
+y-agent diag traces         # Diagnostics and observability
 ```
 
 ## Next Steps

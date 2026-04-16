@@ -40,7 +40,7 @@ features:
   - title: Guardrails & Safety
     details: Content filtering, PII detection, loop detection, risk scoring middleware. Three-layer defense -- sandbox, middleware interception, human-in-the-loop approval.
   - title: Context Pipeline
-    details: 7-stage middleware chain for token-budget-aware prompt assembly. System prompt, bootstrap, memory, knowledge, skills, tools, and context status injection.
+    details: 8-stage middleware chain for token-budget-aware prompt assembly. System prompt, bootstrap, memory, knowledge, skills, tools, history loading, and context status injection.
   - title: Knowledge Base & RAG
     details: Multi-level chunking (L0/L1/L2), hybrid retrieval (BM25 + vector). Import Markdown, code, PDF, and more into searchable collections.
   - title: Self-Evolving Skills

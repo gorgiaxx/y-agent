@@ -86,6 +86,9 @@ curl -X POST http://localhost:3000/api/v1/sessions/SESSION_ID/branch \
 ```bash
 # List registered agents
 curl http://localhost:3000/api/v1/agents
+
+# Get agent details
+curl http://localhost:3000/api/v1/agents/AGENT_ID
 ```
 
 ### Tools
@@ -93,6 +96,66 @@ curl http://localhost:3000/api/v1/agents
 ```bash
 # List registered tools
 curl http://localhost:3000/api/v1/tools
+```
+
+### Workflows
+
+```bash
+# List workflows
+curl http://localhost:3000/api/v1/workflows
+
+# Create a workflow
+curl -X POST http://localhost:3000/api/v1/workflows \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-workflow", "definition": {...}}'
+
+# Get workflow details
+curl http://localhost:3000/api/v1/workflows/WORKFLOW_ID
+
+# Update a workflow
+curl -X PUT http://localhost:3000/api/v1/workflows/WORKFLOW_ID \
+  -H "Content-Type: application/json" \
+  -d '{"definition": {...}}'
+
+# Delete a workflow
+curl -X DELETE http://localhost:3000/api/v1/workflows/WORKFLOW_ID
+
+# Validate a workflow definition
+curl -X POST http://localhost:3000/api/v1/workflows/validate \
+  -H "Content-Type: application/json" \
+  -d '{"definition": {...}}'
+
+# Get DAG visualization
+curl http://localhost:3000/api/v1/workflows/WORKFLOW_ID/dag
+```
+
+### Schedules
+
+```bash
+# List schedules
+curl http://localhost:3000/api/v1/schedules
+
+# Create a schedule
+curl -X POST http://localhost:3000/api/v1/schedules \
+  -H "Content-Type: application/json" \
+  -d '{"name": "daily-report", "cron": "0 9 * * *", "workflow_id": "WORKFLOW_ID"}'
+
+# Get schedule details
+curl http://localhost:3000/api/v1/schedules/SCHEDULE_ID
+
+# Update a schedule
+curl -X PUT http://localhost:3000/api/v1/schedules/SCHEDULE_ID \
+  -H "Content-Type: application/json" \
+  -d '{"cron": "0 10 * * *"}'
+
+# Delete a schedule
+curl -X DELETE http://localhost:3000/api/v1/schedules/SCHEDULE_ID
+
+# Pause a schedule
+curl -X POST http://localhost:3000/api/v1/schedules/SCHEDULE_ID/pause
+
+# Resume a schedule
+curl -X POST http://localhost:3000/api/v1/schedules/SCHEDULE_ID/resume
 ```
 
 ### Diagnostics
@@ -106,6 +169,16 @@ curl "http://localhost:3000/api/v1/diagnostics/traces?session_id=SESSION_ID&limi
 
 # Get trace detail
 curl http://localhost:3000/api/v1/diagnostics/traces/TRACE_UUID
+```
+
+### Bot Webhooks
+
+```bash
+# Feishu webhook
+POST /api/v1/bots/feishu/webhook
+
+# Discord webhook
+POST /api/v1/bots/discord/webhook
 ```
 
 ## Error Format
@@ -131,8 +204,8 @@ All errors return JSON:
 HTTP Client  ->  axum Router  ->  handlers  ->  y-service  ->  domain crates
 ```
 
-The server is a thin presentation layer. All business logic lives in `y-service::ServiceContainer`.
+The server is a thin presentation layer. All business logic lives in `y-service::ServiceContainer`. CORS is enabled via `tower-http` CorsLayer.
 
 ::: warning Current Limitations
-The Web API is currently in development. Authentication, SSE streaming, rate limiting, CORS, and request size limits are not yet implemented.
+The Web API is currently in development. Authentication, SSE streaming, rate limiting, and request size limits are not yet implemented.
 :::

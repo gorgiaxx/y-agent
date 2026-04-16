@@ -1,49 +1,81 @@
-:root {
-  /* Warm rust/orange brand colors */
-  --vp-c-brand-1: #e8590c;
-  --vp-c-brand-2: #d9480f;
-  --vp-c-brand-3: #c92a2a;
-  --vp-c-brand-soft: rgba(232, 89, 12, 0.14);
-}
+/* =============================================
+   y-agent Website -- Black-Gold / White-Gold Theme
+   Aligned with the GUI desktop app color scheme
+   ============================================= */
 
-.dark {
-  --vp-c-brand-1: #ff6b2b;
-  --vp-c-brand-2: #e8590c;
-  --vp-c-brand-3: #d9480f;
-  --vp-c-brand-soft: rgba(255, 107, 43, 0.16);
-}
-
-/* Hero name gradient */
+/* --- Light mode (white-gold) --- */
 :root {
+  /* Brand: warm dark gold */
+  --vp-c-brand-1: #9a7c2a;
+  --vp-c-brand-2: #7e6420;
+  --vp-c-brand-3: #6b5518;
+  --vp-c-brand-soft: rgba(154, 124, 42, 0.10);
+
+  /* Surfaces: warm whites matching GUI light theme */
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-alt: #f5f4f1;
+  --vp-c-bg-soft: #edecea;
+  --vp-c-bg-elv: #ffffff;
+
+  /* Text: warm tones */
+  --vp-c-text-1: #1a1917;
+  --vp-c-text-2: #6b6560;
+  --vp-c-text-3: #9c9894;
+
+  /* Divider */
+  --vp-c-divider: rgba(0, 0, 0, 0.08);
+
+  /* Hero gradients */
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: -webkit-linear-gradient(
     120deg,
-    #e8590c 30%,
-    #ff922b
+    #9a7c2a 30%,
+    #c8b560
   );
-
   --vp-home-hero-image-background-image: linear-gradient(
     -45deg,
-    rgba(232, 89, 12, 0.3) 50%,
-    rgba(255, 146, 43, 0.3) 50%
+    rgba(154, 124, 42, 0.25) 50%,
+    rgba(200, 181, 96, 0.25) 50%
   );
   --vp-home-hero-image-filter: blur(44px);
 }
 
+/* --- Dark mode (black-gold) --- */
 .dark {
+  /* Brand: warm gold */
+  --vp-c-brand-1: #c8b560;
+  --vp-c-brand-2: #d4c26e;
+  --vp-c-brand-3: #b5a350;
+  --vp-c-brand-soft: rgba(200, 181, 96, 0.14);
+
+  /* Surfaces: near-black matching GUI dark theme */
+  --vp-c-bg: #0f0f0f;
+  --vp-c-bg-alt: #141414;
+  --vp-c-bg-soft: #1c1c1c;
+  --vp-c-bg-elv: #1c1c1c;
+
+  /* Text: warm off-whites */
+  --vp-c-text-1: #e8e6e1;
+  --vp-c-text-2: #8a8680;
+  --vp-c-text-3: #555250;
+
+  /* Divider */
+  --vp-c-divider: rgba(255, 255, 255, 0.06);
+
+  /* Hero gradients */
   --vp-home-hero-name-background: -webkit-linear-gradient(
     120deg,
-    #ff6b2b 30%,
-    #ffa94d
+    #c8b560 30%,
+    #d4c26e
   );
   --vp-home-hero-image-background-image: linear-gradient(
     -45deg,
-    rgba(217, 72, 15, 0.25) 50%,
-    rgba(255, 107, 43, 0.25) 50%
+    rgba(200, 181, 96, 0.20) 50%,
+    rgba(212, 194, 110, 0.20) 50%
   );
 }
 
-/* Hero image styling */
+/* --- Hero image styling --- */
 .VPHero .VPImage {
   filter: drop-shadow(-2px 4px 6px rgba(0, 0, 0, 0.2));
   padding: 18px;
@@ -54,7 +86,7 @@
   max-height: 240px;
 }
 
-/* Feature card hover effect */
+/* --- Feature card hover effect --- */
 .VPFeature {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
@@ -63,10 +95,10 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 .dark .VPFeature:hover {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.40);
 }
 
-/* Button styling */
+/* --- Brand button --- */
 .VPButton.brand {
   border-color: var(--vp-c-brand-1);
   color: #fff;
@@ -75,4 +107,61 @@
 .VPButton.brand:hover {
   border-color: var(--vp-c-brand-2);
   background-color: var(--vp-c-brand-2);
+}
+
+/* Dark mode: dark text on gold button for contrast */
+.dark .VPButton.brand {
+  color: #0f0f0f;
+}
+
+/* --- Alt button (dark mode): subtle gold border --- */
+.dark .VPButton.alt {
+  border-color: rgba(200, 181, 96, 0.25);
+  color: #e8e6e1;
+  background-color: rgba(200, 181, 96, 0.06);
+}
+.dark .VPButton.alt:hover {
+  border-color: rgba(200, 181, 96, 0.40);
+  background-color: rgba(200, 181, 96, 0.12);
+}
+
+/* --- Sidebar active link gold highlight --- */
+.dark .VPSidebarItem.is-active > .item > .link > .text {
+  color: var(--vp-c-brand-1);
+}
+
+/* --- Nav bar: match surface tones --- */
+.dark .VPNav {
+  background-color: rgba(15, 15, 15, 0.85) !important;
+  backdrop-filter: blur(12px);
+}
+
+/* --- Code blocks: match GUI surface --- */
+.dark .vp-code-group .tabs label {
+  color: var(--vp-c-text-2);
+}
+.dark .vp-code-group .tabs label.active {
+  color: var(--vp-c-brand-1);
+}
+
+/* --- Custom scrollbar for dark mode --- */
+.dark ::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.dark ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 2px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* --- Selection color --- */
+::selection {
+  background: var(--vp-c-brand-soft);
+  color: var(--vp-c-text-1);
 }

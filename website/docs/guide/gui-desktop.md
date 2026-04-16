@@ -8,11 +8,12 @@ The GUI follows a **VSCode-style layout** with a sidebar and main content area:
 
 | Sidebar Panel | Description |
 |---------------|-------------|
-| **Sessions** | Chat history, organized by workspaces |
-| **Automation** | Workflow automation (DAG editor) |
+| **Chat** | Chat sessions, organized by workspaces |
+| **Automation** | Workflow and schedule management (DAG editor, execution history) |
 | **Skills** | Installed skills -- search, import, enable/disable |
 | **Knowledge** | Knowledge base collections -- create, import, search |
-| **Agents** | Registered agents -- built-in, user-defined, dynamic |
+| **Agents** | Registered agents -- built-in, user-defined, dynamic. Agent studio for editing. |
+| **Observation** | Diagnostics and observability -- traces, costs, system health |
 
 ## Chat Interface
 
@@ -24,6 +25,20 @@ The GUI follows a **VSCode-style layout** with a sidebar and main content area:
 - **Model Selector** -- Click the `@` button to switch between configured providers
 - **Context Reset** -- Click the eraser button to insert a context reset divider; messages before it are excluded from future context
 - **Stop Generation** -- Click the stop button during streaming to cancel
+
+## Agents View
+
+- Browse all registered agents (built-in and user-defined)
+- Agent overview with glyph display
+- **Agent Studio** -- visual editor for creating and modifying agent definitions
+- Per-agent session rail showing recent conversations
+
+## Automation View
+
+- **Workflows** -- Create, edit, and visualize DAG-based workflows with the built-in graph editor
+- **Schedules** -- Cron/interval/one-time schedule management with pause/resume
+- **Execution History** -- View past workflow and schedule execution results
+- **DAG Graph** -- Interactive visualization of workflow step dependencies
 
 ## Workspaces
 
@@ -44,10 +59,14 @@ Open via `/settings` or the gear icon:
 | **Runtime** | Execution backend (Native / Docker / SSH), Python / Bun venvs |
 | **Browser** | Browser tool toggle, headless mode, Chrome path |
 | **Storage** | SQLite path, WAL mode, transcript directory |
-| **Tools** | Max active tools, MCP server configuration |
+| **Tools** | Max active tools, tool configuration |
+| **MCP** | MCP server connections (stdio / HTTP transports) |
 | **Guardrails** | Permission model, loop detection, risk scoring |
 | **Knowledge** | Embedding model, chunking, retrieval strategy |
+| **Hooks** | Middleware timeouts, event bus capacity, hook handler configuration |
 | **Prompts** | View and edit system prompt templates |
+| **TOML Editor** | Direct TOML config file editing with syntax highlighting |
+| **About** | Version info and system details |
 
 ## Status Bar
 

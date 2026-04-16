@@ -34,18 +34,24 @@ Agent definitions live in `config/agents/` as TOML files. They support **templat
 
 | Agent | Purpose |
 |-------|---------|
+| `agent-architect` | Agent design and configuration |
+| `capability-assessor` | Capability assessment |
+| `compaction-summarizer` | Context compaction |
+| `complexity-classifier` | Task complexity classification |
+| `context-summarizer` | Context summarization |
+| `knowledge-metadata` | Knowledge entry metadata extraction |
+| `knowledge-summarizer` | Knowledge base document summarization |
+| `pattern-extractor` | Pattern extraction from conversations |
+| `plan-phase-executor` | Plan phase execution |
+| `plan-writer` | Plan generation and writing |
+| `pruning-summarizer` | Context pruning optimization |
 | `skill-ingestion` | Skill import and validation |
 | `skill-security-check` | Security audit for skill packages |
-| `agent-architect` | Agent design and configuration |
-| `tool-engineer` | Dynamic tool creation |
-| `title-generator` | Session title auto-generation |
-| `compaction-summarizer` | Context compaction |
-| `pruning-summarizer` | Context pruning optimization |
-| `knowledge-summarizer` | Knowledge base document summarization |
-| `knowledge-metadata` | Knowledge entry metadata extraction |
+| `task-decomposer` | Task decomposition into sub-tasks |
 | `task-intent-analyzer` | Intent classification for delegation |
-| `pattern-extractor` | Pattern extraction from conversations |
-| `capability-assessor` | Capability assessment |
+| `title-generator` | Session title auto-generation |
+| `tool-engineer` | Dynamic tool creation |
+| `translator` | Content translation |
 
 ## Proxy Configuration
 

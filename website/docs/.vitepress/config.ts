@@ -29,7 +29,7 @@ export default withMermaid(defineConfig({
 
   head: [
     ['link', { rel: 'icon', href: '/favicon.ico' }],
-    ['meta', { name: 'theme-color', content: '#e8590c' }],
+    ['meta', { name: 'theme-color', content: '#c8b560' }],
     ['meta', { name: 'author', content: 'y-agent Team' }],
     [
       'meta',

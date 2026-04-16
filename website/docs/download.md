@@ -10,8 +10,7 @@
 | **Node.js 18+** | GUI only | For building the Tauri desktop app |
 | **SQLite 3.35+** | Embedded | Bundled, no action needed |
 | **Chrome / Chromium** | Optional | For the browser tool (auto-detected) |
-| PostgreSQL 14+ | Optional | For diagnostics / analytics |
-| Qdrant | Optional | For semantic vector search |
+| Qdrant | Optional | For semantic vector search (knowledge base, memory) |
 
 ## Build from Source
 
