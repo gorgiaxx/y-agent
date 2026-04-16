@@ -462,6 +462,11 @@ impl AgentDelegator for AgentPool {
             trust_tier: Some(definition.trust_tier),
             trace_id: None,
             prune_tool_history: definition.prune_tool_history,
+            response_format: definition.resolved_response_format().map_err(|e| {
+                DelegationError::DelegationFailed {
+                    message: format!("invalid response_format for agent '{agent_name}': {e}"),
+                }
+            })?,
         };
 
         // Register for observability before execution.
@@ -528,6 +533,7 @@ mod tests {
             user_callable: false,
             prune_tool_history: false,
             auto_update: true,
+            response_format: None,
         }
     }
 

@@ -7,7 +7,108 @@ use serde::{Deserialize, Serialize};
 use crate::agent::error::MultiAgentError;
 use crate::agent::trust::TrustTier;
 use y_core::permission_types::PermissionMode;
-use y_core::provider::{ThinkingConfig, ThinkingEffort};
+use y_core::provider::{ResponseFormat, ThinkingConfig, ThinkingEffort};
+
+/// Response format configuration as written in TOML agent definitions.
+///
+/// Supports structured output via JSON Schema. The schema can be provided
+/// as either a TOML table (`schema`) or a JSON string (`schema_json`).
+///
+/// # TOML examples
+///
+/// Simple schema via TOML table:
+/// ```toml
+/// [response_format]
+/// type = "json_schema"
+/// name = "metadata"
+///
+/// [response_format.schema]
+/// type = "object"
+/// required = ["title", "tags"]
+/// additionalProperties = false
+///
+/// [response_format.schema.properties.title]
+/// type = "string"
+///
+/// [response_format.schema.properties.tags]
+/// type = "array"
+/// ```
+///
+/// Complex schema via JSON string:
+/// ```toml
+/// [response_format]
+/// type = "json_schema"
+/// name = "metadata"
+/// schema_json = '''
+/// {
+///   "type": "object",
+///   "properties": { "title": { "type": "string" } },
+///   "required": ["title"],
+///   "additionalProperties": false
+/// }
+/// '''
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseFormatConfig {
+    /// Format type: `"text"`, `"json_object"`, or `"json_schema"`.
+    #[serde(rename = "type")]
+    pub format_type: String,
+    /// Schema name (required for `json_schema` type).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Schema as a TOML table (deserialized to JSON value).
+    #[serde(default)]
+    pub schema: Option<serde_json::Value>,
+    /// Schema as a JSON string (alternative for complex schemas).
+    /// Takes precedence over `schema` if both are provided.
+    #[serde(default)]
+    pub schema_json: Option<String>,
+}
+
+impl ResponseFormatConfig {
+    /// Convert to the core `ResponseFormat` type.
+    ///
+    /// Returns `Err` if the configuration is invalid (e.g., `json_schema`
+    /// without a name or schema).
+    pub fn to_response_format(&self) -> Result<ResponseFormat, MultiAgentError> {
+        match self.format_type.as_str() {
+            "text" => Ok(ResponseFormat::Text),
+            "json_object" => Ok(ResponseFormat::JsonObject),
+            "json_schema" => {
+                let name = self
+                    .name
+                    .clone()
+                    .ok_or_else(|| MultiAgentError::InvalidDefinition {
+                        message: "response_format.name is required for json_schema type"
+                            .to_string(),
+                    })?;
+                // Prefer schema_json over schema table.
+                let schema = if let Some(ref json_str) = self.schema_json {
+                    serde_json::from_str(json_str).map_err(|e| {
+                        MultiAgentError::InvalidDefinition {
+                            message: format!("response_format.schema_json is not valid JSON: {e}"),
+                        }
+                    })?
+                } else if let Some(ref table) = self.schema {
+                    table.clone()
+                } else {
+                    return Err(MultiAgentError::InvalidDefinition {
+                        message: "response_format requires either schema or schema_json \
+                                  for json_schema type"
+                            .to_string(),
+                    });
+                };
+                Ok(ResponseFormat::JsonSchema { name, schema })
+            }
+            other => Err(MultiAgentError::InvalidDefinition {
+                message: format!(
+                    "unknown response_format type '{other}': \
+                     expected text, json_object, or json_schema"
+                ),
+            }),
+        }
+    }
+}
 
 /// Behavioral mode governing tool availability and system prompt focus.
 ///
@@ -187,6 +288,14 @@ pub struct AgentDefinition {
     /// preserve local customizations across y-agent upgrades.
     #[serde(default = "default_auto_update")]
     pub auto_update: bool,
+
+    /// Response format for structured output.
+    ///
+    /// When set, the provider enforces the response conforms to the
+    /// specified format (e.g., a JSON Schema). See [`ResponseFormatConfig`]
+    /// for TOML syntax.
+    #[serde(default)]
+    pub response_format: Option<ResponseFormatConfig>,
 }
 
 const fn default_max_iterations() -> usize {
@@ -255,6 +364,17 @@ impl AgentDefinition {
             _ => return None,
         };
         Some(ThinkingConfig { effort })
+    }
+
+    /// Resolve the response format configuration to a core `ResponseFormat`.
+    ///
+    /// Returns `None` if no response format is configured, or `Err` if the
+    /// configuration is invalid.
+    pub fn resolved_response_format(&self) -> Result<Option<ResponseFormat>, MultiAgentError> {
+        self.response_format
+            .as_ref()
+            .map(ResponseFormatConfig::to_response_format)
+            .transpose()
     }
 }
 
@@ -373,6 +493,7 @@ system_prompt = ""
             user_callable: false,
             prune_tool_history: false,
             auto_update: true,
+            response_format: None,
         };
         assert!(def.validate().is_err());
     }

@@ -13,6 +13,7 @@ use std::fmt;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::provider::ResponseFormat;
 use crate::trust::TrustTier;
 
 // ---------------------------------------------------------------------------
@@ -184,6 +185,11 @@ pub struct AgentRunConfig {
     /// deleting old tool results would destroy context needed for later
     /// iterations.
     pub prune_tool_history: bool,
+    /// Response format for structured output (`None` = default text).
+    ///
+    /// When set, the provider enforces the response conforms to the
+    /// specified format (e.g., a JSON Schema).
+    pub response_format: Option<ResponseFormat>,
 }
 
 /// Output from a single agent execution.
@@ -347,6 +353,7 @@ mod tests {
             trust_tier: None,
             trace_id: None,
             prune_tool_history: false,
+            response_format: None,
         };
         assert_eq!(config.agent_name, "title-generator");
         assert_eq!(config.preferred_models.len(), 1);

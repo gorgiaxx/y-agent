@@ -668,6 +668,7 @@ mod tests {
             user_callable: false,
             prune_tool_history: false,
             auto_update: true,
+            response_format: None,
         }
     }
 
@@ -721,6 +722,7 @@ mod tests {
             user_callable: false,
             prune_tool_history: false,
             auto_update: true,
+            response_format: None,
         };
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
@@ -930,6 +932,7 @@ mod tests {
             user_callable: false,
             prune_tool_history: false,
             auto_update: true,
+            response_format: None,
         };
         registry.register_dynamic(dyn_def).unwrap();
         assert_eq!(registry.count(), 2);
