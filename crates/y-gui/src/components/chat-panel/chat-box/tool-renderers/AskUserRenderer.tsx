@@ -30,15 +30,15 @@ export function AskUserRenderer({
   return (
     <div className={`tool-call-askuser-wrapper ${statusClass}`}>
       <div
-        className="tool-call-askuser-tag"
+        className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
         title="AskUser"
       >
-        <span className="tool-call-askuser-action-group">
-          <MessageCircleQuestion size={14} className="tool-call-askuser-icon" />
-          <span className="tool-call-askuser-action">Ask</span>
+        <span className="tool-call-action-group">
+          <MessageCircleQuestion size={14} className="tool-call-icon-accent" />
+          <span className="tool-call-key">Ask</span>
         </span>
-        <span className="tool-call-askuser-summary">
+        <span className="tool-call-monospace-value">
           {questionCount > 0
             ? `${questionCount} question${questionCount > 1 ? 's' : ''}`
             : 'AskUser'
@@ -52,13 +52,13 @@ export function AskUserRenderer({
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>
         )}
         {canExpand && (
-          <span className={`tool-call-askuser-chevron ${expanded ? 'expanded' : ''}`}>
+          <span className={`tool-call-chevron ${expanded ? 'expanded' : ''}`}>
             <ChevronRight size={12} />
           </span>
         )}
       </div>
       {expanded && (
-        <div className="tool-call-askuser-detail">
+        <div className="tool-call-detail">
           {hasAnswers ? (
             <div className="tool-call-askuser-answers">
               {Object.entries(askUserResult!.answers).map(([q, a], i) => (

@@ -204,7 +204,7 @@ export function PlanRenderer({
   let action = 'Plan';
   let title = requestMeta?.request ?? 'Plan';
   let path = '';
-  let icon = <ClipboardList size={14} className="tool-call-plan-icon" />;
+  let icon = <ClipboardList size={14} className="tool-call-icon-accent" />;
   let detail: ReactNode = null;
 
   if (meta?.kind === 'plan_stage' && meta.stage === 'plan_writer') {
@@ -218,13 +218,13 @@ export function PlanRenderer({
     action = 'Tasks';
     title = meta.planTitle || title;
     path = meta.planFile;
-    icon = <ListTodo size={14} className="tool-call-plan-icon" />;
+    icon = <ListTodo size={14} className="tool-call-icon-accent" />;
     detail = <PlanTaskList tasks={meta.tasks} />;
   } else if (meta?.kind === 'plan_execution') {
     action = 'Execute';
     title = meta.planTitle || title;
     path = meta.planFile;
-    icon = <Play size={14} className="tool-call-plan-icon" />;
+    icon = <Play size={14} className="tool-call-icon-accent" />;
     detail = (
       <div className="tool-call-plan-summary">
         <div className="tool-call-plan-stats">
@@ -256,15 +256,15 @@ export function PlanRenderer({
   return (
     <div className={`tool-call-plan-wrapper ${effectiveStatusClass}`}>
       <div
-        className="tool-call-plan-tag"
+        className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
         title={path || title || 'Plan'}
       >
-        <span className="tool-call-plan-action-group">
+        <span className="tool-call-action-group">
           {icon}
-          <span className="tool-call-plan-action">{action}</span>
+          <span className="tool-call-key">{action}</span>
         </span>
-        <span className="tool-call-plan-title">{title}</span>
+        <span className="tool-call-monospace-value">{title}</span>
         {path && (
           <span className="tool-call-plan-path">{basename(path)}</span>
         )}
@@ -276,13 +276,13 @@ export function PlanRenderer({
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>
         )}
         {canExpand && (
-          <span className={`tool-call-plan-chevron ${expanded ? 'expanded' : ''}`}>
+          <span className={`tool-call-chevron ${expanded ? 'expanded' : ''}`}>
             <ChevronRight size={12} />
           </span>
         )}
       </div>
       {expanded && (
-        <div className="tool-call-plan-detail">
+        <div className="tool-call-detail">
           {detail ?? fallbackDetail}
         </div>
       )}

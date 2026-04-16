@@ -63,27 +63,27 @@ export function FileToolRenderer({
   return (
     <div className={`tool-call-file-wrapper ${statusClass}`}>
       <div
-        className="tool-call-file-tag"
+        className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
         title={fileMeta?.filePath ?? toolCall.name}
       >
-        <span className="tool-call-file-action-group">
-          <FileIcon size={14} className="tool-call-file-icon" />
-          <span className="tool-call-file-action">{fileLabel}</span>
+        <span className="tool-call-action-group">
+          <FileIcon size={14} className="tool-call-icon-muted" />
+          <span className="tool-call-key">{fileLabel}</span>
         </span>
-        <span className="tool-call-file-name">{fileName}</span>
+        <span className="tool-call-monospace-value">{fileName}</span>
         <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
         {durationMs !== undefined && (
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>
         )}
         {canExpand && (
-          <span className={`tool-call-file-chevron ${expanded ? 'expanded' : ''}`}>
+          <span className={`tool-call-chevron ${expanded ? 'expanded' : ''}`}>
             <ChevronRight size={12} />
           </span>
         )}
       </div>
       {expanded && (
-        <div className="tool-call-file-detail">
+        <div className="tool-call-detail">
           {showDiff && <FileDiffView oldString={fileMeta!.oldString!} newString={fileMeta!.newString!} />}
           {!showDiff && fileContent && status !== 'error' && (
             <CodeBlock language={language} themeStyle={codeThemeStyle}>

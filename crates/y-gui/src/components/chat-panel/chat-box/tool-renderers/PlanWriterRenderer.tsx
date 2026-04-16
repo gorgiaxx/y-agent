@@ -30,15 +30,15 @@ export function PlanWriterRenderer({
   return (
     <div className={`tool-call-plan-wrapper ${statusClass}`}>
       <div
-        className="tool-call-plan-tag"
+        className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
         title={writtenPath || 'PlanWriter'}
       >
-        <span className="tool-call-plan-action-group">
-          <ClipboardList size={14} className="tool-call-plan-icon" />
-          <span className="tool-call-plan-action">Plan</span>
+        <span className="tool-call-action-group">
+          <ClipboardList size={14} className="tool-call-icon-accent" />
+          <span className="tool-call-key">Plan</span>
         </span>
-        <span className="tool-call-plan-title">{title}</span>
+        <span className="tool-call-monospace-value">{title}</span>
         {writtenPath && (
           <span className="tool-call-plan-path">{basename(writtenPath)}</span>
         )}
@@ -47,13 +47,13 @@ export function PlanWriterRenderer({
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>
         )}
         {canExpand && (
-          <span className={`tool-call-plan-chevron ${expanded ? 'expanded' : ''}`}>
+          <span className={`tool-call-chevron ${expanded ? 'expanded' : ''}`}>
             <ChevronRight size={12} />
           </span>
         )}
       </div>
       {expanded && (
-        <div className="tool-call-plan-detail">
+        <div className="tool-call-detail">
           {planContent ? (
             <pre className="tool-call-plan-content">{planContent}</pre>
           ) : (

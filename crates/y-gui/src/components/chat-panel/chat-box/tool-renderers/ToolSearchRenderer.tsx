@@ -30,25 +30,25 @@ export function ToolSearchRenderer({
   return (
     <div className={`tool-call-search-wrapper ${statusClass}`}>
       <div
-        className="tool-call-search-tag"
+        className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
         title={`ToolSearch: ${searchMeta.key}=${searchMeta.value}`}
       >
-        <Search size={14} className="tool-call-search-icon" />
-        <span className="tool-call-search-key">{searchMeta.key}:</span>
-        <span className="tool-call-search-value">{searchMeta.value}</span>
+        <Search size={14} className="tool-call-icon-muted" />
+        <span className="tool-call-key">{searchMeta.key}:</span>
+        <span className="tool-call-monospace-value">{searchMeta.value}</span>
         <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
         {durationMs !== undefined && (
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>
         )}
         {canExpand && (
-          <span className={`tool-call-search-chevron ${expanded ? 'expanded' : ''}`}>
+          <span className={`tool-call-chevron ${expanded ? 'expanded' : ''}`}>
             <ChevronRight size={12} />
           </span>
         )}
       </div>
       {expanded && (
-        <div className="tool-call-search-detail">
+        <div className="tool-call-detail">
           {searchResult ? (
             searchResult.lines.map((group, gi) => (
               <div key={gi} className="tool-call-search-group">

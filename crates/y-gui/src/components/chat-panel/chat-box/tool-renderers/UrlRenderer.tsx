@@ -53,7 +53,7 @@ export function UrlRenderer(props: ToolRendererProps) {
   return (
     <div className={`tool-call-url-wrapper ${statusClass}`}>
       <div
-        className="tool-call-url-tag"
+        className="tool-call-tag"
         onClick={() => hasExpandable && setExpanded(!expanded)}
         title={urlMeta.url}
       >
@@ -76,7 +76,7 @@ export function UrlRenderer(props: ToolRendererProps) {
         )}
       </div>
       {expanded && hasExpandable && (
-        <div className="tool-call-url-detail">
+        <div className="tool-call-detail">
           <DetailSections
             displayArgs={displayArgs}
             displayResult={activeResult}

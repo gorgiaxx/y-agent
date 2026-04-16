@@ -59,11 +59,11 @@ export function BrowserRenderer(props: ToolRendererProps) {
   return (
     <div className={`tool-call-url-wrapper ${statusClass}`}>
       <div
-        className="tool-call-url-tag tool-call-browser-tag"
+        className="tool-call-tag"
         onClick={() => hasExpandable && setExpanded(!expanded)}
         title={detail ?? label}
       >
-        <Globe size={14} className="tool-call-browser-icon" />
+        <Globe size={14} className="tool-call-icon-muted" />
         <span className="tool-call-url-title">{label}</span>
         {detail && (
           <span className="tool-call-url-domain">{detail}</span>
@@ -74,7 +74,7 @@ export function BrowserRenderer(props: ToolRendererProps) {
         )}
       </div>
       {expanded && hasExpandable && (
-        <div className="tool-call-url-detail">
+        <div className="tool-call-detail">
           <DetailSections
             displayArgs={displayArgs}
             displayResult={activeResult}

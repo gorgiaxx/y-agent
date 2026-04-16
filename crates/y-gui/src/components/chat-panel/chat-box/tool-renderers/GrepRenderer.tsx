@@ -44,15 +44,15 @@ export function GrepRenderer({
   return (
     <div className={`tool-call-file-wrapper ${statusClass}`}>
       <div
-        className="tool-call-file-tag"
+        className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
         title={grepMeta.path ? `Grep: ${grepMeta.pattern} in ${grepMeta.path}` : `Grep: ${grepMeta.pattern}`}
       >
-        <span className="tool-call-file-action-group">
-          <Search size={14} className="tool-call-file-icon" />
-          <span className="tool-call-file-action">Grep</span>
+        <span className="tool-call-action-group">
+          <Search size={14} className="tool-call-icon-muted" />
+          <span className="tool-call-key">Grep</span>
         </span>
-        <span className="tool-call-file-name">{grepMeta.pattern}</span>
+        <span className="tool-call-monospace-value">{grepMeta.pattern}</span>
         {grepResult && (
           <span className="tool-call-glob-count">{getSummaryText()}</span>
         )}
@@ -61,7 +61,7 @@ export function GrepRenderer({
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>
         )}
         {canExpand && (
-          <span className={`tool-call-file-chevron ${expanded ? 'expanded' : ''}`}>
+          <span className={`tool-call-chevron ${expanded ? 'expanded' : ''}`}>
             <ChevronRight size={12} />
           </span>
         )}

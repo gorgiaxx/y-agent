@@ -30,15 +30,15 @@ export function GlobRenderer({
   return (
     <div className={`tool-call-file-wrapper ${statusClass}`}>
       <div
-        className="tool-call-file-tag"
+        className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
         title={globMeta.searchPath ? `Glob: ${globMeta.pattern} in ${globMeta.searchPath}` : `Glob: ${globMeta.pattern}`}
       >
-        <span className="tool-call-file-action-group">
-          <FolderSearch size={14} className="tool-call-file-icon" />
-          <span className="tool-call-file-action">Glob</span>
+        <span className="tool-call-action-group">
+          <FolderSearch size={14} className="tool-call-icon-muted" />
+          <span className="tool-call-key">Glob</span>
         </span>
-        <span className="tool-call-file-name">{globMeta.pattern}</span>
+        <span className="tool-call-monospace-value">{globMeta.pattern}</span>
         {globResult && (
           <span className="tool-call-glob-count">{globResult.count} files</span>
         )}
@@ -47,7 +47,7 @@ export function GlobRenderer({
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>
         )}
         {canExpand && (
-          <span className={`tool-call-file-chevron ${expanded ? 'expanded' : ''}`}>
+          <span className={`tool-call-chevron ${expanded ? 'expanded' : ''}`}>
             <ChevronRight size={12} />
           </span>
         )}
