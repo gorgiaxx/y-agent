@@ -108,7 +108,12 @@ impl Tool for FileReadTool {
             total_lines
         };
 
-        let sliced_content = lines[start..end].join("\n");
+        let sliced_content = lines[start..end]
+            .iter()
+            .enumerate()
+            .map(|(i, line)| format!("{}\t{line}", start + i + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
         let line_count = end - start;
 
         let (content, truncated) = truncate_content(&sliced_content);
@@ -225,10 +230,9 @@ mod tests {
         }));
         let output = tool.execute(input).await.unwrap();
         assert!(output.success);
-        assert!(output.content["content"]
-            .as_str()
-            .unwrap()
-            .contains("line 1"));
+        let content_text = output.content["content"].as_str().unwrap();
+        assert!(content_text.contains("1\tline 1"));
+        assert!(content_text.contains("2\tline 2"));
         assert_eq!(output.content["lines"], 2);
         assert_eq!(output.content["total_lines"], 2);
         assert_eq!(output.content["encoding"], "UTF-8");
@@ -256,10 +260,10 @@ mod tests {
         assert_eq!(content_obj["lines"].as_u64().unwrap(), 2);
         assert_eq!(content_obj["total_lines"].as_u64().unwrap(), 4);
         let text = content_obj["content"].as_str().unwrap();
-        assert!(text.contains("line 2"));
-        assert!(text.contains("line 3"));
-        assert!(!text.contains("line 1"));
-        assert!(!text.contains("line 4"));
+        assert!(text.contains("2\tline 2"));
+        assert!(text.contains("3\tline 3"));
+        assert!(!text.contains("1\tline 1"));
+        assert!(!text.contains("4\tline 4"));
     }
 
     #[tokio::test]
