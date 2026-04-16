@@ -69,6 +69,7 @@ async fn e2e_parent_delegates_to_child() {
         tool_calling_mode: ToolCallingMode::default(),
         extra: serde_json::Value::Null,
         thinking: None,
+        response_format: None,
     };
 
     let child_response = child_provider
@@ -144,6 +145,7 @@ async fn e2e_sequential_multi_agent_pipeline() {
         tool_calling_mode: ToolCallingMode::default(),
         extra: serde_json::Value::Null,
         thinking: None,
+        response_format: None,
     };
     let resp1 = researcher.chat_completion(&req).await.unwrap();
 
@@ -178,6 +180,7 @@ async fn e2e_sequential_multi_agent_pipeline() {
         tool_calling_mode: ToolCallingMode::default(),
         extra: serde_json::Value::Null,
         thinking: None,
+        response_format: None,
     };
     let resp2 = summarizer.chat_completion(&req2).await.unwrap();
     assert!(resp2.content.as_deref().unwrap_or("").contains("Summary"));

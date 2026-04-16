@@ -48,6 +48,7 @@ pub fn make_chat_request(user_input: &str) -> ChatRequest {
         tool_calling_mode: ToolCallingMode::default(),
         extra: serde_json::Value::Null,
         thinking: None,
+        response_format: None,
     }
 }
 
