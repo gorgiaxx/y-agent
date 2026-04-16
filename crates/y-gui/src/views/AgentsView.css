@@ -545,6 +545,10 @@
   min-width: 0;
 }
 
+.agents-session-rail [data-radix-scroll-area-viewport] {
+  overflow-x: hidden;
+}
+
 .agents-session-rail-actions {
   display: flex;
   align-items: center;
@@ -692,6 +696,7 @@
   background: transparent;
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
 }
 
 .agents-session-item-title {
