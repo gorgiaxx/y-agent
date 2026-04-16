@@ -30,6 +30,7 @@ pub async fn run_embedded_migrations(pool: &SqlitePool) -> Result<(), StorageErr
     // EXISTS, so we check PRAGMA table_info first.
     add_column_if_missing(pool, "session_metadata", "context_reset_index", "INTEGER").await?;
     add_column_if_missing(pool, "session_metadata", "custom_system_prompt", "TEXT").await?;
+    add_column_if_missing(pool, "session_metadata", "manual_title", "TEXT").await?;
     add_column_if_missing(pool, "schedule_executions", "triggered_at", "TEXT").await?;
     add_column_if_missing(pool, "schedule_executions", "workflow_execution_id", "TEXT").await?;
     add_column_if_missing(pool, "schedule_executions", "request_summary", "TEXT").await?;
@@ -148,6 +149,7 @@ async fn migrate_session_type_sub_agent(pool: &SqlitePool) -> Result<(), Storage
             )),
             agent_id        TEXT,
             title           TEXT,
+            manual_title    TEXT,
             token_count     INTEGER NOT NULL DEFAULT 0,
             message_count   INTEGER NOT NULL DEFAULT 0,
             transcript_path TEXT NOT NULL,

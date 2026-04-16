@@ -273,6 +273,22 @@
   color: var(--text-primary);
 }
 
+.session-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* ---- Right side: time + action button ---- */
 .session-item-right {
   display: flex;

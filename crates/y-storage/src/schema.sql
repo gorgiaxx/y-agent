@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS session_metadata (
                     )),
     agent_id        TEXT,
     title           TEXT,
+    manual_title    TEXT,
     token_count     INTEGER NOT NULL DEFAULT 0,
     message_count   INTEGER NOT NULL DEFAULT 0,
     transcript_path TEXT NOT NULL,

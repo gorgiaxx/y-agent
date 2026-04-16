@@ -18,6 +18,7 @@ pub struct SessionInfo {
     pub id: String,
     pub agent_id: Option<String>,
     pub title: Option<String>,
+    pub manual_title: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub message_count: usize,
@@ -96,6 +97,7 @@ pub async fn session_list(
                 id: s.id.0.clone(),
                 agent_id: s.agent_id.as_ref().map(|id| id.0.clone()),
                 title: s.title.clone(),
+                manual_title: s.manual_title.clone(),
                 created_at: s.created_at.to_rfc3339(),
                 updated_at: s.updated_at.to_rfc3339(),
                 message_count: s.message_count as usize,
@@ -164,6 +166,7 @@ pub async fn session_create(
         id: session.id.0.clone(),
         agent_id: session.agent_id.as_ref().map(|id| id.0.clone()),
         title: session.title.clone(),
+        manual_title: session.manual_title.clone(),
         created_at: session.created_at.to_rfc3339(),
         updated_at: session.updated_at.to_rfc3339(),
         message_count: 0,
@@ -374,9 +377,31 @@ pub async fn session_fork(
         id: fork.id.0.clone(),
         agent_id: fork.agent_id.as_ref().map(|id| id.0.clone()),
         title: fork.title.clone(),
+        manual_title: fork.manual_title.clone(),
         created_at: fork.created_at.to_rfc3339(),
         updated_at: fork.updated_at.to_rfc3339(),
         message_count: fork.message_count as usize,
         has_custom_prompt: false,
     })
+}
+
+/// Rename a session (sets the manual title).
+///
+/// When a manual title is set, automatic title generation is disabled for
+/// this session. Pass `null` for `title` to clear the manual title and
+/// revert to auto-generated titles.
+#[tauri::command]
+pub async fn session_rename(
+    state: State<'_, AppState>,
+    session_id: String,
+    title: Option<String>,
+) -> Result<(), String> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .set_manual_title(&sid, title)
+        .await
+        .map_err(|e| format!("Failed to rename session: {e}"))?;
+    Ok(())
 }

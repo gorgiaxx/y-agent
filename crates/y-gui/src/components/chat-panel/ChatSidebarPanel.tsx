@@ -30,6 +30,7 @@ interface ChatSidebarPanelProps {
   onNewChatInWorkspace: (workspaceId: string) => void;
   onDeleteSession: (id: string) => void;
   onForkSession?: (sessionId: string) => void;
+  onRenameSession: (id: string, title: string | null) => void;
   onCreateWorkspace: (name: string, path: string) => void;
   onUpdateWorkspace: (id: string, name: string, path: string) => void;
   onDeleteWorkspace: (id: string) => void;
@@ -66,6 +67,7 @@ export function ChatSidebarPanel({
   onNewChatInWorkspace,
   onDeleteSession,
   onForkSession,
+  onRenameSession,
   onCreateWorkspace,
   onUpdateWorkspace,
   onDeleteWorkspace,
@@ -92,6 +94,10 @@ export function ChatSidebarPanel({
   const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
   const [dragOverPosition, setDragOverPosition] = useState<'above' | 'below'>('above');
   const dragGroupRef = useRef<string[]>([]);
+
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
   /** Ref to track latest drop target for the mouseup handler (avoids stale closure). */
   const dropTargetRef = useRef<{ targetId: string; position: 'above' | 'below' } | null>(null);
 
@@ -455,6 +461,26 @@ export function ChatSidebarPanel({
     }
   }, [selectedIds, onDeleteSession]);
 
+  const startRename = useCallback((session: SessionInfo) => {
+    setRenameValue(session.manual_title || session.title || '');
+    setRenamingSessionId(session.id);
+    setTimeout(() => renameInputRef.current?.focus(), 0);
+  }, []);
+
+  const commitRename = useCallback(() => {
+    if (renamingSessionId) {
+      const trimmed = renameValue.trim();
+      onRenameSession(renamingSessionId, trimmed || null);
+      setRenamingSessionId(null);
+      setRenameValue('');
+    }
+  }, [renamingSessionId, renameValue, onRenameSession]);
+
+  const cancelRename = useCallback(() => {
+    setRenamingSessionId(null);
+    setRenameValue('');
+  }, []);
+
   const getPreviewList = useCallback(
     (list: SessionInfo[]) => {
       if (!draggedSessionId || !dragOverSessionId || draggedSessionId === dragOverSessionId) {
@@ -521,9 +547,35 @@ export function ChatSidebarPanel({
         )}
 
         {/* Title */}
-        <div className="session-item-title">
-          {session.title || 'Untitled Session'}
-        </div>
+        {renamingSessionId === session.id ? (
+          <input
+            ref={renameInputRef}
+            className="session-rename-input"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.stopPropagation();
+                commitRename();
+              } else if (e.key === 'Escape') {
+                e.stopPropagation();
+                cancelRename();
+              }
+            }}
+            onBlur={commitRename}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <div
+            className="session-item-title"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              startRename(session);
+            }}
+          >
+            {session.manual_title || session.title || 'Untitled Session'}
+          </div>
+        )}
 
         {/* Right: timestamp + delete */}
         <div className="session-item-right">
@@ -624,6 +676,16 @@ export function ChatSidebarPanel({
           )}
           {onForkSession && (
             <>
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  startRename(openSession);
+                  closeOpenMenu();
+                }}
+              >
+                <Pencil size={11} />
+                Rename
+              </button>
               <button
                 className="context-menu-item"
                 onClick={() => {

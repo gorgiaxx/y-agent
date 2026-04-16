@@ -287,6 +287,21 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Set or clear the manual (user-edited) title for a session.
+    ///
+    /// When set, this overrides the auto-generated title for display and
+    /// prevents future automatic title generation. Pass `None` to revert
+    /// to the auto-generated title.
+    #[instrument(skip(self), fields(session_id = %id))]
+    pub async fn set_manual_title(
+        &self,
+        id: &SessionId,
+        title: Option<String>,
+    ) -> Result<(), SessionManagerError> {
+        self.session_store.set_manual_title(id, title).await?;
+        Ok(())
+    }
+
     /// Delete a session and clear transcript content.
     ///
     /// Preferred path is hard-delete of metadata row.

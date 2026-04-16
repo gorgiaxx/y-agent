@@ -28,6 +28,11 @@ pub struct SessionNode {
     /// Agent that owns this session (if any).
     pub agent_id: Option<AgentId>,
     pub title: Option<String>,
+    /// User-edited title that overrides the auto-generated title.
+    ///
+    /// When set, this takes precedence over `title` for display purposes
+    /// and prevents automatic title generation from overwriting it.
+    pub manual_title: Option<String>,
     /// Channel identifier (e.g., "cli", "tui", "api").
     pub channel: Option<String>,
     /// User-defined label for categorization.
@@ -171,6 +176,16 @@ pub trait SessionStore: Send + Sync {
 
     /// Update only the session title.
     async fn set_title(&self, id: &SessionId, title: String) -> Result<(), SessionError>;
+
+    /// Set or clear the manual (user-edited) title for a session.
+    ///
+    /// When set, this takes precedence over `title` for display and prevents
+    /// automatic title generation. Pass `None` to revert to auto-generated title.
+    async fn set_manual_title(
+        &self,
+        id: &SessionId,
+        title: Option<String>,
+    ) -> Result<(), SessionError>;
 
     /// Hard-delete a session and all its data from storage.
     ///
