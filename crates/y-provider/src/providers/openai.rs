@@ -212,6 +212,22 @@ impl OpenAiProvider {
                     },
                 }
             }),
+            response_format: request.response_format.as_ref().map(|rf| {
+                use y_core::provider::ResponseFormat;
+                match rf {
+                    ResponseFormat::Text => OpenAiResponseFormat::Text,
+                    ResponseFormat::JsonObject => OpenAiResponseFormat::JsonObject,
+                    ResponseFormat::JsonSchema { name, schema } => {
+                        OpenAiResponseFormat::JsonSchema {
+                            json_schema: OpenAiJsonSchema {
+                                name: name.clone(),
+                                schema: schema.clone(),
+                                strict: true,
+                            },
+                        }
+                    }
+                }
+            }),
         }
     }
 }
@@ -611,11 +627,35 @@ struct OpenAiRequest {
     stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<OpenAiReasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<OpenAiResponseFormat>,
 }
 
 #[derive(Debug, Serialize)]
 struct OpenAiReasoning {
     effort: String,
+}
+
+/// `OpenAI` `response_format` for structured output.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OpenAiResponseFormat {
+    /// Plain text (default).
+    Text,
+    /// JSON output (model chooses schema).
+    JsonObject,
+    /// JSON output conforming to a specific schema.
+    JsonSchema {
+        /// Nested schema wrapper.
+        json_schema: OpenAiJsonSchema,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiJsonSchema {
+    name: String,
+    schema: serde_json::Value,
+    strict: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -885,6 +925,7 @@ mod tests {
             tools: None,
             stop: None,
             reasoning: None,
+            response_format: None,
         };
 
         let json = serde_json::to_value(&req).unwrap();
@@ -912,6 +953,7 @@ mod tests {
             tools: None,
             stop: None,
             reasoning: None,
+            response_format: None,
         };
 
         let json = serde_json::to_value(&req).unwrap();
@@ -1194,6 +1236,7 @@ mod tests {
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
+            response_format: None,
         };
 
         let messages = OpenAiProvider::build_messages(&request);
@@ -1237,6 +1280,7 @@ mod tests {
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
+            response_format: None,
         };
 
         let messages = OpenAiProvider::build_messages(&request);

@@ -84,6 +84,31 @@ pub struct ThinkingConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Response format (structured output)
+// ---------------------------------------------------------------------------
+
+/// Response format specification for structured LLM output.
+///
+/// Maps to provider-specific parameters:
+/// - Anthropic: merged into `output_config.format`
+/// - `OpenAI`: `response_format`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Plain text output (default behavior).
+    Text,
+    /// JSON output (model chooses the schema).
+    JsonObject,
+    /// JSON output conforming to a specific JSON Schema.
+    JsonSchema {
+        /// Schema name (required by providers for identification).
+        name: String,
+        /// JSON Schema definition.
+        schema: serde_json::Value,
+    },
+}
+
+// ---------------------------------------------------------------------------
 // Request / Response
 // ---------------------------------------------------------------------------
 
@@ -108,6 +133,8 @@ pub struct ChatRequest {
     pub extra: serde_json::Value,
     /// Thinking/reasoning configuration (`None` = use model defaults).
     pub thinking: Option<ThinkingConfig>,
+    /// Response format for structured output (`None` = default text).
+    pub response_format: Option<ResponseFormat>,
 }
 
 /// Response from an LLM provider.

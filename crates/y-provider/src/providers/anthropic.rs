@@ -237,7 +237,7 @@ impl AnthropicProvider {
         };
 
         // Map unified thinking config to Anthropic adaptive thinking.
-        let (thinking, output_config, temperature) = if let Some(ref tc) = request.thinking {
+        let (thinking, mut output_config, temperature) = if let Some(ref tc) = request.thinking {
             let effort_str = match tc.effort {
                 ThinkingEffort::Low => "low",
                 ThinkingEffort::Medium => "medium",
@@ -249,7 +249,8 @@ impl AnthropicProvider {
                     thinking_type: "adaptive".to_string(),
                 }),
                 Some(AnthropicOutputConfig {
-                    effort: effort_str.to_string(),
+                    effort: Some(effort_str.to_string()),
+                    format: None,
                 }),
                 // Anthropic requires temperature to be unset (or 1.0) when
                 // thinking is enabled.
@@ -258,6 +259,35 @@ impl AnthropicProvider {
         } else {
             (None, None, request.temperature)
         };
+
+        // Map response format to Anthropic output_config.format.
+        if let Some(ref rf) = request.response_format {
+            use y_core::provider::ResponseFormat;
+            let fmt = match rf {
+                ResponseFormat::Text => Some(AnthropicOutputFormat::Text),
+                ResponseFormat::JsonObject => {
+                    // Anthropic does not have a separate json_object mode;
+                    // use json_schema with a permissive schema.
+                    None
+                }
+                ResponseFormat::JsonSchema { name, schema } => {
+                    Some(AnthropicOutputFormat::JsonSchema {
+                        name: name.clone(),
+                        schema: schema.clone(),
+                    })
+                }
+            };
+            if let Some(fmt) = fmt {
+                if let Some(ref mut oc) = output_config {
+                    oc.format = Some(fmt);
+                } else {
+                    output_config = Some(AnthropicOutputConfig {
+                        effort: None,
+                        format: Some(fmt),
+                    });
+                }
+            }
+        }
 
         AnthropicRequest {
             model: model.to_string(),
@@ -922,7 +952,25 @@ struct AnthropicThinking {
 
 #[derive(Debug, Serialize)]
 struct AnthropicOutputConfig {
-    effort: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<AnthropicOutputFormat>,
+}
+
+/// Structured output format for Anthropic's `output_config.format`.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicOutputFormat {
+    /// Plain text (default).
+    Text,
+    /// JSON conforming to a specific schema.
+    JsonSchema {
+        /// Schema name.
+        name: String,
+        /// JSON Schema definition.
+        schema: serde_json::Value,
+    },
 }
 
 /// A content block in the `system` array, supporting `cache_control` for
@@ -1213,6 +1261,7 @@ mod tests {
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
+            response_format: None,
         };
 
         let system = AnthropicProvider::extract_system(&request);
@@ -1279,6 +1328,7 @@ mod tests {
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
+            response_format: None,
         };
 
         let messages = AnthropicProvider::build_messages(&request);
@@ -1535,6 +1585,7 @@ mod tests {
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
+            response_format: None,
         };
 
         let messages = AnthropicProvider::build_messages(&request);
@@ -1578,6 +1629,7 @@ mod tests {
             thinking: Some(ThinkingConfig {
                 effort: ThinkingEffort::Max,
             }),
+            response_format: None,
         };
 
         let provider = AnthropicProvider::new(

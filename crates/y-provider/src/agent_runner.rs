@@ -81,6 +81,7 @@ impl SingleTurnRunner {
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
+            response_format: config.response_format.clone(),
         }
     }
 
@@ -154,6 +155,7 @@ mod tests {
             trust_tier: None,
             trace_id: None,
             prune_tool_history: false,
+            response_format: None,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -188,6 +190,7 @@ mod tests {
             trust_tier: None,
             trace_id: None,
             prune_tool_history: false,
+            response_format: None,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -214,6 +217,7 @@ mod tests {
             trust_tier: None,
             trace_id: None,
             prune_tool_history: false,
+            response_format: None,
         };
 
         let route = SingleTurnRunner::build_route(&config);

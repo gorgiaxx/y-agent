@@ -71,6 +71,7 @@ impl HookLlmRunner for ProviderPoolHookLlmRunner {
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
+            response_format: None,
         };
 
         let route = RouteRequest {
