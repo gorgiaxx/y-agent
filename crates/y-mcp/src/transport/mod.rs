@@ -7,8 +7,10 @@
 mod http;
 mod stdio;
 
-pub use http::HttpTransport;
+pub use http::{HttpTransport, HttpTransportBuilder};
 pub use stdio::StdioTransport;
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -43,12 +45,40 @@ pub struct JsonRpcError {
 }
 
 /// A JSON-RPC 2.0 notification (no `id`, no response expected).
+///
+/// Used for outgoing notifications sent to the server.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct JsonRpcNotification {
     pub jsonrpc: String,
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
+}
+
+/// An incoming JSON-RPC 2.0 notification received from the server.
+///
+/// Unlike [`JsonRpcResponse`], notifications have no `id` field.
+/// Used internally by transports to distinguish notifications from responses.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct IncomingNotification {
+    pub method: String,
+    pub params: Option<Value>,
+}
+
+/// Handler for server-sent notifications.
+///
+/// Called by the transport when the server sends a notification (e.g.,
+/// `notifications/tools/list_changed`).
+pub type NotificationHandler = Arc<dyn Fn(&str, Option<Value>) + Send + Sync>;
+
+/// Raw JSON message from the server, before type discrimination.
+///
+/// Used by the stdio reader to decide whether an incoming line is a response
+/// (has `id`) or a notification (has `method`, no `id`).
+#[derive(Debug, serde::Deserialize)]
+struct RawJsonRpcMessage {
+    id: Option<u64>,
+    method: Option<String>,
 }
 
 impl JsonRpcRequest {
@@ -90,6 +120,12 @@ pub trait McpTransport: Send + Sync {
 
     /// Transport type name (for logging).
     fn transport_type(&self) -> &'static str;
+
+    /// Set a handler for incoming server notifications.
+    ///
+    /// The default implementation is a no-op for transports that do not support
+    /// server-initiated notifications (e.g., HTTP).
+    fn set_notification_handler(&self, _handler: NotificationHandler) {}
 }
 
 #[cfg(test)]

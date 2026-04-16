@@ -5,14 +5,19 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::{oneshot, Mutex};
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tracing::{debug, warn};
 
-use super::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, McpTransport};
+use super::{
+    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, McpTransport, NotificationHandler,
+    RawJsonRpcMessage,
+};
 use crate::error::McpError;
 
 /// MCP transport over subprocess stdin/stdout.
@@ -22,6 +27,7 @@ use crate::error::McpError;
 pub struct StdioTransport {
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>>,
+    notification_handler: Arc<Mutex<Option<NotificationHandler>>>,
     reader_handle: Mutex<Option<JoinHandle<()>>>,
     stderr_handle: Mutex<Option<JoinHandle<()>>>,
     child: Mutex<Option<Child>>,
@@ -40,10 +46,12 @@ impl StdioTransport {
     /// Spawn a child process and create a stdio transport.
     ///
     /// The child process must speak newline-delimited JSON-RPC on stdin/stdout.
+    /// An optional working directory can be specified for the child process.
     pub fn spawn(
         command: &str,
         args: &[String],
         env: &HashMap<String, String>,
+        cwd: Option<&str>,
     ) -> Result<Self, McpError> {
         let mut cmd = tokio::process::Command::new(command);
         cmd.args(args)
@@ -52,6 +60,10 @@ impl StdioTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
 
         let mut child = cmd.spawn().map_err(|e| McpError::ConnectionFailed {
             message: format!("failed to spawn '{command}': {e}"),
@@ -79,29 +91,60 @@ impl StdioTransport {
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
-        // Background task: read stdout lines and route responses by ID.
+        let notification_handler: Arc<Mutex<Option<NotificationHandler>>> =
+            Arc::new(Mutex::new(None));
+
+        // Background task: read stdout lines and route responses/notifications.
         let reader_pending = Arc::clone(&pending);
+        let reader_notif = Arc::clone(&notification_handler);
         let reader_handle = tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let resp: JsonRpcResponse = match serde_json::from_str(&line) {
+                // Peek at the message to decide: response (has id) or notification
+                // (has method, no id).
+                let raw: RawJsonRpcMessage = match serde_json::from_str(&line) {
                     Ok(r) => r,
                     Err(e) => {
                         debug!(
                             error = %e,
                             line = %line,
-                            "failed to parse JSON-RPC response from stdout, skipping"
+                            "failed to parse JSON-RPC message from stdout, skipping"
                         );
                         continue;
                     }
                 };
-                let id = resp.id;
-                let mut map = reader_pending.lock().await;
-                if let Some(tx) = map.remove(&id) {
-                    let _ = tx.send(resp);
+
+                if let Some(id) = raw.id {
+                    // This is a response.
+                    let resp: JsonRpcResponse = match serde_json::from_str(&line) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            debug!(
+                                error = %e,
+                                "failed to parse JSON-RPC response, skipping"
+                            );
+                            continue;
+                        }
+                    };
+                    let mut map = reader_pending.lock().await;
+                    if let Some(tx) = map.remove(&id) {
+                        let _ = tx.send(resp);
+                    } else {
+                        debug!(id, "received response for unknown request ID");
+                    }
+                } else if let Some(method) = raw.method {
+                    // This is a server notification.
+                    let params: Option<serde_json::Value> =
+                        serde_json::from_str::<serde_json::Value>(&line)
+                            .ok()
+                            .and_then(|v| v.get("params").cloned());
+                    debug!(method = %method, "received server notification");
+                    if let Some(handler) = reader_notif.lock().await.as_ref() {
+                        handler(&method, params);
+                    }
                 } else {
-                    debug!(id, "received response for unknown request ID");
+                    debug!(line = %line, "received unrecognized JSON-RPC message");
                 }
             }
             // stdout closed -- clear all pending requests so they get RecvError.
@@ -121,6 +164,7 @@ impl StdioTransport {
         Ok(Self {
             stdin: Arc::new(Mutex::new(stdin)),
             pending,
+            notification_handler,
             reader_handle: Mutex::new(Some(reader_handle)),
             stderr_handle: Mutex::new(Some(stderr_handle)),
             child: Mutex::new(Some(child)),
@@ -201,9 +245,9 @@ impl McpTransport for StdioTransport {
     async fn close(&self) -> Result<(), McpError> {
         self.closed.store(true, Ordering::Release);
 
-        // Kill child process.
+        // Graceful shutdown: SIGTERM -> grace period -> SIGKILL.
         if let Some(mut child) = self.child.lock().await.take() {
-            let _ = child.kill().await;
+            graceful_shutdown(&mut child).await;
         }
 
         // Abort background tasks.
@@ -223,6 +267,51 @@ impl McpTransport for StdioTransport {
     fn transport_type(&self) -> &'static str {
         "stdio"
     }
+
+    fn set_notification_handler(&self, handler: NotificationHandler) {
+        // Use try_lock to avoid blocking in sync context. The handler is
+        // typically set once during setup before any messages arrive.
+        if let Ok(mut guard) = self.notification_handler.try_lock() {
+            *guard = Some(handler);
+        }
+    }
+}
+
+/// Grace period before escalating from SIGTERM to SIGKILL.
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
+
+/// Gracefully shut down a child process.
+///
+/// On Unix: sends SIGTERM, waits up to 2 seconds, then SIGKILL if still alive.
+/// On other platforms: falls back to immediate kill.
+async fn graceful_shutdown(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{self, Signal};
+        use nix::unistd::Pid;
+
+        if let Some(pid) = child.id().and_then(|p| i32::try_from(p).ok()) {
+            let pid = Pid::from_raw(pid);
+            if signal::kill(pid, Signal::SIGTERM).is_ok() {
+                debug!(%pid, "sent SIGTERM to MCP server process");
+                match tokio::time::timeout(SHUTDOWN_GRACE_PERIOD, child.wait()).await {
+                    Ok(Ok(status)) => {
+                        debug!(%pid, %status, "MCP server process exited after SIGTERM");
+                        return;
+                    }
+                    Ok(Err(e)) => {
+                        warn!(%pid, error = %e, "error waiting for MCP server process");
+                    }
+                    Err(_) => {
+                        debug!(%pid, "SIGTERM grace period expired, sending SIGKILL");
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: force kill.
+    let _ = child.kill().await;
 }
 
 #[cfg(test)]
@@ -231,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_nonexistent_command() {
-        let result = StdioTransport::spawn("__nonexistent_mcp_cmd__", &[], &HashMap::new());
+        let result = StdioTransport::spawn("__nonexistent_mcp_cmd__", &[], &HashMap::new(), None);
         assert!(
             matches!(result, Err(McpError::ConnectionFailed { .. })),
             "expected ConnectionFailed, got: {result:?}"
@@ -242,7 +331,7 @@ mod tests {
     async fn test_send_after_close() {
         // Use 'cat' as a simple echo process.
         let transport =
-            StdioTransport::spawn("cat", &[], &HashMap::new()).expect("failed to spawn cat");
+            StdioTransport::spawn("cat", &[], &HashMap::new(), None).expect("failed to spawn cat");
         transport.close().await.unwrap();
 
         let req = JsonRpcRequest::new(1, "test", None);
@@ -260,7 +349,7 @@ mod tests {
         // We craft a JSON object that is valid as both request serialization
         // output and response deserialization input.
         let transport =
-            StdioTransport::spawn("cat", &[], &HashMap::new()).expect("failed to spawn cat");
+            StdioTransport::spawn("cat", &[], &HashMap::new(), None).expect("failed to spawn cat");
 
         // Send a request -- cat will echo it back. The echoed JSON has
         // the same `id` so the pending map will match it.

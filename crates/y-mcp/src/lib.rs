@@ -14,14 +14,20 @@
 //! Tool calls are proxied via `tools/call` over the configured transport.
 //! Transport implementations (stdio, HTTP/SSE) are pluggable.
 
+pub mod auth;
 pub mod client;
 pub mod discovery;
 pub mod error;
+pub mod manager;
 pub mod tool_adapter;
 pub mod transport;
 
 // Re-export primary types.
+pub use auth::{McpAuthStore, McpAuthTokens};
 pub use client::McpClient;
 pub use error::McpError;
+pub use manager::{McpConnectionManager, McpServerConfigRef, McpServerStatus};
 pub use tool_adapter::McpToolAdapter;
-pub use transport::{HttpTransport, McpTransport, StdioTransport};
+pub use transport::{
+    HttpTransport, HttpTransportBuilder, McpTransport, NotificationHandler, StdioTransport,
+};

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::{info, instrument};
 
 use crate::error::McpError;
-use crate::transport::{JsonRpcNotification, JsonRpcRequest, McpTransport};
+use crate::transport::{JsonRpcNotification, JsonRpcRequest, McpTransport, NotificationHandler};
 
 /// Capabilities and metadata returned by the MCP `initialize` handshake.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -172,6 +172,15 @@ impl McpClient {
     /// Close the connection to the MCP server.
     pub async fn close(&self) -> Result<(), McpError> {
         self.transport.close().await
+    }
+
+    /// Register a handler for server-sent notifications.
+    ///
+    /// The handler is called for every notification from the server (e.g.,
+    /// `notifications/tools/list_changed`). Only stdio transport supports
+    /// this; HTTP transport is stateless and ignores the handler.
+    pub fn set_notification_handler(&self, handler: NotificationHandler) {
+        self.transport.set_notification_handler(handler);
     }
 
     fn make_request(&self, method: &str, params: Option<serde_json::Value>) -> JsonRpcRequest {

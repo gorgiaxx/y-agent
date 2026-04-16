@@ -33,6 +33,10 @@ pub enum McpError {
     #[error("serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
+    /// Authentication required by the remote server (HTTP 401).
+    #[error("authentication required for server '{server}'")]
+    AuthenticationRequired { server: String },
+
     /// Generic error.
     #[error("{message}")]
     Other { message: String },
