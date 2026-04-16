@@ -57,7 +57,6 @@
 .agents-sidebar-panel-header {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   padding: var(--space-md);
   border-bottom: 1px solid var(--border);
   min-width: 0;
@@ -93,7 +92,7 @@
 }
 
 .agents-sidebar-count {
-  font-size: 22px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
 }
