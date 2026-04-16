@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import './ProvidersTab.css';
 import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicker';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
 import { TagChipInput } from './TagChipInput';
@@ -34,7 +35,6 @@ function ProviderTabPanel({
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Model discovery state
-  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelList, setModelList] = useState<ModelItem[]>([]);
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -50,10 +50,9 @@ function ProviderTabPanel({
     return () => clearTimeout(t);
   }, [testResult]);
 
-  // Also clear test result and model picker when provider changes.
+  // Also clear test result when provider changes.
   useEffect(() => {
     setTestResult(null);
-    setModelPickerOpen(false);
   }, [provider.id]);
 
   const handleTest = async () => {
@@ -84,7 +83,6 @@ function ProviderTabPanel({
 
   const handleModelSearch = async () => {
     if (!provider.base_url) return;
-    setModelPickerOpen(true);
     setModelLoading(true);
     setModelError(null);
     setModelList([]);
@@ -218,23 +216,21 @@ function ProviderTabPanel({
               placeholder="e.g. gpt-4o"
             />
             {canDiscoverModels && (
-              <button
-                className="pf-model-search-btn"
-                onClick={handleModelSearch}
-                title="Discover models from endpoint"
-                type="button"
-              >
-                <Search size={13} />
-              </button>
-            )}
-            {modelPickerOpen && (
               <ModelPickerDropdown
                 models={modelList}
                 loading={modelLoading}
                 error={modelError}
                 onSelect={(id) => update({ model: id })}
-                onClose={() => setModelPickerOpen(false)}
-              />
+              >
+                <button
+                  className="pf-model-search-btn"
+                  onClick={handleModelSearch}
+                  title="Discover models from endpoint"
+                  type="button"
+                >
+                  <Search size={13} />
+                </button>
+              </ModelPickerDropdown>
             )}
           </div>
         </div>

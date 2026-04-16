@@ -1,26 +1,11 @@
 /* ---- ModelPickerDropdown: shared filterable model list overlay ---- */
 
 .model-picker-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
   min-width: 280px;
   max-height: 320px;
-  background: var(--surface-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
-  z-index: 100;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: modelPickerFadeIn 0.12s ease-out;
-}
-
-@keyframes modelPickerFadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
 }
 
 .model-picker-search {
