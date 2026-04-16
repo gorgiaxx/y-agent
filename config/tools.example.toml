@@ -17,6 +17,22 @@ allow_dynamic_tools = false
 # Each [[mcp_servers]] entry defines a Model Context Protocol server.
 # Tools from MCP servers are automatically discovered at startup and
 # registered with the naming convention: mcp_{server}_{tool}
+#
+# Common fields:
+#   name              - Unique server name (used in tool name prefix)
+#   transport         - "stdio" or "http"
+#   command           - Command to execute (stdio only)
+#   args              - Command arguments (stdio only)
+#   url               - Server URL (http only)
+#   env               - Environment variables (stdio only)
+#   enabled           - Enable/disable this server (default: true)
+#   headers           - Custom HTTP headers (http only)
+#   startup_timeout_secs - Initialize handshake timeout (default: 30)
+#   tool_timeout_secs - Per-tool-call timeout (default: 120)
+#   cwd               - Working directory for subprocess (stdio only)
+#   bearer_token      - Explicit bearer token for auth (http only)
+#   enabled_tools     - Whitelist of tool names (omit for all)
+#   disabled_tools    - Blacklist of tool names
 # ==============================================================================
 
 # --- Filesystem MCP Server (stdio transport) --------------------------------
@@ -26,6 +42,9 @@ allow_dynamic_tools = false
 # transport = "stdio"
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+# cwd = "/workspace"
+# startup_timeout_secs = 30
+# tool_timeout_secs = 120
 # enabled = true
 
 # --- GitHub MCP Server (stdio transport) ------------------------------------
@@ -36,6 +55,10 @@ allow_dynamic_tools = false
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-github"]
 # enabled = true
+# disabled_tools = ["create_issue"]  # optional: block specific tools
+#
+# [mcp_servers.env]
+# GITHUB_TOKEN = "ghp_..."
 
 # --- Custom HTTP MCP Server ------------------------------------------------
 
@@ -43,4 +66,11 @@ allow_dynamic_tools = false
 # name = "custom"
 # transport = "http"
 # url = "http://localhost:3000"
+# bearer_token = "my-secret-token"    # or set CUSTOM_TOKEN env var
+# startup_timeout_secs = 15
+# tool_timeout_secs = 60
 # enabled = true
+# enabled_tools = ["search", "query"]  # optional: only expose these tools
+#
+# [mcp_servers.headers]
+# X-Custom-Header = "value"

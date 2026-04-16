@@ -57,6 +57,15 @@ impl ToolRegistryImpl {
         tracing::info!("Tool registry config hot-reloaded");
     }
 
+    /// Get a read-only snapshot of the current configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration lock is poisoned.
+    pub fn config(&self) -> ToolRegistryConfig {
+        self.config.read().unwrap().clone()
+    }
+
     /// Register a tool with its definition (direct method, not trait).
     pub async fn register_tool(
         &self,

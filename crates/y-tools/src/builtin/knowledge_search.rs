@@ -16,7 +16,7 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 use y_knowledge::middleware::{InjectKnowledge, KnowledgeContextItem};
-use y_knowledge::tokenizer::SimpleTokenizer;
+use y_knowledge::tokenizer::AutoTokenizer;
 
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 10_000;
@@ -27,13 +27,13 @@ const MAX_CHUNK_CONTENT_CHARS: usize = 2_000;
 /// Built-in tool for searching the knowledge base.
 pub struct KnowledgeSearchTool {
     def: ToolDefinition,
-    knowledge: Arc<Mutex<InjectKnowledge<SimpleTokenizer>>>,
+    knowledge: Arc<Mutex<InjectKnowledge<AutoTokenizer>>>,
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
 impl KnowledgeSearchTool {
     /// Create a new knowledge search tool with a shared knowledge middleware.
-    pub fn new(knowledge: Arc<Mutex<InjectKnowledge<SimpleTokenizer>>>) -> Self {
+    pub fn new(knowledge: Arc<Mutex<InjectKnowledge<AutoTokenizer>>>) -> Self {
         Self {
             def: Self::tool_definition(),
             knowledge,
@@ -44,7 +44,7 @@ impl KnowledgeSearchTool {
     /// Create a knowledge search tool with an embedding provider for
     /// vector-based semantic search.
     pub fn with_embedding(
-        knowledge: Arc<Mutex<InjectKnowledge<SimpleTokenizer>>>,
+        knowledge: Arc<Mutex<InjectKnowledge<AutoTokenizer>>>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
     ) -> Self {
         Self {
@@ -282,7 +282,7 @@ mod tests {
             enable_dedup: false,
             ..Default::default()
         };
-        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        let mut retriever = HybridRetriever::with_config(AutoTokenizer::new(), config);
         retriever.index(Chunk {
             id: "c1".to_string(),
             document_id: "doc-1".to_string(),
@@ -308,7 +308,7 @@ mod tests {
             enable_dedup: false,
             ..Default::default()
         };
-        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        let mut retriever = HybridRetriever::with_config(AutoTokenizer::new(), config);
         // Index a chunk WITH an embedding vector so cosine similarity works.
         retriever.index_with_embedding(
             Chunk {
@@ -393,7 +393,7 @@ mod tests {
     #[tokio::test]
     async fn test_with_embedding_constructor() {
         let config = RetrievalConfig::default();
-        let retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        let retriever = HybridRetriever::with_config(AutoTokenizer::new(), config);
         let knowledge = InjectKnowledge::new(retriever);
         let provider: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
         let tool = KnowledgeSearchTool::with_embedding(Arc::new(Mutex::new(knowledge)), provider);

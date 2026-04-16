@@ -19,12 +19,12 @@ pub mod workflow;
 use std::sync::{Arc, Mutex};
 use y_core::embedding::EmbeddingProvider;
 use y_knowledge::middleware::InjectKnowledge;
-use y_knowledge::tokenizer::SimpleTokenizer;
+use y_knowledge::tokenizer::AutoTokenizer;
 
 use crate::registry::ToolRegistryImpl;
 
 /// Optional knowledge handle for the knowledge search tool.
-pub type KnowledgeHandle = Option<Arc<Mutex<InjectKnowledge<SimpleTokenizer>>>>;
+pub type KnowledgeHandle = Option<Arc<Mutex<InjectKnowledge<AutoTokenizer>>>>;
 
 /// Optional embedding provider for the knowledge search tool.
 pub type EmbeddingHandle = Option<Arc<dyn EmbeddingProvider>>;
@@ -183,7 +183,7 @@ mod tests {
 
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
         let config = RetrievalConfig::default();
-        let retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        let retriever = HybridRetriever::with_config(AutoTokenizer::new(), config);
         let knowledge = Arc::new(Mutex::new(InjectKnowledge::new(retriever)));
         register_builtin_tools(
             &registry,
