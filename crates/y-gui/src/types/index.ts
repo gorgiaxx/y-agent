@@ -8,6 +8,7 @@ export interface SessionInfo {
   id: string;
   agent_id?: string | null;
   title: string | null;
+  manual_title?: string | null;
   created_at: string;
   updated_at: string;
   message_count: number;

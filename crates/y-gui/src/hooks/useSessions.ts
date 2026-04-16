@@ -14,6 +14,7 @@ interface UseSessionsReturn {
   deleteSession: (id: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
   forkSession: (sessionId: string, messageIndex: number, title?: string) => Promise<SessionInfo | null>;
+  renameSession: (id: string, title: string | null) => Promise<void>;
 }
 
 // Polling interval in ms -- keeps session titles and new sessions from the TUI in sync.
@@ -138,6 +139,22 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
     [],
   );
 
+  const renameSession = useCallback(
+    async (id: string, title: string | null) => {
+      try {
+        await invoke('session_rename', { sessionId: id, title });
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === id ? { ...s, manual_title: title } : s,
+          ),
+        );
+      } catch (e) {
+        console.error('Failed to rename session:', e);
+      }
+    },
+    [],
+  );
+
   return {
     sessions,
     activeSessionId,
@@ -147,5 +164,6 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
     deleteSession,
     refreshSessions,
     forkSession,
+    renameSession,
   };
 }
