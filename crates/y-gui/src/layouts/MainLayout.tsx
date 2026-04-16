@@ -108,17 +108,18 @@ export function MainLayout() {
           onDeleteSession: async (id) => {
              await sessionHooks.deleteSession(id);
           },
-          onForkSession: async (sessionId) => {
-             // Fork the entire session (use max index to copy all messages).
-             const fork = await sessionHooks.forkSession(sessionId, Number.MAX_SAFE_INTEGER);
-             // If the original session belongs to a workspace, assign the fork to the same workspace.
-             if (fork) {
-               const workspaceId = workspaceHooks.sessionWorkspaceMap[sessionId];
-               if (workspaceId) {
-                 await workspaceHooks.assignSession(workspaceId, fork.id);
-               }
-             }
-          },
+           onForkSession: async (sessionId) => {
+              const fork = await sessionHooks.forkSession(sessionId, Number.MAX_SAFE_INTEGER);
+              if (fork) {
+                const workspaceId = workspaceHooks.sessionWorkspaceMap[sessionId];
+                if (workspaceId) {
+                  await workspaceHooks.assignSession(workspaceId, fork.id);
+                }
+              }
+           },
+           onRenameSession: async (id, title) => {
+              await sessionHooks.renameSession(id, title);
+           },
           onCreateWorkspace: async (name, path) => {
              await workspaceHooks.createWorkspace(name, path);
           },
