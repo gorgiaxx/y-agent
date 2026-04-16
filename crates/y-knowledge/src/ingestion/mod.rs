@@ -289,6 +289,22 @@ mod tests {
     }
 
     #[test]
+    fn test_pipeline_rejects_duplicate_hash() {
+        let config = KnowledgeConfig::default();
+        let pipeline = IngestionPipeline::new(config);
+        let filter = QualityFilter::new();
+
+        let doc1 = test_raw_doc();
+        let doc2 = test_raw_doc(); // same content_hash as doc1
+
+        let entry1 = pipeline.ingest(doc1, "ws-1", "default", None, Some(&filter));
+        assert!(entry1.is_ok(), "first ingest should succeed");
+
+        let entry2 = pipeline.ingest(doc2, "ws-1", "default", None, Some(&filter));
+        assert!(entry2.is_err(), "duplicate content_hash should be rejected");
+    }
+
+    #[test]
     fn test_pipeline_with_sentence_boundary_chunker() {
         let config = KnowledgeConfig::default();
         let pipeline = IngestionPipeline::new(config).with_chunker(ChunkerType::SentenceBoundary);

@@ -53,6 +53,9 @@ impl ProgressiveLoader {
     }
 
     /// Load chunks within a token budget, starting from L0 and upgrading.
+    ///
+    /// Falls back to the best complete resolution that fits: L0 is always
+    /// preferred over a truncated L1, and L1 over a truncated L2.
     pub fn load_within_budget(
         &self,
         document_id: &str,
@@ -60,39 +63,46 @@ impl ProgressiveLoader {
         metadata: &ChunkMetadata,
         budget_tokens: u32,
     ) -> Vec<Chunk> {
-        // Try L0 first
+        // Try L0 first.
         let l0 = self.load_l0(document_id, content, metadata);
         let l0_total: u32 = l0.iter().map(|c| c.token_estimate).sum();
         if l0_total > budget_tokens {
-            // L0 already exceeds budget — return truncated
             return Self::fit_budget(l0, budget_tokens);
         }
 
-        // Try L1
+        // Try L1.
         let l1 = self.load_l1(document_id, content, metadata);
         let l1_total: u32 = l1.iter().map(|c| c.token_estimate).sum();
-        if l1_total <= budget_tokens {
-            // L1 fits — try L2
-            let l2 = self.load_l2(document_id, content, metadata);
-            let l2_total: u32 = l2.iter().map(|c| c.token_estimate).sum();
-            if l2_total <= budget_tokens {
-                return l2;
-            }
-            return Self::fit_budget(l2, budget_tokens);
+        if l1_total > budget_tokens {
+            // L1 doesn't fit -- fall back to L0 (which is known to fit).
+            return l0;
         }
 
-        // L1 doesn't fully fit — return what fits
-        Self::fit_budget(l1, budget_tokens)
+        // Try L2.
+        let l2 = self.load_l2(document_id, content, metadata);
+        let l2_total: u32 = l2.iter().map(|c| c.token_estimate).sum();
+        if l2_total <= budget_tokens {
+            return l2;
+        }
+        // L2 doesn't fit -- L1 is the best complete resolution.
+        l1
     }
 
-    /// Take chunks until the budget is exhausted.
+    /// Keep chunks that fit within the budget (greedy knapsack).
+    ///
+    /// Iterates all chunks in order, skipping any that would exceed
+    /// the remaining budget, and keeps collecting smaller ones that fit.
     fn fit_budget(chunks: Vec<Chunk>, budget: u32) -> Vec<Chunk> {
         let mut total = 0u32;
         chunks
             .into_iter()
-            .take_while(|c| {
-                total += c.token_estimate;
-                total <= budget
+            .filter(|c| {
+                if total + c.token_estimate <= budget {
+                    total += c.token_estimate;
+                    true
+                } else {
+                    false
+                }
             })
             .collect()
     }
@@ -151,5 +161,37 @@ mod tests {
         let chunks = loader.load_within_budget("doc-1", content, &test_metadata(), 500);
         let total: u32 = chunks.iter().map(|c| c.token_estimate).sum();
         assert!(total <= 500, "total {total} exceeds budget 500");
+    }
+
+    #[test]
+    fn test_load_within_budget_falls_back_to_l0() {
+        let loader = ProgressiveLoader::new(KnowledgeConfig::default());
+        // L0 is a short summary that should fit in a tiny budget.
+        // L1 has multiple sections that together exceed the budget.
+        let content = "Short summary.\n\n\
+            Section 1: lots of detail about this topic with many words to inflate token count. \
+            Section 2: another section with additional detail and explanation. \
+            Section 3: third section for further expansion.";
+        let l0 = loader.load_l0("doc-1", content, &test_metadata());
+        let l0_total: u32 = l0.iter().map(|c| c.token_estimate).sum();
+
+        let l1 = loader.load_l1("doc-1", content, &test_metadata());
+        let l1_total: u32 = l1.iter().map(|c| c.token_estimate).sum();
+
+        // Budget that fits L0 but not L1.
+        let budget = l0_total + (l1_total - l0_total) / 2;
+        if budget >= l1_total {
+            // Content is too short for this test to be meaningful; skip.
+            return;
+        }
+
+        let chunks = loader.load_within_budget("doc-1", content, &test_metadata(), budget);
+
+        // Should fall back to L0, not a truncated L1.
+        assert!(
+            chunks.iter().all(|c| c.level == ChunkLevel::L0),
+            "should fall back to complete L0 when L1 does not fit, got levels: {:?}",
+            chunks.iter().map(|c| c.level).collect::<Vec<_>>()
+        );
     }
 }

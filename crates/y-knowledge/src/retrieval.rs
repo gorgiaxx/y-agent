@@ -257,6 +257,14 @@ impl<T: Tokenizer> HybridRetriever<T> {
         &self.embeddings
     }
 
+    /// Remove all stored embedding vectors.
+    ///
+    /// Called when the embedding provider changes dimensions, making
+    /// old vectors incompatible. Chunks and BM25 index are preserved.
+    pub fn clear_embeddings(&mut self) {
+        self.embeddings.clear();
+    }
+
     /// Search using the configured strategy.
     pub fn search(&self, query: &str, filter: &RetrievalFilter) -> Vec<RetrievalResult> {
         self.search_with_embedding(query, None, filter)
@@ -284,16 +292,16 @@ impl<T: Tokenizer> HybridRetriever<T> {
             }
         };
 
-        // Apply quality boost.
+        // Apply min similarity threshold on raw relevance (before quality boost).
+        results.retain(|r| r.relevance >= self.config.min_similarity_threshold);
+
+        // Apply quality boost for ranking (after threshold filtering).
         for result in &mut results {
             if let Some(&quality) = self.quality_scores.get(&result.chunk.id) {
                 let boost = f64::from(quality.sqrt());
                 result.relevance *= boost;
             }
         }
-
-        // Apply min similarity threshold.
-        results.retain(|r| r.relevance >= self.config.min_similarity_threshold);
 
         // Paragraph-level dedup: keep highest score per (document_id, section_index).
         if self.config.enable_dedup {
@@ -432,9 +440,11 @@ impl<T: Tokenizer> HybridRetriever<T> {
     }
 
     /// Compute text similarity (development substitute for vector cosine similarity).
+    ///
+    /// Capped at 0.5 because text containment is not semantic equivalence.
     fn compute_text_similarity(query: &str, content: &str) -> f32 {
         if content.contains(query) {
-            1.0_f32
+            0.5 // Capped: text containment is not semantic equivalence.
         } else {
             // Word overlap score.
             let query_words: Vec<&str> = query.split_whitespace().collect();
@@ -446,8 +456,8 @@ impl<T: Tokenizer> HybridRetriever<T> {
             // Word counts are small, u16 is always sufficient.
             let matches_f = f32::from(u16::try_from(matches).unwrap_or(u16::MAX));
             let total_f = f32::from(u16::try_from(query_words.len()).unwrap_or(u16::MAX));
-            let score = matches_f / total_f;
-            score * 0.8 // Scale down partial matches.
+            let ratio = matches_f / total_f;
+            ratio * 0.4 // Capped partial match.
         }
     }
 
@@ -479,15 +489,18 @@ impl<T: Tokenizer> HybridRetriever<T> {
         true
     }
 
-    /// Paragraph-level dedup: keep highest score per (`document_id`, `section_index`).
+    /// Paragraph-level dedup: keep highest score per (`document_id`, `level`, `section_index`).
     ///
     /// Inspired by `MaxKB` DISTINCT ON approach.
+    /// Level is included so that L0 summaries and L2 detail chunks with the
+    /// same `section_index` are not treated as duplicates.
     fn dedup_by_section(results: Vec<RetrievalResult>) -> Vec<RetrievalResult> {
-        let mut best: HashMap<(String, usize), RetrievalResult> = HashMap::new();
+        let mut best: HashMap<(String, ChunkLevel, usize), RetrievalResult> = HashMap::new();
 
         for result in results {
             let key = (
                 result.chunk.document_id.clone(),
+                result.chunk.level,
                 result.chunk.metadata.section_index,
             );
 
@@ -506,26 +519,29 @@ impl<T: Tokenizer> HybridRetriever<T> {
 
     /// Content-level dedup: remove near-duplicate chunks across different documents.
     ///
-    /// Computes a simplified content fingerprint (first N chars, lowercased,
-    /// whitespace-normalised) and keeps only the highest-scoring result per
-    /// fingerprint. This catches the common case where the same passage
-    /// appears in multiple ingested files.
+    /// Computes a simplified content fingerprint (level prefix + first N chars,
+    /// lowercased, whitespace-normalised) and keeps only the highest-scoring
+    /// result per fingerprint. Level is included so that L0 summaries and L2
+    /// paragraphs with the same text prefix are not treated as duplicates.
     fn dedup_by_content(results: Vec<RetrievalResult>) -> Vec<RetrievalResult> {
         /// Number of characters to use for fingerprinting.
         const FINGERPRINT_LEN: usize = 100;
 
-        fn fingerprint(text: &str) -> String {
-            text.chars()
-                .filter(|c| !c.is_whitespace())
-                .flat_map(char::to_lowercase)
-                .take(FINGERPRINT_LEN)
-                .collect()
+        fn fingerprint(text: &str, level: ChunkLevel) -> String {
+            let mut fp = format!("{level:?}:");
+            fp.extend(
+                text.chars()
+                    .filter(|c| !c.is_whitespace())
+                    .flat_map(char::to_lowercase)
+                    .take(FINGERPRINT_LEN),
+            );
+            fp
         }
 
         let mut best: HashMap<String, RetrievalResult> = HashMap::new();
 
         for result in results {
-            let fp = fingerprint(&result.chunk.content);
+            let fp = fingerprint(&result.chunk.content, result.chunk.level);
             match best.get(&fp) {
                 Some(existing) if existing.relevance >= result.relevance => {
                     // Keep existing higher score.
@@ -589,6 +605,13 @@ impl<T: Tokenizer> HybridRetriever<T> {
 /// mismatched-dimension vectors.
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
+        if !a.is_empty() && !b.is_empty() {
+            tracing::warn!(
+                a_dim = a.len(),
+                b_dim = b.len(),
+                "cosine_similarity: dimension mismatch, returning 0.0"
+            );
+        }
         return 0.0;
     }
 
@@ -801,6 +824,84 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_l0_and_l2_coexist_in_search() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: true,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+
+        // L0 summary and L2[0] from same document, both with section_index=0.
+        let mut l0 = make_chunk_with_section("l0", "Rust programming overview summary", "rust", 0);
+        l0.level = ChunkLevel::L0;
+
+        let mut l2 = make_chunk_with_section(
+            "l2",
+            "Rust error handling with Result and Option types",
+            "rust",
+            0,
+        );
+        l2.level = ChunkLevel::L2;
+
+        retriever.index(l0);
+        retriever.index(l2);
+
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = retriever.search("Rust", &filter);
+
+        let ids: Vec<&str> = results.iter().map(|r| r.chunk.id.as_str()).collect();
+        assert!(
+            ids.contains(&"l0") && ids.contains(&"l2"),
+            "L0 and L2 at same section_index should both appear, got {:?}",
+            ids
+        );
+    }
+
+    #[test]
+    fn test_cross_level_dedup_preserves_both() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: true,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+
+        // L0 and L2 with overlapping text prefix (same first 100 chars
+        // after whitespace removal), simulating a summary that starts
+        // with the same text as the first paragraph.
+        let shared_prefix = "Rust programming language provides memory safety guarantees \
+            without garbage collection through its ownership system";
+
+        let mut l0 = make_chunk("l0", shared_prefix, "rust");
+        l0.level = ChunkLevel::L0;
+        l0.document_id = "doc-shared".to_string();
+
+        let mut l2 = make_chunk("l2", shared_prefix, "rust");
+        l2.level = ChunkLevel::L2;
+        l2.document_id = "doc-shared".to_string();
+
+        retriever.index(l0);
+        retriever.index(l2);
+
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = retriever.search("Rust programming", &filter);
+
+        let ids: Vec<&str> = results.iter().map(|r| r.chunk.id.as_str()).collect();
+        assert!(
+            ids.contains(&"l0") && ids.contains(&"l2"),
+            "cross-level content dedup should preserve both L0 and L2, got {:?}",
+            ids
+        );
+    }
+
     // --- Threshold ---
 
     #[test]
@@ -857,6 +958,42 @@ mod tests {
             results[0].chunk.id, "c1",
             "higher quality should rank first"
         );
+    }
+
+    #[test]
+    fn test_threshold_applied_before_quality_boost() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.5,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+
+        // A chunk with high quality but low raw relevance.
+        // The text "unrelated topic about gardening" has very low
+        // similarity to the query "Rust error". With quality=1.0, the
+        // quality boost (sqrt(1.0)=1.0) should NOT rescue it past threshold.
+        let c1 = make_chunk("c1", "unrelated topic about gardening and flowers", "misc");
+        retriever.index_with_quality(c1, 1.0);
+
+        // A chunk with moderate raw relevance that should pass threshold.
+        let c2 = make_chunk("c2", "Rust error handling best practices guide", "rust");
+        retriever.index_with_quality(c2, 0.01); // Very low quality.
+
+        let filter = RetrievalFilter {
+            limit: 10,
+            ..Default::default()
+        };
+        let results = retriever.search("Rust error", &filter);
+
+        // c1 should be filtered out because its RAW relevance is < 0.5,
+        // regardless of quality boost.
+        for r in &results {
+            assert_ne!(
+                r.chunk.id, "c1",
+                "irrelevant chunk should not pass threshold even with quality=1.0"
+            );
+        }
     }
 
     // --- Collection Filter ---

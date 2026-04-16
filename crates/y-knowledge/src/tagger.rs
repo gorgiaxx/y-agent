@@ -509,13 +509,15 @@ impl TagMerger {
     }
 
     /// Normalize a single tag: lowercase, trim, replace spaces with hyphens,
-    /// remove non-alphanumeric characters except hyphens.
+    /// remove non-alphanumeric characters except hyphens, dots, plus, and hash.
+    ///
+    /// Preserves `.`, `+`, `#` so tags like "c++", "node.js", "c#" survive.
     pub fn normalize_tag(tag: &str) -> String {
         tag.trim()
             .to_lowercase()
             .replace(' ', "-")
             .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-')
+            .filter(|c| c.is_alphanumeric() || matches!(*c, '-' | '.' | '+' | '#'))
             .collect::<String>()
             .trim_matches('-')
             .to_string()
@@ -593,8 +595,9 @@ mod tests {
 
     #[test]
     fn test_normalize_tag_special_chars() {
-        assert_eq!(TagMerger::normalize_tag("c++"), "c");
-        assert_eq!(TagMerger::normalize_tag("node.js"), "nodejs");
+        assert_eq!(TagMerger::normalize_tag("c++"), "c++");
+        assert_eq!(TagMerger::normalize_tag("node.js"), "node.js");
+        assert_eq!(TagMerger::normalize_tag("c#"), "c#");
         assert_eq!(
             TagMerger::normalize_tag("--leading-trailing--"),
             "leading-trailing"

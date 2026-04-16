@@ -297,7 +297,7 @@ fn merge_into_chunks(fragments: Vec<String>, max_chars: usize) -> Vec<String> {
     for fragment in fragments {
         if current.is_empty() {
             current = fragment;
-        } else if current.len() + 1 + fragment.len() <= max_chars {
+        } else if current.chars().count() + 1 + fragment.chars().count() <= max_chars {
             current.push(' ');
             current.push_str(&fragment);
         } else {
@@ -372,21 +372,31 @@ pub fn estimate_tokens(text: &str) -> u32 {
 
 /// Convert a token limit to a character limit, accounting for CJK content.
 ///
-/// Samples the first 200 characters of `content` to estimate the CJK ratio,
-/// then uses that ratio to compute how many characters fit within `max_tokens`.
+/// Samples from three positions (start, middle, end) of `content` to estimate
+/// the CJK ratio, then uses that ratio to compute how many characters fit
+/// within `max_tokens`. Multi-position sampling avoids bias when a document
+/// has an English abstract but Chinese body (or vice versa).
 fn tokens_to_max_chars(max_tokens: u32, content: &str) -> usize {
-    // Sample the beginning to estimate CJK ratio.
-    let sample: String = content.chars().take(200).collect();
-    let total = sample.chars().count().max(1);
-    let cjk = sample.chars().filter(|c| is_cjk_char(*c)).count();
-    // These values are bounded by the 200-char sample, so u32 conversion is safe.
-    let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
-    let cjk_u32 = u32::try_from(cjk).unwrap_or(u32::MAX);
-    let cjk_ratio = f64::from(cjk_u32) / f64::from(total_u32);
+    let total_chars = content.chars().count();
+    let sample_size = 200.min(total_chars);
 
-    // Weighted chars-per-token: CJK ~ 0.67 chars/token, Latin ~ 4.0 chars/token.
+    // Sample start, middle, end.
+    let samples = [
+        0,
+        total_chars.saturating_sub(sample_size) / 2,
+        total_chars.saturating_sub(sample_size),
+    ];
+    let mut total_sampled = 0usize;
+    let mut cjk_count = 0usize;
+
+    for &offset in &samples {
+        let s: String = content.chars().skip(offset).take(sample_size).collect();
+        total_sampled += s.chars().count();
+        cjk_count += s.chars().filter(|c| is_cjk_char(*c)).count();
+    }
+
+    let cjk_ratio = cjk_count as f64 / total_sampled.max(1) as f64;
     let chars_per_token = cjk_ratio * 0.67 + (1.0 - cjk_ratio) * 4.0;
-    // Result is always non-negative and bounded by max_tokens * 4.0.
     (f64::from(max_tokens) * chars_per_token) as usize
 }
 
@@ -465,7 +475,7 @@ pub fn compute_l1_alignment(
     }
 
     // Compute cumulative end positions for L1 sections.
-    // l1_boundaries[i] = (cumulative_char_end, section_index)
+    // l1_boundaries[i] = (cumulative_byte_end, section_index)
     let mut l1_boundaries: Vec<(usize, usize)> = Vec::with_capacity(l1_sections.len());
     let mut pos = 0usize;
     for &(index, content_len) in l1_sections {

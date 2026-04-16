@@ -298,21 +298,34 @@ impl<T: Tokenizer> InjectKnowledge<T> {
                     ));
                     Self::format_chunk(result)
                 } else {
-                    for chunk in &new_neighbors {
-                        seen_sections
-                            .insert((chunk.document_id.clone(), chunk.metadata.section_index));
-                    }
-
                     let joined: String = new_neighbors
                         .iter()
                         .map(|c| c.content.as_str())
                         .collect::<Vec<_>>()
                         .join("\n");
 
-                    format!(
+                    let joined_content = format!(
                         "[Knowledge: {} (relevance: {:.2})]\n{}",
                         result.chunk.metadata.title, result.relevance, joined
-                    )
+                    );
+
+                    // Cap neighbor expansion: if the joined content would
+                    // consume more than half the remaining budget, fall back
+                    // to the matched chunk alone.
+                    let per_item_cap = remaining_budget / 2;
+                    if estimate_tokens(&joined_content) > per_item_cap {
+                        seen_sections.insert((
+                            result.chunk.document_id.clone(),
+                            result.chunk.metadata.section_index,
+                        ));
+                        Self::format_chunk(result)
+                    } else {
+                        for chunk in &new_neighbors {
+                            seen_sections
+                                .insert((chunk.document_id.clone(), chunk.metadata.section_index));
+                        }
+                        joined_content
+                    }
                 }
             } else {
                 seen_sections.insert((
@@ -325,7 +338,7 @@ impl<T: Tokenizer> InjectKnowledge<T> {
             let tokens = estimate_tokens(&content);
 
             if tokens > remaining_budget {
-                break;
+                continue; // Skip this oversized item, try smaller ones.
             }
 
             remaining_budget = remaining_budget.saturating_sub(tokens);

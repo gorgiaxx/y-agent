@@ -5,6 +5,7 @@
 
 use crate::models::KnowledgeEntry;
 use std::collections::HashSet;
+use std::sync::Mutex;
 
 /// Quality filter that evaluates knowledge entries for acceptance.
 ///
@@ -17,7 +18,7 @@ pub struct QualityFilter {
     /// Minimum token count to accept an entry.
     min_tokens: u32,
     /// Set of already-seen content hashes for deduplication.
-    seen_hashes: HashSet<String>,
+    seen_hashes: Mutex<HashSet<String>>,
 }
 
 impl QualityFilter {
@@ -25,7 +26,7 @@ impl QualityFilter {
     pub fn new() -> Self {
         Self {
             min_tokens: 50,
-            seen_hashes: HashSet::new(),
+            seen_hashes: Mutex::new(HashSet::new()),
         }
     }
 
@@ -33,19 +34,27 @@ impl QualityFilter {
     pub fn with_min_tokens(min_tokens: u32) -> Self {
         Self {
             min_tokens,
-            seen_hashes: HashSet::new(),
+            seen_hashes: Mutex::new(HashSet::new()),
         }
     }
 
     /// Evaluate an entry and return (accepted, `quality_score`).
     ///
     /// Quality score breakdown:
-    /// - Length component (0.0–0.3): based on content length
-    /// - Structure component (0.0–0.3): based on headings, paragraphs
-    /// - Domain component (0.0–0.4): based on domain classification matches
+    /// - Length component (0.0--0.3): based on content length
+    /// - Structure component (0.0--0.3): based on headings, paragraphs
+    /// - Domain component (0.0--0.4): based on domain classification matches
+    ///
+    /// Also checks for duplicate `content_hash` -- returns `(false, 0.0)`
+    /// if the same hash has already been seen.
     pub fn evaluate(&self, entry: &KnowledgeEntry) -> (bool, f32) {
         // Check is_active.
         if !entry.is_active {
+            return (false, 0.0);
+        }
+
+        // Dedup by content hash.
+        if !self.check_duplicate(&entry.source.content_hash) {
             return (false, 0.0);
         }
 
@@ -67,13 +76,24 @@ impl QualityFilter {
     /// Check for duplicate content and register the hash.
     ///
     /// Returns `true` if the content hash is new (not a duplicate).
-    pub fn check_duplicate(&mut self, content_hash: &str) -> bool {
-        self.seen_hashes.insert(content_hash.to_string())
+    /// Thread-safe: uses interior mutability via `Mutex`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned.
+    pub fn check_duplicate(&self, content_hash: &str) -> bool {
+        let mut hashes = self.seen_hashes.lock().expect("seen_hashes lock poisoned");
+        hashes.insert(content_hash.to_string())
     }
 
     /// Reset the deduplication state.
-    pub fn reset_dedup(&mut self) {
-        self.seen_hashes.clear();
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned.
+    pub fn reset_dedup(&self) {
+        let mut hashes = self.seen_hashes.lock().expect("seen_hashes lock poisoned");
+        hashes.clear();
     }
 }
 
@@ -85,13 +105,13 @@ impl Default for QualityFilter {
 
 use crate::chunking::estimate_tokens;
 
-/// Length score: 0.0–0.3.
+/// Length score: 0.0--0.3.
 ///
 /// - < 200 chars: 0.1
-/// - 200–1000 chars: 0.2
+/// - 200--1000 chars: 0.2
 /// - > 1000 chars: 0.3
 fn compute_length_score(content: &str) -> f32 {
-    match content.len() {
+    match content.chars().count() {
         0..200 => 0.1,
         200..1000 => 0.2,
         _ => 0.3,
@@ -237,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_deduplication() {
-        let mut filter = QualityFilter::new();
+        let filter = QualityFilter::new();
         assert!(
             filter.check_duplicate("hash1"),
             "first occurrence should be new"
@@ -254,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_deduplication_reset() {
-        let mut filter = QualityFilter::new();
+        let filter = QualityFilter::new();
         filter.check_duplicate("hash1");
         filter.reset_dedup();
         assert!(filter.check_duplicate("hash1"), "after reset should be new");

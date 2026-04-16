@@ -59,8 +59,16 @@ impl<T: Tokenizer> Bm25Index<T> {
         }
     }
 
-    /// Index a chunk of text.
+    /// Index a chunk of text (upsert semantics).
+    ///
+    /// If `chunk_id` already exists, the old entry is removed first so
+    /// that counters and postings stay consistent.
     pub fn add(&mut self, chunk_id: &str, content: &str) {
+        // Upsert: remove stale data before re-inserting.
+        if self.doc_lengths.contains_key(chunk_id) {
+            self.remove(chunk_id);
+        }
+
         let tokens = self.tokenizer.tokenize(content);
         let doc_len = u32::try_from(tokens.len()).unwrap_or(u32::MAX);
 
@@ -83,7 +91,7 @@ impl<T: Tokenizer> Bm25Index<T> {
         }
     }
 
-    /// Index multiple chunks in one call.
+    /// Index multiple chunks in one call (upsert semantics).
     ///
     /// Functionally equivalent to calling [`Self::add`] for each item, but
     /// pre-reserves capacity in the document-lengths map to reduce
@@ -92,6 +100,11 @@ impl<T: Tokenizer> Bm25Index<T> {
         self.doc_lengths.reserve(documents.len());
 
         for &(chunk_id, content) in documents {
+            // Upsert: remove stale data before re-inserting.
+            if self.doc_lengths.contains_key(chunk_id) {
+                self.remove(chunk_id);
+            }
+
             let tokens = self.tokenizer.tokenize(content);
             let doc_len = u32::try_from(tokens.len()).unwrap_or(u32::MAX);
 
@@ -295,6 +308,48 @@ mod tests {
         assert_eq!(results.len(), 2);
         // Higher TF should rank higher.
         assert_eq!(results[0].chunk_id, "frequent");
+    }
+
+    #[test]
+    fn test_bm25_add_idempotent() {
+        let mut index = Bm25Index::new(SimpleTokenizer::new());
+        index.add("c1", "Rust error handling patterns");
+
+        // Add same chunk again -- should be an upsert, not a double-insert.
+        index.add("c1", "Rust error handling patterns");
+
+        assert_eq!(index.len(), 1, "doc_count should still be 1 after re-add");
+
+        let results = index.search("Rust error", 10);
+        assert_eq!(results.len(), 1, "should return exactly one result");
+
+        // After removing the only copy, the index must be empty.
+        index.remove("c1");
+        assert_eq!(
+            index.len(),
+            0,
+            "index should be empty after removing the only chunk"
+        );
+        assert!(
+            index.search("Rust error", 10).is_empty(),
+            "no results expected after removal"
+        );
+    }
+
+    #[test]
+    fn test_bm25_add_bulk_idempotent() {
+        let mut index = Bm25Index::new(SimpleTokenizer::new());
+        index.add("c1", "Rust error handling");
+        index.add_bulk(&[("c1", "Rust error handling"), ("c2", "Python web")]);
+
+        assert_eq!(index.len(), 2, "should have 2 unique chunks");
+
+        index.remove("c1");
+        assert_eq!(index.len(), 1, "only c2 should remain");
+        assert!(
+            index.search("Rust error", 10).is_empty(),
+            "c1 should be fully removed"
+        );
     }
 
     #[test]
