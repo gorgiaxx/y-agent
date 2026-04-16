@@ -1,5 +1,5 @@
 import * as ToastPrimitive from '@radix-ui/react-toast'
-import { useState, useCallback, type ReactNode } from 'react'
+import { useState, useCallback, useRef, type ReactNode } from 'react'
 import { ToastContext, type ToastType } from '../../hooks/useToast'
 
 interface ToastData {
@@ -15,14 +15,13 @@ const typeStyles: Record<ToastType, string> = {
   info: 'bg-[var(--surface-tertiary)] border-[var(--border)] text-[var(--text-primary)]',
 }
 
-let processWideNextId = 0
-
 /* ---- Provider ---- */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastData[]>([])
+  const nextIdRef = useRef(0)
 
   const addToast = useCallback((message: string, type: ToastType = 'success') => {
-    const id = ++processWideNextId
+    const id = ++nextIdRef.current
     setToasts((prev) => [...prev, { id, message, type }])
     // Auto-dismiss
     setTimeout(() => {

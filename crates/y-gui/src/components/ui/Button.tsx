@@ -10,15 +10,15 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    'bg-[var(--accent)] text-white border-transparent hover:op-85',
+    'bg-accent text-accent-contrast border-transparent hover:op-85',
   ghost:
-    'bg-transparent text-[var(--text-secondary)] border-[var(--border)] hover:(bg-[var(--surface-hover)] text-[var(--text-primary)])',
+    'bg-transparent text-text-secondary border-border hover:(bg-surface-hover text-text-primary)',
   danger:
-    'bg-[var(--error)] text-white border-transparent hover:op-85',
+    'bg-error text-white border-transparent hover:op-85',
   outline:
-    'bg-[var(--surface-primary)] text-[var(--text-secondary)] border-[var(--border)] hover:(bg-[var(--surface-hover)] text-[var(--text-primary)])',
+    'bg-surface-primary text-text-secondary border-border hover:(bg-surface-hover text-text-primary)',
   icon:
-    'bg-transparent text-[var(--text-muted)] border-transparent hover:(text-[var(--text-primary)] border-[var(--border)] bg-[var(--surface-hover)])',
+    'bg-transparent text-text-muted border-transparent hover:(text-text-primary border-border bg-surface-hover)',
 }
 
 const sizeStyles: Record<ButtonSize, string> = {
@@ -42,7 +42,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         className={[
           'inline-flex items-center justify-center gap-1',
           'font-500 font-sans cursor-pointer',
-          'rounded-[var(--radius-md)]',
+          'rounded-md',
           'border border-solid',
           'transition-all duration-150',
           'outline-none',
