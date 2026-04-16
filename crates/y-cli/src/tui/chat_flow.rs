@@ -267,29 +267,36 @@ pub fn submit_message(
         // Trigger title summarization if interval reached.
         if should_generate_title {
             let session_id = SessionId::from_string(session_id_str.clone());
-            // Re-read the full history for title generation context.
-            match services.session_manager.read_transcript(&session_id).await {
-                Ok(transcript) => {
-                    match services
-                        .session_manager
-                        .generate_title(&*services.agent_delegator, &session_id, &transcript)
-                        .await
-                    {
-                        Ok(title) => {
-                            let _ = tx
-                                .send(ChatEvent::TitleUpdated {
-                                    session_id: session_id_str,
-                                    title,
-                                })
-                                .await;
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "title generation failed");
+            let has_manual_title = services
+                .session_manager
+                .get_session(&session_id)
+                .await
+                .map(|s| s.manual_title.is_some())
+                .unwrap_or(false);
+            if !has_manual_title {
+                match services.session_manager.read_transcript(&session_id).await {
+                    Ok(transcript) => {
+                        match services
+                            .session_manager
+                            .generate_title(&*services.agent_delegator, &session_id, &transcript)
+                            .await
+                        {
+                            Ok(title) => {
+                                let _ = tx
+                                    .send(ChatEvent::TitleUpdated {
+                                        session_id: session_id_str,
+                                        title,
+                                    })
+                                    .await;
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "title generation failed");
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    warn!(error = %e, "failed to read transcript for title generation");
+                    Err(e) => {
+                        warn!(error = %e, "failed to read transcript for title generation");
+                    }
                 }
             }
         }

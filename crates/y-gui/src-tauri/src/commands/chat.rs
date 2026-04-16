@@ -256,7 +256,11 @@ fn spawn_llm_worker(
             let do_title = if should_generate_title {
                 match container.session_manager.get_session(&sid_clone).await {
                     Ok(session) if session.session_type.is_user_facing() => {
-                        ChatService::should_generate_title(&container, &prepared.history)
+                        if session.manual_title.is_some() {
+                            false
+                        } else {
+                            ChatService::should_generate_title(&container, &prepared.history)
+                        }
                     }
                     Ok(_) => false,
                     Err(e) => {

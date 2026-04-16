@@ -189,6 +189,7 @@ pub fn run() {
             commands::session::session_get_custom_prompt,
             commands::session::session_set_custom_prompt,
             commands::session::session_fork,
+            commands::session::session_rename,
             // Diagnostics
             commands::diagnostics::diagnostics_get_by_session,
             commands::diagnostics::diagnostics_get_subagent_history,
