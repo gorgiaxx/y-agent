@@ -171,6 +171,7 @@ impl SessionStore for MockSessionStore {
             state: SessionState::Active,
             agent_id: options.agent_id,
             title: options.title,
+            manual_title: None,
             channel: None,
             label: None,
             token_count: 0,
@@ -271,6 +272,19 @@ impl SessionStore for MockSessionStore {
             .get_mut(&id.to_string())
             .ok_or(SessionError::NotFound { id: id.to_string() })?;
         node.title = Some(title);
+        Ok(())
+    }
+
+    async fn set_manual_title(
+        &self,
+        id: &SessionId,
+        title: Option<String>,
+    ) -> Result<(), SessionError> {
+        let mut map = self.sessions.write().unwrap();
+        let node = map
+            .get_mut(&id.to_string())
+            .ok_or(SessionError::NotFound { id: id.to_string() })?;
+        node.manual_title = title;
         Ok(())
     }
 
