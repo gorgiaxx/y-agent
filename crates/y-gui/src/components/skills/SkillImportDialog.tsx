@@ -42,7 +42,7 @@ export function SkillImportDialog({ onImport, onClose }: SkillImportDialogProps)
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent width="420px" className="text-left items-stretch">
+      <DialogContent size="md" className="text-left items-stretch">
         <DialogTitle className="text-left">Import Skill</DialogTitle>
 
         {/* Path selection */}

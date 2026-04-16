@@ -1,10 +1,12 @@
 import { type HTMLAttributes, forwardRef } from 'react'
 import { X } from 'lucide-react'
 
-type BadgeVariant = 'default' | 'accent' | 'success' | 'error' | 'outline'
+type BadgeVariant = 'default' | 'accent' | 'success' | 'error' | 'warning' | 'info' | 'outline'
+type BadgeSize = 'sm' | 'md'
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant
+  size?: BadgeSize
   /** If true, renders a small "x" dismiss button */
   onDismiss?: () => void
 }
@@ -18,19 +20,27 @@ const variantStyles: Record<BadgeVariant, string> = {
     'bg-[rgba(111,207,151,0.08)] text-[var(--success)] border-[rgba(111,207,151,0.2)]',
   error:
     'bg-[var(--error-subtle)] text-[var(--error)] border-[rgba(229,115,115,0.2)]',
+  warning:
+    'bg-[rgba(240,192,80,0.10)] text-[var(--warning)] border-[rgba(240,192,80,0.25)]',
+  info:
+    'bg-[var(--info-subtle)] text-[var(--info)] border-[rgba(96,165,250,0.2)]',
   outline:
     'bg-transparent text-[var(--text-secondary)] border-[var(--border)]',
 }
 
+const sizeStyles: Record<BadgeSize, string> = {
+  sm: 'px-1.5 py-0 text-9px leading-4',
+  md: 'px-2 py-0.5 text-10px leading-4',
+}
+
 export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(
-  ({ variant = 'default', onDismiss, className = '', children, ...props }, ref) => (
+  ({ variant = 'default', size = 'sm', onDismiss, className = '', children, ...props }, ref) => (
     <span
       ref={ref}
       className={[
         'inline-flex items-center gap-1',
-        'px-1.5 py-0',
-        'text-9px font-500',
-        'leading-4',
+        sizeStyles[size],
+        'font-500',
         'whitespace-nowrap',
         'rounded-full',
         'border border-solid',

@@ -51,7 +51,7 @@ export function WorkspaceDialog({
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent width="400px" className="text-left items-stretch">
+      <DialogContent size="sm" className="text-left items-stretch">
         <DialogTitle className="text-left">
           {initialName ? 'Edit Workspace' : 'New Workspace'}
         </DialogTitle>

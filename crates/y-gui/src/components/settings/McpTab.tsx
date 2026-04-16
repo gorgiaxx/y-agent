@@ -10,7 +10,7 @@ import type { McpServerFormData } from './settingsTypes';
 import { emptyMcpServer, jsonToMcpServers, mcpServersToJson } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox, Input } from '../ui';
+import { Checkbox, Input, Button } from '../ui';
 
 // ---------------------------------------------------------------------------
 // McpServerTabPanel -- form for a single MCP server (shown in tab view)
@@ -109,25 +109,23 @@ function McpServerTabPanel({
                       }}
                       placeholder="value"
                     />
-                    <button
-                      type="button"
-                      className="pf-tag-chip-remove"
-                      style={{ padding: '2px 6px', cursor: 'pointer' }}
+                    <Button
+                      variant="icon"
+                      size="sm"
                       title="Remove"
                       onClick={() => {
                         const newEnv = { ...server.env };
                         delete newEnv[k];
                         update({ env: newEnv });
                       }}
-                    >x</button>
+                    ><X size={12} /></Button>
                   </div>
                 ))}
-                <button
-                  type="button"
-                  className="btn-test"
-                  style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '2px 8px' }}
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => update({ env: { ...server.env, '': '' } })}
-                >+ Add Variable</button>
+                >+ Add Variable</Button>
               </div>
             </div>
           </div>
@@ -173,25 +171,23 @@ function McpServerTabPanel({
                       }}
                       placeholder="value"
                     />
-                    <button
-                      type="button"
-                      className="pf-tag-chip-remove"
-                      style={{ padding: '2px 6px', cursor: 'pointer' }}
+                    <Button
+                      variant="icon"
+                      size="sm"
                       title="Remove"
                       onClick={() => {
                         const newHeaders = { ...server.headers };
                         delete newHeaders[k];
                         update({ headers: newHeaders });
                       }}
-                    >x</button>
+                    ><X size={12} /></Button>
                   </div>
                 ))}
-                <button
-                  type="button"
-                  className="btn-test"
-                  style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '2px 8px' }}
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => update({ headers: { ...server.headers, '': '' } })}
-                >+ Add Header</button>
+                >+ Add Header</Button>
               </div>
             </div>
           </div>
@@ -302,7 +298,7 @@ export function McpTab({
     return (
       <>
         <div className="settings-header">
-          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+          <h3 className="section-title section-title--flush">
             <span className="settings-header-with-toggle">MCP Servers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
           </h3>
         </div>
@@ -323,7 +319,7 @@ export function McpTab({
   return (
     <>
     <div className="settings-header">
-      <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+      <h3 className="section-title section-title--flush">
         <span className="settings-header-with-toggle">MCP Servers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
       </h3>
     </div>

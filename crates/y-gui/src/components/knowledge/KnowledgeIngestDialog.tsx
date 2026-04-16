@@ -113,7 +113,7 @@ export function KnowledgeIngestDialog({
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent width="480px" className="text-left items-stretch">
+      <DialogContent size="md" className="text-left items-stretch">
         <DialogTitle className="text-left flex items-center gap-2">
           <Upload size={16} />
           Import Knowledge

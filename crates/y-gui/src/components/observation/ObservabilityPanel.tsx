@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Eye, X, Maximize2, Minimize2, Server, Bot, ChevronDown, ChevronRight, Filter } from 'lucide-react';
 import { ProviderIconImg } from '../common/ProviderIconPicker';
+import { Button } from '../ui';
 
 import type { SystemSnapshot, ProviderSnapshot as ProviderSnap, AgentInstanceSnapshot } from '../../types';
 import type { TimeRange } from '../../hooks/useObservability';
@@ -192,13 +193,15 @@ export function ObservabilityPanel({ snapshot, loading, error, expanded, onToggl
         </div>
         <div className="obs-header-actions">
           <div className="obs-filter-wrapper" ref={filterRef}>
-            <button
-              className={`obs-btn${timeRange !== 'all' ? ' obs-btn-active' : ''}`}
+            <Button
+              variant="icon"
+              size="sm"
+              className={timeRange !== 'all' ? 'obs-btn-active' : ''}
               onClick={() => setFilterOpen(!filterOpen)}
               title="Filter by time range"
             >
               <Filter size={14} />
-            </button>
+            </Button>
             {filterOpen && (
               <div className="obs-filter-popover">
                 <div className="obs-filter-title">Time range</div>
@@ -217,12 +220,12 @@ export function ObservabilityPanel({ snapshot, loading, error, expanded, onToggl
               </div>
             )}
           </div>
-          <button className="obs-btn" onClick={onToggleExpand} title={expanded ? 'Collapse' : 'Expand'}>
+          <Button variant="icon" size="sm" onClick={onToggleExpand} title={expanded ? 'Collapse' : 'Expand'}>
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
-          <button className="obs-btn" onClick={onClose} title="Close">
+          </Button>
+          <Button variant="icon" size="sm" onClick={onClose} title="Close">
             <X size={14} />
-          </button>
+          </Button>
         </div>
       </div>
 

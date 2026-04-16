@@ -221,33 +221,7 @@
   color: var(--text-muted);
 }
 
-/* ---- Test button and result ---- */
-.btn-test {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 6px var(--space-md);
-  font-size: 12px;
-  font-weight: 500;
-  font-family: inherit;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-
-.btn-test:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.btn-test:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
+/* ---- Test result ---- */
 .pf-test-result {
   font-size: 11px;
   font-weight: 500;
@@ -440,32 +414,6 @@
 .sub-list-item-add:hover {
   color: var(--accent);
   background: var(--accent-subtle);
-}
-
-.sub-list-action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
-}
-
-.sub-list-action-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-  border-color: var(--border);
-}
-
-.sub-list-action-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
 }
 
 .sub-list-detail {

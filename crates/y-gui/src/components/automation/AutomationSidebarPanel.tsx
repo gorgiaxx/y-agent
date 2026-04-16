@@ -7,6 +7,8 @@
 import { useState } from 'react';
 import { ChevronRight, ChevronDown, Plus, GitBranch, Clock } from 'lucide-react';
 import type { WorkflowInfo, ScheduleInfo } from '../../hooks/useAutomation';
+import { Badge } from '../ui';
+import { parseTags } from '../../utils/parseTags';
 import './AutomationPanel.css';
 
 interface AutomationSidebarPanelProps {
@@ -32,16 +34,6 @@ export function AutomationSidebarPanel({
 }: AutomationSidebarPanelProps) {
   const [workflowsOpen, setWorkflowsOpen] = useState(true);
   const [schedulesOpen, setSchedulesOpen] = useState(true);
-
-  /** Parse tags from JSON string or return empty array. */
-  const parseTags = (tagsStr: string): string[] => {
-    try {
-      const arr = JSON.parse(tagsStr);
-      return Array.isArray(arr) ? arr : [];
-    } catch {
-      return [];
-    }
-  };
 
   return (
     <div className="automation-sidebar">
@@ -83,14 +75,14 @@ export function AutomationSidebarPanel({
                   >
                     <div className="automation-sidebar-item-main">
                       <span className="automation-sidebar-item-name">{wf.name}</span>
-                      <span className={`automation-sidebar-badge automation-sidebar-badge--${wf.format === 'expression_dsl' ? 'dsl' : 'toml'}`}>
+                      <Badge variant={wf.format === 'expression_dsl' ? 'info' : 'accent'}>
                         {wf.format === 'expression_dsl' ? 'DSL' : 'TOML'}
-                      </span>
+                      </Badge>
                     </div>
                     {tags.length > 0 && (
                       <div className="automation-sidebar-item-tags">
                         {tags.slice(0, 3).map((t) => (
-                          <span key={t} className="automation-sidebar-tag">{t}</span>
+                          <Badge key={t} variant="outline">{t}</Badge>
                         ))}
                       </div>
                     )}
@@ -138,9 +130,9 @@ export function AutomationSidebarPanel({
                 >
                   <div className="automation-sidebar-item-main">
                     <span className="automation-sidebar-item-name">{sc.name}</span>
-                    <span className={`automation-sidebar-badge automation-sidebar-badge--${sc.trigger_type}`}>
+                    <Badge variant="accent">
                       {sc.trigger_type}
-                    </span>
+                    </Badge>
                     <span className={`automation-sidebar-status ${sc.enabled ? 'active' : 'paused'}`}>
                       {sc.enabled ? '' : '||'}
                     </span>

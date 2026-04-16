@@ -13,6 +13,7 @@ import {
 import type { SessionInfo, WorkspaceInfo } from '../../types';
 import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
+import { Button } from '../ui';
 import {
   calculateFloatingMenuPosition,
   calculateWorkspaceOptionsMaxHeight,
@@ -850,13 +851,14 @@ export function ChatSidebarPanel({
         {selectedIds.size > 0 && (
           <div className="batch-action-bar">
             <span className="batch-action-count">{selectedIds.size} selected</span>
-            <button
-              className="batch-action-btn batch-action-btn--delete"
+            <Button
+              variant="danger"
+              size="sm"
               onClick={handleBatchDelete}
             >
               <Trash2 size={13} />
               Delete
-            </button>
+            </Button>
           </div>
         )}
       </div>

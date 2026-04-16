@@ -13,7 +13,7 @@ import type { ProviderFormData } from './settingsTypes';
 import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Input } from '../ui';
+import { Input, Button } from '../ui';
 
 // ---------------------------------------------------------------------------
 // ProviderTabPanel -- flat form for a single provider (shown in tab view)
@@ -378,24 +378,24 @@ function ProviderTabPanel({
 
       {/* Test connection row */}
       <div className="pf-action-row">
-          <button
-            type="button"
-            className="btn-test"
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => onDuplicate(index)}
             title="Duplicate this provider"
           >
             <Copy size={13} />
             Duplicate
-          </button>
-          <button
-            type="button"
-            className="btn-test"
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={handleTest}
             disabled={testing}
           >
             {testing ? <span className="pf-spinner" /> : null}
             {testing ? 'Testing...' : 'Test Connection'}
-          </button>
+          </Button>
           {testResult && (
             <span className={`pf-test-result ${testResult.ok ? 'ok' : 'error'}`}>
               {testResult.message}
@@ -600,22 +600,24 @@ export function ProvidersTab({
             <Plus size={13} />
             <span>Add</span>
           </button>
-          <button
-            className="sub-list-action-btn"
+          <Button
+            variant="icon"
+            size="sm"
             onClick={handleProviderMoveUp}
             disabled={activeProviderTab <= 0 || providersList.length === 0}
             title="Move up"
           >
             <ChevronUp size={14} />
-          </button>
-          <button
-            className="sub-list-action-btn"
+          </Button>
+          <Button
+            variant="icon"
+            size="sm"
             onClick={handleProviderMoveDown}
             disabled={activeProviderTab >= providersList.length - 1 || providersList.length === 0}
             title="Move down"
           >
             <ChevronDown size={14} />
-          </button>
+          </Button>
         </div>
       </div>
 

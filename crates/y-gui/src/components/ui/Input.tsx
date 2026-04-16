@@ -20,12 +20,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         ref={ref}
         className={[
           'w-full',
-          'px-2 py-1.5',
+          'px-3 py-1.5',
           'text-12px',
           monoClass,
           numClass,
           'border border-solid border-[var(--border)]',
-          'rounded-[var(--radius-sm)]',
+          'rounded-[var(--radius-md)]',
           'bg-[var(--surface-primary)]',
           'text-[var(--text-primary)]',
           'outline-none',
@@ -61,7 +61,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         ref={ref}
         className={[
           'w-full',
-          'px-4 py-4',
+          'px-3 py-2',
           'text-12px',
           monoClass,
           'leading-[1.65]',

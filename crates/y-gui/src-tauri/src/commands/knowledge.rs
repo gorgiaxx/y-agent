@@ -90,7 +90,7 @@ impl KnowledgeState {
         &self,
     ) -> std::sync::Arc<
         std::sync::Mutex<
-            y_knowledge::middleware::InjectKnowledge<y_knowledge::tokenizer::SimpleTokenizer>,
+            y_knowledge::middleware::InjectKnowledge<y_knowledge::tokenizer::AutoTokenizer>,
         >,
     > {
         self.service.lock().await.knowledge_handle()

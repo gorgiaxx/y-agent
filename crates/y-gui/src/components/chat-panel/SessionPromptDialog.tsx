@@ -75,7 +75,7 @@ export function SessionPromptDialog({
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent width="560px" className="text-left items-stretch">
+      <DialogContent size="lg" className="text-left items-stretch">
         <DialogTitle className="text-left">
           Session System Prompt
         </DialogTitle>

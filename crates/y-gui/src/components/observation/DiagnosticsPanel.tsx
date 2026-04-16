@@ -10,6 +10,7 @@ import type { DiagnosticsEntry, LlmResponseEvent, LlmErrorEvent, ToolResultEvent
 import { computeSummary } from '../../hooks/useDiagnostics';
 import type { DiagnosticsSummary } from '../../hooks/useDiagnostics';
 import { useResolvedTheme } from '../../hooks/useTheme';
+import { Button } from '../ui';
 import './DiagnosticsPanel.css';
 
 // Strip hardcoded background from every token rule so the highlighter
@@ -122,9 +123,9 @@ function CopyButton({ getText }: { getText: () => string }) {
     });
   };
   return (
-    <button className="diag-copy-btn" onClick={handleCopy} title="Copy to clipboard">
+    <Button variant="icon" size="sm" onClick={handleCopy} title="Copy to clipboard">
       {copied ? <Check size={12} /> : <Copy size={12} />}
-    </button>
+    </Button>
   );
 }
 
@@ -772,13 +773,15 @@ export function DiagnosticsPanel({ entries, isActive, isGlobal, sessionId, expan
         </div>
         <div className="diag-header-actions">
           <div className="diag-filter-wrapper" ref={filterRef}>
-            <button
-              className={`diag-btn${timeRange !== 'all' ? ' diag-btn-active' : ''}`}
+            <Button
+              variant="icon"
+              size="sm"
+              className={timeRange !== 'all' ? 'diag-btn-active' : ''}
               onClick={() => setFilterOpen(!filterOpen)}
               title="Filter by time range"
             >
               <Filter size={14} />
-            </button>
+            </Button>
             {filterOpen && (
               <div className="diag-filter-popover">
                 <div className="diag-filter-title">Time range</div>
@@ -797,15 +800,15 @@ export function DiagnosticsPanel({ entries, isActive, isGlobal, sessionId, expan
               </div>
             )}
           </div>
-          <button className="diag-btn" onClick={onToggleExpand} title={expanded ? 'Collapse' : 'Expand'}>
+          <Button variant="icon" size="sm" onClick={onToggleExpand} title={expanded ? 'Collapse' : 'Expand'}>
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
-          <button className="diag-btn" onClick={onClear} title="Clear">
+          </Button>
+          <Button variant="icon" size="sm" onClick={onClear} title="Clear">
             <Trash2 size={14} />
-          </button>
-          <button className="diag-btn" onClick={onClose} title="Close">
+          </Button>
+          <Button variant="icon" size="sm" onClick={onClose} title="Close">
             <X size={14} />
-          </button>
+          </Button>
         </div>
       </div>
 

@@ -4,6 +4,8 @@ import { DagGraph } from './DagGraph';
 import { ExecutionHistorySection } from './ExecutionHistorySection';
 import { WorkflowEditor } from './WorkflowEditor';
 import type { WorkflowInfo, DagVisualization, ValidationResult, ExecutionRecord } from './types';
+import { Button, Badge } from '../ui';
+import { parseTags } from '../../utils/parseTags';
 import '../automation/AutomationPanel.css';
 
 export function WorkflowDetail({
@@ -32,6 +34,8 @@ export function WorkflowDetail({
   const [editDesc, setEditDesc] = useState('');
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [validating, setValidating] = useState(false);
 
   // Execution state
   const [running, setRunning] = useState(false);
@@ -71,23 +75,36 @@ export function WorkflowDetail({
 
   const handleValidate = async () => {
     if (!wf) return;
-    const result = await validateWorkflow(editDef, wf.format);
-    setValidation(result);
+    setValidating(true);
+    try {
+      const result = await validateWorkflow(editDef, wf.format);
+      setValidation(result);
+    } finally {
+      setValidating(false);
+    }
   };
 
   const handleSave = async () => {
     if (!wf) return;
     setSaving(true);
-    await updateWorkflow(id, editDef, undefined, editDesc);
-    setSaving(false);
-    setEditing(false);
-    load();
+    try {
+      await updateWorkflow(id, editDef, undefined, editDesc);
+      setEditing(false);
+      load();
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async () => {
-    const ok = await deleteWorkflow(id);
-    if (ok) {
-      setWf(null);
+    setDeleting(true);
+    try {
+      const ok = await deleteWorkflow(id);
+      if (ok) {
+        setWf(null);
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -107,14 +124,7 @@ export function WorkflowDetail({
     return <div className="automation-panel"><div className="automation-loading">Loading workflow...</div></div>;
   }
 
-  const tags = (() => {
-    try {
-      const arr = JSON.parse(wf.tags);
-      return Array.isArray(arr) ? arr : [];
-    } catch {
-      return [];
-    }
-  })();
+  const tags = parseTags(wf.tags);
 
   return (
     <div className="automation-panel">
@@ -130,20 +140,21 @@ export function WorkflowDetail({
               <p className="automation-detail-desc">{wf.description}</p>
             )}
             <div className="automation-detail-badges">
-              <span className={`automation-badge automation-badge--${wf.format === 'expression_dsl' ? 'dsl' : 'toml'}`}>
+              <Badge variant={wf.format === 'expression_dsl' ? 'info' : 'accent'}>
                 {wf.format === 'expression_dsl' ? 'Expression DSL' : 'TOML'}
-              </span>
-              <span className="automation-badge automation-badge--creator">{wf.creator}</span>
+              </Badge>
+              <Badge variant="outline">{wf.creator}</Badge>
               {tags.map((t: string) => (
-                <span key={t} className="automation-badge automation-badge--tag">{t}</span>
+                <Badge key={t} variant="outline">{t}</Badge>
               ))}
             </div>
           </div>
           <div className="automation-detail-actions">
             {!editing && (
               <>
-                <button
-                  className="automation-btn automation-btn--primary"
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={handleRun}
                   disabled={running}
                 >
@@ -152,13 +163,13 @@ export function WorkflowDetail({
                   ) : (
                     <><Play size={14} /> Run</>
                   )}
-                </button>
-                <button className="automation-btn" onClick={handleEdit}>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleEdit}>
                   <Pencil size={14} /> Edit
-                </button>
-                <button className="automation-btn automation-btn--danger" onClick={handleDelete}>
-                  <Trash2 size={14} /> Delete
-                </button>
+                </Button>
+                <Button variant="danger" size="sm" onClick={handleDelete} disabled={deleting}>
+                  <Trash2 size={14} /> {deleting ? 'Deleting...' : 'Delete'}
+                </Button>
               </>
             )}
           </div>

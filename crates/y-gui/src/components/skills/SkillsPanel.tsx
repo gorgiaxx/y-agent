@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Puzzle, FolderOpen, Trash2, ToggleLeft, ToggleRight, ChevronRight, File, Folder, Save } from 'lucide-react';
 import type { SkillDetail, SkillFileEntry } from '../../types';
+import { Button, Badge } from '../ui';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { MonacoEditor } from '../ui/MonacoEditor';
 import { languageFromPath } from '../ui/languageFromPath';
@@ -96,6 +97,7 @@ export function SkillsPanel({
   const [fileContent, setFileContent] = useState<string>('');
   const [originalContent, setOriginalContent] = useState<string>('');
   const [saving, setSaving] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
   const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
 
@@ -170,8 +172,13 @@ export function SkillsPanel({
 
   const handleUninstall = useCallback(async () => {
     if (!skillName) return;
-    await onUninstall(skillName);
-    setShowUninstallConfirm(false);
+    setUninstalling(true);
+    try {
+      await onUninstall(skillName);
+      setShowUninstallConfirm(false);
+    } finally {
+      setUninstalling(false);
+    }
   }, [skillName, onUninstall]);
 
   const handleToggleDir = useCallback((path: string) => {
@@ -222,9 +229,9 @@ export function SkillsPanel({
           <div className="skill-editor-title-row">
             <Puzzle size={18} className="skill-editor-icon" />
             <h2 className="skill-editor-name">{detail.name}</h2>
-            <span className={`skill-editor-badge ${detail.enabled ? 'skill-editor-badge--enabled' : 'skill-editor-badge--disabled'}`}>
+            <Badge variant={detail.enabled ? 'success' : 'outline'} size="md">
               {detail.enabled ? 'Active' : 'Disabled'}
-            </span>
+            </Badge>
           </div>
           <div className="skill-editor-meta">
             {detail.author && <span className="skill-editor-meta-item">Author: {detail.author}</span>}
@@ -235,21 +242,23 @@ export function SkillsPanel({
           {detail.tags.length > 0 && (
             <div className="skill-editor-tags">
               {detail.tags.map((tag) => (
-                <span key={tag} className="skill-editor-tag">{tag}</span>
+                <Badge key={tag} variant="outline">{tag}</Badge>
               ))}
             </div>
           )}
         </div>
         <div className="skill-editor-actions">
-          <button
-            className="skill-editor-btn"
+          <Button
+            variant="icon"
+            size="sm"
             onClick={() => onOpenFolder(detail.name)}
             title="Open Folder"
           >
             <FolderOpen size={14} />
-          </button>
-          <button
-            className={`skill-editor-btn ${detail.enabled ? 'skill-editor-btn--success' : ''}`}
+          </Button>
+          <Button
+            variant={detail.enabled ? 'primary' : 'icon'}
+            size="sm"
             onClick={async () => {
               const newEnabled = !detail.enabled;
               setDetail((prev) => prev ? { ...prev, enabled: newEnabled } : prev);
@@ -261,14 +270,15 @@ export function SkillsPanel({
             title={detail.enabled ? 'Disable' : 'Enable'}
           >
             {detail.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
-          </button>
-          <button
-            className="skill-editor-btn skill-editor-btn--danger"
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
             onClick={() => setShowUninstallConfirm(true)}
             title="Uninstall"
           >
             <Trash2 size={14} />
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -301,15 +311,16 @@ export function SkillsPanel({
             <>
               <div className="skill-editor-pane-header">
                 <span className="skill-editor-pane-filename">{selectedFilePath}</span>
-                <button
-                  className={`skill-editor-save ${isDirty ? 'skill-editor-save--dirty' : ''}`}
+                <Button
+                  variant={isDirty ? 'primary' : 'ghost'}
+                  size="sm"
                   onClick={handleSave}
                   disabled={!isDirty || saving}
                   title="Save (Ctrl+S)"
                 >
                   <Save size={14} />
                   {saving ? 'Saving...' : 'Save'}
-                </button>
+                </Button>
               </div>
               <MonacoEditor
                 className="skill-editor-monaco"

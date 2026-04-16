@@ -100,41 +100,7 @@
   flex: 1;
 }
 
-.agent-card-badge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-
-.agent-card-badge--build {
-  background: color-mix(in srgb, var(--success) 15%, transparent);
-  color: var(--success);
-}
-
-.agent-card-badge--plan {
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
-  color: var(--warning);
-}
-
-.agent-card-badge--explore {
-  background: color-mix(in srgb, var(--info) 15%, transparent);
-  color: var(--info);
-}
-
-.agent-card-badge--general {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent);
-}
-
-.agent-card-badge--overridden {
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
-  color: var(--warning);
-  margin-left: 4px;
-}
+/* Badge/button classes removed -- now uses shared Button and Badge components */
 
 .agent-card-desc {
   font-size: 12px;
@@ -276,23 +242,7 @@
   gap: 4px;
 }
 
-.agent-detail-tag {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--surface-tertiary);
-  color: var(--text-secondary);
-}
-
-.agent-detail-tag--tool {
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-  color: var(--success);
-}
-
-.agent-detail-tag--denied {
-  background: color-mix(in srgb, var(--error) 12%, transparent);
-  color: var(--error);
-}
+/* Tag classes removed -- now uses shared Badge component */
 
 .agent-detail-prompt {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
@@ -318,51 +268,7 @@
   flex-shrink: 0;
 }
 
-.agent-detail-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  white-space: nowrap;
-}
-
-.agent-detail-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.agent-detail-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.agent-detail-btn--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-contrast);
-}
-
-.agent-detail-btn--primary:hover {
-  background: var(--accent-hover);
-}
-
-.agent-detail-btn--warning {
-  color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
-}
-
-.agent-detail-btn--warning:hover {
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-  color: var(--warning);
-}
+/* Button classes removed -- now uses shared Button component */
 
 /* ----- Edit textarea ----- */
 

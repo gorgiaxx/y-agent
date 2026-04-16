@@ -53,7 +53,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen && !loading) onCancel(); }}>
-      <DialogContent width="360px">
+      <DialogContent size="sm">
         {/* Icon */}
         <div
           className={[

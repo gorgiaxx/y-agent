@@ -43,6 +43,12 @@
   margin-top: var(--space-lg);
 }
 
+.section-title--flush {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
 /* ---- Forms ---- */
 .form-group {
   margin-bottom: var(--space-md);

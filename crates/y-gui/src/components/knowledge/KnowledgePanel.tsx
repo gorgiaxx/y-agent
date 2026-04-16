@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { ArrowLeft, BookOpen, Trash2, Search, Upload, ChevronDown, ChevronRight, FileText, Database, BarChart3, File, Clock, HardDrive, Globe, Plug, FolderOpen, Pencil, Check, X, Tag, Layers } from 'lucide-react';
 import type { KnowledgeCollectionInfo, KnowledgeEntryInfo, KnowledgeEntryDetail, KnowledgeSearchResult } from '../../types';
+import { Button, Badge, Input } from '../ui';
 import { KnowledgeIngestDialog } from './KnowledgeIngestDialog';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import './KnowledgePanel.css';
@@ -92,6 +93,9 @@ export function KnowledgePanel({
   const [deletingCollection, setDeletingCollection] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [l2Page, setL2Page] = useState(1);
 
   const handleStartRename = useCallback(() => {
@@ -105,11 +109,14 @@ export function KnowledgePanel({
       setEditingName(false);
       return;
     }
+    setRenaming(true);
     try {
       await onRenameCollection(selectedCollection, trimmed);
       onSelectCollection(trimmed);
     } catch {
       // error is logged by the hook
+    } finally {
+      setRenaming(false);
     }
     setEditingName(false);
   }, [editNameValue, selectedCollection, onRenameCollection, onSelectCollection]);
@@ -118,19 +125,29 @@ export function KnowledgePanel({
     setEditingName(false);
   }, []);
 
-  const handleCreateCollection = useCallback(() => {
+  const handleCreateCollection = useCallback(async () => {
     if (!newCollName.trim()) return;
-    onCreateCollection(newCollName.trim(), newCollDesc.trim());
-    setNewCollName('');
-    setNewCollDesc('');
-    setShowNewCollection(false);
+    setCreating(true);
+    try {
+      await onCreateCollection(newCollName.trim(), newCollDesc.trim());
+      setNewCollName('');
+      setNewCollDesc('');
+      setShowNewCollection(false);
+    } finally {
+      setCreating(false);
+    }
   }, [newCollName, newCollDesc, onCreateCollection]);
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) return;
-    const results = await onSearch(searchQuery, undefined, 10);
-    setSearchResults(results);
-    setShowSearch(true);
+    setSearching(true);
+    try {
+      const results = await onSearch(searchQuery, undefined, 10);
+      setSearchResults(results);
+      setShowSearch(true);
+    } finally {
+      setSearching(false);
+    }
   }, [searchQuery, onSearch]);
 
   const handleViewEntry = useCallback(async (entryId: string) => {
@@ -191,21 +208,20 @@ export function KnowledgePanel({
             <Search size={18} />
             <h2>Search Results</h2>
           </div>
-          <button className="kb-btn kb-btn--ghost" onClick={() => setShowSearch(false)}>
+          <Button variant="ghost" size="sm" onClick={() => setShowSearch(false)}>
             Back
-          </button>
+          </Button>
         </div>
         <div className="knowledge-search-bar">
-          <input
-            className="kb-input"
+          <Input
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search knowledge base..."
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
           />
-          <button className="kb-btn kb-btn--primary" onClick={handleSearch}>
-            <Search size={14} /> Search
-          </button>
+          <Button variant="primary" size="sm" onClick={handleSearch} disabled={searching}>
+            <Search size={14} /> {searching ? 'Searching...' : 'Search'}
+          </Button>
         </div>
         <div className="knowledge-results">
           {searchResults.length === 0 ? (
@@ -223,7 +239,7 @@ export function KnowledgePanel({
                   </div>
                   <div className="knowledge-result-domains">
                     {r.domains.map(d => (
-                      <span key={d} className="kb-tag">{d}</span>
+                      <Badge key={d} variant="outline">{d}</Badge>
                     ))}
                   </div>
                   <p className="knowledge-result-content">
@@ -245,25 +261,27 @@ export function KnowledgePanel({
       <div className="knowledge-panel">
         <div className="knowledge-header">
           <div className="knowledge-header-title">
-            <button
-              className="kb-btn kb-btn--ghost kb-btn--icon"
+            <Button
+              variant="icon"
+              size="sm"
               onClick={() => setSelectedEntry(null)}
               title="Back to entries"
             >
               <ArrowLeft size={18} />
-            </button>
+            </Button>
             <h2>{selectedEntry.title || 'Entry Detail'}</h2>
-            <span className={`kb-badge kb-badge--${selectedEntry.state}`}>
+            <Badge variant={selectedEntry.state === 'active' ? 'success' : 'outline'}>
               {selectedEntry.state}
-            </span>
+            </Badge>
           </div>
-          <button
-            className="kb-btn kb-btn--danger"
+          <Button
+            variant="danger"
+            size="sm"
             onClick={() => setDeleteTarget({ type: 'entry', id: selectedEntry.id, name: selectedEntry.title || 'this entry' })}
             title="Delete entry"
           >
             <Trash2 size={14} />
-          </button>
+          </Button>
         </div>
 
         <div className="knowledge-entry-body">
@@ -274,7 +292,7 @@ export function KnowledgePanel({
           <span className="kb-meta-item">Quality: {(selectedEntry.quality_score * 100).toFixed(0)}%</span>
           <span className="kb-meta-item">Hits: {selectedEntry.hit_count}</span>
           {selectedEntry.domains.map(d => (
-            <span key={d} className="kb-tag">{d}</span>
+            <Badge key={d} variant="outline">{d}</Badge>
           ))}
         </div>
 
@@ -296,17 +314,17 @@ export function KnowledgePanel({
                     {selectedEntry.interpreted_title}
                   </div>
                 )}
-                
+
                 {(selectedEntry.document_type || selectedEntry.industry || selectedEntry.subcategory) && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
                     {selectedEntry.document_type && (
-                      <span className="kb-tag kb-tag--type">{selectedEntry.document_type}</span>
+                      <Badge variant="info">{selectedEntry.document_type}</Badge>
                     )}
                     {selectedEntry.industry && (
-                      <span className="kb-tag kb-tag--industry">{selectedEntry.industry}</span>
+                      <Badge variant="accent">{selectedEntry.industry}</Badge>
                     )}
                     {selectedEntry.subcategory && (
-                      <span className="kb-tag kb-tag--sub">{selectedEntry.subcategory}</span>
+                      <Badge variant="outline">{selectedEntry.subcategory}</Badge>
                     )}
                   </div>
                 )}
@@ -315,7 +333,7 @@ export function KnowledgePanel({
                   <div className="knowledge-metadata-tags" style={{ borderTop: 'none', paddingTop: 0 }}>
                     <Tag size={12} />
                     {selectedEntry.tags.map(t => (
-                      <span key={t} className="kb-tag">{t}</span>
+                      <Badge key={t} variant="outline">{t}</Badge>
                     ))}
                   </div>
                 )}
@@ -384,12 +402,14 @@ export function KnowledgePanel({
                   </div>
                 ))}
                 {l2Page * L2_PAGE_SIZE < selectedEntry.l2_chunks.length && (
-                  <button
-                    className="kb-btn kb-btn--primary knowledge-load-more"
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="knowledge-load-more"
                     onClick={() => setL2Page(p => p + 1)}
                   >
                     Show More ({Math.min(L2_PAGE_SIZE, selectedEntry.l2_chunks.length - l2Page * L2_PAGE_SIZE)} of {selectedEntry.l2_chunks.length - l2Page * L2_PAGE_SIZE} remaining)
-                  </button>
+                  </Button>
                 )}
                 {selectedEntry.total_chunk_count > selectedEntry.l2_chunks.length && (
                   <div className="knowledge-chunk-note">
@@ -431,8 +451,8 @@ export function KnowledgePanel({
           <Database size={18} />
           {editingName ? (
             <div className="knowledge-rename-inline">
-              <input
-                className="kb-input knowledge-rename-input"
+              <Input
+                className="knowledge-rename-input"
                 value={editNameValue}
                 onChange={e => setEditNameValue(e.target.value)}
                 onKeyDown={e => {
@@ -441,44 +461,50 @@ export function KnowledgePanel({
                 }}
                 autoFocus
               />
-              <button
-                className="kb-btn kb-btn--ghost kb-btn--icon"
+              <Button
+                variant="icon"
+                size="sm"
                 onClick={handleConfirmRename}
+                disabled={renaming}
                 title="Confirm rename"
               >
                 <Check size={14} />
-              </button>
-              <button
-                className="kb-btn kb-btn--ghost kb-btn--icon"
+              </Button>
+              <Button
+                variant="icon"
+                size="sm"
                 onClick={handleCancelRename}
                 title="Cancel rename"
               >
                 <X size={14} />
-              </button>
+              </Button>
             </div>
           ) : (
             <>
               <h2>{currentCollection?.name || selectedCollection}</h2>
-              <button
-                className="kb-btn kb-btn--ghost kb-btn--icon"
+              <Button
+                variant="icon"
+                size="sm"
                 onClick={handleStartRename}
                 title="Rename collection"
               >
                 <Pencil size={14} />
-              </button>
+              </Button>
             </>
           )}
         </div>
         <div className="knowledge-header-actions">
-          <button
-            className="kb-btn kb-btn--primary"
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => setShowIngestDialog(true)}
             title="Import document"
           >
             <Upload size={14} /> Import
-          </button>
-          <button
-            className="kb-btn kb-btn--ghost"
+          </Button>
+          <Button
+            variant="icon"
+            size="sm"
             onClick={() => {
               setSearchQuery('');
               setShowSearch(true);
@@ -486,14 +512,15 @@ export function KnowledgePanel({
             title="Search"
           >
             <Search size={14} />
-          </button>
-          <button
-            className="kb-btn kb-btn--danger"
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
             onClick={() => setDeleteTarget({ type: 'collection', id: selectedCollection!, name: selectedCollection! })}
             title="Delete collection"
           >
             <Trash2 size={14} />
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -532,9 +559,9 @@ export function KnowledgePanel({
       {topDomains.length > 0 && (
         <div className="knowledge-domain-bar">
           {topDomains.map(([domain, count]) => (
-            <span key={domain} className="kb-tag" title={`${count} entries`}>
+            <Badge key={domain} variant="outline" title={`${count} entries`}>
               {domain} ({count})
-            </span>
+            </Badge>
           ))}
         </div>
       )}
@@ -565,22 +592,22 @@ export function KnowledgePanel({
                   </div>
                   <div className="knowledge-entry-tags">
                     {entry.document_type && (
-                      <span className="kb-tag kb-tag--sm kb-tag--type">{entry.document_type}</span>
+                      <Badge variant="info">{entry.document_type}</Badge>
                     )}
                     {entry.industry && (
-                      <span className="kb-tag kb-tag--sm kb-tag--industry">{entry.industry}</span>
+                      <Badge variant="accent">{entry.industry}</Badge>
                     )}
                     {entry.subcategory && (
-                      <span className="kb-tag kb-tag--sm kb-tag--sub">{entry.subcategory}</span>
+                      <Badge variant="outline">{entry.subcategory}</Badge>
                     )}
                     {entry.domains.map(d => (
-                      <span key={d} className="kb-tag kb-tag--sm">{d}</span>
+                      <Badge key={d} variant="outline">{d}</Badge>
                     ))}
                     {entry.tags && entry.tags.slice(0, 4).map(t => (
-                      <span key={t} className="kb-tag kb-tag--sm kb-tag--topic">{t}</span>
+                      <Badge key={t} variant="outline">{t}</Badge>
                     ))}
                     {entry.tags && entry.tags.length > 4 && (
-                      <span className="kb-tag kb-tag--sm kb-tag--more">+{entry.tags.length - 4}</span>
+                      <Badge variant="default">+{entry.tags.length - 4}</Badge>
                     )}
                   </div>
                 </div>
@@ -589,12 +616,13 @@ export function KnowledgePanel({
                 <span>{entry.chunk_count} chunks</span>
                 {entry.content_size > 0 && <span>{formatBytes(entry.content_size)}</span>}
                 <span>Q: {(entry.quality_score * 100).toFixed(0)}%</span>
-                <span className={`kb-badge kb-badge--${entry.state} kb-badge--sm`}>
+                <Badge variant={entry.state === 'active' ? 'success' : 'outline'}>
                   {entry.state}
-                </span>
+                </Badge>
                 <span className="knowledge-entry-time">{formatRelativeTime(entry.updated_at)}</span>
-                <button
-                  className="kb-btn kb-btn--danger kb-btn--sm"
+                <Button
+                  variant="danger"
+                  size="sm"
                   onClick={(e) => {
                     e.stopPropagation();
                     setDeleteTarget({ type: 'entry', id: entry.id, name: entry.title || extractFilename(entry.source_uri) });
@@ -602,7 +630,7 @@ export function KnowledgePanel({
                   title="Delete entry"
                 >
                   <Trash2 size={12} />
-                </button>
+                </Button>
               </div>
             </div>
           ))
@@ -612,26 +640,24 @@ export function KnowledgePanel({
       {/* New Collection Dialog (inline) */}
       {showNewCollection && (
         <div className="knowledge-new-collection">
-          <input
-            className="kb-input"
+          <Input
             placeholder="Collection name"
             value={newCollName}
             onChange={e => setNewCollName(e.target.value)}
             autoFocus
           />
-          <input
-            className="kb-input"
+          <Input
             placeholder="Description (optional)"
             value={newCollDesc}
             onChange={e => setNewCollDesc(e.target.value)}
           />
           <div className="knowledge-new-collection-actions">
-            <button className="kb-btn kb-btn--primary" onClick={handleCreateCollection}>
-              Create
-            </button>
-            <button className="kb-btn kb-btn--ghost" onClick={() => setShowNewCollection(false)}>
+            <Button variant="primary" size="sm" onClick={handleCreateCollection} disabled={creating}>
+              {creating ? 'Creating...' : 'Create'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setShowNewCollection(false)}>
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}

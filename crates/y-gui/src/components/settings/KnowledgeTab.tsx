@@ -77,7 +77,7 @@ export function KnowledgeTab({
     return (
       <>
         <div className="settings-header">
-          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+          <h3 className="section-title section-title--flush">
             <span className="settings-header-with-toggle">Knowledge <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
           </h3>
         </div>
@@ -97,7 +97,7 @@ export function KnowledgeTab({
   return (
     <>
       <div className="settings-header">
-        <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+        <h3 className="section-title section-title--flush">
           <span className="settings-header-with-toggle">Knowledge <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
         </h3>
       </div>

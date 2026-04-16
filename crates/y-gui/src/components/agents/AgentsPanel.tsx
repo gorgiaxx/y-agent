@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Bot, Save, RotateCcw, RefreshCw, Pencil, X } from 'lucide-react';
 import type { AgentDetail } from '../../hooks/useAgents';
+import { Button, Badge } from '../ui';
 import './AgentsPanel.css';
 
 interface AgentsPanelProps {
@@ -122,8 +123,6 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
     );
   }
 
-  const modeBadgeClass = `agent-card-badge agent-card-badge--${detail.mode}`;
-
   // --- EDIT mode ---
   if (editing) {
     return (
@@ -137,23 +136,25 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
               </div>
             </div>
             <div className="agent-detail-header-actions">
-              <button
-                className="agent-detail-btn agent-detail-btn--primary"
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={handleSave}
                 disabled={saving}
                 title="Save"
               >
                 <Save size={14} />
                 {saving ? 'Saving…' : 'Save'}
-              </button>
-              <button
-                className="agent-detail-btn"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={handleCancelEdit}
                 title="Cancel"
               >
                 <X size={14} />
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
           <textarea
@@ -186,35 +187,36 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
             </div>
             <p className="agent-detail-desc">{detail.description}</p>
             <div className="agent-detail-badges">
-              <span className={modeBadgeClass}>{detail.mode}</span>
-              <span className="agent-card-badge" style={{ background: 'var(--accent-subtle)', color: 'var(--accent)' }}>
+              <Badge variant="accent" size="md">{detail.mode}</Badge>
+              <Badge variant="accent" size="md">
                 {detail.trust_tier}
-              </span>
+              </Badge>
               {detail.is_overridden && (
-                <span className="agent-card-badge agent-card-badge--overridden">Overridden</span>
+                <Badge variant="warning" size="md">Overridden</Badge>
               )}
             </div>
           </div>
           <div className="agent-detail-header-actions">
-            <button className="agent-detail-btn" onClick={handleEdit} title="Edit TOML">
+            <Button variant="ghost" size="sm" onClick={handleEdit} title="Edit TOML">
               <Pencil size={14} />
               Edit
-            </button>
+            </Button>
             {detail.is_overridden && (
-              <button className="agent-detail-btn agent-detail-btn--warning" onClick={handleReset} title="Reset to Default">
+              <Button variant="warning" size="sm" onClick={handleReset} title="Reset to Default">
                 <RotateCcw size={14} />
                 Reset
-              </button>
+              </Button>
             )}
-            <button
-              className="agent-detail-btn"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleReload}
               disabled={reloading}
               title="Reload from Disk"
             >
               <RefreshCw size={14} className={reloading ? 'agent-spin' : ''} />
               {reloading ? 'Reloading…' : 'Reload'}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -276,7 +278,7 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
             <div className="agent-detail-section-title">Allowed Tools</div>
             <div className="agent-detail-tags">
               {detail.allowed_tools.map((tool) => (
-                <span key={tool} className="agent-detail-tag agent-detail-tag--tool">{tool}</span>
+                <Badge key={tool} variant="info">{tool}</Badge>
               ))}
             </div>
           </div>
@@ -288,7 +290,7 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
             <div className="agent-detail-section-title">Capabilities</div>
             <div className="agent-detail-tags">
               {detail.capabilities.map((cap) => (
-                <span key={cap} className="agent-detail-tag">{cap}</span>
+                <Badge key={cap} variant="outline">{cap}</Badge>
               ))}
             </div>
           </div>
@@ -325,7 +327,7 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
             <div className="agent-detail-section-title">Skills</div>
             <div className="agent-detail-tags">
               {detail.skills.map((skill) => (
-                <span key={skill} className="agent-detail-tag">{skill}</span>
+                <Badge key={skill} variant="outline">{skill}</Badge>
               ))}
             </div>
           </div>

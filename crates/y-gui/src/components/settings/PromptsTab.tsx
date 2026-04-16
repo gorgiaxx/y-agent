@@ -98,7 +98,7 @@ export function PromptsTab({
   return (
     <div className="settings-section">
       <div className="settings-header">
-        <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
+        <h3 className="section-title section-title--flush">
           Builtin Prompts
         </h3>
       </div>

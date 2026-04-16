@@ -294,31 +294,3 @@
   margin-right: auto;
   white-space: nowrap;
 }
-
-.batch-action-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
-}
-
-.batch-action-btn:hover {
-  background: var(--surface-hover);
-}
-
-.batch-action-btn--delete {
-  color: var(--error, #f87171);
-  border-color: var(--error, #f87171);
-}
-
-.batch-action-btn--delete:hover {
-  background: rgba(248, 113, 113, 0.1);
-}

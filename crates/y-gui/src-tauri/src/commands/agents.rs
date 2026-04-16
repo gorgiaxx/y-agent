@@ -427,6 +427,7 @@ mod tests {
             user_callable: true,
             prune_tool_history: false,
             auto_update: true,
+            response_format: None,
         }
     }
 

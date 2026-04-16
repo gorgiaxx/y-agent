@@ -135,27 +135,7 @@
   gap: 2px;
 }
 
-.diag-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid transparent;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--radius-md);
-  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
-}
-
-.diag-btn:hover {
-  background: var(--surface-hover);
-  border-color: var(--border);
-  color: var(--text-primary);
-}
-
-.diag-btn.diag-btn-active {
+.diag-btn-active {
   color: var(--accent);
 }
 
@@ -565,27 +545,6 @@
 .diag-beautify-btn.disabled {
   opacity: 0.35;
   cursor: not-allowed;
-}
-
-.diag-copy-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 7px;
-  height: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-tertiary);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
-  flex-shrink: 0;
-}
-
-.diag-copy-btn:hover {
-  background: var(--accent-subtle);
-  color: var(--accent);
-  border-color: transparent;
 }
 
 .diag-result-code {

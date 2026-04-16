@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Clock, Pencil, Trash2, Save, X, Play, Pause, RotateCw } from 'lucide-react';
-import { Button, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui';
+import { Button, Badge, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui';
 import { ExecutionHistorySection } from './ExecutionHistorySection';
 import type { WorkflowInfo, ScheduleInfo, ExecutionRecord } from './types';
 import './AutomationPanel.css';
@@ -120,12 +120,12 @@ export function ScheduleDetail({
             </div>
             {sc.description && <p className="automation-detail-desc">{sc.description}</p>}
             <div className="automation-detail-badges">
-              <span className={`automation-badge automation-badge--${sc.trigger_type}`}>
+              <Badge variant="accent">
                 {sc.trigger_type}
-              </span>
-              <span className={`automation-badge ${sc.enabled ? 'automation-badge--active' : 'automation-badge--paused'}`}>
+              </Badge>
+              <Badge variant={sc.enabled ? 'success' : 'outline'}>
                 {sc.enabled ? 'Active' : 'Paused'}
-              </span>
+              </Badge>
             </div>
           </div>
           <div className="automation-detail-actions">

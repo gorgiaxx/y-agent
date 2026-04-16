@@ -82,7 +82,7 @@ export function AgentEditorDialog({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        width="720px"
+        size="xl"
         className="p-0 flex flex-col items-stretch text-left gap-0 max-h-[90vh] overflow-hidden"
       >
         {/* Header */}
