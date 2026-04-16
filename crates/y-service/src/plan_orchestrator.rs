@@ -6,11 +6,13 @@
 //! `ToolSearchOrchestrator` -- the `tool_dispatch` layer intercepts
 //! `Plan` tool calls and routes them here.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use y_agent::orchestrator::dag::{DagError, TaskDag, TaskNode, TaskPriority};
 use y_agent::AgentDefinition;
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::tool::{ToolError, ToolOutput};
@@ -22,7 +24,10 @@ use crate::chat::{TurnEvent, TurnEventSender};
 use crate::container::ServiceContainer;
 
 const PLAN_CANCELLED_MESSAGE: &str = "Cancelled";
+const PLAN_ANALYST_AGENT_ID: &str = "plan-analyst";
 const PHASE_EXECUTOR_AGENT_ID: &str = "plan-phase-executor";
+/// Maximum number of phases to execute concurrently.
+const DEFAULT_MAX_PARALLEL_PHASES: usize = 4;
 const PHASE_EXECUTOR_FALLBACK_ALLOWED_TOOLS: &[&str] = &[
     "ToolSearch",
     "FileRead",
@@ -96,11 +101,12 @@ impl PlanOrchestrator {
     /// Handle a `Plan` tool call.
     ///
     /// Workflow:
+    /// 0. (optional) Run plan-analyst for pre-planning analysis
     /// 1. Create a child session for the `plan-writer` sub-agent
     /// 2. Execute plan-writer (codebase exploration + plan generation)
     /// 3. Create a child session for the `task-decomposer` sub-agent
     /// 4. Execute task-decomposer (structured JSON task list)
-    /// 5. Execute each phase sequentially in its own child session
+    /// 5. Execute phases (parallel when dependencies allow, sequential fallback)
     /// 6. Return consolidated results
     pub async fn handle(
         arguments: &serde_json::Value,
@@ -150,6 +156,41 @@ impl PlanOrchestrator {
             });
         }
 
+        // Phase 0: Pre-planning analysis (optional)
+        let skip_analysis = arguments
+            .get("skip_analysis")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+
+        let analysis = if skip_analysis {
+            String::new()
+        } else {
+            tracing::info!(
+                request = %request,
+                "plan orchestrator: starting plan-analyst"
+            );
+            match Self::run_plan_analyst(
+                container,
+                parent_session_id,
+                request,
+                context,
+                progress,
+                cancel.as_ref(),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    // Non-fatal: log and continue without analysis.
+                    tracing::warn!(
+                        error = %e,
+                        "plan-analyst failed, continuing without analysis"
+                    );
+                    String::new()
+                }
+            }
+        };
+
         // Phase 1: Plan writing
         tracing::info!(request = %request, "plan orchestrator: starting plan-writer");
         let plan_content = Self::run_plan_writer(
@@ -157,6 +198,7 @@ impl PlanOrchestrator {
             parent_session_id,
             request,
             context,
+            &analysis,
             &plan_path,
             progress,
             cancel.as_ref(),
@@ -177,96 +219,17 @@ impl PlanOrchestrator {
 
         let total_tasks = structured_plan.tasks.len();
 
-        // Phase 3: Sequential execution
+        // Phase 3: Dependency-aware parallel execution
         tracing::info!(total_tasks, "plan orchestrator: starting phase execution");
-        let mut phase_results = Vec::with_capacity(total_tasks);
-        for (idx, task) in structured_plan.tasks.iter().enumerate() {
-            if is_cancelled(cancel.as_ref()) {
-                return Err(cancelled_tool_error());
-            }
-
-            tracing::info!(
-                phase = idx + 1,
-                title = %task.title,
-                "plan orchestrator: executing phase"
-            );
-
-            if let Some(tx) = progress {
-                let mut progress_snapshot = phase_results.clone();
-                progress_snapshot.push(serde_json::json!({
-                    "task_id": task.id,
-                    "phase": task.phase,
-                    "title": task.title,
-                    "status": "in_progress",
-                }));
-                emit_plan_execution_progress(
-                    tx,
-                    &plan_path,
-                    &structured_plan,
-                    &progress_snapshot,
-                    format!("Executing phase {}: {}", task.phase, task.title),
-                );
-            }
-
-            match Self::run_phase(
-                container,
-                parent_session_id,
-                task,
-                &structured_plan.plan_title,
-                idx + 1,
-                total_tasks,
-                progress,
-                cancel.as_ref(),
-            )
-            .await
-            {
-                Ok(summary) => {
-                    phase_results.push(serde_json::json!({
-                        "task_id": task.id,
-                        "phase": task.phase,
-                        "title": task.title,
-                        "status": "completed",
-                        "summary": summary,
-                    }));
-                    if let Some(tx) = progress {
-                        emit_plan_execution_progress(
-                            tx,
-                            &plan_path,
-                            &structured_plan,
-                            &phase_results,
-                            format!("Completed phase {}: {}", task.phase, task.title),
-                        );
-                    }
-                }
-                Err(e) => {
-                    if is_cancelled_tool_error(&e) {
-                        return Err(e);
-                    }
-                    tracing::error!(
-                        phase = idx + 1,
-                        error = %e,
-                        "plan orchestrator: phase failed"
-                    );
-                    phase_results.push(serde_json::json!({
-                        "task_id": task.id,
-                        "phase": task.phase,
-                        "title": task.title,
-                        "status": "failed",
-                        "error": e.to_string(),
-                    }));
-                    if let Some(tx) = progress {
-                        emit_plan_execution_progress(
-                            tx,
-                            &plan_path,
-                            &structured_plan,
-                            &phase_results,
-                            format!("Failed phase {}: {}", task.phase, task.title),
-                        );
-                    }
-                    // Continue with remaining phases despite failure.
-                }
-            }
-        }
+        let phase_results = Self::execute_phases(
+            container,
+            parent_session_id,
+            &structured_plan,
+            &plan_path,
+            progress,
+            cancel.as_ref(),
+        )
+        .await?;
 
         let completed = phase_results
             .iter()
@@ -299,12 +262,125 @@ impl PlanOrchestrator {
         })
     }
 
+    /// Create a child session and run the plan-analyst agent.
+    ///
+    /// Returns the analyst's structured analysis text. The caller should
+    /// treat failures as non-fatal (analysis is optional enrichment).
+    async fn run_plan_analyst(
+        container: &ServiceContainer,
+        parent_session_id: &SessionId,
+        request: &str,
+        context: &str,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<String, ToolError> {
+        if is_cancelled(cancel) {
+            return Err(cancelled_tool_error());
+        }
+
+        let child_session = container
+            .session_manager
+            .create_session(CreateSessionOptions {
+                parent_id: Some(parent_session_id.clone()),
+                session_type: SessionType::SubAgent,
+                agent_id: Some(y_core::types::AgentId::from_string(PLAN_ANALYST_AGENT_ID)),
+                title: Some("Plan Analyst".to_string()),
+            })
+            .await
+            .map_err(|e| ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("failed to create plan-analyst session: {e}"),
+            })?;
+
+        let child_uuid =
+            Uuid::parse_str(child_session.id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
+
+        let settings = Self::resolve_agent_config(
+            container,
+            PLAN_ANALYST_AGENT_ID,
+            ResolvedAgentConfig {
+                system_prompt: String::new(),
+                max_iterations: 10,
+                max_tool_calls: 10,
+                preferred_models: vec![],
+                provider_tags: vec!["general".to_string()],
+                temperature: Some(0.3),
+                max_tokens: None,
+                trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
+                allowed_tools: vec!["FileRead".into(), "Glob".into(), "Grep".into()],
+                prune_tool_history: false,
+            },
+        )
+        .await;
+
+        let user_msg = if context.is_empty() {
+            format!("Analyze this request for pre-planning:\n\n{request}")
+        } else {
+            format!(
+                "Analyze this request for pre-planning:\n\n\
+                 Request: {request}\n\n\
+                 Context:\n{context}"
+            )
+        };
+
+        let messages = build_subagent_messages(&settings.system_prompt, user_msg);
+        let tool_defs =
+            Self::load_tool_schemas_for_allowed_tools(container, &settings.allowed_tools).await;
+
+        let exec_config = AgentExecutionConfig {
+            agent_name: PLAN_ANALYST_AGENT_ID.to_string(),
+            system_prompt: settings.system_prompt.clone(),
+            max_iterations: settings.max_iterations,
+            max_tool_calls: settings.max_tool_calls,
+            tool_definitions: tool_defs,
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            messages,
+            provider_id: None,
+            preferred_models: settings.preferred_models.clone(),
+            provider_tags: settings.provider_tags.clone(),
+            temperature: settings.temperature,
+            max_tokens: settings.max_tokens,
+            thinking: None,
+            session_id: Some(child_session.id.clone()),
+            session_uuid: child_uuid,
+            knowledge_collections: vec![],
+            use_context_pipeline: false,
+            user_query: request.to_string(),
+            external_trace_id: None,
+            trust_tier: settings.trust_tier,
+            agent_allowed_tools: settings.allowed_tools.clone(),
+            prune_tool_history: settings.prune_tool_history,
+            response_format: None,
+        };
+
+        let result =
+            AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
+                .await
+                .map_err(|e| map_plan_agent_error(PLAN_ANALYST_AGENT_ID, e))?;
+
+        if let Some(tx) = progress {
+            let _ = tx.send(TurnEvent::ToolResult {
+                name: "Plan".into(),
+                success: true,
+                duration_ms: 0,
+                input_preview: "plan-analyst completed".into(),
+                result_preview: "Pre-planning analysis done".into(),
+                agent_name: "plan-orchestrator".into(),
+                url_meta: None,
+                metadata: None,
+            });
+        }
+
+        Ok(result.content)
+    }
+
     /// Create a child session under the parent and run the plan-writer agent.
     async fn run_plan_writer(
         container: &ServiceContainer,
         parent_session_id: &SessionId,
         request: &str,
         context: &str,
+        analysis: &str,
         plan_path: &std::path::Path,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
@@ -345,12 +421,15 @@ impl PlanOrchestrator {
         .await;
 
         // Build the user message for the plan-writer as structured JSON.
-        let user_msg = serde_json::json!({
+        let mut plan_writer_input = serde_json::json!({
             "task": request,
             "context": context,
             "plan_path": plan_path.display().to_string(),
-        })
-        .to_string();
+        });
+        if !analysis.is_empty() {
+            plan_writer_input["analysis"] = serde_json::Value::String(analysis.to_string());
+        }
+        let user_msg = plan_writer_input.to_string();
 
         let messages = build_subagent_messages(&settings.system_prompt, user_msg);
         let tool_defs =
@@ -379,6 +458,7 @@ impl PlanOrchestrator {
             trust_tier: settings.trust_tier,
             agent_allowed_tools: settings.allowed_tools.clone(),
             prune_tool_history: settings.prune_tool_history,
+            response_format: None,
         };
 
         let result =
@@ -492,6 +572,7 @@ impl PlanOrchestrator {
             trust_tier: settings.trust_tier,
             agent_allowed_tools: settings.allowed_tools.clone(),
             prune_tool_history: settings.prune_tool_history,
+            response_format: None,
         };
 
         let result =
@@ -528,6 +609,300 @@ impl PlanOrchestrator {
         }
 
         Ok(plan)
+    }
+
+    /// Execute plan phases with dependency-aware parallelism.
+    ///
+    /// Builds a DAG from `PlanTask.depends_on`, then executes in waves:
+    /// each wave runs all tasks whose dependencies are satisfied, up to
+    /// `DEFAULT_MAX_PARALLEL_PHASES` concurrently. Falls back to sequential
+    /// execution if the DAG is invalid (cycles, missing deps).
+    async fn execute_phases(
+        container: &ServiceContainer,
+        parent_session_id: &SessionId,
+        plan: &StructuredPlan,
+        plan_path: &Path,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<Vec<serde_json::Value>, ToolError> {
+        let total_tasks = plan.tasks.len();
+
+        // Build a lookup from task id to task.
+        let task_map: std::collections::HashMap<&str, &PlanTask> =
+            plan.tasks.iter().map(|t| (t.id.as_str(), t)).collect();
+
+        // Build DAG. Fall back to sequential on error.
+        let dag = match build_task_dag(&plan.tasks) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "failed to build task DAG, falling back to sequential execution"
+                );
+                return Self::execute_phases_sequential(
+                    container,
+                    parent_session_id,
+                    plan,
+                    plan_path,
+                    progress,
+                    cancel,
+                )
+                .await;
+            }
+        };
+
+        let mut completed: HashSet<String> = HashSet::new();
+        let mut failed: HashSet<String> = HashSet::new();
+        let mut phase_results: Vec<serde_json::Value> = Vec::with_capacity(total_tasks);
+
+        loop {
+            if is_cancelled(cancel) {
+                return Err(cancelled_tool_error());
+            }
+
+            // Find ready tasks (deps satisfied, not completed, not failed).
+            let ready: Vec<&TaskNode> = dag
+                .ready_tasks(&completed)
+                .into_iter()
+                .filter(|n| !failed.contains(&n.id))
+                .collect();
+
+            if ready.is_empty() {
+                break;
+            }
+
+            tracing::info!(
+                wave_size = ready.len(),
+                ready_ids = ?ready.iter().map(|n| &n.id).collect::<Vec<_>>(),
+                "plan orchestrator: starting parallel wave"
+            );
+
+            // Check if any ready task has a failed dependency (transitive).
+            // Skip those tasks entirely.
+            let mut runnable = Vec::new();
+            for node in &ready {
+                let Some(task) = task_map.get(node.id.as_str()) else {
+                    continue;
+                };
+                let has_failed_dep = task
+                    .depends_on
+                    .iter()
+                    .any(|dep| failed.contains(dep.as_str()));
+                if has_failed_dep {
+                    tracing::warn!(
+                        task_id = %task.id,
+                        "skipping task due to failed dependency"
+                    );
+                    failed.insert(task.id.clone());
+                    phase_results.push(serde_json::json!({
+                        "task_id": task.id,
+                        "phase": task.phase,
+                        "title": task.title,
+                        "status": "skipped",
+                        "error": "dependency failed",
+                    }));
+                } else {
+                    runnable.push(*task);
+                }
+            }
+
+            if runnable.is_empty() {
+                break;
+            }
+
+            // Emit progress for all tasks starting in this wave.
+            for task in &runnable {
+                if let Some(tx) = progress {
+                    let mut snapshot = phase_results.clone();
+                    snapshot.push(serde_json::json!({
+                        "task_id": task.id,
+                        "phase": task.phase,
+                        "title": task.title,
+                        "status": "in_progress",
+                    }));
+                    emit_plan_execution_progress(
+                        tx,
+                        plan_path,
+                        plan,
+                        &snapshot,
+                        format!("Executing phase {}: {}", task.phase, task.title),
+                    );
+                }
+            }
+
+            // Execute runnable tasks concurrently, in chunks of
+            // DEFAULT_MAX_PARALLEL_PHASES to bound resource usage.
+            for chunk in runnable.chunks(DEFAULT_MAX_PARALLEL_PHASES) {
+                let chunk_futures: Vec<_> = chunk
+                    .iter()
+                    .map(|task| async move {
+                        let result = Self::run_phase(
+                            container,
+                            parent_session_id,
+                            task,
+                            &plan.plan_title,
+                            task.phase,
+                            total_tasks,
+                            progress,
+                            cancel,
+                        )
+                        .await;
+                        (*task, result)
+                    })
+                    .collect();
+
+                let chunk_results = futures::future::join_all(chunk_futures).await;
+
+                for (task, result) in chunk_results {
+                    match result {
+                        Ok(summary) => {
+                            completed.insert(task.id.clone());
+                            phase_results.push(serde_json::json!({
+                                "task_id": task.id,
+                                "phase": task.phase,
+                                "title": task.title,
+                                "status": "completed",
+                                "summary": summary,
+                            }));
+                            if let Some(tx) = progress {
+                                emit_plan_execution_progress(
+                                    tx,
+                                    plan_path,
+                                    plan,
+                                    &phase_results,
+                                    format!("Completed phase {}: {}", task.phase, task.title),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            if is_cancelled_tool_error(&e) {
+                                return Err(e);
+                            }
+                            tracing::error!(
+                                task_id = %task.id,
+                                error = %e,
+                                "plan orchestrator: phase failed"
+                            );
+                            failed.insert(task.id.clone());
+                            phase_results.push(serde_json::json!({
+                                "task_id": task.id,
+                                "phase": task.phase,
+                                "title": task.title,
+                                "status": "failed",
+                                "error": e.to_string(),
+                            }));
+                            if let Some(tx) = progress {
+                                emit_plan_execution_progress(
+                                    tx,
+                                    plan_path,
+                                    plan,
+                                    &phase_results,
+                                    format!("Failed phase {}: {}", task.phase, task.title),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(phase_results)
+    }
+
+    /// Sequential fallback when DAG construction fails.
+    async fn execute_phases_sequential(
+        container: &ServiceContainer,
+        parent_session_id: &SessionId,
+        plan: &StructuredPlan,
+        plan_path: &Path,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<Vec<serde_json::Value>, ToolError> {
+        let total_tasks = plan.tasks.len();
+        let mut phase_results = Vec::with_capacity(total_tasks);
+
+        for (idx, task) in plan.tasks.iter().enumerate() {
+            if is_cancelled(cancel) {
+                return Err(cancelled_tool_error());
+            }
+
+            if let Some(tx) = progress {
+                let mut snapshot = phase_results.clone();
+                snapshot.push(serde_json::json!({
+                    "task_id": task.id,
+                    "phase": task.phase,
+                    "title": task.title,
+                    "status": "in_progress",
+                }));
+                emit_plan_execution_progress(
+                    tx,
+                    plan_path,
+                    plan,
+                    &snapshot,
+                    format!("Executing phase {}: {}", task.phase, task.title),
+                );
+            }
+
+            match Self::run_phase(
+                container,
+                parent_session_id,
+                task,
+                &plan.plan_title,
+                idx + 1,
+                total_tasks,
+                progress,
+                cancel,
+            )
+            .await
+            {
+                Ok(summary) => {
+                    phase_results.push(serde_json::json!({
+                        "task_id": task.id,
+                        "phase": task.phase,
+                        "title": task.title,
+                        "status": "completed",
+                        "summary": summary,
+                    }));
+                    if let Some(tx) = progress {
+                        emit_plan_execution_progress(
+                            tx,
+                            plan_path,
+                            plan,
+                            &phase_results,
+                            format!("Completed phase {}: {}", task.phase, task.title),
+                        );
+                    }
+                }
+                Err(e) => {
+                    if is_cancelled_tool_error(&e) {
+                        return Err(e);
+                    }
+                    tracing::error!(
+                        phase = idx + 1,
+                        error = %e,
+                        "plan orchestrator: phase failed"
+                    );
+                    phase_results.push(serde_json::json!({
+                        "task_id": task.id,
+                        "phase": task.phase,
+                        "title": task.title,
+                        "status": "failed",
+                        "error": e.to_string(),
+                    }));
+                    if let Some(tx) = progress {
+                        emit_plan_execution_progress(
+                            tx,
+                            plan_path,
+                            plan,
+                            &phase_results,
+                            format!("Failed phase {}: {}", task.phase, task.title),
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(phase_results)
     }
 
     /// Execute a single phase in its own child session.
@@ -798,6 +1173,7 @@ fn build_phase_execution_config(
         // Phase executors rely on the full tool/result history for multi-step
         // implementation work; pruning old tool pairs would discard context.
         prune_tool_history: settings.prune_tool_history,
+        response_format: None,
     }
 }
 
@@ -965,6 +1341,26 @@ fn resolve_task_status(task: &PlanTask, phase_results: &[serde_json::Value]) -> 
     status
 }
 
+/// Convert structured plan tasks into a validated [`TaskDag`].
+///
+/// Each [`PlanTask`] becomes a [`TaskNode`] with its `depends_on` mapped to
+/// DAG dependencies. The DAG is validated (cycles, missing deps) before
+/// returning; callers should fall back to sequential execution on error.
+fn build_task_dag(tasks: &[PlanTask]) -> Result<TaskDag, DagError> {
+    let mut dag = TaskDag::new();
+    for task in tasks {
+        dag.add_task(TaskNode {
+            id: task.id.clone(),
+            name: task.title.clone(),
+            priority: TaskPriority::Normal,
+            dependencies: task.depends_on.clone(),
+            ..TaskNode::default()
+        })?;
+    }
+    dag.validate()?;
+    Ok(dag)
+}
+
 fn count_phase_results(phase_results: &[serde_json::Value], status: &str) -> usize {
     phase_results
         .iter()
@@ -1120,6 +1516,7 @@ pub async fn assess_complexity(
         trust_tier: None,
         agent_allowed_tools: vec![],
         prune_tool_history,
+        response_format: None,
     };
 
     match AgentService::execute(container, &exec_config, None, None).await {
@@ -1586,5 +1983,140 @@ Fix the plan stream rendering.
         assert!(config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
         assert!(config.allowed_tools.iter().any(|tool| tool == "ToolSearch"));
         assert!(!config.prune_tool_history);
+    }
+
+    #[test]
+    fn test_build_task_dag_independent_tasks() {
+        let tasks = vec![
+            PlanTask {
+                id: "task-1".into(),
+                phase: 1,
+                title: "Setup schema".into(),
+                description: "Create tables".into(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 10,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+            PlanTask {
+                id: "task-2".into(),
+                phase: 2,
+                title: "Add API routes".into(),
+                description: "Create endpoints".into(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 10,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+        ];
+
+        let dag = build_task_dag(&tasks).unwrap();
+        let ready = dag.ready_tasks(&HashSet::new());
+        assert_eq!(ready.len(), 2, "independent tasks should both be ready");
+    }
+
+    #[test]
+    fn test_build_task_dag_with_dependencies() {
+        let tasks = vec![
+            PlanTask {
+                id: "task-1".into(),
+                phase: 1,
+                title: "Create model".into(),
+                description: "".into(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 10,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+            PlanTask {
+                id: "task-2".into(),
+                phase: 2,
+                title: "Use model in API".into(),
+                description: "".into(),
+                depends_on: vec!["task-1".into()],
+                status: TaskStatus::Pending,
+                estimated_iterations: 10,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+            PlanTask {
+                id: "task-3".into(),
+                phase: 3,
+                title: "Independent test".into(),
+                description: "".into(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 10,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+        ];
+
+        let dag = build_task_dag(&tasks).unwrap();
+
+        // Initially: task-1 and task-3 are ready (no deps).
+        let ready = dag.ready_tasks(&HashSet::new());
+        let ready_ids: Vec<&str> = ready.iter().map(|n| n.id.as_str()).collect();
+        assert!(ready_ids.contains(&"task-1"));
+        assert!(ready_ids.contains(&"task-3"));
+        assert!(!ready_ids.contains(&"task-2"));
+
+        // After task-1 completes: task-2 becomes ready.
+        let mut completed = HashSet::new();
+        completed.insert("task-1".to_string());
+        let ready = dag.ready_tasks(&completed);
+        let ready_ids: Vec<&str> = ready.iter().map(|n| n.id.as_str()).collect();
+        assert!(ready_ids.contains(&"task-2"));
+        assert!(ready_ids.contains(&"task-3"));
+    }
+
+    #[test]
+    fn test_build_task_dag_detects_cycle() {
+        let tasks = vec![
+            PlanTask {
+                id: "task-1".into(),
+                phase: 1,
+                title: "A".into(),
+                description: "".into(),
+                depends_on: vec!["task-2".into()],
+                status: TaskStatus::Pending,
+                estimated_iterations: 10,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+            PlanTask {
+                id: "task-2".into(),
+                phase: 2,
+                title: "B".into(),
+                description: "".into(),
+                depends_on: vec!["task-1".into()],
+                status: TaskStatus::Pending,
+                estimated_iterations: 10,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+        ];
+
+        assert!(build_task_dag(&tasks).is_err());
+    }
+
+    #[test]
+    fn test_build_task_dag_detects_missing_dependency() {
+        let tasks = vec![PlanTask {
+            id: "task-1".into(),
+            phase: 1,
+            title: "A".into(),
+            description: "".into(),
+            depends_on: vec!["nonexistent".into()],
+            status: TaskStatus::Pending,
+            estimated_iterations: 10,
+            key_files: vec![],
+            acceptance_criteria: vec![],
+        }];
+
+        assert!(build_task_dag(&tasks).is_err());
     }
 }

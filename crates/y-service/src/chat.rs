@@ -676,6 +676,7 @@ impl ChatService {
             trust_tier: input.trust_tier,
             agent_allowed_tools: input.agent_allowed_tools.clone(),
             prune_tool_history: input.prune_tool_history,
+            response_format: None,
         }
     }
 

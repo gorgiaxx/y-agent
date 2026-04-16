@@ -18,7 +18,7 @@ use y_knowledge::middleware::{
 use y_knowledge::models::{KnowledgeCollection, KnowledgeEntry};
 use y_knowledge::quality::QualityFilter;
 use y_knowledge::retrieval::HybridRetriever;
-use y_knowledge::tokenizer::SimpleTokenizer;
+use y_knowledge::tokenizer::AutoTokenizer;
 use y_knowledge::tools::{
     KnowledgeIngestParams, KnowledgeIngestResult, KnowledgeSearchParams, KnowledgeSearchResult,
     SearchResultItem,
@@ -36,7 +36,10 @@ use y_knowledge::metadata::DocumentMetadata;
 fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
 
-    let tmp_path = path.with_extension("json.tmp");
+    let tmp_path = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
     let mut file = fs::File::create(&tmp_path)?;
     file.write_all(data)?;
     file.flush()?;
@@ -101,7 +104,7 @@ pub struct KnowledgeService {
     /// Ingested entries keyed by entry ID.
     entries: HashMap<String, KnowledgeEntry>,
     /// Knowledge injection middleware (shared via Arc for tool/context integration).
-    inject_knowledge: Arc<StdMutex<InjectKnowledge<SimpleTokenizer>>>,
+    inject_knowledge: Arc<StdMutex<InjectKnowledge<AutoTokenizer>>>,
     /// Ingestion pipeline.
     pipeline: IngestionPipeline,
     /// Domain classifier.
@@ -204,7 +207,7 @@ impl KnowledgeServiceBuilder {
 
     /// Build the [`KnowledgeService`].
     pub fn build(self) -> KnowledgeService {
-        let retriever = HybridRetriever::new(SimpleTokenizer::new());
+        let retriever = HybridRetriever::new(AutoTokenizer::new());
         let inject_knowledge = if let Some(inject_cfg) = self.inject_config {
             Arc::new(StdMutex::new(InjectKnowledge::with_config(
                 retriever, inject_cfg,
@@ -291,6 +294,43 @@ impl KnowledgeService {
     /// When set, document ingestion will generate embeddings for each chunk
     /// and store them for cosine similarity retrieval.
     pub fn set_embedding_provider(&mut self, provider: Arc<dyn EmbeddingProvider>) {
+        // Check for dimension mismatch with existing embeddings.
+        let new_dim = provider.dimensions();
+        {
+            let knowledge = self
+                .inject_knowledge
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let stored = knowledge.retriever().embeddings();
+
+            if let Some(first_emb) = stored.values().next() {
+                let old_dim = first_emb.len();
+                if old_dim == new_dim {
+                    tracing::info!(
+                        dim = new_dim,
+                        "embedding provider changed but dimensions match \
+                         -- semantic space may have shifted"
+                    );
+                } else {
+                    let n = stored.len();
+                    drop(knowledge);
+                    // Clear stale embeddings.
+                    let mut knowledge = self
+                        .inject_knowledge
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    knowledge.retriever_mut().clear_embeddings();
+                    tracing::warn!(
+                        old_dim,
+                        new_dim,
+                        cleared = n,
+                        "embedding provider changed dimensions, cleared stale embeddings \
+                         -- re-ingest or re-embed to restore vector search"
+                    );
+                }
+            }
+        }
+
         self.embedding_provider = Some(provider);
     }
 
@@ -331,7 +371,7 @@ impl KnowledgeService {
     ///
     /// Used to share the retriever with the `KnowledgeSearch` tool and
     /// `KnowledgeContextProvider` for chat integration.
-    pub fn knowledge_handle(&self) -> Arc<StdMutex<InjectKnowledge<SimpleTokenizer>>> {
+    pub fn knowledge_handle(&self) -> Arc<StdMutex<InjectKnowledge<AutoTokenizer>>> {
         Arc::clone(&self.inject_knowledge)
     }
 
@@ -910,12 +950,11 @@ impl KnowledgeService {
             .iter()
             .enumerate()
             .map(|(i, chunk_content)| Chunk {
-                id: format!("{entry_id}-{i}"),
+                id: format!("{entry_id}-L2-{i}"),
                 document_id: entry_id.to_string(),
                 level: ChunkLevel::L2,
                 content: chunk_content.clone(),
-                token_estimate: u32::try_from(chunk_content.chars().count() / 4)
-                    .unwrap_or(u32::MAX),
+                token_estimate: y_knowledge::chunking::estimate_tokens(chunk_content),
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
@@ -947,12 +986,12 @@ impl KnowledgeService {
                 document_id: entry_id.to_string(),
                 level: ChunkLevel::L0,
                 content: summary.clone(),
-                token_estimate: u32::try_from(summary.chars().count() / 4).unwrap_or(u32::MAX),
+                token_estimate: y_knowledge::chunking::estimate_tokens(summary),
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
                     title: entry.source.title.clone(),
-                    section_index: 0,
+                    section_index: usize::MAX, // L0 sentinel: never collides with L2 sections.
                     collection: entry.collection.clone(),
                     l1_section_index: None,
                     indexed_at: indexed_at.clone(),
@@ -970,8 +1009,7 @@ impl KnowledgeService {
                 document_id: entry_id.to_string(),
                 level: ChunkLevel::L1,
                 content: section.content.clone(),
-                token_estimate: u32::try_from(section.content.chars().count() / 4)
-                    .unwrap_or(u32::MAX),
+                token_estimate: y_knowledge::chunking::estimate_tokens(&section.content),
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
@@ -1077,12 +1115,11 @@ impl KnowledgeService {
                 .iter()
                 .enumerate()
                 .map(|(i, chunk_content)| Chunk {
-                    id: format!("{}-{i}", entry.entry_id),
+                    id: format!("{}-L2-{i}", entry.entry_id),
                     document_id: entry.entry_id.clone(),
                     level: ChunkLevel::L2,
                     content: chunk_content.clone(),
-                    token_estimate: u32::try_from(chunk_content.chars().count() / 4)
-                        .unwrap_or(u32::MAX),
+                    token_estimate: y_knowledge::chunking::estimate_tokens(chunk_content),
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),
@@ -1132,12 +1169,12 @@ impl KnowledgeService {
                     document_id: entry.entry_id.clone(),
                     level: ChunkLevel::L0,
                     content: summary.clone(),
-                    token_estimate: u32::try_from(summary.chars().count() / 4).unwrap_or(u32::MAX),
+                    token_estimate: y_knowledge::chunking::estimate_tokens(summary),
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),
                         title: entry.title.clone(),
-                        section_index: 0,
+                        section_index: usize::MAX, // L0 sentinel: never collides with L2 sections.
                         collection: entry.collection.clone(),
                         l1_section_index: None,
                         indexed_at: entry.indexed_at.clone(),
@@ -1163,7 +1200,7 @@ impl KnowledgeService {
                     document_id: entry.entry_id.clone(),
                     level: ChunkLevel::L1,
                     content: content.clone(),
-                    token_estimate: u32::try_from(content.chars().count() / 4).unwrap_or(u32::MAX),
+                    token_estimate: y_knowledge::chunking::estimate_tokens(&content),
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),

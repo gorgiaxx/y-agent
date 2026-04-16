@@ -462,6 +462,7 @@ mod tests {
             trust_tier: None,
             agent_allowed_tools: vec![],
             prune_tool_history: false,
+            response_format: None,
         };
 
         let (_assembled, trace_id, owns_trace) = init_context_and_trace(&container, &config).await;

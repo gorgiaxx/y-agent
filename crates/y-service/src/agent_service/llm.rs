@@ -52,6 +52,7 @@ pub(crate) fn build_chat_request(
         stop: vec![],
         extra: serde_json::Value::Null,
         thinking: config.thinking.clone(),
+        response_format: config.response_format.clone(),
     }
 }
 
@@ -471,6 +472,7 @@ mod tests {
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
+            response_format: None,
         }
     }
 

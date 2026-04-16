@@ -159,6 +159,7 @@ impl BotService {
             trust_tier: None,
             agent_allowed_tools: persona.config.persona.tools.allowed_tools.clone(),
             prune_tool_history: false,
+            response_format: None,
         };
 
         // Execute the agent.

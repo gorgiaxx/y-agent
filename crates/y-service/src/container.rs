@@ -43,6 +43,8 @@ use crate::config::ServiceConfig;
 use crate::knowledge_service::KnowledgeService;
 use crate::skill_ingestion::SkillIngestionService;
 
+use y_mcp::McpConnectionManager;
+
 /// Embedded default taxonomy TOML (compiled into binary).
 const DEFAULT_TAXONOMY_TOML: &str = include_str!("../../../config/tool_taxonomy.toml");
 
@@ -177,6 +179,10 @@ pub struct ServiceContainer {
     /// Path to the bot persona directory (`~/.config/y-agent/persona/`).
     pub persona_dir: Option<PathBuf>,
 
+    // -- MCP ---------------------------------------------------------------
+    /// MCP connection manager for multi-server lifecycle.
+    pub mcp_manager: Arc<McpConnectionManager>,
+
     // -- File History (Rewind) ---------------------------------------------
     /// Per-session file history managers for rewind support.
     pub file_history_managers: crate::rewind::FileHistoryManagers,
@@ -309,6 +315,10 @@ impl ServiceContainer {
             });
         }
 
+        // 15. MCP connection manager (connections started later via
+        //     start_background_services).
+        let mcp_manager = Arc::new(McpConnectionManager::new(None));
+
         Ok(Self {
             provider_pool: RwLock::new(provider_pool),
             session_manager: sessions.session_manager,
@@ -344,6 +354,7 @@ impl ServiceContainer {
             pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
             persona_dir: config.persona_dir.clone(),
+            mcp_manager,
             file_history_managers: crate::rewind::create_file_history_managers(),
             data_dir: {
                 let db_path = std::path::Path::new(&config.storage.db_path);
@@ -522,10 +533,14 @@ tools = ["ToolSearch"]
         {
             let mut sys_prompt_provider = BuildSystemPromptProvider::with_venv_info(
                 default_template(),
-                builtin_section_store_with_overrides(config.prompts_dir.as_deref()),
+                builtin_section_store_with_overrides(
+                    config.prompts_dir.as_deref(),
+                    &config.runtime.default_backend,
+                ),
                 Arc::clone(&prompt_context),
                 SystemPromptConfig::default(),
                 venv_info,
+                config.runtime.default_backend.clone(),
             );
             sys_prompt_provider.set_prompts_dir(config.prompts_dir.clone());
             callable_agents_text = sys_prompt_provider.callable_agents_handle();
@@ -1103,6 +1118,7 @@ impl ServiceContainer {
         self.init_scheduler().await;
         self.init_callable_agents_text().await;
         self.init_knowledge_llm_services().await;
+        self.init_mcp_connections().await;
     }
 
     /// Wire LLM-backed knowledge services (tag generator, metadata
@@ -1131,6 +1147,49 @@ impl ServiceContainer {
         ks.set_summary_generator(summary_gen);
 
         tracing::info!("Knowledge LLM services wired (tagger, metadata, summarizer)");
+    }
+
+    /// Connect to configured MCP servers via the connection manager.
+    ///
+    /// Converts `McpServerConfig` entries from the tool config into
+    /// `McpServerConfigRef` and starts concurrent connections. Disabled
+    /// servers are skipped. Called as part of `start_background_services`.
+    async fn init_mcp_connections(self: &Arc<Self>) {
+        let mcp_configs = &self.tool_registry.config().mcp_servers;
+        if mcp_configs.is_empty() {
+            return;
+        }
+
+        let configs: Vec<y_mcp::McpServerConfigRef> = mcp_configs
+            .iter()
+            .filter(|c| c.enabled)
+            .map(|c| y_mcp::McpServerConfigRef {
+                name: c.name.clone(),
+                transport: c.transport.clone(),
+                command: c.command.clone(),
+                args: c.args.clone(),
+                url: c.url.clone(),
+                env: c.env.clone(),
+                headers: c.headers.clone(),
+                startup_timeout_secs: c.startup_timeout_secs,
+                tool_timeout_secs: c.tool_timeout_secs,
+                cwd: c.cwd.clone(),
+                bearer_token: c.bearer_token.clone(),
+            })
+            .collect();
+
+        if configs.is_empty() {
+            return;
+        }
+
+        let count = configs.len();
+        self.mcp_manager.connect_all(configs).await;
+        let connected = self.mcp_manager.connected_count().await;
+        info!(
+            total = count,
+            connected = connected,
+            "MCP server connections initialized"
+        );
     }
 
     /// Spawn per-provider tasks that drain metrics events and persist them.

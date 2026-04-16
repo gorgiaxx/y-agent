@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use y_core::agent::{AgentRunConfig, AgentRunOutput, AgentRunner, DelegationError};
 use y_core::provider::ToolCallingMode;
+use y_core::runtime::{RuntimeAdapter, RuntimeBackend};
 use y_core::types::{Message, Role};
 
 use crate::container::ServiceContainer;
@@ -33,12 +34,13 @@ pub(crate) fn build_subagent_system_prompt(
     base_prompt: &str,
     filtered_defs: &[y_core::tool::ToolDefinition],
     tool_calling_mode: ToolCallingMode,
+    runtime_backend: &RuntimeBackend,
 ) -> String {
     if filtered_defs.is_empty() {
         return base_prompt.to_string();
     }
 
-    let tool_protocol = y_prompt::PROMPT_TOOL_PROTOCOL;
+    let tool_protocol = y_prompt::tool_protocol_for(runtime_backend);
 
     match tool_calling_mode {
         ToolCallingMode::Native => {
@@ -117,8 +119,13 @@ impl AgentRunner for ServiceAgentRunner {
         // Augment the system prompt with tool protocol and available-tools
         // summary when the agent has tools. In Native mode the XML tool
         // protocol is omitted (~800 tokens saved).
-        let system_prompt =
-            build_subagent_system_prompt(&config.system_prompt, &filtered_defs, tool_calling_mode);
+        let runtime_backend = self.container.runtime_manager.backend();
+        let system_prompt = build_subagent_system_prompt(
+            &config.system_prompt,
+            &filtered_defs,
+            tool_calling_mode,
+            &runtime_backend,
+        );
 
         // Build messages: system_prompt + input as user message.
         let mut messages = Vec::with_capacity(2);
@@ -175,6 +182,7 @@ impl AgentRunner for ServiceAgentRunner {
             trust_tier: config.trust_tier,
             agent_allowed_tools: config.allowed_tools.clone(),
             prune_tool_history: config.prune_tool_history,
+            response_format: config.response_format.clone(),
         };
 
         let result = AgentService::execute(&self.container, &exec_config, None, None)

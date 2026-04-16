@@ -28,6 +28,7 @@ mod tool_handling;
 
 use uuid::Uuid;
 
+use y_core::provider::ResponseFormat;
 use y_core::provider::ToolCallingMode;
 use y_core::trust::TrustTier;
 use y_core::types::{Message, SessionId};
@@ -111,6 +112,11 @@ pub struct AgentExecutionConfig {
     /// summary in every tool-calling assistant message. Otherwise, removing
     /// old tool results would discard context instead of compressing it.
     pub prune_tool_history: bool,
+    /// Response format for structured output (`None` = default text).
+    ///
+    /// When set, the provider enforces the response conforms to the
+    /// specified format (e.g., a JSON Schema).
+    pub response_format: Option<ResponseFormat>,
 }
 
 /// Result of agent execution.
@@ -566,8 +572,12 @@ mod tests {
     #[test]
     fn test_subagent_prompt_unchanged_without_tools() {
         let base = "You are a test agent.";
-        let result =
-            subagent::build_subagent_system_prompt(base, &[], ToolCallingMode::PromptBased);
+        let result = subagent::build_subagent_system_prompt(
+            base,
+            &[],
+            ToolCallingMode::PromptBased,
+            &y_core::runtime::RuntimeBackend::Native,
+        );
         assert_eq!(result, base);
     }
 
@@ -575,8 +585,12 @@ mod tests {
     fn test_subagent_prompt_includes_protocol_and_summary() {
         let base = "You are a test agent.";
         let defs = vec![make_test_tool_def("ShellExec")];
-        let result =
-            subagent::build_subagent_system_prompt(base, &defs, ToolCallingMode::PromptBased);
+        let result = subagent::build_subagent_system_prompt(
+            base,
+            &defs,
+            ToolCallingMode::PromptBased,
+            &y_core::runtime::RuntimeBackend::Native,
+        );
 
         assert!(result.starts_with(base));
         assert!(result.contains("Tool Usage Protocol"));
@@ -588,7 +602,12 @@ mod tests {
     fn test_subagent_prompt_native_mode_returns_base_and_rules() {
         let base = "You are a test agent.";
         let defs = vec![make_test_tool_def("ShellExec")];
-        let result = subagent::build_subagent_system_prompt(base, &defs, ToolCallingMode::Native);
+        let result = subagent::build_subagent_system_prompt(
+            base,
+            &defs,
+            ToolCallingMode::Native,
+            &y_core::runtime::RuntimeBackend::Native,
+        );
 
         // Native mode: tools are sent via API field, prompt includes rules but no XML/summary.
         assert!(result.starts_with(base));
@@ -601,8 +620,12 @@ mod tests {
     fn test_subagent_prompt_preserves_base() {
         let base = "Custom system prompt with specific instructions.";
         let defs = vec![make_test_tool_def("FileRead")];
-        let result =
-            subagent::build_subagent_system_prompt(base, &defs, ToolCallingMode::PromptBased);
+        let result = subagent::build_subagent_system_prompt(
+            base,
+            &defs,
+            ToolCallingMode::PromptBased,
+            &y_core::runtime::RuntimeBackend::Native,
+        );
 
         assert!(result.starts_with(base));
         assert!(result.contains("FileRead"));
