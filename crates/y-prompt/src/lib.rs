@@ -31,7 +31,7 @@ pub use budget::{
 };
 pub use builtins::{
     builtin_section_store, builtin_section_store_with_overrides, default_template,
-    BUILTIN_PROMPT_FILES, PROMPT_TOOL_PROTOCOL,
+    tool_protocol_for, BUILTIN_PROMPT_FILES, PROMPT_TOOL_PROTOCOL, PROMPT_TOOL_PROTOCOL_REMOTE,
 };
 pub use section::{
     ContentSource, PromptContext, PromptSection, SectionCategory, SectionCondition, SectionId,

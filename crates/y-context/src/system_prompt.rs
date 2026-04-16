@@ -13,6 +13,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
+use y_core::runtime::RuntimeBackend;
 use y_prompt::{
     builtin_section_store_with_overrides, estimate_tokens, truncate_to_budget, PromptContext,
     PromptTemplate, SectionStore,
@@ -100,6 +101,8 @@ pub struct BuildSystemPromptProvider {
     venv_info: VenvPromptInfo,
     /// Path to the user prompts override directory (for hot-reload).
     prompts_dir: Option<PathBuf>,
+    /// Runtime backend used to select the tool-protocol variant.
+    runtime_backend: RuntimeBackend,
     /// Dynamic text listing user-callable agents. Injected from `ServiceContainer`
     /// and replaced into the `{{CALLABLE_AGENTS}}` placeholder in core.orchestration.
     callable_agents_text: Arc<RwLock<String>>,
@@ -120,6 +123,7 @@ impl BuildSystemPromptProvider {
             config,
             venv_info: VenvPromptInfo::default(),
             prompts_dir: None,
+            runtime_backend: RuntimeBackend::Native,
             callable_agents_text: Arc::new(RwLock::new(String::new())),
         }
     }
@@ -131,6 +135,7 @@ impl BuildSystemPromptProvider {
         prompt_context: Arc<RwLock<PromptContext>>,
         config: SystemPromptConfig,
         venv_info: VenvPromptInfo,
+        runtime_backend: RuntimeBackend,
     ) -> Self {
         Self {
             template,
@@ -139,6 +144,7 @@ impl BuildSystemPromptProvider {
             config,
             venv_info,
             prompts_dir: None,
+            runtime_backend,
             callable_agents_text: Arc::new(RwLock::new(String::new())),
         }
     }
@@ -154,7 +160,10 @@ impl BuildSystemPromptProvider {
     /// `SectionStore`. This is called when the user saves prompts in the
     /// GUI settings and is a no-op if `prompts_dir` was never set.
     pub async fn reload_store(&self) {
-        let new_store = builtin_section_store_with_overrides(self.prompts_dir.as_deref());
+        let new_store = builtin_section_store_with_overrides(
+            self.prompts_dir.as_deref(),
+            &self.runtime_backend,
+        );
         let mut guard = self.store.write().await;
         *guard = new_store;
         tracing::info!("Prompt section store hot-reloaded");
