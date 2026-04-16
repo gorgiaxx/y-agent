@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { MonacoEditor } from '../ui/MonacoEditor';
 
 interface PromptsTabProps {
   setToast: (toast: { message: string; type: 'success' | 'error' } | null) => void;
@@ -125,23 +126,22 @@ export function PromptsTab({
           </div>
 
           {/* Right detail panel -- prompt editor */}
-          <div className="sub-list-detail">
+          <div className="sub-list-detail sub-list-detail--editor">
             {promptLoading ? (
               <div className="section-loading">Loading...</div>
             ) : (
               <div className="toml-editor-wrap">
-                <textarea
-                  className="toml-editor prompt-editor"
+                <MonacoEditor
+                  className="prompt-editor-monaco"
                   value={promptContent}
-                  onChange={(e) => {
-                    const val = e.target.value;
+                  onChange={(val) => {
                     setPromptContent(val);
                     const filename = promptFiles[activePromptTab];
                     if (filename) {
                       setDirtyPrompts((prev) => ({ ...prev, [filename]: val }));
                     }
                   }}
-                  spellCheck={false}
+                  language="plaintext"
                   placeholder="Empty prompt. Type content here."
                 />
                 <div className="prompt-editor-actions">

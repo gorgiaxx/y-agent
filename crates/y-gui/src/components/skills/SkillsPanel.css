@@ -349,24 +349,20 @@
   background: var(--accent-subtle);
 }
 
-.skill-editor-textarea {
+.skill-editor-monaco {
   flex: 1;
   width: 100%;
-  padding: var(--space-md);
-  border: none;
-  background: var(--surface-primary);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.6;
-  resize: none;
-  outline: none;
-  box-sizing: border-box;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.skill-editor-textarea::placeholder {
-  color: var(--text-muted);
+.skill-editor-monaco > div {
+  height: 100% !important;
+}
+
+.skill-editor-monaco .monaco-editor,
+.skill-editor-monaco .monaco-editor .overflow-guard {
+  border-radius: 0 !important;
 }
 
 /* ---- Empty editor pane ---- */

@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Puzzle, FolderOpen, Trash2, ToggleLeft, ToggleRight, ChevronRight, File, Folder, Save } from 'lucide-react';
 import type { SkillDetail, SkillFileEntry } from '../../types';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { MonacoEditor } from '../ui/MonacoEditor';
+import { languageFromPath } from '../ui/languageFromPath';
 import './SkillsPanel.css';
 
 interface SkillsPanelProps {
@@ -183,6 +185,11 @@ export function SkillsPanel({
 
   const isDirty = fileContent !== originalContent;
 
+  const editorLanguage = useMemo(
+    () => (selectedFilePath ? languageFromPath(selectedFilePath) : 'plaintext'),
+    [selectedFilePath],
+  );
+
   // Empty state: no skill selected.
   if (!skillName) {
     return (
@@ -304,17 +311,12 @@ export function SkillsPanel({
                   {saving ? 'Saving...' : 'Save'}
                 </button>
               </div>
-              <textarea
-                className="skill-editor-textarea"
+              <MonacoEditor
+                className="skill-editor-monaco"
                 value={fileContent}
-                onChange={(e) => setFileContent(e.target.value)}
-                spellCheck={false}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-                    e.preventDefault();
-                    if (isDirty) handleSave();
-                  }
-                }}
+                onChange={(val) => setFileContent(val)}
+                language={editorLanguage}
+                onSave={isDirty ? handleSave : undefined}
               />
             </>
           ) : (

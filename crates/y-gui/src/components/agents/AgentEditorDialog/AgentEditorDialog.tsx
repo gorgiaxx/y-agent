@@ -4,7 +4,7 @@ import { Button } from '../../ui/Button';
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose } from '../../ui/Dialog';
 import { ScrollArea } from '../../ui/ScrollArea';
 import { Switch } from '../../ui/Switch';
-import { Textarea } from '../../ui/Input';
+import { MonacoEditor } from '../../ui/MonacoEditor';
 import type { AgentInfo, AgentToolInfo, PromptSectionInfo } from '../../../hooks/useAgents';
 import type { AgentDraft, EditorTab, EditorSurface } from '../types';
 import { EDITOR_TABS } from '../types';
@@ -194,12 +194,11 @@ export function AgentEditorDialog({
                       {rawPath ?? 'The content below will be saved as the agent definition TOML.'}
                     </span>
                   </div>
-                  <Textarea
-                    variant="mono"
+                  <MonacoEditor
                     value={rawToml}
-                    onChange={(event) => onRawTomlChange(event.target.value)}
-                    rows={20}
-                    className="min-h-[400px] text-11px"
+                    onChange={(val) => onRawTomlChange(val)}
+                    language="toml"
+                    height="400px"
                   />
                 </div>
               ) : (

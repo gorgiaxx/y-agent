@@ -319,6 +319,59 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  flex: 1;
+  min-height: 0;
+}
+
+.toml-editor {
+  width: 100%;
+  min-height: 340px;
+  padding: var(--space-md);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1.65;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  resize: vertical;
+  tab-size: 2;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.toml-editor:focus {
+  border-color: var(--border-focus);
+}
+
+.toml-editor[readonly] {
+  opacity: 0.75;
+  cursor: default;
+}
+
+/* Prompt editor (Monaco) */
+.prompt-editor-monaco {
+  flex: 1;
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.prompt-editor-monaco > div {
+  height: 100% !important;
+}
+
+.prompt-editor-monaco .monaco-editor,
+.prompt-editor-monaco .monaco-editor .overflow-guard {
+  border-radius: var(--radius-md) !important;
+}
+
+/* Sub-list detail variant with flex for Monaco editor */
+.sub-list-detail--editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .toml-editor {
@@ -402,15 +455,18 @@
   color: var(--text-muted);
 }
 
-/* ---- Prompt editor ---- */
-.prompt-editor {
+/* Prompt editor (Monaco) */
+.prompt-editor-monaco {
   min-height: 320px;
   max-height: 4000px;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.prompt-editor-monaco .monaco-editor,
+.prompt-editor-monaco .monaco-editor .overflow-guard {
+  border-radius: var(--radius-md) !important;
 }
 
 /* Prompt editor actions (Restore button) */
