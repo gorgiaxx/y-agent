@@ -41,7 +41,12 @@ export function WelcomePage({
     <div className="welcome-page">
       <div className="welcome-content">
         {/* Logo */}
-        <div className="welcome-logo">y</div>
+        <img
+          className="welcome-logo"
+          src="/logo-256x256.png"
+          alt="y-agent"
+          draggable={false}
+        />
 
         {/* Introduction */}
         <div className="welcome-intro">

@@ -31,15 +31,12 @@
 
 /* ---- Logo ---- */
 .welcome-logo {
-  font-family: var(--font-display);
-  font-style: italic;
-  font-size: 72px;
-  font-weight: 400;
-  color: var(--accent);
-  line-height: 1;
-  letter-spacing: -0.02em;
-  text-shadow: 0 0 40px var(--accent-glow), 0 0 80px var(--accent-glow);
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
   user-select: none;
+  pointer-events: none;
+  filter: drop-shadow(0 0 24px var(--accent-glow));
 }
 
 /* ---- Introduction ---- */
