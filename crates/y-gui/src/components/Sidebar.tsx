@@ -10,6 +10,7 @@ import {
 import type { SessionInfo, WorkspaceInfo } from '../types';
 import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
 import { NavSidebar, NavItem, NavSearch, NavDivider } from './common/NavSidebar';
+import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
 import './Sidebar.css';
 
 export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents' | 'settings';
@@ -42,6 +43,8 @@ export interface ChatSidebarProps {
 export interface NavSidebarPropsGroup {
   activeView: ViewType;
   onSelectView: (view: ViewType) => void;
+  activeSettingsTab: string | null;
+  onSelectSettingsTab: (tab: string) => void;
 }
 
 interface SidebarProps {
@@ -53,6 +56,17 @@ export function Sidebar({ chat, nav }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
   const goTo = (view: ViewType) => nav.onSelectView(view);
+
+  // When in settings view, swap the sidebar contents for the settings menu.
+  if (nav.activeView === 'settings') {
+    return (
+      <SettingsSidebarNav
+        activeTab={nav.activeSettingsTab}
+        onSelectTab={nav.onSelectSettingsTab}
+        onBack={() => goTo('chat')}
+      />
+    );
+  }
 
   return (
     <NavSidebar

@@ -13,12 +13,16 @@ import {
   BookOpen,
   FileText,
   Info,
+  ArrowLeft,
 } from 'lucide-react';
-import { NavSidebar, NavItem } from '../common/NavSidebar';
+import { NavSidebar, NavItem, NavDivider } from '../common/NavSidebar';
 
 interface SettingsSidebarNavProps {
   activeTab: string | null;
   onSelectTab: (tab: string) => void;
+  /** When provided, renders a back button at the top (used when the
+   *  settings menu replaces the main nav sidebar). */
+  onBack?: () => void;
 }
 
 const SETTINGS_ICON_MAP: Record<string, (props: { size: number }) => ReactElement> = {
@@ -53,9 +57,19 @@ const SETTINGS_CATEGORIES: { key: string; label: string }[] = [
   { key: 'about', label: 'About' },
 ];
 
-export function SettingsSidebarNav({ activeTab, onSelectTab }: SettingsSidebarNavProps) {
+export function SettingsSidebarNav({ activeTab, onSelectTab, onBack }: SettingsSidebarNavProps) {
   return (
-    <NavSidebar variant="narrow">
+    <NavSidebar>
+      {onBack && (
+        <>
+          <NavItem
+            icon={<ArrowLeft size={15} />}
+            label="Back"
+            onClick={onBack}
+          />
+          <NavDivider />
+        </>
+      )}
       {SETTINGS_CATEGORIES.map((cat) => {
         const iconFn = SETTINGS_ICON_MAP[cat.key];
         const icon = iconFn ? iconFn({ size: 15 }) : <Settings size={15} />;

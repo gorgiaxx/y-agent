@@ -82,6 +82,8 @@ export function MainLayout() {
               navProps.setInputExpanded(false);
             }
           },
+          activeSettingsTab: navProps.activeSettingsTab,
+          onSelectSettingsTab: (t: string) => navProps.setActiveSettingsTab(t as never),
         }}
         chat={{
           sessions: sessionHooks.sessions,
