@@ -157,32 +157,28 @@
 .input-toolbar {
   display: flex;
   align-items: center;
+  gap: 2px;
   padding: 4px var(--space-sm);
   border-top: 1px solid var(--border);
   user-select: none;
-  min-width: 0;
-}
-
-.input-toolbar-scroll {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: 1 1 auto;
-  min-width: 0;
   overflow-x: auto;
-  overflow-y: clip;
-  overflow-clip-margin: 600px;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
-.input-toolbar-scroll::-webkit-scrollbar {
+.input-toolbar::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;
 }
 
-.input-toolbar-scroll > * {
+.input-toolbar--dropdown-open {
+  overflow: visible;
+}
+
+.input-toolbar > * {
   flex-shrink: 0;
 }
 

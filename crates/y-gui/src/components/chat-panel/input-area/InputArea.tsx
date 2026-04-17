@@ -548,8 +548,13 @@ export function InputArea({
         )}
 
         {/* Toolbar row with action buttons -- inside the input border */}
-        <div className="input-toolbar">
-          <div className="input-toolbar-scroll">
+        <div
+          className={`input-toolbar${
+            providerDropdownOpen || kbPickerOpen || thinkingDropdownOpen || mcpDropdownOpen
+              ? ' input-toolbar--dropdown-open'
+              : ''
+          }`}
+        >
 
           {/* (b) Model / provider selection */}
           <div className="toolbar-btn-group" ref={providerDropdownRef}>
@@ -810,7 +815,6 @@ export function InputArea({
           >
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
-          </div>
         </div>
       </div>
 
