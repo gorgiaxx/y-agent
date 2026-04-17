@@ -82,7 +82,9 @@ impl ReconnectPolicy {
     pub fn backoff_delay(&self, attempt: u32) -> Duration {
         let attempt = attempt.saturating_sub(1);
         let millis = (self.initial_delay.as_millis() as f64)
-            * self.multiplier.powi(i32::try_from(attempt).unwrap_or(i32::MAX));
+            * self
+                .multiplier
+                .powi(i32::try_from(attempt).unwrap_or(i32::MAX));
         let capped = millis.min(self.max_delay.as_millis() as f64);
         Duration::from_millis(capped as u64)
     }

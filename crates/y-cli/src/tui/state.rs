@@ -3,11 +3,22 @@
 //! Contains all state types used by the TUI: panel focus, interaction mode,
 //! sidebar view, chat messages, and the top-level `AppState`.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use chrono::{DateTime, Utc};
 
 use crate::tui::selection::TextSelection;
+
+// TurnMeta
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnMeta {
+    pub model: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+    pub context_window: usize,
+    pub context_tokens_used: u64,
+}
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -257,6 +268,7 @@ pub struct AppState {
     pub selected_provider_id: Option<String>,
     /// Monotonic tick counter for frame-based animations (incremented every 250ms).
     pub tick_counter: u64,
+    pub turn_meta_cache: HashMap<String, TurnMeta>,
 }
 
 impl Default for AppState {
@@ -291,6 +303,7 @@ impl Default for AppState {
             page_height: 20,
             selected_provider_id: None,
             tick_counter: 0,
+            turn_meta_cache: HashMap::new(),
         }
     }
 }
@@ -891,5 +904,83 @@ mod tests {
         state.last_input_tokens = 1500;
         let pct = state.context_usage_percent();
         assert!(pct > 100.0, "expected >100%, got {pct}");
+    }
+
+    // T-TURNMETA-01: TurnMeta struct construction.
+    #[test]
+    fn test_turn_meta_creation() {
+        let meta = TurnMeta {
+            model: "gpt-4o".into(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_usd: 0.002,
+            context_window: 128_000,
+            context_tokens_used: 100,
+        };
+        assert_eq!(meta.model, "gpt-4o");
+        assert_eq!(meta.input_tokens, 100);
+        assert_eq!(meta.output_tokens, 50);
+        assert!((meta.cost_usd - 0.002).abs() < f64::EPSILON);
+        assert_eq!(meta.context_window, 128_000);
+        assert_eq!(meta.context_tokens_used, 100);
+    }
+
+    // T-TURNMETA-02: AppState default has empty turn_meta_cache.
+    #[test]
+    fn test_app_state_default_turn_meta_cache_empty() {
+        let state = AppState::new();
+        assert!(state.turn_meta_cache.is_empty());
+    }
+
+    // T-TURNMETA-03: TurnMeta can be inserted and retrieved from cache.
+    #[test]
+    fn test_turn_meta_cache_insert_get() {
+        let mut state = AppState::new();
+        let meta = TurnMeta {
+            model: "gpt-4o".into(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_usd: 0.002,
+            context_window: 128_000,
+            context_tokens_used: 100,
+        };
+        state
+            .turn_meta_cache
+            .insert("session-1".into(), meta.clone());
+        assert_eq!(state.turn_meta_cache.get("session-1"), Some(&meta));
+        assert!(state.turn_meta_cache.get("unknown").is_none());
+    }
+
+    // T-TURNMETA-04: TurnMeta cache supports multiple sessions.
+    #[test]
+    fn test_turn_meta_cache_multiple_sessions() {
+        let mut state = AppState::new();
+        let meta1 = TurnMeta {
+            model: "gpt-4o".into(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_usd: 0.002,
+            context_window: 128_000,
+            context_tokens_used: 100,
+        };
+        let meta2 = TurnMeta {
+            model: "claude-3".into(),
+            input_tokens: 200,
+            output_tokens: 100,
+            cost_usd: 0.005,
+            context_window: 200_000,
+            context_tokens_used: 200,
+        };
+        state.turn_meta_cache.insert("session-1".into(), meta1);
+        state.turn_meta_cache.insert("session-2".into(), meta2);
+        assert_eq!(state.turn_meta_cache.len(), 2);
+        assert_eq!(
+            state.turn_meta_cache.get("session-1").unwrap().model,
+            "gpt-4o"
+        );
+        assert_eq!(
+            state.turn_meta_cache.get("session-2").unwrap().model,
+            "claude-3"
+        );
     }
 }

@@ -133,7 +133,7 @@ html.custom-decorations[data-platform="macos"] .nav-sidebar input {
 }
 
 .nav-item--primary:hover {
-  background: var(--surface-hover);
+  background: var(--accent-subtle-hover, rgba(56, 139, 253, 0.2));
 }
 
 .nav-item--primary .nav-item-icon {
