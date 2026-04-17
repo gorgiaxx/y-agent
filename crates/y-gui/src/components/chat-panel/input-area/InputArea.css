@@ -222,10 +222,6 @@
   color: var(--error);
 }
 
-.toolbar-btn-label {
-  display: none;
-}
-
 /* Hover tooltip bubble */
 .has-tooltip {
   position: relative;

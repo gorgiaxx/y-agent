@@ -232,9 +232,8 @@
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-lg);
-  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  background: var(--surface-secondary);
+  background: var(--surface-primary);
   height: 52px;
 }
 

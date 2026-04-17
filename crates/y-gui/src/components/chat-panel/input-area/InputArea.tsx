@@ -719,9 +719,6 @@ export function InputArea({
               disabled={disabled}
             >
               <Cpu size={14} />
-              <span className="toolbar-btn-label">
-                {mcpMode === 'manual' ? `manual (${selectedMcpServers.length})` : mcpMode}
-              </span>
             </button>
             {mcpDropdownOpen && (
               <div className="toolbar-mcp-dropdown">
