@@ -68,7 +68,7 @@ export function AgentsView() {
   const [mcpModeBySession, setMcpModeBySession] = useState<Record<string, McpMode>>({});
   const [mcpServersBySession, setMcpServersBySession] = useState<Record<string, string[]>>({});
   const mcpSessionKey = agentActiveSessionId ?? '__no_session__';
-  const mcpMode: McpMode = mcpModeBySession[mcpSessionKey] ?? 'auto';
+  const mcpMode: McpMode = mcpModeBySession[mcpSessionKey] ?? 'disabled';
   const selectedMcpServers = mcpServersBySession[mcpSessionKey] ?? [];
   const { servers: mcpServers } = useMcpServers();
   const mcpServerList = mcpServers.map((s) => ({ name: s.name, disabled: s.disabled }));

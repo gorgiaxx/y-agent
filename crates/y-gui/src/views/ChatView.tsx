@@ -37,7 +37,7 @@ export function ChatView() {
   const [mcpModeBySession, setMcpModeBySession] = useState<Record<string, McpMode>>({});
   const [mcpServersBySession, setMcpServersBySession] = useState<Record<string, string[]>>({});
   const mcpSessionKey = sessionHooks.activeSessionId ?? '__no_session__';
-  const mcpMode: McpMode = mcpModeBySession[mcpSessionKey] ?? 'auto';
+  const mcpMode: McpMode = mcpModeBySession[mcpSessionKey] ?? 'disabled';
   const selectedMcpServers = mcpServersBySession[mcpSessionKey] ?? [];
   const { servers: mcpServers } = useMcpServers();
   const mcpServerList = mcpServers.map((s) => ({ name: s.name, disabled: s.disabled }));

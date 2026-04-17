@@ -131,7 +131,7 @@ export function InputArea({
   onCustomPromptChange,
   rewindDraft,
   onRewindDraftConsumed,
-  mcpMode = 'auto',
+  mcpMode = 'disabled',
   onMcpModeChange,
   mcpServerList = [],
   selectedMcpServers = [],
