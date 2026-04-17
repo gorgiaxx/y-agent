@@ -439,6 +439,7 @@ RUST_LOG=info
 ```mermaid
 flowchart TD
     subgraph CLIENT ["Client"]
+        direction LR
         CLI["CLI / TUI"]
         GUI["Tauri v2 GUI"]
         API["Web API (axum)"]
@@ -446,6 +447,7 @@ flowchart TD
     end
 
     subgraph SERVICE ["Service"]
+        direction LR
         Chat["Chat"]
         Agent["Agent"]
         Bot["Bot"]
@@ -454,6 +456,7 @@ flowchart TD
     end
 
     subgraph CORE ["Core"]
+        direction LR
         Router["Request Router"]
         Orchestrator["Agent Orchestrator"]
         DAG["DAG Engine"]
@@ -461,6 +464,7 @@ flowchart TD
     end
 
     subgraph MIDDLE ["Middleware"]
+        direction LR
         CtxMW["Context Pipeline"]
         ToolMW["Tool Middleware"]
         LlmMW["LLM Middleware"]
@@ -468,6 +472,7 @@ flowchart TD
     end
 
     subgraph EXEC ["Execution"]
+        direction LR
         Providers["LLM Provider Pool"]
         ToolReg["Tool Registry"]
         MCP["MCP Servers"]
@@ -476,6 +481,7 @@ flowchart TD
     end
 
     subgraph STATE ["State"]
+        direction LR
         Session["Session Tree"]
         STM["Short-Term Memory"]
         LTM["Long-Term Memory"]
@@ -484,6 +490,7 @@ flowchart TD
     end
 
     subgraph INFRA ["Infrastructure"]
+        direction LR
         SQLite[("SQLite")]
         PG[("PostgreSQL")]
         Qdrant[("Qdrant")]
@@ -492,10 +499,8 @@ flowchart TD
     CLIENT --> SERVICE
     SERVICE --> CORE
     CORE --> MIDDLE
-    MIDDLE --> EXEC
-    MIDDLE --> STATE
-    STATE --> INFRA
-    EXEC --> INFRA
+    MIDDLE --> EXEC & STATE
+    EXEC & STATE --> INFRA
 
     style CLIENT fill:#e8f0fe,stroke:#4285f4,color:#1a73e8
     style SERVICE fill:#e8f5e9,stroke:#34a853,color:#1e8e3e
