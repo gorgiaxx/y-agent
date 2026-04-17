@@ -62,6 +62,12 @@ pub struct McpServerConfig {
     /// Blacklist of tool names to hide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disabled_tools: Option<Vec<String>>,
+    /// Whether to automatically reconnect on unexpected disconnect.
+    #[serde(default = "default_true")]
+    pub auto_reconnect: bool,
+    /// Maximum reconnection attempts before giving up.
+    #[serde(default = "default_max_reconnect_attempts")]
+    pub max_reconnect_attempts: u32,
 }
 
 fn default_true() -> bool {
@@ -74,6 +80,10 @@ fn default_startup_timeout() -> u64 {
 
 fn default_tool_timeout() -> u64 {
     120
+}
+
+fn default_max_reconnect_attempts() -> u32 {
+    5
 }
 
 /// Result of MCP tool discovery for a single server.

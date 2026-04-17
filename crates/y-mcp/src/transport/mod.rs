@@ -28,19 +28,22 @@ pub struct JsonRpcRequest {
 }
 
 /// A JSON-RPC 2.0 response.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
     pub id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
 }
 
 /// A JSON-RPC 2.0 error object.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct JsonRpcError {
     pub code: i32,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
 }
 
@@ -71,10 +74,23 @@ pub struct IncomingNotification {
 /// `notifications/tools/list_changed`).
 pub type NotificationHandler = Arc<dyn Fn(&str, Option<Value>) + Send + Sync>;
 
+/// Handler for server-initiated requests (e.g., `roots/list`).
+///
+/// Returns either a JSON result or a JSON-RPC error object.
+pub type RequestHandler = Arc<
+    dyn Fn(
+            String,
+            Option<Value>,
+        ) -> futures::future::BoxFuture<'static, Result<Value, JsonRpcError>>
+        + Send
+        + Sync,
+>;
+
 /// Raw JSON message from the server, before type discrimination.
 ///
 /// Used by the stdio reader to decide whether an incoming line is a response
-/// (has `id`) or a notification (has `method`, no `id`).
+/// (has `id`, no `method`), a notification (has `method`, no `id`), or a
+/// server-initiated request (has both `id` and `method`).
 #[derive(Debug, serde::Deserialize)]
 struct RawJsonRpcMessage {
     id: Option<u64>,
@@ -126,6 +142,18 @@ pub trait McpTransport: Send + Sync {
     /// The default implementation is a no-op for transports that do not support
     /// server-initiated notifications (e.g., HTTP).
     fn set_notification_handler(&self, _handler: NotificationHandler) {}
+
+    /// Set a handler for incoming server-initiated requests.
+    ///
+    /// The default implementation is a no-op for transports that do not support
+    /// server-initiated requests (e.g., HTTP).
+    fn set_request_handler(&self, _handler: RequestHandler) {}
+
+    /// Register a channel to be notified when the transport disconnects
+    /// unexpectedly (e.g., stdio child process exits).
+    ///
+    /// The default implementation is a no-op.
+    fn set_disconnect_signal(&self, _tx: tokio::sync::mpsc::UnboundedSender<()>) {}
 }
 
 #[cfg(test)]

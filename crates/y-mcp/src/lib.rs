@@ -24,10 +24,14 @@ pub mod transport;
 
 // Re-export primary types.
 pub use auth::{McpAuthStore, McpAuthTokens};
-pub use client::McpClient;
+pub use client::{
+    GetPromptResult, McpClient, McpPrompt, McpResource, McpRoot, McpToolInfo, PromptArgument,
+    PromptMessage, ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
+};
 pub use error::McpError;
-pub use manager::{McpConnectionManager, McpServerConfigRef, McpServerStatus};
+pub use manager::{McpConnectionManager, McpServerConfigRef, McpServerStatus, ReconnectPolicy};
 pub use tool_adapter::McpToolAdapter;
 pub use transport::{
-    HttpTransport, HttpTransportBuilder, McpTransport, NotificationHandler, StdioTransport,
+    HttpTransport, HttpTransportBuilder, McpTransport, NotificationHandler, RequestHandler,
+    StdioTransport,
 };

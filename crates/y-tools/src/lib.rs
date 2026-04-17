@@ -28,6 +28,7 @@ pub mod executor;
 pub mod formatter;
 pub mod index;
 pub mod mcp_integration;
+pub mod mcp_toml;
 pub mod parser;
 pub mod rate_limiter;
 pub mod registry;

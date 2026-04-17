@@ -15,8 +15,8 @@ use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
 use super::{
-    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, McpTransport, NotificationHandler,
-    RawJsonRpcMessage,
+    JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, McpTransport,
+    NotificationHandler, RawJsonRpcMessage, RequestHandler,
 };
 use crate::error::McpError;
 
@@ -28,10 +28,12 @@ pub struct StdioTransport {
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>>,
     notification_handler: Arc<Mutex<Option<NotificationHandler>>>,
+    request_handler: Arc<Mutex<Option<RequestHandler>>>,
+    disconnect_signal: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>>,
     reader_handle: Mutex<Option<JoinHandle<()>>>,
     stderr_handle: Mutex<Option<JoinHandle<()>>>,
     child: Mutex<Option<Child>>,
-    closed: AtomicBool,
+    closed: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for StdioTransport {
@@ -93,16 +95,27 @@ impl StdioTransport {
 
         let notification_handler: Arc<Mutex<Option<NotificationHandler>>> =
             Arc::new(Mutex::new(None));
+        let request_handler: Arc<Mutex<Option<RequestHandler>>> = Arc::new(Mutex::new(None));
+        let disconnect_signal: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>> =
+            Arc::new(Mutex::new(None));
+        let closed_flag = Arc::new(AtomicBool::new(false));
 
-        // Background task: read stdout lines and route responses/notifications.
+        // Shared stdin handle for both outgoing writes and reader-task responses.
+        let stdin = Arc::new(Mutex::new(stdin));
+
+        // Background task: read stdout lines and route responses/notifications/requests.
         let reader_pending = Arc::clone(&pending);
         let reader_notif = Arc::clone(&notification_handler);
+        let reader_req = Arc::clone(&request_handler);
+        let reader_stdin = Arc::clone(&stdin);
+        let reader_disconnect = Arc::clone(&disconnect_signal);
+        let reader_closed = Arc::clone(&closed_flag);
         let reader_handle = tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                // Peek at the message to decide: response (has id) or notification
-                // (has method, no id).
+                // Peek at the message to discriminate: response (id only),
+                // notification (method only), or server-initiated request (both).
                 let raw: RawJsonRpcMessage = match serde_json::from_str(&line) {
                     Ok(r) => r,
                     Err(e) => {
@@ -115,41 +128,84 @@ impl StdioTransport {
                     }
                 };
 
-                if let Some(id) = raw.id {
-                    // This is a response.
-                    let resp: JsonRpcResponse = match serde_json::from_str(&line) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            debug!(
-                                error = %e,
-                                "failed to parse JSON-RPC response, skipping"
-                            );
-                            continue;
+                match (raw.id, raw.method) {
+                    (Some(id), Some(method)) => {
+                        // Server-initiated request.
+                        let params: Option<serde_json::Value> =
+                            serde_json::from_str::<serde_json::Value>(&line)
+                                .ok()
+                                .and_then(|v| v.get("params").cloned());
+                        let handler_opt = reader_req.lock().await.clone();
+                        let stdin_for_reply = Arc::clone(&reader_stdin);
+                        tokio::spawn(async move {
+                            let result = match handler_opt {
+                                Some(handler) => handler(method.clone(), params).await,
+                                None => Err(JsonRpcError {
+                                    code: -32601,
+                                    message: format!("method not found: {method}"),
+                                    data: None,
+                                }),
+                            };
+                            let resp = JsonRpcResponse {
+                                jsonrpc: "2.0".into(),
+                                id,
+                                result: result.as_ref().ok().cloned(),
+                                error: result.err(),
+                            };
+                            if let Ok(data) = serde_json::to_vec(&resp) {
+                                let mut guard = stdin_for_reply.lock().await;
+                                let _ = guard.write_all(&data).await;
+                                let _ = guard.write_all(b"\n").await;
+                                let _ = guard.flush().await;
+                            }
+                        });
+                    }
+                    (Some(id), None) => {
+                        // Response to one of our pending requests.
+                        let resp: JsonRpcResponse = match serde_json::from_str(&line) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                debug!(
+                                    error = %e,
+                                    "failed to parse JSON-RPC response, skipping"
+                                );
+                                continue;
+                            }
+                        };
+                        let mut map = reader_pending.lock().await;
+                        if let Some(tx) = map.remove(&id) {
+                            let _ = tx.send(resp);
+                        } else {
+                            debug!(id, "received response for unknown request ID");
                         }
-                    };
-                    let mut map = reader_pending.lock().await;
-                    if let Some(tx) = map.remove(&id) {
-                        let _ = tx.send(resp);
-                    } else {
-                        debug!(id, "received response for unknown request ID");
                     }
-                } else if let Some(method) = raw.method {
-                    // This is a server notification.
-                    let params: Option<serde_json::Value> =
-                        serde_json::from_str::<serde_json::Value>(&line)
-                            .ok()
-                            .and_then(|v| v.get("params").cloned());
-                    debug!(method = %method, "received server notification");
-                    if let Some(handler) = reader_notif.lock().await.as_ref() {
-                        handler(&method, params);
+                    (None, Some(method)) => {
+                        // Server notification.
+                        let params: Option<serde_json::Value> =
+                            serde_json::from_str::<serde_json::Value>(&line)
+                                .ok()
+                                .and_then(|v| v.get("params").cloned());
+                        debug!(method = %method, "received server notification");
+                        if let Some(handler) = reader_notif.lock().await.as_ref() {
+                            handler(&method, params);
+                        }
                     }
-                } else {
-                    debug!(line = %line, "received unrecognized JSON-RPC message");
+                    (None, None) => {
+                        debug!(line = %line, "received unrecognized JSON-RPC message");
+                    }
                 }
             }
             // stdout closed -- clear all pending requests so they get RecvError.
             let mut map = reader_pending.lock().await;
             map.clear();
+            drop(map);
+
+            // Signal disconnect if not already closed intentionally.
+            if !reader_closed.load(Ordering::Acquire) {
+                if let Some(tx) = reader_disconnect.lock().await.as_ref() {
+                    let _ = tx.send(());
+                }
+            }
         });
 
         // Background task: log stderr lines.
@@ -162,13 +218,15 @@ impl StdioTransport {
         });
 
         Ok(Self {
-            stdin: Arc::new(Mutex::new(stdin)),
+            stdin,
             pending,
             notification_handler,
+            request_handler,
+            disconnect_signal,
             reader_handle: Mutex::new(Some(reader_handle)),
             stderr_handle: Mutex::new(Some(stderr_handle)),
             child: Mutex::new(Some(child)),
-            closed: AtomicBool::new(false),
+            closed: closed_flag,
         })
     }
 
@@ -273,6 +331,18 @@ impl McpTransport for StdioTransport {
         // typically set once during setup before any messages arrive.
         if let Ok(mut guard) = self.notification_handler.try_lock() {
             *guard = Some(handler);
+        }
+    }
+
+    fn set_request_handler(&self, handler: RequestHandler) {
+        if let Ok(mut guard) = self.request_handler.try_lock() {
+            *guard = Some(handler);
+        }
+    }
+
+    fn set_disconnect_signal(&self, tx: tokio::sync::mpsc::UnboundedSender<()>) {
+        if let Ok(mut guard) = self.disconnect_signal.try_lock() {
+            *guard = Some(tx);
         }
     }
 }

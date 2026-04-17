@@ -1,17 +1,21 @@
 //! MCP Connection Manager: lifecycle management for multiple MCP servers.
 //!
-//! Provides concurrent startup, status tracking, aggregated tool listing,
-//! tool call routing, and `ToolListChanged` notification handling.
+//! Provides concurrent startup, status tracking, aggregated tool/resource/prompt
+//! listing, call routing, notification dispatch, and automatic reconnection
+//! with exponential backoff.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
+use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::auth::McpAuthStore;
-use crate::client::{McpClient, McpToolInfo};
+use crate::client::{
+    GetPromptResult, McpClient, McpPrompt, McpResource, McpToolInfo, ReadResourceResult,
+};
 use crate::error::McpError;
 use crate::transport::{HttpTransport, McpTransport, NotificationHandler, StdioTransport};
 
@@ -22,6 +26,8 @@ pub enum McpServerStatus {
     Connected,
     /// Connection attempt in progress.
     Connecting,
+    /// Reconnection in progress after an unexpected disconnect.
+    Reconnecting { attempt: u32, next_delay_ms: u64 },
     /// Not connected (never started or cleanly disconnected).
     Disconnected,
     /// Connection or initialization failed.
@@ -35,10 +41,50 @@ impl std::fmt::Display for McpServerStatus {
         match self {
             Self::Connected => write!(f, "connected"),
             Self::Connecting => write!(f, "connecting"),
+            Self::Reconnecting {
+                attempt,
+                next_delay_ms,
+            } => write!(
+                f,
+                "reconnecting (attempt {attempt}, next in {next_delay_ms}ms)"
+            ),
             Self::Disconnected => write!(f, "disconnected"),
             Self::Failed { error } => write!(f, "failed: {error}"),
             Self::Disabled => write!(f, "disabled"),
         }
+    }
+}
+
+/// Reconnection policy: exponential backoff with bounded attempts.
+#[derive(Debug, Clone)]
+pub struct ReconnectPolicy {
+    pub enabled: bool,
+    pub max_retries: u32,
+    pub initial_delay: Duration,
+    pub max_delay: Duration,
+    pub multiplier: f64,
+}
+
+impl Default for ReconnectPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_retries: 5,
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(30),
+            multiplier: 2.0,
+        }
+    }
+}
+
+impl ReconnectPolicy {
+    /// Compute the delay before the given attempt number (1-indexed).
+    pub fn backoff_delay(&self, attempt: u32) -> Duration {
+        let attempt = attempt.saturating_sub(1);
+        let millis = (self.initial_delay.as_millis() as f64)
+            * self.multiplier.powi(i32::try_from(attempt).unwrap_or(i32::MAX));
+        let capped = millis.min(self.max_delay.as_millis() as f64);
+        Duration::from_millis(capped as u64)
     }
 }
 
@@ -47,8 +93,10 @@ struct ServerState {
     client: Arc<McpClient>,
     status: McpServerStatus,
     tools: Vec<McpToolInfo>,
-    #[allow(dead_code)] // kept for reconnection support
+    resources: Vec<McpResource>,
+    prompts: Vec<McpPrompt>,
     config: McpServerConfigRef,
+    reconnect_attempt: u32,
 }
 
 /// Minimal config reference stored alongside each server state.
@@ -67,15 +115,38 @@ pub struct McpServerConfigRef {
     pub tool_timeout_secs: u64,
     pub cwd: Option<String>,
     pub bearer_token: Option<String>,
+    /// Whether to auto-reconnect on unexpected disconnect.
+    pub auto_reconnect: bool,
+    /// Maximum reconnection attempts before giving up.
+    pub max_reconnect_attempts: u32,
+}
+
+impl Default for McpServerConfigRef {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            transport: String::new(),
+            command: None,
+            args: Vec::new(),
+            url: None,
+            env: HashMap::new(),
+            headers: HashMap::new(),
+            startup_timeout_secs: 30,
+            tool_timeout_secs: 120,
+            cwd: None,
+            bearer_token: None,
+            auto_reconnect: true,
+            max_reconnect_attempts: 5,
+        }
+    }
 }
 
 /// Central orchestrator for multiple MCP server connections.
-///
-/// Manages connection lifecycle, tool caching, and call routing
-/// across all configured MCP servers.
 pub struct McpConnectionManager {
     servers: RwLock<HashMap<String, ServerState>>,
     auth_store: Option<McpAuthStore>,
+    supervisors: RwLock<Vec<JoinHandle<()>>>,
+    reconnect_policy: ReconnectPolicy,
 }
 
 impl McpConnectionManager {
@@ -84,14 +155,20 @@ impl McpConnectionManager {
         Self {
             servers: RwLock::new(HashMap::new()),
             auth_store,
+            supervisors: RwLock::new(Vec::new()),
+            reconnect_policy: ReconnectPolicy::default(),
         }
     }
 
+    /// Set the global reconnect policy.
+    #[must_use]
+    pub fn with_reconnect_policy(mut self, policy: ReconnectPolicy) -> Self {
+        self.reconnect_policy = policy;
+        self
+    }
+
     /// Connect to multiple servers concurrently.
-    ///
-    /// Each server is started in a separate task. Failures are logged
-    /// and reflected in the server status; they do not abort other connections.
-    pub async fn connect_all(&self, configs: Vec<McpServerConfigRef>) {
+    pub async fn connect_all(self: &Arc<Self>, configs: Vec<McpServerConfigRef>) {
         let mut set = tokio::task::JoinSet::new();
 
         for config in configs {
@@ -110,7 +187,7 @@ impl McpConnectionManager {
                 .await;
 
                 match result {
-                    Ok(Ok((client, tools))) => (name, config, Ok((client, tools))),
+                    Ok(Ok(built)) => (name, config, Ok(built)),
                     Ok(Err(e)) => (name, config, Err(e.to_string())),
                     Err(_) => (
                         name,
@@ -126,22 +203,15 @@ impl McpConnectionManager {
 
         while let Some(result) = set.join_next().await {
             match result {
-                Ok((name, config, Ok((client, tools)))) => {
+                Ok((name, config, Ok(built))) => {
                     info!(
                         server = %name,
-                        tool_count = tools.len(),
+                        tool_count = built.tools.len(),
+                        resource_count = built.resources.len(),
+                        prompt_count = built.prompts.len(),
                         "MCP server connected"
                     );
-                    let mut servers = self.servers.write().await;
-                    servers.insert(
-                        name,
-                        ServerState {
-                            client,
-                            status: McpServerStatus::Connected,
-                            tools,
-                            config,
-                        },
-                    );
+                    self.install_server(name, config, built).await;
                 }
                 Ok((name, config, Err(error))) => {
                     warn!(server = %name, %error, "MCP server connection failed");
@@ -156,7 +226,10 @@ impl McpConnectionManager {
                                 error: error.clone(),
                             },
                             tools: Vec::new(),
+                            resources: Vec::new(),
+                            prompts: Vec::new(),
                             config,
+                            reconnect_attempt: 0,
                         },
                     );
                 }
@@ -164,6 +237,151 @@ impl McpConnectionManager {
                     warn!(error = %e, "MCP server connection task panicked");
                 }
             }
+        }
+    }
+
+    /// Install a freshly-connected server into the state map and wire up its
+    /// notification handler and disconnect supervisor.
+    ///
+    /// Returns a boxed future to break recursive async cycles with
+    /// `reconnect -> install_server`.
+    fn install_server(
+        self: &Arc<Self>,
+        name: String,
+        config: McpServerConfigRef,
+        built: ConnectedServer,
+    ) -> futures::future::BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let ConnectedServer {
+                client,
+                tools,
+                resources,
+                prompts,
+                disconnect_rx,
+            } = built;
+
+            // Register the unified notification dispatcher.
+            client
+                .set_notification_handler(notification_dispatcher(Arc::clone(self), name.clone()));
+
+            // Spawn supervisor task if disconnect detection is available.
+            if let Some(rx) = disconnect_rx {
+                let mgr = Arc::clone(self);
+                let supervised_name = name.clone();
+                let handle = tokio::spawn(async move {
+                    let mut rx = rx;
+                    if rx.recv().await.is_some() {
+                        warn!(server = %supervised_name, "MCP transport disconnected");
+                        mgr.handle_disconnect(&supervised_name).await;
+                    }
+                });
+                self.supervisors.write().await.push(handle);
+            }
+
+            let mut servers = self.servers.write().await;
+            servers.insert(
+                name,
+                ServerState {
+                    client,
+                    status: McpServerStatus::Connected,
+                    tools,
+                    resources,
+                    prompts,
+                    config,
+                    reconnect_attempt: 0,
+                },
+            );
+        })
+    }
+
+    /// Called by the supervisor when a transport unexpectedly disconnects.
+    async fn handle_disconnect(self: &Arc<Self>, server_name: &str) {
+        let should_reconnect = {
+            let servers = self.servers.read().await;
+            servers
+                .get(server_name)
+                .is_some_and(|s| s.config.auto_reconnect && self.reconnect_policy.enabled)
+        };
+
+        if !should_reconnect {
+            let mut servers = self.servers.write().await;
+            if let Some(state) = servers.get_mut(server_name) {
+                state.status = McpServerStatus::Disconnected;
+                state.tools.clear();
+                state.resources.clear();
+                state.prompts.clear();
+            }
+            return;
+        }
+
+        self.reconnect(server_name).await;
+    }
+
+    /// Attempt to reconnect a server, applying the configured backoff policy.
+    pub async fn reconnect(self: &Arc<Self>, server_name: &str) {
+        let config = {
+            let servers = self.servers.read().await;
+            match servers.get(server_name) {
+                Some(s) => s.config.clone(),
+                None => return,
+            }
+        };
+
+        let max_retries = config
+            .max_reconnect_attempts
+            .min(self.reconnect_policy.max_retries);
+        let auth_store = self
+            .auth_store
+            .as_ref()
+            .map(|s| McpAuthStore::new(s.path().to_path_buf()));
+
+        for attempt in 1..=max_retries {
+            let delay = self.reconnect_policy.backoff_delay(attempt);
+            {
+                let mut servers = self.servers.write().await;
+                if let Some(state) = servers.get_mut(server_name) {
+                    state.status = McpServerStatus::Reconnecting {
+                        attempt,
+                        next_delay_ms: delay.as_millis() as u64,
+                    };
+                    state.reconnect_attempt = attempt;
+                }
+            }
+
+            info!(
+                server = %server_name,
+                attempt,
+                delay_ms = delay.as_millis() as u64,
+                "scheduling reconnect"
+            );
+            tokio::time::sleep(delay).await;
+
+            match connect_single_server(&config, auth_store.as_ref()).await {
+                Ok(built) => {
+                    info!(server = %server_name, attempt, "MCP server reconnected");
+                    self.install_server(server_name.to_string(), config.clone(), built)
+                        .await;
+                    return;
+                }
+                Err(e) => {
+                    warn!(
+                        server = %server_name,
+                        attempt,
+                        error = %e,
+                        "reconnect attempt failed"
+                    );
+                }
+            }
+        }
+
+        let mut servers = self.servers.write().await;
+        if let Some(state) = servers.get_mut(server_name) {
+            state.status = McpServerStatus::Failed {
+                error: format!("reconnect exhausted after {max_retries} attempts"),
+            };
+            state.tools.clear();
+            state.resources.clear();
+            state.prompts.clear();
         }
     }
 
@@ -183,8 +401,6 @@ impl McpConnectionManager {
     }
 
     /// List all tools across all connected servers.
-    ///
-    /// Returns `(server_name, tool_info)` pairs.
     pub async fn list_all_tools(&self) -> Vec<(String, McpToolInfo)> {
         let servers = self.servers.read().await;
         let mut result = Vec::new();
@@ -198,6 +414,34 @@ impl McpConnectionManager {
         result
     }
 
+    /// List all resources across all connected servers.
+    pub async fn list_all_resources(&self) -> Vec<(String, McpResource)> {
+        let servers = self.servers.read().await;
+        let mut result = Vec::new();
+        for (name, state) in servers.iter() {
+            if state.status == McpServerStatus::Connected {
+                for r in &state.resources {
+                    result.push((name.clone(), r.clone()));
+                }
+            }
+        }
+        result
+    }
+
+    /// List all prompts across all connected servers.
+    pub async fn list_all_prompts(&self) -> Vec<(String, McpPrompt)> {
+        let servers = self.servers.read().await;
+        let mut result = Vec::new();
+        for (name, state) in servers.iter() {
+            if state.status == McpServerStatus::Connected {
+                for p in &state.prompts {
+                    result.push((name.clone(), p.clone()));
+                }
+            }
+        }
+        result
+    }
+
     /// Call a tool on a specific server.
     pub async fn call_tool(
         &self,
@@ -205,46 +449,80 @@ impl McpConnectionManager {
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, McpError> {
+        let client = self.connected_client(server_name).await?;
+        client.call_tool(tool_name, arguments).await
+    }
+
+    /// Read a resource from a specific server.
+    pub async fn read_resource(
+        &self,
+        server_name: &str,
+        uri: &str,
+    ) -> Result<ReadResourceResult, McpError> {
+        let client = self.connected_client(server_name).await?;
+        client.read_resource(uri).await
+    }
+
+    /// Retrieve a prompt from a specific server.
+    pub async fn get_prompt(
+        &self,
+        server_name: &str,
+        prompt_name: &str,
+        arguments: HashMap<String, String>,
+    ) -> Result<GetPromptResult, McpError> {
+        let client = self.connected_client(server_name).await?;
+        client.get_prompt(prompt_name, arguments).await
+    }
+
+    async fn connected_client(&self, server_name: &str) -> Result<Arc<McpClient>, McpError> {
         let servers = self.servers.read().await;
         let state = servers.get(server_name).ok_or_else(|| McpError::Other {
             message: format!("unknown MCP server: {server_name}"),
         })?;
-
         if state.status != McpServerStatus::Connected {
             return Err(McpError::ConnectionFailed {
                 message: format!("server '{server_name}' is not connected: {}", state.status),
             });
         }
-
-        state.client.call_tool(tool_name, arguments).await
+        Ok(Arc::clone(&state.client))
     }
 
     /// Refresh the tool list for a specific server.
-    ///
-    /// Called when the server sends a `notifications/tools/list_changed`
-    /// notification.
     pub async fn refresh_tools(&self, server_name: &str) -> Result<usize, McpError> {
-        let mut servers = self.servers.write().await;
-        let state = servers
-            .get_mut(server_name)
-            .ok_or_else(|| McpError::Other {
-                message: format!("unknown MCP server: {server_name}"),
-            })?;
-
-        if state.status != McpServerStatus::Connected {
-            return Err(McpError::ConnectionFailed {
-                message: format!("cannot refresh tools: server '{server_name}' is not connected"),
-            });
-        }
-
-        let tools = state.client.list_tools().await?;
+        let client = self.connected_client(server_name).await?;
+        let tools = client.list_tools().await?;
         let count = tools.len();
-        info!(
-            server = %server_name,
-            tool_count = count,
-            "refreshed MCP tool list"
-        );
-        state.tools = tools;
+        info!(server = %server_name, tool_count = count, "refreshed MCP tool list");
+        let mut servers = self.servers.write().await;
+        if let Some(state) = servers.get_mut(server_name) {
+            state.tools = tools;
+        }
+        Ok(count)
+    }
+
+    /// Refresh the resource list for a specific server.
+    pub async fn refresh_resources(&self, server_name: &str) -> Result<usize, McpError> {
+        let client = self.connected_client(server_name).await?;
+        let resources = client.list_resources().await?;
+        let count = resources.len();
+        info!(server = %server_name, resource_count = count, "refreshed MCP resource list");
+        let mut servers = self.servers.write().await;
+        if let Some(state) = servers.get_mut(server_name) {
+            state.resources = resources;
+        }
+        Ok(count)
+    }
+
+    /// Refresh the prompt list for a specific server.
+    pub async fn refresh_prompts(&self, server_name: &str) -> Result<usize, McpError> {
+        let client = self.connected_client(server_name).await?;
+        let prompts = client.list_prompts().await?;
+        let count = prompts.len();
+        info!(server = %server_name, prompt_count = count, "refreshed MCP prompt list");
+        let mut servers = self.servers.write().await;
+        if let Some(state) = servers.get_mut(server_name) {
+            state.prompts = prompts;
+        }
         Ok(count)
     }
 
@@ -255,6 +533,8 @@ impl McpConnectionManager {
             state.client.close().await?;
             state.status = McpServerStatus::Disconnected;
             state.tools.clear();
+            state.resources.clear();
+            state.prompts.clear();
             info!(server = %server_name, "MCP server disconnected");
         }
         Ok(())
@@ -270,7 +550,14 @@ impl McpConnectionManager {
                 }
                 state.status = McpServerStatus::Disconnected;
                 state.tools.clear();
+                state.resources.clear();
+                state.prompts.clear();
             }
+        }
+        // Abort supervisors.
+        let mut sups = self.supervisors.write().await;
+        for h in sups.drain(..) {
+            h.abort();
         }
         info!("all MCP servers closed");
     }
@@ -285,22 +572,34 @@ impl McpConnectionManager {
     }
 }
 
-/// Connect to a single MCP server and return the client + discovered tools.
+/// Bundle of artifacts returned by `connect_single_server`.
+struct ConnectedServer {
+    client: Arc<McpClient>,
+    tools: Vec<McpToolInfo>,
+    resources: Vec<McpResource>,
+    prompts: Vec<McpPrompt>,
+    disconnect_rx: Option<mpsc::UnboundedReceiver<()>>,
+}
+
+/// Connect to a single MCP server and probe its advertised capabilities.
 async fn connect_single_server(
     config: &McpServerConfigRef,
     auth_store: Option<&McpAuthStore>,
-) -> Result<(Arc<McpClient>, Vec<McpToolInfo>), McpError> {
+) -> Result<ConnectedServer, McpError> {
+    let mut disconnect_rx: Option<mpsc::UnboundedReceiver<()>> = None;
+
     let transport: Arc<dyn McpTransport> = match config.transport.as_str() {
         "stdio" => {
             let command = config.command.as_deref().ok_or_else(|| McpError::Other {
                 message: "stdio transport requires a 'command' field".into(),
             })?;
-            Arc::new(StdioTransport::spawn(
-                command,
-                &config.args,
-                &config.env,
-                config.cwd.as_deref(),
-            )?)
+            let stdio =
+                StdioTransport::spawn(command, &config.args, &config.env, config.cwd.as_deref())?;
+            // Wire up disconnect signal channel for supervisor.
+            let (tx, rx) = mpsc::unbounded_channel();
+            stdio.set_disconnect_signal(tx);
+            disconnect_rx = Some(rx);
+            Arc::new(stdio)
         }
         "http" => {
             let url = config.url.as_deref().unwrap_or("http://localhost:3000");
@@ -328,16 +627,53 @@ async fn connect_single_server(
     };
 
     let client = Arc::new(McpClient::new(transport, &config.name));
-    client.initialize().await?;
+    let caps = client.initialize().await?;
 
-    let tools = client.list_tools().await?;
+    let tools = if caps.supports_tools() {
+        client.list_tools().await.unwrap_or_else(|e| {
+            warn!(server = %config.name, error = %e, "failed to list tools");
+            Vec::new()
+        })
+    } else {
+        Vec::new()
+    };
+
+    let resources = if caps.supports_resources() {
+        client.list_resources().await.unwrap_or_else(|e| {
+            warn!(server = %config.name, error = %e, "failed to list resources");
+            Vec::new()
+        })
+    } else {
+        Vec::new()
+    };
+
+    let prompts = if caps.supports_prompts() {
+        client.list_prompts().await.unwrap_or_else(|e| {
+            warn!(server = %config.name, error = %e, "failed to list prompts");
+            Vec::new()
+        })
+    } else {
+        Vec::new()
+    };
+
     debug!(
         server = %config.name,
-        tool_count = tools.len(),
-        "discovered tools from MCP server"
+        tools = tools.len(),
+        resources = resources.len(),
+        prompts = prompts.len(),
+        "discovered MCP capabilities"
     );
 
-    Ok((client, tools))
+    // Silence the unused-value warning when tools-only servers are used.
+    let _ = caps;
+
+    Ok(ConnectedServer {
+        client,
+        tools,
+        resources,
+        prompts,
+        disconnect_rx,
+    })
 }
 
 /// Null transport used as a placeholder for failed connections.
@@ -372,36 +708,56 @@ impl McpTransport for NullTransport {
     }
 }
 
-/// Create a [`NotificationHandler`] that triggers tool refresh on the given
-/// connection manager when `notifications/tools/list_changed` is received.
-pub fn tool_list_changed_handler(
+/// Unified notification dispatcher: routes `list_changed` notifications to the
+/// appropriate refresh method on the manager.
+fn notification_dispatcher(
     manager: Arc<McpConnectionManager>,
     server_name: String,
 ) -> NotificationHandler {
     Arc::new(move |method: &str, _params: Option<serde_json::Value>| {
-        if method == "notifications/tools/list_changed" {
-            let mgr = Arc::clone(&manager);
-            let name = server_name.clone();
-            tokio::spawn(async move {
-                match mgr.refresh_tools(&name).await {
-                    Ok(count) => {
-                        info!(
-                            server = %name,
-                            tool_count = count,
-                            "tool list refreshed after ToolListChanged notification"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            server = %name,
-                            error = %e,
-                            "failed to refresh tools after ToolListChanged notification"
-                        );
-                    }
+        let mgr = Arc::clone(&manager);
+        let name = server_name.clone();
+        let method = method.to_string();
+        tokio::spawn(async move {
+            let outcome: Result<(), McpError> = match method.as_str() {
+                "notifications/tools/list_changed" => mgr.refresh_tools(&name).await.map(|_| ()),
+                "notifications/resources/list_changed" => {
+                    mgr.refresh_resources(&name).await.map(|_| ())
                 }
-            });
-        }
+                "notifications/prompts/list_changed" => {
+                    mgr.refresh_prompts(&name).await.map(|_| ())
+                }
+                _ => {
+                    debug!(server = %name, method = %method, "ignoring MCP notification");
+                    return;
+                }
+            };
+            if let Err(e) = outcome {
+                warn!(
+                    server = %name,
+                    method = %method,
+                    error = %e,
+                    "failed to handle MCP notification"
+                );
+            }
+        });
     })
+}
+
+/// Backward-compatible wrapper for callers that only need tool refresh.
+pub fn tool_list_changed_handler(
+    manager: Arc<McpConnectionManager>,
+    server_name: String,
+) -> NotificationHandler {
+    notification_dispatcher(manager, server_name)
+}
+
+/// Probe the manager-public helper so external callers can derive one.
+pub fn build_notification_dispatcher(
+    manager: Arc<McpConnectionManager>,
+    server_name: String,
+) -> NotificationHandler {
+    notification_dispatcher(manager, server_name)
 }
 
 #[cfg(test)]
@@ -421,26 +777,39 @@ mod tests {
             .to_string(),
             "failed: timeout"
         );
+        assert_eq!(
+            McpServerStatus::Reconnecting {
+                attempt: 2,
+                next_delay_ms: 4000
+            }
+            .to_string(),
+            "reconnecting (attempt 2, next in 4000ms)"
+        );
     }
 
     #[test]
-    fn test_config_ref_clone() {
-        let config = McpServerConfigRef {
-            name: "test".into(),
-            transport: "stdio".into(),
-            command: Some("echo".into()),
-            args: vec!["hello".into()],
-            url: None,
-            env: HashMap::new(),
-            headers: HashMap::new(),
-            startup_timeout_secs: 30,
-            tool_timeout_secs: 120,
-            cwd: None,
-            bearer_token: None,
+    fn test_reconnect_policy_backoff() {
+        let policy = ReconnectPolicy {
+            enabled: true,
+            max_retries: 5,
+            initial_delay: Duration::from_millis(100),
+            max_delay: Duration::from_millis(1000),
+            multiplier: 2.0,
         };
-        let cloned = config.clone();
-        assert_eq!(cloned.name, "test");
-        assert_eq!(cloned.startup_timeout_secs, 30);
+        assert_eq!(policy.backoff_delay(1), Duration::from_millis(100));
+        assert_eq!(policy.backoff_delay(2), Duration::from_millis(200));
+        assert_eq!(policy.backoff_delay(3), Duration::from_millis(400));
+        assert_eq!(policy.backoff_delay(4), Duration::from_millis(800));
+        // Capped at max_delay.
+        assert_eq!(policy.backoff_delay(5), Duration::from_millis(1000));
+        assert_eq!(policy.backoff_delay(99), Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn test_config_ref_default() {
+        let config = McpServerConfigRef::default();
+        assert!(config.auto_reconnect);
+        assert_eq!(config.max_reconnect_attempts, 5);
     }
 
     #[tokio::test]
@@ -449,6 +818,8 @@ mod tests {
         assert_eq!(manager.connected_count().await, 0);
         assert!(manager.status().await.is_empty());
         assert!(manager.list_all_tools().await.is_empty());
+        assert!(manager.list_all_resources().await.is_empty());
+        assert!(manager.list_all_prompts().await.is_empty());
     }
 
     #[tokio::test]
@@ -463,7 +834,6 @@ mod tests {
     #[tokio::test]
     async fn test_disconnect_unknown_server() {
         let manager = McpConnectionManager::new(None);
-        // Disconnecting an unknown server is a no-op.
         assert!(manager.disconnect("nonexistent").await.is_ok());
     }
 
@@ -476,7 +846,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_all_with_bad_command() {
-        let manager = McpConnectionManager::new(None);
+        let manager = Arc::new(McpConnectionManager::new(None));
         let config = McpServerConfigRef {
             name: "bad-server".into(),
             transport: "stdio".into(),
@@ -489,6 +859,8 @@ mod tests {
             tool_timeout_secs: 30,
             cwd: None,
             bearer_token: None,
+            auto_reconnect: false,
+            max_reconnect_attempts: 5,
         };
 
         manager.connect_all(vec![config]).await;

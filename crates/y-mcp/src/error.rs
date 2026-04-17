@@ -37,6 +37,12 @@ pub enum McpError {
     #[error("authentication required for server '{server}'")]
     AuthenticationRequired { server: String },
 
+    /// Remote session has expired (HTTP 404 or JSON-RPC -32001).
+    ///
+    /// Signals that the connection must be re-established.
+    #[error("session expired for server '{server}'")]
+    SessionExpired { server: String },
+
     /// Generic error.
     #[error("{message}")]
     Other { message: String },

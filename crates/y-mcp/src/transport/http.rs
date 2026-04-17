@@ -141,6 +141,13 @@ impl HttpTransport {
             });
         }
 
+        // Handle 404 Not Found as session expiration (server dropped our session).
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(McpError::SessionExpired {
+                server: self.server_name.clone(),
+            });
+        }
+
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
             return Err(McpError::TransportError {
@@ -169,14 +176,25 @@ impl McpTransport for HttpTransport {
             message: format!("failed to read response body: {e}"),
         })?;
 
-        if content_type.contains("text/event-stream") {
+        let resp_parsed: JsonRpcResponse = if content_type.contains("text/event-stream") {
             debug!("parsing SSE response");
-            parse_sse_response(&text)
+            parse_sse_response(&text)?
         } else {
             serde_json::from_str(&text).map_err(|e| McpError::ProtocolError {
                 message: format!("failed to parse JSON-RPC response: {e}"),
-            })
+            })?
+        };
+
+        // JSON-RPC error code -32001 is the conventional MCP session-expired code.
+        if let Some(ref err) = resp_parsed.error {
+            if err.code == -32001 {
+                return Err(McpError::SessionExpired {
+                    server: self.server_name.clone(),
+                });
+            }
         }
+
+        Ok(resp_parsed)
     }
 
     async fn send_notification(&self, notification: JsonRpcNotification) -> Result<(), McpError> {

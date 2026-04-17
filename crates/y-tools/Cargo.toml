@@ -21,6 +21,7 @@ y-browser = { workspace = true }
 y-knowledge = { workspace = true }
 y-mcp = { workspace = true }
 toml.workspace = true
+toml_edit = { workspace = true }
 chardetng = { workspace = true }
 encoding_rs = { workspace = true }
 ignore = { workspace = true }
