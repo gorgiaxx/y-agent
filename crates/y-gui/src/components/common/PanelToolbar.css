@@ -1,0 +1,130 @@
+/* PanelToolbar: compact labeled toolbar for sidebar sections. */
+
+.panel-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 var(--space-sm);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-secondary);
+}
+
+.panel-toolbar-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.panel-toolbar-label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-toolbar-collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.panel-toolbar:hover .panel-toolbar-collapse-btn,
+.panel-toolbar-collapse-btn:focus-visible {
+  opacity: 1;
+}
+
+.panel-toolbar-collapse-btn:hover {
+  color: var(--text-primary);
+}
+
+.panel-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.panel-toolbar-sort-trigger {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 22px !important;
+  height: 22px !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: var(--radius-sm) !important;
+  background: transparent !important;
+  background: none !important;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+  gap: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden;
+  font-size: 0;
+  line-height: 1;
+}
+
+.panel-toolbar-sort-trigger:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover) !important;
+}
+
+.panel-toolbar-sort-trigger:focus {
+  outline: none;
+  border: none !important;
+}
+
+.panel-toolbar-sort-trigger[data-state="open"] {
+  color: var(--text-primary);
+  background: var(--surface-hover) !important;
+  border: none !important;
+}
+
+/* Hide the SelectValue text -- trigger is icon-only */
+.panel-toolbar-sort-trigger span {
+  font-size: 0;
+  width: 0;
+  overflow: hidden;
+  display: inline-block;
+}
+
+/* Hide the Radix SelectTrigger's built-in ChevronDown icon */
+.panel-toolbar-sort-trigger svg:not(:first-child) {
+  display: none;
+}
+
+.panel-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 0.12s, background 0.12s;
+  padding: 0;
+}
+
+.panel-toolbar-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
