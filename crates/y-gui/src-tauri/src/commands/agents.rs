@@ -70,6 +70,8 @@ pub struct AgentDetail {
     pub max_completion_tokens: Option<usize>,
     pub user_callable: bool,
     pub is_overridden: bool,
+    pub mcp_mode: Option<String>,
+    pub mcp_servers: Vec<String>,
 }
 
 /// Tool info returned for agent tool-selection settings.
@@ -145,6 +147,8 @@ fn detail_from_definition(
         max_completion_tokens: def.max_completion_tokens,
         user_callable: def.user_callable,
         is_overridden,
+        mcp_mode: def.mcp_mode.clone(),
+        mcp_servers: def.mcp_servers.clone(),
     }
 }
 
@@ -425,6 +429,8 @@ mod tests {
             max_context_tokens: 2048,
             max_completion_tokens: Some(512),
             user_callable: true,
+            mcp_mode: None,
+            mcp_servers: vec![],
             prune_tool_history: false,
             auto_update: true,
             response_format: None,

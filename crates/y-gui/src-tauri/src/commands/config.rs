@@ -349,42 +349,207 @@ pub async fn provider_list_models(
 }
 
 // ---------------------------------------------------------------------------
-// MCP server config commands (JSON-based, stored in <config_dir>/mcp.json)
+// MCP server config commands (backed by <config_dir>/tools.toml [[mcp_servers]])
 // ---------------------------------------------------------------------------
 
 /// Get the MCP server configuration as JSON.
 ///
-/// Returns the parsed contents of `mcp.json`. If the file does not exist,
-/// returns `{"mcpServers": {}}`.
+/// Loads `[[mcp_servers]]` entries from `tools.toml` and returns them in the
+/// frontend-native shape: `{"mcpServers": {name: {transport, ...}}}`.
 #[tauri::command]
 pub async fn mcp_config_get(state: State<'_, AppState>) -> Result<Value, String> {
-    let path = state.config_dir.join("mcp.json");
-    if !path.exists() {
-        return Ok(serde_json::json!({"mcpServers": {}}));
-    }
+    let path = state.config_dir.join("tools.toml");
+    let servers = y_tools::mcp_toml::load_mcp_servers(&path)
+        .map_err(|e| format!("Failed to read mcp_servers from tools.toml: {e}"))?;
 
-    let content =
-        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read mcp.json: {e}"))?;
-    let value: Value =
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse mcp.json: {e}"))?;
-    Ok(value)
+    let mut map = serde_json::Map::new();
+    for s in servers {
+        map.insert(s.name.clone(), server_to_json(&s));
+    }
+    Ok(serde_json::json!({ "mcpServers": Value::Object(map) }))
 }
 
 /// Save the MCP server configuration from JSON.
 ///
-/// Validates the JSON and writes it to `mcp.json` with pretty formatting.
+/// Parses the frontend `{"mcpServers": {...}}` shape and replaces the
+/// `[[mcp_servers]]` section of `tools.toml`, preserving unrelated entries.
 #[tauri::command]
 pub async fn mcp_config_save(state: State<'_, AppState>, content: Value) -> Result<(), String> {
-    let json_str = serde_json::to_string_pretty(&content)
-        .map_err(|e| format!("Failed to serialize MCP config: {e}"))?;
-
-    std::fs::create_dir_all(&state.config_dir)
-        .map_err(|e| format!("Failed to create config dir: {e}"))?;
-
-    let path = state.config_dir.join("mcp.json");
-    std::fs::write(&path, &json_str).map_err(|e| format!("Failed to write mcp.json: {e}"))?;
-
+    let path = state.config_dir.join("tools.toml");
+    let servers = json_to_servers(&content)?;
+    y_tools::mcp_toml::replace_mcp_servers(&path, &servers)
+        .map_err(|e| format!("Failed to write mcp_servers to tools.toml: {e}"))?;
     Ok(())
+}
+
+fn server_to_json(s: &y_tools::McpServerConfig) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("transport".into(), Value::String(s.transport.clone()));
+    obj.insert("disabled".into(), Value::Bool(!s.enabled));
+    obj.insert(
+        "startup_timeout_secs".into(),
+        Value::Number(s.startup_timeout_secs.into()),
+    );
+    obj.insert(
+        "tool_timeout_secs".into(),
+        Value::Number(s.tool_timeout_secs.into()),
+    );
+    if let Some(c) = &s.command {
+        obj.insert("command".into(), Value::String(c.clone()));
+    }
+    if !s.args.is_empty() {
+        obj.insert(
+            "args".into(),
+            Value::Array(s.args.iter().cloned().map(Value::String).collect()),
+        );
+    }
+    if let Some(u) = &s.url {
+        obj.insert("url".into(), Value::String(u.clone()));
+    }
+    if !s.env.is_empty() {
+        let env = s
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+            .collect();
+        obj.insert("env".into(), Value::Object(env));
+    }
+    if !s.headers.is_empty() {
+        let h = s
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+            .collect();
+        obj.insert("headers".into(), Value::Object(h));
+    }
+    if let Some(cwd) = &s.cwd {
+        obj.insert("cwd".into(), Value::String(cwd.clone()));
+    }
+    if let Some(t) = &s.bearer_token {
+        obj.insert("bearer_token".into(), Value::String(t.clone()));
+    }
+    if let Some(list) = &s.enabled_tools {
+        obj.insert(
+            "alwaysAllow".into(),
+            Value::Array(list.iter().cloned().map(Value::String).collect()),
+        );
+    }
+    Value::Object(obj)
+}
+
+fn json_to_servers(content: &Value) -> Result<Vec<y_tools::McpServerConfig>, String> {
+    let servers_val = content
+        .get("mcpServers")
+        .ok_or("payload is missing 'mcpServers' key")?;
+    let servers_obj = servers_val
+        .as_object()
+        .ok_or("'mcpServers' must be an object")?;
+
+    let mut out = Vec::with_capacity(servers_obj.len());
+    for (name, cfg) in servers_obj {
+        let cfg_obj = cfg
+            .as_object()
+            .ok_or_else(|| format!("'{name}' must be an object"))?;
+
+        let transport = cfg_obj
+            .get("transport")
+            .and_then(Value::as_str)
+            .map_or_else(
+                || {
+                    if cfg_obj.contains_key("url") {
+                        "http".to_string()
+                    } else {
+                        "stdio".to_string()
+                    }
+                },
+                str::to_string,
+            );
+
+        let disabled = cfg_obj
+            .get("disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+        let args = cfg_obj
+            .get("args")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let env = string_map(cfg_obj.get("env"));
+        let headers = string_map(cfg_obj.get("headers"));
+
+        let enabled_tools = cfg_obj
+            .get("alwaysAllow")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
+
+        out.push(y_tools::McpServerConfig {
+            name: name.clone(),
+            transport,
+            command: cfg_obj
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            args,
+            url: cfg_obj
+                .get("url")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            env,
+            enabled: !disabled,
+            headers,
+            startup_timeout_secs: cfg_obj
+                .get("startup_timeout_secs")
+                .and_then(Value::as_u64)
+                .unwrap_or(30),
+            tool_timeout_secs: cfg_obj
+                .get("tool_timeout_secs")
+                .and_then(Value::as_u64)
+                .unwrap_or(120),
+            cwd: cfg_obj
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            bearer_token: cfg_obj
+                .get("bearer_token")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            enabled_tools,
+            disabled_tools: None,
+            auto_reconnect: cfg_obj
+                .get("auto_reconnect")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            max_reconnect_attempts: cfg_obj
+                .get("max_reconnect_attempts")
+                .and_then(Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(5),
+        });
+    }
+    Ok(out)
+}
+
+fn string_map(v: Option<&Value>) -> std::collections::HashMap<String, String> {
+    v.and_then(Value::as_object)
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------

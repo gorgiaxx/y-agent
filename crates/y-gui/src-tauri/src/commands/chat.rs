@@ -109,6 +109,8 @@ pub async fn chat_send(
     thinking_effort: Option<String>,
     attachments: Option<Vec<serde_json::Value>>,
     plan_mode: Option<String>,
+    mcp_mode: Option<String>,
+    mcp_servers: Option<Vec<String>>,
 ) -> Result<ChatStarted, String> {
     tracing::info!(plan_mode = ?plan_mode, "chat_send: plan_mode received from frontend");
     if message.trim().is_empty() {
@@ -144,6 +146,8 @@ pub async fn chat_send(
             thinking,
             user_message_metadata,
             plan_mode,
+            mcp_mode,
+            mcp_servers,
         },
     )
     .await
