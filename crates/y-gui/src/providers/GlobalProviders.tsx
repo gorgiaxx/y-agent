@@ -18,6 +18,7 @@ import type { EditorTab, EditorSurface } from '../components/agents/types';
 import {
   ChatContext,
   SessionsContext,
+  AgentSessionsContext,
   WorkspacesContext,
   SkillsContext,
   KnowledgeContext,
@@ -34,7 +35,10 @@ interface GlobalProvidersProps {
 }
 
 export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps) {
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+
   const sessionHooks = useSessions();
+  const agentSessionHooks = useSessions(activeAgentId);
   const chatHooks = useChat(sessionHooks.activeSessionId);
   const configHooks = useConfig();
   const themeCtx = useThemeProvider(configHooks.config.theme);
@@ -54,11 +58,11 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
 
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [agentEditing, setAgentEditing] = useState(false);
   const [agentEditorTab, setAgentEditorTab] = useState<EditorTab>('general');
   const [agentEditorSurface, setAgentEditorSurface] = useState<EditorSurface>('form');
   const agentEditorSurfaceHandlerRef = useRef<((surface: EditorSurface) => void) | null>(null);
+  const agentStudioEditHandlerRef = useRef<(() => void) | null>(null);
   const onAgentEditorSurfaceChange = useCallback((surface: EditorSurface) => {
     if (agentEditorSurfaceHandlerRef.current) {
       agentEditorSurfaceHandlerRef.current(surface);
@@ -68,6 +72,12 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
   }, []);
   const setAgentEditorSurfaceHandler = useCallback((handler: ((surface: EditorSurface) => void) | null) => {
     agentEditorSurfaceHandlerRef.current = handler;
+  }, []);
+  const onAgentStudioEdit = useCallback(() => {
+    agentStudioEditHandlerRef.current?.();
+  }, []);
+  const setAgentStudioEditHandler = useCallback((handler: (() => void) | null) => {
+    agentStudioEditHandlerRef.current = handler;
   }, []);
   const [automationSelectedType, setAutomationSelectedType] = useState<'workflow' | 'schedule' | null>(null);
   const [automationSelectedId, setAutomationSelectedId] = useState<string | null>(null);
@@ -118,6 +128,7 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     agentEditing, agentEditorTab, agentEditorSurface,
     setAgentEditing, setAgentEditorTab, setAgentEditorSurface,
     onAgentEditorSurfaceChange, setAgentEditorSurfaceHandler,
+    onAgentStudioEdit, setAgentStudioEditHandler,
     onAgentEditorBack: () => { setAgentEditing(false); },
     automationSelectedType, setAutomationSelectedType,
     automationSelectedId, setAutomationSelectedId,
@@ -129,6 +140,7 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     <ThemeContext.Provider value={themeCtx}>
       <ConfigContext.Provider value={configHooks}>
         <SessionsContext.Provider value={sessionHooks}>
+          <AgentSessionsContext.Provider value={agentSessionHooks}>
           <ChatContext.Provider value={chatHooks}>
             <WorkspacesContext.Provider value={workspaceHooks}>
               <SkillsContext.Provider value={skillHooks}>
@@ -146,6 +158,7 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
               </SkillsContext.Provider>
             </WorkspacesContext.Provider>
           </ChatContext.Provider>
+          </AgentSessionsContext.Provider>
         </SessionsContext.Provider>
       </ConfigContext.Provider>
     </ThemeContext.Provider>

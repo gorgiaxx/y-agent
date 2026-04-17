@@ -10,7 +10,6 @@ import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import type { PendingEdit, CompactInfo } from '../../hooks/useChat';
 import type { AskUserDialogState, PermissionDialogState } from '../../hooks/useSessionInteractions';
-import { AgentSessionRail } from './AgentSessionRail';
 
 interface AgentStudioProps {
   agentSummary: AgentInfo | AgentDetail | null;
@@ -18,7 +17,6 @@ interface AgentStudioProps {
   detailLoading: boolean;
   sessions: SessionInfo[];
   activeSessionId: string | null;
-  sessionsLoading: boolean;
   streamingSessionIds: Set<string>;
   messages: Message[];
   isStreaming: boolean;
@@ -57,10 +55,7 @@ interface AgentStudioProps {
   onMcpServerToggle: (name: string) => void;
   askUserData: AskUserDialogState | null;
   permissionData: PermissionDialogState | null;
-  onEdit: () => void;
   onNewSession: () => void;
-  onSelectSession: (id: string) => void;
-  onDeleteSession: (id: string) => void;
   // ChatPanel callbacks (content first, then messageId)
   onEditMessage: (content: string, messageId: string) => void;
   onUndoMessage: (messageId: string) => void;
@@ -93,8 +88,6 @@ export function AgentStudio({
   detailLoading,
   sessions,
   activeSessionId,
-  sessionsLoading,
-  streamingSessionIds,
   messages,
   isStreaming,
   isLoadingMessages,
@@ -132,10 +125,7 @@ export function AgentStudio({
   onMcpServerToggle,
   askUserData,
   permissionData,
-  onEdit,
   onNewSession,
-  onSelectSession,
-  onDeleteSession,
   onEditMessage,
   onUndoMessage,
   onResendMessage,
@@ -160,115 +150,102 @@ export function AgentStudio({
   onPermissionAllowAllForSession,
 }: AgentStudioProps) {
   return (
-    <div className="agents-studio">
-      <AgentSessionRail
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        loading={sessionsLoading}
-        streamingSessionIds={streamingSessionIds}
-        onEdit={onEdit}
-        onNewSession={onNewSession}
-        onSelectSession={onSelectSession}
-        onDeleteSession={onDeleteSession}
+    <section className="agents-chat-stage">
+      {detailLoading ? (
+        <div className="agents-chat-stage-empty">
+          Loading agent preset...
+        </div>
+      ) : activeSessionId ? (
+        <div className="agents-chat-stage-body">
+          <ChatPanel
+            messages={messages}
+            isStreaming={isStreaming}
+            isLoading={isLoadingMessages}
+            error={error}
+            onEditMessage={onEditMessage}
+            onUndoMessage={onUndoMessage}
+            onResendMessage={onResendMessage}
+            onForkMessage={onForkMessage}
+            onRestoreBranch={onRestoreBranch}
+            toolResults={toolResults}
+            getStreamSegments={getStreamSegments}
+            contextResetPoints={contextResetPoints}
+            compactPoints={compactPoints}
+          />
+        </div>
+      ) : (
+        <div className="agents-chat-stage-empty">
+          <div className="agents-chat-empty-card">
+            <div className="agents-chat-empty-title">
+              {agentSummary?.name ?? 'Agent'}
+            </div>
+            <p className="agents-chat-empty-description">
+              Start a dedicated session for this preset to keep prompts, tools, and
+              retrieval settings aligned from the first turn.
+            </p>
+            <Button variant="primary" size="sm" onClick={onNewSession}>
+              <Plus size={12} />
+              New Session
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <InputArea
+        key={activeSessionId ?? `${agentId}-empty`}
+        onSend={onSend}
+        onStop={onStop}
+        onCommand={onCommand}
+        disabled={inputDisabled}
+        sendOnEnter={sendOnEnter}
+        providers={providers}
+        selectedProviderId={selectedProviderId}
+        onSelectProvider={onSelectProvider}
+        pendingEdit={pendingEdit}
+        onCancelEdit={onCancelEdit}
+        skills={visibleSkills}
+        knowledgeCollections={visibleKnowledge}
+        expanded={inputExpanded}
+        onExpandChange={onExpandChange}
+        onClearSession={onClearSession}
+        onAddContextReset={onAddContextReset}
+        providerIcons={providerIcons}
+        thinkingEffort={thinkingEffort}
+        onThinkingEffortChange={onThinkingEffortChange}
+        planMode={planMode}
+        onPlanModeChange={onPlanModeChange}
+        persistPlanMode={false}
+        askUserData={askUserData}
+        onAskUserSubmit={onAskUserSubmit}
+        onAskUserDismiss={onAskUserDismiss}
+        permissionData={permissionData}
+        onPermissionApprove={onPermissionApprove}
+        onPermissionDeny={onPermissionDeny}
+        onPermissionAllowAllForSession={onPermissionAllowAllForSession}
+        isCompacting={isCompacting}
+        sessionId={activeSessionId}
+        hasCustomPrompt={hasCustomPrompt}
+        onCustomPromptChange={onCustomPromptChange}
+        rewindDraft={rewindDraft}
+        onRewindDraftConsumed={onRewindDraftConsumed}
+        mcpMode={mcpMode}
+        onMcpModeChange={onMcpModeChange}
+        mcpServerList={mcpServerList}
+        selectedMcpServers={selectedMcpServers}
+        onMcpServerToggle={onMcpServerToggle}
       />
 
-      <section className="agents-chat-stage">
-        {detailLoading ? (
-          <div className="agents-chat-stage-empty">
-            Loading agent preset...
-          </div>
-        ) : activeSessionId ? (
-          <div className="agents-chat-stage-body">
-            <ChatPanel
-              messages={messages}
-              isStreaming={isStreaming}
-              isLoading={isLoadingMessages}
-              error={error}
-              onEditMessage={onEditMessage}
-              onUndoMessage={onUndoMessage}
-              onResendMessage={onResendMessage}
-              onForkMessage={onForkMessage}
-              onRestoreBranch={onRestoreBranch}
-              toolResults={toolResults}
-              getStreamSegments={getStreamSegments}
-              contextResetPoints={contextResetPoints}
-              compactPoints={compactPoints}
-            />
-          </div>
-        ) : (
-          <div className="agents-chat-stage-empty">
-            <div className="agents-chat-empty-card">
-              <div className="agents-chat-empty-title">
-                {agentSummary?.name ?? 'Agent'}
-              </div>
-              <p className="agents-chat-empty-description">
-                Start a dedicated session for this preset to keep prompts, tools, and
-                retrieval settings aligned from the first turn.
-              </p>
-              <Button variant="primary" size="sm" onClick={onNewSession}>
-                <Plus size={12} />
-                New Session
-              </Button>
-            </div>
-          </div>
-        )}
-
-        <InputArea
-          key={activeSessionId ?? `${agentId}-empty`}
-          onSend={onSend}
-          onStop={onStop}
-          onCommand={onCommand}
-          disabled={inputDisabled}
-          sendOnEnter={sendOnEnter}
-          providers={providers}
-          selectedProviderId={selectedProviderId}
-          onSelectProvider={onSelectProvider}
-          pendingEdit={pendingEdit}
-          onCancelEdit={onCancelEdit}
-          skills={visibleSkills}
-          knowledgeCollections={visibleKnowledge}
-          expanded={inputExpanded}
-          onExpandChange={onExpandChange}
-          onClearSession={onClearSession}
-          onAddContextReset={onAddContextReset}
-          providerIcons={providerIcons}
-          thinkingEffort={thinkingEffort}
-          onThinkingEffortChange={onThinkingEffortChange}
-          planMode={planMode}
-          onPlanModeChange={onPlanModeChange}
-          persistPlanMode={false}
-          askUserData={askUserData}
-          onAskUserSubmit={onAskUserSubmit}
-          onAskUserDismiss={onAskUserDismiss}
-          permissionData={permissionData}
-          onPermissionApprove={onPermissionApprove}
-          onPermissionDeny={onPermissionDeny}
-          onPermissionAllowAllForSession={onPermissionAllowAllForSession}
-          isCompacting={isCompacting}
-          sessionId={activeSessionId}
-          hasCustomPrompt={hasCustomPrompt}
-          onCustomPromptChange={onCustomPromptChange}
-          rewindDraft={rewindDraft}
-          onRewindDraftConsumed={onRewindDraftConsumed}
-          mcpMode={mcpMode}
-          onMcpModeChange={onMcpModeChange}
-          mcpServerList={mcpServerList}
-          selectedMcpServers={selectedMcpServers}
-          onMcpServerToggle={onMcpServerToggle}
-        />
-
-        <StatusBar
-          providerCount={providerCount}
-          sessionCount={sessions.length}
-          version={version}
-          activeModel={activeModel}
-          activeProviderIcon={activeProviderIcon}
-          lastCost={lastCost}
-          lastTokens={lastTokens}
-          contextWindow={contextWindow}
-          contextTokensUsed={contextTokensUsed}
-        />
-      </section>
-    </div>
+      <StatusBar
+        providerCount={providerCount}
+        sessionCount={sessions.length}
+        version={version}
+        activeModel={activeModel}
+        activeProviderIcon={activeProviderIcon}
+        lastCost={lastCost}
+        lastTokens={lastTokens}
+        contextWindow={contextWindow}
+        contextTokensUsed={contextTokensUsed}
+      />
+    </section>
   );
 }

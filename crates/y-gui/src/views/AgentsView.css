@@ -73,7 +73,6 @@
 }
 
 .agents-gallery-empty,
-.agents-session-empty,
 .agents-chat-stage-empty {
   display: flex;
   align-items: center;
@@ -82,8 +81,7 @@
   text-align: center;
 }
 
-.agents-gallery-empty,
-.agents-session-empty {
+.agents-gallery-empty {
   padding: var(--space-lg);
   border: 1px dashed var(--border);
   border-radius: var(--radius-md);
@@ -253,9 +251,7 @@
   gap: 6px;
 }
 
-.agents-preset-card-title-row,
-.agents-session-summary-top,
-.agents-session-list-header {
+.agents-preset-card-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -285,8 +281,7 @@
   opacity: 1;
 }
 
-.agents-preset-card-glyph,
-.agents-session-summary-glyph {
+.agents-preset-card-glyph {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -297,15 +292,13 @@
   border-radius: var(--radius-md);
 }
 
-.agents-preset-card-glyph,
-.agents-session-summary-glyph {
+.agents-preset-card-glyph {
   width: 32px;
   height: 32px;
 }
 
 .agents-preset-card-badges,
-.agents-preset-card-footer,
-.agents-session-summary-badges {
+.agents-preset-card-footer {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -353,144 +346,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-}
-
-.agents-studio {
-  display: grid;
-  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
-  flex: 1;
-  min-height: 0;
-}
-
-.agents-session-rail {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  gap: 12px;
-  padding: var(--space-md);
-  border-right: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-secondary) 92%, transparent);
-  overflow: hidden;
-}
-
-.agents-session-rail > .scroll-area {
-  min-width: 0;
-}
-
-.agents-session-rail [data-radix-scroll-area-viewport] {
-  overflow-x: hidden;
-}
-
-.agents-session-rail [data-radix-scroll-area-viewport] > div {
-  display: block !important;
-  min-width: 0 !important;
-}
-
-.agents-session-rail-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.agents-session-rail-actions .button--icon {
-  border: none;
-  background: transparent;
-}
-
-.agents-session-rail-actions .button--icon:hover {
-  background: var(--surface-hover);
-  border: none;
-}
-
-.agents-session-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-primary) 92%, transparent), var(--surface-secondary));
-  box-shadow: var(--shadow-sm);
-}
-
-.agents-session-summary-copy {
-  min-width: 0;
-  flex: 1;
-}
-
-.agents-session-summary-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.agents-session-summary-description {
-  margin: 4px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.agents-session-path {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface-primary) 92%, transparent);
-  font-size: 11px;
-  line-height: 1.55;
-  font-family: var(--font-mono);
-  color: var(--text-secondary);
-  word-break: break-word;
-}
-
-.agents-session-summary-actions {
-  display: flex;
-  gap: var(--space-sm);
-}
-
-.agents-session-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 2px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.agents-session-list-header-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.agents-session-list-loading {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-}
-
-.agents-session-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-.agents-session-list * {
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-.agents-session-empty {
-  gap: 8px;
 }
 
 .agents-chat-stage {
@@ -560,10 +415,6 @@
 }
 
 @media (max-width: 1200px) {
-  .agents-studio {
-    grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
-  }
-
   .agents-metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -581,19 +432,6 @@
 
   .agents-shell {
     flex-direction: column;
-  }
-
-  .agents-studio {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .agents-session-rail {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .agents-session-rail {
-    max-height: 300px;
   }
 
   .agents-metrics-grid {

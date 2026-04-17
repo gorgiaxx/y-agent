@@ -23,12 +23,10 @@ function ProviderTabPanel({
   provider,
   index,
   onChange,
-  onDuplicate,
 }: {
   provider: ProviderFormData;
   index: number;
   onChange: (index: number, updated: ProviderFormData) => void;
-  onDuplicate: (index: number) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -265,7 +263,18 @@ function ProviderTabPanel({
             placeholder="e.g. OPENAI_API_KEY"
           />
         </SettingsItem>
+        <SettingsItem title="Test Connection" wide>
+          <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
+            {testing ? <span className="pf-spinner" /> : null}
+            {testing ? 'Testing...' : 'Test Connection'}
+          </Button>
+        </SettingsItem>
       </SettingsGroup>
+      {testResult && (
+        <div className={`pf-test-result ${testResult.ok ? 'ok' : 'error'}`}>
+          {testResult.message}
+        </div>
+      )}
 
       <SettingsGroup title="Tags">
         <SettingsItem
@@ -323,22 +332,6 @@ function ProviderTabPanel({
           />
         </SettingsItem>
       </SettingsGroup>
-
-      {/* Test connection row */}
-      <div className="pf-action-row">
-          <Button variant="outline" size="sm" onClick={() => onDuplicate(index)} title="Duplicate this provider">
-            <Copy size={13} /> Duplicate
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
-            {testing ? <span className="pf-spinner" /> : null}
-            {testing ? 'Testing...' : 'Test Connection'}
-          </Button>
-          {testResult && (
-            <span className={`pf-test-result ${testResult.ok ? 'ok' : 'error'}`}>
-              {testResult.message}
-            </span>
-          )}
-      </div>
     </div>
   );
 }
@@ -502,6 +495,43 @@ export function ProvidersTab({
     <SubListLayout
       sidebar={
         <>
+          <div className="sub-list-actions">
+            <button
+              className="sub-list-item sub-list-item-add"
+              onClick={handleProviderAdd}
+              title="Add provider"
+            >
+              <Plus size={13} />
+              <span>Add</span>
+            </button>
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={() => handleProviderDuplicate(activeProviderTab)}
+              disabled={providersList.length === 0}
+              title="Duplicate provider"
+            >
+              <Copy size={14} />
+            </Button>
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={handleProviderMoveUp}
+              disabled={activeProviderTab <= 0 || providersList.length === 0}
+              title="Move up"
+            >
+              <ChevronUp size={14} />
+            </Button>
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={handleProviderMoveDown}
+              disabled={activeProviderTab >= providersList.length - 1 || providersList.length === 0}
+              title="Move down"
+            >
+              <ChevronDown size={14} />
+            </Button>
+          </div>
           <div className="sub-list-items">
             {providersList.map((p, i) => (
               <button
@@ -528,34 +558,6 @@ export function ProvidersTab({
               </button>
             ))}
           </div>
-          <div className="sub-list-actions">
-            <button
-              className="sub-list-item sub-list-item-add"
-              onClick={handleProviderAdd}
-              title="Add provider"
-            >
-              <Plus size={13} />
-              <span>Add</span>
-            </button>
-            <Button
-              variant="icon"
-              size="sm"
-              onClick={handleProviderMoveUp}
-              disabled={activeProviderTab <= 0 || providersList.length === 0}
-              title="Move up"
-            >
-              <ChevronUp size={14} />
-            </Button>
-            <Button
-              variant="icon"
-              size="sm"
-              onClick={handleProviderMoveDown}
-              disabled={activeProviderTab >= providersList.length - 1 || providersList.length === 0}
-              title="Move down"
-            >
-              <ChevronDown size={14} />
-            </Button>
-          </div>
         </>
       }
     >
@@ -569,7 +571,6 @@ export function ProvidersTab({
           provider={providersList[activeProviderTab] ?? providersList[0]}
           index={activeProviderTab < providersList.length ? activeProviderTab : 0}
           onChange={handleProviderChange}
-          onDuplicate={handleProviderDuplicate}
         />
       )}
     </SubListLayout>

@@ -13,6 +13,7 @@ import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
 import { NavSidebar, NavItem, NavDivider } from './common/NavSidebar';
 import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
 import { AgentEditorSidebarNav } from './agents/AgentEditorSidebarNav';
+import { AgentStudioSidebarNav } from './agents/AgentStudioSidebarNav';
 import type { EditorTab, EditorSurface } from './agents/types';
 import './Sidebar.css';
 
@@ -56,12 +57,27 @@ export interface NavSidebarPropsGroup {
   onAgentEditorBack: () => void;
 }
 
+/** Agent studio props (shown when an agent is selected but not being edited). */
+export interface AgentStudioSidebarProps {
+  agentName: string;
+  sessions: SessionInfo[];
+  activeSessionId: string | null;
+  loading: boolean;
+  streamingSessionIds: Set<string>;
+  onBack: () => void;
+  onEdit: () => void;
+  onNewSession: () => void;
+  onSelectSession: (id: string) => void;
+  onDeleteSession: (id: string) => void;
+}
+
 interface SidebarProps {
   chat: ChatSidebarProps;
   nav: NavSidebarPropsGroup;
+  agentStudio?: AgentStudioSidebarProps | null;
 }
 
-export function Sidebar({ chat, nav }: SidebarProps) {
+export function Sidebar({ chat, nav, agentStudio }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -100,6 +116,24 @@ export function Sidebar({ chat, nav }: SidebarProps) {
         onSelectTab={nav.onAgentEditorTabChange}
         onSurfaceChange={nav.onAgentEditorSurfaceChange}
         onBack={nav.onAgentEditorBack}
+      />
+    );
+  }
+
+  // When viewing an agent workspace, show agent session list in the sidebar.
+  if (nav.activeView === 'agents' && agentStudio) {
+    return (
+      <AgentStudioSidebarNav
+        agentName={agentStudio.agentName}
+        sessions={agentStudio.sessions}
+        activeSessionId={agentStudio.activeSessionId}
+        loading={agentStudio.loading}
+        streamingSessionIds={agentStudio.streamingSessionIds}
+        onBack={agentStudio.onBack}
+        onEdit={agentStudio.onEdit}
+        onNewSession={agentStudio.onNewSession}
+        onSelectSession={agentStudio.onSelectSession}
+        onDeleteSession={agentStudio.onDeleteSession}
       />
     );
   }

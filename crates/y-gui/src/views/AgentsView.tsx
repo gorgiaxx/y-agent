@@ -10,9 +10,9 @@ import {
   useSkillsContext,
   useKnowledgeContext,
   useWorkspacesContext,
+  useAgentSessionsContext,
 } from '../providers/AppContexts';
 import { useChat } from '../hooks/useChat';
-import { useSessions } from '../hooks/useSessions';
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
@@ -41,7 +41,7 @@ export function AgentsView() {
   const skillHooks = useSkillsContext();
   const knowledgeHooks = useKnowledgeContext();
   const workspaceHooks = useWorkspacesContext();
-  const sessionHooks = useSessions(nav.activeAgentId);
+  const sessionHooks = useAgentSessionsContext();
   const {
     activeSessionId: agentActiveSessionId,
     sessions: agentSessions,
@@ -107,6 +107,19 @@ export function AgentsView() {
     );
     return () => nav.setAgentEditorSurfaceHandler(null);
   }, [nav.agentEditing, editor.handleEditorSurfaceChange, nav.setAgentEditorSurfaceHandler]);
+
+  // Register the agent studio edit handler so the sidebar's edit button
+  // triggers the full editor flow (loading source, building draft, etc.).
+  useEffect(() => {
+    if (nav.activeAgentId) {
+      nav.setAgentStudioEditHandler(() => {
+        void editor.handleOpenEdit(nav.activeAgentId!);
+      });
+    } else {
+      nav.setAgentStudioEditHandler(null);
+    }
+    return () => nav.setAgentStudioEditHandler(null);
+  }, [nav.activeAgentId, editor.handleOpenEdit, nav.setAgentStudioEditHandler]);
 
   const loadSelectedAgentDetail = useCallback(async (agentId: string) => {
     setDetailLoading(true);
@@ -321,7 +334,6 @@ export function AgentsView() {
                   detailLoading={detailLoading}
                   sessions={sessionHooks.sessions}
                   activeSessionId={sessionHooks.activeSessionId}
-                  sessionsLoading={sessionHooks.loading}
                   streamingSessionIds={agentChatHooks.streamingSessionIds}
                   messages={agentChatHooks.messages}
                   isStreaming={agentChatHooks.isStreaming}
@@ -364,10 +376,7 @@ export function AgentsView() {
                   onMcpServerToggle={handleMcpServerToggle}
                   askUserData={interactions.askUserData}
                   permissionData={interactions.permissionData}
-                  onEdit={() => void editor.handleOpenEdit(nav.activeAgentId!)}
                   onNewSession={() => void chatHandlers.handleNewChat()}
-                  onSelectSession={sessionHooks.selectSession}
-                  onDeleteSession={(id) => void sessionHooks.deleteSession(id)}
                   onForkMessage={(messageIndex) => void handleForkMessage(messageIndex)}
                   onSend={chatHandlers.handleSend}
                   onStop={agentChatHooks.cancelRun}

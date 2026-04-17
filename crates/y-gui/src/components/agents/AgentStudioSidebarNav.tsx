@@ -1,16 +1,18 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Loader2, Plus, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Plus, Settings2, Trash2 } from 'lucide-react';
+import { NavSidebar, NavItem, NavDivider } from '../common/NavSidebar';
+import { SessionItem } from '../shared/SessionItem';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { ScrollArea } from '../ui/ScrollArea';
-import { SessionItem } from '../shared/SessionItem';
 import type { SessionInfo } from '../../types';
 
-interface AgentSessionRailProps {
+interface AgentStudioSidebarNavProps {
+  agentName: string;
   sessions: SessionInfo[];
   activeSessionId: string | null;
   loading: boolean;
   streamingSessionIds: Set<string>;
+  onBack: () => void;
   onEdit: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
@@ -19,24 +21,24 @@ interface AgentSessionRailProps {
 
 const SESSION_ORDER_STORAGE_KEY = 'y-gui:agent-session-order';
 
-export function AgentSessionRail({
+export function AgentStudioSidebarNav({
+  agentName,
   sessions,
   activeSessionId,
   loading,
   streamingSessionIds,
+  onBack,
   onEdit,
   onNewSession,
   onSelectSession,
   onDeleteSession,
-}: AgentSessionRailProps) {
-  // -- Mouse-based reorder state --
+}: AgentStudioSidebarNavProps) {
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
   const [dragOverPosition, setDragOverPosition] = useState<'above' | 'below'>('above');
   const dragGroupRef = useRef<string[]>([]);
   const dropTargetRef = useRef<{ targetId: string; position: 'above' | 'below' } | null>(null);
 
-  // Session order -- persisted in localStorage.
   const [sessionOrder, setSessionOrder] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem(SESSION_ORDER_STORAGE_KEY);
@@ -48,12 +50,10 @@ export function AgentSessionRail({
     return [];
   });
 
-  // Persist session order on change.
   useEffect(() => {
     localStorage.setItem(SESSION_ORDER_STORAGE_KEY, JSON.stringify(sessionOrder));
   }, [sessionOrder]);
 
-  /** Sort sessions by user-defined order; unknowns go to the top sorted by updated_at desc. */
   const sortByUserOrder = useCallback(
     (list: SessionInfo[]): SessionInfo[] => {
       if (sessionOrder.length === 0) return list;
@@ -80,8 +80,6 @@ export function AgentSessionRail({
     () => sortedSessions.map((s) => s.id),
     [sortedSessions],
   );
-
-  // -- Mouse-based reorder --
 
   const commitReorder = useCallback(
     (sourceId: string, targetId: string, dropPos: 'above' | 'below', groupSessionIds: string[]) => {
@@ -163,7 +161,6 @@ export function AgentSessionRail({
     [commitReorder, allSessionIds],
   );
 
-  // Compute preview list during drag.
   const displaySessions = useMemo(() => {
     if (!draggedSessionId || !dragOverSessionId || draggedSessionId === dragOverSessionId) {
       return sortedSessions;
@@ -180,7 +177,6 @@ export function AgentSessionRail({
     return result;
   }, [sortedSessions, draggedSessionId, dragOverSessionId, dragOverPosition]);
 
-  // Cleanup body class on unmount.
   useEffect(() => {
     return () => {
       document.body.classList.remove('y-gui-dragging');
@@ -188,32 +184,43 @@ export function AgentSessionRail({
   }, []);
 
   return (
-    <aside className="agents-session-rail">
-      <div className="agents-session-rail-actions">
-        <Button variant="icon" size="sm" onClick={onEdit} title="Edit Agent">
-          <Settings2 size={14} />
-        </Button>
-        <Button variant="icon" size="sm" onClick={onNewSession} title="New Session">
-          <Plus size={14} />
-        </Button>
-      </div>
+    <NavSidebar
+      footer={
+        <NavItem
+          icon={<Settings2 size={15} />}
+          label="Edit Agent"
+          onClick={onEdit}
+        />
+      }
+    >
+      <NavItem
+        icon={<ArrowLeft size={15} />}
+        label={agentName}
+        onClick={onBack}
+      />
+      <NavDivider />
 
-      <div className="agents-session-list-header">
-        <span>Sessions</span>
-        <div className="agents-session-list-header-meta">
-          {loading && (
-            <span className="agents-session-list-loading" aria-label="Loading sessions">
-              <Loader2 size={12} className="agents-spin" />
-            </span>
-          )}
-          <Badge variant="outline">{sessions.length}</Badge>
+      <div className="session-list-general">
+        <div className="agent-session-toolbar">
+          <div className="agent-session-toolbar-label">
+            <span>Sessions</span>
+            <div className="agent-session-toolbar-meta">
+              {loading && (
+                <span className="agent-session-toolbar-loading" aria-label="Loading sessions">
+                  <Loader2 size={12} className="agents-spin" />
+                </span>
+              )}
+              <Badge variant="outline">{sessions.length}</Badge>
+            </div>
+          </div>
+          <Button variant="icon" size="sm" onClick={onNewSession} title="New Session">
+            <Plus size={14} />
+          </Button>
         </div>
-      </div>
 
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="agents-session-list">
+        <div className="session-pane">
           {loading && sessions.length === 0 && (
-            <div className="agents-session-empty">
+            <div className="session-empty">
               <Loader2 size={14} className="agents-spin" />
               <span>Loading sessions...</span>
             </div>
@@ -247,10 +254,10 @@ export function AgentSessionRail({
           ))}
 
           {!loading && sessions.length === 0 && (
-            <div className="agents-session-empty">No sessions yet.</div>
+            <div className="session-empty">No sessions yet.</div>
           )}
         </div>
-      </ScrollArea>
-    </aside>
+      </div>
+    </NavSidebar>
   );
 }

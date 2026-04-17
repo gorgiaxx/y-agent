@@ -14,6 +14,7 @@ import type { EditorTab, EditorSurface } from '../components/agents/types';
 
 export const ChatContext = createContext<ReturnType<typeof useChat> | null>(null);
 export const SessionsContext = createContext<ReturnType<typeof useSessions> | null>(null);
+export const AgentSessionsContext = createContext<ReturnType<typeof useSessions> | null>(null);
 export const WorkspacesContext = createContext<ReturnType<typeof useWorkspaces> | null>(null);
 export const SkillsContext = createContext<ReturnType<typeof useSkills> | null>(null);
 export const KnowledgeContext = createContext<ReturnType<typeof useKnowledge> | null>(null);
@@ -60,6 +61,8 @@ export interface NavigationState {
   onAgentEditorSurfaceChange: (surface: EditorSurface) => void;
   setAgentEditorSurfaceHandler: (handler: ((surface: EditorSurface) => void) | null) => void;
   onAgentEditorBack: () => void;
+  onAgentStudioEdit: () => void;
+  setAgentStudioEditHandler: (handler: (() => void) | null) => void;
 
   automationSelectedType: 'workflow' | 'schedule' | null;
   setAutomationSelectedType: (type: 'workflow' | 'schedule' | null) => void;
@@ -80,6 +83,11 @@ export function useChatContext() {
 export function useSessionsContext() {
   const ctx = useContext(SessionsContext);
   if (!ctx) throw new Error('useSessionsContext must be used within SessionsProvider');
+  return ctx;
+}
+export function useAgentSessionsContext() {
+  const ctx = useContext(AgentSessionsContext);
+  if (!ctx) throw new Error('useAgentSessionsContext must be used within AgentSessionsProvider');
   return ctx;
 }
 export function useWorkspacesContext() {

@@ -14,7 +14,7 @@ import { AgentsView } from '../views/AgentsView';
 import { AutomationView } from '../views/AutomationView';
 import { SettingsView } from '../views/SettingsView';
 
-import { useNavigationContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext } from '../providers/AppContexts';
+import { useNavigationContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext, useAgentSessionsContext } from '../providers/AppContexts';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useObservability, type TimeRange } from '../hooks/useObservability';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
@@ -24,6 +24,7 @@ export function MainLayout() {
   const sessionHooks = useSessionsContext();
   const skillHooks = useSkillsContext();
   const agentHooks = useAgentsContext();
+  const agentSessionHooks = useAgentSessionsContext();
   const workspaceHooks = useWorkspacesContext();
   const chatHooks = useChatContext();
 
@@ -138,6 +139,23 @@ export function MainLayout() {
              await workspaceHooks.unassignSession(sessionId);
           },
         }}
+        agentStudio={navProps.activeAgentId && !navProps.agentEditing ? {
+          agentName: selectedAgentName ?? navProps.activeAgentId,
+          sessions: agentSessionHooks.sessions,
+          activeSessionId: agentSessionHooks.activeSessionId,
+          loading: agentSessionHooks.loading,
+          streamingSessionIds: chatHooks.streamingSessionIds,
+          onBack: () => navProps.setActiveAgentId(null),
+          onEdit: () => navProps.onAgentStudioEdit(),
+          onNewSession: async () => {
+            const newSession = await agentSessionHooks.createSession(undefined, { agentId: navProps.activeAgentId });
+            if (newSession) agentSessionHooks.selectSession(newSession.id);
+          },
+          onSelectSession: agentSessionHooks.selectSession,
+          onDeleteSession: async (id) => {
+            await agentSessionHooks.deleteSession(id);
+          },
+        } : null}
       />
 
       <main className="main-panel">

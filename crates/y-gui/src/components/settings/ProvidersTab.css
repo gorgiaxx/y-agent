@@ -232,6 +232,8 @@
   padding: 5px var(--space-sm);
   border-radius: var(--radius-sm);
   animation: settings-fadeIn 0.18s ease;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .pf-test-result.ok {

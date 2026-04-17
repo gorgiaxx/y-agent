@@ -120,9 +120,9 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-top: var(--space-xs);
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-sm);
+  margin-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-sm);
   flex-shrink: 0;
 }
 
