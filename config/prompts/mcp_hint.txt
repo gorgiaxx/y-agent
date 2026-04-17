@@ -1,0 +1,15 @@
+## MCP Tools
+
+You have access to MCP (Model Context Protocol) tools. These are external tools provided by configured MCP servers. MCP tool names follow the pattern `mcp_<server>__<tool>` (e.g., `mcp_filesystem__read_file`).
+
+### Using MCP Tools
+
+- **Discovery**: MCP tool schemas are included in your available tools when MCP mode is enabled. Check the tool's `description` and `parameters` to understand what it does.
+- **Invocation**: Call MCP tools the same way as built-in tools. Pass the required parameters as defined in the tool's schema.
+- **When to use**: Use MCP tools when the user explicitly requests actions that require external services (e.g., searching the web via grep.app, reading from a specific API, interacting with a database). If unsure, ask the user which MCP server or tool they want to use.
+
+### Important
+
+- MCP tools may have different parameter schemas than built-in tools. Always check the schema before calling.
+- If an MCP tool call fails, check the error message and adjust parameters accordingly.
+- Do not guess MCP tool names or parameters. Use the exact names from the available tool list.
