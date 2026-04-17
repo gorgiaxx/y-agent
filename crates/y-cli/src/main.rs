@@ -197,6 +197,18 @@ async fn main() -> Result<()> {
         Some(Commands::Kb { ref action }) => {
             commands::kb::run(action, mode).await?;
         }
+        Some(Commands::Mcp { ref action }) => match action {
+            commands::mcp::McpAction::Status => {
+                let services = wire::wire(&config).await?;
+                let services = std::sync::Arc::new(services);
+                services.start_background_services().await;
+                commands::mcp::run_status(&services, mode).await?;
+            }
+            other => {
+                let path = resolve_mcp_tools_toml_path(cli.user_config_dir.as_deref())?;
+                commands::mcp::run_offline(other, &path, mode)?;
+            }
+        },
         Some(Commands::Completion(_)) => {
             // Already handled above before config loading.
             unreachable!("completion is dispatched before config loading");
@@ -243,6 +255,17 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve the `tools.toml` path used by the `mcp` subcommands.
+///
+/// Honors the global `--user-config-dir` override; falls back to
+/// `~/.config/y-agent/tools.toml`.
+fn resolve_mcp_tools_toml_path(user_dir_override: Option<&str>) -> Result<std::path::PathBuf> {
+    if let Some(dir) = user_dir_override {
+        return Ok(std::path::PathBuf::from(dir).join("tools.toml"));
+    }
+    commands::mcp::default_tools_toml_path()
 }
 
 /// Print a summary after the TUI exits, including token usage and a resume hint.

@@ -165,6 +165,8 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 trust_tier: None,
                 agent_allowed_tools: vec![],
                 prune_tool_history: false,
+                mcp_mode: None,
+                mcp_servers: vec![],
             };
 
             match orchestrator::execute_turn(services, &turn_input).await {

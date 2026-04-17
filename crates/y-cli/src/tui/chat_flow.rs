@@ -212,6 +212,8 @@ pub fn submit_message(
             trust_tier: None,
             agent_allowed_tools: vec![],
             prune_tool_history: false,
+            mcp_mode: None,
+            mcp_servers: vec![],
         };
 
         // Set up a progress channel to receive streaming deltas.

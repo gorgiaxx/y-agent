@@ -7,6 +7,7 @@ pub mod config_cmd;
 pub mod diag;
 pub mod init;
 pub mod kb;
+pub mod mcp;
 pub mod serve;
 pub mod session;
 pub mod skills;
@@ -84,6 +85,12 @@ pub enum Commands {
     Kb {
         #[command(subcommand)]
         action: kb::KbAction,
+    },
+
+    /// MCP server management (add / remove / list / status).
+    Mcp {
+        #[command(subcommand)]
+        action: mcp::McpAction,
     },
 
     /// Generate shell completions.
