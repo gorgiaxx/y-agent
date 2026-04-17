@@ -84,6 +84,12 @@ export function MainLayout() {
           },
           activeSettingsTab: navProps.activeSettingsTab,
           onSelectSettingsTab: (t: string) => navProps.setActiveSettingsTab(t as never),
+          agentEditing: navProps.agentEditing,
+          agentEditorTab: navProps.agentEditorTab,
+          agentEditorSurface: navProps.agentEditorSurface,
+          onAgentEditorTabChange: navProps.setAgentEditorTab,
+          onAgentEditorSurfaceChange: navProps.onAgentEditorSurfaceChange,
+          onAgentEditorBack: navProps.onAgentEditorBack,
         }}
         chat={{
           sessions: sessionHooks.sessions,
@@ -135,7 +141,7 @@ export function MainLayout() {
       />
 
       <main className="main-panel">
-        {navProps.activeView !== 'settings' && (
+        {navProps.activeView !== 'settings' && !(navProps.activeView === 'agents' && navProps.agentEditing) && (
         <header className="main-header" data-tauri-drag-region>
           <div className="main-header-start" data-tauri-drag-region>
             {showAgentBack && (

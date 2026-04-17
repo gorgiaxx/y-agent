@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 
 import { useChat } from '../hooks/useChat';
 import { useSessions } from '../hooks/useSessions';
@@ -13,6 +13,7 @@ import { useThemeProvider, ThemeContext } from '../hooks/useTheme';
 
 import type { ViewType } from '../components/Sidebar';
 import type { SettingsTab } from '../components/settings/SettingsPanel';
+import type { EditorTab, EditorSurface } from '../components/agents/types';
 
 import {
   ChatContext,
@@ -54,6 +55,20 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const [agentEditing, setAgentEditing] = useState(false);
+  const [agentEditorTab, setAgentEditorTab] = useState<EditorTab>('general');
+  const [agentEditorSurface, setAgentEditorSurface] = useState<EditorSurface>('form');
+  const agentEditorSurfaceHandlerRef = useRef<((surface: EditorSurface) => void) | null>(null);
+  const onAgentEditorSurfaceChange = useCallback((surface: EditorSurface) => {
+    if (agentEditorSurfaceHandlerRef.current) {
+      agentEditorSurfaceHandlerRef.current(surface);
+    } else {
+      setAgentEditorSurface(surface);
+    }
+  }, []);
+  const setAgentEditorSurfaceHandler = useCallback((handler: ((surface: EditorSurface) => void) | null) => {
+    agentEditorSurfaceHandlerRef.current = handler;
+  }, []);
   const [automationSelectedType, setAutomationSelectedType] = useState<'workflow' | 'schedule' | null>(null);
   const [automationSelectedId, setAutomationSelectedId] = useState<string | null>(null);
   const [automationCreating, setAutomationCreating] = useState<'workflow' | 'schedule' | null>(null);
@@ -100,6 +115,10 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     selectedKbCollection: knowledgeHooks.selectedCollection,
     setSelectedKbCollection: knowledgeHooks.setSelectedCollection,
     activeAgentId, setActiveAgentId,
+    agentEditing, agentEditorTab, agentEditorSurface,
+    setAgentEditing, setAgentEditorTab, setAgentEditorSurface,
+    onAgentEditorSurfaceChange, setAgentEditorSurfaceHandler,
+    onAgentEditorBack: () => { setAgentEditing(false); },
     automationSelectedType, setAutomationSelectedType,
     automationSelectedId, setAutomationSelectedId,
     automationCreating, setAutomationCreating,

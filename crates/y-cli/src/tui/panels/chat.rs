@@ -1498,7 +1498,15 @@ mod tests {
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_message(&mut lines, &mut plain, &msg, false, 0, 80);
+        render_message(
+            &mut lines,
+            &mut plain,
+            &msg,
+            false,
+            0,
+            80,
+            &Theme::default(),
+        );
 
         // Header + 2 content lines = 3 lines.
         assert_eq!(lines.len(), 3);
@@ -1520,7 +1528,15 @@ mod tests {
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_message(&mut lines, &mut plain, &msg, false, 0, 80);
+        render_message(
+            &mut lines,
+            &mut plain,
+            &msg,
+            false,
+            0,
+            80,
+            &Theme::default(),
+        );
 
         let header = &lines[0];
         let header_text: String = header.spans.iter().map(|s| s.content.to_string()).collect();

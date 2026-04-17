@@ -9,6 +9,12 @@ interface UseAgentEditorParams {
   parseAgentToml: (toml: string) => Promise<AgentDetail | null>;
   saveAgent: (id: string, content: string) => Promise<boolean>;
   resetAgent: (id: string) => Promise<boolean>;
+  editorOpen: boolean;
+  setEditorOpen: (open: boolean) => void;
+  editorTab: EditorTab;
+  setEditorTab: (tab: EditorTab) => void;
+  editorSurface: EditorSurface;
+  setEditorSurface: (surface: EditorSurface) => void;
 }
 
 export function useAgentEditor({
@@ -17,11 +23,14 @@ export function useAgentEditor({
   parseAgentToml,
   saveAgent,
   resetAgent,
+  editorOpen,
+  setEditorOpen,
+  editorTab,
+  setEditorTab,
+  editorSurface,
+  setEditorSurface,
 }: UseAgentEditorParams) {
-  const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create');
-  const [editorTab, setEditorTab] = useState<EditorTab>('general');
-  const [editorSurface, setEditorSurface] = useState<EditorSurface>('form');
   const [editorDraft, setEditorDraft] = useState<AgentDraft>(buildDraft());
   const [editorRawToml, setEditorRawToml] = useState('');
   const [editorRawPath, setEditorRawPath] = useState<string | null>(null);
@@ -171,8 +180,6 @@ export function useAgentEditor({
   return {
     editorOpen,
     editorMode,
-    editorTab,
-    editorSurface,
     editorDraft,
     editorRawToml,
     editorRawPath,
@@ -180,7 +187,6 @@ export function useAgentEditor({
     editorRawOrigin,
     editorRawError,
     editorSaving,
-    setEditorTab,
     setEditorRawToml: (content: string) => {
       setEditorRawToml(content);
       setEditorRawOrigin('raw');

@@ -1241,27 +1241,45 @@ impl TuiApp {
         match self
             .services
             .session_manager
-            .read_transcript(session_id)
+            .read_display_transcript(session_id)
             .await
         {
             Ok(messages) => {
+                // Reset cumulative status bar counters before re-accumulating.
+                self.state.cumulative_input_tokens = 0;
+                self.state.cumulative_output_tokens = 0;
+                self.state.last_cost = None;
+                self.state.status_model = String::new();
+                self.state.status_tokens = String::new();
+                self.state.last_input_tokens = 0;
+
                 self.state.messages = messages
                     .into_iter()
-                    .map(|m| state::ChatMessage {
-                        role: match m.role {
-                            y_core::types::Role::User => state::MessageRole::User,
-                            y_core::types::Role::Assistant => state::MessageRole::Assistant,
-                            y_core::types::Role::System => state::MessageRole::System,
-                            y_core::types::Role::Tool => state::MessageRole::Tool,
-                        },
-                        content: m.content,
-                        timestamp: m.timestamp,
-                        is_streaming: false,
-                        is_cancelled: false,
-                        reasoning_content: String::new(),
-                        reasoning_complete: false,
-                        tool_calls: Vec::new(),
-                        segments: Vec::new(),
+                    .map(|m| {
+                        let tool_calls = extract_tool_calls_from_metadata(&m.metadata);
+                        let segments = build_segments_from_content(&m.content, &tool_calls);
+
+                        // Accumulate status bar data from assistant metadata.
+                        if m.role == y_core::types::Role::Assistant {
+                            restore_status_from_metadata(&m.metadata, &mut self.state);
+                        }
+
+                        state::ChatMessage {
+                            role: match m.role {
+                                y_core::types::Role::User => state::MessageRole::User,
+                                y_core::types::Role::Assistant => state::MessageRole::Assistant,
+                                y_core::types::Role::System => state::MessageRole::System,
+                                y_core::types::Role::Tool => state::MessageRole::Tool,
+                            },
+                            content: m.content,
+                            timestamp: m.timestamp,
+                            is_streaming: false,
+                            is_cancelled: false,
+                            reasoning_content: String::new(),
+                            reasoning_complete: false,
+                            tool_calls,
+                            segments,
+                        }
                     })
                     .collect();
                 self.state.scroll_offset = 0;
@@ -1388,5 +1406,106 @@ impl Drop for TuiApp {
             LeaveAlternateScreen
         );
         let _ = self.terminal.show_cursor();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Transcript restoration helpers
+// ---------------------------------------------------------------------------
+
+/// Extract tool call info from an assistant message's `metadata.tool_results`.
+fn extract_tool_calls_from_metadata(metadata: &serde_json::Value) -> Vec<state::ToolCallInfo> {
+    let Some(results) = metadata.get("tool_results").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    results
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.get("name")?.as_str()?.to_string();
+            let success = entry
+                .get("success")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let duration_ms = entry
+                .get("duration_ms")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            Some(state::ToolCallInfo {
+                name,
+                success,
+                duration_ms,
+            })
+        })
+        .collect()
+}
+
+/// Build event-ordered segments from content text and tool calls.
+///
+/// For historical messages we don't have the original interleaving, so we
+/// emit the full text first, then append tool call segments.
+fn build_segments_from_content(
+    content: &str,
+    tool_calls: &[state::ToolCallInfo],
+) -> Vec<state::StreamSegment> {
+    if tool_calls.is_empty() {
+        return Vec::new();
+    }
+    let mut segments = Vec::with_capacity(1 + tool_calls.len());
+    if !content.is_empty() {
+        segments.push(state::StreamSegment::Text(content.to_string()));
+    }
+    for tc in tool_calls {
+        segments.push(state::StreamSegment::ToolCall(tc.clone()));
+    }
+    segments
+}
+
+/// Restore status bar fields from a single assistant message's metadata.
+///
+/// Called for each assistant message during transcript loading. Accumulates
+/// cumulative token counts and overwrites "last" fields so the final call
+/// (the most recent assistant message) leaves the correct current values.
+fn restore_status_from_metadata(metadata: &serde_json::Value, state: &mut state::AppState) {
+    let input_tokens = metadata
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = metadata
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    state.cumulative_input_tokens += input_tokens;
+    state.cumulative_output_tokens += output_tokens;
+
+    if let Some(model) = metadata.get("model").and_then(|v| v.as_str()) {
+        state.status_model = model.to_string();
+    }
+
+    state.status_tokens = format!(
+        "{}\u{2191} {}\u{2193}",
+        state.cumulative_input_tokens, state.cumulative_output_tokens
+    );
+
+    if let Some(ctx) = metadata
+        .get("context_tokens_used")
+        .and_then(serde_json::Value::as_u64)
+    {
+        state.last_input_tokens = ctx;
+    }
+
+    if let Some(window) = metadata
+        .get("context_window")
+        .and_then(serde_json::Value::as_u64)
+    {
+        if window > 0 {
+            state.context_window = window as usize;
+        }
+    }
+
+    if let Some(cost) = metadata.get("cost_usd").and_then(serde_json::Value::as_f64) {
+        if cost > 0.0 {
+            state.last_cost = Some(state.last_cost.unwrap_or(0.0) + cost);
+        }
     }
 }

@@ -10,6 +10,7 @@ import type { useProviders } from '../hooks/useProviders';
 import type { useConfig } from '../hooks/useConfig';
 import type { ViewType } from '../components/Sidebar';
 import type { SettingsTab } from '../components/settings/SettingsPanel';
+import type { EditorTab, EditorSurface } from '../components/agents/types';
 
 export const ChatContext = createContext<ReturnType<typeof useChat> | null>(null);
 export const SessionsContext = createContext<ReturnType<typeof useSessions> | null>(null);
@@ -49,6 +50,16 @@ export interface NavigationState {
 
   activeAgentId: string | null;
   setActiveAgentId: (id: string | null) => void;
+
+  agentEditing: boolean;
+  agentEditorTab: EditorTab;
+  agentEditorSurface: EditorSurface;
+  setAgentEditing: (editing: boolean) => void;
+  setAgentEditorTab: (tab: EditorTab) => void;
+  setAgentEditorSurface: (surface: EditorSurface) => void;
+  onAgentEditorSurfaceChange: (surface: EditorSurface) => void;
+  setAgentEditorSurfaceHandler: (handler: ((surface: EditorSurface) => void) | null) => void;
+  onAgentEditorBack: () => void;
 
   automationSelectedType: 'workflow' | 'schedule' | null;
   setAutomationSelectedType: (type: 'workflow' | 'schedule' | null) => void;

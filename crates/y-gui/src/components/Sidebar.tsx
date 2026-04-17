@@ -12,6 +12,8 @@ import type { SessionInfo, WorkspaceInfo } from '../types';
 import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
 import { NavSidebar, NavItem, NavDivider } from './common/NavSidebar';
 import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
+import { AgentEditorSidebarNav } from './agents/AgentEditorSidebarNav';
+import type { EditorTab, EditorSurface } from './agents/types';
 import './Sidebar.css';
 
 export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents' | 'settings';
@@ -46,6 +48,12 @@ export interface NavSidebarPropsGroup {
   onSelectView: (view: ViewType) => void;
   activeSettingsTab: string | null;
   onSelectSettingsTab: (tab: string) => void;
+  agentEditing: boolean;
+  agentEditorTab: EditorTab;
+  agentEditorSurface: EditorSurface;
+  onAgentEditorTabChange: (tab: EditorTab) => void;
+  onAgentEditorSurfaceChange: (surface: EditorSurface) => void;
+  onAgentEditorBack: () => void;
 }
 
 interface SidebarProps {
@@ -79,6 +87,19 @@ export function Sidebar({ chat, nav }: SidebarProps) {
         activeTab={nav.activeSettingsTab}
         onSelectTab={nav.onSelectSettingsTab}
         onBack={() => goTo('chat')}
+      />
+    );
+  }
+
+  // When editing an agent, swap the sidebar for the agent editor nav.
+  if (nav.activeView === 'agents' && nav.agentEditing) {
+    return (
+      <AgentEditorSidebarNav
+        activeTab={nav.agentEditorTab}
+        surface={nav.agentEditorSurface}
+        onSelectTab={nav.onAgentEditorTabChange}
+        onSurfaceChange={nav.onAgentEditorSurfaceChange}
+        onBack={nav.onAgentEditorBack}
       />
     );
   }

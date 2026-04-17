@@ -1,4 +1,4 @@
-export type EditorTab = 'general' | 'tools' | 'skills' | 'knowledge' | 'prompt' | 'model' | 'limits';
+export type EditorTab = 'general' | 'tools' | 'skills' | 'knowledge' | 'prompt' | 'model' | 'limits' | 'mcp';
 export type EditorSurface = 'form' | 'raw';
 
 export interface AgentDraft {
@@ -43,4 +43,5 @@ export const EDITOR_TABS: { id: EditorTab; label: string }[] = [
   { id: 'prompt', label: 'Prompt' },
   { id: 'model', label: 'Model' },
   { id: 'limits', label: 'Limits' },
+  { id: 'mcp', label: 'MCP' },
 ];

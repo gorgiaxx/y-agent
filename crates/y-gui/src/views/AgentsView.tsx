@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AgentsSidebarPanel } from '../components/agents/AgentsSidebarPanel';
-import { AgentEditorDialog } from '../components/agents/AgentEditorDialog';
+import { AgentEditorPanel } from '../components/agents/AgentEditorPanel';
 import { AgentOverview } from '../components/agents/AgentOverview';
 import { AgentStudio } from '../components/agents/AgentStudio';
 import {
@@ -92,7 +92,22 @@ export function AgentsView() {
     parseAgentToml,
     saveAgent,
     resetAgent,
+    editorOpen: nav.agentEditing,
+    setEditorOpen: nav.setAgentEditing,
+    editorTab: nav.agentEditorTab,
+    setEditorTab: nav.setAgentEditorTab,
+    editorSurface: nav.agentEditorSurface,
+    setEditorSurface: nav.setAgentEditorSurface,
   });
+
+  // Register the editor's surface change handler so the sidebar toggle
+  // goes through TOML validation before switching raw <-> form.
+  useEffect(() => {
+    nav.setAgentEditorSurfaceHandler(
+      nav.agentEditing ? (surface) => { void editor.handleEditorSurfaceChange(surface); } : null,
+    );
+    return () => nav.setAgentEditorSurfaceHandler(null);
+  }, [nav.agentEditing, editor.handleEditorSurfaceChange, nav.setAgentEditorSurfaceHandler]);
 
   const loadSelectedAgentDetail = useCallback(async (agentId: string) => {
     setDetailLoading(true);
@@ -260,152 +275,148 @@ export function AgentsView() {
   );
   const visibleKnowledge = selectedAgentSummary?.features.knowledge ? knowledgeHooks.collections : [];
 
-  const editorDialog = editor.editorOpen ? (
-    <AgentEditorDialog
-      mode={editor.editorMode}
-      draft={editor.editorDraft}
-      tab={editor.editorTab}
-      surface={editor.editorSurface}
-      rawToml={editor.editorRawToml}
-      rawPath={editor.editorRawPath}
-      rawUsesSourceFile={editor.editorRawUsesSourceFile}
-      rawError={editor.editorRawError}
-      saving={editor.editorSaving}
-      canReset={editor.editorMode === 'edit' && !!selectedAgentDetail?.is_overridden}
-      agents={agents}
-      tools={tools}
-      promptSections={promptSections}
-      availableSkills={availableSkills}
-      knowledgeCollections={knowledgeCollectionNames}
-      providerOptions={providerHooks.providers}
-      onChange={editor.handleEditorDraftChange}
-      onTabChange={editor.setEditorTab}
-      onSurfaceChange={(surface) => { void editor.handleEditorSurfaceChange(surface); }}
-      onRawTomlChange={editor.setEditorRawToml}
-      onApplyTemplate={editor.handleApplyTemplate}
-      onClose={editor.closeEditor}
-      onSave={async () => {
-        const ok = await editor.handleSaveEditor();
-        if (ok && nav.activeAgentId) {
-          await loadSelectedAgentDetail(nav.activeAgentId);
-        }
-      }}
-      onReset={async () => {
-        const ok = await editor.handleResetEditor();
-        if (ok && nav.activeAgentId) {
-          await loadSelectedAgentDetail(nav.activeAgentId);
-        }
-      }}
-    />
-  ) : null;
-
   return (
     <div className="agents-view">
-      <div className="agents-shell">
-        {nav.activeAgentId ? (
-          <>
-            <AgentsSidebarPanel
-              agents={filteredAgents}
-              activeAgentId={nav.activeAgentId}
-              query={agentQuery}
-              totalCount={agents.length}
-              reloading={reloadingAgents}
-              onQueryChange={setAgentQuery}
-              onSelectAgent={nav.setActiveAgentId}
-              onReload={() => void handleReloadAgents()}
-              onNewAgent={editor.handleOpenCreate}
-            />
-
-            <section className="agents-main-panel">
-              <AgentStudio
-                agentSummary={selectedAgentSummary}
-                agentId={nav.activeAgentId}
-                detailLoading={detailLoading}
-                sessions={sessionHooks.sessions}
-                activeSessionId={sessionHooks.activeSessionId}
-                sessionsLoading={sessionHooks.loading}
-                streamingSessionIds={agentChatHooks.streamingSessionIds}
-                messages={agentChatHooks.messages}
-                isStreaming={agentChatHooks.isStreaming}
-                isLoadingMessages={agentChatHooks.isLoadingMessages}
-                error={agentChatHooks.error}
-                toolResults={agentChatHooks.toolResults}
-                getStreamSegments={agentChatHooks.getStreamSegments}
-                contextResetPoints={agentChatHooks.contextResetPoints}
-                compactPoints={agentChatHooks.compactPoints}
-                providerCount={providerHooks.systemStatus?.provider_count ?? 0}
-                version={providerHooks.systemStatus?.version ?? 'debug'}
-                activeModel={statusBarMeta.provider}
-                activeProviderIcon={
-                  (statusBarMeta.providerId ? providerHooks.providerIconMap[statusBarMeta.providerId] : undefined)
-                  ?? (selectedProviderId !== 'auto' ? providerHooks.providerIconMap[selectedProviderId] : undefined)
-                  ?? null
-                }
-                lastTokens={statusBarMeta.tokens}
-                lastCost={statusBarMeta.cost}
-                contextWindow={statusBarMeta.contextWindow}
-                contextTokensUsed={statusBarMeta.contextTokensUsed}
-                selectedProviderId={selectedProviderId}
-                thinkingEffort={thinkingEffort}
-                planMode={planMode}
-                inputDisabled={inputDisabled}
-                sendOnEnter={configHooks.config.send_on_enter}
-                providers={providerHooks.providers}
-                providerIcons={providerHooks.providerIconMap}
-                visibleSkills={visibleSkills}
-                visibleKnowledge={visibleKnowledge}
-                inputExpanded={nav.inputExpanded}
-                pendingEdit={agentChatHooks.pendingEdit}
-                isCompacting={agentChatHooks.opStatus === 'compacting'}
-                hasCustomPrompt={sessionHooks.sessions.find((session) => session.id === sessionHooks.activeSessionId)?.has_custom_prompt ?? false}
-                rewindDraft={rewindDraft}
-                mcpMode={mcpMode}
-                onMcpModeChange={handleMcpModeChange}
-                mcpServerList={mcpServerList}
-                selectedMcpServers={selectedMcpServers}
-                onMcpServerToggle={handleMcpServerToggle}
-                askUserData={interactions.askUserData}
-                permissionData={interactions.permissionData}
-                onEdit={() => void editor.handleOpenEdit(nav.activeAgentId!)}
-                onNewSession={() => void chatHandlers.handleNewChat()}
-                onSelectSession={sessionHooks.selectSession}
-                onDeleteSession={(id) => void sessionHooks.deleteSession(id)}
-                onForkMessage={(messageIndex) => void handleForkMessage(messageIndex)}
-                onSend={chatHandlers.handleSend}
-                onStop={agentChatHooks.cancelRun}
-                onCommand={chatHandlers.handleCommand}
-                onSelectProvider={setSelectedProviderId}
-                onThinkingEffortChange={setThinkingEffort}
-                onPlanModeChange={setPlanMode}
-                onExpandChange={nav.setInputExpanded}
-                onCancelEdit={chatHandlers.handleCancelEdit}
-                onClearSession={() => void chatHandlers.handleClearSession()}
-                onAddContextReset={agentChatHooks.addContextReset}
-                onEditMessage={chatHandlers.handleEditMessage}
-                onUndoMessage={chatHandlers.handleUndoMessage}
-                onResendMessage={chatHandlers.handleResendMessage}
-                onRestoreBranch={chatHandlers.handleRestoreBranch}
-                onCustomPromptChange={() => { void refreshAgentSessions(); }}
-                onRewindDraftConsumed={() => setRewindDraft(null)}
-                onAskUserSubmit={interactions.handleAskUserSubmit}
-                onAskUserDismiss={interactions.handleAskUserDismiss}
-                onPermissionApprove={interactions.handlePermissionApprove}
-                onPermissionDeny={interactions.handlePermissionDeny}
-                onPermissionAllowAllForSession={interactions.handlePermissionAllowAllForSession}
+      {nav.agentEditing ? (
+        <AgentEditorPanel
+          mode={editor.editorMode}
+          draft={editor.editorDraft}
+          tab={nav.agentEditorTab}
+          surface={nav.agentEditorSurface}
+          rawToml={editor.editorRawToml}
+          rawPath={editor.editorRawPath}
+          rawUsesSourceFile={editor.editorRawUsesSourceFile}
+          rawError={editor.editorRawError}
+          saving={editor.editorSaving}
+          canReset={editor.editorMode === 'edit' && !!selectedAgentDetail?.is_overridden}
+          agents={agents}
+          tools={tools}
+          promptSections={promptSections}
+          availableSkills={availableSkills}
+          knowledgeCollections={knowledgeCollectionNames}
+          mcpServers={mcpServerList}
+          providerOptions={providerHooks.providers}
+          onChange={editor.handleEditorDraftChange}
+          onRawTomlChange={editor.setEditorRawToml}
+          onApplyTemplate={editor.handleApplyTemplate}
+          onSave={async () => {
+            const ok = await editor.handleSaveEditor();
+            if (ok && nav.activeAgentId) {
+              await loadSelectedAgentDetail(nav.activeAgentId);
+            }
+          }}
+          onReset={async () => {
+            const ok = await editor.handleResetEditor();
+            if (ok && nav.activeAgentId) {
+              await loadSelectedAgentDetail(nav.activeAgentId);
+            }
+          }}
+        />
+      ) : (
+        <div className="agents-shell">
+          {nav.activeAgentId ? (
+            <>
+              <AgentsSidebarPanel
+                agents={filteredAgents}
+                activeAgentId={nav.activeAgentId}
+                query={agentQuery}
+                totalCount={agents.length}
+                reloading={reloadingAgents}
+                onQueryChange={setAgentQuery}
+                onSelectAgent={nav.setActiveAgentId}
+                onReload={() => void handleReloadAgents()}
+                onNewAgent={editor.handleOpenCreate}
               />
-            </section>
-          </>
-        ) : (
-            <AgentOverview
-              filteredAgents={filteredAgents}
-              agentQuery={agentQuery}
-              onSelectAgent={nav.setActiveAgentId}
-              onOpenEdit={(id) => void editor.handleOpenEdit(id)}
-            />
-        )}
-      </div>
 
-      {editorDialog}
+              <section className="agents-main-panel">
+                <AgentStudio
+                  agentSummary={selectedAgentSummary}
+                  agentId={nav.activeAgentId}
+                  detailLoading={detailLoading}
+                  sessions={sessionHooks.sessions}
+                  activeSessionId={sessionHooks.activeSessionId}
+                  sessionsLoading={sessionHooks.loading}
+                  streamingSessionIds={agentChatHooks.streamingSessionIds}
+                  messages={agentChatHooks.messages}
+                  isStreaming={agentChatHooks.isStreaming}
+                  isLoadingMessages={agentChatHooks.isLoadingMessages}
+                  error={agentChatHooks.error}
+                  toolResults={agentChatHooks.toolResults}
+                  getStreamSegments={agentChatHooks.getStreamSegments}
+                  contextResetPoints={agentChatHooks.contextResetPoints}
+                  compactPoints={agentChatHooks.compactPoints}
+                  providerCount={providerHooks.systemStatus?.provider_count ?? 0}
+                  version={providerHooks.systemStatus?.version ?? 'debug'}
+                  activeModel={statusBarMeta.provider}
+                  activeProviderIcon={
+                    (statusBarMeta.providerId ? providerHooks.providerIconMap[statusBarMeta.providerId] : undefined)
+                    ?? (selectedProviderId !== 'auto' ? providerHooks.providerIconMap[selectedProviderId] : undefined)
+                    ?? null
+                  }
+                  lastTokens={statusBarMeta.tokens}
+                  lastCost={statusBarMeta.cost}
+                  contextWindow={statusBarMeta.contextWindow}
+                  contextTokensUsed={statusBarMeta.contextTokensUsed}
+                  selectedProviderId={selectedProviderId}
+                  thinkingEffort={thinkingEffort}
+                  planMode={planMode}
+                  inputDisabled={inputDisabled}
+                  sendOnEnter={configHooks.config.send_on_enter}
+                  providers={providerHooks.providers}
+                  providerIcons={providerHooks.providerIconMap}
+                  visibleSkills={visibleSkills}
+                  visibleKnowledge={visibleKnowledge}
+                  inputExpanded={nav.inputExpanded}
+                  pendingEdit={agentChatHooks.pendingEdit}
+                  isCompacting={agentChatHooks.opStatus === 'compacting'}
+                  hasCustomPrompt={sessionHooks.sessions.find((session) => session.id === sessionHooks.activeSessionId)?.has_custom_prompt ?? false}
+                  rewindDraft={rewindDraft}
+                  mcpMode={mcpMode}
+                  onMcpModeChange={handleMcpModeChange}
+                  mcpServerList={mcpServerList}
+                  selectedMcpServers={selectedMcpServers}
+                  onMcpServerToggle={handleMcpServerToggle}
+                  askUserData={interactions.askUserData}
+                  permissionData={interactions.permissionData}
+                  onEdit={() => void editor.handleOpenEdit(nav.activeAgentId!)}
+                  onNewSession={() => void chatHandlers.handleNewChat()}
+                  onSelectSession={sessionHooks.selectSession}
+                  onDeleteSession={(id) => void sessionHooks.deleteSession(id)}
+                  onForkMessage={(messageIndex) => void handleForkMessage(messageIndex)}
+                  onSend={chatHandlers.handleSend}
+                  onStop={agentChatHooks.cancelRun}
+                  onCommand={chatHandlers.handleCommand}
+                  onSelectProvider={setSelectedProviderId}
+                  onThinkingEffortChange={setThinkingEffort}
+                  onPlanModeChange={setPlanMode}
+                  onExpandChange={nav.setInputExpanded}
+                  onCancelEdit={chatHandlers.handleCancelEdit}
+                  onClearSession={() => void chatHandlers.handleClearSession()}
+                  onAddContextReset={agentChatHooks.addContextReset}
+                  onEditMessage={chatHandlers.handleEditMessage}
+                  onUndoMessage={chatHandlers.handleUndoMessage}
+                  onResendMessage={chatHandlers.handleResendMessage}
+                  onRestoreBranch={chatHandlers.handleRestoreBranch}
+                  onCustomPromptChange={() => { void refreshAgentSessions(); }}
+                  onRewindDraftConsumed={() => setRewindDraft(null)}
+                  onAskUserSubmit={interactions.handleAskUserSubmit}
+                  onAskUserDismiss={interactions.handleAskUserDismiss}
+                  onPermissionApprove={interactions.handlePermissionApprove}
+                  onPermissionDeny={interactions.handlePermissionDeny}
+                  onPermissionAllowAllForSession={interactions.handlePermissionAllowAllForSession}
+                />
+              </section>
+            </>
+          ) : (
+              <AgentOverview
+                filteredAgents={filteredAgents}
+                agentQuery={agentQuery}
+                onSelectAgent={nav.setActiveAgentId}
+                onOpenEdit={(id) => void editor.handleOpenEdit(id)}
+              />
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -26,6 +26,8 @@ pub enum ChatEvent {
         last_input_tokens: u64,
         /// Context window size of the provider that served this request.
         context_window: usize,
+        /// Cost in USD for this turn.
+        cost_usd: f64,
     },
     /// A tool call was executed during the LLM turn.
     ToolCallExecuted {
@@ -267,6 +269,7 @@ pub fn submit_message(
                         output_tokens: result.output_tokens,
                         last_input_tokens: result.last_input_tokens,
                         context_window: result.context_window,
+                        cost_usd: result.cost_usd,
                     })
                     .await;
             }
@@ -328,6 +331,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             output_tokens,
             last_input_tokens,
             context_window,
+            cost_usd,
         } => {
             // Update the last (streaming) assistant message.
             if let Some(last) = state.messages.last_mut() {
@@ -341,7 +345,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
 
             // Update status bar data.
             state.status_model = model;
-            state.status_tokens = format!("{input_tokens}↑ {output_tokens}↓");
+            state.status_tokens = format!("{input_tokens}\u{2191} {output_tokens}\u{2193}");
 
             // Track cumulative tokens and context window for usage display.
             state.cumulative_input_tokens += input_tokens;
@@ -349,6 +353,9 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             state.last_input_tokens = last_input_tokens;
             if context_window > 0 {
                 state.context_window = context_window;
+            }
+            if cost_usd > 0.0 {
+                state.last_cost = Some(state.last_cost.unwrap_or(0.0) + cost_usd);
             }
         }
         ChatEvent::ToolCallExecuted {
@@ -482,6 +489,7 @@ mod tests {
                 output_tokens: 5,
                 last_input_tokens: 10,
                 context_window: 128_000,
+                cost_usd: 0.001,
             },
             &mut state,
         );
@@ -491,6 +499,7 @@ mod tests {
         assert_eq!(last.content, "Hello!");
         assert!(!last.is_streaming);
         assert_eq!(state.status_model, "gpt-4");
+        assert_eq!(state.last_cost, Some(0.001));
     }
 
     #[test]
@@ -717,6 +726,7 @@ mod tests {
                 output_tokens: 5,
                 last_input_tokens: 10,
                 context_window: 128_000,
+                cost_usd: 0.0,
             },
             &mut state,
         );

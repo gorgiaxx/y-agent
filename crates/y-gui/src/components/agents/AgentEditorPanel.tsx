@@ -13,6 +13,7 @@ import { ModelTab } from './AgentEditorDialog/ModelTab';
 import { LimitsTab } from './AgentEditorDialog/LimitsTab';
 import { McpTab } from './AgentEditorDialog/McpTab';
 import '../settings/SettingsPanel.css';
+import '../settings/SettingsForm.css';
 
 interface AgentEditorPanelProps {
   mode: 'create' | 'edit';
@@ -33,8 +34,6 @@ interface AgentEditorPanelProps {
   mcpServers: { name: string; disabled: boolean }[];
   providerOptions: Array<{ id: string; model: string }>;
   onChange: (updater: (draft: AgentDraft) => AgentDraft) => void;
-  onTabChange: (tab: EditorTab) => void;
-  onSurfaceChange: (surface: EditorSurface) => void;
   onRawTomlChange: (content: string) => void;
   onApplyTemplate: (id: string) => void;
   onSave: () => void;
@@ -60,8 +59,6 @@ export function AgentEditorPanel({
   mcpServers,
   providerOptions,
   onChange,
-  onTabChange,
-  onSurfaceChange,
   onRawTomlChange,
   onApplyTemplate,
   onSave,
@@ -87,45 +84,36 @@ export function AgentEditorPanel({
       </div>
 
       {surface === 'raw' ? (
-        <div className="settings-content agent-editor-raw">
-          {rawError && (
-            <div className="settings-toast error">
-              {rawError}
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="settings-content">
+            {rawError && (
+              <div className="settings-toast error">{rawError}</div>
+            )}
+            <div className="settings-form-wrap">
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                {rawUsesSourceFile ? 'Editing source file' : 'Editing generated agent source'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                {rawPath ?? 'The content below will be saved as the agent definition TOML.'}
+              </div>
             </div>
-          )}
-          <div className="pf-field" style={{ gap: 4 }}>
-            <span className="pf-section-title">
-              {rawUsesSourceFile ? 'Editing source file' : 'Editing generated agent source'}
-            </span>
-            <span className="pf-hint">
-              {rawPath ?? 'The content below will be saved as the agent definition TOML.'}
-            </span>
+            <div className="toml-editor-monaco">
+              <MonacoEditor
+                value={rawToml}
+                onChange={(val) => onRawTomlChange(val)}
+                language="toml"
+              />
+            </div>
           </div>
-          <div className="toml-editor-monaco">
-            <MonacoEditor
-              value={rawToml}
-              onChange={(val) => onRawTomlChange(val)}
-              language="toml"
-            />
-          </div>
-        </div>
+        </ScrollArea>
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           <div className="settings-content">
             {rawError && (
-              <div className="settings-toast error">
-                {rawError}
-              </div>
+              <div className="settings-toast error">{rawError}</div>
             )}
-
             {tab === 'general' && (
-              <GeneralTab
-                mode={mode}
-                draft={draft}
-                agents={agents}
-                onChange={onChange}
-                onApplyTemplate={onApplyTemplate}
-              />
+              <GeneralTab mode={mode} draft={draft} agents={agents} onChange={onChange} onApplyTemplate={onApplyTemplate} />
             )}
             {tab === 'tools' && (
               <ToolsTab draft={draft} tools={tools} onChange={onChange} />

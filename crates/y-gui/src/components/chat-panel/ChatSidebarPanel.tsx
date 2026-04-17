@@ -6,11 +6,13 @@ import {
   FolderOpen,
   Folder,
   FolderPlus,
+  FolderSymlink,
   MoreHorizontal,
   Pencil,
   Trash2,
   GitBranch,
 } from 'lucide-react';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
 import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
@@ -746,8 +748,19 @@ export function ChatSidebarPanel({
             }}
           >
             <Pencil size={11} />
-            Rename
+            Edit
           </button>
+          <button
+            className="context-menu-item"
+            onClick={() => {
+              revealItemInDir(openWorkspace.path);
+              closeOpenMenu();
+            }}
+          >
+            <FolderSymlink size={11} />
+            Open in file manager
+          </button>
+          <hr className="context-menu-divider" />
           <button
             className="context-menu-item context-menu-item--danger"
             onClick={() => {
@@ -905,6 +918,11 @@ export function ChatSidebarPanel({
                       <div
                         className="panel-group-label"
                         onClick={() => toggleCollapsed(workspace.id)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
+                        }}
                         style={{ cursor: 'pointer' }}
                       >
                         {isCollapsed
