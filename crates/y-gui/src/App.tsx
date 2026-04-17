@@ -18,6 +18,17 @@ function AppContent({ onRequestWizard }: { onRequestWizard: () => void }) {
     invoke('show_window').catch(() => {});
   }, []);
 
+  // Keep the native decoration state in sync with the user preference.
+  // Also expose it as a class on <html> so CSS can adapt the custom titlebar
+  // (e.g. reserve space for macOS traffic lights, enable the drag region).
+  useEffect(() => {
+    const useCustom = !!config.use_custom_decorations;
+    document.documentElement.classList.toggle('custom-decorations', useCustom);
+    document.documentElement.dataset.platform =
+      typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? 'macos' : 'other';
+    invoke('window_set_decorations', { useCustom }).catch(() => {});
+  }, [config.use_custom_decorations]);
+
   // Determine whether to show the wizard on first load.
   // For existing users who already have providers configured, auto-mark setup
   // as completed so they never see the wizard.

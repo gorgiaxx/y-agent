@@ -54,6 +54,14 @@ pub struct GuiConfig {
     pub setup_completed: bool,
     /// Default target language for the translation agent (e.g. "English", "Chinese").
     pub translate_target_language: String,
+    /// Whether to hide native window decorations and render a custom titlebar.
+    ///
+    /// On macOS, when `true`, the titlebar is rendered in overlay mode
+    /// (traffic lights kept, chrome transparent) for an Apple-style layered look.
+    /// On Linux/Windows, when `true`, native decorations are removed and the
+    /// frontend draws a custom titlebar. Default: `true` on macOS, `false` elsewhere
+    /// because Linux desktops (KDE/GNOME) often mishandle client-side decorations.
+    pub use_custom_decorations: bool,
 }
 
 impl Default for GuiConfig {
@@ -66,6 +74,7 @@ impl Default for GuiConfig {
             window_height: 800,
             setup_completed: false,
             translate_target_language: "English".to_string(),
+            use_custom_decorations: default_use_custom_decorations(),
         }
     }
 }
@@ -102,6 +111,15 @@ impl AppState {
             turn_meta_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+}
+
+/// Platform-aware default for `use_custom_decorations`.
+///
+/// macOS defaults to `true` so the vibrancy/overlay titlebar works out of the box.
+/// Linux/Windows default to `false` because custom client-side decorations are
+/// fragile on KDE/GNOME and some Windows compositors.
+const fn default_use_custom_decorations() -> bool {
+    cfg!(target_os = "macos")
 }
 
 /// Load GUI config from `gui.toml` in the config directory.

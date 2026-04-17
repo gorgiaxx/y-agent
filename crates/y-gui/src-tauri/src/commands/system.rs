@@ -133,3 +133,52 @@ pub async fn toggle_devtools(window: tauri::WebviewWindow) {
         window.open_devtools();
     }
 }
+
+/// Apply the window decoration mode to the main window.
+///
+/// Platform behavior:
+/// - **macOS**: native decorations are *never* toggled off, because doing so
+///   also removes the traffic-light buttons. Instead we rely on the
+///   `titleBarStyle: "Overlay"` + `hiddenTitle: true` configuration, which
+///   keeps the traffic lights visible on top of a transparent titlebar. The
+///   `use_custom` flag therefore only affects CSS layout (padding for the
+///   traffic lights) on the frontend -- this command is effectively a no-op.
+/// - **Linux / Windows**: `set_decorations(!use_custom)` is applied so the
+///   frontend can draw its own chrome (min / max / close buttons). Linux
+///   compositors (KDE, GNOME) often mishandle client-side decorations; the
+///   user-facing toggle exists precisely so they can fall back to native.
+#[tauri::command]
+pub async fn window_set_decorations(
+    window: tauri::WebviewWindow,
+    use_custom: bool,
+) -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    window
+        .set_decorations(!use_custom)
+        .map_err(|e| format!("Failed to set window decorations: {e}"))
+}
+
+/// Minimize the main window (called by the custom titlebar on Linux/Windows).
+#[tauri::command]
+pub async fn window_minimize(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())
+}
+
+/// Toggle maximized state (called by the custom titlebar on Linux/Windows).
+#[tauri::command]
+pub async fn window_toggle_maximize(window: tauri::WebviewWindow) -> Result<(), String> {
+    let is_max = window.is_maximized().map_err(|e| e.to_string())?;
+    if is_max {
+        window.unmaximize().map_err(|e| e.to_string())
+    } else {
+        window.maximize().map_err(|e| e.to_string())
+    }
+}
+
+/// Close the main window (called by the custom titlebar on Linux/Windows).
+#[tauri::command]
+pub async fn window_close(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.close().map_err(|e| e.to_string())
+}

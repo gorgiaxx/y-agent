@@ -147,6 +147,22 @@ pub fn run() {
 
             let app_state = AppState::new(Arc::clone(&container), config_path.clone());
 
+            // Apply the persisted window-decoration preference to the main
+            // window before it is shown. On macOS we never strip native
+            // decorations (doing so would also remove the traffic lights);
+            // the Overlay titlebar config in `tauri.conf.json` already gives
+            // us the Apple-style layered look. On Linux/Windows we honour
+            // the preference so the frontend can draw its own chrome.
+            #[cfg(not(target_os = "macos"))]
+            if let Some(main_window) = app.get_webview_window("main") {
+                let use_custom = rt
+                    .block_on(app_state.gui_config.read())
+                    .use_custom_decorations;
+                if let Err(e) = main_window.set_decorations(!use_custom) {
+                    tracing::warn!(error = %e, "Failed to apply window decoration preference");
+                }
+            }
+
             // Sync the translation target language from persisted GUI config
             // into the agent registry so the translator agent prompt is correct
             // on first use after launch.
@@ -219,6 +235,10 @@ pub fn run() {
             commands::system::provider_list,
             commands::system::show_window,
             commands::system::toggle_devtools,
+            commands::system::window_set_decorations,
+            commands::system::window_minimize,
+            commands::system::window_toggle_maximize,
+            commands::system::window_close,
             commands::system::app_paths,
             // Workspaces
             commands::workspace::workspace_list,

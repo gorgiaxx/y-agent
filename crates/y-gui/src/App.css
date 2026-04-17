@@ -26,6 +26,19 @@
   user-select: none;
 }
 
+/*
+ * Custom-decorations mode: the native titlebar is hidden and the app draws
+ * its own chrome inside `.main-header`. On macOS, the traffic lights float
+ * at top-left of the sidebar; our NavSidebar reserves space at the top.
+ */
+html.custom-decorations .main-header {
+  -webkit-app-region: drag;
+}
+html.custom-decorations .main-header button,
+html.custom-decorations .main-header [role="button"] {
+  -webkit-app-region: no-drag;
+}
+
 .main-header-start {
   display: flex;
   align-items: center;
