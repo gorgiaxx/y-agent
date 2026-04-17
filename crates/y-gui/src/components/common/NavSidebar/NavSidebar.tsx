@@ -7,7 +7,6 @@
  * pinned footer for bottom items) and styling; items' behavior stays inline.
  */
 import type { ReactNode, MouseEvent } from 'react';
-import { Search } from 'lucide-react';
 import './NavSidebar.css';
 
 export interface NavItemProps {
@@ -30,27 +29,6 @@ export function NavItem({ icon, label, active, primary, accessory, title, onClic
       <span className="nav-item-label">{label}</span>
       {accessory && <span className="nav-item-accessory">{accessory}</span>}
     </button>
-  );
-}
-
-export interface NavSearchProps {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}
-
-export function NavSearch({ value, onChange, placeholder }: NavSearchProps) {
-  return (
-    <div className="nav-search">
-      <Search size={12} className="nav-search-icon" />
-      <input
-        type="text"
-        className="nav-search-input"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-      />
-    </div>
   );
 }
 

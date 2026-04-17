@@ -49,6 +49,8 @@ export function PanelToolbar({
   onCollapseToggle,
   actions,
 }: PanelToolbarProps) {
+  const isCollapsed = collapsed === true;
+
   return (
     <div className="panel-toolbar">
       <div className="panel-toolbar-label-wrap">
@@ -57,15 +59,15 @@ export function PanelToolbar({
           <button
             className="panel-toolbar-collapse-btn"
             onClick={onCollapseToggle}
-            title={collapsed ? 'Expand' : 'Collapse'}
+            title={isCollapsed ? 'Expand' : 'Collapse'}
           >
-            {collapsed
+            {isCollapsed
               ? <ChevronRight size={12} />
               : <ChevronDown size={12} />}
           </button>
         )}
       </div>
-      {!collapsed && (
+      {!isCollapsed && (
         <div className="panel-toolbar-actions">
           <Select value={sortValue} onValueChange={(v) => onSortChange(v as SortField)}>
             <SelectTrigger

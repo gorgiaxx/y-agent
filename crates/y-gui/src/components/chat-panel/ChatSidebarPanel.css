@@ -1,6 +1,6 @@
 /* ================================================
    ChatSidebarPanel: session list, workspace
-   sections, context menus.
+   sections, pinned section, context menus.
    ================================================ */
 
 /* ---- Session list ---- */
@@ -8,10 +8,9 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: var(--space-xs) var(--space-sm);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -21,77 +20,78 @@
   user-select: none;
 }
 
-.session-list-sections {
-  flex: 1;
-  min-height: 0;
+/* ---- Section wrappers (pinned / workspace / general) ---- */
+.session-list-pinned,
+.session-list-workspace,
+.session-list-general {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  min-height: 0;
 }
 
-.workspace-session-groups,
-.general-session-groups {
+.session-list-pinned {
+  flex-shrink: 0;
+}
+
+.session-list-pinned-items {
+  padding: 0 var(--space-sm) 4px;
+}
+
+.session-list-workspace {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.session-list-workspace:not(:has(.workspace-pane)) {
+  flex: 0 0 auto;
+}
+
+.session-list-general {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.session-list-general:not(:has(.session-pane)) {
+  flex: 0 0 auto;
+}
+
+/* ---- Scrollable panes ---- */
+.workspace-pane,
+.session-pane {
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
 }
 
-.workspace-session-groups {
-  flex: 0 1 auto;
+.workspace-pane {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0 var(--space-sm);
 }
 
-.general-session-groups {
-  flex: 1 1 auto;
+.session-pane {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0 var(--space-sm);
 }
 
-/* .general-session-groups--split {
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-} */
-
-/* ---- Workspace sections ---- */
-.workspace-section {
-  margin-top: 6px;
+/* ---- Panel group sections (workspace folders) ---- */
+.panel-group-section {
+  margin-top: 4px;
 }
 
-.workspace-section:first-child {
+.panel-group-section:first-child {
   margin-top: 0;
 }
 
-.btn-workspace-collapse {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-  border-radius: var(--radius-sm);
-  transition: color 0.12s;
-}
-
-.btn-workspace-collapse:hover {
-  color: var(--text-primary);
-}
-
-.workspace-chevron {
-  transition: transform 0.18s ease;
-}
-
-.workspace-chevron--open {
-  transform: rotate(90deg);
-}
-
-.workspace-icon {
+.panel-group-icon {
   color: var(--text-muted);
   flex-shrink: 0;
 }
 
-.btn-workspace-menu {
+.panel-group-action-btn {
   opacity: 0;
   display: flex;
   align-items: center;
@@ -107,11 +107,11 @@
   padding: 0;
 }
 
-.workspace-label:hover .btn-workspace-menu {
+.panel-group-label:hover .panel-group-action-btn {
   opacity: 1;
 }
 
-.btn-workspace-menu:hover {
+.panel-group-action-btn:hover {
   color: var(--text-primary);
 }
 
@@ -177,7 +177,7 @@
 }
 
 .context-menu-item:hover {
-  background: var(--surface-hover);
+  background: var(--accent-subtle);
 }
 
 .context-menu-item--danger {
@@ -202,7 +202,6 @@
 
 /* ---- Chat-specific session item styles ---- */
 
-/* Multi-select state */
 .session-item--selected {
   background: var(--info-subtle) !important;
 }
@@ -215,7 +214,6 @@
   background: rgba(96, 165, 250, 0.15) !important;
 }
 
-/* Rename input */
 .session-item--renaming {
   position: relative;
   display: flex;
@@ -242,7 +240,6 @@
   user-select: text;
 }
 
-/* Action button visibility */
 .btn-session-action {
   opacity: 0;
   background: none;

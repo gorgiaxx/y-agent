@@ -15,7 +15,7 @@
 }
 
 .session-item:hover {
-  background: var(--surface-hover);
+  background: var(--accent-subtle);
 }
 
 .session-item--active {
@@ -46,6 +46,38 @@
 
 .session-item-spinner-placeholder {
   display: none;
+}
+
+/* Pin button */
+.session-item-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.session-item:hover .session-item-pin,
+.session-item-pin--pinned {
+  opacity: 1;
+}
+
+.session-item-pin:hover {
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+}
+
+.session-item-pin--pinned {
+  color: var(--accent);
 }
 
 /* Content */

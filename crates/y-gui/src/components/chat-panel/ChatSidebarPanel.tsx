@@ -4,16 +4,18 @@ import {
   X,
   Plus,
   FolderOpen,
+  Folder,
+  FolderPlus,
   MoreHorizontal,
   Pencil,
   Trash2,
-  ChevronRight,
   GitBranch,
 } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
 import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { Button } from '../ui';
+import { PanelToolbar, type SortField, type PanelToolbarAction } from '../common/PanelToolbar';
 import {
   calculateFloatingMenuPosition,
   calculateWorkspaceOptionsMaxHeight,
@@ -38,8 +40,6 @@ interface ChatSidebarPanelProps {
   onDeleteWorkspace: (id: string) => void;
   onAssignSession: (workspaceId: string, sessionId: string) => void;
   onUnassignSession: (sessionId: string) => void;
-  /** When true, suppress the internal header (search + buttons). */
-  hideHeader?: boolean;
   /** Controlled search query; falls back to internal state when undefined. */
   searchQuery?: string;
   onSearchQueryChange?: (q: string) => void;
@@ -51,6 +51,35 @@ type OpenMenuState =
   | { kind: 'workspace'; id: string }
   | { kind: 'session'; id: string }
   | null;
+
+
+function sortSessions(list: SessionInfo[], field: SortField): SessionInfo[] {
+  if (field === 'default') return list;
+  return [...list].sort((a, b) => {
+    if (field === 'name') {
+      return (a.manual_title || a.title || '').localeCompare(b.manual_title || b.title || '', undefined, { sensitivity: 'base' });
+    }
+    if (field === 'created') {
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    }
+    // updated / last active
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+  });
+}
+
+function sortWorkspaces(list: WorkspaceInfo[], field: SortField): WorkspaceInfo[] {
+  if (field === 'default') return list;
+  return [...list].sort((a, b) => {
+    if (field === 'name') {
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    }
+    // created / updated not available on WorkspaceInfo; fall back to name
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  });
+}
+
+
+// Component
 
 export function ChatSidebarPanel({
   sessions,
@@ -69,12 +98,13 @@ export function ChatSidebarPanel({
   onDeleteWorkspace,
   onAssignSession,
   onUnassignSession,
-  hideHeader,
   searchQuery: searchQueryProp,
   onSearchQueryChange,
 }: ChatSidebarPanelProps) {
   const COLLAPSED_STORAGE_KEY = 'y-gui:workspace-collapsed';
-  const SESSION_ORDER_STORAGE_KEY = 'y-gui:session-order';
+  const PINNED_STORAGE_KEY = 'y-gui:pinned-sessions';
+  const WS_SORT_STORAGE_KEY = 'y-gui:workspace-sort';
+  const SESSION_SORT_STORAGE_KEY = 'y-gui:session-sort';
 
   const [internalSearchQuery, setInternalSearchQuery] = useState('');
   const searchQuery = searchQueryProp ?? internalSearchQuery;
@@ -93,7 +123,7 @@ export function ChatSidebarPanel({
   const menuRef = useRef<HTMLDivElement>(null);
   const menuAnchorRef = useRef<HTMLElement | null>(null);
 
-  // -- Mouse-based reorder state (HTML5 DnD is blocked by Tauri webview) --
+  // -- Mouse-based reorder state --
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
   const [dragOverPosition, setDragOverPosition] = useState<'above' | 'below'>('above');
@@ -102,15 +132,87 @@ export function ChatSidebarPanel({
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
-  /** Ref to track latest drop target for the mouseup handler (avoids stale closure). */
   const dropTargetRef = useRef<{ targetId: string; position: 'above' | 'below' } | null>(null);
 
-  // Sorted workspaces by name (alphabetically).
+  // -- Sort state (persisted) --
+  const [wsSortField, setWsSortField] = useState<SortField>(() => {
+    try {
+      const v = localStorage.getItem(WS_SORT_STORAGE_KEY) as SortField;
+      if (v && ['default', 'name', 'created', 'updated'].includes(v)) return v;
+    } catch { /* ignore */ }
+    return 'default';
+  });
+
+  const [sessionSortField, setSessionSortField] = useState<SortField>(() => {
+    try {
+      const v = localStorage.getItem(SESSION_SORT_STORAGE_KEY) as SortField;
+      if (v && ['default', 'name', 'created', 'updated'].includes(v)) return v;
+    } catch { /* ignore */ }
+    return 'default';
+  });
+
+  useEffect(() => { localStorage.setItem(WS_SORT_STORAGE_KEY, wsSortField); }, [wsSortField]);
+  useEffect(() => { localStorage.setItem(SESSION_SORT_STORAGE_KEY, sessionSortField); }, [sessionSortField]);
+
+  // -- Section collapse state (persisted) --
+  const SECTION_COLLAPSED_KEY = 'y-gui:section-collapsed';
+  const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem(SECTION_COLLAPSED_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Record<string, boolean>;
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch { /* ignore */ }
+    return {};
+  });
+
+  useEffect(() => {
+    localStorage.setItem(SECTION_COLLAPSED_KEY, JSON.stringify(sectionCollapsed));
+  }, [sectionCollapsed]);
+
+  const toggleSectionCollapsed = useCallback((section: string) => {
+    setSectionCollapsed((prev) => ({ ...prev, [section]: !prev[section] }));
+  }, []);
+
+  // -- Pinned sessions state (persisted) --
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(PINNED_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as string[];
+        if (Array.isArray(parsed)) return new Set(parsed);
+      }
+    } catch { /* ignore */ }
+    return new Set();
+  });
+
+  useEffect(() => {
+    localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify([...pinnedIds]));
+  }, [pinnedIds]);
+
+  const togglePin = useCallback((sessionId: string) => {
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  }, []);
+
+  // Prune pinned IDs for sessions that no longer exist.
+  useEffect(() => {
+    const currentIds = new Set(sessions.map((s) => s.id));
+    setPinnedIds((prev) => {
+      const next = new Set([...prev].filter((id) => currentIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [sessions]);
+
+  // Sorted workspaces.
   const sortedWorkspaces = useMemo(
-    () => [...workspaces].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
-    ),
-    [workspaces],
+    () => sortWorkspaces([...workspaces], wsSortField),
+    [workspaces, wsSortField],
   );
 
   // Workspace collapse state -- persisted in localStorage.
@@ -122,11 +224,9 @@ export function ChatSidebarPanel({
         if (Array.isArray(parsed)) return new Set(parsed);
       }
     } catch { /* ignore corrupt data */ }
-    // Fallback: collapse all except first workspace.
     return new Set(sortedWorkspaces.slice(1).map((w) => w.id));
   });
 
-  // Persist collapse state on change.
   useEffect(() => {
     localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify([...collapsedIds]));
   }, [collapsedIds]);
@@ -140,7 +240,17 @@ export function ChatSidebarPanel({
     });
   };
 
-  // Session order -- persisted in localStorage.
+  const allExpanded = sortedWorkspaces.length > 0 && sortedWorkspaces.every((w) => !collapsedIds.has(w.id));
+  const toggleAllExpanded = () => {
+    if (allExpanded) {
+      setCollapsedIds(new Set(sortedWorkspaces.map((w) => w.id)));
+    } else {
+      setCollapsedIds(new Set());
+    }
+  };
+
+  // Session order -- persisted in localStorage (for custom/drag reorder).
+  const SESSION_ORDER_STORAGE_KEY = 'y-gui:session-order';
   const [sessionOrder, setSessionOrder] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem(SESSION_ORDER_STORAGE_KEY);
@@ -152,7 +262,6 @@ export function ChatSidebarPanel({
     return [];
   });
 
-  // Persist session order on change.
   useEffect(() => {
     localStorage.setItem(SESSION_ORDER_STORAGE_KEY, JSON.stringify(sessionOrder));
   }, [sessionOrder]);
@@ -160,26 +269,24 @@ export function ChatSidebarPanel({
   /** Sort a list of sessions by user-defined order; unknowns go to the top sorted by updated_at desc. */
   const sortByUserOrder = useCallback(
     (list: SessionInfo[]): SessionInfo[] => {
-      if (sessionOrder.length === 0) return list;
+      if (sessionSortField !== 'default') return sortSessions(list, sessionSortField);
+      if (sessionOrder.length === 0) return sortSessions(list, 'updated');
       const orderMap = new Map(sessionOrder.map((id, idx) => [id, idx]));
       return [...list].sort((a, b) => {
         const ia = orderMap.get(a.id);
         const ib = orderMap.get(b.id);
-        // Both have custom positions -- sort by position.
         if (ia !== undefined && ib !== undefined) return ia - ib;
-        // Items without position come first, sorted by updated_at desc.
         if (ia === undefined && ib === undefined) {
           return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
         }
         return ia === undefined ? -1 : 1;
       });
     },
-    [sessionOrder],
+    [sessionOrder, sessionSortField],
   );
 
-  // -- Mouse-based reorder (Tauri webview blocks HTML5 DnD by default) --
+  // -- Mouse-based reorder --
 
-  /** Commit the reorder: move dragged session to the target position. */
   const commitReorder = useCallback(
     (sourceId: string, targetId: string, dropPos: 'above' | 'below', groupSessionIds: string[]) => {
       if (sourceId === targetId) return;
@@ -204,7 +311,6 @@ export function ChatSidebarPanel({
     [sessions, sessionOrder],
   );
 
-  /** Called by React onMouseMove on each session item while dragging is active. */
   const handleItemHover = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
       if (!draggedSessionId || draggedSessionId === sessionId) return;
@@ -217,11 +323,10 @@ export function ChatSidebarPanel({
     [draggedSessionId],
   );
 
-  /** Initiate drag on mousedown with a 4px threshold to distinguish from clicks. */
   const handleMouseDown = useCallback(
     (e: React.MouseEvent, sessionId: string, groupSessionIds: string[]) => {
       if (e.button !== 0) return;
-      if ((e.target as HTMLElement).closest('.btn-session-action, .session-context-menu')) return;
+      if ((e.target as HTMLElement).closest('.btn-session-action, .session-context-menu, .session-item-pin')) return;
 
       const startX = e.clientX;
       const startY = e.clientY;
@@ -246,7 +351,6 @@ export function ChatSidebarPanel({
         document.body.classList.remove('y-gui-dragging');
         if (!dragging) return;
 
-        // Commit reorder using the latest drop target tracked by handleItemHover.
         const target = dropTargetRef.current;
         if (target) {
           commitReorder(sessionId, target.targetId, target.position, dragGroupRef.current);
@@ -317,19 +421,25 @@ export function ChatSidebarPanel({
     );
   }, [sessions, searchQuery]);
 
-  // Group sessions by workspace, sorted alphabetically; apply user-defined order within groups.
+  // Group sessions by workspace; apply sorting within groups.
   const { groups, ungrouped } = useMemo(() => {
     const g: { workspace: WorkspaceInfo | null; sessions: SessionInfo[] }[] = sortedWorkspaces.map(
       (ws) => ({
         workspace: ws,
         sessions: sortByUserOrder(
-          filtered.filter((s) => sessionWorkspaceMap[s.id] === ws.id),
+          filtered.filter((s) => sessionWorkspaceMap[s.id] === ws.id && !pinnedIds.has(s.id)),
         ),
       }),
     );
-    const u = sortByUserOrder(filtered.filter((s) => !sessionWorkspaceMap[s.id]));
+    const u = sortByUserOrder(filtered.filter((s) => !sessionWorkspaceMap[s.id] && !pinnedIds.has(s.id)));
     return { groups: g, ungrouped: u };
-  }, [sortedWorkspaces, filtered, sessionWorkspaceMap, sortByUserOrder]);
+  }, [sortedWorkspaces, filtered, sessionWorkspaceMap, sortByUserOrder, pinnedIds]);
+
+  // Pinned sessions (from filtered list, sorted separately)
+  const pinnedSessions = useMemo(
+    () => sortByUserOrder(filtered.filter((s) => pinnedIds.has(s.id))),
+    [filtered, pinnedIds, sortByUserOrder],
+  );
 
   const sessionPaneLayout = useMemo(
     () => getSessionPaneLayout({
@@ -339,18 +449,16 @@ export function ChatSidebarPanel({
     [groups.length, ungrouped.length],
   );
 
-  const workspaceMaxHeight = `${sessionPaneLayout.workspaceMaxHeightRatio * 100}%`;
-
-  // Flat ordered list of all visible session IDs (for shift-range selection).
   const flatVisibleIds = useMemo(() => {
     const ids: string[] = [];
+    for (const s of pinnedSessions) ids.push(s.id);
     for (const { workspace, sessions: wsSessions } of groups) {
       if (workspace && collapsedIds.has(workspace.id)) continue;
       for (const s of wsSessions) ids.push(s.id);
     }
     for (const s of ungrouped) ids.push(s.id);
     return ids;
-  }, [groups, ungrouped, collapsedIds]);
+  }, [pinnedSessions, groups, ungrouped, collapsedIds]);
 
   // Prune stale selected IDs when sessions list changes.
   useEffect(() => {
@@ -417,7 +525,6 @@ export function ChatSidebarPanel({
   const handleSessionClick = useCallback(
     (e: ReactMouseEvent, sessionId: string) => {
       if (e.shiftKey && lastClickedIdRef.current) {
-        // Range select between lastClickedId and current.
         const anchorIdx = flatVisibleIds.indexOf(lastClickedIdRef.current);
         const currentIdx = flatVisibleIds.indexOf(sessionId);
         if (anchorIdx !== -1 && currentIdx !== -1) {
@@ -430,11 +537,10 @@ export function ChatSidebarPanel({
             return next;
           });
         }
-        return; // Do not navigate on shift-click.
+        return;
       }
 
       if (e.ctrlKey || e.metaKey) {
-        // Toggle individual item.
         setSelectedIds((prev) => {
           const next = new Set(prev);
           if (next.has(sessionId)) next.delete(sessionId);
@@ -442,10 +548,9 @@ export function ChatSidebarPanel({
           return next;
         });
         lastClickedIdRef.current = sessionId;
-        return; // Do not navigate on ctrl/cmd-click.
+        return;
       }
 
-      // Plain click: clear selection and navigate.
       if (selectedIds.size > 0) {
         setSelectedIds(new Set());
       }
@@ -455,7 +560,6 @@ export function ChatSidebarPanel({
     [flatVisibleIds, selectedIds.size, onSelectSession],
   );
 
-  // Batch delete all selected sessions.
   const handleBatchDelete = useCallback(() => {
     const ids = [...selectedIds];
     setSelectedIds(new Set());
@@ -521,13 +625,31 @@ export function ChatSidebarPanel({
     : null;
   const workspaceOptionsMaxHeight = calculateWorkspaceOptionsMaxHeight(menuPosition?.maxHeight ?? 0);
 
-  const renderSessionItem = (session: SessionInfo, groupSessionIds: string[]) => {
+  // -- Toolbar action definitions --
+  const wsToolbarActions: PanelToolbarAction[] = useMemo(() => [
+    {
+      icon: <FolderPlus size={13} />,
+      title: 'New Workspace',
+      onClick: () => setWsDialogOpen(true),
+    },
+  ], []);
+
+  const sessionToolbarActions: PanelToolbarAction[] = useMemo(() => [
+    {
+      icon: <Plus size={13} />,
+      title: 'New Session',
+      onClick: onNewChat,
+    },
+  ], [onNewChat]);
+
+  // -- Session item renderer --
+  const renderSessionItem = (session: SessionInfo, groupSessionIds: string[], isPinnedItem = false) => {
     const isStreaming = streamingSessionIds.has(session.id);
     const isActive = session.id === activeSessionId;
     const isSelected = selectedIds.has(session.id);
     const isDragging = draggedSessionId === session.id;
+    const isPinned = pinnedIds.has(session.id);
 
-    // If renaming, render custom input instead of using SessionItem
     if (renamingSessionId === session.id) {
       return (
         <div
@@ -557,7 +679,6 @@ export function ChatSidebarPanel({
       );
     }
 
-    // Use shared SessionItem with Chat-specific features
     return (
       <div
         key={session.id}
@@ -574,6 +695,11 @@ export function ChatSidebarPanel({
           }}
           isActive={isActive}
           isStreaming={isStreaming}
+          isPinned={isPinned}
+          onPinToggle={(e) => {
+            e.stopPropagation();
+            togglePin(session.id);
+          }}
           className={
             (isSelected ? 'session-item--selected ' : '') +
             (isDragging ? 'session-item--dragging' : '')
@@ -598,6 +724,7 @@ export function ChatSidebarPanel({
     );
   };
 
+  // -- Floating context menu --
   const floatingMenu = (() => {
     if (!openMenu || typeof document === 'undefined') {
       return null;
@@ -738,133 +865,115 @@ export function ChatSidebarPanel({
 
   return (
     <>
-      {/* Header */}
-      {!hideHeader && (
-      <div className="sidebar-header">
-        {/* Search */}
-        <div className="sidebar-search">
-          <input
-            type="text"
-            placeholder="Search sessions..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="search-input"
-          />
-        </div>
-        <div className="sidebar-header-actions">
-          <button
-            className="btn-new-chat"
-            onClick={() => setWsDialogOpen(true)}
-            title="New Workspace"
-          >
-            <FolderOpen size={15} />
-          </button>
-          <button className="btn-new-chat" onClick={onNewChat} title="New Chat">
-            <Plus size={16} />
-          </button>
-        </div>
-      </div>
-      )}
-
-      {/* Session list grouped by workspace */}
       <div className="session-list">
-        <div className="session-list-sections">
-          {sessionPaneLayout.showWorkspacePane && (
-            <div className="workspace-session-groups" style={{ maxHeight: workspaceMaxHeight }}>
-              {groups.map(({ workspace, sessions: originalWsSessions }) => {
-                if (!workspace) return null;
-                const isCollapsed = collapsedIds.has(workspace.id);
-                const wsSessions = getPreviewList(originalWsSessions);
-                return (
-                  <div key={workspace.id} className="workspace-section">
-                    <div className="workspace-label">
-                      <button
-                        className="btn-workspace-collapse"
-                        onClick={() => toggleCollapsed(workspace.id)}
-                        title={isCollapsed ? 'Expand' : 'Collapse'}
-                        aria-expanded={!isCollapsed}
-                      >
-                        <ChevronRight
-                          size={12}
-                          className={`workspace-chevron ${isCollapsed ? '' : 'workspace-chevron--open'}`}
-                        />
-                      </button>
-                      <FolderOpen size={11} className="workspace-icon" />
-                      <span
-                        className="workspace-name"
-                        title={workspace.path}
+        {pinnedSessions.length > 0 && (
+          <div className="session-list-pinned">
+            <PanelToolbar
+              label="Pinned"
+              sortValue={sessionSortField}
+              onSortChange={setSessionSortField}
+              collapsed={sectionCollapsed['pinned']}
+              onCollapseToggle={() => toggleSectionCollapsed('pinned')}
+            />
+            {!sectionCollapsed['pinned'] && (
+              <div className="session-list-pinned-items">
+                {getPreviewList(pinnedSessions).map((session) => renderSessionItem(session, pinnedSessions.map((s) => s.id), true))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {sessionPaneLayout.showWorkspacePane && (
+          <div className="session-list-workspace">
+            <PanelToolbar
+              label="Workspaces"
+              sortValue={wsSortField}
+              onSortChange={setWsSortField}
+              collapsed={sectionCollapsed['workspace']}
+              onCollapseToggle={() => toggleSectionCollapsed('workspace')}
+              collapseToggle={{ allExpanded, onToggle: toggleAllExpanded }}
+              actions={wsToolbarActions}
+            />
+            {!sectionCollapsed['workspace'] && (
+              <div className="workspace-pane">
+                {groups.map(({ workspace, sessions: originalWsSessions }) => {
+                  if (!workspace) return null;
+                  const isCollapsed = collapsedIds.has(workspace.id);
+                  const wsSessions = getPreviewList(originalWsSessions);
+                  return (
+                    <div key={workspace.id} className="panel-group-section">
+                      <div
+                        className="panel-group-label"
                         onClick={() => toggleCollapsed(workspace.id)}
                         style={{ cursor: 'pointer' }}
                       >
-                        {workspace.name}
-                      </span>
-                      <button
-                        className="btn-workspace-menu"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onNewChatInWorkspace(workspace.id);
-                        }}
-                        title="New session in this workspace"
-                      >
-                        <Plus size={12} />
-                      </button>
-                      <button
-                        className="btn-workspace-menu"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
-                        }}
-                        title="Workspace options"
-                      >
-                        <MoreHorizontal size={12} />
-                      </button>
+                        {isCollapsed
+                          ? <Folder size={11} className="panel-group-icon" />
+                          : <FolderOpen size={11} className="panel-group-icon" />
+                        }
+                        <span className="panel-group-name" title={workspace.path}>
+                          {workspace.name}
+                        </span>
+                        <button
+                          className="panel-group-action-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onNewChatInWorkspace(workspace.id);
+                          }}
+                          title="New session in this workspace"
+                        >
+                          <Plus size={12} />
+                        </button>
+                        <button
+                          className="panel-group-action-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
+                          }}
+                          title="Workspace options"
+                        >
+                          <MoreHorizontal size={12} />
+                        </button>
+                      </div>
+                      {!isCollapsed && wsSessions.map((session) => renderSessionItem(session, originalWsSessions.map((item) => item.id)))}
                     </div>
-                    {!isCollapsed && wsSessions.map((session) => renderSessionItem(session, originalWsSessions.map((item) => item.id)))}
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {sessionPaneLayout.showGeneralPane && (
+          <div className="session-list-general">
+            <PanelToolbar
+              label="Sessions"
+              sortValue={sessionSortField}
+              onSortChange={setSessionSortField}
+              collapsed={sectionCollapsed['sessions']}
+              onCollapseToggle={() => toggleSectionCollapsed('sessions')}
+              actions={sessionToolbarActions}
+            />
+            {!sectionCollapsed['sessions'] && (
+              <div className="session-pane">
+                {getPreviewList(ungrouped).map((session) => renderSessionItem(session, ungrouped.map((item) => item.id)))}
+
+                {filtered.length === 0 && (
+                  <div className="session-empty">
+                    {searchQuery ? 'No matching sessions' : 'No sessions yet'}
                   </div>
-                );
-              })}
-            </div>
-          )}
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
-          {sessionPaneLayout.showGeneralPane && (
-            <div className={`general-session-groups${sessionPaneLayout.showWorkspacePane ? ' general-session-groups--split' : ''}`}>
-              {(ungrouped.length > 0 || workspaces.length > 0) && (
-                <div className="workspace-section">
-                  {workspaces.length > 0 && (
-                    <div className="workspace-label workspace-label--general">
-                      <span className="workspace-name">General</span>
-                      <button
-                        className="btn-workspace-menu"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onNewChat();
-                        }}
-                        title="New session in General"
-                      >
-                        <Plus size={12} />
-                      </button>
-                    </div>
-                  )}
-                  {getPreviewList(ungrouped).map((session) => renderSessionItem(session, ungrouped.map((item) => item.id)))}
-                </div>
-              )}
+        {filtered.length === 0 && !sessionPaneLayout.showGeneralPane && (
+          <div className="session-empty">
+            {searchQuery ? 'No matching sessions' : 'No sessions yet'}
+          </div>
+        )}
 
-              {filtered.length === 0 && (
-                <div className="session-empty">
-                  {searchQuery ? 'No matching sessions' : 'No sessions yet'}
-                </div>
-              )}
-            </div>
-          )}
-
-          {filtered.length === 0 && !sessionPaneLayout.showGeneralPane && (
-            <div className="session-empty">
-              {searchQuery ? 'No matching sessions' : 'No sessions yet'}
-            </div>
-          )}
-        </div>
-
-        {/* Batch action bar */}
         {selectedIds.size > 0 && (
           <div className="batch-action-bar">
             <span className="batch-action-count">{selectedIds.size} selected</span>
@@ -883,7 +992,6 @@ export function ChatSidebarPanel({
 
       {floatingMenu}
 
-      {/* Workspace creation dialog */}
       {wsDialogOpen && (
         <WorkspaceDialog
           onConfirm={(name, path) => {
@@ -894,7 +1002,6 @@ export function ChatSidebarPanel({
         />
       )}
 
-      {/* Workspace edit dialog */}
       {editingWorkspace && (
         <WorkspaceDialog
           initialName={editingWorkspace.name}

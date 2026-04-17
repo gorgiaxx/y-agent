@@ -13,6 +13,100 @@
   margin-top: 2px;
 }
 
+.sidebar-top-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.sidebar-top-row .nav-item {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.sidebar-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  position: relative;
+  z-index: 2;
+}
+
+.sidebar-search-toggle:hover {
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+  border-color: var(--border);
+}
+
+.sidebar-search-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-top-row--search-open .sidebar-search-overlay {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.sidebar-top-row--search-open .nav-item,
+.sidebar-top-row--search-open .sidebar-search-toggle {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.sidebar-search-overlay-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.sidebar-search-overlay-input {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 7px 32px 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1.2;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.sidebar-search-overlay-input:focus {
+  border-color: var(--border-focus);
+}
+
+.sidebar-search-overlay-input::placeholder {
+  color: var(--text-muted);
+}
+
 /* ---- View master-detail shell (used by Skills/Knowledge/Automation/Settings) ---- */
 .view-shell {
   display: flex;
@@ -106,7 +200,7 @@
 .btn-new-chat:hover {
   color: var(--text-primary);
   border-color: var(--border-focus);
-  background: var(--surface-hover);
+  background: var(--accent-subtle);
 }
 
 /* ---- Shared: search input ---- */
@@ -161,7 +255,7 @@
 }
 
 .sidebar-item:hover {
-  background: var(--surface-hover);
+  background: var(--accent-subtle);
 }
 
 .sidebar-item.active {
@@ -237,8 +331,8 @@
   line-height: 16px;
 }
 
-/* ---- Shared: workspace label (used by chat, agents) ---- */
-.workspace-label {
+/* ---- Shared: panel group label (used by chat, agents) ---- */
+.panel-group-label {
   position: relative;
   display: flex;
   align-items: center;
@@ -248,26 +342,7 @@
   cursor: default;
 }
 
-.workspace-label--general {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--surface-secondary);
-  margin-top: 4px;
-  padding-top: 8px;
-}
-
-.workspace-label--general::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: var(--border);
-}
-
-.workspace-name {
+.panel-group-name {
   font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
@@ -363,7 +438,7 @@
 .import-status-toggle:hover,
 .import-status-dismiss:hover {
   color: var(--text-primary);
-  background: var(--surface-hover);
+  background: var(--accent-subtle);
 }
 
 /* ---- Expanded detail area (skill import) ---- */

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { SessionInfo } from '../../types';
+import { Pin } from 'lucide-react';
 import { formatSessionRelativeTime } from '../chat-panel/sessionListActivity';
 import './SessionItem.css';
 
@@ -7,10 +8,12 @@ export interface SessionItemProps {
   session: SessionInfo;
   isActive: boolean;
   isStreaming: boolean;
+  isPinned?: boolean;
   subtitle?: string;
   actions?: ReactNode;
   className?: string;
   onClick: (e: React.MouseEvent) => void;
+  onPinToggle?: (e: React.MouseEvent) => void;
   onMouseDown?: (e: React.MouseEvent) => void;
   onMouseMove?: (e: React.MouseEvent) => void;
 }
@@ -19,10 +22,12 @@ export function SessionItem({
   session,
   isActive,
   isStreaming,
+  isPinned,
   subtitle,
   actions,
   className = '',
   onClick,
+  onPinToggle,
   onMouseDown,
   onMouseMove,
 }: SessionItemProps) {
@@ -37,6 +42,17 @@ export function SessionItem({
     >
       {isStreaming ? (
         <span className="session-item-spinner" aria-hidden="true" />
+      ) : isPinned || onPinToggle ? (
+        <button
+          className={`session-item-pin${isPinned ? ' session-item-pin--pinned' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPinToggle?.(e);
+          }}
+          aria-label={isPinned ? 'Unpin session' : 'Pin session'}
+        >
+          <Pin size={12} />
+        </button>
       ) : (
         <span className="session-item-spinner-placeholder" aria-hidden="true" />
       )}

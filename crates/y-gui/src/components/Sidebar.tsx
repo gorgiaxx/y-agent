@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Zap,
   Puzzle,
@@ -6,10 +6,11 @@ import {
   Bot,
   Settings as SettingsIcon,
   Plus,
+  Search,
 } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo } from '../types';
 import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
-import { NavSidebar, NavItem, NavSearch, NavDivider } from './common/NavSidebar';
+import { NavSidebar, NavItem, NavDivider } from './common/NavSidebar';
 import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
 import './Sidebar.css';
 
@@ -31,7 +32,7 @@ export interface ChatSidebarProps {
   onNewChatInWorkspace: (workspaceId: string) => void;
   onDeleteSession: (id: string) => void;
   onForkSession?: (sessionId: string) => void;
-  onRenameSession: (id: string, title: string | null) => void;
+  onRenameSession: (id: string, title: string) => void;
   onCreateWorkspace: (name: string, path: string) => void;
   onUpdateWorkspace: (id: string, name: string, path: string) => void;
   onDeleteWorkspace: (id: string) => void;
@@ -54,6 +55,20 @@ interface SidebarProps {
 
 export function Sidebar({ chat, nav }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (searchOpen) {
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+  }, [searchOpen]);
+
+  const closeSearch = useCallback(() => {
+    setSearchQuery('');
+    setSearchOpen(false);
+  }, []);
 
   const goTo = (view: ViewType) => nav.onSelectView(view);
 
@@ -79,23 +94,54 @@ export function Sidebar({ chat, nav }: SidebarProps) {
         />
       }
     >
-      {/* 1. New Chat */}
-      <NavItem
-        icon={<Plus size={15} />}
-        label="New Chat"
-        primary
-        onClick={() => {
-          goTo('chat');
-          chat.onNewChat();
-        }}
-      />
-
-      {/* 2. Search conversations */}
-      <NavSearch
-        value={searchQuery}
-        onChange={setSearchQuery}
-        placeholder="Search conversations..."
-      />
+      <div className={`sidebar-top-row${searchOpen ? ' sidebar-top-row--search-open' : ''}`}>
+        <NavItem
+          icon={<Plus size={15} />}
+          label="New Chat"
+          primary
+          onClick={() => {
+            goTo('chat');
+            chat.onNewChat();
+          }}
+        />
+        <button
+          type="button"
+          className="sidebar-search-toggle"
+          ref={toggleRef}
+          onClick={() => {
+            if (searchOpen) {
+              closeSearch();
+            } else {
+              setSearchOpen(true);
+            }
+          }}
+          title="Search conversations"
+        >
+          <Search size={14} />
+        </button>
+        <div className="sidebar-search-overlay">
+          <div className="sidebar-search-overlay-field">
+            <input
+              type="text"
+              className="sidebar-search-overlay-input"
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search conversations..."
+              onBlur={(e) => {
+                if (e.relatedTarget !== toggleRef.current) {
+                  closeSearch();
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  closeSearch();
+                }
+              }}
+            />
+          </div>
+        </div>
+      </div>
 
       {/* 3-6. Feature nav */}
       <NavItem
@@ -147,7 +193,6 @@ export function Sidebar({ chat, nav }: SidebarProps) {
           onDeleteWorkspace={chat.onDeleteWorkspace}
           onAssignSession={chat.onAssignSession}
           onUnassignSession={chat.onUnassignSession}
-          hideHeader
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
         />
