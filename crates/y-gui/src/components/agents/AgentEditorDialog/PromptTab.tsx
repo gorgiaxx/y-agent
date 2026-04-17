@@ -1,5 +1,5 @@
-import { Textarea } from '../../ui/Input';
 import { Checkbox } from '../../ui/Checkbox';
+import { MonacoEditor } from '../../ui/MonacoEditor';
 import { SettingsGroup, SettingsItem } from '../../ui';
 import type { PromptSectionInfo } from '../../../hooks/useAgents';
 import type { AgentDraft } from '../types';
@@ -15,14 +15,15 @@ export function PromptTab({ draft, promptSections, onChange }: PromptTabProps) {
   return (
     <div className="settings-form-wrap">
       <SettingsGroup title="System Prompt">
-        <SettingsItem title="Custom System Prompt" wide>
-          <Textarea
-            value={draft.system_prompt}
-            onChange={(event) => onChange((prev) => ({ ...prev, system_prompt: event.target.value }))}
-            rows={6}
-            className="text-11px"
-          />
-        </SettingsItem>
+        <div className="settings-item--custom-body">
+          <div className="prompt-editor-monaco" style={{ height: 260 }}>
+            <MonacoEditor
+              value={draft.system_prompt}
+              onChange={(val) => onChange((prev) => ({ ...prev, system_prompt: val }))}
+              language="markdown"
+            />
+          </div>
+        </div>
       </SettingsGroup>
 
       <SettingsGroup title="Prompt Sections">

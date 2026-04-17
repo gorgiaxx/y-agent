@@ -1,0 +1,82 @@
+/* ---- Agent Editor Panel styles ---- */
+
+/* Raw TOML surface: flex column so Monaco fills remaining space */
+.agent-editor-raw-surface {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.agent-editor-raw-surface .toml-editor-monaco {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- Checkbox grid ---- */
+
+.agent-editor-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.agent-editor-checkbox-grid--short {
+  max-height: 200px;
+}
+
+/* ---- Checkbox card ---- */
+
+.agent-editor-checkbox-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.agent-editor-checkbox-card:hover {
+  border-color: var(--border-focus);
+}
+
+.agent-editor-checkbox-card--center {
+  align-items: center;
+}
+
+.agent-editor-checkbox-card--active {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.agent-editor-checkbox-card--active:hover {
+  border-color: var(--accent);
+}
+
+.agent-editor-checkbox-card-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-editor-checkbox-card-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-editor-checkbox-card-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}

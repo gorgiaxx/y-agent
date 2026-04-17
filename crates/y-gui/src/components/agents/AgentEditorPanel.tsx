@@ -14,6 +14,7 @@ import { LimitsTab } from './AgentEditorDialog/LimitsTab';
 import { McpTab } from './AgentEditorDialog/McpTab';
 import '../settings/SettingsPanel.css';
 import '../settings/SettingsForm.css';
+import './AgentEditorPanel.css';
 
 interface AgentEditorPanelProps {
   mode: 'create' | 'edit';
@@ -84,28 +85,24 @@ export function AgentEditorPanel({
       </div>
 
       {surface === 'raw' ? (
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="settings-content">
-            {rawError && (
-              <div className="settings-toast error">{rawError}</div>
-            )}
-            <div className="settings-form-wrap">
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
-                {rawUsesSourceFile ? 'Editing source file' : 'Editing generated agent source'}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                {rawPath ?? 'The content below will be saved as the agent definition TOML.'}
-              </div>
-            </div>
-            <div className="toml-editor-monaco">
-              <MonacoEditor
-                value={rawToml}
-                onChange={(val) => onRawTomlChange(val)}
-                language="toml"
-              />
-            </div>
+        <div className="settings-content agent-editor-raw-surface">
+          {rawError && (
+            <div className="settings-toast error">{rawError}</div>
+          )}
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
+            {rawUsesSourceFile ? 'Editing source file' : 'Editing generated agent source'}
           </div>
-        </ScrollArea>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+            {rawPath ?? 'The content below will be saved as the agent definition TOML.'}
+          </div>
+          <div className="toml-editor-monaco">
+            <MonacoEditor
+              value={rawToml}
+              onChange={(val) => onRawTomlChange(val)}
+              language="toml"
+            />
+          </div>
+        </div>
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           <div className="settings-content">
