@@ -268,6 +268,19 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub user_callable: bool,
 
+    // -- MCP --
+    /// Default MCP mode for this agent's sessions.
+    ///
+    /// One of `"auto"`, `"manual"`, or `"disabled"`. `None` = `"auto"`.
+    /// - `"auto"`: all enabled MCP server tools are available.
+    /// - `"manual"`: only tools from servers listed in `mcp_servers` are available.
+    /// - `"disabled"`: no MCP tools are exposed.
+    #[serde(default)]
+    pub mcp_mode: Option<String>,
+    /// MCP server names whose tools are exposed when `mcp_mode = "manual"`.
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
+
     // -- Working history pruning --
     /// Whether to prune historical tool call pairs from `working_history`.
     ///
@@ -491,6 +504,8 @@ system_prompt = ""
             max_context_tokens: 4096,
             max_completion_tokens: None,
             user_callable: false,
+            mcp_mode: None,
+            mcp_servers: vec![],
             prune_tool_history: false,
             auto_update: true,
             response_format: None,

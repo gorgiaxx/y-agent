@@ -191,6 +191,8 @@ mod tests {
             max_context_tokens: 4096,
             max_completion_tokens: None,
             user_callable: false,
+            mcp_mode: None,
+            mcp_servers: vec![],
             prune_tool_history: false,
             auto_update: true,
             response_format: None,

@@ -1175,6 +1175,8 @@ impl ServiceContainer {
                 tool_timeout_secs: c.tool_timeout_secs,
                 cwd: c.cwd.clone(),
                 bearer_token: c.bearer_token.clone(),
+                auto_reconnect: c.auto_reconnect,
+                max_reconnect_attempts: c.max_reconnect_attempts,
             })
             .collect();
 

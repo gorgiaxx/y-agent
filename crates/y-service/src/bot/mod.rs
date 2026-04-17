@@ -318,6 +318,8 @@ impl BotService {
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
             },
         )
         .await;
@@ -337,6 +339,8 @@ impl BotService {
                         thinking: None,
                         user_message_metadata: None,
                         plan_mode: None,
+                        mcp_mode: None,
+                        mcp_servers: None,
                     },
                 )
                 .await

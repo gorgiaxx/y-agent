@@ -405,6 +405,8 @@ async fn chat_turn(
             thinking,
             user_message_metadata,
             plan_mode: body.plan_mode,
+            mcp_mode: None,
+            mcp_servers: None,
         },
     )
     .await
@@ -465,6 +467,8 @@ async fn chat_send(
             thinking,
             user_message_metadata,
             plan_mode: body.plan_mode,
+            mcp_mode: None,
+            mcp_servers: None,
         },
     )
     .await

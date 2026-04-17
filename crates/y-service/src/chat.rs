@@ -356,6 +356,10 @@ pub struct TurnInput<'a> {
     pub agent_allowed_tools: Vec<String>,
     /// Whether to prune historical tool results for the bound agent.
     pub prune_tool_history: bool,
+    /// Effective MCP mode for this turn.
+    pub mcp_mode: Option<String>,
+    /// Effective MCP server selection for `"manual"` mode.
+    pub mcp_servers: Vec<String>,
 }
 pub type TurnCancellationToken = CancellationToken;
 
@@ -391,6 +395,8 @@ pub struct SessionAgentConfig {
     pub max_tool_calls: usize,
     pub trust_tier: TrustTier,
     pub prune_tool_history: bool,
+    pub mcp_mode: Option<String>,
+    pub mcp_servers: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +404,7 @@ pub struct SessionAgentConfig {
 // ---------------------------------------------------------------------------
 
 /// Request to prepare a chat turn before execution.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PrepareTurnRequest {
     /// Existing session ID (`None` = create a new `Main` session).
     pub session_id: Option<SessionId>,
@@ -421,6 +427,10 @@ pub struct PrepareTurnRequest {
     pub user_message_metadata: Option<serde_json::Value>,
     /// Plan mode: `"fast"`, `"auto"`, or `"plan"` (`None` = `"fast"`).
     pub plan_mode: Option<String>,
+    /// MCP mode: `"auto"`, `"manual"`, or `"disabled"` (`None` = agent/default).
+    pub mcp_mode: Option<String>,
+    /// MCP server names selected when `mcp_mode == "manual"`.
+    pub mcp_servers: Option<Vec<String>>,
 }
 
 /// Fully resolved turn data, ready for `execute_turn()` or
@@ -450,6 +460,10 @@ pub struct PreparedTurn {
     pub thinking: Option<y_core::provider::ThinkingConfig>,
     /// Plan mode: `"fast"`, `"auto"`, or `"plan"` (`None` = `"fast"`).
     pub plan_mode: Option<String>,
+    /// Effective MCP mode (resolved from request or agent config).
+    pub mcp_mode: Option<String>,
+    /// Effective MCP server names selected for `"manual"` mode.
+    pub mcp_servers: Vec<String>,
     /// Effective skills active for this turn.
     pub skills: Vec<String>,
     /// Bound session-agent settings, if this session belongs to an agent preset.
@@ -511,6 +525,8 @@ impl PreparedTurn {
                 .agent_config
                 .as_ref()
                 .is_some_and(|config| config.prune_tool_history),
+            mcp_mode: self.mcp_mode.clone(),
+            mcp_servers: self.mcp_servers.clone(),
         }
     }
 }
@@ -711,6 +727,8 @@ impl ChatService {
             max_tool_calls: definition.max_tool_calls,
             trust_tier: definition.trust_tier,
             prune_tool_history: definition.prune_tool_history,
+            mcp_mode: definition.mcp_mode.clone(),
+            mcp_servers: definition.mcp_servers.clone(),
         }
     }
 
@@ -854,6 +872,16 @@ impl ChatService {
                 .as_ref()
                 .and_then(|config| config.plan_mode.clone())
         });
+        let mcp_mode = request.mcp_mode.or_else(|| {
+            agent_config
+                .as_ref()
+                .and_then(|config| config.mcp_mode.clone())
+        });
+        let mcp_servers = request.mcp_servers.unwrap_or_else(|| {
+            agent_config
+                .as_ref()
+                .map_or_else(Vec::new, |config| config.mcp_servers.clone())
+        });
 
         // 2. Build and persist the user message.
         let metadata = {
@@ -957,6 +985,8 @@ impl ChatService {
             knowledge_collections,
             thinking,
             plan_mode,
+            mcp_mode,
+            mcp_servers,
             skills,
             agent_config,
         })
@@ -1071,6 +1101,12 @@ impl ChatService {
                 .as_ref()
                 .and_then(|config| config.plan_mode.clone())
         });
+        let mcp_mode = agent_config
+            .as_ref()
+            .and_then(|config| config.mcp_mode.clone());
+        let mcp_servers = agent_config
+            .as_ref()
+            .map_or_else(Vec::new, |config| config.mcp_servers.clone());
         let user_input = last_msg.content.clone();
 
         // Derive turn number from display transcript (never compacted) for
@@ -1096,6 +1132,8 @@ impl ChatService {
             knowledge_collections,
             thinking,
             plan_mode,
+            mcp_mode,
+            mcp_servers,
             skills,
             agent_config,
         })
@@ -1202,6 +1240,13 @@ impl ChatService {
         } else {
             vec![]
         };
+
+        // 1a. Apply MCP mode filtering.
+        Self::apply_mcp_mode_filter(
+            &mut tool_defs,
+            input.mcp_mode.as_deref(),
+            &input.mcp_servers,
+        );
 
         // 1b. Inject plan_mode.active config flag based on the user's mode selection.
         //
@@ -1564,6 +1609,49 @@ impl ChatService {
         );
     }
 
+    /// Filter MCP tool definitions according to the user's MCP mode.
+    ///
+    /// - `"auto"` (default / `None`): no filtering (all MCP tools pass through).
+    /// - `"manual"`: keep only MCP tools whose server name is in `allowed_servers`.
+    /// - `"disabled"`: remove every tool whose name starts with the `mcp_` prefix.
+    ///
+    /// Non-MCP tools (no `mcp_` prefix) are never removed.
+    fn apply_mcp_mode_filter(
+        tool_defs: &mut Vec<serde_json::Value>,
+        mcp_mode: Option<&str>,
+        allowed_servers: &[String],
+    ) {
+        let mode = mcp_mode.unwrap_or("auto");
+        if mode == "auto" {
+            return;
+        }
+
+        let before = tool_defs.len();
+        tool_defs.retain(|def| {
+            let name = def
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            let Some((server, _)) = y_tools::mcp_integration::split_qualified_tool_name(name)
+            else {
+                return true;
+            };
+            match mode {
+                "disabled" => false,
+                "manual" => allowed_servers.iter().any(|s| s == server),
+                _ => true,
+            }
+        });
+
+        tracing::info!(
+            mcp_mode = mode,
+            before = before,
+            after = tool_defs.len(),
+            "mcp mode filter applied"
+        );
+    }
+
     /// Build LLM messages by prepending system prompt from assembled context.
     ///
     /// Delegates to [`crate::message_builder::build_chat_messages`].
@@ -1841,6 +1929,8 @@ mod tests {
             trust_tier: None,
             agent_allowed_tools: vec![],
             prune_tool_history: false,
+            mcp_mode: None,
+            mcp_servers: vec![],
         };
 
         let config =
@@ -1872,6 +1962,8 @@ mod tests {
             trust_tier: None,
             agent_allowed_tools: vec![],
             prune_tool_history: false,
+            mcp_mode: None,
+            mcp_servers: vec![],
         };
 
         let config =
@@ -1911,6 +2003,8 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            mcp_mode: None,
+            mcp_servers: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1945,6 +2039,8 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            mcp_mode: None,
+            mcp_servers: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1965,6 +2061,8 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            mcp_mode: None,
+            mcp_servers: None,
         };
         let err = ChatService::prepare_turn(&container, request)
             .await
@@ -1984,6 +2082,8 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            mcp_mode: None,
+            mcp_servers: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -2010,6 +2110,8 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            mcp_mode: None,
+            mcp_servers: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -2034,6 +2136,8 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            mcp_mode: None,
+            mcp_servers: None,
         };
         let p1 = ChatService::prepare_turn(&container, request)
             .await
@@ -2050,6 +2154,8 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            mcp_mode: None,
+            mcp_servers: None,
         };
         let p2 = ChatService::prepare_turn(&container, request2)
             .await
@@ -2112,6 +2218,8 @@ thinking_effort = "high"
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
             },
         )
         .await
@@ -2175,6 +2283,8 @@ skills = ["workspace-skill"]
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
             },
         )
         .await
@@ -2192,6 +2302,8 @@ skills = ["workspace-skill"]
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
             },
         )
         .await
@@ -2247,6 +2359,8 @@ max_iterations = 1
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
             },
         )
         .await
@@ -2263,6 +2377,8 @@ max_iterations = 1
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
             },
         )
         .await

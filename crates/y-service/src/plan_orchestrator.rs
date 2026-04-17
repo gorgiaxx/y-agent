@@ -26,8 +26,10 @@ use crate::container::ServiceContainer;
 const PLAN_CANCELLED_MESSAGE: &str = "Cancelled";
 const PLAN_ANALYST_AGENT_ID: &str = "plan-analyst";
 const PHASE_EXECUTOR_AGENT_ID: &str = "plan-phase-executor";
-/// Maximum number of phases to execute concurrently.
+/// Default maximum number of phases to execute concurrently.
 const DEFAULT_MAX_PARALLEL_PHASES: usize = 4;
+/// Hard upper bound to protect against runaway concurrency from caller input.
+const MAX_PARALLEL_PHASES_CEILING: usize = 16;
 const PHASE_EXECUTOR_FALLBACK_ALLOWED_TOOLS: &[&str] = &[
     "ToolSearch",
     "FileRead",
@@ -219,13 +221,20 @@ impl PlanOrchestrator {
 
         let total_tasks = structured_plan.tasks.len();
 
+        let max_parallel = resolve_max_parallel_phases(arguments);
+
         // Phase 3: Dependency-aware parallel execution
-        tracing::info!(total_tasks, "plan orchestrator: starting phase execution");
+        tracing::info!(
+            total_tasks,
+            max_parallel,
+            "plan orchestrator: starting phase execution"
+        );
         let phase_results = Self::execute_phases(
             container,
             parent_session_id,
             &structured_plan,
             &plan_path,
+            max_parallel,
             progress,
             cancel.as_ref(),
         )
@@ -421,15 +430,7 @@ impl PlanOrchestrator {
         .await;
 
         // Build the user message for the plan-writer as structured JSON.
-        let mut plan_writer_input = serde_json::json!({
-            "task": request,
-            "context": context,
-            "plan_path": plan_path.display().to_string(),
-        });
-        if !analysis.is_empty() {
-            plan_writer_input["analysis"] = serde_json::Value::String(analysis.to_string());
-        }
-        let user_msg = plan_writer_input.to_string();
+        let user_msg = build_plan_writer_input(request, context, plan_path, analysis);
 
         let messages = build_subagent_messages(&settings.system_prompt, user_msg);
         let tool_defs =
@@ -615,13 +616,14 @@ impl PlanOrchestrator {
     ///
     /// Builds a DAG from `PlanTask.depends_on`, then executes in waves:
     /// each wave runs all tasks whose dependencies are satisfied, up to
-    /// `DEFAULT_MAX_PARALLEL_PHASES` concurrently. Falls back to sequential
-    /// execution if the DAG is invalid (cycles, missing deps).
+    /// `max_parallel` concurrently. Falls back to sequential execution if
+    /// the DAG is invalid (cycles, missing deps).
     async fn execute_phases(
         container: &ServiceContainer,
         parent_session_id: &SessionId,
         plan: &StructuredPlan,
         plan_path: &Path,
+        max_parallel: usize,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
     ) -> Result<Vec<serde_json::Value>, ToolError> {
@@ -731,8 +733,8 @@ impl PlanOrchestrator {
             }
 
             // Execute runnable tasks concurrently, in chunks of
-            // DEFAULT_MAX_PARALLEL_PHASES to bound resource usage.
-            for chunk in runnable.chunks(DEFAULT_MAX_PARALLEL_PHASES) {
+            // `max_parallel` to bound resource usage.
+            for chunk in runnable.chunks(max_parallel) {
                 let chunk_futures: Vec<_> = chunk
                     .iter()
                     .map(|task| async move {
@@ -1339,6 +1341,49 @@ fn resolve_task_status(task: &PlanTask, phase_results: &[serde_json::Value]) -> 
     }
 
     status
+}
+
+/// Build the structured JSON user message passed to `plan-writer`.
+///
+/// Always includes `task`, `context`, and `plan_path`. Includes `analysis`
+/// only when non-empty so plan-writer can detect whether pre-planning
+/// analysis is available.
+fn build_plan_writer_input(
+    request: &str,
+    context: &str,
+    plan_path: &Path,
+    analysis: &str,
+) -> String {
+    let mut input = serde_json::json!({
+        "task": request,
+        "context": context,
+        "plan_path": plan_path.display().to_string(),
+    });
+    if !analysis.is_empty() {
+        input["analysis"] = serde_json::Value::String(analysis.to_string());
+    }
+    input.to_string()
+}
+
+/// Resolve the max-parallel-phases setting from Plan tool arguments.
+///
+/// Reads the optional `max_parallel_phases` field from the arguments JSON
+/// (accepting u64 or i64). Clamps to `[1, MAX_PARALLEL_PHASES_CEILING]` and
+/// falls back to `DEFAULT_MAX_PARALLEL_PHASES` when the field is missing,
+/// zero, or not a number.
+fn resolve_max_parallel_phases(arguments: &serde_json::Value) -> usize {
+    let raw = arguments.get("max_parallel_phases").and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
+    });
+
+    match raw {
+        Some(0) | None => DEFAULT_MAX_PARALLEL_PHASES,
+        Some(n) => {
+            let n = usize::try_from(n).unwrap_or(DEFAULT_MAX_PARALLEL_PHASES);
+            n.min(MAX_PARALLEL_PHASES_CEILING)
+        }
+    }
 }
 
 /// Convert structured plan tasks into a validated [`TaskDag`].
@@ -2118,5 +2163,72 @@ Fix the plan stream rendering.
         }];
 
         assert!(build_task_dag(&tasks).is_err());
+    }
+
+    #[test]
+    fn test_resolve_max_parallel_phases_default_when_missing() {
+        let args = serde_json::json!({ "request": "do something" });
+        assert_eq!(
+            resolve_max_parallel_phases(&args),
+            DEFAULT_MAX_PARALLEL_PHASES
+        );
+    }
+
+    #[test]
+    fn test_resolve_max_parallel_phases_accepts_explicit_value() {
+        let args = serde_json::json!({ "max_parallel_phases": 2 });
+        assert_eq!(resolve_max_parallel_phases(&args), 2);
+    }
+
+    #[test]
+    fn test_resolve_max_parallel_phases_clamps_to_ceiling() {
+        let args = serde_json::json!({ "max_parallel_phases": 999 });
+        assert_eq!(
+            resolve_max_parallel_phases(&args),
+            MAX_PARALLEL_PHASES_CEILING
+        );
+    }
+
+    #[test]
+    fn test_resolve_max_parallel_phases_zero_falls_back_to_default() {
+        let args = serde_json::json!({ "max_parallel_phases": 0 });
+        assert_eq!(
+            resolve_max_parallel_phases(&args),
+            DEFAULT_MAX_PARALLEL_PHASES
+        );
+    }
+
+    #[test]
+    fn test_resolve_max_parallel_phases_ignores_non_numeric() {
+        let args = serde_json::json!({ "max_parallel_phases": "four" });
+        assert_eq!(
+            resolve_max_parallel_phases(&args),
+            DEFAULT_MAX_PARALLEL_PHASES
+        );
+    }
+
+    #[test]
+    fn test_build_plan_writer_input_includes_analysis_when_present() {
+        let plan_path = Path::new("/tmp/plan.md");
+        let raw = build_plan_writer_input(
+            "refactor auth",
+            "src/auth/",
+            plan_path,
+            "intent: REFACTORING\ngap: none",
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["task"], "refactor auth");
+        assert_eq!(parsed["context"], "src/auth/");
+        assert_eq!(parsed["plan_path"], "/tmp/plan.md");
+        assert_eq!(parsed["analysis"], "intent: REFACTORING\ngap: none");
+    }
+
+    #[test]
+    fn test_build_plan_writer_input_omits_analysis_when_empty() {
+        let plan_path = Path::new("/tmp/plan.md");
+        let raw = build_plan_writer_input("task", "ctx", plan_path, "");
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(parsed.get("analysis").is_none());
+        assert_eq!(parsed["task"], "task");
     }
 }
