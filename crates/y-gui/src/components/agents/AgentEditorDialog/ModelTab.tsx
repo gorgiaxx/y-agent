@@ -10,9 +10,9 @@ interface ModelTabProps {
 
 export function ModelTab({ draft, providerOptions, onChange }: ModelTabProps) {
   return (
-    <div className="grid grid-cols-2 gap-3">
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Provider</span>
+    <div className="agent-editor-form-grid">
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Provider</span>
         <Select value={draft.provider_id || '__auto__'} onValueChange={(value) => onChange((prev) => ({ ...prev, provider_id: value === '__auto__' ? '' : value }))}>
           <SelectTrigger>
             <SelectValue placeholder="auto" />
@@ -25,8 +25,8 @@ export function ModelTab({ draft, providerOptions, onChange }: ModelTabProps) {
           </SelectContent>
         </Select>
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Plan Mode</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Plan Mode</span>
         <Select value={draft.plan_mode || '__default__'} onValueChange={(value) => onChange((prev) => ({ ...prev, plan_mode: value === '__default__' ? '' : value }))}>
           <SelectTrigger>
             <SelectValue placeholder="default" />
@@ -39,8 +39,8 @@ export function ModelTab({ draft, providerOptions, onChange }: ModelTabProps) {
           </SelectContent>
         </Select>
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Thinking Effort</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Thinking Effort</span>
         <Select value={draft.thinking_effort || '__default__'} onValueChange={(value) => onChange((prev) => ({ ...prev, thinking_effort: value === '__default__' ? '' : value }))}>
           <SelectTrigger>
             <SelectValue placeholder="default" />
@@ -54,25 +54,50 @@ export function ModelTab({ draft, providerOptions, onChange }: ModelTabProps) {
           </SelectContent>
         </Select>
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Temperature</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Temperature</span>
         <Input value={draft.temperature} onChange={(event) => onChange((prev) => ({ ...prev, temperature: event.target.value }))} />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Top P</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Top P</span>
         <Input value={draft.top_p} onChange={(event) => onChange((prev) => ({ ...prev, top_p: event.target.value }))} />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Preferred Models</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Preferred Models</span>
         <Input value={draft.preferred_models} onChange={(event) => onChange((prev) => ({ ...prev, preferred_models: event.target.value }))} placeholder="model-a, model-b" />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Fallback Models</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Fallback Models</span>
         <Input value={draft.fallback_models} onChange={(event) => onChange((prev) => ({ ...prev, fallback_models: event.target.value }))} placeholder="model-c" />
       </label>
-      <label className="col-span-2 flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Provider Tags</span>
+      <label className="agent-editor-field agent-editor-field--full">
+        <span className="agent-editor-field-label">Provider Tags</span>
         <Input value={draft.provider_tags} onChange={(event) => onChange((prev) => ({ ...prev, provider_tags: event.target.value }))} placeholder="general, code" />
+      </label>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">MCP Mode</span>
+        <Select value={draft.mcp_mode || '__default__'} onValueChange={(value) => onChange((prev) => ({ ...prev, mcp_mode: value === '__default__' ? '' : value }))}>
+          <SelectTrigger>
+            <SelectValue placeholder="default" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__default__">default</SelectItem>
+            <SelectItem value="auto">auto</SelectItem>
+            <SelectItem value="manual">manual</SelectItem>
+            <SelectItem value="disabled">disabled</SelectItem>
+          </SelectContent>
+        </Select>
+      </label>
+      <label className="agent-editor-field agent-editor-field--full">
+        <span className="agent-editor-field-label">MCP Servers (manual mode)</span>
+        <Input
+          value={draft.mcp_servers.join(', ')}
+          onChange={(event) => onChange((prev) => ({
+            ...prev,
+            mcp_servers: event.target.value.split(',').map((s) => s.trim()).filter(Boolean),
+          }))}
+          placeholder="server-a, server-b"
+        />
       </label>
     </div>
   );

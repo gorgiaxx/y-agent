@@ -10,31 +10,28 @@ interface SkillsTabProps {
 
 export function SkillsTab({ draft, availableSkills, onChange }: SkillsTabProps) {
   return (
-    <div className="flex flex-col gap-3">
-      <label className="flex items-center gap-2 cursor-pointer">
+    <div className="agent-editor-form-stack">
+      <label className="agent-editor-checkbox-row">
         <Checkbox
           checked={draft.skills_enabled}
           onCheckedChange={(checked) => onChange((prev) => ({ ...prev, skills_enabled: checked === true }))}
         />
-        <span className="text-11px text-[var(--text-secondary)]">Enable skills</span>
+        <span className="agent-editor-field-label">Enable skills</span>
       </label>
-      <div className="grid grid-cols-2 gap-2 max-h-[320px] overflow-y-auto">
+      <div className="agent-editor-checkbox-grid">
         {availableSkills.map((skill) => (
           <label
             key={skill}
             className={[
-              'flex items-center gap-2 p-2 rounded-[var(--radius-sm)] border border-solid cursor-pointer',
-              'transition-colors duration-150',
-              draft.skills.includes(skill)
-                ? 'border-[var(--accent)] bg-[var(--accent-subtle)]'
-                : 'border-[var(--border)] hover:border-[var(--border-focus)]',
+              'agent-editor-checkbox-card agent-editor-checkbox-card--center',
+              draft.skills.includes(skill) ? 'agent-editor-checkbox-card--active' : '',
             ].join(' ')}
           >
             <Checkbox
               checked={draft.skills.includes(skill)}
               onCheckedChange={() => onChange((prev) => ({ ...prev, skills: toggleItem(prev.skills, skill) }))}
             />
-            <div className="text-11px font-500 text-[var(--text-primary)] truncate">{skill}</div>
+            <div className="agent-editor-checkbox-card-title">{skill}</div>
           </label>
         ))}
       </div>

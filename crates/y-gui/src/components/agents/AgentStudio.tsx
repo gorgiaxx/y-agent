@@ -5,7 +5,7 @@ import { ChatPanel } from '../chat-panel/ChatPanel';
 import { InputArea } from '../chat-panel/input-area/InputArea';
 import type { AgentInfo, AgentDetail } from '../../hooks/useAgents';
 import type { SessionInfo } from '../../types';
-import type { Message, ThinkingEffort, PlanMode, Attachment, SkillInfo, KnowledgeCollectionInfo, ProviderInfo } from '../../types';
+import type { Message, ThinkingEffort, PlanMode, McpMode, Attachment, SkillInfo, KnowledgeCollectionInfo, ProviderInfo } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import type { PendingEdit, CompactInfo } from '../../hooks/useChat';
@@ -50,6 +50,11 @@ interface AgentStudioProps {
   isCompacting: boolean;
   hasCustomPrompt: boolean;
   rewindDraft: string | null;
+  mcpMode: McpMode;
+  onMcpModeChange: (mode: McpMode) => void;
+  mcpServerList: { name: string; disabled: boolean }[];
+  selectedMcpServers: string[];
+  onMcpServerToggle: (name: string) => void;
   askUserData: AskUserDialogState | null;
   permissionData: PermissionDialogState | null;
   onEdit: () => void;
@@ -63,7 +68,7 @@ interface AgentStudioProps {
   onRestoreBranch: (checkpointId: string) => void;
   onForkMessage: (messageIndex: number) => void;
   // InputArea callbacks
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => void;
   onStop: () => void;
   onCommand: (command: string) => boolean;
   onSelectProvider: (id: string) => void;
@@ -120,6 +125,11 @@ export function AgentStudio({
   isCompacting,
   hasCustomPrompt,
   rewindDraft,
+  mcpMode,
+  onMcpModeChange,
+  mcpServerList,
+  selectedMcpServers,
+  onMcpServerToggle,
   askUserData,
   permissionData,
   onEdit,
@@ -240,6 +250,11 @@ export function AgentStudio({
           onCustomPromptChange={onCustomPromptChange}
           rewindDraft={rewindDraft}
           onRewindDraftConsumed={onRewindDraftConsumed}
+          mcpMode={mcpMode}
+          onMcpModeChange={onMcpModeChange}
+          mcpServerList={mcpServerList}
+          selectedMcpServers={selectedMcpServers}
+          onMcpServerToggle={onMcpServerToggle}
         />
 
         <StatusBar

@@ -12,9 +12,9 @@ interface PromptTabProps {
 
 export function PromptTab({ draft, promptSections, onChange }: PromptTabProps) {
   return (
-    <div className="flex flex-col gap-3">
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Custom System Prompt</span>
+    <div className="agent-editor-form-stack">
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Custom System Prompt</span>
         <Textarea
           value={draft.system_prompt}
           onChange={(event) => onChange((prev) => ({ ...prev, system_prompt: event.target.value }))}
@@ -22,18 +22,15 @@ export function PromptTab({ draft, promptSections, onChange }: PromptTabProps) {
           className="text-11px"
         />
       </label>
-      <div className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Prompt Sections</span>
-        <div className="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
+      <div className="agent-editor-field">
+        <span className="agent-editor-field-label">Prompt Sections</span>
+        <div className="agent-editor-checkbox-grid agent-editor-checkbox-grid--short">
           {promptSections.map((section) => (
             <label
               key={section.id}
               className={[
-                'flex items-start gap-2 p-2 rounded-[var(--radius-sm)] border border-solid cursor-pointer',
-                'transition-colors duration-150',
-                draft.prompt_section_ids.includes(section.id)
-                  ? 'border-[var(--accent)] bg-[var(--accent-subtle)]'
-                  : 'border-[var(--border)] hover:border-[var(--border-focus)]',
+                'agent-editor-checkbox-card',
+                draft.prompt_section_ids.includes(section.id) ? 'agent-editor-checkbox-card--active' : '',
               ].join(' ')}
             >
               <Checkbox
@@ -41,9 +38,9 @@ export function PromptTab({ draft, promptSections, onChange }: PromptTabProps) {
                 onCheckedChange={() => onChange((prev) => ({ ...prev, prompt_section_ids: toggleItem(prev.prompt_section_ids, section.id) }))}
                 className="mt-0.5"
               />
-              <div className="min-w-0 flex-1">
-                <div className="text-11px font-500 text-[var(--text-primary)] truncate">{section.id}</div>
-                <div className="text-10px text-[var(--text-muted)] mt-0.5">{section.category}</div>
+              <div className="agent-editor-checkbox-card-body">
+                <div className="agent-editor-checkbox-card-title">{section.id}</div>
+                <div className="agent-editor-checkbox-card-desc">{section.category}</div>
               </div>
             </label>
           ))}

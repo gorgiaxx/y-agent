@@ -57,6 +57,8 @@ export function buildDraft(detail?: AgentDetail | null): AgentDraft {
     max_context_tokens: String(detail?.max_context_tokens ?? 4096),
     max_completion_tokens: detail?.max_completion_tokens?.toString() ?? '',
     user_callable: detail?.user_callable ?? true,
+    mcp_mode: detail?.mcp_mode ?? '',
+    mcp_servers: detail?.mcp_servers ?? [],
   };
 }
 
@@ -96,6 +98,10 @@ export function serializeAgentDraft(draft: AgentDraft): string {
   if (draft.permission_mode.trim()) lines.push(`permission_mode = ${JSON.stringify(draft.permission_mode)}`);
   if (draft.max_completion_tokens.trim()) {
     lines.push(`max_completion_tokens = ${Number.parseInt(draft.max_completion_tokens, 10)}`);
+  }
+  if (draft.mcp_mode.trim()) lines.push(`mcp_mode = ${JSON.stringify(draft.mcp_mode.trim())}`);
+  if (draft.mcp_servers.length > 0) {
+    lines.push(`mcp_servers = [${draft.mcp_servers.map((item) => JSON.stringify(item)).join(', ')}]`);
   }
 
   return `${lines.join('\n')}\n`;

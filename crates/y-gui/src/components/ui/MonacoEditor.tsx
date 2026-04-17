@@ -20,6 +20,11 @@ import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
 import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 
+// Register Monarch tokenizers for all basic languages (Python, Markdown, Rust, etc.).
+// Without this import the ESM build only ships tokenizers for worker-backed languages
+// (JSON, CSS, HTML, TypeScript/JavaScript).
+import 'monaco-editor/esm/vs/basic-languages/monaco.contribution';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const globalSelf = self as any;
 

@@ -11,24 +11,21 @@ interface ToolsTabProps {
 
 export function ToolsTab({ draft, tools, onChange }: ToolsTabProps) {
   return (
-    <div className="flex flex-col gap-3">
-      <label className="flex items-center gap-2 cursor-pointer">
+    <div className="agent-editor-form-stack">
+      <label className="agent-editor-checkbox-row">
         <Checkbox
           checked={draft.toolcall_enabled}
           onCheckedChange={(checked) => onChange((prev) => ({ ...prev, toolcall_enabled: checked === true }))}
         />
-        <span className="text-11px text-[var(--text-secondary)]">Enable tool calls</span>
+        <span className="agent-editor-field-label">Enable tool calls</span>
       </label>
-      <div className="grid grid-cols-2 gap-2 max-h-[320px] overflow-y-auto">
+      <div className="agent-editor-checkbox-grid">
         {tools.map((tool) => (
           <label
             key={tool.name}
             className={[
-              'flex items-start gap-2 p-2 rounded-[var(--radius-sm)] border border-solid cursor-pointer',
-              'transition-colors duration-150',
-              draft.allowed_tools.includes(tool.name)
-                ? 'border-[var(--accent)] bg-[var(--accent-subtle)]'
-                : 'border-[var(--border)] hover:border-[var(--border-focus)]',
+              'agent-editor-checkbox-card',
+              draft.allowed_tools.includes(tool.name) ? 'agent-editor-checkbox-card--active' : '',
             ].join(' ')}
           >
             <Checkbox
@@ -36,9 +33,9 @@ export function ToolsTab({ draft, tools, onChange }: ToolsTabProps) {
               onCheckedChange={() => onChange((prev) => ({ ...prev, allowed_tools: toggleItem(prev.allowed_tools, tool.name) }))}
               className="mt-0.5"
             />
-            <div className="min-w-0 flex-1">
-              <div className="text-11px font-500 text-[var(--text-primary)] truncate">{tool.name}</div>
-              <div className="text-10px text-[var(--text-muted)] line-clamp-2 mt-0.5">{tool.description}</div>
+            <div className="agent-editor-checkbox-card-body">
+              <div className="agent-editor-checkbox-card-title">{tool.name}</div>
+              <div className="agent-editor-checkbox-card-desc">{tool.description}</div>
             </div>
           </label>
         ))}

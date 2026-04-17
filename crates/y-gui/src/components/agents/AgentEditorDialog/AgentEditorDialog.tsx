@@ -1,9 +1,8 @@
-import { Save, FileCode2, Settings, Wrench, Sparkles, BookOpen, MessageSquare, Cpu, Gauge } from 'lucide-react';
+import { Save, Settings, Wrench, Sparkles, BookOpen, MessageSquare, Cpu, Gauge } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { Button } from '../../ui/Button';
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose } from '../../ui/Dialog';
 import { ScrollArea } from '../../ui/ScrollArea';
-import { Switch } from '../../ui/Switch';
 import { MonacoEditor } from '../../ui/MonacoEditor';
 import type { AgentInfo, AgentToolInfo, PromptSectionInfo } from '../../../hooks/useAgents';
 import type { AgentDraft, EditorTab, EditorSurface } from '../types';
@@ -15,6 +14,8 @@ import { KnowledgeTab } from './KnowledgeTab';
 import { PromptTab } from './PromptTab';
 import { ModelTab } from './ModelTab';
 import { LimitsTab } from './LimitsTab';
+import '../../settings/ProvidersTab.css';
+import './AgentEditorDialog.css';
 
 interface AgentEditorDialogProps {
   mode: 'create' | 'edit';
@@ -83,11 +84,11 @@ export function AgentEditorDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         size="xl"
-        className="p-0 flex flex-col items-stretch text-left gap-0 max-h-[90vh] overflow-hidden"
+        className="p-0 flex flex-col items-stretch text-left gap-0 h-[85vh] overflow-hidden"
       >
         {/* Header */}
-        <div className="flex items-center justify-between gap-4 px-4 py-3">
-          <div className="min-w-0">
+        <div className="agent-editor-header">
+          <div className="agent-editor-header-info">
             <DialogTitle className="text-14px">
               {mode === 'create' ? 'Create Agent' : `Edit ${draft.name || draft.id}`}
             </DialogTitle>
@@ -95,7 +96,7 @@ export function AgentEditorDialog({
               Preset settings for reusable agent sessions.
             </DialogDescription>
           </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className="agent-editor-header-actions">
             {canReset && (
               <Button variant="ghost" size="sm" onClick={onReset}>
                 Reset
@@ -114,30 +115,22 @@ export function AgentEditorDialog({
         </div>
 
         {/* Body: sidebar + content */}
-        <div className="flex flex-1 min-h-0">
+        <div className="agent-editor-body">
           {/* Left sidebar */}
-          <div className="flex flex-col w-44 flex-shrink-0">
-            <nav className="flex flex-col py-1 px-2 gap-0.5 flex-1">
+          <div className="agent-editor-sidebar">
+            <nav className="agent-editor-nav">
               {EDITOR_TABS.map((item) => {
                 const isActive = tab === item.id && surface === 'form';
                 const IconFn = TAB_ICON_MAP[item.id];
                 const icon = IconFn
-                  ? IconFn({ size: 14, className: `shrink-0 ${isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}` })
+                  ? IconFn({ size: 14, className: 'agent-editor-nav-icon' })
                   : null;
                 return (
                   <div
                     key={item.id}
                     className={[
-                      'flex items-center gap-1.5',
-                      'px-2 py-2.5',
-                      'rounded-[var(--radius-md)]',
-                      'cursor-pointer',
-                      'transition-colors duration-120',
-                      'mb-0.5',
-                      'border border-solid',
-                      isActive
-                        ? 'bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.06)]'
-                        : 'border-transparent hover:bg-[var(--surface-hover)]',
+                      'agent-editor-nav-item',
+                      isActive ? 'agent-editor-nav-item--active' : '',
                     ].join(' ')}
                     onClick={() => {
                       if (surface === 'raw') {
@@ -147,12 +140,7 @@ export function AgentEditorDialog({
                     }}
                   >
                     {icon}
-                    <span className={[
-                      'text-13px font-600',
-                      'flex-1 min-w-0',
-                      'whitespace-nowrap overflow-hidden text-ellipsis',
-                      isActive ? 'text-[var(--text-primary)]' : 'text-[var(--text-primary)]',
-                    ].join(' ')}>
+                    <span className="agent-editor-nav-label">
                       {item.label}
                     </span>
                   </div>
@@ -160,37 +148,39 @@ export function AgentEditorDialog({
               })}
             </nav>
 
-            {/* Raw TOML toggle */}
-            <div className="px-3 py-3">
-              <label className="flex items-center justify-between gap-2 cursor-pointer">
-                <span className="text-11px text-[var(--text-muted)] flex items-center gap-1.5">
-                  <FileCode2 size={12} />
-                  Raw TOML
-                </span>
-                <Switch
-                  checked={surface === 'raw'}
-                  onCheckedChange={(checked) => void onSurfaceChange(checked ? 'raw' : 'form')}
-                />
+            {/* Raw TOML toggle (unified with Settings raw-mode-switch) */}
+            <div className="agent-editor-toml-toggle">
+              <label className="raw-mode-switch" title={surface === 'raw' ? 'Switch to Form view' : 'Switch to Raw TOML view'}>
+                <span className={`raw-mode-switch-label ${surface === 'raw' ? '' : 'raw-mode-switch-label--active'}`}>Form</span>
+                <button
+                  type="button"
+                  className={`raw-mode-switch-track ${surface === 'raw' ? 'raw-mode-switch-track--on' : ''}`}
+                  onClick={() => void onSurfaceChange(surface === 'raw' ? 'form' : 'raw')}
+                  aria-label="Toggle RAW mode"
+                >
+                  <span className="raw-mode-switch-thumb" />
+                </button>
+                <span className={`raw-mode-switch-label ${surface === 'raw' ? 'raw-mode-switch-label--active' : ''}`}>RAW</span>
               </label>
             </div>
           </div>
 
           {/* Right content area */}
           <ScrollArea className="flex-1 min-h-0">
-            <div className="p-4">
+            <div className="agent-editor-content">
               {rawError && (
-                <div className="mb-3 px-3 py-2 text-11px rounded-[var(--radius-md)] bg-[var(--error-subtle)] text-[var(--error)] border border-solid border-[rgba(229,115,115,0.2)]">
+                <div className="agent-editor-error">
                   {rawError}
                 </div>
               )}
 
               {surface === 'raw' ? (
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-11px font-500 text-[var(--text-primary)]">
+                <div className="agent-editor-raw">
+                  <div className="agent-editor-raw-info">
+                    <span className="agent-editor-raw-title">
                       {rawUsesSourceFile ? 'Editing source file' : 'Editing generated agent source'}
                     </span>
-                    <span className="text-10px text-[var(--text-muted)] break-all">
+                    <span className="agent-editor-raw-path">
                       {rawPath ?? 'The content below will be saved as the agent definition TOML.'}
                     </span>
                   </div>

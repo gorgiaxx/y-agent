@@ -10,31 +10,28 @@ interface KnowledgeTabProps {
 
 export function KnowledgeTab({ draft, knowledgeCollections, onChange }: KnowledgeTabProps) {
   return (
-    <div className="flex flex-col gap-3">
-      <label className="flex items-center gap-2 cursor-pointer">
+    <div className="agent-editor-form-stack">
+      <label className="agent-editor-checkbox-row">
         <Checkbox
           checked={draft.knowledge_enabled}
           onCheckedChange={(checked) => onChange((prev) => ({ ...prev, knowledge_enabled: checked === true }))}
         />
-        <span className="text-11px text-[var(--text-secondary)]">Enable knowledge base</span>
+        <span className="agent-editor-field-label">Enable knowledge base</span>
       </label>
-      <div className="grid grid-cols-2 gap-2 max-h-[320px] overflow-y-auto">
+      <div className="agent-editor-checkbox-grid">
         {knowledgeCollections.map((collection) => (
           <label
             key={collection}
             className={[
-              'flex items-center gap-2 p-2 rounded-[var(--radius-sm)] border border-solid cursor-pointer',
-              'transition-colors duration-150',
-              draft.knowledge_collections.includes(collection)
-                ? 'border-[var(--accent)] bg-[var(--accent-subtle)]'
-                : 'border-[var(--border)] hover:border-[var(--border-focus)]',
+              'agent-editor-checkbox-card agent-editor-checkbox-card--center',
+              draft.knowledge_collections.includes(collection) ? 'agent-editor-checkbox-card--active' : '',
             ].join(' ')}
           >
             <Checkbox
               checked={draft.knowledge_collections.includes(collection)}
               onCheckedChange={() => onChange((prev) => ({ ...prev, knowledge_collections: toggleItem(prev.knowledge_collections, collection) }))}
             />
-            <div className="text-11px font-500 text-[var(--text-primary)] truncate">{collection}</div>
+            <div className="agent-editor-checkbox-card-title">{collection}</div>
           </label>
         ))}
       </div>

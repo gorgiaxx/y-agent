@@ -33,7 +33,7 @@ const dialogSizeMap: Record<DialogSize, string> = {
   sm: '360px',
   md: '480px',
   lg: '640px',
-  xl: '720px',
+  xl: '960px',
 }
 
 interface DialogContentProps extends DialogPrimitive.DialogContentProps {

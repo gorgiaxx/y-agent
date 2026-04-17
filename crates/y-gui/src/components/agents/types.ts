@@ -31,6 +31,8 @@ export interface AgentDraft {
   max_context_tokens: string;
   max_completion_tokens: string;
   user_callable: boolean;
+  mcp_mode: string;
+  mcp_servers: string[];
 }
 
 export const EDITOR_TABS: { id: EditorTab; label: string }[] = [

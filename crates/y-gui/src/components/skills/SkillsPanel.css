@@ -119,9 +119,21 @@
 /* ---- Editor header actions ---- */
 .skill-editor-actions {
   display: flex;
-  gap: 6px;
-  flex-shrink: 0;
   align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.skill-toggle-btn {
+  color: var(--text-muted);
+}
+
+.skill-toggle-btn--on {
+  color: var(--success, #6fcf97);
+}
+
+.skill-uninstall-btn:hover {
+  color: var(--error);
 }
 
 /* Button/badge/tag classes removed -- now uses shared Button and Badge components */

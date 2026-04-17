@@ -97,7 +97,7 @@ export function SkillsPanel({
   const [fileContent, setFileContent] = useState<string>('');
   const [originalContent, setOriginalContent] = useState<string>('');
   const [saving, setSaving] = useState(false);
-  const [uninstalling, setUninstalling] = useState(false);
+  const [_uninstalling, setUninstalling] = useState(false);
   const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
 
@@ -257,7 +257,7 @@ export function SkillsPanel({
             <FolderOpen size={14} />
           </Button>
           <Button
-            variant={detail.enabled ? 'primary' : 'icon'}
+            variant="icon"
             size="sm"
             onClick={async () => {
               const newEnabled = !detail.enabled;
@@ -268,14 +268,16 @@ export function SkillsPanel({
               if (refreshed) setDetail(refreshed);
             }}
             title={detail.enabled ? 'Disable' : 'Enable'}
+            className={detail.enabled ? 'skill-toggle-btn skill-toggle-btn--on' : 'skill-toggle-btn'}
           >
             {detail.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
           </Button>
           <Button
-            variant="danger"
+            variant="icon"
             size="sm"
             onClick={() => setShowUninstallConfirm(true)}
             title="Uninstall"
+            className="skill-uninstall-btn"
           >
             <Trash2 size={14} />
           </Button>

@@ -13,10 +13,10 @@ interface GeneralTabProps {
 
 export function GeneralTab({ mode, draft, agents, onChange, onApplyTemplate }: GeneralTabProps) {
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="agent-editor-form-grid">
       {mode === 'create' && (
-        <label className="col-span-2 flex flex-col gap-1.5">
-          <span className="text-11px text-[var(--text-secondary)]">Template</span>
+        <label className="agent-editor-field agent-editor-field--full">
+          <span className="agent-editor-field-label">Template</span>
           <Select value="__none__" onValueChange={(value) => value !== '__none__' && onApplyTemplate(value)}>
             <SelectTrigger>
               <SelectValue placeholder="Start from scratch" />
@@ -29,8 +29,8 @@ export function GeneralTab({ mode, draft, agents, onChange, onApplyTemplate }: G
           </Select>
         </label>
       )}
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">ID</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">ID</span>
         <Input
           value={draft.id}
           disabled={mode === 'edit'}
@@ -38,16 +38,16 @@ export function GeneralTab({ mode, draft, agents, onChange, onApplyTemplate }: G
           placeholder="code-reviewer"
         />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Name</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Name</span>
         <Input
           value={draft.name}
           onChange={(event) => onChange((prev) => ({ ...prev, name: event.target.value }))}
           placeholder="Code Reviewer"
         />
       </label>
-      <label className="col-span-2 flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Description</span>
+      <label className="agent-editor-field agent-editor-field--full">
+        <span className="agent-editor-field-label">Description</span>
         <Textarea
           value={draft.description}
           onChange={(event) => onChange((prev) => ({ ...prev, description: event.target.value }))}
@@ -55,8 +55,8 @@ export function GeneralTab({ mode, draft, agents, onChange, onApplyTemplate }: G
           className="text-11px"
         />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Mode</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Mode</span>
         <Select value={draft.mode} onValueChange={(value) => onChange((prev) => ({ ...prev, mode: value }))}>
           <SelectTrigger>
             <SelectValue />
@@ -69,20 +69,20 @@ export function GeneralTab({ mode, draft, agents, onChange, onApplyTemplate }: G
           </SelectContent>
         </Select>
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Working Directory</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Working Directory</span>
         <Input
           value={draft.working_directory}
           onChange={(event) => onChange((prev) => ({ ...prev, working_directory: event.target.value }))}
           placeholder="/path/to/workspace"
         />
       </label>
-      <label className="col-span-2 flex items-center gap-2 cursor-pointer">
+      <label className="agent-editor-checkbox-row agent-editor-field--full">
         <Checkbox
           checked={draft.user_callable}
           onCheckedChange={(checked) => onChange((prev) => ({ ...prev, user_callable: checked === true }))}
         />
-        <span className="text-11px text-[var(--text-secondary)]">Show as selectable agent</span>
+        <span className="agent-editor-field-label">Show as selectable agent</span>
       </label>
     </div>
   );

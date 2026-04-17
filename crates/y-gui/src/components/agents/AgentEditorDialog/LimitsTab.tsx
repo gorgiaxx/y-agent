@@ -9,9 +9,9 @@ interface LimitsTabProps {
 
 export function LimitsTab({ draft, onChange }: LimitsTabProps) {
   return (
-    <div className="grid grid-cols-2 gap-3">
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Permission Mode</span>
+    <div className="agent-editor-form-grid">
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Permission Mode</span>
         <Select value={draft.permission_mode || '__default__'} onValueChange={(value) => onChange((prev) => ({ ...prev, permission_mode: value === '__default__' ? '' : value }))}>
           <SelectTrigger>
             <SelectValue placeholder="default" />
@@ -25,21 +25,21 @@ export function LimitsTab({ draft, onChange }: LimitsTabProps) {
           </SelectContent>
         </Select>
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Max Iterations</span>
-        <span className="text-10px text-[var(--text-muted)]">Also used as the session turn cap for bound agent chats.</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Max Iterations</span>
+        <span className="agent-editor-field-hint">Also used as the session turn cap for bound agent chats.</span>
         <Input value={draft.max_iterations} onChange={(event) => onChange((prev) => ({ ...prev, max_iterations: event.target.value }))} />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Max Tool Calls</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Max Tool Calls</span>
         <Input value={draft.max_tool_calls} onChange={(event) => onChange((prev) => ({ ...prev, max_tool_calls: event.target.value }))} />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Timeout Seconds</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Timeout Seconds</span>
         <Input value={draft.timeout_secs} onChange={(event) => onChange((prev) => ({ ...prev, timeout_secs: event.target.value }))} />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Context Sharing</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Context Sharing</span>
         <Select value={draft.context_sharing} onValueChange={(value) => onChange((prev) => ({ ...prev, context_sharing: value }))}>
           <SelectTrigger>
             <SelectValue />
@@ -52,12 +52,12 @@ export function LimitsTab({ draft, onChange }: LimitsTabProps) {
           </SelectContent>
         </Select>
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Max Context Tokens</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Max Context Tokens</span>
         <Input value={draft.max_context_tokens} onChange={(event) => onChange((prev) => ({ ...prev, max_context_tokens: event.target.value }))} />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-11px text-[var(--text-secondary)]">Max Completion Tokens</span>
+      <label className="agent-editor-field">
+        <span className="agent-editor-field-label">Max Completion Tokens</span>
         <Input value={draft.max_completion_tokens} onChange={(event) => onChange((prev) => ({ ...prev, max_completion_tokens: event.target.value }))} />
       </label>
     </div>

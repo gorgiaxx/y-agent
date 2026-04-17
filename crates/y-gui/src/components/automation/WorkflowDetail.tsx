@@ -35,7 +35,7 @@ export function WorkflowDetail({
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [validating, setValidating] = useState(false);
+  const [_validating, setValidating] = useState(false);
 
   // Execution state
   const [running, setRunning] = useState(false);
