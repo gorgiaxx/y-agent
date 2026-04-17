@@ -157,3 +157,39 @@
   color: var(--text-muted);
   font-size: 12px;
 }
+
+/* ---- Arg mode header / back button ---- */
+
+.command-menu-arg-header {
+  display: flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-md) 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-xs);
+}
+
+.command-menu-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.command-menu-back-btn:hover {
+  background: var(--surface-hover);
+}
+
+.command-menu-item.current .command-menu-name::after {
+  content: '(current)';
+  margin-left: var(--space-sm);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-muted);
+}

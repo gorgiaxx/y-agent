@@ -247,8 +247,9 @@ export function InputArea({
       if (cmd.immediate) {
         resetInput();
         onCommand?.(cmd.name);
+      } else if (cmd.name === 'model') {
+        // model command enters arg mode inside CommandMenu; don't exit yet.
       } else {
-        // For non-immediate commands, insert the command text.
         contentEditableRef.current?.setText(`/${cmd.name} `);
         contentEditableRef.current?.placeCursorAtEnd();
         updateHasContent();
@@ -272,6 +273,15 @@ export function InputArea({
       prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
     );
   }, []);
+
+  const handleModelProviderSelect = useCallback(
+    (providerId: string) => {
+      onSelectProvider(providerId);
+      exitCommandMode();
+      resetInput();
+    },
+    [onSelectProvider, exitCommandMode, resetInput],
+  );
 
   const handleKbCollectionSelect = useCallback(
     (collectionName: string) => {
@@ -498,9 +508,12 @@ export function InputArea({
           <CommandMenu
             skills={skills}
             knowledgeCollections={knowledgeCollections}
+            providers={providers}
+            selectedProviderId={selectedProviderId}
             onSelect={handleCommandSelect}
             onSelectSkill={handleSkillSelect}
             onSelectKbCollection={handleKbCollectionSelect}
+            onSelectModelProvider={handleModelProviderSelect}
             onDismiss={() => {
               exitCommandMode();
               resetInput();

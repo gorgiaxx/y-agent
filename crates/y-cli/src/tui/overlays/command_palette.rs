@@ -271,12 +271,7 @@ fn render_command_list(
     frame.render_widget(List::new(items), list_area);
 }
 
-fn render_arg_list(
-    frame: &mut Frame,
-    list_area: Rect,
-    palette: &CommandPaletteState,
-    t: &Theme,
-) {
+fn render_arg_list(frame: &mut Frame, list_area: Rect, palette: &CommandPaletteState, t: &Theme) {
     let items: Vec<ListItem> = palette
         .filtered_args
         .iter()

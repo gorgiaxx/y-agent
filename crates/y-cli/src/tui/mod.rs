@@ -220,12 +220,11 @@ impl TuiApp {
                         self.state.set_mode(InteractionMode::Normal);
                         self.state.set_focus(PanelFocus::Input);
                     } else {
-                        let cmd_input =
-                            if let Some(selected) = self.palette.selected_command() {
-                                selected.to_string()
-                            } else {
-                                self.palette.input.clone()
-                            };
+                        let cmd_input = if let Some(selected) = self.palette.selected_command() {
+                            selected.to_string()
+                        } else {
+                            self.palette.input.clone()
+                        };
                         if self.should_enter_arg_mode(&cmd_input).await {
                             // Stay in command mode with arg completions.
                         } else {

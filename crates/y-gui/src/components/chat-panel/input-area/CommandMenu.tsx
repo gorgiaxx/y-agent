@@ -106,7 +106,7 @@ export function CommandMenu({
       items.push({ kind: 'collection', collection });
     }
     return items;
-  }, [filteredCommands, filteredSkills, filteredCollections]);
+  }, [argMode, filteredCommands, filteredSkills, filteredCollections]);
 
   // Clamp selection.
   const totalItems = argMode ? filteredArgItems.length : flatItems.length;
@@ -258,7 +258,34 @@ export function CommandMenu({
 
       {/* Scrollable list area */}
       <div className="command-menu-list">
-        {flatItems.length === 0 ? (
+        {argMode ? (
+          <>
+            <div className="command-menu-arg-header">
+              <button
+                className="command-menu-back-btn"
+                onMouseDown={(e) => { e.preventDefault(); exitArgMode(); }}
+              >
+                <ChevronLeft size={13} />
+                <span>/{argMode.command}</span>
+              </button>
+            </div>
+            {filteredArgItems.length === 0 ? (
+              <div className="command-menu-empty">No matching models</div>
+            ) : (
+              filteredArgItems.map((item, i) => (
+                <div
+                  key={item.id}
+                  className={`command-menu-item ${i === clampedIndex ? 'selected' : ''} ${item.id === selectedProviderId ? 'current' : ''}`}
+                  onMouseEnter={() => setSelectedIndex(i)}
+                  onMouseDown={(e) => { e.preventDefault(); selectArgItem(item); }}
+                >
+                  <span className="command-menu-name">{item.id}</span>
+                  <span className="command-menu-desc">{item.label}</span>
+                </div>
+              ))
+            )}
+          </>
+        ) : flatItems.length === 0 ? (
           <div className="command-menu-empty">No matching results</div>
         ) : (
           <>
@@ -276,7 +303,7 @@ export function CommandMenu({
                         onMouseEnter={() => setSelectedIndex(idx)}
                         onMouseDown={(e) => {
                           e.preventDefault();
-                          onSelect(cmd);
+                          selectItem({ kind: 'command', command: cmd });
                         }}
                       >
                         <span className="command-menu-name">/{cmd.name}</span>
