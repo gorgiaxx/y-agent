@@ -9,6 +9,7 @@ import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
 import { SessionPromptDialog } from '../SessionPromptDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
+import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
@@ -411,13 +412,29 @@ export function InputArea({
   const handleInput = useCallback((plainText: string) => {
     updateHasContent();
 
-    // Command mode detection: "/" at start, single-line only.
     if (plainText.startsWith('/') && !plainText.includes('\n')) {
-      setCommandMode(true);
+      const query = plainText.slice(1).split(/\s+/)[0];
+      const hasMatch =
+        GUI_COMMANDS.some(
+          (cmd) => cmd.name.startsWith(query) || (cmd.alias !== null && cmd.alias.startsWith(query)),
+        ) ||
+        skills.some(
+          (s) =>
+            s.name.toLowerCase().startsWith(query) ||
+            s.tags.some((t) => t.toLowerCase().startsWith(query)),
+        ) ||
+        knowledgeCollections.some(
+          (c) => c.name.toLowerCase().startsWith(query),
+        );
+      if (hasMatch) {
+        setCommandMode(true);
+      } else if (commandMode) {
+        exitCommandMode();
+      }
     } else {
       if (commandMode) exitCommandMode();
     }
-  }, [commandMode, exitCommandMode, updateHasContent]);
+  }, [commandMode, exitCommandMode, updateHasContent, skills, knowledgeCollections]);
 
   // When entering edit mode, populate with the message content.
   useEffect(() => {
