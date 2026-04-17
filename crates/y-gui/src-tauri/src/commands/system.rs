@@ -137,12 +137,12 @@ pub async fn toggle_devtools(window: tauri::WebviewWindow) {
 /// Apply the window decoration mode to the main window.
 ///
 /// Platform behavior:
-/// - **macOS**: native decorations are *never* toggled off, because doing so
-///   also removes the traffic-light buttons. Instead we rely on the
-///   `titleBarStyle: "Overlay"` + `hiddenTitle: true` configuration, which
-///   keeps the traffic lights visible on top of a transparent titlebar. The
-///   `use_custom` flag therefore only affects CSS layout (padding for the
-///   traffic lights) on the frontend -- this command is effectively a no-op.
+/// - **macOS**: toggles the title bar style between `Overlay` (custom
+///   decorations on -- layered chrome, no native title) and `Visible`
+///   (custom decorations off -- standard macOS title bar with traffic
+///   lights and window title). Unlike `set_decorations(false)` which
+///   removes the traffic lights entirely, `set_title_bar_style` preserves
+///   them in both modes.
 /// - **Linux / Windows**: `set_decorations(!use_custom)` is applied so the
 ///   frontend can draw its own chrome (min / max / close buttons). Linux
 ///   compositors (KDE, GNOME) often mishandle client-side decorations; the
@@ -152,12 +152,26 @@ pub async fn window_set_decorations(
     window: tauri::WebviewWindow,
     use_custom: bool,
 ) -> Result<(), String> {
-    if cfg!(target_os = "macos") {
-        return Ok(());
+    #[cfg(target_os = "macos")]
+    {
+        let style = if use_custom {
+            tauri::TitleBarStyle::Overlay
+        } else {
+            tauri::TitleBarStyle::Visible
+        };
+        window
+            .set_title_bar_style(style)
+            .map_err(|e| format!("Failed to set title bar style: {e}"))?;
     }
-    window
-        .set_decorations(!use_custom)
-        .map_err(|e| format!("Failed to set window decorations: {e}"))
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window
+            .set_decorations(!use_custom)
+            .map_err(|e| format!("Failed to set window decorations: {e}"))?;
+    }
+
+    Ok(())
 }
 
 /// Minimize the main window (called by the custom titlebar on Linux/Windows).

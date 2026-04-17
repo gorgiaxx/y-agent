@@ -148,16 +148,30 @@ pub fn run() {
             let app_state = AppState::new(Arc::clone(&container), config_path.clone());
 
             // Apply the persisted window-decoration preference to the main
-            // window before it is shown. On macOS we never strip native
-            // decorations (doing so would also remove the traffic lights);
-            // the Overlay titlebar config in `tauri.conf.json` already gives
-            // us the Apple-style layered look. On Linux/Windows we honour
-            // the preference so the frontend can draw its own chrome.
-            #[cfg(not(target_os = "macos"))]
+            // window before it is shown.
+            // - macOS: switch title bar style between Overlay (custom) and
+            //   Visible (native). Overlay keeps traffic lights on a layered
+            //   chrome; Visible restores the standard macOS title bar.
+            // - Linux/Windows: toggle native decorations so the frontend can
+            //   draw its own chrome when the user opts in.
             if let Some(main_window) = app.get_webview_window("main") {
                 let use_custom = rt
                     .block_on(app_state.gui_config.read())
                     .use_custom_decorations;
+
+                #[cfg(target_os = "macos")]
+                {
+                    let style = if use_custom {
+                        tauri::TitleBarStyle::Overlay
+                    } else {
+                        tauri::TitleBarStyle::Visible
+                    };
+                    if let Err(e) = main_window.set_title_bar_style(style) {
+                        tracing::warn!(error = %e, "Failed to apply title bar style");
+                    }
+                }
+
+                #[cfg(not(target_os = "macos"))]
                 if let Err(e) = main_window.set_decorations(!use_custom) {
                     tracing::warn!(error = %e, "Failed to apply window decoration preference");
                 }
