@@ -1,6 +1,7 @@
-import { SquarePen } from 'lucide-react';
+import { Plus, RefreshCw, Search, SquarePen } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 import { ScrollArea } from '../ui/ScrollArea';
 import type { AgentInfo } from '../../hooks/useAgents';
 import { AgentGlyph } from './AgentGlyph';
@@ -12,20 +13,66 @@ import {
 
 interface AgentOverviewProps {
   filteredAgents: AgentInfo[];
+  totalCount: number;
   agentQuery: string;
+  reloading?: boolean;
+  onQueryChange: (value: string) => void;
   onSelectAgent: (id: string) => void;
   onOpenEdit: (id: string) => void;
+  onReload?: () => void;
+  onNewAgent?: () => void;
 }
 
 export function AgentOverview({
   filteredAgents,
+  totalCount,
   agentQuery,
+  reloading,
+  onQueryChange,
   onSelectAgent,
   onOpenEdit,
+  onReload,
+  onNewAgent,
 }: AgentOverviewProps) {
   return (
     <ScrollArea className="flex-1 min-h-0">
       <div className="agents-overview">
+        <div className="agents-overview-toolbar">
+          <label className="agents-overview-search">
+            <Search size={14} className="agents-overview-search-icon" />
+            <Input
+              value={agentQuery}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="Search agents"
+              className="agents-overview-search-input"
+            />
+          </label>
+
+          <div className="agents-overview-actions">
+            {onReload && (
+              <Button
+                variant="icon"
+                size="sm"
+                onClick={() => onReload()}
+                disabled={reloading}
+                title="Reload"
+              >
+                <RefreshCw size={14} className={reloading ? 'agents-spin' : ''} />
+              </Button>
+            )}
+            {onNewAgent && (
+              <Button
+                variant="icon"
+                size="sm"
+                onClick={() => onNewAgent()}
+                title="New Agent"
+              >
+                <Plus size={14} />
+              </Button>
+            )}
+          </div>
+        </div>
+
         <section className="agents-gallery-section">
           <div className="agents-gallery-header">
             <div>
@@ -34,7 +81,7 @@ export function AgentOverview({
               </div>
               <h3 className="agents-gallery-title">
                 {agentQuery.trim()
-                  ? `${filteredAgents.length} matching presets`
+                  ? `${filteredAgents.length} of ${totalCount} presets`
                   : 'Choose a preset to open its workspace'}
               </h3>
             </div>

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AgentsSidebarPanel } from '../components/agents/AgentsSidebarPanel';
 import { AgentEditorPanel } from '../components/agents/AgentEditorPanel';
 import { AgentOverview } from '../components/agents/AgentOverview';
 import { AgentStudio } from '../components/agents/AgentStudio';
@@ -315,19 +314,6 @@ export function AgentsView() {
       ) : (
         <div className="agents-shell">
           {nav.activeAgentId ? (
-            <>
-              <AgentsSidebarPanel
-                agents={filteredAgents}
-                activeAgentId={nav.activeAgentId}
-                query={agentQuery}
-                totalCount={agents.length}
-                reloading={reloadingAgents}
-                onQueryChange={setAgentQuery}
-                onSelectAgent={nav.setActiveAgentId}
-                onReload={() => void handleReloadAgents()}
-                onNewAgent={editor.handleOpenCreate}
-              />
-
               <section className="agents-main-panel">
                 <AgentStudio
                   agentSummary={selectedAgentSummary}
@@ -406,13 +392,17 @@ export function AgentsView() {
                   onPermissionAllowAllForSession={interactions.handlePermissionAllowAllForSession}
                 />
               </section>
-            </>
           ) : (
               <AgentOverview
                 filteredAgents={filteredAgents}
+                totalCount={agents.length}
                 agentQuery={agentQuery}
+                reloading={reloadingAgents}
+                onQueryChange={setAgentQuery}
                 onSelectAgent={nav.setActiveAgentId}
                 onOpenEdit={(id) => void editor.handleOpenEdit(id)}
+                onReload={() => void handleReloadAgents()}
+                onNewAgent={editor.handleOpenCreate}
               />
           )}
         </div>

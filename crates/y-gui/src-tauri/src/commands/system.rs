@@ -125,12 +125,23 @@ pub async fn show_window(window: tauri::WebviewWindow) {
 }
 
 /// Toggle the `WebView` developer tools (Ctrl+Shift+I shortcut handler).
+///
+/// In release builds this is a no-op: devtools are disabled in production
+/// to prevent end-users from accessing the inspector or reloading the page.
 #[tauri::command]
 pub async fn toggle_devtools(window: tauri::WebviewWindow) {
-    if window.is_devtools_open() {
-        window.close_devtools();
-    } else {
-        window.open_devtools();
+    #[cfg(debug_assertions)]
+    {
+        if window.is_devtools_open() {
+            window.close_devtools();
+        } else {
+            window.open_devtools();
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = window;
     }
 }
 
