@@ -1,81 +1,34 @@
 /* ================================================
-   Sidebar shell: icon bar, panel container, shared
-   sub-panel primitives used across all views.
+   Sidebar shell -- unified macOS-style sidebar.
+   The layout primitives live in common/NavSidebar.
+   This file keeps shared sub-panel primitives used
+   by chat/skills/knowledge/agents master lists.
    ================================================ */
 
-.sidebar {
+.sidebar-chat-region {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: 2px;
+}
+
+/* ---- View master-detail shell (used by Skills/Knowledge/Automation/Settings) ---- */
+.view-shell {
   display: flex;
   flex-direction: row;
-  height: 100%;
-}
-
-/* ---- VS Code-style icon bar ---- */
-.sidebar-icon-bar {
-  width: 48px;
-  min-width: 48px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 8px;
-  padding-bottom: 8px;
-  gap: 2px;
-  background: var(--surface-primary);
-  border-right: 1px solid var(--border);
-  flex-shrink: 0;
-  user-select: none;
-}
-
-.sidebar-icon-spacer {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
 }
 
-.sidebar-nav-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: none;
-  border-left: 2px solid transparent;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-  border-radius: 0;
-  position: relative;
-}
-
-.sidebar-nav-btn:hover {
-  color: var(--text-primary);
-}
-
-.sidebar-nav-btn.active {
-  color: var(--text-primary);
-  border-left-color: var(--accent);
-}
-
-/* ---- Sidebar panel (content area) ---- */
-.sidebar-panel {
-  width: 256px;
-  min-width: 256px;
-  background: var(--surface-secondary);
-  border-right: 1px solid var(--border);
+.view-main-pane {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  transition: width 0.2s ease, min-width 0.2s ease, border-width 0.2s ease;
-}
-
-.sidebar-panel--collapsed {
-  width: 0;
+  flex: 1;
   min-width: 0;
-  border-right-width: 0;
-}
-
-.sidebar-panel--settings {
-  width: 180px;
-  min-width: 180px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ---- Placeholder views ---- */
@@ -110,7 +63,7 @@
   line-height: 1.4;
 }
 
-/* ---- Shared: header bar used by chat, skills, knowledge ---- */
+/* ---- Shared: header bar (kept for non-chat sidebar-style master panes) ---- */
 .sidebar-header {
   display: flex;
   align-items: center;
@@ -391,26 +344,7 @@
   margin-left: auto;
 }
 
-.import-status-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  flex-shrink: 0;
-  transition: color 0.12s, background 0.12s;
-}
-
-.import-status-toggle:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
+.import-status-toggle,
 .import-status-dismiss {
   display: flex;
   align-items: center;
@@ -426,6 +360,7 @@
   transition: color 0.12s, background 0.12s;
 }
 
+.import-status-toggle:hover,
 .import-status-dismiss:hover {
   color: var(--text-primary);
   background: var(--surface-hover);

@@ -6,6 +6,7 @@ import { StatusBar } from '../components/chat-panel/StatusBar';
 import { WorkspaceDialog } from '../components/chat-panel/WorkspaceDialog';
 import { RewindPanel } from '../components/chat-panel/RewindPanel';
 import { useRewind } from '../hooks/useRewind';
+import { useMcpServers } from '../hooks/useMcpServers';
 
 import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useNavigationContext } from '../providers/AppContexts';
 import { useChatHandlers } from '../hooks/useChatHandlers';
@@ -13,7 +14,7 @@ import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
-import type { ThinkingEffort, PlanMode } from '../types';
+import type { ThinkingEffort, PlanMode, McpMode } from '../types';
 
 export function ChatView() {
   const chatHooks = useChatContext();
@@ -31,6 +32,27 @@ export function ChatView() {
   const [rewindDraft, setRewindDraft] = useState<string | null>(null);
 
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
+
+  // MCP mode + manual-mode server selection are per-session, remembered per active session.
+  const [mcpModeBySession, setMcpModeBySession] = useState<Record<string, McpMode>>({});
+  const [mcpServersBySession, setMcpServersBySession] = useState<Record<string, string[]>>({});
+  const mcpSessionKey = sessionHooks.activeSessionId ?? '__no_session__';
+  const mcpMode: McpMode = mcpModeBySession[mcpSessionKey] ?? 'auto';
+  const selectedMcpServers = mcpServersBySession[mcpSessionKey] ?? [];
+  const { servers: mcpServers } = useMcpServers();
+  const mcpServerList = mcpServers.map((s) => ({ name: s.name, disabled: s.disabled }));
+  const handleMcpModeChange = useCallback((mode: McpMode) => {
+    setMcpModeBySession((prev) => ({ ...prev, [mcpSessionKey]: mode }));
+  }, [mcpSessionKey]);
+  const handleMcpServerToggle = useCallback((name: string) => {
+    setMcpServersBySession((prev) => {
+      const existing = prev[mcpSessionKey] ?? [];
+      const next = existing.includes(name)
+        ? existing.filter((n) => n !== name)
+        : [...existing, name];
+      return { ...prev, [mcpSessionKey]: next };
+    });
+  }, [mcpSessionKey]);
   const {
     askUserData,
     permissionData,
@@ -185,6 +207,11 @@ export function ChatView() {
         }}
         rewindDraft={rewindDraft}
         onRewindDraftConsumed={() => setRewindDraft(null)}
+        mcpMode={mcpMode}
+        onMcpModeChange={handleMcpModeChange}
+        mcpServerList={mcpServerList}
+        selectedMcpServers={selectedMcpServers}
+        onMcpServerToggle={handleMcpServerToggle}
       />
       <StatusBar
         providerCount={providerHooks.systemStatus?.provider_count ?? 0}

@@ -1,27 +1,21 @@
 import { useState } from 'react';
 import {
-  MessageSquare,
   Zap,
   Puzzle,
   BookOpen,
   Bot,
-  Settings,
+  Settings as SettingsIcon,
+  Plus,
 } from 'lucide-react';
-import type { SessionInfo, WorkspaceInfo, SkillInfo, KnowledgeCollectionInfo } from '../types';
-import type { ImportStatus } from '../hooks/useSkills';
-import type { KbIngestStatus, KbBatchProgress } from '../hooks/useKnowledge';
-import type { WorkflowInfo, ScheduleInfo } from '../hooks/useAutomation';
+import type { SessionInfo, WorkspaceInfo } from '../types';
 import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
-import { SkillsSidebarPanel } from './skills/SkillsSidebarPanel';
-import { KnowledgeSidebarPanel } from './knowledge/KnowledgeSidebarPanel';
-import { AutomationSidebarPanel } from './automation/AutomationSidebarPanel';
-import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
+import { NavSidebar, NavItem, NavSearch, NavDivider } from './common/NavSidebar';
 import './Sidebar.css';
 
 export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents' | 'settings';
 
 // ---------------------------------------------------------------------------
-// Grouped prop interfaces -- reduces 38 flat props to 5 domain groups
+// Grouped prop interfaces
 // ---------------------------------------------------------------------------
 
 /** Chat/Session domain props. */
@@ -44,153 +38,91 @@ export interface ChatSidebarProps {
   onUnassignSession: (sessionId: string) => void;
 }
 
-/** Skills domain props. */
-export interface SkillsSidebarPropsGroup {
-  skills: SkillInfo[];
-  activeSkillName: string | null;
-  importStatus: ImportStatus;
-  importError: string | null;
-  onSelectSkill: (name: string) => void;
-  onImportClick: () => void;
-  onClearImportStatus: () => void;
-}
-
-/** Knowledge domain props. */
-export interface KnowledgeSidebarPropsGroup {
-  collections: KnowledgeCollectionInfo[];
-  selectedCollection: string | null;
-  onSelectCollection: (name: string) => void;
-  onCreateCollection: (name: string, description: string) => void;
-  ingestStatus: KbIngestStatus;
-  batchProgress: KbBatchProgress | null;
-  ingestError: string | null;
-  onClearIngestStatus: () => void;
-  onCancelIngest: () => void;
-}
-
-/** Automation domain props. */
-export interface AutomationSidebarPropsGroup {
-  workflows: WorkflowInfo[];
-  schedules: ScheduleInfo[];
-  selectedType: 'workflow' | 'schedule' | null;
-  selectedId: string | null;
-  onSelectWorkflow: (id: string) => void;
-  onSelectSchedule: (id: string) => void;
-  onCreateWorkflow: () => void;
-  onCreateSchedule: () => void;
-}
-
-/** Navigation / settings props. */
+/** Navigation props. */
 export interface NavSidebarPropsGroup {
   activeView: ViewType;
   onSelectView: (view: ViewType) => void;
-  activeSettingsTab: string | null;
-  onSelectSettingsTab: (tab: string) => void;
 }
-
-// ---------------------------------------------------------------------------
-// Sidebar component
-// ---------------------------------------------------------------------------
 
 interface SidebarProps {
   chat: ChatSidebarProps;
-  skills: SkillsSidebarPropsGroup;
-  knowledge: KnowledgeSidebarPropsGroup;
-  automation: AutomationSidebarPropsGroup;
   nav: NavSidebarPropsGroup;
 }
 
-export function Sidebar({ chat, skills, knowledge, automation, nav }: SidebarProps) {
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
+export function Sidebar({ chat, nav }: SidebarProps) {
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Handle icon bar clicks: toggle panel collapse when clicking the active view,
-  // switch view and expand panel when clicking a different view.
-  const handleIconClick = (view: ViewType) => {
-    if (view === 'settings') {
-      // Settings panel is always visible -- no collapse toggle
-      nav.onSelectView(view);
-      setPanelCollapsed(false);
-      return;
-    }
-    if (view === 'agents') {
-      nav.onSelectView(view);
-      setPanelCollapsed(false);
-      return;
-    }
-    if (view === nav.activeView && !panelCollapsed) {
-      // Same view is active and panel is open -- collapse
-      setPanelCollapsed(true);
-    } else {
-      // Different view or panel is collapsed -- switch and expand
-      nav.onSelectView(view);
-      setPanelCollapsed(false);
-    }
-  };
+  const goTo = (view: ViewType) => nav.onSelectView(view);
 
   return (
-    <aside className="sidebar">
-      {/* VS Code-style vertical icon bar */}
-      <div className="sidebar-icon-bar">
-        <button
-          className={`sidebar-nav-btn ${nav.activeView === 'chat' && !panelCollapsed ? 'active' : ''}`}
-          onClick={() => handleIconClick('chat')}
-          title="Sessions"
-        >
-          <MessageSquare size={20} />
-        </button>
-        <button
-          className={`sidebar-nav-btn ${nav.activeView === 'automation' && !panelCollapsed ? 'active' : ''}`}
-          onClick={() => handleIconClick('automation')}
-          title="Automation"
-        >
-          <Zap size={20} />
-        </button>
-        <button
-          className={`sidebar-nav-btn ${nav.activeView === 'skills' && !panelCollapsed ? 'active' : ''}`}
-          onClick={() => handleIconClick('skills')}
-          title="Skills"
-        >
-          <Puzzle size={20} />
-        </button>
-        <button
-          className={`sidebar-nav-btn ${nav.activeView === 'knowledge' && !panelCollapsed ? 'active' : ''}`}
-          onClick={() => handleIconClick('knowledge')}
-          title="Knowledge"
-        >
-          <BookOpen size={20} />
-        </button>
-        <button
-          className={`sidebar-nav-btn ${nav.activeView === 'agents' && !panelCollapsed ? 'active' : ''}`}
-          onClick={() => handleIconClick('agents')}
-          title="Agents"
-        >
-          <Bot size={20} />
-        </button>
-        <div className="sidebar-icon-spacer" />
-        <button
-          className={`sidebar-nav-btn ${nav.activeView === 'settings' && !panelCollapsed ? 'active' : ''}`}
-          onClick={() => handleIconClick('settings')}
-          title="Settings"
-          id="btn-settings"
-        >
-          <Settings size={20} />
-        </button>
-      </div>
+    <NavSidebar
+      footer={
+        <NavItem
+          icon={<SettingsIcon size={15} />}
+          label="Settings"
+          active={nav.activeView === 'settings'}
+          onClick={() => goTo('settings')}
+        />
+      }
+    >
+      {/* 1. New Chat */}
+      <NavItem
+        icon={<Plus size={15} />}
+        label="New Chat"
+        primary
+        onClick={() => {
+          goTo('chat');
+          chat.onNewChat();
+        }}
+      />
 
-      {/* Sidebar panel content */}
-      <div
-        className={`sidebar-panel ${panelCollapsed || nav.activeView === 'agents' ? 'sidebar-panel--collapsed' : ''} ${nav.activeView === 'settings' ? 'sidebar-panel--settings' : ''}`}
-      >
+      {/* 2. Search conversations */}
+      <NavSearch
+        value={searchQuery}
+        onChange={setSearchQuery}
+        placeholder="Search conversations..."
+      />
 
-      {/* Sessions content (only when chat view is active) */}
-      {nav.activeView === 'chat' && (
+      {/* 3-6. Feature nav */}
+      <NavItem
+        icon={<Puzzle size={15} />}
+        label="Skills"
+        active={nav.activeView === 'skills'}
+        onClick={() => goTo('skills')}
+      />
+      <NavItem
+        icon={<Bot size={15} />}
+        label="Agents"
+        active={nav.activeView === 'agents'}
+        onClick={() => goTo('agents')}
+      />
+      <NavItem
+        icon={<BookOpen size={15} />}
+        label="Knowledge"
+        active={nav.activeView === 'knowledge'}
+        onClick={() => goTo('knowledge')}
+      />
+      <NavItem
+        icon={<Zap size={15} />}
+        label="Automation"
+        active={nav.activeView === 'automation'}
+        onClick={() => goTo('automation')}
+      />
+
+      <NavDivider />
+
+      {/* 7+8. Workspaces and chat sessions (master list). */}
+      <div className="sidebar-chat-region">
         <ChatSidebarPanel
           sessions={chat.sessions}
           activeSessionId={chat.activeSessionId}
           streamingSessionIds={chat.streamingSessionIds}
           workspaces={chat.workspaces}
           sessionWorkspaceMap={chat.sessionWorkspaceMap}
-          onSelectSession={chat.onSelectSession}
+          onSelectSession={(id) => {
+            goTo('chat');
+            chat.onSelectSession(id);
+          }}
           onNewChat={chat.onNewChat}
           onNewChatInWorkspace={chat.onNewChatInWorkspace}
           onDeleteSession={chat.onDeleteSession}
@@ -201,60 +133,11 @@ export function Sidebar({ chat, skills, knowledge, automation, nav }: SidebarPro
           onDeleteWorkspace={chat.onDeleteWorkspace}
           onAssignSession={chat.onAssignSession}
           onUnassignSession={chat.onUnassignSession}
+          hideHeader
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
         />
-      )}
-
-      {/* Automation sidebar */}
-      {nav.activeView === 'automation' && (
-        <AutomationSidebarPanel
-          workflows={automation.workflows}
-          schedules={automation.schedules}
-          selectedType={automation.selectedType}
-          selectedId={automation.selectedId}
-          onSelectWorkflow={automation.onSelectWorkflow}
-          onSelectSchedule={automation.onSelectSchedule}
-          onCreateWorkflow={automation.onCreateWorkflow}
-          onCreateSchedule={automation.onCreateSchedule}
-        />
-      )}
-
-      {/* Settings view -- category list */}
-      {nav.activeView === 'settings' && (
-        <SettingsSidebarNav
-          activeTab={nav.activeSettingsTab}
-          onSelectTab={nav.onSelectSettingsTab}
-        />
-      )}
-
-      {/* Skills view -- skill list */}
-      {nav.activeView === 'skills' && (
-        <SkillsSidebarPanel
-          skills={skills.skills}
-          activeSkillName={skills.activeSkillName}
-          importStatus={skills.importStatus}
-          importError={skills.importError}
-          onSelectSkill={skills.onSelectSkill}
-          onImportClick={skills.onImportClick}
-          onClearImportStatus={skills.onClearImportStatus}
-        />
-      )}
-
-      {/* Knowledge view -- collection list */}
-      {nav.activeView === 'knowledge' && (
-        <KnowledgeSidebarPanel
-          collections={knowledge.collections}
-          selectedCollection={knowledge.selectedCollection}
-          onSelectCollection={knowledge.onSelectCollection}
-          onCreateCollection={knowledge.onCreateCollection}
-          kbIngestStatus={knowledge.ingestStatus}
-          kbBatchProgress={knowledge.batchProgress}
-          kbIngestError={knowledge.ingestError}
-          onClearKbIngestStatus={knowledge.onClearIngestStatus}
-          onCancelKbIngest={knowledge.onCancelIngest}
-        />
-      )}
-
-      </div>{/* end sidebar-panel */}
-    </aside>
+      </div>
+    </NavSidebar>
   );
 }

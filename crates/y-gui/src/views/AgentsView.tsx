@@ -20,7 +20,8 @@ import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { useAgentEditor } from '../hooks/useAgentEditor';
 import type { AgentDetail } from '../hooks/useAgents';
-import type { PlanMode, ThinkingEffort } from '../types';
+import type { PlanMode, ThinkingEffort, McpMode } from '../types';
+import { useMcpServers } from '../hooks/useMcpServers';
 import './AgentsView.css';
 
 export function AgentsView() {
@@ -64,6 +65,26 @@ export function AgentsView() {
   const [agentQuery, setAgentQuery] = useState('');
   const [reloadingAgents, setReloadingAgents] = useState(false);
 
+  const [mcpModeBySession, setMcpModeBySession] = useState<Record<string, McpMode>>({});
+  const [mcpServersBySession, setMcpServersBySession] = useState<Record<string, string[]>>({});
+  const mcpSessionKey = agentActiveSessionId ?? '__no_session__';
+  const mcpMode: McpMode = mcpModeBySession[mcpSessionKey] ?? 'auto';
+  const selectedMcpServers = mcpServersBySession[mcpSessionKey] ?? [];
+  const { servers: mcpServers } = useMcpServers();
+  const mcpServerList = mcpServers.map((s) => ({ name: s.name, disabled: s.disabled }));
+  const handleMcpModeChange = useCallback((mode: McpMode) => {
+    setMcpModeBySession((prev) => ({ ...prev, [mcpSessionKey]: mode }));
+  }, [mcpSessionKey]);
+  const handleMcpServerToggle = useCallback((name: string) => {
+    setMcpServersBySession((prev) => {
+      const existing = prev[mcpSessionKey] ?? [];
+      const next = existing.includes(name)
+        ? existing.filter((n) => n !== name)
+        : [...existing, name];
+      return { ...prev, [mcpSessionKey]: next };
+    });
+  }, [mcpSessionKey]);
+
   // Agent editor -- all editor state and logic extracted to a dedicated hook
   const editor = useAgentEditor({
     getAgentDetail,
@@ -71,7 +92,6 @@ export function AgentsView() {
     parseAgentToml,
     saveAgent,
     resetAgent,
-    activeAgentId: nav.activeAgentId,
   });
 
   const loadSelectedAgentDetail = useCallback(async (agentId: string) => {
@@ -83,11 +103,18 @@ export function AgentsView() {
       setSelectedProviderId(detail?.provider_id ?? 'auto');
       setThinkingEffort((detail?.thinking_effort as ThinkingEffort | null | undefined) ?? null);
       setPlanMode((detail?.plan_mode as PlanMode | null | undefined) ?? 'fast');
+      if (detail?.mcp_mode) {
+        const mode = detail.mcp_mode as McpMode;
+        setMcpModeBySession((prev) => ({ ...prev, [mcpSessionKey]: mode }));
+      }
+      if (detail?.mcp_servers && detail.mcp_servers.length > 0) {
+        setMcpServersBySession((prev) => ({ ...prev, [mcpSessionKey]: detail.mcp_servers }));
+      }
       return detail;
     } finally {
       setDetailLoading(false);
     }
-  }, [getAgentDetail]);
+  }, [getAgentDetail, mcpSessionKey]);
 
   useEffect(() => {
     if (!nav.activeAgentId) {
@@ -332,6 +359,11 @@ export function AgentsView() {
                 isCompacting={agentChatHooks.opStatus === 'compacting'}
                 hasCustomPrompt={sessionHooks.sessions.find((session) => session.id === sessionHooks.activeSessionId)?.has_custom_prompt ?? false}
                 rewindDraft={rewindDraft}
+                mcpMode={mcpMode}
+                onMcpModeChange={handleMcpModeChange}
+                mcpServerList={mcpServerList}
+                selectedMcpServers={selectedMcpServers}
+                onMcpServerToggle={handleMcpServerToggle}
                 askUserData={interactions.askUserData}
                 permissionData={interactions.permissionData}
                 onEdit={() => void editor.handleOpenEdit(nav.activeAgentId!)}

@@ -5,15 +5,16 @@ import { DiagnosticsPanel } from '../components/observation/DiagnosticsPanel';
 import { ObservabilityPanel } from '../components/observation/ObservabilityPanel';
 import { Activity, ArrowLeft, Eye } from 'lucide-react';
 
+import { WindowControls } from '../components/ui/WindowControls';
+
 import { ChatView } from '../views/ChatView';
 import { SkillsView } from '../views/SkillsView';
 import { KnowledgeView } from '../views/KnowledgeView';
 import { AgentsView } from '../views/AgentsView';
 import { AutomationView } from '../views/AutomationView';
 import { SettingsView } from '../views/SettingsView';
-import { type SettingsTab } from '../components/settings/SettingsPanel';
 
-import { useNavigationContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useKnowledgeContext, useAutomationContext, useChatContext } from '../providers/AppContexts';
+import { useNavigationContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext } from '../providers/AppContexts';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useObservability, type TimeRange } from '../hooks/useObservability';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
@@ -24,8 +25,6 @@ export function MainLayout() {
   const skillHooks = useSkillsContext();
   const agentHooks = useAgentsContext();
   const workspaceHooks = useWorkspacesContext();
-  const knowledgeHooks = useKnowledgeContext();
-  const autoHooks = useAutomationContext();
   const chatHooks = useChatContext();
 
   const diagnosticsScope = resolveDiagnosticsScope(navProps.activeView, sessionHooks.activeSessionId);
@@ -83,8 +82,6 @@ export function MainLayout() {
               navProps.setInputExpanded(false);
             }
           },
-          activeSettingsTab: navProps.activeSettingsTab,
-          onSelectSettingsTab: (t: string) => navProps.setActiveSettingsTab(t as SettingsTab),
         }}
         chat={{
           sessions: sessionHooks.sessions,
@@ -133,58 +130,12 @@ export function MainLayout() {
              await workspaceHooks.unassignSession(sessionId);
           },
         }}
-        skills={{
-          skills: skillHooks.skills,
-          activeSkillName: navProps.activeSkillName,
-          onSelectSkill: navProps.setActiveSkillName,
-          onImportClick: () => navProps.setImportDialogOpen(true),
-          importStatus: skillHooks.importStatus,
-          importError: skillHooks.importError,
-          onClearImportStatus: skillHooks.clearImportStatus,
-        }}
-        knowledge={{
-          collections: knowledgeHooks.collections,
-          selectedCollection: navProps.selectedKbCollection,
-          onSelectCollection: navProps.setSelectedKbCollection,
-          onCreateCollection: knowledgeHooks.createCollection,
-          ingestStatus: knowledgeHooks.ingestStatus,
-          batchProgress: knowledgeHooks.batchProgress,
-          ingestError: knowledgeHooks.ingestError,
-          onClearIngestStatus: knowledgeHooks.clearIngestStatus,
-          onCancelIngest: knowledgeHooks.cancelIngest,
-        }}
-        automation={{
-          workflows: autoHooks.workflows,
-          schedules: autoHooks.schedules,
-          selectedType: navProps.automationSelectedType,
-          selectedId: navProps.automationSelectedId,
-          onSelectWorkflow: (id: string) => {
-            navProps.setAutomationSelectedType('workflow');
-            navProps.setAutomationSelectedId(id);
-            navProps.setAutomationCreating(null);
-          },
-          onSelectSchedule: (id: string) => {
-            navProps.setAutomationSelectedType('schedule');
-            navProps.setAutomationSelectedId(id);
-            navProps.setAutomationCreating(null);
-          },
-          onCreateWorkflow: () => {
-            navProps.setAutomationSelectedType(null);
-            navProps.setAutomationSelectedId(null);
-            navProps.setAutomationCreating('workflow');
-          },
-          onCreateSchedule: () => {
-            navProps.setAutomationSelectedType(null);
-            navProps.setAutomationSelectedId(null);
-            navProps.setAutomationCreating('schedule');
-          },
-        }}
       />
 
       <main className="main-panel">
         {navProps.activeView !== 'settings' && (
-        <header className="main-header">
-          <div className="main-header-start">
+        <header className="main-header" data-tauri-drag-region>
+          <div className="main-header-start" data-tauri-drag-region>
             {showAgentBack && (
               <button
                 className="btn-header"
@@ -214,6 +165,7 @@ export function MainLayout() {
             >
               <Eye size={16} />
             </button>
+            <WindowControls />
           </div>
         </header>
         )}
