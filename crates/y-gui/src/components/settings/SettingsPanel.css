@@ -7,11 +7,28 @@
   position: relative;
 }
 
+/* Radix Tabs root must fill available height */
+.settings-panel > [role="tablist"] ~ * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Radix TabsContent panels must fill available height */
+.settings-content [data-state="active"][role="tabpanel"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* ---- Content ---- */
 .settings-content {
   flex: 1;
   padding: var(--space-lg);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .settings-section {
@@ -309,6 +326,7 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: var(--space-md);
+  flex-shrink: 0;
 }
 
 /* TOML editor */
@@ -331,7 +349,7 @@
 
 .toml-editor-monaco {
   flex: 1;
-  min-height: 340px;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -343,6 +361,11 @@
   inset: 0;
 }
 
+/* react-monaco-editor-container must fill its parent for height:100% to work */
+.toml-editor-monaco .react-monaco-editor-container {
+  height: 100% !important;
+}
+
 .toml-editor-monaco .monaco-editor,
 .toml-editor-monaco .monaco-editor .overflow-guard {
   border-radius: var(--radius-md) !important;
@@ -351,14 +374,20 @@
 /* Prompt editor (Monaco) */
 .prompt-editor-monaco {
   flex: 1;
-  min-height: 280px;
+  min-height: 0;
   max-height: 4000px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  position: relative;
 }
 
 .prompt-editor-monaco > div {
+  position: absolute !important;
+  inset: 0;
+}
+
+.prompt-editor-monaco .react-monaco-editor-container {
   height: 100% !important;
 }
 
