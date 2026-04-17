@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
@@ -10,12 +10,12 @@ import { PermissionDialog } from './PermissionDialog';
 import { SessionPromptDialog } from '../SessionPromptDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, Attachment } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
 import './InputArea.css';
 
 interface InputAreaProps {
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -82,6 +82,16 @@ interface InputAreaProps {
   rewindDraft?: string | null;
   /** Called after rewindDraft is consumed to clear the state. */
   onRewindDraftConsumed?: () => void;
+  /** MCP mode for the current session. */
+  mcpMode?: McpMode;
+  /** Callback when MCP mode changes. */
+  onMcpModeChange?: (mode: McpMode) => void;
+  /** List of configured MCP servers (for manual mode selection). */
+  mcpServerList?: { name: string; disabled: boolean }[];
+  /** Selected MCP server names (for manual mode). */
+  selectedMcpServers?: string[];
+  /** Callback when manual-mode server selection changes. */
+  onMcpServerToggle?: (serverName: string) => void;
 }
 
 export function InputArea({
@@ -120,6 +130,11 @@ export function InputArea({
   onCustomPromptChange,
   rewindDraft,
   onRewindDraftConsumed,
+  mcpMode = 'auto',
+  onMcpModeChange,
+  mcpServerList = [],
+  selectedMcpServers = [],
+  onMcpServerToggle,
 }: InputAreaProps) {
   const [commandMode, setCommandMode] = useState(false);
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
@@ -128,10 +143,12 @@ export function InputArea({
   const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
+  const [mcpDropdownOpen, setMcpDropdownOpen] = useState(false);
   const contentEditableRef = useRef<ContentEditableInputHandle>(null);
   const providerDropdownRef = useRef<HTMLDivElement>(null);
   const kbPickerRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
+  const mcpDropdownRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
   const lastCompEndRef = useRef<number>(0);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -192,6 +209,18 @@ export function InputArea({
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [thinkingDropdownOpen]);
+
+  // Close MCP dropdown on outside click.
+  useEffect(() => {
+    if (!mcpDropdownOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (mcpDropdownRef.current && !mcpDropdownRef.current.contains(e.target as Node)) {
+        setMcpDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [mcpDropdownOpen]);
 
   // Derive display label for selected provider.
   const selectedProviderLabel = selectedProviderId === 'auto'
@@ -288,13 +317,15 @@ export function InputArea({
       thinkingEffort,
       attachments.length > 0 ? attachments : undefined,
       planMode,
+      mcpMode,
+      mcpMode === 'manual' ? selectedMcpServers : undefined,
     );
     resetInput();
     setAttachments([]);
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode]);
+  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, mcpMode, selectedMcpServers]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     // Check for pasted images first.
@@ -518,6 +549,7 @@ export function InputArea({
 
         {/* Toolbar row with action buttons -- inside the input border */}
         <div className="input-toolbar">
+          <div className="input-toolbar-scroll">
 
           {/* (b) Model / provider selection */}
           <div className="toolbar-btn-group" ref={providerDropdownRef}>
@@ -656,6 +688,67 @@ export function InputArea({
             )}
           </div>
 
+          {/* (g) MCP mode selector */}
+          <div className="toolbar-btn-group" ref={mcpDropdownRef}>
+            <button
+              className={`toolbar-btn has-tooltip ${mcpMode !== 'disabled' ? 'toolbar-btn--active' : ''}`}
+              onClick={() => setMcpDropdownOpen(!mcpDropdownOpen)}
+              data-tooltip="MCP mode"
+              disabled={disabled}
+            >
+              <Cpu size={14} />
+              <span className="toolbar-btn-label">
+                {mcpMode === 'manual' ? `manual (${selectedMcpServers.length})` : mcpMode}
+              </span>
+            </button>
+            {mcpDropdownOpen && (
+              <div className="toolbar-mcp-dropdown">
+                <div className="toolbar-mcp-section">
+                  {(['auto', 'manual', 'disabled'] as const).map((m) => (
+                    <button
+                      key={m}
+                      className={`toolbar-mcp-mode-item ${mcpMode === m ? 'selected' : ''}`}
+                      onClick={() => {
+                        onMcpModeChange?.(m);
+                        if (m !== 'manual') setMcpDropdownOpen(false);
+                      }}
+                    >
+                      <span className="toolbar-mcp-mode-label">{m.charAt(0).toUpperCase() + m.slice(1)}</span>
+                      <span className="toolbar-mcp-mode-desc">
+                        {m === 'auto' && 'All enabled MCP servers'}
+                        {m === 'manual' && 'Choose servers'}
+                        {m === 'disabled' && 'No MCP tools'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {mcpMode === 'manual' && (
+                  <div className="toolbar-mcp-section toolbar-mcp-section--servers">
+                    <div className="toolbar-mcp-section-title">Servers</div>
+                    {mcpServerList.length === 0 ? (
+                      <div className="toolbar-mcp-empty">No MCP servers configured</div>
+                    ) : (
+                      mcpServerList.map((srv) => (
+                        <button
+                          key={srv.name}
+                          className={`toolbar-mcp-server-item ${selectedMcpServers.includes(srv.name) ? 'selected' : ''}`}
+                          onClick={() => onMcpServerToggle?.(srv.name)}
+                          disabled={srv.disabled}
+                        >
+                          <span className="toolbar-mcp-server-check">
+                            {selectedMcpServers.includes(srv.name) ? '\u2713' : ''}
+                          </span>
+                          <span className="toolbar-mcp-server-name">{srv.name}</span>
+                          {srv.disabled && <span className="toolbar-mcp-server-off">OFF</span>}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* (f) Knowledge base picker */}
           {knowledgeCollections.length > 0 && (
             <div className="toolbar-btn-group" ref={kbPickerRef}>
@@ -717,6 +810,7 @@ export function InputArea({
           >
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
+          </div>
         </div>
       </div>
 

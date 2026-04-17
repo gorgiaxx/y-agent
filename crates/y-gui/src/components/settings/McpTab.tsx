@@ -45,14 +45,14 @@ function McpServerTabPanel({
           <label className="pf-label">Transport</label>
           <Select
             value={server.transport}
-            onValueChange={(val) => update({ transport: val as 'stdio' | 'sse' })}
+            onValueChange={(val) => update({ transport: val as 'stdio' | 'http' })}
           >
             <SelectTrigger>
               <SelectValue placeholder="Select transport" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="stdio">STDIO (Local)</SelectItem>
-              <SelectItem value="sse">SSE (Remote)</SelectItem>
+              <SelectItem value="http">HTTP (Remote)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -131,7 +131,7 @@ function McpServerTabPanel({
           </div>
         </>
       ) : (
-        /* SSE fields */
+        /* HTTP fields */
         <>
           <div className="pf-row">
             <div className="pf-field pf-field-full">
@@ -141,7 +141,19 @@ function McpServerTabPanel({
                 onChange={(e) => update({ url: e.target.value })}
                 placeholder="https://your-server-url.com/mcp"
               />
-              <span className="pf-hint">HTTP/SSE endpoint URL for the remote MCP server</span>
+              <span className="pf-hint">HTTP endpoint URL for the remote MCP server</span>
+            </div>
+          </div>
+          <div className="pf-row">
+            <div className="pf-field pf-field-full">
+              <label className="pf-label">Bearer Token</label>
+              <Input
+                type="password"
+                value={server.bearer_token}
+                onChange={(e) => update({ bearer_token: e.target.value })}
+                placeholder="(optional) sent as Authorization: Bearer ..."
+              />
+              <span className="pf-hint">Optional OAuth bearer token for Authorization header</span>
             </div>
           </div>
           <div className="pf-row">
@@ -205,6 +217,43 @@ function McpServerTabPanel({
           <span className="pf-hint">Tool names that are auto-approved without user confirmation</span>
         </div>
       </div>
+
+      {/* Timeouts */}
+      <div className="pf-row">
+        <div className="pf-field">
+          <label className="pf-label">Startup timeout (s)</label>
+          <Input
+            type="number"
+            min={1}
+            value={server.startup_timeout_secs}
+            onChange={(e) => update({ startup_timeout_secs: Number(e.target.value) || 30 })}
+          />
+          <span className="pf-hint">Initial connection / initialize handshake timeout</span>
+        </div>
+        <div className="pf-field">
+          <label className="pf-label">Tool call timeout (s)</label>
+          <Input
+            type="number"
+            min={1}
+            value={server.tool_timeout_secs}
+            onChange={(e) => update({ tool_timeout_secs: Number(e.target.value) || 120 })}
+          />
+          <span className="pf-hint">Per-tool-call timeout</span>
+        </div>
+      </div>
+
+      {server.transport === 'stdio' && (
+        <div className="pf-row">
+          <div className="pf-field pf-field-full">
+            <label className="pf-label">Working Directory</label>
+            <Input
+              value={server.cwd}
+              onChange={(e) => update({ cwd: e.target.value })}
+              placeholder="(optional) working directory for the server process"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Disabled toggle */}
       <div className="pf-row">

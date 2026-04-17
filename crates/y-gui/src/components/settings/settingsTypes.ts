@@ -155,12 +155,16 @@ export interface KnowledgeFormData {
 
 export interface McpServerFormData {
   name: string;
-  transport: 'stdio' | 'sse';
+  transport: 'stdio' | 'http';
   command: string;
   args: string[];
   env: Record<string, string>;
   url: string;
   headers: Record<string, string>;
+  bearer_token: string;
+  cwd: string;
+  startup_timeout_secs: number;
+  tool_timeout_secs: number;
   alwaysAllow: string[];
   disabled: boolean;
 }
@@ -199,6 +203,10 @@ export function emptyMcpServer(): McpServerFormData {
     env: {},
     url: '',
     headers: {},
+    bearer_token: '',
+    cwd: '',
+    startup_timeout_secs: 30,
+    tool_timeout_secs: 120,
     alwaysAllow: [],
     disabled: false,
   };
@@ -404,16 +412,27 @@ export function jsonToMcpServers(json: unknown): McpServerFormData[] {
   const servers = (jsonObj?.mcpServers as Record<string, unknown>) ?? {};
   return Object.entries(servers).map(([name, cfgRaw]: [string, unknown]) => {
     const cfg = cfgRaw as Record<string, unknown> | null;
-    // Detect transport type: if 'url' field exists, it's SSE; otherwise STDIO.
-    const isSSE = !!cfg?.url;
+    const explicitTransport = cfg?.transport as string | undefined;
+    const transport: 'stdio' | 'http' =
+      explicitTransport === 'http' || explicitTransport === 'sse'
+        ? 'http'
+        : explicitTransport === 'stdio'
+          ? 'stdio'
+          : cfg?.url
+            ? 'http'
+            : 'stdio';
     return {
       name,
-      transport: isSSE ? 'sse' as const : 'stdio' as const,
+      transport,
       command: (cfg?.command as string) ?? '',
       args: Array.isArray(cfg?.args) ? (cfg.args as string[]) : [],
       env: (cfg?.env as Record<string, string>) ?? {},
       url: (cfg?.url as string) ?? '',
       headers: (cfg?.headers as Record<string, string>) ?? {},
+      bearer_token: (cfg?.bearer_token as string) ?? '',
+      cwd: (cfg?.cwd as string) ?? '',
+      startup_timeout_secs: typeof cfg?.startup_timeout_secs === 'number' ? (cfg.startup_timeout_secs as number) : 30,
+      tool_timeout_secs: typeof cfg?.tool_timeout_secs === 'number' ? (cfg.tool_timeout_secs as number) : 120,
       alwaysAllow: Array.isArray(cfg?.alwaysAllow) ? (cfg.alwaysAllow as string[]) : [],
       disabled: (cfg?.disabled as boolean) ?? false,
     };
@@ -424,24 +443,24 @@ export function mcpServersToJson(servers: McpServerFormData[]): Record<string, u
   const mcpServers: Record<string, unknown> = {};
   for (const s of servers) {
     const name = s.name || `server-${Object.keys(mcpServers).length + 1}`;
+    const entry: Record<string, unknown> = {
+      transport: s.transport,
+      disabled: s.disabled,
+      startup_timeout_secs: s.startup_timeout_secs,
+      tool_timeout_secs: s.tool_timeout_secs,
+    };
     if (s.transport === 'stdio') {
-      const entry: Record<string, unknown> = {
-        command: s.command,
-        args: s.args,
-      };
+      entry.command = s.command;
+      entry.args = s.args;
       if (Object.keys(s.env).length > 0) entry.env = s.env;
-      if (s.alwaysAllow.length > 0) entry.alwaysAllow = s.alwaysAllow;
-      entry.disabled = s.disabled;
-      mcpServers[name] = entry;
+      if (s.cwd) entry.cwd = s.cwd;
     } else {
-      const entry: Record<string, unknown> = {
-        url: s.url,
-      };
+      entry.url = s.url;
       if (Object.keys(s.headers).length > 0) entry.headers = s.headers;
-      if (s.alwaysAllow.length > 0) entry.alwaysAllow = s.alwaysAllow;
-      entry.disabled = s.disabled;
-      mcpServers[name] = entry;
+      if (s.bearer_token) entry.bearer_token = s.bearer_token;
     }
+    if (s.alwaysAllow.length > 0) entry.alwaysAllow = s.alwaysAllow;
+    mcpServers[name] = entry;
   }
   return { mcpServers };
 }

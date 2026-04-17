@@ -131,6 +131,22 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
         </div>
       </div>
 
+      <div className="form-group">
+        <Switch
+          label="Custom window decorations"
+          checked={localConfig.use_custom_decorations}
+          onCheckedChange={(checked) =>
+            setLocalConfig({ ...localConfig, use_custom_decorations: checked })
+          }
+        />
+        <p className="form-hint">
+          Hide the native titlebar and render an Apple-style layered chrome.
+          Recommended on macOS. On Linux (KDE/GNOME) or Windows, disable this
+          if the window chrome looks broken; a restart may be needed on some
+          compositors.
+        </p>
+      </div>
+
       <h3 className="section-title">Behavior</h3>
 
       <div className="form-group">

@@ -277,6 +277,9 @@ export type ThinkingEffort = 'low' | 'medium' | 'high' | 'max';
 /** Plan mode: controls whether planning prompts are injected. */
 export type PlanMode = 'fast' | 'auto' | 'plan';
 
+/** MCP mode: controls which MCP server tools are included in requests. */
+export type McpMode = 'auto' | 'manual' | 'disabled';
+
 /** Last-turn metadata cached per session by the backend (from `session_last_turn_meta`). */
 export interface TurnMeta {
   provider_id: string | null;
@@ -337,6 +340,7 @@ export interface GuiConfig {
   window_height: number;
   setup_completed: boolean;
   translate_target_language: string;
+  use_custom_decorations: boolean;
 }
 
 // ---------------------------------------------------------------------------

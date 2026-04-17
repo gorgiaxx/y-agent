@@ -15,6 +15,7 @@ import type {
   RestoreResult,
   ThinkingEffort,
   PlanMode,
+  McpMode,
   Attachment,
 } from '../types';
 import {
@@ -81,7 +82,7 @@ interface UseChatReturn {
    *  order (stream_delta -> text, tool_result -> tool card) so the
    *  interleaving is inherently correct without character offsets. */
   getStreamSegments: () => InterleavedSegment[] | null;
-  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
@@ -997,7 +998,7 @@ export function useChat(
   const sendingRef = useRef(false);
 
   const sendMessage = useCallback(
-    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode): Promise<ChatStarted | null> => {
+    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]): Promise<ChatStarted | null> => {
       // Guard: block if any operation is already in progress, including a
       // prior send.  The previous guard also allowed 'sending' through,
       // which could cause duplicate LLM calls when rapid double-fires
@@ -1050,6 +1051,8 @@ export function useChat(
           thinkingEffort: thinkingEffort ?? null,
           attachments: attachments && attachments.length > 0 ? attachments : null,
           planMode: planMode ?? null,
+          mcpMode: mcpMode ?? null,
+          mcpServers: mcpServers && mcpServers.length > 0 ? mcpServers : null,
         });
         return result;
       } catch (e) {

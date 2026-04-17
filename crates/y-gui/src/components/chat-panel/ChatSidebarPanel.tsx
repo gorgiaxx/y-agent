@@ -38,6 +38,13 @@ interface ChatSidebarPanelProps {
   onDeleteWorkspace: (id: string) => void;
   onAssignSession: (workspaceId: string, sessionId: string) => void;
   onUnassignSession: (sessionId: string) => void;
+  /** When true, suppress the internal header (search + buttons). */
+  hideHeader?: boolean;
+  /** Controlled search query; falls back to internal state when undefined. */
+  searchQuery?: string;
+  onSearchQueryChange?: (q: string) => void;
+  /** Open the workspace creation dialog externally. */
+  onRequestNewWorkspace?: () => void;
 }
 
 type OpenMenuState =
@@ -62,11 +69,19 @@ export function ChatSidebarPanel({
   onDeleteWorkspace,
   onAssignSession,
   onUnassignSession,
+  hideHeader,
+  searchQuery: searchQueryProp,
+  onSearchQueryChange,
 }: ChatSidebarPanelProps) {
   const COLLAPSED_STORAGE_KEY = 'y-gui:workspace-collapsed';
   const SESSION_ORDER_STORAGE_KEY = 'y-gui:session-order';
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [internalSearchQuery, setInternalSearchQuery] = useState('');
+  const searchQuery = searchQueryProp ?? internalSearchQuery;
+  const setSearchQuery = (next: string) => {
+    if (onSearchQueryChange) onSearchQueryChange(next);
+    else setInternalSearchQuery(next);
+  };
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<WorkspaceInfo | null>(null);
   const [openMenu, setOpenMenu] = useState<OpenMenuState>(null);
@@ -724,6 +739,7 @@ export function ChatSidebarPanel({
   return (
     <>
       {/* Header */}
+      {!hideHeader && (
       <div className="sidebar-header">
         {/* Search */}
         <div className="sidebar-search">
@@ -748,6 +764,7 @@ export function ChatSidebarPanel({
           </button>
         </div>
       </div>
+      )}
 
       {/* Session list grouped by workspace */}
       <div className="session-list">
@@ -852,12 +869,13 @@ export function ChatSidebarPanel({
           <div className="batch-action-bar">
             <span className="batch-action-count">{selectedIds.size} selected</span>
             <Button
-              variant="danger"
+              variant="icon"
               size="sm"
               onClick={handleBatchDelete}
+              title="Delete"
+              className="batch-action-delete-btn"
             >
-              <Trash2 size={13} />
-              Delete
+              <Trash2 size={14} />
             </Button>
           </div>
         )}

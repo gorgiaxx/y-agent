@@ -60,6 +60,10 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
 }
 
 .pf-select {
@@ -316,9 +320,13 @@
 .sub-list-item.active {
   color: var(--text-primary);
   font-weight: 500;
-  background: var(--surface-tertiary);
+  background: var(--surface-active);
   border-color: var(--border);
-  border-left: 2px solid var(--accent);
+}
+
+.sub-list-item.active .sub-list-item-icon {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .sub-list-item-icon {

@@ -118,6 +118,7 @@ export interface ContentEditableInputHandle {
   hasContent: () => boolean;
   focus: () => void;
   removeSlashCommandText: () => void;
+  placeCursorAtEnd: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +154,7 @@ export const ContentEditableInput = forwardRef<ContentEditableInputHandle, Conte
       onPaste,
       onKeyDown,
       onCompositionEnd,
-      lastCompEndRef,
+      lastCompEndRef: _lastCompEndRef,
     },
     ref,
   ) {

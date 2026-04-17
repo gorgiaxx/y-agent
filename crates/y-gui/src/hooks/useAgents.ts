@@ -54,6 +54,8 @@ export interface AgentDetail {
   max_completion_tokens: number | null;
   user_callable: boolean;
   is_overridden: boolean;
+  mcp_mode?: string | null;
+  mcp_servers?: string[];
 }
 
 export interface AgentToolInfo {

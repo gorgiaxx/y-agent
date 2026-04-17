@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import type { AgentDetail } from '../../hooks/useAgents';
+import type { AgentDetail } from './useAgents';
 import type { EditorTab, EditorSurface, AgentDraft } from '../components/agents/types';
 import { buildDraft, serializeAgentDraft, slugifyAgentId } from '../components/agents/utils';
 
@@ -9,7 +9,6 @@ interface UseAgentEditorParams {
   parseAgentToml: (toml: string) => Promise<AgentDetail | null>;
   saveAgent: (id: string, content: string) => Promise<boolean>;
   resetAgent: (id: string) => Promise<boolean>;
-  activeAgentId: string | null;
 }
 
 export function useAgentEditor({
@@ -18,7 +17,6 @@ export function useAgentEditor({
   parseAgentToml,
   saveAgent,
   resetAgent,
-  activeAgentId,
 }: UseAgentEditorParams) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create');
