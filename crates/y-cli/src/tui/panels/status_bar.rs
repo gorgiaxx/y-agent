@@ -12,37 +12,13 @@
 //! LLM response).
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::tui::state::AppState;
-
-// ---------------------------------------------------------------------------
-// Color palette (aligned with GUI StatusBar.css)
-// ---------------------------------------------------------------------------
-
-/// Status bar background.
-const BG: Color = Color::Rgb(22, 22, 30);
-/// Muted text (secondary info, version).
-const COLOR_MUTED: Color = Color::Rgb(90, 90, 110);
-/// Model name accent.
-const COLOR_MODEL: Color = Color::Rgb(180, 140, 255);
-/// Token ratio text.
-const COLOR_TOKEN_RATIO: Color = Color::Rgb(150, 150, 170);
-/// Context bar track (empty portion).
-const COLOR_BAR_TRACK: Color = Color::Rgb(45, 45, 60);
-/// Context bar fill -- normal (<80%).
-const COLOR_BAR_NORMAL: Color = Color::Rgb(100, 140, 255);
-/// Context bar fill -- warning (>=80%).
-const COLOR_BAR_WARN: Color = Color::Rgb(240, 192, 80);
-/// Separator between items.
-const COLOR_SEP: Color = Color::Rgb(60, 60, 80);
-/// Cost text.
-const COLOR_COST: Color = Color::Rgb(130, 130, 150);
-/// Version text.
-const COLOR_VERSION: Color = Color::Rgb(80, 80, 100);
+use crate::tui::theme::Theme;
 
 // ---------------------------------------------------------------------------
 // Public render entry point
@@ -50,7 +26,8 @@ const COLOR_VERSION: Color = Color::Rgb(80, 80, 100);
 
 /// Render the status bar into the given area using live data from `AppState`.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
-    let sep = Span::styled(" | ", Style::default().fg(COLOR_SEP));
+    let t = &state.theme;
+    let sep = Span::styled(" | ", Style::default().fg(t.status_sep()));
 
     // -- Left section --
 
@@ -63,11 +40,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let mut left_spans: Vec<Span> = vec![
         Span::styled(" ", Style::default()),
-        Span::styled(model_label, Style::default().fg(COLOR_MODEL)),
+        Span::styled(model_label, Style::default().fg(t.status_model())),
     ];
 
     // Context window usage (tokens/window + pct + bar).
-    let ctx_spans = build_context_spans(state);
+    let ctx_spans = build_context_spans(state, t);
     if !ctx_spans.is_empty() {
         left_spans.push(sep.clone());
         left_spans.extend(ctx_spans);
@@ -79,7 +56,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             left_spans.push(sep.clone());
             left_spans.push(Span::styled(
                 format!("${cost:.4}"),
-                Style::default().fg(COLOR_COST),
+                Style::default().fg(t.status_cost()),
             ));
         }
     }
@@ -99,16 +76,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     if gap > 0 {
         spans.push(Span::styled(" ".repeat(gap), Style::default()));
     }
-    spans.push(Span::styled(right_str, Style::default().fg(COLOR_VERSION)));
+    spans.push(Span::styled(
+        right_str,
+        Style::default().fg(t.status_version()),
+    ));
 
     // Truncate if too wide.
     let total_len: usize = spans.iter().map(|s| s.content.len()).sum();
     if total_len > total_width && total_width > 3 {
-        spans = truncate_spans(spans, total_width);
+        spans = truncate_spans(spans, total_width, t);
     }
 
     let line = Line::from(spans);
-    let para = Paragraph::new(line).style(Style::default().bg(BG));
+    let para = Paragraph::new(line).style(Style::default().bg(t.status_bg()));
     frame.render_widget(para, area);
 }
 
@@ -123,16 +103,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 /// Color coding:
 /// - Normal (accent) : < 80%
 /// - Warning (yellow) : >= 80%
-fn build_context_spans(state: &AppState) -> Vec<Span<'static>> {
+fn build_context_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
     if state.context_window == 0 {
-        // No context window info available.
         if state.status_tokens.is_empty() {
             return vec![];
         }
-        // Fallback: just show the raw token string.
         return vec![Span::styled(
             state.status_tokens.clone(),
-            Style::default().fg(COLOR_MUTED),
+            Style::default().fg(t.muted()),
         )];
     }
 
@@ -148,13 +126,13 @@ fn build_context_spans(state: &AppState) -> Vec<Span<'static>> {
     let empty = bar_width.saturating_sub(filled);
 
     let bar_color = if pct >= 80.0 {
-        COLOR_BAR_WARN
+        t.status_bar_warn()
     } else {
-        COLOR_BAR_NORMAL
+        t.status_bar_normal()
     };
 
-    let filled_str: String = "\u{2501}".repeat(filled); // heavy horizontal
-    let empty_str: String = "\u{2500}".repeat(empty); // light horizontal
+    let filled_str: String = "\u{2501}".repeat(filled);
+    let empty_str: String = "\u{2500}".repeat(empty);
 
     let used_label = format_token_count(occupancy);
     let total_label = format_token_count(ctx_window);
@@ -162,20 +140,20 @@ fn build_context_spans(state: &AppState) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             format!("{used_label}/{total_label}"),
-            Style::default().fg(COLOR_TOKEN_RATIO),
+            Style::default().fg(t.status_token_ratio()),
         ),
-        Span::styled(format!(" ({pct:.1}%) "), Style::default().fg(COLOR_MUTED)),
+        Span::styled(format!(" ({pct:.1}%) "), Style::default().fg(t.muted())),
         Span::styled(
             filled_str,
             Style::default().fg(bar_color).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(empty_str, Style::default().fg(COLOR_BAR_TRACK)),
+        Span::styled(empty_str, Style::default().fg(t.status_bar_track())),
     ]
 }
 
 /// Truncate a span list to fit within `max_width` characters, appending an
 /// ellipsis if truncation occurs.
-fn truncate_spans(spans: Vec<Span<'static>>, max_width: usize) -> Vec<Span<'static>> {
+fn truncate_spans(spans: Vec<Span<'static>>, max_width: usize, t: &Theme) -> Vec<Span<'static>> {
     let max = max_width.saturating_sub(1);
     let mut acc = 0;
     let mut result: Vec<Span<'static>> = Vec::new();
@@ -191,7 +169,7 @@ fn truncate_spans(spans: Vec<Span<'static>>, max_width: usize) -> Vec<Span<'stat
                 let partial: String = span.content.chars().take(remaining).collect();
                 result.push(Span::styled(partial, span.style));
             }
-            result.push(Span::styled("\u{2026}", Style::default().fg(COLOR_MUTED)));
+            result.push(Span::styled("\u{2026}", Style::default().fg(t.muted())));
             break;
         }
     }
@@ -256,7 +234,7 @@ mod tests {
     #[test]
     fn test_build_context_spans_zero_window() {
         let state = AppState::default();
-        let spans = build_context_spans(&state);
+        let spans = build_context_spans(&state, &state.theme);
         assert!(spans.is_empty(), "no spans when window is 0 and no tokens");
     }
 
@@ -265,7 +243,7 @@ mod tests {
         let mut state = AppState::default();
         state.context_window = 128_000;
         state.last_input_tokens = 64_000;
-        let spans = build_context_spans(&state);
+        let spans = build_context_spans(&state, &state.theme);
         // Should have 4 spans: ratio, pct, filled bar, empty bar.
         assert_eq!(spans.len(), 4);
         // Ratio should contain token counts.
@@ -287,30 +265,33 @@ mod tests {
     fn test_context_color_coding() {
         let mut state = AppState::default();
         state.context_window = 100;
+        let t = &state.theme;
 
         // < 80% -> normal accent color
         state.last_input_tokens = 30;
-        let spans = build_context_spans(&state);
-        assert_eq!(spans[2].style.fg, Some(COLOR_BAR_NORMAL));
+        let spans = build_context_spans(&state, t);
+        assert_eq!(spans[2].style.fg, Some(t.status_bar_normal()));
 
         // >= 80% -> warning color
         state.last_input_tokens = 85;
-        let spans = build_context_spans(&state);
-        assert_eq!(spans[2].style.fg, Some(COLOR_BAR_WARN));
+        let spans = build_context_spans(&state, t);
+        assert_eq!(spans[2].style.fg, Some(t.status_bar_warn()));
     }
 
     #[test]
     fn test_truncate_spans_short() {
+        let t = Theme::default();
         let spans = vec![Span::raw("hello")];
-        let result = truncate_spans(spans, 10);
+        let result = truncate_spans(spans, 10, &t);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].content.as_ref(), "hello");
     }
 
     #[test]
     fn test_truncate_spans_overflow() {
+        let t = Theme::default();
         let spans = vec![Span::raw("hello world this is long")];
-        let result = truncate_spans(spans, 10);
+        let result = truncate_spans(spans, 10, &t);
         // Should truncate and add ellipsis.
         assert!(result.len() >= 2);
         let total_chars: usize = result.iter().map(|s| s.content.chars().count()).sum();

@@ -7,14 +7,16 @@ import { Copy, Wand2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GuiConfig } from '../../types';
 import {
-  Input,
   Button,
+  Input,
   Select,
   SelectTrigger,
   SelectContent,
   SelectItem,
   SelectValue,
   Switch,
+  SettingsGroup,
+  SettingsItem,
 } from '../ui';
 
 interface GeneralTabProps {
@@ -49,163 +51,148 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
 
   return (
     <div className="settings-section">
-      <h3 className="section-title">Paths</h3>
-      <div className="form-group">
-        <label className="form-label">Config Directory</label>
-        <div className="flex relative items-center">
-          <Input
-            variant="mono"
-            value={configPath}
-            readOnly
-            title={configPath}
-            className="pr-9 text-[var(--text-secondary)] cursor-default select-all"
-          />
-          <Button
-            variant="icon"
-            size="sm"
-            className="absolute right-1"
-            onClick={() => handleCopyPath(configPath, 'config')}
-            title={copiedField === 'config' ? 'Copied!' : 'Copy path'}
-          >
-            <Copy size={13} />
-          </Button>
-        </div>
-      </div>
-      <div className="form-group">
-        <label className="form-label">Data Directory</label>
-        <div className="flex relative items-center">
-          <Input
-            variant="mono"
-            value={dataPath}
-            readOnly
-            title={dataPath}
-            className="pr-9 text-[var(--text-secondary)] cursor-default select-all"
-          />
-          <Button
-            variant="icon"
-            size="sm"
-            className="absolute right-1"
-            onClick={() => handleCopyPath(dataPath, 'data')}
-            title={copiedField === 'data' ? 'Copied!' : 'Copy path'}
-          >
-            <Copy size={13} />
-          </Button>
-        </div>
-      </div>
+      <SettingsGroup title="Paths">
+        <SettingsItem title="Config Directory" wide>
+          <div className="flex relative items-center w-full">
+            <Input
+              variant="mono"
+              value={configPath}
+              readOnly
+              title={configPath}
+              className="pr-9 text-[var(--text-secondary)] cursor-default select-all"
+            />
+            <Button
+              variant="icon"
+              size="sm"
+              className="absolute right-1"
+              onClick={() => handleCopyPath(configPath, 'config')}
+              title={copiedField === 'config' ? 'Copied!' : 'Copy path'}
+            >
+              <Copy size={13} />
+            </Button>
+          </div>
+        </SettingsItem>
+        <SettingsItem title="Data Directory" wide>
+          <div className="flex relative items-center w-full">
+            <Input
+              variant="mono"
+              value={dataPath}
+              readOnly
+              title={dataPath}
+              className="pr-9 text-[var(--text-secondary)] cursor-default select-all"
+            />
+            <Button
+              variant="icon"
+              size="sm"
+              className="absolute right-1"
+              onClick={() => handleCopyPath(dataPath, 'data')}
+              title={copiedField === 'data' ? 'Copied!' : 'Copy path'}
+            >
+              <Copy size={13} />
+            </Button>
+          </div>
+        </SettingsItem>
+      </SettingsGroup>
 
-      <h3 className="section-title">Appearance</h3>
-
-      <div className="form-group">
-        <label className="form-label">Theme</label>
-        <Select
-          value={localConfig.theme}
-          onValueChange={(v) =>
-            setLocalConfig({ ...localConfig, theme: v as GuiConfig['theme'] })
-          }
+      <SettingsGroup title="Appearance">
+        <SettingsItem title="Theme">
+          <Select
+            value={localConfig.theme}
+            onValueChange={(v) =>
+              setLocalConfig({ ...localConfig, theme: v as GuiConfig['theme'] })
+            }
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="dark">Dark</SelectItem>
+              <SelectItem value="light">Light</SelectItem>
+              <SelectItem value="system">System</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingsItem>
+        <SettingsItem title="Font Size">
+          <div className="form-range-group">
+            <input
+              type="range"
+              className="form-range"
+              min="12"
+              max="20"
+              value={localConfig.font_size}
+              onChange={(e) =>
+                setLocalConfig({ ...localConfig, font_size: Number(e.target.value) })
+              }
+            />
+            <span className="range-value">{localConfig.font_size}px</span>
+          </div>
+        </SettingsItem>
+        <SettingsItem
+          title="Custom window decorations"
+          description="Hide the native titlebar and render an Apple-style layered chrome. Recommended on macOS."
         >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="dark">Dark</SelectItem>
-            <SelectItem value="light">Light</SelectItem>
-            <SelectItem value="system">System</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="form-group">
-        <label className="form-label">Font Size</label>
-        <div className="form-range-group">
-          <input
-            type="range"
-            className="form-range"
-            min="12"
-            max="20"
-            value={localConfig.font_size}
-            onChange={(e) =>
-              setLocalConfig({ ...localConfig, font_size: Number(e.target.value) })
+          <Switch
+            checked={localConfig.use_custom_decorations}
+            onCheckedChange={(checked) =>
+              setLocalConfig({ ...localConfig, use_custom_decorations: checked })
             }
           />
-          <span className="range-value">{localConfig.font_size}px</span>
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
 
-      <div className="form-group">
-        <Switch
-          label="Custom window decorations"
-          checked={localConfig.use_custom_decorations}
-          onCheckedChange={(checked) =>
-            setLocalConfig({ ...localConfig, use_custom_decorations: checked })
-          }
-        />
-        <p className="form-hint">
-          Hide the native titlebar and render an Apple-style layered chrome.
-          Recommended on macOS. On Linux (KDE/GNOME) or Windows, disable this
-          if the window chrome looks broken; a restart may be needed on some
-          compositors.
-        </p>
-      </div>
-
-      <h3 className="section-title">Behavior</h3>
-
-      <div className="form-group">
-        <Switch
-          label="Send message on Enter"
-          checked={localConfig.send_on_enter}
-          onCheckedChange={(checked) =>
-            setLocalConfig({ ...localConfig, send_on_enter: checked })
-          }
-        />
-        <p className="form-hint">
-          When enabled, press Enter to send and Shift+Enter for newline.
-        </p>
-      </div>
-
-      <h3 className="section-title">Translation</h3>
-
-      <div className="form-group">
-        <label className="form-label">Default Target Language</label>
-        <Select
-          value={localConfig.translate_target_language}
-          onValueChange={(v) =>
-            setLocalConfig({ ...localConfig, translate_target_language: v })
-          }
+      <SettingsGroup title="Behavior">
+        <SettingsItem
+          title="Send message on Enter"
+          description="When enabled, press Enter to send and Shift+Enter for newline."
         >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="Chinese">Chinese</SelectItem>
-            <SelectItem value="English">English</SelectItem>
-            <SelectItem value="Japanese">Japanese</SelectItem>
-            <SelectItem value="Korean">Korean</SelectItem>
-            <SelectItem value="Spanish">Spanish</SelectItem>
-            <SelectItem value="Russian">Russian</SelectItem>
-            <SelectItem value="German">German</SelectItem>
-            <SelectItem value="French">French</SelectItem>
-            <SelectItem value="Italian">Italian</SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="form-hint">
-          The target language used by the translate button in the chat input toolbar.
-        </p>
-      </div>
-
-      <h3 className="section-title">Setup</h3>
-
-      <div className="form-group">
-        <p className="form-hint" style={{ marginBottom: '8px' }}>
-          Re-run the initial setup wizard to reconfigure providers, runtime, browser, guardrails, and knowledge base.
-        </p>
-        <Button
-          variant="outline"
-          onClick={onRunWizard}
+          <Switch
+            checked={localConfig.send_on_enter}
+            onCheckedChange={(checked) =>
+              setLocalConfig({ ...localConfig, send_on_enter: checked })
+            }
+          />
+        </SettingsItem>
+      </SettingsGroup>
+      <SettingsGroup title="Translation">
+        <SettingsItem
+          title="Default Target Language"
+          description="The target language used by the translate button in the chat input toolbar."
         >
-          <Wand2 size={14} />
-          Run Setup Wizard
-        </Button>
-      </div>
+          <Select
+            value={localConfig.translate_target_language}
+            onValueChange={(v) =>
+              setLocalConfig({ ...localConfig, translate_target_language: v })
+            }
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Chinese">Chinese</SelectItem>
+              <SelectItem value="English">English</SelectItem>
+              <SelectItem value="Japanese">Japanese</SelectItem>
+              <SelectItem value="Korean">Korean</SelectItem>
+              <SelectItem value="Spanish">Spanish</SelectItem>
+              <SelectItem value="Russian">Russian</SelectItem>
+              <SelectItem value="German">German</SelectItem>
+              <SelectItem value="French">French</SelectItem>
+              <SelectItem value="Italian">Italian</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingsItem>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Setup"
+        description="Re-run the initial setup wizard to reconfigure providers, runtime, browser, guardrails, and knowledge base."
+      >
+        <SettingsItem title="Setup Wizard">
+          <Button variant="outline" onClick={onRunWizard}>
+            <Wand2 size={14} />
+            Run Setup Wizard
+          </Button>
+        </SettingsItem>
+      </SettingsGroup>
     </div>
   );
 }

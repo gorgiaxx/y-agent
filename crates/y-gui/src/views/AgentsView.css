@@ -4,9 +4,6 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-secondary) 50%, transparent) 0%, transparent 24%),
-    var(--surface-primary);
 }
 
 .agents-action-kicker,

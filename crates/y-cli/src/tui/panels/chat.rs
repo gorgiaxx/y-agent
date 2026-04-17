@@ -24,51 +24,7 @@ use crate::tui::selection::TextSelection;
 use crate::tui::state::{
     AppState, ChatMessage, MessageRole, PanelFocus, StreamSegment, ToolCallInfo,
 };
-
-// ---------------------------------------------------------------------------
-// Color palette (aligned with GUI CSS variables)
-// ---------------------------------------------------------------------------
-
-/// Accent color for the user role header.
-const COLOR_USER: Color = Color::Rgb(130, 220, 130);
-/// Accent color for the assistant role header.
-const COLOR_ASSISTANT: Color = Color::Rgb(120, 180, 255);
-/// Accent color for system messages.
-const COLOR_SYSTEM: Color = Color::Rgb(220, 200, 100);
-/// Accent color for tool messages.
-const COLOR_TOOL: Color = Color::Rgb(200, 140, 255);
-/// Muted text color for secondary information.
-const COLOR_MUTED: Color = Color::Rgb(100, 100, 120);
-/// Content text color.
-const COLOR_TEXT: Color = Color::Rgb(220, 220, 230);
-/// Code inline background.
-const COLOR_CODE_BG: Color = Color::Rgb(40, 42, 54);
-/// Streaming indicator dot color.
-const COLOR_STREAMING_DOT: Color = Color::Rgb(255, 200, 60);
-/// Error text color.
-const COLOR_ERROR: Color = Color::Rgb(255, 100, 100);
-/// Panel background (subtle dark).
-const COLOR_PANEL_BG: Color = Color::Rgb(22, 22, 30);
-/// Welcome screen accent.
-const COLOR_WELCOME: Color = Color::Rgb(100, 120, 180);
-/// `ThinkingCard` accent (purple, from GUI ThinkingCard.tsx #a78bfa).
-const COLOR_THINK_ACCENT: Color = Color::Rgb(167, 139, 250);
-/// `ThinkingCard` content text.
-const COLOR_THINK_TEXT: Color = Color::Rgb(160, 150, 200);
-/// `ToolCallCard` accent (blue, from GUI ToolCallCard.tsx #00a6ff).
-const COLOR_TOOL_ACCENT: Color = Color::Rgb(0, 166, 255);
-/// `ToolCallCard` content text.
-const COLOR_TOOL_CARD_TEXT: Color = Color::Rgb(140, 170, 200);
-/// `ToolCallCard` success status.
-const COLOR_TOOL_SUCCESS: Color = Color::Rgb(100, 200, 120);
-/// `ToolCallCard` error status.
-const COLOR_TOOL_ERROR: Color = Color::Rgb(255, 100, 100);
-/// `ToolCallCard` running status.
-const COLOR_TOOL_RUNNING: Color = Color::Rgb(255, 200, 60);
-/// Blockquote accent.
-const COLOR_BLOCKQUOTE: Color = Color::Rgb(100, 120, 160);
-/// Horizontal rule color.
-const COLOR_HR: Color = Color::Rgb(60, 60, 80);
+use crate::tui::theme::Theme;
 
 // ---------------------------------------------------------------------------
 // Display items (mirrors GUI `DisplayItem` enum)
@@ -121,18 +77,19 @@ fn build_display_items<'a>(state: &'a AppState) -> Vec<DisplayItem<'a>> {
 /// so that the selection system can extract text by row/col index.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
     let is_focused = state.focus == PanelFocus::Chat;
+    let t = &state.theme;
 
     let border_style = if is_focused {
-        Style::default().fg(COLOR_ASSISTANT)
+        Style::default().fg(t.assistant_accent())
     } else {
-        Style::default().fg(Color::Rgb(50, 50, 65))
+        Style::default().fg(t.border_unfocused())
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
         .title(" Chat ")
-        .title_style(Style::default().fg(Color::Rgb(180, 180, 200)));
+        .title_style(Style::default().fg(t.title()));
 
     // Available content width (subtract 2 for left/right borders).
     let inner_width = area.width.saturating_sub(2) as usize;
@@ -144,7 +101,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
     for item in &display_items {
         match item {
             DisplayItem::WelcomeScreen => {
-                render_welcome(&mut raw_lines, &mut raw_plain, inner_width);
+                render_welcome(&mut raw_lines, &mut raw_plain, inner_width, t);
             }
             DisplayItem::Message { msg, is_last } => {
                 if !raw_lines.is_empty() {
@@ -158,17 +115,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
                     *is_last,
                     state.tick_counter,
                     inner_width,
+                    t,
                 );
             }
             DisplayItem::StreamingIndicator => {
                 raw_lines.push(Line::from(""));
                 raw_plain.push(String::new());
-                render_streaming_indicator(&mut raw_lines, &mut raw_plain);
+                render_streaming_indicator(&mut raw_lines, &mut raw_plain, t);
             }
             DisplayItem::Error(err) => {
                 raw_lines.push(Line::from(""));
                 raw_plain.push(String::new());
-                render_error(&mut raw_lines, &mut raw_plain, err);
+                render_error(&mut raw_lines, &mut raw_plain, err, t);
             }
         }
     }
@@ -225,7 +183,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
 
     let para = Paragraph::new(lines)
         .block(block)
-        .style(Style::default().bg(COLOR_PANEL_BG))
+        .style(Style::default().bg(t.panel_bg()))
         .scroll((u16::try_from(scroll_to).unwrap_or(0), 0));
 
     frame.render_widget(para, area);
@@ -236,7 +194,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
             " v New content below ",
             Style::default()
                 .fg(Color::Rgb(20, 20, 30))
-                .bg(COLOR_STREAMING_DOT)
+                .bg(t.streaming_dot())
                 .add_modifier(Modifier::BOLD),
         );
         let indicator_line = Line::from(indicator);
@@ -256,7 +214,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
 // Welcome screen (aligned with GUI WelcomePage empty state)
 // ---------------------------------------------------------------------------
 
-fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize) {
+fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize, t: &Theme) {
     // Center vertically by adding blank lines (best effort).
     let pad_lines = 3;
     for _ in 0..pad_lines {
@@ -271,7 +229,7 @@ fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize) 
     lines.push(Line::from(Span::styled(
         padded.clone(),
         Style::default()
-            .fg(COLOR_WELCOME)
+            .fg(t.welcome())
             .add_modifier(Modifier::BOLD),
     )));
     plain.push(padded);
@@ -284,7 +242,7 @@ fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize) 
     let padded2 = format!("{}{}", " ".repeat(pad2), subtitle);
     lines.push(Line::from(Span::styled(
         padded2.clone(),
-        Style::default().fg(COLOR_MUTED),
+        Style::default().fg(t.muted()),
     )));
     plain.push(padded2);
 }
@@ -311,12 +269,13 @@ fn render_message(
     is_last: bool,
     tick: u64,
     content_width: usize,
+    t: &Theme,
 ) {
     let (role_label, role_color, prefix_char) = match msg.role {
-        MessageRole::User => ("You", COLOR_USER, ">"),
-        MessageRole::Assistant => ("Assistant", COLOR_ASSISTANT, "*"),
-        MessageRole::System => ("System", COLOR_SYSTEM, "-"),
-        MessageRole::Tool => ("Tool", COLOR_TOOL, "#"),
+        MessageRole::User => ("You", t.user_accent(), ">"),
+        MessageRole::Assistant => ("Assistant", t.assistant_accent(), "*"),
+        MessageRole::System => ("System", t.system_accent(), "-"),
+        MessageRole::Tool => ("Tool", t.tool_accent(), "#"),
     };
 
     let role_style = Style::default().fg(role_color).add_modifier(Modifier::BOLD);
@@ -332,16 +291,13 @@ fn render_message(
         header_spans.push(Span::styled(
             "  *",
             Style::default()
-                .fg(COLOR_STREAMING_DOT)
+                .fg(t.streaming_dot())
                 .add_modifier(Modifier::BOLD),
         ));
         header_plain.push_str("  *");
     }
     if msg.is_cancelled {
-        header_spans.push(Span::styled(
-            " [cancelled]",
-            Style::default().fg(COLOR_ERROR),
-        ));
+        header_spans.push(Span::styled(" [cancelled]", Style::default().fg(t.error())));
         header_plain.push_str(" [cancelled]");
     }
 
@@ -356,6 +312,7 @@ fn render_message(
             &msg.reasoning_content,
             msg.reasoning_complete,
             tick,
+            t,
         );
     }
 
@@ -366,20 +323,18 @@ fn render_message(
     // Otherwise fall back to parsing the accumulated content string (for
     // historical messages loaded from the database).
     if msg.segments.is_empty() {
-        // Fallback for historical messages: parse content and interleave
-        // tool calls by matching XML-parsed segments with ToolCallInfo.
         let content_segs = preprocess_content(&msg.content);
         let mut tc_idx: usize = 0;
         for seg in &content_segs {
             match seg {
                 ContentSegment::Text(text) => {
-                    render_content_lines(lines, plain_lines, text, msg.role, content_width);
+                    render_content_lines(lines, plain_lines, text, msg.role, content_width, t);
                 }
                 ContentSegment::ThinkBlock {
                     content,
                     is_complete,
                 } => {
-                    render_think_card(lines, plain_lines, content, *is_complete, tick);
+                    render_think_card(lines, plain_lines, content, *is_complete, tick, t);
                 }
                 ContentSegment::ToolCall {
                     name,
@@ -387,7 +342,7 @@ fn render_message(
                     is_streaming,
                 } => {
                     if let Some(tc) = msg.tool_calls.get(tc_idx) {
-                        render_tool_call_executed_card(lines, plain_lines, tc);
+                        render_tool_call_executed_card(lines, plain_lines, tc, t);
                     } else {
                         render_tool_call_card(
                             lines,
@@ -395,41 +350,45 @@ fn render_message(
                             name,
                             arguments.as_deref(),
                             *is_streaming,
+                            t,
                         );
                     }
                     tc_idx += 1;
                 }
             }
         }
-        // Remaining tool calls without matching XML segments.
         for tc in msg.tool_calls.iter().skip(tc_idx) {
-            render_tool_call_executed_card(lines, plain_lines, tc);
+            render_tool_call_executed_card(lines, plain_lines, tc, t);
         }
     } else {
-        // Event-ordered segments from streaming: tool call cards appear at
-        // the position they were executed, interleaved with text chunks.
         for seg in &msg.segments {
             match seg {
                 StreamSegment::Text(text) => {
-                    // Each text chunk may contain <think> or <tool_call> XML
-                    // (for models using XML-based tool calling).
                     let sub_segs = preprocess_content(text);
                     for sub in &sub_segs {
                         match sub {
-                            ContentSegment::Text(t) => {
+                            ContentSegment::Text(segment_text) => {
                                 render_content_lines(
                                     lines,
                                     plain_lines,
-                                    t,
+                                    segment_text,
                                     msg.role,
                                     content_width,
+                                    t,
                                 );
                             }
                             ContentSegment::ThinkBlock {
                                 content,
                                 is_complete,
                             } => {
-                                render_think_card(lines, plain_lines, content, *is_complete, tick);
+                                render_think_card(
+                                    lines,
+                                    plain_lines,
+                                    content,
+                                    *is_complete,
+                                    tick,
+                                    t,
+                                );
                             }
                             ContentSegment::ToolCall {
                                 name,
@@ -442,13 +401,14 @@ fn render_message(
                                     name,
                                     arguments.as_deref(),
                                     *is_streaming,
+                                    t,
                                 );
                             }
                         }
                     }
                 }
                 StreamSegment::ToolCall(tc) => {
-                    render_tool_call_executed_card(lines, plain_lines, tc);
+                    render_tool_call_executed_card(lines, plain_lines, tc, t);
                 }
             }
         }
@@ -459,7 +419,7 @@ fn render_message(
         let time_str = msg.timestamp.format("%H:%M").to_string();
         let footer_spans = vec![Span::styled(
             format!("     {time_str}"),
-            Style::default().fg(COLOR_MUTED),
+            Style::default().fg(t.muted()),
         )];
         let footer_plain = format!("     {time_str}");
         lines.push(Line::from(footer_spans));
@@ -809,18 +769,18 @@ fn render_think_card(
     content: &str,
     is_complete: bool,
     tick: u64,
+    t: &Theme,
 ) {
     let indent = "     ";
 
-    // Header line with icon and status.
     let header_spans = if is_complete {
         let label_style = Style::default()
-            .fg(COLOR_THINK_ACCENT)
+            .fg(t.think_accent())
             .add_modifier(Modifier::BOLD);
         vec![
             Span::styled(
                 format!("{indent}\u{25b8} "),
-                Style::default().fg(COLOR_THINK_ACCENT),
+                Style::default().fg(t.think_accent()),
             ),
             Span::styled("Thought".to_string(), label_style),
         ]
@@ -828,12 +788,12 @@ fn render_think_card(
         let frame_idx = (tick as usize) % SPINNER_FRAMES.len();
         let spinner = SPINNER_FRAMES[frame_idx];
         let label_style = Style::default()
-            .fg(COLOR_THINK_ACCENT)
+            .fg(t.think_accent())
             .add_modifier(Modifier::BOLD);
         vec![
             Span::styled(
                 format!("{indent}{spinner} "),
-                Style::default().fg(COLOR_THINK_ACCENT),
+                Style::default().fg(t.think_accent()),
             ),
             Span::styled("Thinking...".to_string(), label_style),
         ]
@@ -848,16 +808,14 @@ fn render_think_card(
     lines.push(Line::from(header_spans));
     plain.push(header_plain);
 
-    // Content lines with left border indicator.
     if is_complete {
-        // Show first 3 lines as preview (collapsed state, like GUI auto-collapse).
         let content_lines: Vec<&str> = content.lines().collect();
         let preview_count = 3.min(content_lines.len());
         for line_text in content_lines.iter().take(preview_count) {
             let formatted = format!("{indent}\u{2502} {line_text}");
             lines.push(Line::from(Span::styled(
                 formatted.clone(),
-                Style::default().fg(COLOR_THINK_TEXT),
+                Style::default().fg(t.think_text()),
             )));
             plain.push(formatted);
         }
@@ -866,17 +824,16 @@ fn render_think_card(
             let more_text = format!("{indent}\u{2502} ... ({more} more lines)");
             lines.push(Line::from(Span::styled(
                 more_text.clone(),
-                Style::default().fg(COLOR_MUTED),
+                Style::default().fg(t.muted()),
             )));
             plain.push(more_text);
         }
     } else {
-        // Streaming: show all content.
         for line_text in content.lines() {
             let formatted = format!("{indent}\u{2502} {line_text}");
             lines.push(Line::from(Span::styled(
                 formatted.clone(),
-                Style::default().fg(COLOR_THINK_TEXT),
+                Style::default().fg(t.think_text()),
             )));
             plain.push(formatted);
         }
@@ -900,26 +857,25 @@ fn render_tool_call_card(
     name: &str,
     arguments: Option<&str>,
     is_streaming: bool,
+    t: &Theme,
 ) {
     let indent = "     ";
 
-    // Status indicator.
     let (status_label, status_color) = if is_streaming {
-        ("Running...", COLOR_TOOL_RUNNING)
+        ("Running...", t.warning())
     } else {
-        ("Done", COLOR_TOOL_SUCCESS)
+        ("Done", t.success())
     };
 
-    // Header line: [wrench icon] ToolName  Status
     let header_spans = vec![
         Span::styled(
             format!("{indent}\u{2692} "),
-            Style::default().fg(COLOR_TOOL_ACCENT),
+            Style::default().fg(t.tool_card_accent()),
         ),
         Span::styled(
             name.to_string(),
             Style::default()
-                .fg(COLOR_TOOL_ACCENT)
+                .fg(t.tool_card_accent())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  ", Style::default()),
@@ -948,7 +904,7 @@ fn render_tool_call_card(
             let args_line = format!("{indent}  {display_args}");
             lines.push(Line::from(Span::styled(
                 args_line.clone(),
-                Style::default().fg(COLOR_TOOL_CARD_TEXT),
+                Style::default().fg(t.tool_card_text()),
             )));
             plain.push(args_line);
         }
@@ -960,13 +916,14 @@ fn render_tool_call_executed_card(
     lines: &mut Vec<Line>,
     plain: &mut Vec<String>,
     tc: &ToolCallInfo,
+    t: &Theme,
 ) {
     let indent = "     ";
 
     let (status_label, status_color) = if tc.success {
-        ("Done", COLOR_TOOL_SUCCESS)
+        ("Done", t.success())
     } else {
-        ("Failed", COLOR_TOOL_ERROR)
+        ("Failed", t.error())
     };
 
     let duration_str = format!("{}ms", tc.duration_ms);
@@ -974,12 +931,12 @@ fn render_tool_call_executed_card(
     let header_spans = vec![
         Span::styled(
             format!("{indent}\u{2692} "),
-            Style::default().fg(COLOR_TOOL_ACCENT),
+            Style::default().fg(t.tool_card_accent()),
         ),
         Span::styled(
             tc.name.clone(),
             Style::default()
-                .fg(COLOR_TOOL_ACCENT)
+                .fg(t.tool_card_accent())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  ", Style::default()),
@@ -1048,12 +1005,13 @@ fn render_content_lines(
     content: &str,
     role: MessageRole,
     content_width: usize,
+    t: &Theme,
 ) {
     let indent = "     ";
     let content_style = match role {
-        MessageRole::User | MessageRole::Assistant => Style::default().fg(COLOR_TEXT),
-        MessageRole::System => Style::default().fg(COLOR_SYSTEM),
-        MessageRole::Tool => Style::default().fg(Color::Rgb(180, 180, 200)),
+        MessageRole::User | MessageRole::Assistant => Style::default().fg(t.text()),
+        MessageRole::System => Style::default().fg(t.system_accent()),
+        MessageRole::Tool => Style::default().fg(t.normal()),
     };
 
     // Use pulldown-cmark-based markdown renderer for assistant messages.
@@ -1083,7 +1041,7 @@ fn render_content_lines(
                 let fence = format!("{indent}```");
                 lines.push(Line::from(Span::styled(
                     fence.clone(),
-                    Style::default().fg(COLOR_MUTED),
+                    Style::default().fg(t.muted()),
                 )));
                 plain_lines.push(fence);
                 code_lang.clear();
@@ -1104,7 +1062,7 @@ fn render_content_lines(
                 let fence = format!("{indent}{lang_display}");
                 lines.push(Line::from(Span::styled(
                     fence.clone(),
-                    Style::default().fg(COLOR_MUTED),
+                    Style::default().fg(t.muted()),
                 )));
                 plain_lines.push(fence);
             }
@@ -1116,9 +1074,7 @@ fn render_content_lines(
             let formatted = format!("{indent}  {raw_line}");
             lines.push(Line::from(Span::styled(
                 formatted.clone(),
-                Style::default()
-                    .fg(Color::Rgb(180, 200, 220))
-                    .bg(COLOR_CODE_BG),
+                Style::default().fg(t.code_block_fg()).bg(t.code_bg()),
             )));
             plain_lines.push(formatted);
             continue;
@@ -1164,7 +1120,7 @@ fn render_content_lines(
             let hr_line = format!("{indent}{}", "\u{2500}".repeat(hr_width));
             lines.push(Line::from(Span::styled(
                 hr_line.clone(),
-                Style::default().fg(COLOR_HR),
+                Style::default().fg(t.hr()),
             )));
             plain_lines.push(hr_line);
             continue;
@@ -1173,7 +1129,7 @@ fn render_content_lines(
         // Blockquotes (> text).
         if let Some(rest) = trimmed.strip_prefix("> ") {
             let formatted = format!("{indent}\u{2502} {rest}");
-            let spans = build_inline_spans(&formatted, Style::default().fg(COLOR_BLOCKQUOTE));
+            let spans = build_inline_spans(&formatted, Style::default().fg(t.blockquote()), t);
             lines.push(Line::from(spans));
             plain_lines.push(formatted);
             continue;
@@ -1183,7 +1139,7 @@ fn render_content_lines(
             let formatted = format!("{indent}\u{2502}");
             lines.push(Line::from(Span::styled(
                 formatted.clone(),
-                Style::default().fg(COLOR_BLOCKQUOTE),
+                Style::default().fg(t.blockquote()),
             )));
             plain_lines.push(formatted);
             continue;
@@ -1193,7 +1149,7 @@ fn render_content_lines(
         if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
             let bullet_content = &trimmed[2..];
             let formatted = format!("{indent}  {bullet_content}");
-            let spans = build_inline_spans(&formatted, content_style);
+            let spans = build_inline_spans(&formatted, content_style, t);
             let plain_text = formatted;
             lines.push(Line::from(spans));
             plain_lines.push(plain_text);
@@ -1210,7 +1166,7 @@ fn render_content_lines(
                 .starts_with(". ")
         {
             let formatted = format!("{indent}  {trimmed}");
-            let spans = build_inline_spans(&formatted, content_style);
+            let spans = build_inline_spans(&formatted, content_style, t);
             lines.push(Line::from(spans));
             plain_lines.push(formatted);
             continue;
@@ -1218,7 +1174,7 @@ fn render_content_lines(
 
         // Regular content line with inline formatting.
         let formatted = format!("{indent}{raw_line}");
-        let spans = build_inline_spans(&formatted, content_style);
+        let spans = build_inline_spans(&formatted, content_style, t);
         lines.push(Line::from(spans));
         plain_lines.push(formatted);
     }
@@ -1238,16 +1194,14 @@ fn is_horizontal_rule(trimmed: &str) -> bool {
 ///   - `*italic*` -> italic
 ///   - `~~strikethrough~~` -> crossed out
 ///   - `` `code` `` -> code style
-fn build_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>> {
+fn build_inline_spans(text: &str, base_style: Style, t: &Theme) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
     let mut i = 0;
 
-    let code_style = Style::default()
-        .fg(Color::Rgb(200, 220, 255))
-        .bg(COLOR_CODE_BG);
+    let code_style = Style::default().fg(t.code_fg()).bg(t.code_bg());
     let bold_style = base_style.add_modifier(Modifier::BOLD);
     let italic_style = base_style.add_modifier(Modifier::ITALIC);
     let strikethrough_style = base_style.add_modifier(Modifier::CROSSED_OUT);
@@ -1354,16 +1308,16 @@ fn build_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>> {
 // Streaming indicator (aligned with GUI streaming-indicator class)
 // ---------------------------------------------------------------------------
 
-fn render_streaming_indicator(lines: &mut Vec<Line>, plain: &mut Vec<String>) {
+fn render_streaming_indicator(lines: &mut Vec<Line>, plain: &mut Vec<String>, t: &Theme) {
     let spans = vec![
         Span::styled("     ", Style::default()),
         Span::styled(
             "* ",
             Style::default()
-                .fg(COLOR_STREAMING_DOT)
+                .fg(t.streaming_dot())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("Thinking...", Style::default().fg(COLOR_MUTED)),
+        Span::styled("Thinking...", Style::default().fg(t.muted())),
     ];
     lines.push(Line::from(spans));
     plain.push("     * Thinking...".to_string());
@@ -1373,13 +1327,11 @@ fn render_streaming_indicator(lines: &mut Vec<Line>, plain: &mut Vec<String>) {
 // Error banner (aligned with GUI chat-error class)
 // ---------------------------------------------------------------------------
 
-fn render_error(lines: &mut Vec<Line>, plain: &mut Vec<String>, err: &str) {
+fn render_error(lines: &mut Vec<Line>, plain: &mut Vec<String>, err: &str, t: &Theme) {
     let formatted = format!("     ! {err}");
     lines.push(Line::from(Span::styled(
         formatted.clone(),
-        Style::default()
-            .fg(COLOR_ERROR)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(t.error()).add_modifier(Modifier::BOLD),
     )));
     plain.push(formatted);
 }
@@ -1648,18 +1600,19 @@ mod tests {
 
     #[test]
     fn test_inline_bold_formatting() {
-        let base = Style::default().fg(COLOR_TEXT);
-        let spans = build_inline_spans("hello **world** end", base);
+        let t = Theme::default();
+        let base = Style::default().fg(t.text());
+        let spans = build_inline_spans("hello **world** end", base, &t);
         assert!(spans.len() >= 3, "expected at least 3 spans for bold text");
-        // The bold span should contain "world".
         let bold_span = &spans[1];
         assert_eq!(bold_span.content.as_ref(), "world");
     }
 
     #[test]
     fn test_inline_code_formatting() {
-        let base = Style::default().fg(COLOR_TEXT);
-        let spans = build_inline_spans("run `cargo test` now", base);
+        let t = Theme::default();
+        let base = Style::default().fg(t.text());
+        let spans = build_inline_spans("run `cargo test` now", base, &t);
         assert!(
             spans.len() >= 3,
             "expected at least 3 spans for inline code"
@@ -1668,10 +1621,18 @@ mod tests {
 
     #[test]
     fn test_code_block_rendering() {
+        let t = Theme::default();
         let content = "text\n```rust\nfn main() {}\n```\nmore";
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_content_lines(&mut lines, &mut plain, content, MessageRole::Assistant, 80);
+        render_content_lines(
+            &mut lines,
+            &mut plain,
+            content,
+            MessageRole::Assistant,
+            80,
+            &t,
+        );
         // Markdown renderer produces lines for: text, lang label, code line, more.
         assert!(lines.len() >= 3, "code block should produce multiple lines");
     }

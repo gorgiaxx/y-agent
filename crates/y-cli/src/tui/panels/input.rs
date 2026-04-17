@@ -4,24 +4,28 @@
 //! Auto-expands height based on content (1-6 lines).
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders};
 use ratatui::Frame;
 use tui_textarea::TextArea;
 
 use crate::tui::state::PanelFocus;
+use crate::tui::theme::Theme;
 
 /// Render the input area into the given area.
-///
-/// The `textarea` is borrowed because `tui-textarea` implements `Widget`
-/// for `&TextArea`.
-pub fn render(frame: &mut Frame, area: Rect, focus: PanelFocus, textarea: &TextArea<'_>) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    focus: PanelFocus,
+    textarea: &TextArea<'_>,
+    t: &Theme,
+) {
     let is_focused = focus == PanelFocus::Input;
 
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.input_border_focused())
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.input_border_unfocused())
     };
 
     let title = if is_focused {
@@ -36,12 +40,10 @@ pub fn render(frame: &mut Frame, area: Rect, focus: PanelFocus, textarea: &TextA
         .title(title)
         .title_style(
             Style::default()
-                .fg(Color::White)
+                .fg(t.input_title())
                 .add_modifier(Modifier::BOLD),
         );
 
-    // Clone for rendering (Widget is implemented for &TextArea, but we need
-    // to set block/style on a mutable copy).
     let mut ta = textarea.clone();
     ta.set_block(block);
     ta.set_cursor_line_style(Style::default());
@@ -49,12 +51,12 @@ pub fn render(frame: &mut Frame, area: Rect, focus: PanelFocus, textarea: &TextA
     if is_focused {
         ta.set_cursor_style(
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::White)
+                .fg(t.cursor_fg())
+                .bg(t.cursor_bg())
                 .add_modifier(Modifier::BOLD),
         );
     } else {
-        ta.set_cursor_style(Style::default().fg(Color::DarkGray));
+        ta.set_cursor_style(Style::default().fg(t.cursor_unfocused()));
     }
 
     frame.render_widget(&ta, area);

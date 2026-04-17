@@ -15,6 +15,7 @@
 
 /* Radix TabsContent panels must fill available height */
 .settings-content [data-state="active"][role="tabpanel"] {
+  padding: 0 10px 0 10px;
   display: flex;
   flex-direction: column;
   flex: 1;

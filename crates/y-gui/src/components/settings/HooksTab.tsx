@@ -9,7 +9,7 @@ import { jsonToHooks } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { HOOKS_SCHEMA } from '../../utils/settingsSchemas';
-import { Input } from '../ui';
+import { Input, SettingsGroup, SettingsItem } from '../ui';
 
 interface HooksTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -99,44 +99,41 @@ export function HooksTab({
         </h3>
       </div>
       <div className="settings-form-wrap">
-        <div className="pf-row pf-row-quad">
-          <div className="pf-field">
-            <label className="pf-label">Middleware Timeout (ms)</label>
+        <SettingsGroup title="Hook System">
+          <SettingsItem title="Middleware Timeout (ms)" description="Per-middleware timeout.">
             <Input
               numeric
               type="number"
               min={1000}
               step={1000}
+              className="w-[100px]"
               value={hooksForm.middleware_timeout_ms}
               onChange={(e) => { setHooksForm({ ...hooksForm, middleware_timeout_ms: Number(e.target.value) || 30000 }); setDirtyHooks(true); }}
             />
-            <span className="pf-hint">Per-middleware timeout.</span>
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Event Channel Capacity</label>
+          </SettingsItem>
+          <SettingsItem title="Event Channel Capacity" description="Channel capacity per subscriber.">
             <Input
               numeric
               type="number"
               min={64}
               step={256}
+              className="w-[100px]"
               value={hooksForm.event_channel_capacity}
               onChange={(e) => { setHooksForm({ ...hooksForm, event_channel_capacity: Number(e.target.value) || 1024 }); setDirtyHooks(true); }}
             />
-            <span className="pf-hint">Channel capacity per subscriber.</span>
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Max Subscribers</label>
+          </SettingsItem>
+          <SettingsItem title="Max Subscribers" description="Max event subscribers.">
             <Input
               numeric
               type="number"
               min={1}
               max={1024}
+              className="w-[100px]"
               value={hooksForm.max_subscribers}
               onChange={(e) => { setHooksForm({ ...hooksForm, max_subscribers: Number(e.target.value) || 64 }); setDirtyHooks(true); }}
             />
-            <span className="pf-hint">Max event subscribers.</span>
-          </div>
-        </div>
+          </SettingsItem>
+        </SettingsGroup>
       </div>
     </>
   );

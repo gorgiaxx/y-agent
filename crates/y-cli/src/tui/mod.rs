@@ -18,6 +18,7 @@ pub mod overlays;
 pub mod panels;
 pub mod selection;
 pub mod state;
+pub mod theme;
 pub mod tracing_bridge;
 
 use std::fmt::Write as _;
@@ -204,17 +205,38 @@ impl TuiApp {
             KeyAction::Quit => return true,
             KeyAction::Submit => {
                 if self.state.mode == InteractionMode::Command {
-                    let cmd_input = if let Some(selected) = self.palette.selected_command() {
-                        selected.to_string()
+                    if self.palette.in_arg_mode() {
+                        let cmd = self.palette.arg_command.clone().unwrap_or_default();
+                        let arg = self.palette.selected_arg().unwrap_or("").to_string();
+                        let cmd_input = if arg.is_empty() {
+                            cmd
+                        } else {
+                            format!("{cmd} {arg}")
+                        };
+                        if self.execute_command(&cmd_input).await {
+                            return true;
+                        }
+                        self.palette = CommandPaletteState::new();
+                        self.state.set_mode(InteractionMode::Normal);
+                        self.state.set_focus(PanelFocus::Input);
                     } else {
-                        self.palette.input.clone()
-                    };
-                    if self.execute_command(&cmd_input).await {
-                        return true;
+                        let cmd_input =
+                            if let Some(selected) = self.palette.selected_command() {
+                                selected.to_string()
+                            } else {
+                                self.palette.input.clone()
+                            };
+                        if self.should_enter_arg_mode(&cmd_input).await {
+                            // Stay in command mode with arg completions.
+                        } else {
+                            if self.execute_command(&cmd_input).await {
+                                return true;
+                            }
+                            self.palette = CommandPaletteState::new();
+                            self.state.set_mode(InteractionMode::Normal);
+                            self.state.set_focus(PanelFocus::Input);
+                        }
                     }
-                    self.palette = CommandPaletteState::new();
-                    self.state.set_mode(InteractionMode::Normal);
-                    self.state.set_focus(PanelFocus::Input);
                 } else {
                     let input: String = self.textarea.lines().join("\n");
                     let trimmed = input.trim();
@@ -237,7 +259,11 @@ impl TuiApp {
                     if let crossterm::event::KeyCode::Char(ch) = key.code {
                         self.palette.push_char(ch);
                     } else if key.code == crossterm::event::KeyCode::Backspace {
-                        self.palette.pop_char();
+                        if self.palette.in_arg_mode() && self.palette.input.is_empty() {
+                            self.palette = CommandPaletteState::new();
+                        } else {
+                            self.palette.pop_char();
+                        }
                     }
                 } else if key.code == crossterm::event::KeyCode::Char('/')
                     && self
@@ -549,7 +575,7 @@ impl TuiApp {
 
             // Render command palette overlay if in Command mode.
             if state.mode == InteractionMode::Command {
-                overlays::command_palette::render(frame, area, palette);
+                overlays::command_palette::render(frame, area, palette, &state.theme);
             }
 
             // Render help overlay if in Help mode.
@@ -565,6 +591,31 @@ impl TuiApp {
         self.chat_plain_lines = plain_lines_cell.into_inner();
 
         Ok(())
+    }
+
+    /// Check if a command should enter argument-completion mode instead of
+    /// executing immediately. Returns `true` if arg mode was entered.
+    async fn should_enter_arg_mode(&mut self, cmd_name: &str) -> bool {
+        let resolved = commands::registry::CommandRegistry::new()
+            .resolve_alias(cmd_name)
+            .to_string();
+
+        match resolved.as_str() {
+            "model" => {
+                let pool = self.services.provider_pool().await;
+                let metadata = pool.list_metadata();
+                if metadata.is_empty() {
+                    return false;
+                }
+                let completions: Vec<(String, String)> = metadata
+                    .iter()
+                    .map(|m| (m.id.as_str().to_string(), m.model.clone()))
+                    .collect();
+                self.palette.enter_arg_mode("model".into(), completions);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Execute a command and apply its result to state.
@@ -1078,7 +1129,7 @@ impl TuiApp {
         panels::status_bar::render(frame, chunks.status_bar, state);
 
         // Input area.
-        panels::input::render(frame, chunks.input, state.focus, textarea);
+        panels::input::render(frame, chunks.input, state.focus, textarea, &state.theme);
 
         plain_lines
     }

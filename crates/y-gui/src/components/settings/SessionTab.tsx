@@ -10,7 +10,7 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { SESSION_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox, Input } from '../ui';
+import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
 
 interface SessionTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -99,73 +99,60 @@ export function SessionTab({
       </h3>
     </div>
     <div className="settings-form-wrap">
-      <div className="pf-row pf-row-quad">
-        <div className="pf-field">
-          <label className="pf-label">Max Tree Depth</label>
+      <SettingsGroup title="Session Tree">
+        <SettingsItem title="Max Tree Depth">
           <Input
             numeric
             type="number"
             min={1}
+            className="w-[100px]"
             value={sessionForm.max_depth}
             onChange={(e) => { setSessionForm({ ...sessionForm, max_depth: Number(e.target.value) || 16 }); setDirtySession(true); }}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Max Active per Root</label>
+        </SettingsItem>
+        <SettingsItem title="Max Active per Root">
           <Input
             numeric
             type="number"
             min={1}
+            className="w-[100px]"
             value={sessionForm.max_active_per_root}
             onChange={(e) => { setSessionForm({ ...sessionForm, max_active_per_root: Number(e.target.value) || 8 }); setDirtySession(true); }}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Compaction Threshold (%)</label>
+        </SettingsItem>
+        <SettingsItem title="Compaction Threshold (%)">
           <Input
             numeric
             type="number"
             min={50}
             max={95}
             step={5}
+            className="w-[100px]"
             value={sessionForm.compaction_threshold_pct}
             onChange={(e) => { setSessionForm({ ...sessionForm, compaction_threshold_pct: Math.min(95, Math.max(50, Number(e.target.value) || 85)) }); setDirtySession(true); }}
           />
-        </div>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">
-            <Checkbox
-              checked={sessionForm.auto_archive_merged}
-              onCheckedChange={(c) => { setSessionForm({ ...sessionForm, auto_archive_merged: c === true }); setDirtySession(true); }}
-            />
-            {' '}Auto-archive merged sessions
-          </label>
-        </div>
-      </div>
+        </SettingsItem>
+        <SettingsItem title="Auto-archive merged sessions">
+          <Checkbox
+            checked={sessionForm.auto_archive_merged}
+            onCheckedChange={(c) => { setSessionForm({ ...sessionForm, auto_archive_merged: c === true }); setDirtySession(true); }}
+          />
+        </SettingsItem>
+      </SettingsGroup>
 
-      {/* Pruning configuration */}
-      <div className="pf-section-divider">
-        <span className="pf-section-title">Context Pruning</span>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">
-            <Checkbox
-              checked={sessionForm.pruning_enabled}
-              onCheckedChange={(c) => { setSessionForm({ ...sessionForm, pruning_enabled: c === true }); setDirtySession(true); }}
-            />
-            {' '}Enable Pruning
-          </label>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Strategy</label>
+      <SettingsGroup title="Context Pruning">
+        <SettingsItem title="Enable Pruning">
+          <Checkbox
+            checked={sessionForm.pruning_enabled}
+            onCheckedChange={(c) => { setSessionForm({ ...sessionForm, pruning_enabled: c === true }); setDirtySession(true); }}
+          />
+        </SettingsItem>
+        <SettingsItem title="Strategy">
           <Select
             value={sessionForm.pruning_strategy}
             onValueChange={(val) => { setSessionForm({ ...sessionForm, pruning_strategy: val }); setDirtySession(true); }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="Select strategy" />
             </SelectTrigger>
             <SelectContent>
@@ -174,44 +161,36 @@ export function SessionTab({
               <SelectItem value="progressive_only">Progressive Only (LLM summarization)</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-      </div>
-      <div className="pf-row pf-row-quad">
-        <div className="pf-field">
-          <label className="pf-label">Token Threshold</label>
+        </SettingsItem>
+        <SettingsItem title="Token Threshold" description="Min token growth before pruning triggers">
           <Input
             numeric
             type="number"
             min={500}
             step={500}
+            className="w-[100px]"
             value={sessionForm.pruning_token_threshold}
             onChange={(e) => { setSessionForm({ ...sessionForm, pruning_token_threshold: Number(e.target.value) || 2000 }); setDirtySession(true); }}
           />
-          <span className="pf-hint">Min token growth before pruning triggers</span>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Max Retries</label>
+        </SettingsItem>
+        <SettingsItem title="Max Retries">
           <Input
             numeric
             type="number"
             min={0}
             max={10}
+            className="w-[100px]"
             value={sessionForm.pruning_progressive_max_retries}
             onChange={(e) => { setSessionForm({ ...sessionForm, pruning_progressive_max_retries: Number(e.target.value) || 2 }); setDirtySession(true); }}
           />
-        </div>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">
-            <Checkbox
-              checked={sessionForm.pruning_progressive_preserve_identifiers}
-              onCheckedChange={(c) => { setSessionForm({ ...sessionForm, pruning_progressive_preserve_identifiers: c === true }); setDirtySession(true); }}
-            />
-            {' '}Preserve identifiers in progressive summaries
-          </label>
-        </div>
-      </div>
+        </SettingsItem>
+        <SettingsItem title="Preserve identifiers in progressive summaries">
+          <Checkbox
+            checked={sessionForm.pruning_progressive_preserve_identifiers}
+            onCheckedChange={(c) => { setSessionForm({ ...sessionForm, pruning_progressive_preserve_identifiers: c === true }); setDirtySession(true); }}
+          />
+        </SettingsItem>
+      </SettingsGroup>
     </div>
     </>
   );

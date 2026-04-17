@@ -18,29 +18,57 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use syntect::highlighting::{Theme, ThemeSet};
+use syntect::highlighting::{Theme as SyntectTheme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
+use crate::tui::theme::Theme as TuiTheme;
+
 // ---------------------------------------------------------------------------
-// Color palette (matches chat.rs for consistency)
+// Terminal-aware color palette (lazy-initialized from TuiTheme)
 // ---------------------------------------------------------------------------
 
-const COLOR_HEADING: Color = Color::Rgb(130, 220, 130);
-const COLOR_CODE_FG: Color = Color::Rgb(200, 200, 220);
-const COLOR_CODE_BG: Color = Color::Rgb(40, 42, 54);
-const COLOR_INLINE_CODE_FG: Color = Color::Rgb(220, 180, 120);
-const COLOR_INLINE_CODE_BG: Color = Color::Rgb(50, 52, 64);
-const COLOR_BOLD: Color = Color::Rgb(240, 240, 255);
-const COLOR_ITALIC: Color = Color::Rgb(200, 200, 230);
-const COLOR_LINK: Color = Color::Rgb(100, 180, 255);
-const COLOR_BLOCKQUOTE_BAR: Color = Color::Rgb(100, 120, 160);
-const COLOR_BLOCKQUOTE_TEXT: Color = Color::Rgb(180, 180, 200);
-const COLOR_HR: Color = Color::Rgb(60, 60, 80);
-const COLOR_LIST_BULLET: Color = Color::Rgb(120, 160, 200);
-/// Table border / separator color.
-const COLOR_TABLE_BORDER: Color = Color::Rgb(80, 90, 120);
-/// Table header text color.
-const COLOR_TABLE_HEADER: Color = Color::Rgb(200, 210, 240);
+fn tui_theme() -> &'static TuiTheme {
+    use std::sync::OnceLock;
+    static THEME: OnceLock<TuiTheme> = OnceLock::new();
+    THEME.get_or_init(TuiTheme::default)
+}
+
+fn color_heading() -> Color {
+    tui_theme().user_accent()
+}
+fn color_code_bg() -> Color {
+    tui_theme().code_bg()
+}
+fn color_inline_code_fg() -> Color {
+    tui_theme().code_fg()
+}
+fn color_inline_code_bg() -> Color {
+    tui_theme().code_bg()
+}
+fn color_bold() -> Color {
+    tui_theme().text()
+}
+fn color_link() -> Color {
+    tui_theme().assistant_accent()
+}
+fn color_blockquote_bar() -> Color {
+    tui_theme().blockquote()
+}
+fn color_blockquote_text() -> Color {
+    tui_theme().normal()
+}
+fn color_hr() -> Color {
+    tui_theme().hr()
+}
+fn color_list_bullet() -> Color {
+    tui_theme().assistant_accent()
+}
+fn color_table_border() -> Color {
+    tui_theme().muted()
+}
+fn color_table_header() -> Color {
+    tui_theme().text()
+}
 
 // ---------------------------------------------------------------------------
 // Syntax highlighting singleton
@@ -49,7 +77,7 @@ const COLOR_TABLE_HEADER: Color = Color::Rgb(200, 210, 240);
 /// Lazily-initialized syntax set and theme for code highlighting.
 struct HighlightState {
     syntax_set: SyntaxSet,
-    theme: Theme,
+    theme: SyntectTheme,
 }
 
 fn highlight_state() -> &'static HighlightState {
@@ -355,8 +383,10 @@ impl MdRenderer {
                 format!("{indent}- ")
             };
             let bullet_len = bullet.len();
-            self.current_spans
-                .push(Span::styled(bullet, Style::default().fg(COLOR_LIST_BULLET)));
+            self.current_spans.push(Span::styled(
+                bullet,
+                Style::default().fg(color_list_bullet()),
+            ));
             self.col += bullet_len;
         }
 
@@ -366,7 +396,7 @@ impl MdRenderer {
             let prefix_len = prefix.len();
             self.current_spans.push(Span::styled(
                 prefix,
-                Style::default().fg(COLOR_BLOCKQUOTE_BAR),
+                Style::default().fg(color_blockquote_bar()),
             ));
             self.col += prefix_len;
         }
@@ -388,7 +418,7 @@ impl MdRenderer {
                     let prefix_len = prefix.len();
                     self.current_spans.push(Span::styled(
                         prefix,
-                        Style::default().fg(COLOR_BLOCKQUOTE_BAR),
+                        Style::default().fg(color_blockquote_bar()),
                     ));
                     self.col += prefix_len;
                 }
@@ -406,8 +436,8 @@ impl MdRenderer {
             return;
         }
         let style = Style::default()
-            .fg(COLOR_INLINE_CODE_FG)
-            .bg(COLOR_INLINE_CODE_BG);
+            .fg(color_inline_code_fg())
+            .bg(color_inline_code_bg());
         let text = format!(" {code} ");
         let len = unicode_display_width(&text);
         self.current_spans.push(Span::styled(text, style));
@@ -419,14 +449,14 @@ impl MdRenderer {
         let rule_text = "\u{2500}".repeat(self.width.min(60));
         self.lines.push(Line::from(Span::styled(
             rule_text,
-            Style::default().fg(COLOR_HR),
+            Style::default().fg(color_hr()),
         )));
     }
 
     fn current_style(&self) -> Style {
         if self.heading_level > 0 {
             let mut style = Style::default()
-                .fg(COLOR_HEADING)
+                .fg(color_heading())
                 .add_modifier(Modifier::BOLD);
             if self.heading_level <= 2 {
                 style = style.add_modifier(Modifier::UNDERLINED);
@@ -436,12 +466,12 @@ impl MdRenderer {
 
         if self.flags.has(StyleFlags::LINK) {
             return Style::default()
-                .fg(COLOR_LINK)
+                .fg(color_link())
                 .add_modifier(Modifier::UNDERLINED);
         }
 
         if self.blockquote_depth > 0 {
-            let mut style = Style::default().fg(COLOR_BLOCKQUOTE_TEXT);
+            let mut style = Style::default().fg(color_blockquote_text());
             if self.flags.has(StyleFlags::ITALIC) {
                 style = style.add_modifier(Modifier::ITALIC);
             }
@@ -450,7 +480,7 @@ impl MdRenderer {
 
         let mut style = Style::default();
         if self.flags.has(StyleFlags::BOLD) {
-            style = style.fg(COLOR_BOLD).add_modifier(Modifier::BOLD);
+            style = style.fg(color_bold()).add_modifier(Modifier::BOLD);
         }
         if self.flags.has(StyleFlags::ITALIC) {
             style = style.add_modifier(Modifier::ITALIC);
@@ -494,7 +524,7 @@ impl MdRenderer {
         }
 
         for line_spans in highlighted {
-            let mut spans = vec![Span::styled("  ", Style::default().bg(COLOR_CODE_BG))];
+            let mut spans = vec![Span::styled("  ", Style::default().bg(color_code_bg()))];
             spans.extend(line_spans);
             self.lines.push(Line::from(spans));
         }
@@ -546,9 +576,9 @@ impl MdRenderer {
             }
         }
 
-        let border_style = Style::default().fg(COLOR_TABLE_BORDER);
+        let border_style = Style::default().fg(color_table_border());
         let header_style = Style::default()
-            .fg(COLOR_TABLE_HEADER)
+            .fg(color_table_header())
             .add_modifier(Modifier::BOLD);
         let cell_style = Style::default().fg(Color::Rgb(200, 200, 220));
 
@@ -593,7 +623,7 @@ impl MdRenderer {
 
 fn highlight_code(
     syntax_set: &SyntaxSet,
-    theme: &Theme,
+    theme: &SyntectTheme,
     syntax: &syntect::parsing::SyntaxReference,
     code: &str,
 ) -> Vec<Vec<Span<'static>>> {
@@ -611,7 +641,10 @@ fn highlight_code(
             .into_iter()
             .map(|(style, text)| {
                 let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
-                Span::styled(text.to_string(), Style::default().fg(fg).bg(COLOR_CODE_BG))
+                Span::styled(
+                    text.to_string(),
+                    Style::default().fg(fg).bg(color_code_bg()),
+                )
             })
             .collect();
 

@@ -9,7 +9,7 @@ import { jsonToStorage } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { STORAGE_SCHEMA } from '../../utils/settingsSchemas';
-import { Checkbox, Input } from '../ui';
+import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
 
 interface StorageTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -100,64 +100,64 @@ export function StorageTab({
         </h3>
       </div>
       <div className="settings-form-wrap">
-        <div className="pf-row">
-          <div className="pf-field pf-field-full">
-            <label className="pf-label">Database Path</label>
+        <SettingsGroup title="Database">
+          <SettingsItem
+            title="Database Path"
+            description={'Path to SQLite database file. Use ":memory:" for in-memory (testing).'}
+            wide
+          >
             <Input
               value={storageForm.db_path}
               onChange={(e) => { setStorageForm({ ...storageForm, db_path: e.target.value }); setDirtyStorage(true); }}
               placeholder="data/y-agent.db"
             />
-            <span className="pf-hint">Path to SQLite database file. Use ":memory:" for in-memory (testing).</span>
-          </div>
-        </div>
-        <div className="pf-row pf-row-quad">
-          <div className="pf-field">
-            <label className="pf-label">Pool Size</label>
+          </SettingsItem>
+          <SettingsItem title="Pool Size">
             <Input
               numeric
               type="number"
               min={1}
               max={100}
+              className="w-[100px]"
               value={storageForm.pool_size}
               onChange={(e) => { setStorageForm({ ...storageForm, pool_size: Number(e.target.value) || 5 }); setDirtyStorage(true); }}
             />
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Busy Timeout (ms)</label>
+          </SettingsItem>
+          <SettingsItem title="Busy Timeout (ms)">
             <Input
               numeric
               type="number"
               min={100}
               step={500}
+              className="w-[100px]"
               value={storageForm.busy_timeout_ms}
               onChange={(e) => { setStorageForm({ ...storageForm, busy_timeout_ms: Number(e.target.value) || 5000 }); setDirtyStorage(true); }}
             />
-          </div>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field pf-field-full">
-            <label className="pf-label">
-              <Checkbox
-                checked={storageForm.wal_enabled}
-                onCheckedChange={(c) => { setStorageForm({ ...storageForm, wal_enabled: c === true }); setDirtyStorage(true); }}
-              />
-              {' '}Enable WAL Mode
-            </label>
-            <span className="pf-hint">Write-Ahead Logging recommended for concurrency.</span>
-          </div>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field pf-field-full">
-            <label className="pf-label">Transcript Directory</label>
+          </SettingsItem>
+          <SettingsItem
+            title="Enable WAL Mode"
+            description="Write-Ahead Logging recommended for concurrency."
+          >
+            <Checkbox
+              checked={storageForm.wal_enabled}
+              onCheckedChange={(c) => { setStorageForm({ ...storageForm, wal_enabled: c === true }); setDirtyStorage(true); }}
+            />
+          </SettingsItem>
+        </SettingsGroup>
+
+        <SettingsGroup title="Transcripts">
+          <SettingsItem
+            title="Transcript Directory"
+            description="Directory for JSONL session transcripts."
+            wide
+          >
             <Input
               value={storageForm.transcript_dir}
               onChange={(e) => { setStorageForm({ ...storageForm, transcript_dir: e.target.value }); setDirtyStorage(true); }}
               placeholder="data/transcripts"
             />
-            <span className="pf-hint">Directory for JSONL session transcripts.</span>
-          </div>
-        </div>
+          </SettingsItem>
+        </SettingsGroup>
       </div>
     </>
   );

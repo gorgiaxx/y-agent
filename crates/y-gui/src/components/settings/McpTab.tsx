@@ -10,7 +10,7 @@ import type { McpServerFormData } from './settingsTypes';
 import { emptyMcpServer, jsonToMcpServers, mcpServersToJson } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox, Input, Button } from '../ui';
+import { Checkbox, Input, Button, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
 
 // ---------------------------------------------------------------------------
 // McpServerTabPanel -- form for a single MCP server (shown in tab view)
@@ -30,19 +30,16 @@ function McpServerTabPanel({
   };
 
   return (
-    <div className="sidetab-tab-form">
-      {/* Row 0: Name + Transport */}
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">Server Name</label>
+    <div className="settings-form-wrap">
+      <SettingsGroup title="Identity">
+        <SettingsItem title="Server Name" wide>
           <Input
             value={server.name}
             onChange={(e) => update({ name: e.target.value })}
             placeholder="e.g. my-local-server"
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Transport</label>
+        </SettingsItem>
+        <SettingsItem title="Transport">
           <Select
             value={server.transport}
             onValueChange={(val) => update({ transport: val as 'stdio' | 'http' })}
@@ -55,219 +52,179 @@ function McpServerTabPanel({
               <SelectItem value="http">HTTP (Remote)</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-      </div>
+        </SettingsItem>
+        <SettingsItem title="Disabled" description="Server will not be started or connected to">
+          <Checkbox
+            checked={server.disabled}
+            onCheckedChange={(c) => update({ disabled: c === true })}
+          />
+        </SettingsItem>
+      </SettingsGroup>
 
       {server.transport === 'stdio' ? (
-        /* STDIO fields */
-        <>
-          <div className="pf-row">
-            <div className="pf-field pf-field-full">
-              <label className="pf-label">Command</label>
-              <Input
-                value={server.command}
-                onChange={(e) => update({ command: e.target.value })}
-                placeholder="e.g. node, python, npx"
-              />
-              <span className="pf-hint">Executable command to launch the MCP server process</span>
+        <SettingsGroup title="STDIO Configuration">
+          <SettingsItem title="Command" description="Executable to launch the MCP server process" wide>
+            <Input
+              value={server.command}
+              onChange={(e) => update({ command: e.target.value })}
+              placeholder="e.g. node, python, npx"
+            />
+          </SettingsItem>
+          <SettingsItem title="Arguments" description="Command-line arguments passed to the server" wide>
+            <TagChipInput
+              tags={server.args}
+              onChange={(next) => update({ args: next })}
+            />
+          </SettingsItem>
+          <SettingsItem title="Working Directory" wide>
+            <Input
+              value={server.cwd}
+              onChange={(e) => update({ cwd: e.target.value })}
+              placeholder="(optional) working directory"
+            />
+          </SettingsItem>
+          <div className="settings-item--custom-body">
+            <div className="settings-item-title" style={{ marginBottom: '6px' }}>Environment Variables</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {Object.entries(server.env).map(([k, v], i) => (
+                <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  <Input
+                    style={{ flex: 1 }}
+                    value={k}
+                    onChange={(e) => {
+                      const entries = Object.entries(server.env);
+                      entries[i] = [e.target.value, v];
+                      update({ env: Object.fromEntries(entries) });
+                    }}
+                    placeholder="KEY"
+                  />
+                  <span style={{ color: 'var(--text-secondary)' }}>=</span>
+                  <Input
+                    style={{ flex: 2 }}
+                    value={v}
+                    onChange={(e) => {
+                      const newEnv = { ...server.env };
+                      newEnv[k] = e.target.value;
+                      update({ env: newEnv });
+                    }}
+                    placeholder="value"
+                  />
+                  <Button
+                    variant="icon"
+                    size="sm"
+                    title="Remove"
+                    onClick={() => {
+                      const newEnv = { ...server.env };
+                      delete newEnv[k];
+                      update({ env: newEnv });
+                    }}
+                  ><X size={12} /></Button>
+                </div>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => update({ env: { ...server.env, '': '' } })}
+              >+ Add Variable</Button>
             </div>
           </div>
-          <div className="pf-row">
-            <div className="pf-field pf-field-full">
-              <label className="pf-label">Arguments</label>
-              <TagChipInput
-                tags={server.args}
-                onChange={(next) => update({ args: next })}
-              />
-              <span className="pf-hint">Command-line arguments passed to the server process</span>
-            </div>
-          </div>
-          <div className="pf-row">
-            <div className="pf-field pf-field-full">
-              <label className="pf-label">Environment Variables</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {Object.entries(server.env).map(([k, v], i) => (
-                  <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                    <Input
-                      style={{ flex: 1 }}
-                      value={k}
-                      onChange={(e) => {
-                        const entries = Object.entries(server.env);
-                        entries[i] = [e.target.value, v];
-                        update({ env: Object.fromEntries(entries) });
-                      }}
-                      placeholder="KEY"
-                    />
-                    <span style={{ color: 'var(--text-secondary)' }}>=</span>
-                    <Input
-                      style={{ flex: 2 }}
-                      value={v}
-                      onChange={(e) => {
-                        const newEnv = { ...server.env };
-                        newEnv[k] = e.target.value;
-                        update({ env: newEnv });
-                      }}
-                      placeholder="value"
-                    />
-                    <Button
-                      variant="icon"
-                      size="sm"
-                      title="Remove"
-                      onClick={() => {
-                        const newEnv = { ...server.env };
-                        delete newEnv[k];
-                        update({ env: newEnv });
-                      }}
-                    ><X size={12} /></Button>
-                  </div>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => update({ env: { ...server.env, '': '' } })}
-                >+ Add Variable</Button>
-              </div>
-            </div>
-          </div>
-        </>
+        </SettingsGroup>
       ) : (
-        /* HTTP fields */
-        <>
-          <div className="pf-row">
-            <div className="pf-field pf-field-full">
-              <label className="pf-label">Server URL</label>
-              <Input
-                value={server.url}
-                onChange={(e) => update({ url: e.target.value })}
-                placeholder="https://your-server-url.com/mcp"
-              />
-              <span className="pf-hint">HTTP endpoint URL for the remote MCP server</span>
+        <SettingsGroup title="HTTP Configuration">
+          <SettingsItem title="Server URL" description="HTTP endpoint for the remote MCP server" wide>
+            <Input
+              value={server.url}
+              onChange={(e) => update({ url: e.target.value })}
+              placeholder="https://your-server-url.com/mcp"
+            />
+          </SettingsItem>
+          <SettingsItem title="Bearer Token" description="Optional OAuth bearer token" wide>
+            <Input
+              type="password"
+              value={server.bearer_token}
+              onChange={(e) => update({ bearer_token: e.target.value })}
+              placeholder="(optional) Authorization: Bearer ..."
+            />
+          </SettingsItem>
+          <div className="settings-item--custom-body">
+            <div className="settings-item-title" style={{ marginBottom: '6px' }}>Headers</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {Object.entries(server.headers).map(([k, v], i) => (
+                <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  <Input
+                    style={{ flex: 1 }}
+                    value={k}
+                    onChange={(e) => {
+                      const entries = Object.entries(server.headers);
+                      entries[i] = [e.target.value, v];
+                      update({ headers: Object.fromEntries(entries) });
+                    }}
+                    placeholder="Header-Name"
+                  />
+                  <span style={{ color: 'var(--text-secondary)' }}>:</span>
+                  <Input
+                    style={{ flex: 2 }}
+                    value={v}
+                    onChange={(e) => {
+                      const newHeaders = { ...server.headers };
+                      newHeaders[k] = e.target.value;
+                      update({ headers: newHeaders });
+                    }}
+                    placeholder="value"
+                  />
+                  <Button
+                    variant="icon"
+                    size="sm"
+                    title="Remove"
+                    onClick={() => {
+                      const newHeaders = { ...server.headers };
+                      delete newHeaders[k];
+                      update({ headers: newHeaders });
+                    }}
+                  ><X size={12} /></Button>
+                </div>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => update({ headers: { ...server.headers, '': '' } })}
+              >+ Add Header</Button>
             </div>
           </div>
-          <div className="pf-row">
-            <div className="pf-field pf-field-full">
-              <label className="pf-label">Bearer Token</label>
-              <Input
-                type="password"
-                value={server.bearer_token}
-                onChange={(e) => update({ bearer_token: e.target.value })}
-                placeholder="(optional) sent as Authorization: Bearer ..."
-              />
-              <span className="pf-hint">Optional OAuth bearer token for Authorization header</span>
-            </div>
-          </div>
-          <div className="pf-row">
-            <div className="pf-field pf-field-full">
-              <label className="pf-label">Headers</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {Object.entries(server.headers).map(([k, v], i) => (
-                  <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                    <Input
-                      style={{ flex: 1 }}
-                      value={k}
-                      onChange={(e) => {
-                        const entries = Object.entries(server.headers);
-                        entries[i] = [e.target.value, v];
-                        update({ headers: Object.fromEntries(entries) });
-                      }}
-                      placeholder="Header-Name"
-                    />
-                    <span style={{ color: 'var(--text-secondary)' }}>:</span>
-                    <Input
-                      style={{ flex: 2 }}
-                      value={v}
-                      onChange={(e) => {
-                        const newHeaders = { ...server.headers };
-                        newHeaders[k] = e.target.value;
-                        update({ headers: newHeaders });
-                      }}
-                      placeholder="value"
-                    />
-                    <Button
-                      variant="icon"
-                      size="sm"
-                      title="Remove"
-                      onClick={() => {
-                        const newHeaders = { ...server.headers };
-                        delete newHeaders[k];
-                        update({ headers: newHeaders });
-                      }}
-                    ><X size={12} /></Button>
-                  </div>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => update({ headers: { ...server.headers, '': '' } })}
-                >+ Add Header</Button>
-              </div>
-            </div>
-          </div>
-        </>
+        </SettingsGroup>
       )}
 
-      {/* Always Allow */}
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">Always Allow</label>
+      <SettingsGroup title="Permissions">
+        <SettingsItem title="Always Allow" description="Tool names auto-approved without confirmation" wide>
           <TagChipInput
             tags={server.alwaysAllow}
             onChange={(next) => update({ alwaysAllow: next })}
           />
-          <span className="pf-hint">Tool names that are auto-approved without user confirmation</span>
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
 
-      {/* Timeouts */}
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">Startup timeout (s)</label>
+      <SettingsGroup title="Timeouts">
+        <SettingsItem title="Startup Timeout (s)" description="Initial connection handshake timeout">
           <Input
+            numeric
             type="number"
             min={1}
+            className="w-[100px]"
             value={server.startup_timeout_secs}
             onChange={(e) => update({ startup_timeout_secs: Number(e.target.value) || 30 })}
           />
-          <span className="pf-hint">Initial connection / initialize handshake timeout</span>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Tool call timeout (s)</label>
+        </SettingsItem>
+        <SettingsItem title="Tool Call Timeout (s)" description="Per-tool-call timeout">
           <Input
+            numeric
             type="number"
             min={1}
+            className="w-[100px]"
             value={server.tool_timeout_secs}
             onChange={(e) => update({ tool_timeout_secs: Number(e.target.value) || 120 })}
           />
-          <span className="pf-hint">Per-tool-call timeout</span>
-        </div>
-      </div>
-
-      {server.transport === 'stdio' && (
-        <div className="pf-row">
-          <div className="pf-field pf-field-full">
-            <label className="pf-label">Working Directory</label>
-            <Input
-              value={server.cwd}
-              onChange={(e) => update({ cwd: e.target.value })}
-              placeholder="(optional) working directory for the server process"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Disabled toggle */}
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">
-            <Checkbox
-              checked={server.disabled}
-              onCheckedChange={(c) => update({ disabled: c === true })}
-            />
-            {' '}Disabled
-          </label>
-          <span className="pf-hint">When checked, this server will not be started or connected to</span>
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
     </div>
   );
 }
@@ -372,57 +329,55 @@ export function McpTab({
         <span className="settings-header-with-toggle">MCP Servers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
       </h3>
     </div>
-    <div className="sub-list-layout">
-      {/* Left sidebar list */}
-      <div className="sub-list-sidebar">
-        <div className="sub-list-items">
-          {mcpServersList.map((s, i) => (
-            <button
-              key={i}
-              className={`sub-list-item ${activeMcpTab === i ? 'active' : ''}`}
-              onClick={() => setActiveMcpTab(i)}
-            >
-              <span className="sub-list-item-label">{s.name || `Server ${i + 1}`}</span>
-              {s.disabled && <span style={{ fontSize: '9px', color: 'var(--text-muted)', marginLeft: '2px' }}>OFF</span>}
-              <span
-                className="sub-list-item-close"
-                role="button"
-                tabIndex={0}
-                title="Remove server"
-                onClick={(e) => { e.stopPropagation(); handleMcpServerRemove(i); }}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleMcpServerRemove(i); } }}
+    <SubListLayout
+      sidebar={
+        <>
+          <div className="sub-list-items">
+            {mcpServersList.map((s, i) => (
+              <button
+                key={i}
+                className={`sub-list-item ${activeMcpTab === i ? 'active' : ''}`}
+                onClick={() => setActiveMcpTab(i)}
               >
-                <X size={11} />
-              </span>
-            </button>
-          ))}
-        </div>
-        <button
-          className="sub-list-item sub-list-item-add"
-          onClick={handleMcpServerAdd}
-          title="Add MCP server"
-        >
-          <Plus size={13} />
-          <span>Add</span>
-        </button>
-      </div>
-
-      {/* Right detail panel */}
-      <div className="sub-list-detail">
-        {mcpServersList.length === 0 ? (
-          <div className="settings-empty">
-            No MCP servers configured. Click + to add one.
+                <span className="sub-list-item-label">{s.name || `Server ${i + 1}`}</span>
+                {s.disabled && <span style={{ fontSize: '9px', color: 'var(--text-muted)', marginLeft: '2px' }}>OFF</span>}
+                <span
+                  className="sub-list-item-close"
+                  role="button"
+                  tabIndex={0}
+                  title="Remove server"
+                  onClick={(e) => { e.stopPropagation(); handleMcpServerRemove(i); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleMcpServerRemove(i); } }}
+                >
+                  <X size={11} />
+                </span>
+              </button>
+            ))}
           </div>
-        ) : (
-          <McpServerTabPanel
-            key={activeMcpTab}
-            server={mcpServersList[activeMcpTab] ?? mcpServersList[0]}
-            index={activeMcpTab < mcpServersList.length ? activeMcpTab : 0}
-            onChange={handleMcpServerChange}
-          />
-        )}
-      </div>
-    </div>
+          <button
+            className="sub-list-item sub-list-item-add"
+            onClick={handleMcpServerAdd}
+            title="Add MCP server"
+          >
+            <Plus size={13} />
+            <span>Add</span>
+          </button>
+        </>
+      }
+    >
+      {mcpServersList.length === 0 ? (
+        <div className="settings-empty">
+          No MCP servers configured. Click + to add one.
+        </div>
+      ) : (
+        <McpServerTabPanel
+          key={activeMcpTab}
+          server={mcpServersList[activeMcpTab] ?? mcpServersList[0]}
+          index={activeMcpTab < mcpServersList.length ? activeMcpTab : 0}
+          onChange={handleMcpServerChange}
+        />
+      )}
+    </SubListLayout>
     </>
   );
 }

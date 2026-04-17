@@ -11,7 +11,7 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { RUNTIME_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox, Input } from '../ui';
+import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
 
 interface RuntimeTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -100,15 +100,13 @@ export function RuntimeTab({
       </h3>
     </div>
     <div className="settings-form-wrap">
-      {/* General */}
-      <div className="pf-row pf-row-triple">
-        <div className="pf-field">
-          <label className="pf-label">Default Backend</label>
+      <SettingsGroup title="General">
+        <SettingsItem title="Default Backend">
           <Select
             value={runtimeForm.default_backend}
             onValueChange={(val) => { setRuntimeForm({ ...runtimeForm, default_backend: val }); setDirtyRuntime(true); }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Select backend" />
             </SelectTrigger>
             <SelectContent>
@@ -117,89 +115,63 @@ export function RuntimeTab({
               <SelectItem value="ssh">SSH</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Default Timeout</label>
+        </SettingsItem>
+        <SettingsItem title="Default Timeout" wide>
           <Input
             value={runtimeForm.default_timeout}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, default_timeout: e.target.value }); setDirtyRuntime(true); }}
             placeholder="e.g. 30s, 5m"
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Memory Limit (bytes)</label>
+        </SettingsItem>
+        <SettingsItem title="Memory Limit (bytes)">
           <Input
-            numeric
-            type="number"
-            min={0}
-            step={1048576}
+            numeric type="number" min={0} step={1048576} className="w-[140px]"
             value={runtimeForm.default_memory_bytes}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, default_memory_bytes: Number(e.target.value) || 536870912 }); setDirtyRuntime(true); }}
           />
-        </div>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">
-            <Checkbox
-              checked={runtimeForm.allow_shell}
-              onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, allow_shell: c === true }); setDirtyRuntime(true); }}
-            />
-            {' '}Allow shell execution
-          </label>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">
-            <Checkbox
-              checked={runtimeForm.allow_host_access}
-              onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, allow_host_access: c === true }); setDirtyRuntime(true); }}
-            />
-            {' '}Allow host filesystem access
-          </label>
-        </div>
-      </div>
+        </SettingsItem>
+        <SettingsItem title="Allow shell execution">
+          <Checkbox
+            checked={runtimeForm.allow_shell}
+            onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, allow_shell: c === true }); setDirtyRuntime(true); }}
+          />
+        </SettingsItem>
+        <SettingsItem title="Allow host filesystem access">
+          <Checkbox
+            checked={runtimeForm.allow_host_access}
+            onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, allow_host_access: c === true }); setDirtyRuntime(true); }}
+          />
+        </SettingsItem>
+      </SettingsGroup>
 
-      {/* --- SSH section --- */}
-      <div className="pf-section-divider">
-        <span className="pf-section-title">SSH Configuration</span>
-      </div>
-      <div className="pf-row pf-row-triple">
-        <div className="pf-field">
-          <label className="pf-label">Host</label>
+      <SettingsGroup title="SSH Configuration">
+        <SettingsItem title="Host" wide>
           <Input
             value={runtimeForm.ssh_host}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_host: e.target.value }); setDirtyRuntime(true); }}
             placeholder="localhost"
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Port</label>
+        </SettingsItem>
+        <SettingsItem title="Port">
           <Input
-            numeric
-            type="number"
-            min={1}
-            max={65535}
+            numeric type="number" min={1} max={65535} className="w-[100px]"
             value={runtimeForm.ssh_port}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_port: Number(e.target.value) || 22 }); setDirtyRuntime(true); }}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">User</label>
+        </SettingsItem>
+        <SettingsItem title="User" wide>
           <Input
             value={runtimeForm.ssh_user}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_user: e.target.value }); setDirtyRuntime(true); }}
             placeholder="root"
           />
-        </div>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">Auth Method</label>
+        </SettingsItem>
+        <SettingsItem title="Auth Method">
           <Select
             value={runtimeForm.ssh_auth_method}
             onValueChange={(val) => { setRuntimeForm({ ...runtimeForm, ssh_auth_method: val }); setDirtyRuntime(true); }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Select auth method" />
             </SelectTrigger>
             <SelectContent>
@@ -207,73 +179,61 @@ export function RuntimeTab({
               <SelectItem value="password">Password</SelectItem>
             </SelectContent>
           </Select>
-        </div>
+        </SettingsItem>
         {runtimeForm.ssh_auth_method === 'password' ? (
-          <div className="pf-field">
-            <label className="pf-label">Password</label>
+          <SettingsItem title="Password" wide>
             <Input
               type="password"
               value={runtimeForm.ssh_password}
               onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_password: e.target.value }); setDirtyRuntime(true); }}
               placeholder="SSH password"
             />
-          </div>
+          </SettingsItem>
         ) : (
-          <div className="pf-field">
-            <label className="pf-label">Private Key Path</label>
-            <Input
-              value={runtimeForm.ssh_private_key_path}
-              onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_private_key_path: e.target.value }); setDirtyRuntime(true); }}
-              placeholder="~/.ssh/id_rsa"
-            />
-          </div>
+          <>
+            <SettingsItem title="Private Key Path" wide>
+              <Input
+                value={runtimeForm.ssh_private_key_path}
+                onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_private_key_path: e.target.value }); setDirtyRuntime(true); }}
+                placeholder="~/.ssh/id_rsa"
+              />
+            </SettingsItem>
+            <SettingsItem title="Passphrase" wide>
+              <Input
+                type="password"
+                value={runtimeForm.ssh_passphrase}
+                onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_passphrase: e.target.value }); setDirtyRuntime(true); }}
+                placeholder="(optional)"
+              />
+            </SettingsItem>
+            <SettingsItem title="Known Hosts Path" wide>
+              <Input
+                value={runtimeForm.ssh_known_hosts_path}
+                onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_known_hosts_path: e.target.value }); setDirtyRuntime(true); }}
+                placeholder="~/.ssh/known_hosts"
+              />
+            </SettingsItem>
+          </>
         )}
-      </div>
-      {runtimeForm.ssh_auth_method === 'public_key' && (
-        <div className="pf-row">
-          <div className="pf-field">
-            <label className="pf-label">Passphrase</label>
-            <Input
-              type="password"
-              value={runtimeForm.ssh_passphrase}
-              onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_passphrase: e.target.value }); setDirtyRuntime(true); }}
-              placeholder="(optional)"
-            />
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Known Hosts Path</label>
-            <Input
-              value={runtimeForm.ssh_known_hosts_path}
-              onChange={(e) => { setRuntimeForm({ ...runtimeForm, ssh_known_hosts_path: e.target.value }); setDirtyRuntime(true); }}
-              placeholder="~/.ssh/known_hosts"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* --- Docker section --- */}
-      <div className="pf-section-divider">
-        <span className="pf-section-title">Docker Configuration</span>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">Default Image</label>
+      </SettingsGroup>
+      <SettingsGroup title="Docker Configuration">
+        <SettingsItem
+          title="Default Image"
+          description="Container image used for Docker-backend executions when not specified per-request"
+          wide
+        >
           <Input
             value={runtimeForm.docker_default_image}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_default_image: e.target.value }); setDirtyRuntime(true); }}
             placeholder="e.g. python:3.12-slim, ubuntu:24.04"
           />
-          <span className="pf-hint">Container image used for Docker-backend executions when not specified per-request</span>
-        </div>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">Network Mode</label>
+        </SettingsItem>
+        <SettingsItem title="Network Mode">
           <Select
             value={runtimeForm.docker_network_mode}
             onValueChange={(val) => { setRuntimeForm({ ...runtimeForm, docker_network_mode: val }); setDirtyRuntime(true); }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Select network mode" />
             </SelectTrigger>
             <SelectContent>
@@ -282,77 +242,53 @@ export function RuntimeTab({
               <SelectItem value="host">host</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Container User</label>
+        </SettingsItem>
+        <SettingsItem title="Container User" wide>
           <Input
             value={runtimeForm.docker_user}
             onChange={(e) => { setRuntimeForm({ ...runtimeForm, docker_user: e.target.value }); setDirtyRuntime(true); }}
             placeholder="e.g. 1000:1000"
           />
-        </div>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">
-            <Checkbox
-              checked={runtimeForm.docker_privileged}
-              onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, docker_privileged: c === true }); setDirtyRuntime(true); }}
-            />
-            {' '}Privileged mode
-          </label>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">
-            <Checkbox
-              checked={runtimeForm.docker_readonly_rootfs}
-              onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, docker_readonly_rootfs: c === true }); setDirtyRuntime(true); }}
-            />
-            {' '}Read-only root filesystem
-          </label>
-        </div>
-      </div>
-
-      {/* Cap Drop / Cap Add */}
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">Cap Drop</label>
+        </SettingsItem>
+        <SettingsItem title="Privileged mode">
+          <Checkbox
+            checked={runtimeForm.docker_privileged}
+            onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, docker_privileged: c === true }); setDirtyRuntime(true); }}
+          />
+        </SettingsItem>
+        <SettingsItem title="Read-only root filesystem">
+          <Checkbox
+            checked={runtimeForm.docker_readonly_rootfs}
+            onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, docker_readonly_rootfs: c === true }); setDirtyRuntime(true); }}
+          />
+        </SettingsItem>
+        <SettingsItem title="Cap Drop" wide>
           <TagChipInput
             tags={runtimeForm.docker_cap_drop}
             onChange={(next) => { setRuntimeForm({ ...runtimeForm, docker_cap_drop: next }); setDirtyRuntime(true); }}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Cap Add</label>
+        </SettingsItem>
+        <SettingsItem title="Cap Add" wide>
           <TagChipInput
             tags={runtimeForm.docker_cap_add}
             onChange={(next) => { setRuntimeForm({ ...runtimeForm, docker_cap_add: next }); setDirtyRuntime(true); }}
           />
-        </div>
-      </div>
-
-      {/* DNS / Extra Hosts */}
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">DNS Servers</label>
+        </SettingsItem>
+        <SettingsItem title="DNS Servers" wide>
           <TagChipInput
             tags={runtimeForm.docker_dns}
             onChange={(next) => { setRuntimeForm({ ...runtimeForm, docker_dns: next }); setDirtyRuntime(true); }}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Extra Hosts</label>
+        </SettingsItem>
+        <SettingsItem title="Extra Hosts" wide>
           <TagChipInput
             tags={runtimeForm.docker_extra_hosts}
             onChange={(next) => { setRuntimeForm({ ...runtimeForm, docker_extra_hosts: next }); setDirtyRuntime(true); }}
           />
-        </div>
-      </div>
-
-      {/* Environment Variables */}
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">Environment Variables</label>
+        </SettingsItem>
+      </SettingsGroup>
+      <SettingsGroup title="Docker Environment Variables">
+        <div className="settings-item--custom-body">
           <div className="pf-kv-list">
             {Object.entries(runtimeForm.docker_default_env).map(([k, v], i) => (
               <div key={i} className="pf-kv-row">
@@ -403,12 +339,10 @@ export function RuntimeTab({
             >+ Add Variable</button>
           </div>
         </div>
-      </div>
+      </SettingsGroup>
 
-      {/* Volume Mappings */}
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">Volume Mappings</label>
+      <SettingsGroup title="Docker Volume Mappings">
+        <div className="settings-item--custom-body">
           <div className="pf-kv-list">
             {runtimeForm.docker_default_volumes.map((vol, i) => (
               <div key={i} className="pf-kv-row">
@@ -475,113 +409,88 @@ export function RuntimeTab({
             >+ Add Volume</button>
           </div>
         </div>
-      </div>
+      </SettingsGroup>
 
-      {/* --- Python Environment (uv) section --- */}
-      <div className="pf-section-divider">
-        <span className="pf-section-title">Python Environment (uv)</span>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">
-            <Checkbox
-              checked={runtimeForm.python_venv_enabled}
-              onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, python_venv_enabled: c === true }); setDirtyRuntime(true); }}
-            />
-            {' '}Enable Python environment
-          </label>
-          <span className="pf-hint">When enabled, the Python venv path is injected into the system prompt so the LLM uses the correct runtime</span>
-        </div>
-      </div>
-      {runtimeForm.python_venv_enabled && (
-        <>
-          <div className="pf-row">
-            <div className="pf-field">
-              <label className="pf-label">uv Binary Path</label>
+      <SettingsGroup
+        title="Python Environment (uv)"
+        description="When enabled, the Python venv path is injected into the system prompt so the LLM uses the correct runtime"
+      >
+        <SettingsItem title="Enable Python environment">
+          <Checkbox
+            checked={runtimeForm.python_venv_enabled}
+            onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, python_venv_enabled: c === true }); setDirtyRuntime(true); }}
+          />
+        </SettingsItem>
+        {runtimeForm.python_venv_enabled && (
+          <>
+            <SettingsItem title="uv Binary Path" wide>
               <Input
                 value={runtimeForm.python_uv_path}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_uv_path: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="uv"
               />
-            </div>
-            <div className="pf-field">
-              <label className="pf-label">Python Version</label>
+            </SettingsItem>
+            <SettingsItem title="Python Version" wide>
               <Input
                 value={runtimeForm.python_version}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_version: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="3.12"
               />
-            </div>
-          </div>
-          <div className="pf-row">
-            <div className="pf-field">
-              <label className="pf-label">Venv Directory</label>
+            </SettingsItem>
+            <SettingsItem title="Venv Directory" wide>
               <Input
                 value={runtimeForm.python_venv_dir}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_venv_dir: e.target.value }); setDirtyRuntime(true); }}
                 placeholder=".venv"
               />
-            </div>
-            <div className="pf-field">
-              <label className="pf-label">Working Directory</label>
+            </SettingsItem>
+            <SettingsItem title="Working Directory" wide>
               <Input
                 value={runtimeForm.python_working_dir}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, python_working_dir: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="(uses current dir)"
               />
-            </div>
-          </div>
-        </>
-      )}
+            </SettingsItem>
+          </>
+        )}
+      </SettingsGroup>
 
-      {/* --- JavaScript Environment (bun) section --- */}
-      <div className="pf-section-divider">
-        <span className="pf-section-title">JavaScript Environment (bun)</span>
-      </div>
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">
-            <Checkbox
-              checked={runtimeForm.bun_venv_enabled}
-              onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, bun_venv_enabled: c === true }); setDirtyRuntime(true); }}
-            />
-            {' '}Enable JavaScript environment
-          </label>
-          <span className="pf-hint">When enabled, the Bun path is injected into the system prompt so the LLM uses the correct JS runtime</span>
-        </div>
-      </div>
-      {runtimeForm.bun_venv_enabled && (
-        <>
-          <div className="pf-row">
-            <div className="pf-field">
-              <label className="pf-label">bun Binary Path</label>
+      <SettingsGroup
+        title="JavaScript Environment (bun)"
+        description="When enabled, the Bun path is injected into the system prompt so the LLM uses the correct JS runtime"
+      >
+        <SettingsItem title="Enable JavaScript environment">
+          <Checkbox
+            checked={runtimeForm.bun_venv_enabled}
+            onCheckedChange={(c) => { setRuntimeForm({ ...runtimeForm, bun_venv_enabled: c === true }); setDirtyRuntime(true); }}
+          />
+        </SettingsItem>
+        {runtimeForm.bun_venv_enabled && (
+          <>
+            <SettingsItem title="bun Binary Path" wide>
               <Input
                 value={runtimeForm.bun_path}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_path: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="bun"
               />
-            </div>
-            <div className="pf-field">
-              <label className="pf-label">Bun Version</label>
+            </SettingsItem>
+            <SettingsItem title="Bun Version" wide>
               <Input
                 value={runtimeForm.bun_version}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_version: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="latest"
               />
-            </div>
-          </div>
-          <div className="pf-row">
-            <div className="pf-field pf-field-full">
-              <label className="pf-label">Working Directory</label>
+            </SettingsItem>
+            <SettingsItem title="Working Directory" wide>
               <Input
                 value={runtimeForm.bun_working_dir}
                 onChange={(e) => { setRuntimeForm({ ...runtimeForm, bun_working_dir: e.target.value }); setDirtyRuntime(true); }}
                 placeholder="(uses current dir)"
               />
-            </div>
-          </div>
-        </>
-      )}
+            </SettingsItem>
+          </>
+        )}
+      </SettingsGroup>
     </div>
     </>
   );

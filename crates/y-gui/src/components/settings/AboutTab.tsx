@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { SettingsGroup, SettingsItem } from '../ui';
 
 export function AboutTab() {
   const [appVersion, setAppVersion] = useState('...');
@@ -15,29 +16,23 @@ export function AboutTab() {
 
   return (
     <div className="settings-section">
-      <h3 className="section-title">y-agent Desktop</h3>
-      <div className="about-info">
-        <div className="about-row">
-          <span className="about-label">Author</span>
-          <span className="about-value"><a href="#" onClick={(e) => { e.preventDefault(); openUrl('https://gorgias.me'); }}>Gorgias</a></span>
-        </div>
-        <div className="about-row">
-          <span className="about-label">Version</span>
+      <SettingsGroup title="y-agent Desktop">
+        <SettingsItem title="Author">
+          <a href="#" onClick={(e) => { e.preventDefault(); openUrl('https://gorgias.me'); }}>Gorgias</a>
+        </SettingsItem>
+        <SettingsItem title="Version">
           <span className="about-value">{appVersion}</span>
-        </div>
-        <div className="about-row">
-          <span className="about-label">Framework</span>
+        </SettingsItem>
+        <SettingsItem title="Framework">
           <span className="about-value">Tauri v2</span>
-        </div>
-        <div className="about-row">
-          <span className="about-label">Frontend</span>
+        </SettingsItem>
+        <SettingsItem title="Frontend">
           <span className="about-value">React + TypeScript</span>
-        </div>
-        <div className="about-row">
-          <span className="about-label">Backend</span>
+        </SettingsItem>
+        <SettingsItem title="Backend">
           <span className="about-value">Rust (y-service)</span>
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
     </div>
   );
 }

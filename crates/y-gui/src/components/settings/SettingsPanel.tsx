@@ -53,6 +53,7 @@ import { AboutTab } from './AboutTab';
 import { Button, Tabs, TabsContent } from '../ui';
 
 import './SettingsPanel.css';
+import './SettingsForm.css';
 
 interface SettingsPanelProps {
   config: GuiConfig;

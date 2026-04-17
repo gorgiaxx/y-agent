@@ -15,6 +15,7 @@ import { PromptTab } from './PromptTab';
 import { ModelTab } from './ModelTab';
 import { LimitsTab } from './LimitsTab';
 import '../../settings/ProvidersTab.css';
+import '../../settings/SettingsForm.css';
 import './AgentEditorDialog.css';
 
 interface AgentEditorDialogProps {

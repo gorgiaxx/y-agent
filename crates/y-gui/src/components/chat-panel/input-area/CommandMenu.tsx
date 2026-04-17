@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, Puzzle, BookOpen } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Search, Puzzle, BookOpen, ChevronLeft } from 'lucide-react';
 import { filterCommands, CATEGORY_ORDER } from '../../../commands';
 import type { GuiCommandDef, CommandCategory } from '../../../commands';
-import type { SkillInfo, KnowledgeCollectionInfo } from '../../../types';
+import type { SkillInfo, KnowledgeCollectionInfo, ProviderInfo } from '../../../types';
 import './CommandMenu.css';
 
 /** Union item type for the flat navigation list. */
@@ -11,27 +11,40 @@ type MenuItem =
   | { kind: 'skill'; skill: SkillInfo }
   | { kind: 'collection'; collection: KnowledgeCollectionInfo };
 
+/** Argument completion item for non-immediate commands. */
+interface ArgItem {
+  id: string;
+  label: string;
+}
+
 interface CommandMenuProps {
   skills: SkillInfo[];
   knowledgeCollections?: KnowledgeCollectionInfo[];
+  providers?: ProviderInfo[];
+  selectedProviderId?: string;
   onSelect: (command: GuiCommandDef) => void;
   onSelectSkill: (skillName: string) => void;
   onSelectKbCollection?: (collectionName: string) => void;
+  onSelectModelProvider?: (providerId: string) => void;
   onDismiss: () => void;
 }
 
 export function CommandMenu({
   skills,
   knowledgeCollections = [],
+  providers = [],
+  selectedProviderId,
   onSelect,
   onSelectSkill,
   onSelectKbCollection,
+  onSelectModelProvider,
   onDismiss,
 }: CommandMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [argMode, setArgMode] = useState<{ command: string; items: ArgItem[] } | null>(null);
 
   // Focus search input on mount.
   useEffect(() => {
@@ -60,8 +73,21 @@ export function CommandMenu({
     );
   }, [search, knowledgeCollections]);
 
+  // Filtered arg completions (when in arg mode).
+  const filteredArgItems = useMemo(() => {
+    if (!argMode) return [];
+    if (!search) return argMode.items;
+    const q = search.toLowerCase();
+    return argMode.items.filter(
+      (item) =>
+        item.id.toLowerCase().includes(q) ||
+        item.label.toLowerCase().includes(q),
+    );
+  }, [search, argMode]);
+
   // Build a flat item list for keyboard navigation.
   const flatItems = useMemo<MenuItem[]>(() => {
+    if (argMode) return [];
     const items: MenuItem[] = [];
     // Commands grouped by category, preserving category order.
     for (const cat of CATEGORY_ORDER) {
@@ -83,7 +109,8 @@ export function CommandMenu({
   }, [filteredCommands, filteredSkills, filteredCollections]);
 
   // Clamp selection.
-  const clampedIndex = Math.max(0, Math.min(selectedIndex, flatItems.length - 1));
+  const totalItems = argMode ? filteredArgItems.length : flatItems.length;
+  const clampedIndex = Math.max(0, Math.min(selectedIndex, totalItems - 1));
 
   // Reset selection when search changes.
   useEffect(() => {
@@ -115,13 +142,45 @@ export function CommandMenu({
   // Select the current item.
   const selectItem = (item: MenuItem) => {
     if (item.kind === 'command') {
-      onSelect(item.command);
+      if (!item.command.immediate) {
+        enterArgModeForCommand(item.command);
+      } else {
+        onSelect(item.command);
+      }
     } else if (item.kind === 'skill') {
       onSelectSkill(item.skill.name);
     } else {
       onSelectKbCollection?.(item.collection.name);
     }
   };
+
+  const enterArgModeForCommand = useCallback((cmd: GuiCommandDef) => {
+    if (cmd.name === 'model') {
+      const items: ArgItem[] = providers.map((p) => ({
+        id: p.id,
+        label: p.model,
+      }));
+      setArgMode({ command: cmd.name, items });
+      setSearch('');
+      setSelectedIndex(0);
+      searchRef.current?.focus();
+    } else {
+      onSelect(cmd);
+    }
+  }, [providers, onSelect]);
+
+  const exitArgMode = useCallback(() => {
+    setArgMode(null);
+    setSearch('');
+    setSelectedIndex(0);
+    searchRef.current?.focus();
+  }, []);
+
+  const selectArgItem = useCallback((item: ArgItem) => {
+    if (argMode?.command === 'model') {
+      onSelectModelProvider?.(item.id);
+    }
+  }, [argMode, onSelectModelProvider]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowUp') {
@@ -131,17 +190,30 @@ export function CommandMenu({
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSelectedIndex((i) => Math.min(flatItems.length - 1, i + 1));
+      setSelectedIndex((i) => Math.min(totalItems - 1, i + 1));
       return;
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      onDismiss();
+      if (argMode) {
+        exitArgMode();
+      } else {
+        onDismiss();
+      }
+      return;
+    }
+    if (e.key === 'Backspace' && argMode && search === '') {
+      e.preventDefault();
+      exitArgMode();
       return;
     }
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
-      if (flatItems.length > 0) {
+      if (argMode) {
+        if (filteredArgItems.length > 0) {
+          selectArgItem(filteredArgItems[clampedIndex]);
+        }
+      } else if (flatItems.length > 0) {
         selectItem(flatItems[clampedIndex]);
       }
       return;

@@ -8,6 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Utc};
 
 use crate::tui::selection::TextSelection;
+use crate::tui::theme::Theme;
 
 // TurnMeta
 #[derive(Debug, Clone, PartialEq)]
@@ -269,6 +270,8 @@ pub struct AppState {
     /// Monotonic tick counter for frame-based animations (incremented every 250ms).
     pub tick_counter: u64,
     pub turn_meta_cache: HashMap<String, TurnMeta>,
+    /// Terminal-aware color theme (auto-detected at startup).
+    pub theme: Theme,
 }
 
 impl Default for AppState {
@@ -304,6 +307,7 @@ impl Default for AppState {
             selected_provider_id: None,
             tick_counter: 0,
             turn_meta_cache: HashMap::new(),
+            theme: Theme::default(),
         }
     }
 }

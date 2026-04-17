@@ -4,27 +4,12 @@
 //! aligned with the GUI sidebar layout.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use crate::tui::state::{AppState, PanelFocus};
-
-// ---------------------------------------------------------------------------
-// Color palette
-// ---------------------------------------------------------------------------
-
-const COLOR_BORDER_FOCUSED: Color = Color::Rgb(120, 180, 255);
-const COLOR_BORDER_UNFOCUSED: Color = Color::Rgb(50, 50, 65);
-const COLOR_TITLE: Color = Color::Rgb(180, 180, 200);
-const COLOR_SELECTED: Color = Color::Rgb(120, 180, 255);
-const COLOR_ACTIVE: Color = Color::Rgb(130, 220, 130);
-const COLOR_NORMAL: Color = Color::Rgb(180, 180, 200);
-const COLOR_MUTED: Color = Color::Rgb(90, 90, 110);
-const COLOR_NEW_SESSION: Color = Color::Rgb(100, 160, 255);
-const COLOR_EMPTY: Color = Color::Rgb(80, 80, 100);
-const COLOR_PANEL_BG: Color = Color::Rgb(22, 22, 30);
 
 // ---------------------------------------------------------------------------
 // Public render entry point
@@ -33,22 +18,23 @@ const COLOR_PANEL_BG: Color = Color::Rgb(22, 22, 30);
 /// Render the sidebar panel into the given area.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_focused = state.focus == PanelFocus::Sidebar;
+    let t = &state.theme;
 
     let border_style = if is_focused {
-        Style::default().fg(COLOR_BORDER_FOCUSED)
+        Style::default().fg(t.border_focused())
     } else {
-        Style::default().fg(COLOR_BORDER_UNFOCUSED)
+        Style::default().fg(t.border_unfocused())
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
         .title(" Sessions ")
-        .title_style(Style::default().fg(COLOR_TITLE));
+        .title_style(Style::default().fg(t.title()));
 
     let inner = block.inner(area);
     frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(COLOR_PANEL_BG)),
+        Paragraph::new("").style(Style::default().bg(t.panel_bg())),
         area,
     );
     frame.render_widget(block, area);
@@ -65,11 +51,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         height: 1,
     };
     let new_session_line = Line::from(vec![
-        Span::styled("  + ", Style::default().fg(COLOR_NEW_SESSION)),
+        Span::styled("  + ", Style::default().fg(t.new_session())),
         Span::styled(
             "New Session",
             Style::default()
-                .fg(COLOR_NEW_SESSION)
+                .fg(t.new_session())
                 .add_modifier(Modifier::BOLD),
         ),
     ]);
@@ -89,7 +75,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             sep_char,
-            Style::default().fg(COLOR_BORDER_UNFOCUSED),
+            Style::default().fg(t.border_unfocused()),
         ))),
         sep_area,
     );
@@ -107,7 +93,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     if state.sessions.is_empty() {
         let items = vec![ListItem::new(Line::from(Span::styled(
             "  No sessions yet",
-            Style::default().fg(COLOR_EMPTY),
+            Style::default().fg(t.empty()),
         )))];
         let list = List::new(items);
         frame.render_widget(list, list_area);
@@ -160,18 +146,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
             let style = if is_selected {
                 Style::default()
-                    .fg(COLOR_SELECTED)
+                    .fg(t.selected())
                     .add_modifier(Modifier::BOLD)
             } else if is_current {
-                Style::default().fg(COLOR_ACTIVE)
+                Style::default().fg(t.active())
             } else {
-                Style::default().fg(COLOR_NORMAL)
+                Style::default().fg(t.normal())
             };
 
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, style),
                 Span::styled(label, style),
-                Span::styled(suffix, Style::default().fg(COLOR_MUTED)),
+                Span::styled(suffix, Style::default().fg(t.muted())),
             ]))
         })
         .collect();

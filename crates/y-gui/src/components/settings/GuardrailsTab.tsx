@@ -10,7 +10,7 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { GUARDRAILS_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox, Input } from '../ui';
+import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
 
 interface GuardrailsTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -100,14 +100,13 @@ export function GuardrailsTab({
         </h3>
       </div>
       <div className="settings-form-wrap">
-        <div className="pf-row">
-          <div className="pf-field">
-            <label className="pf-label">Default Permission</label>
+        <SettingsGroup title="Permissions">
+          <SettingsItem title="Default Permission" description="Global default permission for tools.">
             <Select
               value={guardrailsForm.default_permission}
               onValueChange={(val) => { setGuardrailsForm({ ...guardrailsForm, default_permission: val }); setDirtyGuardrails(true); }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-[140px]">
                 <SelectValue placeholder="Select default permission" />
               </SelectTrigger>
               <SelectContent>
@@ -117,96 +116,74 @@ export function GuardrailsTab({
                 <SelectItem value="deny">Deny</SelectItem>
               </SelectContent>
             </Select>
-            <span className="pf-hint">Global default permission for tools.</span>
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Max Tool Iterations</label>
+          </SettingsItem>
+          <SettingsItem title="Max Tool Iterations" description="Max consecutive LLM calls in a tool-call loop.">
             <Input
               numeric
               type="number"
               min={1}
               max={500}
+              className="w-[100px]"
               value={guardrailsForm.max_tool_iterations}
               onChange={(e) => { setGuardrailsForm({ ...guardrailsForm, max_tool_iterations: Number(e.target.value) || 50 }); setDirtyGuardrails(true); }}
             />
-            <span className="pf-hint">Max consecutive LLM calls in a tool-call loop.</span>
-          </div>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field pf-field-full">
-            <label className="pf-label">
-              <Checkbox
-                checked={guardrailsForm.dangerous_auto_ask}
-                onCheckedChange={(c) => { setGuardrailsForm({ ...guardrailsForm, dangerous_auto_ask: c === true }); setDirtyGuardrails(true); }}
-              />
-              {' '}Dangerous tools auto-escalate to "ask"
-            </label>
-          </div>
-        </div>
+          </SettingsItem>
+          <SettingsItem title="Dangerous tools auto-escalate to ask">
+            <Checkbox
+              checked={guardrailsForm.dangerous_auto_ask}
+              onCheckedChange={(c) => { setGuardrailsForm({ ...guardrailsForm, dangerous_auto_ask: c === true }); setDirtyGuardrails(true); }}
+            />
+          </SettingsItem>
+        </SettingsGroup>
 
-        {/* Loop Guard */}
-        <div className="pf-section-divider">
-          <span className="pf-section-title">Loop Guard</span>
-        </div>
-        <div className="pf-row pf-row-quad">
-          <div className="pf-field">
-            <label className="pf-label">Max Iterations</label>
+        <SettingsGroup title="Loop Guard">
+          <SettingsItem title="Max Iterations">
             <Input
               numeric
               type="number"
               min={1}
+              className="w-[100px]"
               value={guardrailsForm.loop_guard_max_iterations}
               onChange={(e) => { setGuardrailsForm({ ...guardrailsForm, loop_guard_max_iterations: Number(e.target.value) || 50 }); setDirtyGuardrails(true); }}
             />
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Similarity Threshold</label>
+          </SettingsItem>
+          <SettingsItem title="Similarity Threshold">
             <Input
               numeric
               type="number"
               min={0}
               max={1}
               step={0.05}
+              className="w-[100px]"
               value={guardrailsForm.loop_guard_similarity_threshold}
               onChange={(e) => { setGuardrailsForm({ ...guardrailsForm, loop_guard_similarity_threshold: Number(e.target.value) || 0.95 }); setDirtyGuardrails(true); }}
             />
-          </div>
-        </div>
+          </SettingsItem>
+        </SettingsGroup>
 
-        {/* Risk Scoring */}
-        <div className="pf-section-divider">
-          <span className="pf-section-title">Risk Scoring</span>
-        </div>
-        <div className="pf-row pf-row-quad">
-          <div className="pf-field">
-            <label className="pf-label">High Risk Threshold</label>
+        <SettingsGroup title="Risk Scoring">
+          <SettingsItem title="High Risk Threshold">
             <Input
               numeric
               type="number"
               min={0}
               max={1}
               step={0.1}
+              className="w-[100px]"
               value={guardrailsForm.risk_high_risk_threshold}
               onChange={(e) => { setGuardrailsForm({ ...guardrailsForm, risk_high_risk_threshold: Number(e.target.value) || 0.8 }); setDirtyGuardrails(true); }}
             />
-          </div>
-        </div>
+          </SettingsItem>
+        </SettingsGroup>
 
-        {/* HITL Escalation */}
-        <div className="pf-section-divider">
-          <span className="pf-section-title">HITL Escalation</span>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field pf-field-full">
-            <label className="pf-label">
-              <Checkbox
-                checked={guardrailsForm.hitl_auto_approve_low_risk}
-                onCheckedChange={(c) => { setGuardrailsForm({ ...guardrailsForm, hitl_auto_approve_low_risk: c === true }); setDirtyGuardrails(true); }}
-              />
-              {' '}Auto-approve low-risk actions
-            </label>
-          </div>
-        </div>
+        <SettingsGroup title="HITL Escalation">
+          <SettingsItem title="Auto-approve low-risk actions">
+            <Checkbox
+              checked={guardrailsForm.hitl_auto_approve_low_risk}
+              onCheckedChange={(c) => { setGuardrailsForm({ ...guardrailsForm, hitl_auto_approve_low_risk: c === true }); setDirtyGuardrails(true); }}
+            />
+          </SettingsItem>
+        </SettingsGroup>
       </div>
     </>
   );

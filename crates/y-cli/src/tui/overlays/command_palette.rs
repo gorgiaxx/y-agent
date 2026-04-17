@@ -4,12 +4,13 @@
 //! fuzzy-filtered list of available commands that updates on each keystroke.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use crate::tui::commands::registry::{CommandInfo, CommandRegistry};
+use crate::tui::theme::Theme;
 
 /// State for the command palette overlay.
 #[derive(Debug, Clone)]
@@ -22,6 +23,12 @@ pub struct CommandPaletteState {
     pub filtered_names: Vec<String>,
     /// Cached filtered descriptions.
     pub filtered_descriptions: Vec<String>,
+    /// When set, the palette is in argument-completion mode for this command.
+    pub arg_command: Option<String>,
+    /// Available argument completions (e.g. provider IDs for `/model`).
+    pub arg_completions: Vec<(String, String)>,
+    /// Filtered argument completions based on current input.
+    pub filtered_args: Vec<(String, String)>,
 }
 
 impl Default for CommandPaletteState {
@@ -41,11 +48,48 @@ impl CommandPaletteState {
             selected: 0,
             filtered_names: names,
             filtered_descriptions: descs,
+            arg_command: None,
+            arg_completions: Vec::new(),
+            filtered_args: Vec::new(),
         }
+    }
+
+    /// Enter argument-completion mode for a command.
+    pub fn enter_arg_mode(&mut self, command: String, completions: Vec<(String, String)>) {
+        self.arg_command = Some(command);
+        self.arg_completions = completions.clone();
+        self.filtered_args = completions;
+        self.input.clear();
+        self.selected = 0;
+    }
+
+    /// Whether the palette is in argument-completion mode.
+    pub fn in_arg_mode(&self) -> bool {
+        self.arg_command.is_some()
     }
 
     /// Update the filtered results based on current input prefix.
     pub fn update_filter(&mut self) {
+        if self.in_arg_mode() {
+            let query = self.input.to_lowercase();
+            self.filtered_args = if query.is_empty() {
+                self.arg_completions.clone()
+            } else {
+                self.arg_completions
+                    .iter()
+                    .filter(|(id, desc)| {
+                        id.to_lowercase().starts_with(&query)
+                            || id.to_lowercase().contains(&query)
+                            || desc.to_lowercase().contains(&query)
+                    })
+                    .cloned()
+                    .collect()
+            };
+            if self.selected >= self.filtered_args.len() {
+                self.selected = self.filtered_args.len().saturating_sub(1);
+            }
+            return;
+        }
         let registry = CommandRegistry::new();
         let results: Vec<&CommandInfo> = if self.input.is_empty() {
             registry.all().iter().collect()
@@ -69,16 +113,34 @@ impl CommandPaletteState {
 
     /// Move selection down.
     pub fn select_next(&mut self) {
-        if self.selected + 1 < self.filtered_names.len() {
+        let max = if self.in_arg_mode() {
+            self.filtered_args.len()
+        } else {
+            self.filtered_names.len()
+        };
+        if self.selected + 1 < max {
             self.selected += 1;
         }
     }
 
     /// Get the currently selected command name (if any).
     pub fn selected_command(&self) -> Option<&str> {
+        if self.in_arg_mode() {
+            return None;
+        }
         self.filtered_names
             .get(self.selected)
             .map(std::string::String::as_str)
+    }
+
+    /// Get the currently selected argument value (if in arg mode).
+    pub fn selected_arg(&self) -> Option<&str> {
+        if !self.in_arg_mode() {
+            return None;
+        }
+        self.filtered_args
+            .get(self.selected)
+            .map(|(id, _)| id.as_str())
     }
 
     /// Push a character to the input.
@@ -98,29 +160,36 @@ impl CommandPaletteState {
 ///
 /// The palette is a floating popup anchored to the bottom of the screen,
 /// positioned above the input area.
-pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState) {
-    // Calculate popup size: min 5 rows, up to half the screen.
-    let max_height = (area.height / 2).clamp(5, 15);
-    let popup_height =
-        (u16::try_from(palette.filtered_names.len()).unwrap_or(0) + 3).min(max_height);
-    let popup_width = area.width.clamp(30, 50);
+pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState, t: &Theme) {
+    let item_count = if palette.in_arg_mode() {
+        palette.filtered_args.len()
+    } else {
+        palette.filtered_names.len()
+    };
 
-    // Position: centered horizontally, above the bottom quarter.
+    let max_height = (area.height / 2).clamp(5, 15);
+    let popup_height = (u16::try_from(item_count).unwrap_or(0) + 3).min(max_height);
+    let popup_width = area.width.clamp(30, 55);
+
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + area.height.saturating_sub(popup_height + 4);
 
     let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-    // Clear the area behind the popup.
     frame.render_widget(Clear, popup_area);
+
+    let title = if let Some(cmd) = &palette.arg_command {
+        format!(" /{cmd} ")
+    } else {
+        " Commands ".to_string()
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(" Commands ")
+        .border_style(Style::default().fg(t.input_border_focused()))
+        .title(title)
         .title_style(
             Style::default()
-                .fg(Color::White)
+                .fg(t.input_title())
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -131,16 +200,20 @@ pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState) {
         return;
     }
 
-    // Input line.
+    let prefix = if palette.in_arg_mode() { "/" } else { ":" };
+    let display_input = if let Some(cmd) = &palette.arg_command {
+        format!("{cmd} {}", palette.input)
+    } else {
+        palette.input.clone()
+    };
     let input_line = Line::from(vec![
-        Span::styled(":", Style::default().fg(Color::Yellow)),
-        Span::styled(&palette.input, Style::default().fg(Color::White)),
-        Span::styled("█", Style::default().fg(Color::Cyan)),
+        Span::styled(prefix, Style::default().fg(t.warning())),
+        Span::styled(display_input, Style::default().fg(t.text())),
+        Span::styled("\u{2588}", Style::default().fg(t.input_border_focused())),
     ]);
     let input_area = Rect::new(inner.x, inner.y, inner.width, 1);
     frame.render_widget(Paragraph::new(input_line), input_area);
 
-    // List area.
     let list_area = Rect::new(
         inner.x,
         inner.y + 1,
@@ -148,6 +221,19 @@ pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState) {
         inner.height.saturating_sub(1),
     );
 
+    if palette.in_arg_mode() {
+        render_arg_list(frame, list_area, palette, t);
+    } else {
+        render_command_list(frame, list_area, palette, t);
+    }
+}
+
+fn render_command_list(
+    frame: &mut Frame,
+    list_area: Rect,
+    palette: &CommandPaletteState,
+    t: &Theme,
+) {
     let items: Vec<ListItem> = palette
         .filtered_names
         .iter()
@@ -160,17 +246,19 @@ pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState) {
 
             let style = if i == palette.selected {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .fg(t.panel_bg())
+                    .bg(t.input_border_focused())
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(t.text())
             };
 
             let desc_style = if i == palette.selected {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
+                Style::default()
+                    .fg(t.panel_bg())
+                    .bg(t.input_border_focused())
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(t.muted())
             };
 
             ListItem::new(Line::from(vec![
@@ -180,8 +268,53 @@ pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState) {
         })
         .collect();
 
-    let list = List::new(items);
-    frame.render_widget(list, list_area);
+    frame.render_widget(List::new(items), list_area);
+}
+
+fn render_arg_list(
+    frame: &mut Frame,
+    list_area: Rect,
+    palette: &CommandPaletteState,
+    t: &Theme,
+) {
+    let items: Vec<ListItem> = palette
+        .filtered_args
+        .iter()
+        .enumerate()
+        .map(|(i, (id, desc))| {
+            let style = if i == palette.selected {
+                Style::default()
+                    .fg(t.panel_bg())
+                    .bg(t.input_border_focused())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(t.text())
+            };
+
+            let desc_style = if i == palette.selected {
+                Style::default()
+                    .fg(t.panel_bg())
+                    .bg(t.input_border_focused())
+            } else {
+                Style::default().fg(t.muted())
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(format!(" {id}"), style),
+                Span::styled(format!("  {desc}"), desc_style),
+            ]))
+        })
+        .collect();
+
+    if items.is_empty() {
+        let empty = ListItem::new(Line::from(Span::styled(
+            " No matches",
+            Style::default().fg(t.muted()),
+        )));
+        frame.render_widget(List::new(vec![empty]), list_area);
+    } else {
+        frame.render_widget(List::new(items), list_area);
+    }
 }
 
 // ---------------------------------------------------------------------------

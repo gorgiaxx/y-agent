@@ -13,7 +13,7 @@ import type { ProviderFormData } from './settingsTypes';
 import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Input, Button } from '../ui';
+import { Input, Button, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
 
 // ---------------------------------------------------------------------------
 // ProviderTabPanel -- flat form for a single provider (shown in tab view)
@@ -110,17 +110,14 @@ function ProviderTabPanel({
 
   return (
     <div className="sidetab-tab-form">
-      {/* Row 0: Icon picker + Enable toggle */}
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">Provider</label>
+      <SettingsGroup title="Identity">
+        <SettingsItem title="Provider Icon">
           <ProviderIconPicker
             value={provider.icon}
             onChange={(icon) => update({ icon })}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Enabled</label>
+        </SettingsItem>
+        <SettingsItem title="Enabled">
           <label className="pf-enable-toggle">
             <button
               type="button"
@@ -135,26 +132,20 @@ function ProviderTabPanel({
               {provider.enabled ? 'Active' : 'Disabled'}
             </span>
           </label>
-        </div>
-      </div>
-
-      {/* Row 1: ID + Type */}
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">ID</label>
+        </SettingsItem>
+        <SettingsItem title="ID" wide>
           <Input
             value={provider.id}
             onChange={(e) => update({ id: e.target.value })}
             placeholder="e.g. openai-gpt4"
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Provider Type</label>
+        </SettingsItem>
+        <SettingsItem title="Provider Type">
           <Select
             value={provider.provider_type}
             onValueChange={(val) => update({ provider_type: val })}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="Select type" />
             </SelectTrigger>
             <SelectContent>
@@ -167,19 +158,23 @@ function ProviderTabPanel({
               <SelectItem value="azure">Azure OpenAI</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
 
-      {/* Row 1b: Tool Calling Mode */}
+      {/* Tool Calling Mode */}
       {(() => {
         const promptBasedDefaults = ['openai-compat', 'custom', 'ollama'];
         const effectiveMode = provider.tool_calling_mode
           ?? (promptBasedDefaults.includes(provider.provider_type) ? 'prompt_based' : 'native');
         const isNative = effectiveMode === 'native';
         return (
-          <div className="pf-row">
-            <div className="pf-field">
-              <label className="pf-label">Tool Calling Mode</label>
+          <SettingsGroup title="Tool Calling">
+            <SettingsItem
+              title="Tool Calling Mode"
+              description={provider.tool_calling_mode
+                ? 'Manually set'
+                : `Auto-detected from provider type (${promptBasedDefaults.includes(provider.provider_type) ? 'prompt_based' : 'native'})`}
+            >
               <label className="pf-enable-toggle">
                 <button
                   type="button"
@@ -194,21 +189,14 @@ function ProviderTabPanel({
                   {isNative ? 'Native' : 'Prompt-based'}
                 </span>
               </label>
-              <span className="pf-hint">
-                {provider.tool_calling_mode
-                  ? 'Manually set'
-                  : `Auto-detected from provider type (${promptBasedDefaults.includes(provider.provider_type) ? 'prompt_based' : 'native'})`}
-              </span>
-            </div>
-          </div>
+            </SettingsItem>
+          </SettingsGroup>
         );
       })()}
 
-      {/* Row 2: Model + Base URL */}
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">Model ID</label>
-          <div className="pf-model-group">
+      <SettingsGroup title="Connection">
+        <SettingsItem title="Model ID" wide>
+          <div className="pf-model-group w-full">
             <Input
               className="flex-1 min-w-0 pr-[30px]"
               value={provider.model}
@@ -233,9 +221,8 @@ function ProviderTabPanel({
               </ModelPickerDropdown>
             )}
           </div>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Base URL</label>
+        </SettingsItem>
+        <SettingsItem title="Base URL" wide>
           <Input
             value={provider.base_url ?? ''}
             onChange={(e) => update({ base_url: e.target.value || null })}
@@ -251,14 +238,9 @@ function ProviderTabPanel({
               }[provider.provider_type] ?? 'Default'
             }
           />
-        </div>
-      </div>
-
-      {/* Row 3: API Key + API Key Env */}
-      <div className="pf-row">
-        <div className="pf-field pf-field-key">
-          <label className="pf-label">API Key</label>
-          <div className="pf-key-group">
+        </SettingsItem>
+        <SettingsItem title="API Key" wide>
+          <div className="pf-key-group w-full">
             <Input
               className="flex-1 min-w-0 pr-[30px]"
               type={showKey ? 'text' : 'password'}
@@ -275,124 +257,79 @@ function ProviderTabPanel({
               {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
           </div>
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">API Key Env Var</label>
+        </SettingsItem>
+        <SettingsItem title="API Key Env Var" wide>
           <Input
             value={provider.api_key_env ?? ''}
             onChange={(e) => update({ api_key_env: e.target.value || null })}
             placeholder="e.g. OPENAI_API_KEY"
           />
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
 
-      {/* Row 4: Tags -- chip editor */}
-      <div className="pf-row">
-        <div className="pf-field pf-field-full">
-          <label className="pf-label">Tags</label>
+      <SettingsGroup title="Tags">
+        <SettingsItem
+          title="Routing Tags"
+          description="Press Enter or comma to confirm each tag"
+          wide
+        >
           <TagChipInput
             tags={provider.tags}
             onChange={(next) => update({ tags: next })}
           />
-          <span className="pf-hint">Routing tags -- press Enter or comma to confirm each tag</span>
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
 
-      {/* Row 5: Numeric settings */}
-      <div className="pf-row pf-row-quad">
-        <div className="pf-field">
-          <label className="pf-label">Max Concurrency</label>
-          <Input
-            numeric
-            type="number"
-            min={1}
-            max={2}
+      <SettingsGroup title="Parameters">
+        <SettingsItem title="Max Concurrency">
+          <Input numeric type="number" min={1} max={2} className="w-[100px]"
             value={provider.max_concurrency}
             onChange={(e) => update({ max_concurrency: Number(e.target.value) || 1 })}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Context Window</label>
-          <Input
-            numeric
-            type="number"
-            min={1}
-            max={2}
+        </SettingsItem>
+        <SettingsItem title="Context Window">
+          <Input numeric type="number" min={1} className="w-[100px]"
             value={provider.context_window}
             onChange={(e) => update({ context_window: Number(e.target.value) || 128000 })}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Temperature</label>
-          <Input
-            numeric
-            type="number"
-            step={0.1}
-            min={0}
-            max={2}
+        </SettingsItem>
+        <SettingsItem title="Temperature">
+          <Input numeric type="number" step={0.1} min={0} max={2} className="w-[100px]"
             value={provider.temperature ?? ''}
             onChange={(e) => update({ temperature: e.target.value ? Number(e.target.value) : null })}
             placeholder="--"
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Top P</label>
-          <Input
-            numeric
-            type="number"
-            step={0.05}
-            min={0}
-            max={1}
+        </SettingsItem>
+        <SettingsItem title="Top P">
+          <Input numeric type="number" step={0.05} min={0} max={1} className="w-[100px]"
             value={provider.top_p ?? ''}
             onChange={(e) => update({ top_p: e.target.value ? Number(e.target.value) : null })}
             placeholder="--"
           />
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
 
-      {/* Row 6: Cost */}
-      <div className="pf-row">
-        <div className="pf-field">
-          <label className="pf-label">Cost / 1k Input Tokens</label>
-          <Input
-            numeric
-            type="number"
-            step={0.0001}
-            min={0}
+      <SettingsGroup title="Cost">
+        <SettingsItem title="Cost / 1k Input Tokens">
+          <Input numeric type="number" step={0.0001} min={0} className="w-[100px]"
             value={provider.cost_per_1k_input}
             onChange={(e) => update({ cost_per_1k_input: Number(e.target.value) || 0 })}
           />
-        </div>
-        <div className="pf-field">
-          <label className="pf-label">Cost / 1k Output Tokens</label>
-          <Input
-            numeric
-            type="number"
-            step={0.0001}
-            min={0}
+        </SettingsItem>
+        <SettingsItem title="Cost / 1k Output Tokens">
+          <Input numeric type="number" step={0.0001} min={0} className="w-[100px]"
             value={provider.cost_per_1k_output}
             onChange={(e) => update({ cost_per_1k_output: Number(e.target.value) || 0 })}
           />
-        </div>
-      </div>
+        </SettingsItem>
+      </SettingsGroup>
 
       {/* Test connection row */}
       <div className="pf-action-row">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onDuplicate(index)}
-            title="Duplicate this provider"
-          >
-            <Copy size={13} />
-            Duplicate
+          <Button variant="outline" size="sm" onClick={() => onDuplicate(index)} title="Duplicate this provider">
+            <Copy size={13} /> Duplicate
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleTest}
-            disabled={testing}
-          >
+          <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
             {testing ? <span className="pf-spinner" /> : null}
             {testing ? 'Testing...' : 'Test Connection'}
           </Button>
@@ -562,82 +499,80 @@ export function ProvidersTab({
     <div className="settings-header">
       <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
     </div>
-    <div className="sub-list-layout">
-      {/* Left sidebar list */}
-      <div className="sub-list-sidebar">
-        <div className="sub-list-items">
-          {providersList.map((p, i) => (
-            <button
-              key={i}
-              className={`sub-list-item ${activeProviderTab === i ? 'active' : ''} ${!p.enabled ? 'sub-list-item--disabled' : ''}`}
-              onClick={() => setActiveProviderTab(i)}
-            >
-              {p.icon ? (
-                <ProviderIconImg iconId={p.icon} size={16} className="sub-list-item-icon" />
-              ) : (
-                <Bot size={14} className="sub-list-item-icon sub-list-item-icon--default" />
-              )}
-              <span className="sub-list-item-label">{p.id || `Provider ${i + 1}`}</span>
-              <span
-                className="sub-list-item-close"
-                role="button"
-                tabIndex={0}
-                title="Remove provider"
-                onClick={(e) => { e.stopPropagation(); handleProviderRemove(i); }}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleProviderRemove(i); } }}
+    <SubListLayout
+      sidebar={
+        <>
+          <div className="sub-list-items">
+            {providersList.map((p, i) => (
+              <button
+                key={i}
+                className={`sub-list-item ${activeProviderTab === i ? 'active' : ''} ${!p.enabled ? 'sub-list-item--disabled' : ''}`}
+                onClick={() => setActiveProviderTab(i)}
               >
-                <X size={11} />
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="sub-list-actions">
-          <button
-            className="sub-list-item sub-list-item-add"
-            onClick={handleProviderAdd}
-            title="Add provider"
-          >
-            <Plus size={13} />
-            <span>Add</span>
-          </button>
-          <Button
-            variant="icon"
-            size="sm"
-            onClick={handleProviderMoveUp}
-            disabled={activeProviderTab <= 0 || providersList.length === 0}
-            title="Move up"
-          >
-            <ChevronUp size={14} />
-          </Button>
-          <Button
-            variant="icon"
-            size="sm"
-            onClick={handleProviderMoveDown}
-            disabled={activeProviderTab >= providersList.length - 1 || providersList.length === 0}
-            title="Move down"
-          >
-            <ChevronDown size={14} />
-          </Button>
-        </div>
-      </div>
-
-      {/* Right detail panel */}
-      <div className="sub-list-detail">
-        {providersList.length === 0 ? (
-          <div className="settings-empty">
-            No providers configured. Click + to add one.
+                {p.icon ? (
+                  <ProviderIconImg iconId={p.icon} size={16} className="sub-list-item-icon" />
+                ) : (
+                  <Bot size={14} className="sub-list-item-icon sub-list-item-icon--default" />
+                )}
+                <span className="sub-list-item-label">{p.id || `Provider ${i + 1}`}</span>
+                <span
+                  className="sub-list-item-close"
+                  role="button"
+                  tabIndex={0}
+                  title="Remove provider"
+                  onClick={(e) => { e.stopPropagation(); handleProviderRemove(i); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleProviderRemove(i); } }}
+                >
+                  <X size={11} />
+                </span>
+              </button>
+            ))}
           </div>
-        ) : (
-          <ProviderTabPanel
-            key={activeProviderTab}
-            provider={providersList[activeProviderTab] ?? providersList[0]}
-            index={activeProviderTab < providersList.length ? activeProviderTab : 0}
-            onChange={handleProviderChange}
-            onDuplicate={handleProviderDuplicate}
-          />
-        )}
-      </div>
-    </div>
+          <div className="sub-list-actions">
+            <button
+              className="sub-list-item sub-list-item-add"
+              onClick={handleProviderAdd}
+              title="Add provider"
+            >
+              <Plus size={13} />
+              <span>Add</span>
+            </button>
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={handleProviderMoveUp}
+              disabled={activeProviderTab <= 0 || providersList.length === 0}
+              title="Move up"
+            >
+              <ChevronUp size={14} />
+            </Button>
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={handleProviderMoveDown}
+              disabled={activeProviderTab >= providersList.length - 1 || providersList.length === 0}
+              title="Move down"
+            >
+              <ChevronDown size={14} />
+            </Button>
+          </div>
+        </>
+      }
+    >
+      {providersList.length === 0 ? (
+        <div className="settings-empty">
+          No providers configured. Click + to add one.
+        </div>
+      ) : (
+        <ProviderTabPanel
+          key={activeProviderTab}
+          provider={providersList[activeProviderTab] ?? providersList[0]}
+          index={activeProviderTab < providersList.length ? activeProviderTab : 0}
+          onChange={handleProviderChange}
+          onDuplicate={handleProviderDuplicate}
+        />
+      )}
+    </SubListLayout>
     </>
   );
 }

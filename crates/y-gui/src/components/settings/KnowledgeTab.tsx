@@ -11,7 +11,7 @@ import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { KNOWLEDGE_SCHEMA } from '../../utils/settingsSchemas';
 import { Eye, EyeOff } from 'lucide-react';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox, Input } from '../ui';
+import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
 
 interface KnowledgeTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -102,138 +102,88 @@ export function KnowledgeTab({
         </h3>
       </div>
       <div className="settings-form-wrap">
-        {/* Chunking */}
-        <div className="pf-section-divider" style={{ marginTop: 0 }}>
-          <span className="pf-section-title">Chunking</span>
-        </div>
-        <div className="pf-row pf-row-quad">
-          <div className="pf-field">
-            <label className="pf-label">L0 Max Tokens</label>
+        <SettingsGroup title="Chunking">
+          <SettingsItem title="L0 Max Tokens" description="Summary level">
             <Input
-              numeric
-              type="number"
-              min={50}
+              numeric type="number" min={50} className="w-[100px]"
               value={knowledgeForm.l0_max_tokens}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, l0_max_tokens: Number(e.target.value) || 200 }); setDirtyKnowledge(true); }}
             />
-            <span className="pf-hint">Summary level</span>
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">L1 Max Tokens</label>
+          </SettingsItem>
+          <SettingsItem title="L1 Max Tokens" description="Section overview">
             <Input
-              numeric
-              type="number"
-              min={100}
+              numeric type="number" min={100} className="w-[100px]"
               value={knowledgeForm.l1_max_tokens}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, l1_max_tokens: Number(e.target.value) || 500 }); setDirtyKnowledge(true); }}
             />
-            <span className="pf-hint">Section overview</span>
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">L2 Max Tokens</label>
+          </SettingsItem>
+          <SettingsItem title="L2 Max Tokens" description="Paragraph level">
             <Input
-              numeric
-              type="number"
-              min={100}
+              numeric type="number" min={100} className="w-[100px]"
               value={knowledgeForm.l2_max_tokens}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, l2_max_tokens: Number(e.target.value) || 500 }); setDirtyKnowledge(true); }}
             />
-            <span className="pf-hint">Paragraph level</span>
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Max Chunks / Entry</label>
+          </SettingsItem>
+          <SettingsItem title="Max Chunks / Entry">
             <Input
-              numeric
-              type="number"
-              min={100}
-              step={500}
+              numeric type="number" min={100} step={500} className="w-[100px]"
               value={knowledgeForm.max_chunks_per_entry}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, max_chunks_per_entry: Number(e.target.value) || 5000 }); setDirtyKnowledge(true); }}
             />
-          </div>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field">
-            <label className="pf-label">Default Collection</label>
+          </SettingsItem>
+          <SettingsItem title="Default Collection" wide>
             <Input
               value={knowledgeForm.default_collection}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, default_collection: e.target.value }); setDirtyKnowledge(true); }}
               placeholder="default"
             />
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Min Similarity Threshold</label>
+          </SettingsItem>
+          <SettingsItem title="Min Similarity Threshold" description="Results below are discarded (0.0-1.0).">
             <Input
-              numeric
-              type="number"
-              min={0}
-              max={1}
-              step={0.05}
+              numeric type="number" min={0} max={1} step={0.05} className="w-[100px]"
               value={knowledgeForm.min_similarity_threshold}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, min_similarity_threshold: Number(e.target.value) || 0.65 }); setDirtyKnowledge(true); }}
             />
-            <span className="pf-hint">Results below are discarded (0.0-1.0).</span>
-          </div>
-        </div>
+          </SettingsItem>
+        </SettingsGroup>
 
-        {/* Embedding */}
-        <div className="pf-section-divider">
-          <span className="pf-section-title">Embedding</span>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field pf-field-full">
-            <label className="pf-label">
-              <Checkbox
-                checked={knowledgeForm.embedding_enabled}
-                onCheckedChange={(c) => { setKnowledgeForm({ ...knowledgeForm, embedding_enabled: c === true }); setDirtyKnowledge(true); }}
-              />
-              {' '}Enable Embedding
-            </label>
-            <span className="pf-hint">Requires an OpenAI-compatible embedding API.</span>
-          </div>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field" style={{ flex: 2 }}>
-            <label className="pf-label">Embedding Model</label>
+        <SettingsGroup title="Embedding">
+          <SettingsItem title="Enable Embedding" description="Requires an OpenAI-compatible embedding API.">
+            <Checkbox
+              checked={knowledgeForm.embedding_enabled}
+              onCheckedChange={(c) => { setKnowledgeForm({ ...knowledgeForm, embedding_enabled: c === true }); setDirtyKnowledge(true); }}
+            />
+          </SettingsItem>
+          <SettingsItem title="Embedding Model" wide>
             <Input
               value={knowledgeForm.embedding_model}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_model: e.target.value }); setDirtyKnowledge(true); }}
               placeholder="text-embedding-3-small"
             />
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Dimensions</label>
+          </SettingsItem>
+          <SettingsItem title="Dimensions">
             <Input
-              numeric
-              type="number"
-              min={64}
+              numeric type="number" min={64} className="w-[100px]"
               value={knowledgeForm.embedding_dimensions}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_dimensions: Number(e.target.value) || 1536 }); setDirtyKnowledge(true); }}
             />
-          </div>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field pf-field-full">
-            <label className="pf-label">Embedding Base URL</label>
+          </SettingsItem>
+          <SettingsItem title="Embedding Base URL" wide>
             <Input
               value={knowledgeForm.embedding_base_url}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_base_url: e.target.value }); setDirtyKnowledge(true); }}
               placeholder="https://api.openai.com/v1"
             />
-          </div>
-        </div>
-        <div className="pf-row">
-          <div className="pf-field">
-            <label className="pf-label">API Key Env Variable</label>
+          </SettingsItem>
+          <SettingsItem title="API Key Env Variable" wide>
             <Input
               value={knowledgeForm.embedding_api_key_env}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_api_key_env: e.target.value }); setDirtyKnowledge(true); }}
               placeholder="OPENAI_API_KEY"
             />
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">API Key (direct)</label>
-            <div className="pf-key-group">
+          </SettingsItem>
+          <SettingsItem title="API Key (direct)" description="Takes precedence over env var." wide>
+            <div className="pf-key-group w-full">
               <Input
                 className="flex-1 min-w-0 pr-[30px]"
                 type={showApiKey ? 'text' : 'password'}
@@ -250,36 +200,23 @@ export function KnowledgeTab({
                 {showApiKey ? <EyeOff size={13} /> : <Eye size={13} />}
               </button>
             </div>
-            <span className="pf-hint">Takes precedence over env var.</span>
-          </div>
-        </div>
-        <div className="pf-row pf-row-quad">
-          <div className="pf-field">
-            <label className="pf-label">Embedding Max Tokens</label>
+          </SettingsItem>
+          <SettingsItem title="Embedding Max Tokens" description="0 = falls back to l2_max_tokens. 512 recommended for local GGUF models.">
             <Input
-              numeric
-              type="number"
-              min={0}
-              step={128}
+              numeric type="number" min={0} step={128} className="w-[100px]"
               value={knowledgeForm.embedding_max_tokens}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, embedding_max_tokens: Number(e.target.value) || 0 }); setDirtyKnowledge(true); }}
             />
-            <span className="pf-hint">0 = falls back to l2_max_tokens. 512 recommended for local GGUF models.</span>
-          </div>
-        </div>
+          </SettingsItem>
+        </SettingsGroup>
 
-        {/* Retrieval */}
-        <div className="pf-section-divider">
-          <span className="pf-section-title">Retrieval Tuning</span>
-        </div>
-        <div className="pf-row pf-row-quad">
-          <div className="pf-field">
-            <label className="pf-label">Strategy</label>
+        <SettingsGroup title="Retrieval Tuning">
+          <SettingsItem title="Strategy">
             <Select
               value={knowledgeForm.retrieval_strategy}
               onValueChange={(val) => { setKnowledgeForm({ ...knowledgeForm, retrieval_strategy: val }); setDirtyKnowledge(true); }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-[220px]">
                 <SelectValue placeholder="Select strategy" />
               </SelectTrigger>
               <SelectContent>
@@ -288,30 +225,22 @@ export function KnowledgeTab({
                 <SelectItem value="semantic">Semantic (Vector only)</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">BM25 Weight</label>
+          </SettingsItem>
+          <SettingsItem title="BM25 Weight">
             <Input
-              numeric
-              type="number"
-              min={0}
-              step={0.1}
+              numeric type="number" min={0} step={0.1} className="w-[100px]"
               value={knowledgeForm.bm25_weight}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, bm25_weight: Number(e.target.value) || 1.0 }); setDirtyKnowledge(true); }}
             />
-          </div>
-          <div className="pf-field">
-            <label className="pf-label">Vector Weight</label>
+          </SettingsItem>
+          <SettingsItem title="Vector Weight">
             <Input
-              numeric
-              type="number"
-              min={0}
-              step={0.1}
+              numeric type="number" min={0} step={0.1} className="w-[100px]"
               value={knowledgeForm.vector_weight}
               onChange={(e) => { setKnowledgeForm({ ...knowledgeForm, vector_weight: Number(e.target.value) || 1.0 }); setDirtyKnowledge(true); }}
             />
-          </div>
-        </div>
+          </SettingsItem>
+        </SettingsGroup>
       </div>
     </>
   );

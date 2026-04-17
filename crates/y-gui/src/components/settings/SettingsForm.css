@@ -1,0 +1,128 @@
+/* ---- Unified Settings Form Layout ---- */
+
+/* Group container */
+.settings-group {
+  margin-bottom: var(--space-lg);
+}
+
+.settings-group:last-child {
+  margin-bottom: 0;
+}
+
+.settings-group-header {
+  padding: 0 2px;
+  margin-bottom: var(--space-sm);
+}
+
+.settings-group-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.settings-group-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+/* Bordered card wrapping all items in a group */
+.settings-group-body {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface-secondary);
+}
+
+/* ---- Item row ---- */
+.settings-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 10px var(--space-md);
+  min-height: 44px;
+}
+
+/* Border divider between sibling items (no gap) */
+.settings-item + .settings-item {
+  border-top: 1px solid var(--border);
+}
+
+/* No description -- vertically center the title */
+.settings-item--no-desc {
+  align-items: center;
+}
+
+/* Left side: title + optional description */
+.settings-item-label {
+  flex: 1;
+  min-width: 0;
+  padding-right: var(--space-md);
+}
+
+.settings-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.settings-item-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Right side: control widget */
+.settings-item-control {
+  max-width: 250px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-right: 10px;
+}
+
+/* Constrain input widths inside settings items */
+.settings-item-control input[type="text"],
+.settings-item-control input[type="number"],
+.settings-item-control input[type="password"] {
+  max-width: 240px;
+}
+
+/* Wide variant -- control takes more space (text inputs, tag inputs) */
+.settings-item--wide .settings-item-label {
+  flex: 0 0 auto;
+  max-width: 50%;
+}
+
+.settings-item--wide .settings-item-control {
+  flex: 1;
+  min-width: 0;
+  padding-right: 0;
+}
+
+.settings-item--wide .settings-item-control > * {
+  width: 100%;
+}
+
+.settings-item--wide .settings-item-control input[type="text"],
+.settings-item--wide .settings-item-control input[type="number"],
+.settings-item--wide .settings-item-control input[type="password"] {
+  max-width: 100%;
+}
+
+/* Custom body inside group-body for complex editors (kv lists, volumes) */
+.settings-item--custom-body {
+  padding: 10px var(--space-md);
+}
+
+.settings-item--custom-body + .settings-item,
+.settings-item + .settings-item--custom-body {
+  border-top: 1px solid var(--border);
+}
