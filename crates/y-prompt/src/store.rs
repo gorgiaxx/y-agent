@@ -68,7 +68,7 @@ impl SectionStore {
                         message: "self-referencing store key".into(),
                     });
                 }
-                self.load_content(key)
+                self.load_content_with_depth(key, depth + 1)
             }
         }
     }

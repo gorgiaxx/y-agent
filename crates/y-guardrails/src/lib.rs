@@ -63,7 +63,7 @@ pub struct GuardrailManager {
 
 impl std::fmt::Debug for GuardrailManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let cfg = self.config.read().unwrap();
+        let cfg = self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         f.debug_struct("GuardrailManager")
             .field("config", &*cfg)
             .finish()
@@ -79,24 +79,19 @@ impl GuardrailManager {
     }
 
     /// Get a snapshot of the current guardrail configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal config `RwLock` is poisoned.
     pub fn config(&self) -> GuardrailConfig {
-        self.config.read().unwrap().clone()
+        self.config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Hot-reload the guardrail configuration.
     ///
     /// Atomically replaces the current config. Subsequent calls to
     /// `config()` and middleware constructors will use the new values.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal config `RwLock` is poisoned.
     pub fn reload_config(&self, new_config: GuardrailConfig) {
-        let mut guard = self.config.write().unwrap();
+        let mut guard = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = new_config;
         tracing::info!("Guardrail config hot-reloaded");
     }

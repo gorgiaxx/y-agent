@@ -150,12 +150,8 @@ impl CdpClient {
     }
 
     /// Update the CDP URL (e.g. when the launcher picks a different port).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal lock is poisoned.
     pub fn set_cdp_url(&self, url: String) {
-        *self.cdp_url.write().unwrap() = url;
+        *self.cdp_url.write().unwrap_or_else(std::sync::PoisonError::into_inner) = url;
     }
 
     /// Connect to the CDP endpoint.
@@ -303,7 +299,11 @@ impl CdpClient {
     /// launching to register its default tab), creating a new page target
     /// only as a last resort to avoid producing duplicate windows/tabs.
     async fn resolve_ws_url(&self) -> Result<String, CdpError> {
-        let cdp_url_owned = self.cdp_url.read().unwrap().clone();
+        let cdp_url_owned = self
+            .cdp_url
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let url = cdp_url_owned.trim();
 
         // Direct WebSocket URL — use as-is.
@@ -487,7 +487,11 @@ impl CdpClient {
             })?;
 
         let ws_url = target.ws_url.as_ref().unwrap();
-        let cdp_url_owned2 = self.cdp_url.read().unwrap().clone();
+        let cdp_url_owned2 = self
+            .cdp_url
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let http_url = cdp_url_owned2.trim();
         debug!(ws_url, "using newly created page target");
         Ok(normalize_ws_url(ws_url, http_url))
@@ -495,7 +499,11 @@ impl CdpClient {
 
     /// Get HTTP base URL for /json/* endpoints.
     fn http_base_url(&self) -> String {
-        let cdp_url_owned3 = self.cdp_url.read().unwrap().clone();
+        let cdp_url_owned3 = self
+            .cdp_url
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let url = cdp_url_owned3.trim().trim_end_matches('/');
         if url.starts_with("ws://") {
             url.replacen("ws://", "http://", 1)
@@ -586,12 +594,12 @@ impl CdpClient {
     ///    `Browser.getVersion` to verify the CDP pipe is functional.
     ///
     /// Returns `true` only if both steps succeed within their timeouts.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal `cdp_url` lock is poisoned.
     pub async fn health_check(&self) -> bool {
-        let cdp_url_owned = self.cdp_url.read().unwrap().clone();
+        let cdp_url_owned = self
+            .cdp_url
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let url = cdp_url_owned.trim();
 
         // For direct WS URLs, try a WS-only probe.

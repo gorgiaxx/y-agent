@@ -201,6 +201,16 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
         "task-intent-analyzer",
         "pattern-extractor",
         "capability-assessor",
+        "skill-ingestion",
+        "skill-security-check",
+        "pruning-summarizer",
+        "complexity-classifier",
+        "knowledge-metadata",
+        "knowledge-summarizer",
+        "translator",
+        "plan-writer",
+        "plan-phase-executor",
+        "task-decomposer",
     ];
     if reserved.contains(&def.definition.name.as_str()) {
         return Err(ValidationError::ReservedName {
@@ -225,11 +235,18 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
     }
 
     // Stage 3: Security screening
-    let _has_dangerous = def
+    let has_dangerous = def
         .definition
         .allowed_tools
         .iter()
         .any(|t| DANGEROUS_TOOLS.contains(&t.as_str()));
+
+    if has_dangerous && def.definition.trust_tier < crate::agent::definition::TrustTier::UserDefined
+    {
+        return Err(ValidationError::SecurityViolation {
+            reason: "dangerous tools require at least UserDefined trust tier".into(),
+        });
+    }
 
     // Detect system prompt injection patterns
     let prompt_lower = def.definition.system_prompt.to_lowercase();

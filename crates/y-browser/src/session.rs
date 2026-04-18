@@ -93,17 +93,13 @@ impl BrowserSession {
     /// Updates the stored config and rebuilds the security policy.
     /// Does NOT affect an already-running Chrome session; changes
     /// take effect on the next connection.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal locks are poisoned.
     pub fn reload_config(&self, new_config: BrowserConfig) {
         let new_security = SecurityPolicy::new(
             new_config.allowed_domains.clone(),
             new_config.block_private_networks,
         );
-        *self.security.write().unwrap() = new_security;
-        *self.config.write().unwrap() = new_config;
+        *self.security.write().unwrap_or_else(std::sync::PoisonError::into_inner) = new_security;
+        *self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner) = new_config;
         info!("Browser config hot-reloaded");
     }
 
@@ -118,21 +114,13 @@ impl BrowserSession {
     }
 
     /// Read the current security policy.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal lock is poisoned.
     pub fn security(&self) -> std::sync::RwLockReadGuard<'_, SecurityPolicy> {
-        self.security.read().unwrap()
+        self.security.read().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Read the current config.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal lock is poisoned.
     pub fn config(&self) -> std::sync::RwLockReadGuard<'_, BrowserConfig> {
-        self.config.read().unwrap()
+        self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Whether the session is connected.
@@ -207,7 +195,11 @@ impl BrowserSession {
 
     /// Internal connection logic with retry.
     async fn do_connect(&self) -> Result<(), ToolError> {
-        let config = self.config.read().unwrap().clone();
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
 
         if config.launch_mode.is_auto_launch() {
             self.connect_auto_launch(&config).await

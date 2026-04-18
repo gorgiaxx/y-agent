@@ -35,7 +35,7 @@ export interface ChatSidebarProps {
   onNewChatInWorkspace: (workspaceId: string) => void;
   onDeleteSession: (id: string) => void;
   onForkSession?: (sessionId: string) => void;
-  onRenameSession: (id: string, title: string) => void;
+  onRenameSession: (id: string, title: string | null) => void;
   onCreateWorkspace: (name: string, path: string) => void;
   onUpdateWorkspace: (id: string, name: string, path: string) => void;
   onDeleteWorkspace: (id: string) => void;

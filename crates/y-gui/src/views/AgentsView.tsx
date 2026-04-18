@@ -135,7 +135,8 @@ export function AgentsView() {
         setMcpModeBySession((prev) => ({ ...prev, [mcpSessionKey]: mode }));
       }
       if (detail?.mcp_servers && detail.mcp_servers.length > 0) {
-        setMcpServersBySession((prev) => ({ ...prev, [mcpSessionKey]: detail.mcp_servers }));
+        const servers = detail.mcp_servers;
+        setMcpServersBySession((prev) => ({ ...prev, [mcpSessionKey]: servers }));
       }
       return detail;
     } finally {

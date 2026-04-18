@@ -101,19 +101,15 @@ export function ChatSidebarPanel({
   onAssignSession,
   onUnassignSession,
   searchQuery: searchQueryProp,
-  onSearchQueryChange,
+  onSearchQueryChange: _onSearchQueryChange,
 }: ChatSidebarPanelProps) {
   const COLLAPSED_STORAGE_KEY = 'y-gui:workspace-collapsed';
   const PINNED_STORAGE_KEY = 'y-gui:pinned-sessions';
   const WS_SORT_STORAGE_KEY = 'y-gui:workspace-sort';
   const SESSION_SORT_STORAGE_KEY = 'y-gui:session-sort';
 
-  const [internalSearchQuery, setInternalSearchQuery] = useState('');
+  const [internalSearchQuery] = useState('');
   const searchQuery = searchQueryProp ?? internalSearchQuery;
-  const _setSearchQuery = (next: string) => {
-    if (onSearchQueryChange) onSearchQueryChange(next);
-    else setInternalSearchQuery(next);
-  };
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<WorkspaceInfo | null>(null);
   const [openMenu, setOpenMenu] = useState<OpenMenuState>(null);

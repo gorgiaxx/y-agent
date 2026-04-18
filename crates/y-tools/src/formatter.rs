@@ -130,11 +130,17 @@ impl ResultFormatter {
 
     /// Truncate output if it exceeds `max_output_chars`.
     fn truncate_if_needed(&self, output: &str) -> (String, bool) {
-        if output.len() <= self.config.max_output_chars {
+        let char_count = output.chars().count();
+        if char_count <= self.config.max_output_chars {
             (output.to_string(), false)
         } else {
-            let truncated_len = self.config.max_output_chars - self.config.truncation_suffix.len();
-            let mut result = output[..truncated_len].to_string();
+            let target =
+                self.config.max_output_chars - self.config.truncation_suffix.chars().count();
+            let byte_offset = output
+                .char_indices()
+                .nth(target)
+                .map_or(output.len(), |(i, _)| i);
+            let mut result = output[..byte_offset].to_string();
             result.push_str(&self.config.truncation_suffix);
             (result, true)
         }

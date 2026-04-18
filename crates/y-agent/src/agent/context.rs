@@ -201,10 +201,11 @@ fn apply_full(
 
 /// Truncate a string to a maximum character length, adding "..." if truncated.
 fn truncate(s: &str, max_chars: usize) -> String {
-    if s.len() <= max_chars {
+    if s.chars().count() <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_chars])
+        let byte_offset = s.char_indices().nth(max_chars).map_or(s.len(), |(i, _)| i);
+        format!("{}...", &s[..byte_offset])
     }
 }
 

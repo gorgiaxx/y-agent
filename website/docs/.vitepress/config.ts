@@ -93,6 +93,7 @@ export default withMermaid(defineConfig({
           { text: 'Download', link: '/download' },
           { text: 'Docs', link: '/guide/getting-started' },
           { text: 'Architecture', link: '/architecture/' },
+          { text: 'Development', link: '/development/' },
         ],
         sidebar: {
           '/guide/': [
@@ -129,6 +130,54 @@ export default withMermaid(defineConfig({
               items: [
                 { text: 'Overview', link: '/architecture/' },
                 { text: 'Crate Map', link: '/architecture/crate-map' },
+              ],
+            },
+          ],
+          '/development/': [
+            {
+              text: 'Development',
+              items: [
+                { text: 'Overview', link: '/development/' },
+                {
+                  text: 'Architecture',
+                  link: '/development/architecture',
+                },
+                {
+                  text: 'Request Lifecycle',
+                  link: '/development/request-lifecycle',
+                },
+                {
+                  text: 'Crate Reference',
+                  link: '/development/crate-reference',
+                },
+                {
+                  text: 'Agent System',
+                  link: '/development/agent-system',
+                },
+                {
+                  text: 'Tool System',
+                  link: '/development/tool-system',
+                },
+                {
+                  text: 'Context Pipeline',
+                  link: '/development/context-pipeline',
+                },
+                {
+                  text: 'Provider Pool',
+                  link: '/development/provider-pool',
+                },
+                {
+                  text: 'Middleware & Hooks',
+                  link: '/development/middleware-hooks',
+                },
+                {
+                  text: 'Storage & Sessions',
+                  link: '/development/storage-sessions',
+                },
+                {
+                  text: 'Contributing',
+                  link: '/development/contributing',
+                },
               ],
             },
           ],

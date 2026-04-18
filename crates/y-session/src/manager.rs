@@ -45,21 +45,13 @@ impl SessionManager {
     }
 
     /// Hot-reload the session configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal config `RwLock` is poisoned.
     pub fn reload_config(&self, new_config: SessionConfig) {
-        let mut guard = self.config.write().unwrap();
+        let mut guard = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = new_config;
         tracing::info!("Session config hot-reloaded");
     }
 
     /// Create a new root session.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the session configuration lock is poisoned.
     #[instrument(skip(self))]
     pub async fn create_session(
         &self,
@@ -68,7 +60,11 @@ impl SessionManager {
         // Validate depth if creating a child.
         if let Some(ref parent_id) = options.parent_id {
             let parent = self.session_store.get(parent_id).await?;
-            let max_depth = self.config.read().unwrap().max_depth;
+            let max_depth = self
+                .config
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .max_depth;
             if parent.depth >= max_depth {
                 return Err(SessionManagerError::Config {
                     message: format!("maximum tree depth {max_depth} exceeded"),
@@ -209,10 +205,6 @@ impl SessionManager {
     /// Create a branch session from an existing one.
     ///
     /// The branch is a new child of the specified session with type Branch.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the session configuration lock is poisoned.
     #[instrument(skip(self), fields(parent_id = %parent_id))]
     pub async fn branch(
         &self,
@@ -220,7 +212,11 @@ impl SessionManager {
         title: Option<String>,
     ) -> Result<SessionNode, SessionManagerError> {
         let parent = self.session_store.get(parent_id).await?;
-        let max_depth = self.config.read().unwrap().max_depth;
+        let max_depth = self
+            .config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .max_depth;
         if parent.depth >= max_depth {
             return Err(SessionManagerError::Config {
                 message: format!("maximum tree depth {max_depth} exceeded"),
@@ -462,10 +458,6 @@ impl SessionManager {
     ///
     /// If `message_index` equals or exceeds the total message count, all
     /// messages are copied (full fork).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the session configuration lock is poisoned.
     #[instrument(skip(self), fields(source_id = %source_id, message_index = message_index))]
     pub async fn fork_session(
         &self,
@@ -504,7 +496,11 @@ impl SessionManager {
         let fork_title = title.or_else(|| source.title.as_ref().map(|t| format!("{t} (Branch)")));
 
         // 5. Create the new Branch session.
-        let max_depth = self.config.read().unwrap().max_depth;
+        let max_depth = self
+            .config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .max_depth;
         if source.depth >= max_depth {
             return Err(SessionManagerError::Config {
                 message: format!("maximum tree depth {max_depth} exceeded"),
@@ -572,19 +568,21 @@ impl SessionManager {
     }
 
     /// Get a snapshot of the session configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the configuration lock is poisoned.
     pub fn config(&self) -> SessionConfig {
-        self.config.read().unwrap().clone()
+        self.config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
 impl std::fmt::Debug for SessionManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionManager")
-            .field("config", &*self.config.read().unwrap())
+            .field(
+                "config",
+                &*self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
             .finish_non_exhaustive()
     }
 }

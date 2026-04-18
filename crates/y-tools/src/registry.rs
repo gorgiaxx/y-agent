@@ -48,22 +48,17 @@ impl ToolRegistryImpl {
     }
 
     /// Hot-reload the tool registry configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the configuration lock is poisoned.
     pub fn reload_config(&self, new_config: ToolRegistryConfig) {
-        *self.config.write().unwrap() = new_config;
+        *self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner) = new_config;
         tracing::info!("Tool registry config hot-reloaded");
     }
 
     /// Get a read-only snapshot of the current configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the configuration lock is poisoned.
     pub fn config(&self) -> ToolRegistryConfig {
-        self.config.read().unwrap().clone()
+        self.config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Register a tool with its definition (direct method, not trait).
@@ -104,10 +99,6 @@ impl ToolRegistryImpl {
     /// The query is split on whitespace, commas, or semicolons into individual
     /// keywords. A tool matches if its name or description contains at least
     /// one keyword (OR semantics).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the configuration lock is poisoned.
     pub async fn search_tools(
         &self,
         query: &str,
@@ -119,7 +110,11 @@ impl ToolRegistryImpl {
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
             .collect();
-        let limit = self.config.read().unwrap().search_limit;
+        let limit = self
+            .config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .search_limit;
 
         if keywords.is_empty() {
             return Vec::new();
