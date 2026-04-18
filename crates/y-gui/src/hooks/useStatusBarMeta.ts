@@ -11,8 +11,8 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback, useRef, startTransition } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { transport } from '../lib';
+
 import type { Message, TurnMeta, ChatCompletePayload, DiagnosticsEntry } from '../types';
 
 export interface StatusBarMeta {
@@ -75,7 +75,7 @@ export function useStatusBarMeta({
       applyMeta(null);
       return;
     }
-    invoke<TurnMeta | null>('session_last_turn_meta', { sessionId: activeSessionId })
+    transport.invoke<TurnMeta | null>('session_last_turn_meta', { sessionId: activeSessionId })
       .then(applyMeta)
       .catch(() => applyMeta(null));
   }, [activeSessionId, applyMeta]);
@@ -89,7 +89,7 @@ export function useStatusBarMeta({
   }, [activeSessionId]);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen<ChatCompletePayload>('chat:complete', (e) => {
+    transport.listen<ChatCompletePayload>('chat:complete', (e) => {
       const payload = e.payload;
       // Only update if the event belongs to the currently viewed session.
       if (payload.session_id !== activeSessionIdRef.current) return;

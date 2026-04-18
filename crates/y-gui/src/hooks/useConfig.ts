@@ -1,7 +1,7 @@
 // Custom hook for GUI configuration.
 
 import { useState, useCallback, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type { GuiConfig } from '../types';
 
 const defaultConfig: GuiConfig = {
@@ -31,7 +31,7 @@ export function useConfig(): UseConfigReturn {
   useEffect(() => {
     const load = async () => {
       try {
-        const cfg = await invoke<GuiConfig>('config_get_gui');
+        const cfg = await transport.invoke<GuiConfig>('config_get_gui');
         setConfig(cfg);
       } catch (e) {
         console.error('Failed to load GUI config:', e);
@@ -52,7 +52,7 @@ export function useConfig(): UseConfigReturn {
     async (updates: Partial<GuiConfig>) => {
       const newConfig = { ...config, ...updates };
       try {
-        await invoke('config_set_gui', { config: newConfig });
+        await transport.invoke('config_set_gui', { config: newConfig });
         setConfig(newConfig);
       } catch (e) {
         console.error('Failed to save GUI config:', e);
@@ -62,15 +62,15 @@ export function useConfig(): UseConfigReturn {
   );
 
   const loadSection = useCallback(async (section: string): Promise<string> => {
-    return await invoke<string>('config_get_section', { section });
+    return await transport.invoke<string>('config_get_section', { section });
   }, []);
 
   const saveSection = useCallback(async (section: string, content: string): Promise<void> => {
-    await invoke('config_save_section', { section, content });
+    await transport.invoke('config_save_section', { section, content });
   }, []);
 
   const reloadConfig = useCallback(async (): Promise<string> => {
-    return await invoke<string>('config_reload');
+    return await transport.invoke<string>('config_reload');
   }, []);
 
   return { config, updateConfig, loading, loadSection, saveSection, reloadConfig };

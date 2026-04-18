@@ -72,16 +72,12 @@
   border: none;
 }
 
-.agents-gallery-empty,
-.agents-chat-stage-empty {
+.agents-gallery-empty {
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
   text-align: center;
-}
-
-.agents-gallery-empty {
   padding: var(--space-lg);
   border: 1px dashed var(--border);
   border-radius: var(--radius-md);
@@ -286,19 +282,15 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  width: 32px;
+  height: 32px;
   color: var(--accent);
   background: color-mix(in srgb, var(--surface-primary) 88%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
 
-.agents-preset-card-glyph {
-  width: 32px;
-  height: 32px;
-}
-
-.agents-preset-card-badges,
-.agents-preset-card-footer {
+.agents-preset-card-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -372,6 +364,11 @@
 .agents-chat-stage-empty {
   flex: 1;
   padding: var(--space-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .agents-chat-empty-card {

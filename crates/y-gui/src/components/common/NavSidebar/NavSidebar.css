@@ -6,8 +6,8 @@
 .nav-sidebar {
   display: flex;
   flex-direction: column;
-  width: 240px;
-  min-width: 240px;
+  width: var(--sidebar-width, 240px);
+  min-width: var(--sidebar-width, 240px);
   height: 100%;
   background: var(--surface-secondary);
   border-right: 1px solid var(--border);
@@ -28,6 +28,14 @@
  */
 .nav-sidebar--bare {
   padding: 0;
+}
+
+/* macOS vibrancy: let the native blur material show through the sidebar. */
+html[data-platform="macos"] .nav-sidebar {
+  background: transparent;
+}
+html[data-platform="macos"] .nav-sidebar-footer {
+  background: transparent;
 }
 
 /* Traffic-light safe area on macOS custom decorations. */

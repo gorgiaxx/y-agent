@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { transport } from '../lib';
+
 import {
   clearSessionInteractionById,
   getSessionInteraction,
@@ -32,7 +32,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   const permissionData = getSessionInteraction(permissionBySession, activeSessionId);
 
   useEffect(() => {
-    const unlisten = listen<{
+    const unlisten = transport.listen<{
       run_id: string;
       session_id: string;
       interaction_id: string;
@@ -48,7 +48,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<{
+    const unlisten = transport.listen<{
       run_id: string;
       session_id: string;
       request_id: string;
@@ -74,7 +74,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
       prev,
       (interaction) => interaction.interactionId === interactionId,
     ));
-    invoke('chat_answer_question', {
+    transport.invoke('chat_answer_question', {
       interactionId,
       answers: { answers },
     }).catch(console.error);
@@ -85,7 +85,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
       prev,
       (interaction) => interaction.interactionId === interactionId,
     ));
-    invoke('chat_answer_question', {
+    transport.invoke('chat_answer_question', {
       interactionId,
       answers: { answers: {} },
     }).catch(console.error);
@@ -96,7 +96,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
       prev,
       (interaction) => interaction.requestId === requestId,
     ));
-    invoke('chat_answer_permission', {
+    transport.invoke('chat_answer_permission', {
       requestId,
       decision: 'approve',
     }).catch(console.error);
@@ -107,7 +107,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
       prev,
       (interaction) => interaction.requestId === requestId,
     ));
-    invoke('chat_answer_permission', {
+    transport.invoke('chat_answer_permission', {
       requestId,
       decision: 'deny',
     }).catch(console.error);
@@ -118,7 +118,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
       prev,
       (interaction) => interaction.requestId === requestId,
     ));
-    invoke('chat_answer_permission', {
+    transport.invoke('chat_answer_permission', {
       requestId,
       decision: 'allow_all_for_session',
     }).catch(console.error);

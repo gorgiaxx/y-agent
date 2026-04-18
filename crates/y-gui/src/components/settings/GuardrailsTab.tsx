@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import type { GuardrailsFormData } from './settingsTypes';
 import { jsonToGuardrails } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
@@ -36,7 +36,7 @@ export function GuardrailsTab({
     setLoading(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await invoke<any>('config_get');
+      const allConfig = await transport.invoke<any>('config_get');
       const json = allConfig?.guardrails ?? {};
       setGuardrailsForm(jsonToGuardrails(json));
       try {

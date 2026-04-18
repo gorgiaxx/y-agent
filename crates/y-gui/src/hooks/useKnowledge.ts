@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type {
   KnowledgeCollectionInfo,
   KnowledgeEntryInfo,
@@ -33,7 +33,7 @@ export function useKnowledge() {
   const refreshCollections = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await invoke<KnowledgeCollectionInfo[]>('kb_collection_list');
+      const list = await transport.invoke<KnowledgeCollectionInfo[]>('kb_collection_list');
       setCollections(list);
     } catch (err) {
       console.error('Failed to load collections:', err);
@@ -44,7 +44,7 @@ export function useKnowledge() {
 
   const createCollection = useCallback(async (name: string, description: string) => {
     try {
-      await invoke<KnowledgeCollectionInfo>('kb_collection_create', { name, description });
+      await transport.invoke<KnowledgeCollectionInfo>('kb_collection_create', { name, description });
       await refreshCollections();
     } catch (err) {
       console.error('Failed to create collection:', err);
@@ -53,7 +53,7 @@ export function useKnowledge() {
 
   const deleteCollection = useCallback(async (name: string) => {
     try {
-      await invoke('kb_collection_delete', { name });
+      await transport.invoke('kb_collection_delete', { name });
       await refreshCollections();
       if (selectedCollection === name) {
         setSelectedCollection(null);
@@ -66,7 +66,7 @@ export function useKnowledge() {
 
   const renameCollection = useCallback(async (oldName: string, newName: string) => {
     try {
-      await invoke('kb_collection_rename', { oldName, newName });
+      await transport.invoke('kb_collection_rename', { oldName, newName });
       await refreshCollections();
       // If the renamed collection is currently selected, track the new name.
       if (selectedCollection === oldName) {
@@ -84,7 +84,7 @@ export function useKnowledge() {
 
   const refreshStats = useCallback(async () => {
     try {
-      const s = await invoke<KnowledgeStats>('kb_stats');
+      const s = await transport.invoke<KnowledgeStats>('kb_stats');
       setStats(s);
     } catch (err) {
       console.error('Failed to load kb stats:', err);
@@ -97,7 +97,7 @@ export function useKnowledge() {
 
   const loadEntries = useCallback(async (collection: string) => {
     try {
-      const list = await invoke<KnowledgeEntryInfo[]>('kb_entry_list', { collection });
+      const list = await transport.invoke<KnowledgeEntryInfo[]>('kb_entry_list', { collection });
       setEntries(list);
     } catch (err) {
       console.error('Failed to load entries:', err);
@@ -110,7 +110,7 @@ export function useKnowledge() {
     resolution: string = 'l0',
   ): Promise<KnowledgeEntryDetail | null> => {
     try {
-      return await invoke<KnowledgeEntryDetail>('kb_entry_detail', { entryId, resolution });
+      return await transport.invoke<KnowledgeEntryDetail>('kb_entry_detail', { entryId, resolution });
     } catch (err) {
       console.error('Failed to get entry detail:', err);
       return null;
@@ -119,7 +119,7 @@ export function useKnowledge() {
 
   const deleteEntry = useCallback(async (entryId: string) => {
     try {
-      await invoke('kb_entry_delete', { entryId });
+      await transport.invoke('kb_entry_delete', { entryId });
       if (selectedCollection) {
         await loadEntries(selectedCollection);
       }
@@ -141,7 +141,7 @@ export function useKnowledge() {
     limit: number = 5,
   ): Promise<KnowledgeSearchResult[]> => {
     try {
-      return await invoke<KnowledgeSearchResult[]>('kb_search', { query, domain, limit });
+      return await transport.invoke<KnowledgeSearchResult[]>('kb_search', { query, domain, limit });
     } catch (err) {
       console.error('Failed to search kb:', err);
       return [];
@@ -165,7 +165,7 @@ export function useKnowledge() {
     setIngestError(null);
     ingestCancelledRef.current = false;
     try {
-      const result = await invoke<KnowledgeIngestResult>(
+      const result = await transport.invoke<KnowledgeIngestResult>(
         'kb_ingest',
         buildKnowledgeIngestPayload({
           source,
@@ -209,10 +209,8 @@ export function useKnowledge() {
     setBatchProgress({ current: 0, total: sources.length });
     ingestCancelledRef.current = false;
 
-    const { listen } = await import('@tauri-apps/api/event');
-
     // Listen for progress counter updates.
-    const unlistenProgress = await listen<{ current: number; total: number; source: string }>(
+    const unlistenProgress = await transport.listen<{ current: number; total: number; source: string }>(
       'kb:batch_progress',
       (event) => {
         setBatchProgress({ current: event.payload.current, total: event.payload.total });
@@ -223,7 +221,7 @@ export function useKnowledge() {
     // full entry data in the event payload so we can merge it directly
     // into local state WITHOUT making additional invoke calls (which
     // would compete for the same backend mutex and block user clicks).
-    const unlistenIngested = await listen<{
+    const unlistenIngested = await transport.listen<{
       entry_id: string;
       source: string;
       collection: string;
@@ -246,7 +244,7 @@ export function useKnowledge() {
     );
 
     try {
-      const result = await invoke<{ succeeded: number; failed: number; errors: string[] }>(
+      const result = await transport.invoke<{ succeeded: number; failed: number; errors: string[] }>(
         'kb_ingest_batch',
         buildKnowledgeIngestBatchPayload({
           sources,

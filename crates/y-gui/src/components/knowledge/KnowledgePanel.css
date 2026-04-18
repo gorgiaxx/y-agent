@@ -15,7 +15,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -28,8 +28,8 @@
 
 .knowledge-header-title h2 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .knowledge-header-actions {
@@ -59,8 +59,8 @@
   align-items: center;
   justify-content: center;
   flex: 1;
-  gap: 8px;
-  opacity: 0.5;
+  gap: var(--space-sm);
+  color: var(--text-muted);
 }
 
 .knowledge-empty-icon {
@@ -70,6 +70,7 @@
 .knowledge-empty-title {
   font-size: 16px;
   font-weight: 600;
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -82,9 +83,10 @@
 
 /* Collection description */
 .knowledge-collection-desc {
-  padding: 8px 20px;
+  padding: var(--space-sm) var(--space-lg);
   margin: 0;
   font-size: 13px;
+  line-height: 1.5;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
 }
@@ -92,11 +94,12 @@
 /* Stats bar */
 .knowledge-stats-bar {
   display: flex;
-  gap: 16px;
-  padding: 8px 20px;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
   font-size: 12px;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
+  background: var(--surface-secondary);
 }
 
 .knowledge-stat {
@@ -109,7 +112,7 @@
 .knowledge-entry-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: var(--space-xs) 0;
 }
 
 .knowledge-entry-list-empty {
@@ -117,13 +120,13 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 20px;
-  gap: 8px;
-  opacity: 0.5;
+  padding: var(--space-xl) var(--space-lg);
+  gap: var(--space-sm);
+  color: var(--text-muted);
 }
 
 .knowledge-entry-row {
-  padding: 10px 20px;
+  padding: var(--space-sm) var(--space-lg);
   cursor: pointer;
   border-bottom: 1px solid var(--border);
   transition: background 0.15s ease;
@@ -135,8 +138,8 @@
 
 .knowledge-entry-main {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: var(--space-sm);
   margin-bottom: 4px;
 }
 
@@ -149,13 +152,20 @@
   font-size: 18px;
   flex-shrink: 0;
   line-height: 1;
+  margin-top: 2px;
 }
 
 .knowledge-entry-info {
   display: flex;
   flex-direction: column;
+  gap: 6px;
   min-width: 0;
   flex: 1;
+}
+
+.knowledge-entry-name-wrap {
+  display: flex;
+  flex-direction: column;
 }
 
 .knowledge-entry-source {
@@ -176,7 +186,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 6px 20px;
+  padding: 6px var(--space-lg);
   border-bottom: 1px solid var(--border);
 }
 
@@ -188,9 +198,15 @@
 
 .knowledge-entry-meta-row {
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: var(--space-sm);
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+/* Delete button — subtle by default, red on hover */
+.knowledge-delete-btn:hover {
+  color: var(--error);
 }
 
 /* Entry detail — scrollable body */
@@ -200,12 +216,12 @@
   min-height: 0;
 }
 
-/* Entry detail — meta */
+/* Entry detail -- meta */
 .knowledge-entry-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 20px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
   font-size: 12px;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
@@ -226,11 +242,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 20px;
+  padding: var(--space-sm) var(--space-lg);
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
   user-select: none;
   transition: color 0.15s ease;
 }
@@ -240,10 +258,36 @@
 }
 
 .knowledge-section-content {
-  padding: 0 20px 12px;
+  padding: 0 var(--space-lg) var(--space-sm);
   font-size: 13px;
   line-height: 1.6;
   animation: kbFadeIn 0.2s ease;
+}
+
+/* Metadata content layout */
+.knowledge-metadata-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.knowledge-interpreted-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.knowledge-metadata-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.knowledge-metadata-tags--inline {
+  border-top: none;
+  padding-top: 0;
 }
 
 @keyframes kbFadeIn {
@@ -308,7 +352,7 @@
 .knowledge-l2-chunk {
   margin-bottom: 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -343,36 +387,36 @@
   font-size: 12px;
   color: var(--text-muted);
   background: var(--surface-secondary);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   text-align: center;
 }
 
 /* Search */
 .knowledge-search-bar {
   display: flex;
-  gap: 8px;
-  padding: 12px 20px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
   border-bottom: 1px solid var(--border);
 }
 
 .knowledge-results {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: var(--space-xs) 0;
 }
 
 .knowledge-results-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 48px;
+  padding: var(--space-xl);
   color: var(--text-secondary);
 }
 
 .knowledge-result-card {
   display: flex;
-  gap: 12px;
-  padding: 12px 20px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
   border-bottom: 1px solid var(--border);
 }
 
@@ -406,7 +450,7 @@
 .knowledge-result-relevance {
   font-size: 11px;
   padding: 1px 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--accent-subtle);
   color: var(--success);
 }
@@ -428,15 +472,15 @@
 .knowledge-new-collection {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 16px 20px;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
   border-top: 1px solid var(--border);
   background: var(--surface-secondary);
 }
 
 .knowledge-new-collection-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 /* Shared UI classes removed -- now uses shared Button, Badge, Input components */

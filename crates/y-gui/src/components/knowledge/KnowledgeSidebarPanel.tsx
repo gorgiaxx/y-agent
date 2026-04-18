@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   X,
   Plus,
@@ -10,8 +10,10 @@ import {
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 import type { KnowledgeCollectionInfo } from '../../types';
 import type { KbIngestStatus, KbBatchProgress } from '../../hooks/useKnowledge';
+import { useSidebarSearch } from '../../hooks/useSidebarSearch';
 import './KnowledgeSidebarPanel.css';
 
 interface KnowledgeSidebarPanelProps {
@@ -37,23 +39,10 @@ export function KnowledgeSidebarPanel({
   onClearKbIngestStatus,
   onCancelKbIngest,
 }: KnowledgeSidebarPanelProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
+  const { searchQuery, setSearchQuery, searchOpen, setSearchOpen, searchInputRef, closeSearch } = useSidebarSearch();
   const [showNewCollection, setShowNewCollection] = useState(false);
   const [newCollName, setNewCollName] = useState('');
   const [newCollDesc, setNewCollDesc] = useState('');
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (searchOpen) {
-      requestAnimationFrame(() => searchInputRef.current?.focus());
-    }
-  }, [searchOpen]);
-
-  const closeSearch = useCallback(() => {
-    setSearchQuery('');
-    setSearchOpen(false);
-  }, []);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return collections;
@@ -158,16 +147,17 @@ export function KnowledgeSidebarPanel({
         <div className="kb-new-collection-form">
           <div className="kb-new-collection-form-header">
             <span className="kb-new-collection-form-title">New Collection</span>
-            <button
-              className="kb-new-collection-form-close"
+            <Button
+              variant="icon"
+              size="sm"
               onClick={() => setShowNewCollection(false)}
               title="Close"
+              className="kb-new-collection-form-close"
             >
               <X size={12} />
-            </button>
+            </Button>
           </div>
-          <input
-            className="search-input"
+          <Input
             placeholder="Collection name"
             value={newCollName}
             onChange={(e) => setNewCollName(e.target.value)}
@@ -181,14 +171,14 @@ export function KnowledgeSidebarPanel({
             }}
             autoFocus
           />
-          <input
-            className="search-input"
+          <Input
             placeholder="Description (optional)"
             value={newCollDesc}
             onChange={(e) => setNewCollDesc(e.target.value)}
           />
-          <button
-            className="kb-new-collection-create-btn"
+          <Button
+            variant="primary"
+            className="w-full font-600"
             disabled={!newCollName.trim()}
             onClick={() => {
               if (newCollName.trim()) {
@@ -200,7 +190,7 @@ export function KnowledgeSidebarPanel({
             }}
           >
             Create
-          </button>
+          </Button>
         </div>
       )}
 

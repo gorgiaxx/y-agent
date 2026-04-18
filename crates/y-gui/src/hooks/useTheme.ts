@@ -2,6 +2,7 @@
 // ('dark' | 'light') to the component tree via React context.
 
 import { createContext, useContext, useEffect, useState, useMemo } from 'react';
+import { transport } from '../lib';
 import type { GuiConfig } from '../types';
 
 export type ResolvedTheme = 'dark' | 'light';
@@ -45,9 +46,11 @@ export function useThemeProvider(preference: GuiConfig['theme']): ThemeContextVa
   const resolvedTheme: ResolvedTheme =
     preference === 'system' ? systemTheme : preference;
 
-  // Apply data-theme attribute on the root element.
+  // Apply data-theme attribute on the root element and sync the native
+  // window theme so macOS vibrancy material matches the app's mode.
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', resolvedTheme);
+    transport.invoke('window_set_theme', { theme: resolvedTheme }).catch(() => {});
   }, [resolvedTheme]);
 
   return useMemo(() => ({ resolvedTheme }), [resolvedTheme]);

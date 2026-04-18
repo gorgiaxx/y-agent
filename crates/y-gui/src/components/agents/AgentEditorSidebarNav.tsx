@@ -13,7 +13,7 @@ import {
 import { NavSidebar, NavItem, NavDivider } from '../common/NavSidebar';
 import type { EditorTab, EditorSurface } from '../agents/types';
 import { EDITOR_TABS } from '../agents/types';
-import '../settings/ProvidersTab.css';
+import { Switch } from '../ui/Switch';
 
 interface AgentEditorSidebarNavProps {
   activeTab: EditorTab;
@@ -46,14 +46,11 @@ export function AgentEditorSidebarNav({
       footer={
         <label className="raw-mode-switch" title={surface === 'raw' ? 'Switch to Form view' : 'Switch to Raw TOML view'}>
           <span className={`raw-mode-switch-label ${surface === 'raw' ? '' : 'raw-mode-switch-label--active'}`}>Form</span>
-          <button
-            type="button"
-            className={`raw-mode-switch-track ${surface === 'raw' ? 'raw-mode-switch-track--on' : ''}`}
-            onClick={() => void onSurfaceChange(surface === 'raw' ? 'form' : 'raw')}
+          <Switch
+            checked={surface === 'raw'}
+            onCheckedChange={(checked) => void onSurfaceChange(checked ? 'raw' : 'form')}
             aria-label="Toggle RAW mode"
-          >
-            <span className="raw-mode-switch-thumb" />
-          </button>
+          />
           <span className={`raw-mode-switch-label ${surface === 'raw' ? 'raw-mode-switch-label--active' : ''}`}>RAW</span>
         </label>
       }

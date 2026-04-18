@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from './lib';
 import { GlobalProviders } from './providers/GlobalProviders';
 import { MainLayout } from './layouts/MainLayout';
 import { SetupWizard } from './components/wizard/SetupWizard';
@@ -15,7 +15,7 @@ function AppContent({ onRequestWizard }: { onRequestWizard: () => void }) {
 
   // Show the window once React tree is mounted (prevents white-flash).
   useEffect(() => {
-    invoke('show_window').catch(() => {});
+    transport.invoke('show_window').catch(() => {});
   }, []);
 
   // Keep the native decoration state in sync with the user preference.
@@ -26,7 +26,7 @@ function AppContent({ onRequestWizard }: { onRequestWizard: () => void }) {
     document.documentElement.classList.toggle('custom-decorations', useCustom);
     document.documentElement.dataset.platform =
       typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? 'macos' : 'other';
-    invoke('window_set_decorations', { useCustom }).catch(() => {});
+    transport.invoke('window_set_decorations', { useCustom }).catch(() => {});
   }, [config.use_custom_decorations]);
 
   // Determine whether to show the wizard on first load.
@@ -102,7 +102,7 @@ function WizardWrapper({ onComplete }: { onComplete: () => void }) {
 
   // Show the window (may be first render).
   useEffect(() => {
-    invoke('show_window').catch(() => {});
+    transport.invoke('show_window').catch(() => {});
   }, []);
 
   return (

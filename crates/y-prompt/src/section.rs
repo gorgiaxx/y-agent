@@ -81,6 +81,10 @@ pub struct PromptContext {
     /// When `Some`, only sections whose IDs are listed here are considered
     /// during template assembly. Dynamic conditions still apply.
     pub selected_prompt_sections: Option<Vec<String>>,
+    /// MCP server instructions collected from connected servers.
+    ///
+    /// When set, appended to the `core.mcp_hint` section during prompt assembly.
+    pub mcp_server_instructions: Option<String>,
 }
 
 impl SectionCondition {
@@ -134,6 +138,7 @@ mod tests {
             working_directory: None,
             custom_system_prompt: None,
             selected_prompt_sections: None,
+            mcp_server_instructions: None,
         }
     }
 

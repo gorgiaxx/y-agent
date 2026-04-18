@@ -1,7 +1,7 @@
 // Custom hook for workspace management.
 
 import { useState, useCallback, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type { WorkspaceInfo } from '../types';
 
 interface UseWorkspacesReturn {
@@ -20,7 +20,7 @@ export async function createWorkspaceRecord(
   path: string,
 ): Promise<WorkspaceInfo | null> {
   try {
-    return await invoke<WorkspaceInfo>('workspace_create', { name, path });
+    return await transport.invoke<WorkspaceInfo>('workspace_create', { name, path });
   } catch (e) {
     console.error('Failed to create workspace:', e);
     return null;
@@ -34,8 +34,8 @@ export function useWorkspaces(): UseWorkspacesReturn {
   const refreshWorkspaces = useCallback(async () => {
     try {
       const [list, map] = await Promise.all([
-        invoke<WorkspaceInfo[]>('workspace_list'),
-        invoke<Record<string, string>>('workspace_session_map'),
+        transport.invoke<WorkspaceInfo[]>('workspace_list'),
+        transport.invoke<Record<string, string>>('workspace_session_map'),
       ]);
       setWorkspaces(list);
       setSessionWorkspaceMap(map);
@@ -58,7 +58,7 @@ export function useWorkspaces(): UseWorkspacesReturn {
 
   const updateWorkspace = useCallback(async (id: string, name: string, path: string) => {
     try {
-      await invoke('workspace_update', { id, name, path });
+      await transport.invoke('workspace_update', { id, name, path });
       setWorkspaces((prev) => prev.map((w) => (w.id === id ? { ...w, name, path } : w)));
     } catch (e) {
       console.error('Failed to update workspace:', e);
@@ -67,7 +67,7 @@ export function useWorkspaces(): UseWorkspacesReturn {
 
   const deleteWorkspace = useCallback(async (id: string) => {
     try {
-      await invoke('workspace_delete', { id });
+      await transport.invoke('workspace_delete', { id });
       setWorkspaces((prev) => prev.filter((w) => w.id !== id));
       setSessionWorkspaceMap((prev) => {
         const next = { ...prev };
@@ -83,7 +83,7 @@ export function useWorkspaces(): UseWorkspacesReturn {
 
   const assignSession = useCallback(async (workspaceId: string, sessionId: string) => {
     try {
-      await invoke('workspace_assign_session', { workspaceId, sessionId });
+      await transport.invoke('workspace_assign_session', { workspaceId, sessionId });
       setSessionWorkspaceMap((prev) => ({ ...prev, [sessionId]: workspaceId }));
     } catch (e) {
       console.error('Failed to assign session:', e);
@@ -92,7 +92,7 @@ export function useWorkspaces(): UseWorkspacesReturn {
 
   const unassignSession = useCallback(async (sessionId: string) => {
     try {
-      await invoke('workspace_unassign_session', { sessionId });
+      await transport.invoke('workspace_unassign_session', { sessionId });
       setSessionWorkspaceMap((prev) => {
         const next = { ...prev };
         delete next[sessionId];

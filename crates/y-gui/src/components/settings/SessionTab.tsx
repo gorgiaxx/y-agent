@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import type { SessionFormData } from './settingsTypes';
 import { jsonToSession } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
@@ -36,7 +36,7 @@ export function SessionTab({
     setLoading(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await invoke<any>('config_get');
+      const allConfig = await transport.invoke<any>('config_get');
       const sessionJson = allConfig?.session ?? {};
       setSessionForm(jsonToSession(sessionJson));
       // Cache raw TOML for comment preservation.

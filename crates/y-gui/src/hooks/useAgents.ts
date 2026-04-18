@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 
 export interface AgentFeatureFlags {
   toolcall: boolean;
@@ -85,9 +85,9 @@ export function useAgents() {
   const refreshAgents = useCallback(async () => {
     try {
       const [list, toolList, sectionList] = await Promise.all([
-        invoke<AgentInfo[]>('agent_list'),
-        invoke<AgentToolInfo[]>('agent_tool_list'),
-        invoke<PromptSectionInfo[]>('agent_prompt_section_list'),
+        transport.invoke<AgentInfo[]>('agent_list'),
+        transport.invoke<AgentToolInfo[]>('agent_tool_list'),
+        transport.invoke<PromptSectionInfo[]>('agent_prompt_section_list'),
       ]);
       setAgents(list);
       setTools(toolList);
@@ -105,7 +105,7 @@ export function useAgents() {
 
   const getAgentDetail = useCallback(async (id: string): Promise<AgentDetail | null> => {
     try {
-      return await invoke<AgentDetail>('agent_get', { id });
+      return await transport.invoke<AgentDetail>('agent_get', { id });
     } catch (e) {
       console.error('Failed to get agent detail:', e);
       return null;
@@ -114,7 +114,7 @@ export function useAgents() {
 
   const getAgentSource = useCallback(async (id: string): Promise<AgentSourceInfo | null> => {
     try {
-      return await invoke<AgentSourceInfo>('agent_source_get', { id });
+      return await transport.invoke<AgentSourceInfo>('agent_source_get', { id });
     } catch (e) {
       console.error('Failed to get agent source:', e);
       return null;
@@ -123,7 +123,7 @@ export function useAgents() {
 
   const parseAgentToml = useCallback(async (tomlContent: string): Promise<AgentDetail | null> => {
     try {
-      return await invoke<AgentDetail>('agent_toml_parse', { tomlContent });
+      return await transport.invoke<AgentDetail>('agent_toml_parse', { tomlContent });
     } catch (e) {
       console.error('Failed to parse agent TOML:', e);
       return null;
@@ -132,7 +132,7 @@ export function useAgents() {
 
   const saveAgent = useCallback(async (id: string, tomlContent: string): Promise<boolean> => {
     try {
-      await invoke('agent_save', { id, tomlContent });
+      await transport.invoke('agent_save', { id, tomlContent });
       await refreshAgents();
       return true;
     } catch (e) {
@@ -143,7 +143,7 @@ export function useAgents() {
 
   const resetAgent = useCallback(async (id: string): Promise<boolean> => {
     try {
-      await invoke('agent_reset', { id });
+      await transport.invoke('agent_reset', { id });
       await refreshAgents();
       return true;
     } catch (e) {
@@ -154,7 +154,7 @@ export function useAgents() {
 
   const reloadAgents = useCallback(async (): Promise<boolean> => {
     try {
-      await invoke('agent_reload');
+      await transport.invoke('agent_reload');
       await refreshAgents();
       return true;
     } catch (e) {

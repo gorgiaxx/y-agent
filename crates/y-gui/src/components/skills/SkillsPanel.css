@@ -33,14 +33,14 @@
 }
 
 .skills-empty-title {
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 600;
   color: var(--text-primary);
   margin: 0;
 }
 
 .skills-empty-desc {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
   margin: 0;
   text-align: center;
@@ -77,8 +77,8 @@
 }
 
 .skill-editor-name {
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   color: var(--text-primary);
   margin: 0;
   white-space: nowrap;
@@ -92,7 +92,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-md);
-  margin-bottom: 4px;
+  margin-top: 4px;
 }
 
 .skill-editor-meta-item {
@@ -101,11 +101,10 @@
 }
 
 .skill-editor-desc {
-  font-size: 12px;
-  color: var(--text-primary);
+  font-size: 13px;
+  color: var(--text-secondary);
   line-height: 1.5;
-  margin: 0 0 4px 0;
-  opacity: 0.85;
+  margin: 6px 0 0 0;
 }
 
 .skill-editor-tags {
@@ -157,10 +156,10 @@
 }
 
 .skill-editor-filetree-header {
-  font-size: 10px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 700;
   color: var(--text-muted);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: var(--space-sm) var(--space-md);
   border-bottom: 1px solid var(--border);

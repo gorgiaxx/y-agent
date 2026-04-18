@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type { SkillInfo, SkillDetail, SkillFileEntry, SkillImportResult } from '../types';
 
 export type ImportStatus = 'idle' | 'importing' | 'success' | 'error';
@@ -13,7 +13,7 @@ export function useSkills() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await invoke<SkillInfo[]>('skill_list');
+      const list = await transport.invoke<SkillInfo[]>('skill_list');
       setSkills(list);
     } catch (err) {
       console.error('Failed to load skills:', err);
@@ -32,7 +32,7 @@ export function useSkills() {
 
   const getSkillDetail = useCallback(async (name: string): Promise<SkillDetail | null> => {
     try {
-      return await invoke<SkillDetail>('skill_get', { name });
+      return await transport.invoke<SkillDetail>('skill_get', { name });
     } catch (err) {
       console.error('Failed to get skill detail:', err);
       return null;
@@ -41,7 +41,7 @@ export function useSkills() {
 
   const uninstallSkill = useCallback(async (name: string) => {
     try {
-      await invoke('skill_uninstall', { name });
+      await transport.invoke('skill_uninstall', { name });
       await refresh();
     } catch (err) {
       console.error('Failed to uninstall skill:', err);
@@ -50,7 +50,7 @@ export function useSkills() {
 
   const setEnabled = useCallback(async (name: string, enabled: boolean) => {
     try {
-      await invoke('skill_set_enabled', { name, enabled });
+      await transport.invoke('skill_set_enabled', { name, enabled });
       await refresh();
     } catch (err) {
       console.error('Failed to toggle skill:', err);
@@ -59,7 +59,7 @@ export function useSkills() {
 
   const openFolder = useCallback(async (name: string) => {
     try {
-      await invoke('skill_open_folder', { name });
+      await transport.invoke('skill_open_folder', { name });
     } catch (err) {
       console.error('Failed to open folder:', err);
     }
@@ -70,7 +70,7 @@ export function useSkills() {
     setImportStatus('importing');
     setImportError(null);
 
-    invoke<SkillImportResult>('skill_import', { path, sanitize })
+    transport.invoke<SkillImportResult>('skill_import', { path, sanitize })
       .then(async (result) => {
         if (result.decision === 'accepted' || result.decision === 'optimized') {
           setImportStatus('success');
@@ -98,7 +98,7 @@ export function useSkills() {
 
   const getSkillFiles = useCallback(async (name: string): Promise<SkillFileEntry[]> => {
     try {
-      return await invoke<SkillFileEntry[]>('skill_get_files', { name });
+      return await transport.invoke<SkillFileEntry[]>('skill_get_files', { name });
     } catch (err) {
       console.error('Failed to get skill files:', err);
       return [];
@@ -107,7 +107,7 @@ export function useSkills() {
 
   const readSkillFile = useCallback(async (name: string, relativePath: string): Promise<string | null> => {
     try {
-      return await invoke<string>('skill_read_file', { name, relativePath });
+      return await transport.invoke<string>('skill_read_file', { name, relativePath });
     } catch (err) {
       console.error('Failed to read skill file:', err);
       return null;
@@ -116,7 +116,7 @@ export function useSkills() {
 
   const saveSkillFile = useCallback(async (name: string, relativePath: string, content: string): Promise<boolean> => {
     try {
-      await invoke('skill_save_file', { name, relativePath, content });
+      await transport.invoke('skill_save_file', { name, relativePath, content });
       return true;
     } catch (err) {
       console.error('Failed to save skill file:', err);

@@ -306,44 +306,6 @@
   color: var(--accent);
 }
 
-.raw-mode-switch-track {
-  position: relative;
-  width: 30px;
-  height: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-tertiary);
-  cursor: pointer;
-  padding: 0;
-  transition: background 0.2s ease, border-color 0.2s ease;
-  flex-shrink: 0;
-}
-
-.raw-mode-switch-track:hover {
-  border-color: var(--border-focus);
-}
-
-.raw-mode-switch-track--on {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.raw-mode-switch-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--text-secondary);
-  transition: transform 0.2s ease, background 0.2s ease;
-}
-
-.raw-mode-switch-track--on .raw-mode-switch-thumb {
-  transform: translateX(14px);
-  background: var(--accent-contrast);
-}
-
 .settings-header-with-toggle {
   display: flex;
   align-items: center;

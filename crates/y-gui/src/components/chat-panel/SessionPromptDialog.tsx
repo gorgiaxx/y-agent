@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import {
   Dialog,
   DialogContent,
@@ -26,7 +26,7 @@ export function SessionPromptDialog({
   const loadPrompt = useCallback(async () => {
     setLoading(true);
     try {
-      const current = await invoke<string | null>('session_get_custom_prompt', {
+      const current = await transport.invoke<string | null>('session_get_custom_prompt', {
         sessionId,
       });
       setPrompt(current ?? '');
@@ -45,7 +45,7 @@ export function SessionPromptDialog({
     setSaving(true);
     try {
       const value = prompt.trim() || null;
-      await invoke('session_set_custom_prompt', {
+      await transport.invoke('session_set_custom_prompt', {
         sessionId,
         prompt: value,
       });
@@ -60,7 +60,7 @@ export function SessionPromptDialog({
   const handleClear = async () => {
     setSaving(true);
     try {
-      await invoke('session_set_custom_prompt', {
+      await transport.invoke('session_set_custom_prompt', {
         sessionId,
         prompt: null,
       });

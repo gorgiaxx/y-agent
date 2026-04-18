@@ -482,6 +482,7 @@ async fn execute_tool_call(
 ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
     // Intercept ToolSearch calls -- unified search across tools, skills, and agents.
     if tc.name == "ToolSearch" {
+        let taxonomy = container.tool_taxonomy.read().await;
         let sources = crate::tool_search_orchestrator::CapabilitySearchSources {
             skill_search: Some(&container.skill_search),
             agent_registry: Some(&*container.agent_registry),
@@ -489,7 +490,7 @@ async fn execute_tool_call(
         let result = crate::tool_search_orchestrator::ToolSearchOrchestrator::handle_with_sources(
             &tc.arguments,
             &container.tool_registry,
-            &container.tool_taxonomy,
+            &taxonomy,
             &container.tool_activation_set,
             &sources,
         )

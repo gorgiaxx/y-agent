@@ -23,8 +23,10 @@
   --accent:        #c8b560;
   --accent-hover:  #d4c26e;
   --accent-subtle: rgba(200, 181, 96, 0.10);
-  --accent-subtle-hover: rgba(200, 181, 96, 0.18);
   --accent-glow:   rgba(200, 181, 96, 0.15);
+
+  /* ToolCall tag (shared across themes) */
+  --toolcall-tag-background-hover: rgba(255, 255, 255, 0.06);
 
   /* Semantic */
   --success:       #6fcf97;
@@ -84,7 +86,6 @@
   --accent:        #9a7c2a;
   --accent-hover:  #7e6420;
   --accent-subtle: rgba(154, 124, 42, 0.08);
-  --accent-subtle-hover: rgba(154, 124, 42, 0.15);
   --accent-glow:   rgba(154, 124, 42, 0.12);
 
   --success:       #3a9d6b;
@@ -105,7 +106,6 @@
   --info-subtle: rgba(37, 99, 235, 0.08);
 
   --accent-contrast: #ffffff;
-  --toolcall-tag-border-active: #edecea;
   --toolcall-tag-background-hover: #f2f0f0;
 }
 
@@ -133,6 +133,11 @@ body {
   height: 100vh;
   width: 100vw;
   letter-spacing: -0.01em;
+}
+
+/* macOS vibrancy: transparent body lets the native blur material show through. */
+html[data-platform="macos"] body {
+  background: transparent;
 }
 
 #root {

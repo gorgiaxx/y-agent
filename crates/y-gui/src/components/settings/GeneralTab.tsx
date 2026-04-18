@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Copy, Wand2 } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import type { GuiConfig } from '../../types';
 import {
   Button,
@@ -32,7 +32,7 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<{ config_dir: string; data_dir: string }>('app_paths')
+    transport.invoke<{ config_dir: string; data_dir: string }>('app_paths')
       .then((paths) => {
         setConfigPath(paths.config_dir);
         setDataPath(paths.data_dir);

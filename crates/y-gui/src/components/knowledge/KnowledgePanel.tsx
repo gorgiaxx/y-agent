@@ -208,8 +208,8 @@ export function KnowledgePanel({
             <Search size={18} />
             <h2>Search Results</h2>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setShowSearch(false)}>
-            Back
+          <Button variant="icon" size="sm" onClick={() => setShowSearch(false)} title="Back">
+            <ArrowLeft size={18} />
           </Button>
         </div>
         <div className="knowledge-search-bar">
@@ -275,10 +275,11 @@ export function KnowledgePanel({
             </Badge>
           </div>
           <Button
-            variant="danger"
+            variant="icon"
             size="sm"
             onClick={() => setDeleteTarget({ type: 'entry', id: selectedEntry.id, name: selectedEntry.title || 'this entry' })}
             title="Delete entry"
+            className="knowledge-delete-btn"
           >
             <Trash2 size={14} />
           </Button>
@@ -308,15 +309,15 @@ export function KnowledgePanel({
               <span>Document Metadata</span>
             </div>
             {!expandedSections.has('metadata') && (
-              <div className="knowledge-section-content" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div className="knowledge-section-content knowledge-metadata-content">
                 {selectedEntry.interpreted_title && (
-                  <div style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: '1.4' }}>
+                  <div className="knowledge-interpreted-title">
                     {selectedEntry.interpreted_title}
                   </div>
                 )}
 
                 {(selectedEntry.document_type || selectedEntry.industry || selectedEntry.subcategory) && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                  <div className="knowledge-metadata-badges">
                     {selectedEntry.document_type && (
                       <Badge variant="info">{selectedEntry.document_type}</Badge>
                     )}
@@ -330,7 +331,7 @@ export function KnowledgePanel({
                 )}
 
                 {selectedEntry.tags && selectedEntry.tags.length > 0 && (
-                  <div className="knowledge-metadata-tags" style={{ borderTop: 'none', paddingTop: 0 }}>
+                  <div className="knowledge-metadata-tags knowledge-metadata-tags--inline">
                     <Tag size={12} />
                     {selectedEntry.tags.map(t => (
                       <Badge key={t} variant="outline">{t}</Badge>
@@ -514,10 +515,11 @@ export function KnowledgePanel({
             <Search size={14} />
           </Button>
           <Button
-            variant="danger"
+            variant="icon"
             size="sm"
             onClick={() => setDeleteTarget({ type: 'collection', id: selectedCollection!, name: selectedCollection! })}
             title="Delete collection"
+            className="knowledge-delete-btn"
           >
             <Trash2 size={14} />
           </Button>
@@ -581,12 +583,12 @@ export function KnowledgePanel({
               className="knowledge-entry-row"
               onClick={() => handleViewEntry(entry.id)}
             >
-              <div className="knowledge-entry-main" style={{ alignItems: 'flex-start' }}>
-                <span className="knowledge-entry-type-icon" style={{ marginTop: '2px' }}>
+              <div className="knowledge-entry-main">
+                <span className="knowledge-entry-type-icon">
                   {fileTypeIcon(entry.source_type || 'file', entry.source_uri)}
                 </span>
-                <div className="knowledge-entry-info" style={{ gap: '6px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <div className="knowledge-entry-info">
+                  <div className="knowledge-entry-name-wrap">
                     <span className="knowledge-entry-title">{entry.title || extractFilename(entry.source_uri)}</span>
                     <span className="knowledge-entry-source">{extractFilename(entry.source_uri)}</span>
                   </div>
@@ -621,13 +623,14 @@ export function KnowledgePanel({
                 </Badge>
                 <span className="knowledge-entry-time">{formatRelativeTime(entry.updated_at)}</span>
                 <Button
-                  variant="danger"
+                  variant="icon"
                   size="sm"
                   onClick={(e) => {
                     e.stopPropagation();
                     setDeleteTarget({ type: 'entry', id: entry.id, name: entry.title || extractFilename(entry.source_uri) });
                   }}
                   title="Delete entry"
+                  className="knowledge-delete-btn"
                 >
                   <Trash2 size={12} />
                 </Button>

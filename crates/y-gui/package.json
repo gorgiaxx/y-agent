@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "VITE_BACKEND=http vite",
     "build": "tsc -b && vite build",
+    "build:web": "VITE_BACKEND=http tsc -b && VITE_BACKEND=http vite build --outDir dist-web",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

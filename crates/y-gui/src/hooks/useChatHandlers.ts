@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, Attachment } from '../types';
 import type { ViewType } from '../components/Sidebar';
 import type { CompactInfo, ChatOpStatus } from './useChat';
@@ -172,7 +172,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
       // Restore files to the state before this message was sent.
       // Best-effort: silently succeeds if no file history exists.
       try {
-        await invoke('rewind_restore_files', {
+        await transport.invoke('rewind_restore_files', {
           sessionId: activeSessionId,
           targetMessageId: messageId,
         });
@@ -248,7 +248,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
   const handleCreateWorkspace = useCallback(
     async (name: string, path: string) => {
       try {
-        await invoke('workspace_create', { name, path });
+        await transport.invoke('workspace_create', { name, path });
         await refreshWorkspaces();
       } catch (e) {
         console.error('Failed to create workspace:', e);
@@ -271,7 +271,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
           if (activeSessionId) {
             const sid = activeSessionId;
             setOp('compacting');
-            invoke<{ messages_pruned: number; messages_compacted: number; tokens_saved: number; summary: string }>(
+            transport.invoke<{ messages_pruned: number; messages_compacted: number; tokens_saved: number; summary: string }>(
               'context_compact',
               { sessionId: sid },
             )
@@ -304,7 +304,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
           setObsOpen((prev) => !prev);
           return true;
         case 'status':
-          invoke<unknown>('system_status')
+          transport.invoke<unknown>('system_status')
             .then(() => console.log('Status refreshed'))
             .catch((e) => console.warn('Failed to refresh system status:', e));
           return true;

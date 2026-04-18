@@ -1,7 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Upload, FolderOpen, FilePlus } from 'lucide-react';
-import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { transport, platform } from '../../lib';
 import type { KnowledgeCollectionInfo } from '../../types';
 import {
   Dialog,
@@ -56,18 +55,15 @@ export function KnowledgeIngestDialog({
 
   const handleAddFiles = async () => {
     try {
-      const selected = await open({
-        directory: false,
+      const selected = await platform.openFileDialog({
         multiple: true,
-        title: 'Select files to import',
         filters: [
           { name: 'Documents', extensions: ['md', 'txt', 'rst', 'json', 'yaml', 'yml', 'toml', 'csv'] },
           { name: 'All files', extensions: ['*'] },
         ],
       });
       if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        addFiles(paths);
+        addFiles(selected);
       }
     } catch (err) {
       console.error('Failed to open file dialog:', err);
@@ -76,23 +72,20 @@ export function KnowledgeIngestDialog({
 
   const handleAddFolder = async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: 'Select folder to import',
-      });
-      if (selected) {
+      const selected = await platform.openFileDialog({ directory: true });
+      if (selected && selected.length > 0) {
+        const folderPath = selected[0];
         setExpanding(true);
         try {
-          const expandedFiles = await invoke<string[]>('kb_expand_folder', { path: selected as string });
+          const expandedFiles = await transport.invoke<string[]>('kb_expand_folder', { path: folderPath });
           if (expandedFiles.length > 0) {
             addFiles(expandedFiles);
           } else {
-            console.warn('No supported files found in folder:', selected);
+            console.warn('No supported files found in folder:', folderPath);
           }
         } catch (err) {
           console.error('Failed to expand folder:', err);
-          addFiles([selected as string]);
+          addFiles([folderPath]);
         } finally {
           setExpanding(false);
         }

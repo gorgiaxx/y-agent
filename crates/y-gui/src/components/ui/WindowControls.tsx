@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { transport, platform } from '../../lib';
 import { Minus, Square, X, Copy } from 'lucide-react';
 import './WindowControls.css';
 
@@ -19,12 +18,16 @@ export function WindowControls() {
   useEffect(() => {
     setIsMac(typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform));
 
-    const win = getCurrentWindow();
+    if (!platform.isTauri()) return;
+
     let unlisten: (() => void) | undefined;
-    win.isMaximized().then(setMaximized).catch(() => {});
-    win.onResized(() => {
+    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+      const win = getCurrentWindow();
       win.isMaximized().then(setMaximized).catch(() => {});
-    }).then((fn) => { unlisten = fn; }).catch(() => {});
+      win.onResized(() => {
+        win.isMaximized().then(setMaximized).catch(() => {});
+      }).then((fn) => { unlisten = fn; }).catch(() => {});
+    }).catch(() => {});
     return () => { unlisten?.(); };
   }, []);
 
@@ -34,7 +37,7 @@ export function WindowControls() {
     <div className="window-controls" aria-label="Window controls">
       <button
         className="window-control-btn"
-        onClick={() => invoke('window_minimize').catch(() => {})}
+        onClick={() => transport.invoke('window_minimize').catch(() => {})}
         title="Minimize"
         aria-label="Minimize"
       >
@@ -42,7 +45,7 @@ export function WindowControls() {
       </button>
       <button
         className="window-control-btn"
-        onClick={() => invoke('window_toggle_maximize').catch(() => {})}
+        onClick={() => transport.invoke('window_toggle_maximize').catch(() => {})}
         title={maximized ? 'Restore' : 'Maximize'}
         aria-label={maximized ? 'Restore' : 'Maximize'}
       >
@@ -50,7 +53,7 @@ export function WindowControls() {
       </button>
       <button
         className="window-control-btn window-control-close"
-        onClick={() => invoke('window_close').catch(() => {})}
+        onClick={() => transport.invoke('window_close').catch(() => {})}
         title="Close"
         aria-label="Close"
       >

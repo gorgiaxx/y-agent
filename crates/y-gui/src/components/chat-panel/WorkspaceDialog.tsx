@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { platform } from '../../lib';
 import { FolderOpen } from 'lucide-react';
 import {
   Dialog,
@@ -30,11 +30,12 @@ export function WorkspaceDialog({
   const handlePickFolder = async () => {
     setPicking(true);
     try {
-      const selected = await open({ directory: true, multiple: false });
-      if (selected && typeof selected === 'string') {
-        setPath(selected);
+      const selected = await platform.openFileDialog({ directory: true });
+      if (selected && selected.length > 0) {
+        const picked = selected[0];
+        setPath(picked);
         if (!name.trim()) {
-          const parts = selected.replace(/\\/g, '/').split('/');
+          const parts = picked.replace(/\\/g, '/').split('/');
           setName(parts[parts.length - 1] || '');
         }
       }

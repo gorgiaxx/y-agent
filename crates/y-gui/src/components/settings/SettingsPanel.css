@@ -306,28 +306,6 @@
   background: var(--surface-hover);
 }
 
-.btn-settings-save {
-  padding: 6px var(--space-md);
-  border-radius: var(--radius-md);
-  font-size: 12px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  transition: opacity 0.15s ease, background 0.15s ease;
-  border: none;
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-
-.btn-settings-save:hover {
-  opacity: 0.85;
-}
-
-.btn-settings-save:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 .settings-header {
   display: flex;
   align-items: center;
@@ -463,34 +441,6 @@
   padding: var(--space-xl);
   font-size: 13px;
   color: var(--text-muted);
-}
-
-/* Prompt editor actions (Restore button) */
-.prompt-editor-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.btn-prompt-restore {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 5px var(--space-sm);
-  font-size: 12px;
-  font-weight: 500;
-  font-family: inherit;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-
-.btn-prompt-restore:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-  border-color: var(--border-focus);
 }
 
 @keyframes settings-spin {

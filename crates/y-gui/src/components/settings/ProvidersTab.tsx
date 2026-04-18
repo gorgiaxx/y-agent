@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import './ProvidersTab.css';
 import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicker';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
@@ -13,7 +13,7 @@ import type { ProviderFormData } from './settingsTypes';
 import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Input, Button, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
+import { Input, Button, Switch, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
 
 // ---------------------------------------------------------------------------
 // ProviderTabPanel -- flat form for a single provider (shown in tab view)
@@ -57,7 +57,7 @@ function ProviderTabPanel({
     setTesting(true);
     setTestResult(null);
     try {
-      const msg = await invoke<string>('provider_test', {
+      const msg = await transport.invoke<string>('provider_test', {
         providerType: provider.provider_type,
         model: provider.model,
         apiKey: provider.api_key ?? '',
@@ -86,7 +86,7 @@ function ProviderTabPanel({
     setModelList([]);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await invoke<any>('provider_list_models', {
+      const result = await transport.invoke<any>('provider_list_models', {
         baseUrl: provider.base_url,
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
@@ -117,15 +117,10 @@ function ProviderTabPanel({
         </SettingsItem>
         <SettingsItem title="Enabled">
           <label className="pf-enable-toggle">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={provider.enabled}
-              className={`raw-mode-switch-track ${provider.enabled ? 'raw-mode-switch-track--on' : ''}`}
-              onClick={() => update({ enabled: !provider.enabled })}
-            >
-              <span className="raw-mode-switch-thumb" />
-            </button>
+            <Switch
+              checked={provider.enabled}
+              onCheckedChange={(checked) => update({ enabled: checked })}
+            />
             <span className={`pf-enable-label ${provider.enabled ? 'pf-enable-label--on' : ''}`}>
               {provider.enabled ? 'Active' : 'Disabled'}
             </span>
@@ -174,15 +169,10 @@ function ProviderTabPanel({
                 : `Auto-detected from provider type (${promptBasedDefaults.includes(provider.provider_type) ? 'prompt_based' : 'native'})`}
             >
               <label className="pf-enable-toggle">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={isNative}
-                  className={`raw-mode-switch-track ${isNative ? 'raw-mode-switch-track--on' : ''}`}
-                  onClick={() => update({ tool_calling_mode: isNative ? 'prompt_based' : 'native' })}
-                >
-                  <span className="raw-mode-switch-thumb" />
-                </button>
+                <Switch
+                  checked={isNative}
+                  onCheckedChange={(checked) => update({ tool_calling_mode: checked ? 'native' : 'prompt_based' })}
+                />
                 <span className={`pf-enable-label ${isNative ? 'pf-enable-label--on' : ''}`}>
                   {isNative ? 'Native' : 'Prompt-based'}
                 </span>
@@ -372,7 +362,7 @@ export function ProvidersTab({
     setProvidersLoading(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await invoke<any>('config_get');
+      const allConfig = await transport.invoke<any>('config_get');
       setProvidersList(jsonToProviders(allConfig));
 
       // Also read raw TOML to cache pool-level meta fields (lines before the

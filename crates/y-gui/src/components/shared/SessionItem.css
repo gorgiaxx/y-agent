@@ -71,13 +71,13 @@
   opacity: 1;
 }
 
+.session-item-pin--pinned {
+  color: var(--accent);
+}
+
 .session-item-pin:hover {
   color: var(--text-primary);
   background: var(--accent-subtle);
-}
-
-.session-item-pin--pinned {
-  color: var(--accent);
 }
 
 /* Content */

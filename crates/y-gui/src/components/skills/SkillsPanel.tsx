@@ -227,18 +227,18 @@ export function SkillsPanel({
       <div className="skill-editor-header">
         <div className="skill-editor-info">
           <div className="skill-editor-title-row">
-            <Puzzle size={18} className="skill-editor-icon" />
+            <Puzzle size={20} className="skill-editor-icon" />
             <h2 className="skill-editor-name">{detail.name}</h2>
             <Badge variant={detail.enabled ? 'success' : 'outline'} size="md">
               {detail.enabled ? 'Active' : 'Disabled'}
             </Badge>
           </div>
+          <p className="skill-editor-desc">{detail.description}</p>
           <div className="skill-editor-meta">
             {detail.author && <span className="skill-editor-meta-item">Author: {detail.author}</span>}
             {detail.version && <span className="skill-editor-meta-item">v{detail.version}</span>}
             {detail.classification_type && <span className="skill-editor-meta-item">Type: {detail.classification_type}</span>}
           </div>
-          <p className="skill-editor-desc">{detail.description}</p>
           {detail.tags.length > 0 && (
             <div className="skill-editor-tags">
               {detail.tags.map((tag) => (

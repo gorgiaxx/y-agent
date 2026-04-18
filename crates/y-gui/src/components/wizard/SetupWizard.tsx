@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import {
   ChevronRight,
   ChevronLeft,
@@ -172,7 +172,7 @@ export function SetupWizard({
     setModelList([]);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await invoke<any>('provider_list_models', {
+      const result = await transport.invoke<any>('provider_list_models', {
         baseUrl: provider.base_url,
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
@@ -197,7 +197,7 @@ export function SetupWizard({
     setTesting(true);
     setTestResult(null);
     try {
-      const msg = await invoke<string>('provider_test', {
+      const msg = await transport.invoke<string>('provider_test', {
         providerType: provider.provider_type,
         model: provider.model,
         apiKey: provider.api_key ?? '',
@@ -319,7 +319,7 @@ export function SetupWizard({
   const handleFinish = useCallback(async () => {
     await updateConfig({ ...config, setup_completed: true });
     try {
-      await invoke<string>('config_reload');
+      await transport.invoke<string>('config_reload');
     } catch (e) {
       console.error('Reload error:', e);
     }

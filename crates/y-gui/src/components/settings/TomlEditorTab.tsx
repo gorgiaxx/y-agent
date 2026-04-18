@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { MonacoEditor } from '../ui/MonacoEditor';
+import { Switch } from '../ui/Switch';
 
 // ---------------------------------------------------------------------------
 // RawTomlEditor -- Monaco editor, no loading/title management
@@ -45,15 +46,10 @@ export function RawModeToggle({ rawMode, onToggle }: RawModeToggleProps) {
   return (
     <label className="raw-mode-switch" title={rawMode ? 'Switch to Form view' : 'Switch to Raw TOML view'}>
       <span className={`raw-mode-switch-label ${rawMode ? '' : 'raw-mode-switch-label--active'}`}>Form</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={rawMode}
-        className={`raw-mode-switch-track ${rawMode ? 'raw-mode-switch-track--on' : ''}`}
-        onClick={() => onToggle(!rawMode)}
-      >
-        <span className="raw-mode-switch-thumb" />
-      </button>
+      <Switch
+        checked={rawMode}
+        onCheckedChange={onToggle}
+      />
       <span className={`raw-mode-switch-label ${rawMode ? 'raw-mode-switch-label--active' : ''}`}>RAW</span>
     </label>
   );

@@ -361,6 +361,13 @@ impl ContextProvider for BuildSystemPromptProvider {
                     let agents = self.callable_agents_text.read().await;
                     content.replace("{{CALLABLE_AGENTS}}", &agents)
                 }
+                "core.mcp_hint" => {
+                    if let Some(ref instructions) = prompt_ctx.mcp_server_instructions {
+                        format!("{content}\n\n{instructions}")
+                    } else {
+                        content
+                    }
+                }
                 _ => content,
             };
 
@@ -454,6 +461,7 @@ mod tests {
             working_directory: None,
             custom_system_prompt: None,
             selected_prompt_sections: None,
+            mcp_server_instructions: None,
         }
     }
 
@@ -496,6 +504,7 @@ mod tests {
             working_directory: None,
             custom_system_prompt: None,
             selected_prompt_sections: None,
+            mcp_server_instructions: None,
         };
         let provider = make_provider(plan_ctx, SystemPromptConfig::default());
         let mut ctx = AssembledContext::default();
@@ -613,6 +622,7 @@ mod tests {
             working_directory: None,
             custom_system_prompt: None,
             selected_prompt_sections: None,
+            mcp_server_instructions: None,
         };
 
         // Template where every section has a condition that won't match.
@@ -743,6 +753,7 @@ mod tests {
             working_directory: None,
             custom_system_prompt: None,
             selected_prompt_sections: None,
+            mcp_server_instructions: None,
         };
         let provider = make_provider(explore_ctx, SystemPromptConfig::default());
         let mut ctx = AssembledContext::default();

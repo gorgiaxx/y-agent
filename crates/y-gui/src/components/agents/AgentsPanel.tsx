@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Bot, Save, RotateCcw, RefreshCw, Pencil, X } from 'lucide-react';
 import type { AgentDetail } from '../../hooks/useAgents';
-import { Button, Badge } from '../ui';
+import { Button, Badge, Textarea } from '../ui';
 import './AgentsPanel.css';
 
 interface AgentsPanelProps {
@@ -157,8 +157,9 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
               </Button>
             </div>
           </div>
-          <textarea
-            className="agent-edit-textarea"
+          <Textarea
+            variant="mono"
+            className="flex-1 mt-3 min-h-[200px] resize-none bg-[var(--surface-code)]"
             value={tomlContent}
             onChange={(e) => setTomlContent(e.target.value)}
             spellCheck={false}

@@ -1,8 +1,8 @@
 // Custom hook for session management.
 
 import { useState, useCallback, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { transport } from '../lib';
+
 import type { SessionInfo } from '../types';
 
 interface UseSessionsReturn {
@@ -27,7 +27,7 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
 
   const refreshSessions = useCallback(async () => {
     try {
-      const list = await invoke<SessionInfo[]>('session_list', {
+      const list = await transport.invoke<SessionInfo[]>('session_list', {
         agentId: agentId ?? null,
       });
       setSessions(list);
@@ -73,7 +73,7 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
   // Listen for title updates emitted by the GUI backend after LLM turns.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen<{ session_id: string; title: string }>('session:title_updated', (e) => {
+    transport.listen<{ session_id: string; title: string }>('session:title_updated', (e) => {
       setSessions((prev) =>
         prev.map((s) =>
           s.id === e.payload.session_id ? { ...s, title: e.payload.title } : s,
@@ -86,7 +86,7 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
   const createSession = useCallback(
     async (title?: string, options?: { agentId?: string | null }): Promise<SessionInfo | null> => {
       try {
-        const session = await invoke<SessionInfo>('session_create', {
+        const session = await transport.invoke<SessionInfo>('session_create', {
           title: title ?? null,
           agentId: options?.agentId ?? agentId ?? null,
         });
@@ -108,7 +108,7 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
   const deleteSession = useCallback(
     async (id: string) => {
       try {
-        await invoke('session_delete', { sessionId: id });
+        await transport.invoke('session_delete', { sessionId: id });
         setSessions((prev) => prev.filter((s) => s.id !== id));
         if (activeSessionId === id) {
           setActiveSessionId(null);
@@ -123,7 +123,7 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
   const forkSession = useCallback(
     async (sessionId: string, messageIndex: number, title?: string): Promise<SessionInfo | null> => {
       try {
-        const fork = await invoke<SessionInfo>('session_fork', {
+        const fork = await transport.invoke<SessionInfo>('session_fork', {
           sessionId,
           messageIndex,
           title: title ?? null,
@@ -142,7 +142,7 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
   const renameSession = useCallback(
     async (id: string, title: string | null) => {
       try {
-        await invoke('session_rename', { sessionId: id, title });
+        await transport.invoke('session_rename', { sessionId: id, title });
         setSessions((prev) =>
           prev.map((s) =>
             s.id === id ? { ...s, manual_title: title } : s,

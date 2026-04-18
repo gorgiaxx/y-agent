@@ -87,6 +87,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
         working_directory: None,
         custom_system_prompt: None,
         selected_prompt_sections: None,
+        mcp_server_instructions: None,
     };
     *services.prompt_context.write().await = initial_ctx;
 

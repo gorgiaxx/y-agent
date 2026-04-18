@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import { TagChipInput } from './TagChipInput';
 import type { RuntimeFormData } from './settingsTypes';
 import { jsonToRuntime } from './settingsTypes';
@@ -37,7 +37,7 @@ export function RuntimeTab({
     setLoading(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await invoke<any>('config_get');
+      const allConfig = await transport.invoke<any>('config_get');
       const runtimeJson = allConfig?.runtime ?? {};
       setRuntimeForm(jsonToRuntime(runtimeJson));
       // Cache raw TOML for comment preservation.

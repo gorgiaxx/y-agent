@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useRef } from 'react';
 import {
   Zap,
   Puzzle,
@@ -17,6 +17,7 @@ import { AgentStudioSidebarNav } from './agents/AgentStudioSidebarNav';
 import { SkillsSidebarContent } from './skills/SkillsSidebarContent';
 import { KnowledgeSidebarContent } from './knowledge/KnowledgeSidebarContent';
 import { AutomationSidebarContent } from './automation/AutomationSidebarContent';
+import { useSidebarSearch } from '../hooks/useSidebarSearch';
 import type { EditorTab, EditorSurface } from './agents/types';
 import './Sidebar.css';
 
@@ -81,21 +82,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ chat, nav, agentStudio }: SidebarProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
+  const { searchQuery, setSearchQuery, searchOpen, setSearchOpen, searchInputRef, closeSearch } = useSidebarSearch();
   const toggleRef = useRef<HTMLButtonElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (searchOpen) {
-      requestAnimationFrame(() => searchInputRef.current?.focus());
-    }
-  }, [searchOpen]);
-
-  const closeSearch = useCallback(() => {
-    setSearchQuery('');
-    setSearchOpen(false);
-  }, []);
 
   const goTo = (view: ViewType) => nav.onSelectView(view);
 

@@ -25,6 +25,9 @@ pub struct ServerCapabilities {
     pub server_info: Option<ServerInfo>,
     /// Feature capabilities advertised by the server.
     pub capabilities: Option<serde_json::Value>,
+    /// Optional instructions for the LLM on how to use this server's tools.
+    #[serde(default)]
+    pub instructions: Option<String>,
 }
 
 impl ServerCapabilities {
@@ -695,6 +698,7 @@ mod tests {
                 "tools": {},
                 "resources": { "listChanged": true }
             })),
+            instructions: None,
         };
         assert!(caps.supports_tools());
         assert!(caps.supports_resources());

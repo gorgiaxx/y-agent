@@ -12,12 +12,14 @@ import {
   Trash2,
   GitBranch,
 } from 'lucide-react';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { platform } from '../../lib';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
 import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { Button } from '../ui';
 import { PanelToolbar, type SortField, type PanelToolbarAction } from '../common/PanelToolbar';
+import { useSessionDragReorder } from '../../hooks/useSessionDragReorder';
+import { STORAGE_KEYS } from '../../constants/storageKeys';
 import {
   calculateFloatingMenuPosition,
   calculateWorkspaceOptionsMaxHeight,
@@ -103,10 +105,16 @@ export function ChatSidebarPanel({
   searchQuery: searchQueryProp,
   onSearchQueryChange: _onSearchQueryChange,
 }: ChatSidebarPanelProps) {
-  const COLLAPSED_STORAGE_KEY = 'y-gui:workspace-collapsed';
-  const PINNED_STORAGE_KEY = 'y-gui:pinned-sessions';
-  const WS_SORT_STORAGE_KEY = 'y-gui:workspace-sort';
-  const SESSION_SORT_STORAGE_KEY = 'y-gui:session-sort';
+  const {
+    draggedSessionId,
+    handleItemHover,
+    handleMouseDown,
+    getPreviewList,
+    sortByUserOrder: baseSortByUserOrder,
+  } = useSessionDragReorder({
+    sessions,
+    storageKey: STORAGE_KEYS.SESSION_ORDER,
+  });
 
   const [internalSearchQuery] = useState('');
   const searchQuery = searchQueryProp ?? internalSearchQuery;
@@ -121,21 +129,14 @@ export function ChatSidebarPanel({
   const menuRef = useRef<HTMLDivElement>(null);
   const menuAnchorRef = useRef<HTMLElement | null>(null);
 
-  // -- Mouse-based reorder state --
-  const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
-  const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
-  const [dragOverPosition, setDragOverPosition] = useState<'above' | 'below'>('above');
-  const dragGroupRef = useRef<string[]>([]);
-
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const dropTargetRef = useRef<{ targetId: string; position: 'above' | 'below' } | null>(null);
 
   // -- Sort state (persisted) --
   const [wsSortField, setWsSortField] = useState<SortField>(() => {
     try {
-      const v = localStorage.getItem(WS_SORT_STORAGE_KEY) as SortField;
+      const v = localStorage.getItem(STORAGE_KEYS.WORKSPACE_SORT) as SortField;
       if (v && ['default', 'name', 'created', 'updated'].includes(v)) return v;
     } catch { /* ignore */ }
     return 'default';
@@ -143,20 +144,19 @@ export function ChatSidebarPanel({
 
   const [sessionSortField, setSessionSortField] = useState<SortField>(() => {
     try {
-      const v = localStorage.getItem(SESSION_SORT_STORAGE_KEY) as SortField;
+      const v = localStorage.getItem(STORAGE_KEYS.SESSION_SORT) as SortField;
       if (v && ['default', 'name', 'created', 'updated'].includes(v)) return v;
     } catch { /* ignore */ }
     return 'default';
   });
 
-  useEffect(() => { localStorage.setItem(WS_SORT_STORAGE_KEY, wsSortField); }, [wsSortField]);
-  useEffect(() => { localStorage.setItem(SESSION_SORT_STORAGE_KEY, sessionSortField); }, [sessionSortField]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.WORKSPACE_SORT, wsSortField); }, [wsSortField]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SESSION_SORT, sessionSortField); }, [sessionSortField]);
 
   // -- Section collapse state (persisted) --
-  const SECTION_COLLAPSED_KEY = 'y-gui:section-collapsed';
   const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>(() => {
     try {
-      const stored = localStorage.getItem(SECTION_COLLAPSED_KEY);
+      const stored = localStorage.getItem(STORAGE_KEYS.SECTION_COLLAPSED);
       if (stored) {
         const parsed = JSON.parse(stored) as Record<string, boolean>;
         if (parsed && typeof parsed === 'object') return parsed;
@@ -166,7 +166,7 @@ export function ChatSidebarPanel({
   });
 
   useEffect(() => {
-    localStorage.setItem(SECTION_COLLAPSED_KEY, JSON.stringify(sectionCollapsed));
+    localStorage.setItem(STORAGE_KEYS.SECTION_COLLAPSED, JSON.stringify(sectionCollapsed));
   }, [sectionCollapsed]);
 
   const toggleSectionCollapsed = useCallback((section: string) => {
@@ -176,7 +176,7 @@ export function ChatSidebarPanel({
   // -- Pinned sessions state (persisted) --
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
     try {
-      const stored = localStorage.getItem(PINNED_STORAGE_KEY);
+      const stored = localStorage.getItem(STORAGE_KEYS.PINNED_SESSIONS);
       if (stored) {
         const parsed = JSON.parse(stored) as string[];
         if (Array.isArray(parsed)) return new Set(parsed);
@@ -186,7 +186,7 @@ export function ChatSidebarPanel({
   });
 
   useEffect(() => {
-    localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify([...pinnedIds]));
+    localStorage.setItem(STORAGE_KEYS.PINNED_SESSIONS, JSON.stringify([...pinnedIds]));
   }, [pinnedIds]);
 
   const togglePin = useCallback((sessionId: string) => {
@@ -216,7 +216,7 @@ export function ChatSidebarPanel({
   // Workspace collapse state -- persisted in localStorage.
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => {
     try {
-      const stored = localStorage.getItem(COLLAPSED_STORAGE_KEY);
+      const stored = localStorage.getItem(STORAGE_KEYS.WORKSPACE_COLLAPSED);
       if (stored) {
         const parsed = JSON.parse(stored) as string[];
         if (Array.isArray(parsed)) return new Set(parsed);
@@ -226,7 +226,7 @@ export function ChatSidebarPanel({
   });
 
   useEffect(() => {
-    localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify([...collapsedIds]));
+    localStorage.setItem(STORAGE_KEYS.WORKSPACE_COLLAPSED, JSON.stringify([...collapsedIds]));
   }, [collapsedIds]);
 
   const toggleCollapsed = (id: string) => {
@@ -247,122 +247,12 @@ export function ChatSidebarPanel({
     }
   };
 
-  // Session order -- persisted in localStorage (for custom/drag reorder).
-  const SESSION_ORDER_STORAGE_KEY = 'y-gui:session-order';
-  const [sessionOrder, setSessionOrder] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem(SESSION_ORDER_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as string[];
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch { /* ignore corrupt data */ }
-    return [];
-  });
-
-  useEffect(() => {
-    localStorage.setItem(SESSION_ORDER_STORAGE_KEY, JSON.stringify(sessionOrder));
-  }, [sessionOrder]);
-
-  /** Sort a list of sessions by user-defined order; unknowns go to the top sorted by updated_at desc. */
   const sortByUserOrder = useCallback(
     (list: SessionInfo[]): SessionInfo[] => {
       if (sessionSortField !== 'default') return sortSessions(list, sessionSortField);
-      if (sessionOrder.length === 0) return sortSessions(list, 'updated');
-      const orderMap = new Map(sessionOrder.map((id, idx) => [id, idx]));
-      return [...list].sort((a, b) => {
-        const ia = orderMap.get(a.id);
-        const ib = orderMap.get(b.id);
-        if (ia !== undefined && ib !== undefined) return ia - ib;
-        if (ia === undefined && ib === undefined) {
-          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-        }
-        return ia === undefined ? -1 : 1;
-      });
+      return baseSortByUserOrder(list);
     },
-    [sessionOrder, sessionSortField],
-  );
-
-  // -- Mouse-based reorder --
-
-  const commitReorder = useCallback(
-    (sourceId: string, targetId: string, dropPos: 'above' | 'below', groupSessionIds: string[]) => {
-      if (sourceId === targetId) return;
-      if (!groupSessionIds.includes(sourceId)) return;
-
-      const newGroupOrder = groupSessionIds.filter((id) => id !== sourceId);
-      const targetIdx = newGroupOrder.indexOf(targetId);
-      if (targetIdx === -1) return;
-      const insertIdx = dropPos === 'below' ? targetIdx + 1 : targetIdx;
-      newGroupOrder.splice(insertIdx, 0, sourceId);
-
-      const allIds = sessions.map((s) => s.id);
-      const currentOrder = sessionOrder.length > 0
-        ? [...sessionOrder, ...allIds.filter((id) => !sessionOrder.includes(id))]
-        : [...allIds];
-      const groupSet = new Set(groupSessionIds);
-      const firstGroupPos = currentOrder.findIndex((id) => groupSet.has(id));
-      const withoutGroup = currentOrder.filter((id) => !groupSet.has(id));
-      withoutGroup.splice(firstGroupPos, 0, ...newGroupOrder);
-      setSessionOrder(withoutGroup);
-    },
-    [sessions, sessionOrder],
-  );
-
-  const handleItemHover = useCallback(
-    (e: React.MouseEvent, sessionId: string) => {
-      if (!draggedSessionId || draggedSessionId === sessionId) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const pos: 'above' | 'below' = e.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
-      setDragOverSessionId(sessionId);
-      setDragOverPosition(pos);
-      dropTargetRef.current = { targetId: sessionId, position: pos };
-    },
-    [draggedSessionId],
-  );
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent, sessionId: string, groupSessionIds: string[]) => {
-      if (e.button !== 0) return;
-      if ((e.target as HTMLElement).closest('.btn-session-action, .session-context-menu, .session-item-pin')) return;
-
-      const startX = e.clientX;
-      const startY = e.clientY;
-      let dragging = false;
-
-      const onMove = (me: MouseEvent) => {
-        if (!dragging) {
-          const dx = me.clientX - startX;
-          const dy = me.clientY - startY;
-          if (Math.abs(dx) + Math.abs(dy) < 4) return;
-          dragging = true;
-          dragGroupRef.current = groupSessionIds;
-          dropTargetRef.current = null;
-          setDraggedSessionId(sessionId);
-          document.body.classList.add('y-gui-dragging');
-        }
-      };
-
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        document.body.classList.remove('y-gui-dragging');
-        if (!dragging) return;
-
-        const target = dropTargetRef.current;
-        if (target) {
-          commitReorder(sessionId, target.targetId, target.position, dragGroupRef.current);
-        }
-
-        dropTargetRef.current = null;
-        setDraggedSessionId(null);
-        setDragOverSessionId(null);
-      };
-
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    },
-    [commitReorder],
+    [baseSortByUserOrder, sessionSortField],
   );
 
   const closeOpenMenu = useCallback(() => {
@@ -587,26 +477,6 @@ export function ChatSidebarPanel({
     setRenameValue('');
   }, []);
 
-  const getPreviewList = useCallback(
-    (list: SessionInfo[]) => {
-      if (!draggedSessionId || !dragOverSessionId || draggedSessionId === dragOverSessionId) {
-        return list;
-      }
-      const sourceIdx = list.findIndex((s) => s.id === draggedSessionId);
-      const targetIdx = list.findIndex((s) => s.id === dragOverSessionId);
-
-      if (sourceIdx === -1 || targetIdx === -1) return list;
-
-      const result = [...list];
-      const [sourceItem] = result.splice(sourceIdx, 1);
-      const newTargetIdx = result.findIndex((s) => s.id === dragOverSessionId);
-      const insertIdx = dragOverPosition === 'below' ? newTargetIdx + 1 : newTargetIdx;
-      result.splice(insertIdx, 0, sourceItem);
-      return result;
-    },
-    [draggedSessionId, dragOverSessionId, dragOverPosition]
-  );
-
   const sessionById = useMemo(
     () => new Map(sessions.map((session) => [session.id, session])),
     [sessions],
@@ -703,19 +573,19 @@ export function ChatSidebarPanel({
             (isDragging ? 'session-item--dragging' : '')
           }
           onClick={(e) => handleSessionClick(e, session.id)}
-          onMouseDown={(e) => handleMouseDown(e, session.id, groupSessionIds)}
+          onMouseDown={(e) => handleMouseDown(e, session.id, groupSessionIds, '.btn-session-action, .session-context-menu, .session-item-pin')}
           onMouseMove={(e) => handleItemHover(e, session.id)}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            toggleMenu({ kind: 'session', id: session.id }, e.currentTarget);
+            toggleMenu({ kind: 'session', id: session.id }, e.currentTarget as HTMLElement);
           }}
           actions={
             <button
               className="btn-session-action"
               onClick={(e) => {
                 e.stopPropagation();
-                toggleMenu({ kind: 'session', id: session.id }, e.currentTarget);
+                toggleMenu({ kind: 'session', id: session.id }, e.currentTarget as HTMLElement);
               }}
               title="Session actions"
             >
@@ -754,7 +624,7 @@ export function ChatSidebarPanel({
           <button
             className="context-menu-item"
             onClick={() => {
-              revealItemInDir(openWorkspace.path);
+              platform.revealInFileManager(openWorkspace.path);
               closeOpenMenu();
             }}
           >

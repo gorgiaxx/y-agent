@@ -4,8 +4,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { RotateCcw } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import { MonacoEditor } from '../ui/MonacoEditor';
+import { Button } from '../ui/Button';
 
 interface PromptsTabProps {
   setToast: (toast: { message: string; type: 'success' | 'error' } | null) => void;
@@ -31,7 +32,7 @@ export function PromptsTab({
   const loadPromptFile = useCallback(async (filename: string) => {
     setPromptLoading(true);
     try {
-      const content = await invoke<string>('prompt_get', { filename });
+      const content = await transport.invoke<string>('prompt_get', { filename });
       setPromptContent(content);
     } catch (e) {
       setToast({ message: `Failed to load prompt: ${e}`, type: 'error' });
@@ -43,7 +44,7 @@ export function PromptsTab({
   const loadPromptFiles = useCallback(async () => {
     setPromptLoading(true);
     try {
-      const files = await invoke<string[]>('prompt_list');
+      const files = await transport.invoke<string[]>('prompt_list');
       setPromptFiles(files);
       setActivePromptTab(0);
       if (files.length > 0) {
@@ -86,7 +87,7 @@ export function PromptsTab({
     const filename = promptFiles[activePromptTab];
     if (!filename) return;
     try {
-      const defaultContent = await invoke<string>('prompt_get_default', { filename });
+      const defaultContent = await transport.invoke<string>('prompt_get_default', { filename });
       setPromptContent(defaultContent);
       setDirtyPrompts((prev) => ({ ...prev, [filename]: defaultContent }));
       setToast({ message: `Restored "${promptLabel(filename)}" to default`, type: 'success' });
@@ -145,15 +146,15 @@ export function PromptsTab({
                   placeholder="Empty prompt. Type content here."
                 />
                 <div className="prompt-editor-actions">
-                  <button
-                    type="button"
-                    className="btn-prompt-restore"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={handlePromptRestore}
                     title="Restore to default"
                   >
                     <RotateCcw size={13} />
                     <span>Restore Default</span>
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}

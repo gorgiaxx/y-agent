@@ -282,6 +282,29 @@ impl ToolTaxonomy {
         tools
     }
 
+    /// Add a dynamic category at runtime (e.g. for MCP tools).
+    ///
+    /// If the category already exists, the tools are merged into it.
+    pub fn add_dynamic_category(&mut self, key: &str, description: &str, tools: Vec<ToolName>) {
+        if let Some(cat) = self.categories.get_mut(key) {
+            for t in tools {
+                if !cat.tools.contains(&t) {
+                    cat.tools.push(t);
+                }
+            }
+        } else {
+            self.categories.insert(
+                key.to_string(),
+                TaxonomyCategory {
+                    label: description.to_string(),
+                    description: description.to_string(),
+                    subcategories: HashMap::new(),
+                    tools,
+                },
+            );
+        }
+    }
+
     /// Get the number of top-level categories.
     pub fn category_count(&self) -> usize {
         self.categories.len()

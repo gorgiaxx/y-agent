@@ -6,7 +6,7 @@
 //   - Checkpoint resolution helpers
 // ---------------------------------------------------------------------------
 
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type { Message, ChatCheckpointInfo } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ export async function findCheckpointForMessage(
   }
 
   try {
-    return await invoke<ChatCheckpointInfo | null>(
+    return await transport.invoke<ChatCheckpointInfo | null>(
       'chat_find_checkpoint_for_resend',
       { sessionId, userMessageContent: content, messageId },
     );

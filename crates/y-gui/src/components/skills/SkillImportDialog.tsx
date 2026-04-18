@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Upload, Shield, FileText } from 'lucide-react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { platform } from '../../lib';
 import {
   Dialog,
   DialogContent,
@@ -21,13 +21,9 @@ export function SkillImportDialog({ onImport, onClose }: SkillImportDialogProps)
 
   const handleBrowse = async () => {
     try {
-      const selected = await open({
-        directory: false,
-        multiple: false,
-        title: 'Select Skill main file',
-      });
-      if (selected) {
-        setPath(selected as string);
+      const selected = await platform.openFileDialog({});
+      if (selected && selected.length > 0) {
+        setPath(selected[0]);
       }
     } catch (err) {
       console.error('Failed to open dialog:', err);

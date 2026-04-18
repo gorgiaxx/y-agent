@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import type { GuiConfig } from '../../types';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import {
@@ -186,7 +186,7 @@ export function SettingsPanel({
     if (dirtyMcp) {
       try {
         const json = mcpServersToJson(mcpServersList);
-        await invoke('mcp_config_save', { content: json });
+        await transport.invoke('mcp_config_save', { content: json });
         setDirtyMcp(false);
       } catch (e) { errors.push(`mcp: ${e}`); }
     }
@@ -239,7 +239,7 @@ export function SettingsPanel({
     // Save dirty prompt files.
     for (const [filename, content] of Object.entries(dirtyPrompts)) {
       try {
-        await invoke('prompt_save', { filename, content });
+        await transport.invoke('prompt_save', { filename, content });
       } catch (e) { errors.push(`prompt ${filename}: ${e}`); }
     }
     if (errors.length === 0) {

@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { CommandMenu } from './CommandMenu';
@@ -477,7 +476,7 @@ export function InputArea({
     if (!text.trim()) return;
     setTranslating(true);
     try {
-      const translated = await invoke<string>('translate_text', { text: text.trim() });
+      const translated = await transport.invoke<string>('translate_text', { text: text.trim() });
       contentEditableRef.current?.setText(translated);
       contentEditableRef.current?.placeCursorAtEnd();
       updateHasContent();
@@ -640,13 +639,13 @@ export function InputArea({
             className={`toolbar-btn has-tooltip ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
             onClick={async () => {
               try {
-                const result = await open({
+                const result = await platform.openFileDialog({
                   multiple: true,
                   filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
                 });
                 if (result) {
-                  const paths = Array.isArray(result) ? result : [result];
-                  const atts = await invoke<Attachment[]>('attachment_read_files', { paths });
+                  const paths = result;
+                  const atts = await transport.invoke<Attachment[]>('attachment_read_files', { paths });
                   setAttachments((prev) => [...prev, ...atts]);
                 }
               } catch (e) {

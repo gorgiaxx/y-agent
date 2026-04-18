@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import type { KnowledgeFormData } from './settingsTypes';
 import { jsonToKnowledge } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
@@ -38,7 +38,7 @@ export function KnowledgeTab({
     setLoading(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await invoke<any>('config_get');
+      const allConfig = await transport.invoke<any>('config_get');
       const json = allConfig?.knowledge ?? {};
       setKnowledgeForm(jsonToKnowledge(json));
       try {

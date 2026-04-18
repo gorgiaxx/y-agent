@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   X,
   Plus,
@@ -14,6 +14,7 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import type { SkillInfo } from '../../types';
 import type { ImportStatus } from '../../hooks/useSkills';
+import { useSidebarSearch } from '../../hooks/useSidebarSearch';
 
 interface SkillsSidebarPanelProps {
   skills: SkillInfo[];
@@ -34,21 +35,8 @@ export function SkillsSidebarPanel({
   onImportClick,
   onClearImportStatus,
 }: SkillsSidebarPanelProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
+  const { searchQuery, setSearchQuery, searchOpen, setSearchOpen, searchInputRef, closeSearch } = useSidebarSearch();
   const [importStatusExpanded, setImportStatusExpanded] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (searchOpen) {
-      requestAnimationFrame(() => searchInputRef.current?.focus());
-    }
-  }, [searchOpen]);
-
-  const closeSearch = useCallback(() => {
-    setSearchQuery('');
-    setSearchOpen(false);
-  }, []);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return skills;

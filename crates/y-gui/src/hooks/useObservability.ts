@@ -5,7 +5,7 @@
 // range is selected.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type { SystemSnapshot } from '../types';
 
 export type TimeRange = '15m' | '30m' | '1h' | '6h' | '24h' | 'all';
@@ -62,14 +62,14 @@ export function useObservability({
     try {
       setError(null);
       // Always fetch the live snapshot for concurrency + agent pool.
-      const liveSnap = await invoke<SystemSnapshot>('observability_snapshot');
+      const liveSnap = await transport.invoke<SystemSnapshot>('observability_snapshot');
 
       // Try to fetch historical metrics from the persistent store.
       // If this fails (e.g. DB issue), fall back to the live snapshot alone.
       let histSnap: SystemSnapshot | null = null;
       try {
         const since = computeSince(timeRange);
-        histSnap = await invoke<SystemSnapshot>('observability_history', {
+        histSnap = await transport.invoke<SystemSnapshot>('observability_history', {
           since,
           until: null,
         });

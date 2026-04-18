@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useCallback, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type { SystemStatus, ProviderInfo } from '../types';
 
 export interface UseProvidersReturn {
@@ -32,7 +32,7 @@ export function useProviders(
 
   // Fetch the latest provider list from backend.
   const refreshProviders = useCallback(() => {
-    invoke<ProviderInfo[]>('provider_list')
+    transport.invoke<ProviderInfo[]>('provider_list')
       .then(setProviders)
       .catch((e) => console.warn('Failed to load provider list:', e));
   }, []);
@@ -70,7 +70,7 @@ export function useProviders(
 
   // Load system status and provider list on mount.
   useEffect(() => {
-    invoke<SystemStatus>('system_status')
+    transport.invoke<SystemStatus>('system_status')
       .then(setSystemStatus)
       .catch((e) => console.warn('Failed to load system status:', e));
     refreshProviders();

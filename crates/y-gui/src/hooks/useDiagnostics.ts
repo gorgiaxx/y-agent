@@ -11,8 +11,7 @@
 // on the next run.
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
+import { transport, type UnlistenFn } from '../lib';
 import type {
   DiagnosticsEntry,
   DiagnosticsGatewayEvent,
@@ -169,7 +168,7 @@ function mapRawToEntry(item: any, idPrefix: string, idx: number): DiagnosticsEnt
 async function loadSubagentHistory() {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await invoke<any[]>('diagnostics_get_subagent_history', { limit: 50 });
+    const raw = await transport.invoke<any[]>('diagnostics_get_subagent_history', { limit: 50 });
     if (!raw || raw.length === 0) return;
 
     const histEntries = raw.map((item, idx) => mapRawToEntry(item, 'subagent', idx));
@@ -193,7 +192,7 @@ async function loadSubagentHistory() {
 async function reloadSessionHistory(sessionId: string) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await invoke<any[]>('diagnostics_get_by_session', { sessionId, limit: 50 });
+    const raw = await transport.invoke<any[]>('diagnostics_get_by_session', { sessionId, limit: 50 });
     if (!raw || raw.length === 0) return;
 
     const histEntries = raw.map((item, idx) => mapRawToEntry(item, `hist-${sessionId}`, idx));
@@ -256,7 +255,7 @@ async function initialiseBus() {
   if (busInitialised) return;
   busInitialised = true;
 
-  const u0 = await listen<ChatStartedPayload>('chat:started', (event) => {
+  const u0 = await transport.listen<ChatStartedPayload>('chat:started', (event) => {
     const { run_id, session_id } = event.payload;
     broadcastUpdate((prev) => {
       const next: DiagnosticsState = {
@@ -269,7 +268,7 @@ async function initialiseBus() {
   });
   unlistenFns.push(u0);
 
-  const u1 = await listen<ProgressPayload>('chat:progress', (event) => {
+  const u1 = await transport.listen<ProgressPayload>('chat:progress', (event) => {
     const { run_id, event: turnEvent } = event.payload;
     broadcastUpdate((prev) => {
       const sid = prev.runToSession[run_id];
@@ -292,7 +291,7 @@ async function initialiseBus() {
   });
   unlistenFns.push(u1);
 
-  const u2 = await listen<ChatCompletePayload>('chat:complete', (event) => {
+  const u2 = await transport.listen<ChatCompletePayload>('chat:complete', (event) => {
     const { run_id } = event.payload;
     broadcastUpdate((prev) => {
       const next = new Set(prev.activeRuns);
@@ -302,7 +301,7 @@ async function initialiseBus() {
   });
   unlistenFns.push(u2);
 
-  const u3 = await listen<ChatErrorPayload>('chat:error', (event) => {
+  const u3 = await transport.listen<ChatErrorPayload>('chat:error', (event) => {
     const { run_id } = event.payload;
     broadcastUpdate((prev) => {
       const next = new Set(prev.activeRuns);
@@ -317,7 +316,7 @@ async function initialiseBus() {
   // and subagent completion visibility for ALL agent executions without
   // per-caller wiring. LLM/tool events are routed to the Global (nil-UUID)
   // view; subagent_completed triggers a DB history reload.
-  const u4 = await listen<DiagnosticsGatewayEvent>('diagnostics:event', (event) => {
+  const u4 = await transport.listen<DiagnosticsGatewayEvent>('diagnostics:event', (event) => {
     const ev = event.payload;
 
     // SubagentCompleted: trigger DB history reload so the diagnostics panel
@@ -445,7 +444,7 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
 
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const raw = await invoke<any[]>('diagnostics_get_by_session', { sessionId: sid, limit: 50 });
+        const raw = await transport.invoke<any[]>('diagnostics_get_by_session', { sessionId: sid, limit: 50 });
         if (!raw || raw.length === 0) return;
 
         const histEntries = raw.map((item, idx) => mapRawToEntry(item, `hist-${sid}`, idx));

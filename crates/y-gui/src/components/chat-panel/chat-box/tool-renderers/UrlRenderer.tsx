@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { ExternalLink } from 'lucide-react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { platform } from '../../../../lib';
 import { formatDuration } from '../../../../utils/formatDuration';
 import { tryParseJson, extractDomain, extractUrlMeta } from '../toolCallUtils';
 import { Favicon, DetailSections } from './shared';
@@ -45,7 +45,7 @@ export function UrlRenderer(props: ToolRendererProps) {
   const handleOpenExternal = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    openUrl(urlMeta.url).catch((err) =>
+    platform.openUrl(urlMeta.url).catch((err) =>
       console.error('[ToolCallCard] failed to open URL:', urlMeta.url, err),
     );
   };

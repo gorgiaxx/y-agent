@@ -10,7 +10,6 @@
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--surface-secondary);
 }
 
 .panel-toolbar-label {
@@ -68,7 +67,6 @@
   padding: 0 !important;
   border: none !important;
   border-radius: var(--radius-sm) !important;
-  background: transparent !important;
   background: none !important;
   color: var(--text-muted);
   cursor: pointer;

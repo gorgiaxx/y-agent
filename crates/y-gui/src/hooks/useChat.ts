@@ -7,7 +7,7 @@
 // - All compound operations are transactional: backend-first, then UI.
 
 import { useState, useCallback, useEffect, useRef, startTransition } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 import type {
   Message,
   ChatStarted,
@@ -275,7 +275,7 @@ export function useChat(
         setContextResetPoints(cached);
       } else {
         // Load from backend (persisted across restarts).
-        invoke<number | null>('session_get_context_reset', { sessionId: activeSessionId })
+        transport.invoke<number | null>('session_get_context_reset', { sessionId: activeSessionId })
           .then((idx) => {
             if (activeSessionIdRef.current !== activeSessionId) return;
             if (idx != null) {
@@ -467,7 +467,7 @@ export function useChat(
           // text (e.g. "I'll check" + analysis) is not lost.
           (async () => {
             try {
-              const msgs = await invoke<Message[]>('session_get_messages', { sessionId });
+              const msgs = await transport.invoke<Message[]>('session_get_messages', { sessionId });
 
               // Preserve skill tags from optimistic user messages.
               const mergedMsgs = mergeSkillsFromCache(msgs, sessionMessagesRef.current, sessionId);
@@ -666,7 +666,7 @@ export function useChat(
             // This ensures subsequent resend/undo can find the message.
             (async () => {
               try {
-                const backendMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+                const backendMsgs = await transport.invoke<Message[]>('session_get_messages', { sessionId });
                 // Merge: keep backend messages + any cancelled assistant msg.
                 const cancelledMsg = getCachedMessages(sessionMessagesRef.current, sessionId)
                   .find((m) => m.id === `cancelled-${payload.run_id}`);
@@ -715,7 +715,7 @@ export function useChat(
             // error message so both are visible.
             (async () => {
               try {
-                const backendMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+                const backendMsgs = await transport.invoke<Message[]>('session_get_messages', { sessionId });
                 const errorMsg = getCachedMessages(sessionMessagesRef.current, sessionId)
                   .find((m) => m.id.startsWith('error-'));
                 const merged = mergeSkillsFromCache(backendMsgs, sessionMessagesRef.current, sessionId);
@@ -862,8 +862,8 @@ export function useChat(
     try {
       // Fetch messages and persisted context reset index in parallel.
       const [msgs, resetIdx] = await Promise.all([
-        invoke<Message[]>('session_get_messages', { sessionId }),
-        invoke<number | null>('session_get_context_reset', { sessionId }),
+        transport.invoke<Message[]>('session_get_messages', { sessionId }),
+        transport.invoke<number | null>('session_get_context_reset', { sessionId }),
       ]);
 
       // Restore persisted context reset points.
@@ -962,7 +962,7 @@ export function useChat(
     }
     // Persist: store the latest kept point (or clear if none remain).
     const persistIdx = kept.length > 0 ? kept[kept.length - 1] : null;
-    invoke('session_set_context_reset', { sessionId, index: persistIdx })
+    transport.invoke('session_set_context_reset', { sessionId, index: persistIdx })
       .catch((e) => console.error('[chat] failed to clear stale context reset:', e));
   }, []);
 
@@ -983,7 +983,7 @@ export function useChat(
       return;
     }
     try {
-      await invoke('chat_cancel', { runId });
+      await transport.invoke('chat_cancel', { runId });
     } catch (e) {
       console.error('[chat] chat_cancel failed:', e);
     }
@@ -1041,7 +1041,7 @@ export function useChat(
         const resetPoints = contextResetMapRef.current.get(sessionId) ?? [];
         const resetIdx = resetPoints.length > 0 ? resetPoints[resetPoints.length - 1] : null;
         console.log('[chat] sendMessage: planMode =', planMode, '-> sending:', planMode ?? null);
-        const result = await invoke<ChatStarted>('chat_send', {
+        const result = await transport.invoke<ChatStarted>('chat_send', {
           message,
           sessionId,
           providerId: providerId ?? null,
@@ -1122,7 +1122,7 @@ export function useChat(
             // created. The backend transcript ends with the user message.
             // Truncate to remove the user message and re-send with new content.
             console.warn('[chat] No checkpoint found for edit -- using truncate fallback');
-            const freshMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+            const freshMsgs = await transport.invoke<Message[]>('session_get_messages', { sessionId });
             let userIdx = freshMsgs.findIndex((m) => m.id === edit.messageId);
             if (userIdx < 0) {
               // Optimistic IDs won't match backend UUIDs; match by content+role.
@@ -1136,7 +1136,7 @@ export function useChat(
             }
 
             if (userIdx >= 0) {
-              await invoke('session_truncate_messages', {
+              await transport.invoke('session_truncate_messages', {
                 sessionId,
                 keepCount: userIdx,
               });
@@ -1157,7 +1157,7 @@ export function useChat(
               setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => [...prev, userMsg]);
               syncVisible(sessionId);
 
-              const result = await invoke<ChatStarted>('chat_send', {
+              const result = await transport.invoke<ChatStarted>('chat_send', {
                 message: newContent,
                 sessionId,
                 providerId: providerId ?? null,
@@ -1175,13 +1175,13 @@ export function useChat(
           }
 
           // 2. Backend undo -- truncate transcript and invalidate checkpoints.
-          await invoke<UndoResult>('chat_undo', {
+          await transport.invoke<UndoResult>('chat_undo', {
             sessionId,
             checkpointId: checkpoint.checkpoint_id,
           });
 
           // 3. Reload messages from backend to sync UI with actual state.
-          const msgs = await invoke<Message[]>('session_get_messages', { sessionId });
+          const msgs = await transport.invoke<Message[]>('session_get_messages', { sessionId });
           setCachedMessages(sessionMessagesRef.current, sessionId, msgs);
           invalidateStaleContextResets(sessionId, msgs.length);
           syncVisible(sessionId);
@@ -1201,7 +1201,7 @@ export function useChat(
           setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => [...prev, userMsg]);
           syncVisible(sessionId);
 
-          const result = await invoke<ChatStarted>('chat_send', {
+          const result = await transport.invoke<ChatStarted>('chat_send', {
             message: newContent,
             sessionId,
             providerId: providerId ?? null,
@@ -1251,7 +1251,7 @@ export function useChat(
             // the assistant message was never persisted. Fall back to
             // direct transcript truncation.
             console.warn('[chat] No checkpoint found for message', messageId, '-- trying direct truncation fallback');
-            const backendMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+            const backendMsgs = await transport.invoke<Message[]>('session_get_messages', { sessionId });
             let targetIdx = backendMsgs.findIndex((m) => m.id === messageId);
             if (targetIdx < 0) {
               // Content-based fallback: match by role + content.
@@ -1262,7 +1262,7 @@ export function useChat(
             }
             if (targetIdx >= 0) {
               // Truncate to before this user message.
-              await invoke('session_truncate_messages', { sessionId, keepCount: targetIdx });
+              await transport.invoke('session_truncate_messages', { sessionId, keepCount: targetIdx });
               invalidateStaleContextResets(sessionId, targetIdx);
               await loadMessages(sessionId);
               setOp('idle');
@@ -1275,7 +1275,7 @@ export function useChat(
 
           // 2. Backend undo to that checkpoint.
           console.log(`[chat] undoToMessage: calling chat_undo with checkpoint=${checkpoint.checkpoint_id}`);
-          const result = await invoke<UndoResult>('chat_undo', {
+          const result = await transport.invoke<UndoResult>('chat_undo', {
             sessionId,
             checkpointId: checkpoint.checkpoint_id,
           });
@@ -1320,7 +1320,7 @@ export function useChat(
       return withSessionLock(sessionId, async () => {
         try {
           // 0. Reload messages from backend to ensure cache has real IDs.
-          const freshMsgs = await invoke<Message[]>('session_get_messages', { sessionId });
+          const freshMsgs = await transport.invoke<Message[]>('session_get_messages', { sessionId });
           setCachedMessages(sessionMessagesRef.current, sessionId, freshMsgs);
 
           // 1. Find checkpoint via the atomic backend command.
@@ -1342,7 +1342,7 @@ export function useChat(
             }
             if (userIdx >= 0) {
               // Truncate to remove the user message.
-              await invoke('session_truncate_messages', {
+              await transport.invoke('session_truncate_messages', {
                 sessionId,
                 keepCount: userIdx,
               });
@@ -1366,7 +1366,7 @@ export function useChat(
               syncVisible(sessionId);
 
               // opStatus stays 'resending' -- the bus handler will set idle on complete/error.
-              const result = await invoke<ChatStarted>('chat_send', {
+              const result = await transport.invoke<ChatStarted>('chat_send', {
                 message: content,
                 sessionId,
                 providerId: providerId ?? null,
@@ -1394,7 +1394,7 @@ export function useChat(
 
           // 3. Backend resend: truncates transcript (keeps user msg), re-runs LLM.
           console.log(`[chat] resendLastTurn: calling chat_resend with checkpoint=${checkpoint.checkpoint_id}`);
-          const result = await invoke<ChatStarted>('chat_resend', {
+          const result = await transport.invoke<ChatStarted>('chat_resend', {
             sessionId,
             checkpointId: checkpoint.checkpoint_id,
             providerId: providerId ?? null,
@@ -1434,7 +1434,7 @@ export function useChat(
 
       return withSessionLock(sessionId, async () => {
         try {
-          const result = await invoke<RestoreResult>('chat_restore_branch', {
+          const result = await transport.invoke<RestoreResult>('chat_restore_branch', {
             sessionId,
             checkpointId,
           });
@@ -1471,7 +1471,7 @@ export function useChat(
     setContextResetPoints(updated);
 
     // Persist to backend so it survives app restarts.
-    invoke('session_set_context_reset', { sessionId: sid, index: idx })
+    transport.invoke('session_set_context_reset', { sessionId: sid, index: idx })
       .catch((e) => console.error('[chat] failed to persist context reset:', e));
   }, []);
 

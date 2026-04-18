@@ -4,7 +4,7 @@
 // with loading state and error handling.
 
 import { useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../lib';
 
 // ---------------------------------------------------------------------------
 // Types (mirrors Rust RewindPointInfo / RewindResult)
@@ -77,7 +77,7 @@ export function useRewind(): UseRewindReturn {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await invoke<RewindPointInfo[]>('rewind_list_points', {
+      const result = await transport.invoke<RewindPointInfo[]>('rewind_list_points', {
         sessionId,
       });
       setPoints(result);
@@ -100,7 +100,7 @@ export function useRewind(): UseRewindReturn {
       setIsRewinding(true);
       setError(null);
       try {
-        const result = await invoke<RewindResult>('rewind_execute', {
+        const result = await transport.invoke<RewindResult>('rewind_execute', {
           sessionId,
           targetMessageId: messageId,
         });

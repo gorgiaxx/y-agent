@@ -97,6 +97,7 @@ struct ServerState {
     tools: Vec<McpToolInfo>,
     resources: Vec<McpResource>,
     prompts: Vec<McpPrompt>,
+    instructions: Option<String>,
     config: McpServerConfigRef,
     reconnect_attempt: u32,
 }
@@ -143,12 +144,22 @@ impl Default for McpServerConfigRef {
     }
 }
 
+/// Lifecycle events emitted by the connection manager.
+#[derive(Debug, Clone)]
+pub enum McpEvent {
+    /// A server reconnected after an unexpected disconnect.
+    ServerReconnected { server_name: String },
+    /// A server disconnected and will not auto-reconnect (or exhausted retries).
+    ServerDisconnected { server_name: String },
+}
+
 /// Central orchestrator for multiple MCP server connections.
 pub struct McpConnectionManager {
     servers: RwLock<HashMap<String, ServerState>>,
     auth_store: Option<McpAuthStore>,
     supervisors: RwLock<Vec<JoinHandle<()>>>,
     reconnect_policy: ReconnectPolicy,
+    event_tx: RwLock<Option<mpsc::UnboundedSender<McpEvent>>>,
 }
 
 impl McpConnectionManager {
@@ -159,6 +170,7 @@ impl McpConnectionManager {
             auth_store,
             supervisors: RwLock::new(Vec::new()),
             reconnect_policy: ReconnectPolicy::default(),
+            event_tx: RwLock::new(None),
         }
     }
 
@@ -167,6 +179,18 @@ impl McpConnectionManager {
     pub fn with_reconnect_policy(mut self, policy: ReconnectPolicy) -> Self {
         self.reconnect_policy = policy;
         self
+    }
+
+    /// Register an event sender for lifecycle notifications.
+    pub async fn set_event_sender(&self, tx: mpsc::UnboundedSender<McpEvent>) {
+        *self.event_tx.write().await = Some(tx);
+    }
+
+    /// Emit a lifecycle event (best-effort, never blocks).
+    async fn emit_event(&self, event: McpEvent) {
+        if let Some(ref tx) = *self.event_tx.read().await {
+            let _ = tx.send(event);
+        }
     }
 
     /// Connect to multiple servers concurrently.
@@ -230,6 +254,7 @@ impl McpConnectionManager {
                             tools: Vec::new(),
                             resources: Vec::new(),
                             prompts: Vec::new(),
+                            instructions: None,
                             config,
                             reconnect_attempt: 0,
                         },
@@ -259,6 +284,7 @@ impl McpConnectionManager {
                 tools,
                 resources,
                 prompts,
+                instructions,
                 disconnect_rx,
             } = built;
 
@@ -289,6 +315,7 @@ impl McpConnectionManager {
                     tools,
                     resources,
                     prompts,
+                    instructions,
                     config,
                     reconnect_attempt: 0,
                 },
@@ -313,6 +340,10 @@ impl McpConnectionManager {
                 state.resources.clear();
                 state.prompts.clear();
             }
+            self.emit_event(McpEvent::ServerDisconnected {
+                server_name: server_name.to_string(),
+            })
+            .await;
             return;
         }
 
@@ -363,6 +394,10 @@ impl McpConnectionManager {
                     info!(server = %server_name, attempt, "MCP server reconnected");
                     self.install_server(server_name.to_string(), config.clone(), built)
                         .await;
+                    self.emit_event(McpEvent::ServerReconnected {
+                        server_name: server_name.to_string(),
+                    })
+                    .await;
                     return;
                 }
                 Err(e) => {
@@ -385,6 +420,11 @@ impl McpConnectionManager {
             state.resources.clear();
             state.prompts.clear();
         }
+        drop(servers);
+        self.emit_event(McpEvent::ServerDisconnected {
+            server_name: server_name.to_string(),
+        })
+        .await;
     }
 
     /// Get the status of all servers.
@@ -415,6 +455,20 @@ impl McpConnectionManager {
     /// List all prompts across all connected servers.
     pub async fn list_all_prompts(&self) -> Vec<(String, McpPrompt)> {
         self.collect_from_connected(|s| &s.prompts).await
+    }
+
+    /// Collect server instructions from all connected servers that provide them.
+    pub async fn collect_server_instructions(&self) -> Vec<(String, String)> {
+        let servers = self.servers.read().await;
+        let mut result = Vec::new();
+        for (name, state) in servers.iter() {
+            if state.status == McpServerStatus::Connected {
+                if let Some(ref instructions) = state.instructions {
+                    result.push((name.clone(), instructions.clone()));
+                }
+            }
+        }
+        result
     }
 
     async fn collect_from_connected<T: Clone>(
@@ -569,6 +623,7 @@ struct ConnectedServer {
     tools: Vec<McpToolInfo>,
     resources: Vec<McpResource>,
     prompts: Vec<McpPrompt>,
+    instructions: Option<String>,
     disconnect_rx: Option<mpsc::UnboundedReceiver<()>>,
 }
 
@@ -647,11 +702,14 @@ async fn connect_single_server(
         Vec::new()
     };
 
+    let instructions = caps.instructions.clone();
+
     debug!(
         server = %config.name,
         tools = tools.len(),
         resources = resources.len(),
         prompts = prompts.len(),
+        has_instructions = instructions.is_some(),
         "discovered MCP capabilities"
     );
 
@@ -663,6 +721,7 @@ async fn connect_single_server(
         tools,
         resources,
         prompts,
+        instructions,
         disconnect_rx,
     })
 }

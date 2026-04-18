@@ -207,3 +207,19 @@ pub async fn window_toggle_maximize(window: tauri::WebviewWindow) -> Result<(), 
 pub async fn window_close(window: tauri::WebviewWindow) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
+
+/// Sync the native window theme with the app's resolved theme.
+///
+/// On macOS this drives the vibrancy material appearance so the frosted-glass
+/// sidebar matches the app's dark/light mode regardless of the system setting.
+#[tauri::command]
+pub async fn window_set_theme(window: tauri::WebviewWindow, theme: String) -> Result<(), String> {
+    let native_theme = match theme.as_str() {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    };
+    window
+        .set_theme(native_theme)
+        .map_err(|e| format!("Failed to set window theme: {e}"))
+}

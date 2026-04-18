@@ -120,14 +120,6 @@
   gap: 4px;
 }
 
-.agent-card-cap {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: var(--surface-tertiary);
-  color: var(--text-muted);
-}
-
 /* ----- Agent detail view ----- */
 
 .agent-detail {
@@ -178,26 +170,6 @@
   margin: 6px 0 0 0;
 }
 
-.agent-detail-back {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-  white-space: nowrap;
-}
-
-.agent-detail-back:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
 .agent-detail-badges {
   display: flex;
   flex-wrap: wrap;
@@ -245,11 +217,11 @@
 /* Tag classes removed -- now uses shared Badge component */
 
 .agent-detail-prompt {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
   padding: 12px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface-code);
   border: 1px solid var(--border);
   color: var(--text-primary);
@@ -269,28 +241,6 @@
 }
 
 /* Button classes removed -- now uses shared Button component */
-
-/* ----- Edit textarea ----- */
-
-.agent-edit-textarea {
-  flex: 1;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: var(--surface-code);
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-  resize: none;
-  outline: none;
-  margin-top: 12px;
-  min-height: 200px;
-}
-
-.agent-edit-textarea:focus {
-  border-color: var(--accent);
-}
 
 /* ----- Reload spin animation ----- */
 

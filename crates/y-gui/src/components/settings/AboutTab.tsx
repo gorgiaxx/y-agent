@@ -3,22 +3,21 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect } from 'react';
-import { getVersion } from '@tauri-apps/api/app';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { platform } from '../../lib';
 import { SettingsGroup, SettingsItem } from '../ui';
 
 export function AboutTab() {
   const [appVersion, setAppVersion] = useState('...');
 
   useEffect(() => {
-    getVersion().then((v) => setAppVersion(v)).catch(() => setAppVersion('unknown'));
+    platform.getAppVersion().then((v) => setAppVersion(v)).catch(() => setAppVersion('unknown'));
   }, []);
 
   return (
     <div className="settings-section">
       <SettingsGroup title="y-agent Desktop">
         <SettingsItem title="Author">
-          <a href="#" onClick={(e) => { e.preventDefault(); openUrl('https://gorgias.me'); }}>Gorgias</a>
+          <a href="#" onClick={(e) => { e.preventDefault(); platform.openUrl('https://gorgias.me'); }}>Gorgias</a>
         </SettingsItem>
         <SettingsItem title="Version">
           <span className="about-value">{appVersion}</span>

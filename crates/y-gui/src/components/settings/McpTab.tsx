@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, X } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../../lib';
 import { TagChipInput } from './TagChipInput';
 import type { McpServerFormData } from './settingsTypes';
 import { emptyMcpServer, jsonToMcpServers, mcpServersToJson } from './settingsTypes';
@@ -253,7 +253,7 @@ export function McpTab({
     setLoading(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const json = await invoke<any>('mcp_config_get');
+      const json = await transport.invoke<any>('mcp_config_get');
       setMcpServersList(jsonToMcpServers(json));
     } catch {
       // Use empty list if file not found.

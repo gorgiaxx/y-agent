@@ -11,8 +11,8 @@
  * - Re-fetches when `active` changes from false to true (tab activation).
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { transport } from '../lib';
+
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,7 +105,7 @@ export function useAutomation(active = true) {
   // --- Fetch all ---
   const refreshWorkflows = useCallback(async () => {
     try {
-      const list = await invoke<WorkflowInfo[]>('workflow_list');
+      const list = await transport.invoke<WorkflowInfo[]>('workflow_list');
       setWorkflows(list);
     } catch (e) {
       console.error('workflow_list failed:', e);
@@ -114,7 +114,7 @@ export function useAutomation(active = true) {
 
   const refreshSchedules = useCallback(async () => {
     try {
-      const list = await invoke<ScheduleInfo[]>('schedule_list');
+      const list = await transport.invoke<ScheduleInfo[]>('schedule_list');
       setSchedules(list);
     } catch (e) {
       console.error('schedule_list failed:', e);
@@ -146,7 +146,7 @@ export function useAutomation(active = true) {
   // may have created/modified/deleted workflows or schedules.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen<unknown>('chat:complete', () => {
+    transport.listen<unknown>('chat:complete', () => {
       refreshAll();
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
@@ -155,7 +155,7 @@ export function useAutomation(active = true) {
   // --- Workflow operations ---
   const getWorkflow = useCallback(async (id: string): Promise<WorkflowInfo | null> => {
     try {
-      return await invoke<WorkflowInfo>('workflow_get', { id });
+      return await transport.invoke<WorkflowInfo>('workflow_get', { id });
     } catch (e) {
       console.error('workflow_get failed:', e);
       return null;
@@ -170,7 +170,7 @@ export function useAutomation(active = true) {
     tags?: string,
   ): Promise<WorkflowInfo | null> => {
     try {
-      const result = await invoke<WorkflowInfo>('workflow_create', {
+      const result = await transport.invoke<WorkflowInfo>('workflow_create', {
         name,
         definition,
         format,
@@ -193,7 +193,7 @@ export function useAutomation(active = true) {
     tags?: string,
   ): Promise<WorkflowInfo | null> => {
     try {
-      const result = await invoke<WorkflowInfo>('workflow_update', {
+      const result = await transport.invoke<WorkflowInfo>('workflow_update', {
         id,
         definition: definition ?? null,
         format: format ?? null,
@@ -210,7 +210,7 @@ export function useAutomation(active = true) {
 
   const deleteWorkflow = useCallback(async (id: string): Promise<boolean> => {
     try {
-      const deleted = await invoke<boolean>('workflow_delete', { id });
+      const deleted = await transport.invoke<boolean>('workflow_delete', { id });
       if (deleted) await refreshWorkflows();
       return deleted;
     } catch (e) {
@@ -224,7 +224,7 @@ export function useAutomation(active = true) {
     format: string,
   ): Promise<ValidationResult | null> => {
     try {
-      return await invoke<ValidationResult>('workflow_validate', { definition, format });
+      return await transport.invoke<ValidationResult>('workflow_validate', { definition, format });
     } catch (e) {
       console.error('workflow_validate failed:', e);
       return null;
@@ -233,7 +233,7 @@ export function useAutomation(active = true) {
 
   const getWorkflowDag = useCallback(async (id: string): Promise<DagVisualization | null> => {
     try {
-      return await invoke<DagVisualization>('workflow_dag', { id });
+      return await transport.invoke<DagVisualization>('workflow_dag', { id });
     } catch (e) {
       console.error('workflow_dag failed:', e);
       return null;
@@ -243,7 +243,7 @@ export function useAutomation(active = true) {
   // --- Schedule operations ---
   const getSchedule = useCallback(async (id: string): Promise<ScheduleInfo | null> => {
     try {
-      return await invoke<ScheduleInfo>('schedule_get', { id });
+      return await transport.invoke<ScheduleInfo>('schedule_get', { id });
     } catch (e) {
       console.error('schedule_get failed:', e);
       return null;
@@ -259,7 +259,7 @@ export function useAutomation(active = true) {
     tags?: string[];
   }): Promise<ScheduleInfo | null> => {
     try {
-      const result = await invoke<ScheduleInfo>('schedule_create', { request });
+      const result = await transport.invoke<ScheduleInfo>('schedule_create', { request });
       await refreshSchedules();
       return result;
     } catch (e) {
@@ -270,7 +270,7 @@ export function useAutomation(active = true) {
 
   const deleteSchedule = useCallback(async (id: string): Promise<boolean> => {
     try {
-      const deleted = await invoke<boolean>('schedule_delete', { id });
+      const deleted = await transport.invoke<boolean>('schedule_delete', { id });
       if (deleted) await refreshSchedules();
       return deleted;
     } catch (e) {
@@ -281,7 +281,7 @@ export function useAutomation(active = true) {
 
   const pauseSchedule = useCallback(async (id: string): Promise<boolean> => {
     try {
-      await invoke('schedule_pause', { id });
+      await transport.invoke('schedule_pause', { id });
       await refreshSchedules();
       return true;
     } catch (e) {
@@ -292,7 +292,7 @@ export function useAutomation(active = true) {
 
   const resumeSchedule = useCallback(async (id: string): Promise<boolean> => {
     try {
-      await invoke('schedule_resume', { id });
+      await transport.invoke('schedule_resume', { id });
       await refreshSchedules();
       return true;
     } catch (e) {
@@ -311,7 +311,7 @@ export function useAutomation(active = true) {
     },
   ): Promise<ScheduleInfo | null> => {
     try {
-      const result = await invoke<ScheduleInfo>('schedule_update', { id, request });
+      const result = await transport.invoke<ScheduleInfo>('schedule_update', { id, request });
       await refreshSchedules();
       return result;
     } catch (e) {
@@ -325,7 +325,7 @@ export function useAutomation(active = true) {
     scheduleId: string,
   ): Promise<ExecutionRecord[]> => {
     try {
-      return await invoke<ExecutionRecord[]>('schedule_execution_history', {
+      return await transport.invoke<ExecutionRecord[]>('schedule_execution_history', {
         scheduleId,
       });
     } catch (e) {
@@ -338,7 +338,7 @@ export function useAutomation(active = true) {
     executionId: string,
   ): Promise<ExecutionRecord | null> => {
     try {
-      return await invoke<ExecutionRecord>('schedule_execution_get', {
+      return await transport.invoke<ExecutionRecord>('schedule_execution_get', {
         executionId,
       });
     } catch (e) {
@@ -351,7 +351,7 @@ export function useAutomation(active = true) {
     scheduleId: string,
   ): Promise<ExecutionRecord | null> => {
     try {
-      return await invoke<ExecutionRecord>('schedule_trigger_now', {
+      return await transport.invoke<ExecutionRecord>('schedule_trigger_now', {
         scheduleId,
       });
     } catch (e) {
@@ -364,7 +364,7 @@ export function useAutomation(active = true) {
     workflowId: string,
   ): Promise<ExecutionRecord | null> => {
     try {
-      return await invoke<ExecutionRecord>('workflow_execute', {
+      return await transport.invoke<ExecutionRecord>('workflow_execute', {
         workflowId,
       });
     } catch (e) {

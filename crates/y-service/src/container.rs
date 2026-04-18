@@ -83,7 +83,7 @@ pub struct ServiceContainer {
     pub tool_activation_set: Arc<RwLock<ToolActivationSet>>,
 
     /// Hierarchical tool taxonomy for prompt-based discovery.
-    pub tool_taxonomy: Arc<ToolTaxonomy>,
+    pub tool_taxonomy: Arc<RwLock<ToolTaxonomy>>,
 
     /// Skill search index for unified `ToolSearch` capability discovery.
     ///
@@ -206,7 +206,7 @@ struct SessionInit {
 /// Tool infrastructure initialised by [`ServiceContainer::init_tools`].
 struct ToolInit {
     tool_registry: ToolRegistryImpl,
-    tool_taxonomy: Arc<ToolTaxonomy>,
+    tool_taxonomy: Arc<RwLock<ToolTaxonomy>>,
     tool_activation_set: Arc<RwLock<ToolActivationSet>>,
 }
 
@@ -455,7 +455,7 @@ impl ServiceContainer {
         )
         .await;
 
-        let tool_taxonomy = Arc::new(
+        let tool_taxonomy = Arc::new(RwLock::new(
             ToolTaxonomy::from_toml(DEFAULT_TAXONOMY_TOML).unwrap_or_else(|e| {
                 warn!(error = %e, "failed to load tool taxonomy; using empty");
                 ToolTaxonomy::from_toml(
@@ -468,7 +468,7 @@ tools = ["ToolSearch"]
                 )
                 .expect("fallback taxonomy")
             }),
-        );
+        ));
         let tool_activation_set =
             Arc::new(RwLock::new(ToolActivationSet::new(ACTIVATION_SET_CEILING)));
         pre_activate_core_tools(&tool_registry, &tool_activation_set).await;
@@ -519,7 +519,7 @@ tools = ["ToolSearch"]
         config: &ServiceConfig,
         tool_registry: &ToolRegistryImpl,
         tool_activation_set: &Arc<RwLock<ToolActivationSet>>,
-        tool_taxonomy: &Arc<ToolTaxonomy>,
+        tool_taxonomy: &Arc<RwLock<ToolTaxonomy>>,
         venv_info: VenvPromptInfo,
     ) -> ContextPipelineInit {
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
@@ -560,7 +560,7 @@ tools = ["ToolSearch"]
             .collect();
         pipeline.register(Box::new(InjectTools::dynamic(
             tool_names,
-            tool_taxonomy.root_summary(),
+            tool_taxonomy.read().await.root_summary(),
             core_tools_summary,
             Arc::clone(&prompt_context),
         )));
@@ -1203,6 +1203,8 @@ impl ServiceContainer {
         self.init_callable_agents_text().await;
         self.init_knowledge_llm_services().await;
         self.init_mcp_connections().await;
+        self.register_mcp_tools().await;
+        self.start_mcp_event_consumer().await;
     }
 
     /// Wire LLM-backed knowledge services (tag generator, metadata
@@ -1276,6 +1278,205 @@ impl ServiceContainer {
             connected = connected,
             "MCP server connections initialized"
         );
+    }
+
+    /// Register MCP tools discovered from connected servers into the tool
+    /// registry and taxonomy so they are discoverable via `ToolSearch` and
+    /// executable through the standard tool dispatch pipeline.
+    async fn register_mcp_tools(self: &Arc<Self>) {
+        let all_tools = self.mcp_manager.list_all_tools().await;
+        if all_tools.is_empty() {
+            return;
+        }
+
+        let mcp_configs = self.tool_registry.config().mcp_servers;
+        let mut registered_names: Vec<String> = Vec::new();
+
+        for (server_name, tool_info) in &all_tools {
+            if let Some(cfg) = mcp_configs.iter().find(|c| c.name == *server_name) {
+                if let Some(ref whitelist) = cfg.enabled_tools {
+                    if !whitelist.contains(&tool_info.name) {
+                        continue;
+                    }
+                }
+                if let Some(ref blacklist) = cfg.disabled_tools {
+                    if blacklist.contains(&tool_info.name) {
+                        continue;
+                    }
+                }
+            }
+
+            let prefixed = format!("mcp_{}_{}", server_name, tool_info.name);
+            let adapter = y_mcp::McpManagedToolAdapter::new(
+                Arc::clone(&self.mcp_manager),
+                server_name,
+                &tool_info.name,
+                &prefixed,
+                tool_info.description.as_deref().unwrap_or(""),
+                tool_info
+                    .input_schema
+                    .clone()
+                    .unwrap_or(serde_json::json!({})),
+            );
+            let def = adapter.definition().clone();
+            match self
+                .tool_registry
+                .register_tool(Arc::new(adapter), def)
+                .await
+            {
+                Ok(()) => registered_names.push(prefixed),
+                Err(e) => {
+                    warn!(tool = %prefixed, error = %e, "failed to register MCP tool");
+                }
+            }
+        }
+
+        if !registered_names.is_empty() {
+            let mut taxonomy = self.tool_taxonomy.write().await;
+            taxonomy.add_dynamic_category(
+                "mcp",
+                "MCP tools from external servers",
+                registered_names.clone(),
+            );
+        }
+
+        info!(
+            count = registered_names.len(),
+            "MCP tools registered in tool registry"
+        );
+
+        // Inject MCP server instructions into prompt context so they appear
+        // in the system prompt alongside the MCP hint section.
+        let instructions = self.mcp_manager.collect_server_instructions().await;
+        if !instructions.is_empty() {
+            use std::fmt::Write;
+            let mut text = String::from("## MCP Server Instructions\n");
+            for (server_name, instruction) in &instructions {
+                let _ = write!(text, "\n### {server_name}\n{instruction}\n");
+            }
+            let mut pctx = self.prompt_context.write().await;
+            pctx.mcp_server_instructions = Some(text);
+        }
+    }
+
+    /// Spawn a background task that listens for MCP lifecycle events
+    /// (reconnect / disconnect) and updates the tool registry accordingly.
+    async fn start_mcp_event_consumer(self: &Arc<Self>) {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        self.mcp_manager.set_event_sender(tx).await;
+
+        let container = Arc::clone(self);
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    y_mcp::McpEvent::ServerReconnected { server_name } => {
+                        container.refresh_mcp_server_tools(&server_name).await;
+                    }
+                    y_mcp::McpEvent::ServerDisconnected { server_name } => {
+                        container.deactivate_mcp_server_tools(&server_name).await;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Re-discover and re-register tools for a single MCP server after reconnection.
+    async fn refresh_mcp_server_tools(self: &Arc<Self>, server_name: &str) {
+        let prefix = format!("mcp_{server_name}_");
+
+        // Remove old tools for this server from the registry.
+        let all_defs = self.tool_registry.get_all_definitions().await;
+        for def in &all_defs {
+            if def.name.as_str().starts_with(&prefix) {
+                self.tool_registry.unregister_tool(&def.name).await;
+                let mut set = self.tool_activation_set.write().await;
+                set.deactivate(&def.name);
+            }
+        }
+
+        // Re-discover tools from the reconnected server.
+        let all_tools = self.mcp_manager.list_all_tools().await;
+        let server_tools: Vec<_> = all_tools
+            .into_iter()
+            .filter(|(name, _)| name == server_name)
+            .collect();
+
+        let mcp_configs = self.tool_registry.config().mcp_servers;
+        let mut registered_names = Vec::new();
+
+        for (sname, tool_info) in &server_tools {
+            if let Some(cfg) = mcp_configs.iter().find(|c| c.name == *sname) {
+                if let Some(ref wl) = cfg.enabled_tools {
+                    if !wl.contains(&tool_info.name) {
+                        continue;
+                    }
+                }
+                if let Some(ref bl) = cfg.disabled_tools {
+                    if bl.contains(&tool_info.name) {
+                        continue;
+                    }
+                }
+            }
+
+            let prefixed = format!("mcp_{}_{}", sname, tool_info.name);
+            let adapter = y_mcp::McpManagedToolAdapter::new(
+                Arc::clone(&self.mcp_manager),
+                sname,
+                &tool_info.name,
+                &prefixed,
+                tool_info.description.as_deref().unwrap_or(""),
+                tool_info
+                    .input_schema
+                    .clone()
+                    .unwrap_or(serde_json::json!({})),
+            );
+            let def = adapter.definition().clone();
+            if self
+                .tool_registry
+                .register_tool(Arc::new(adapter), def)
+                .await
+                .is_ok()
+            {
+                registered_names.push(prefixed);
+            }
+        }
+
+        if !registered_names.is_empty() {
+            let mut taxonomy = self.tool_taxonomy.write().await;
+            taxonomy.add_dynamic_category(
+                "mcp",
+                "MCP tools from external servers",
+                registered_names.clone(),
+            );
+        }
+
+        info!(
+            server = %server_name,
+            count = registered_names.len(),
+            "MCP server tools refreshed after reconnection"
+        );
+    }
+
+    /// Deactivate tools from a disconnected MCP server.
+    async fn deactivate_mcp_server_tools(&self, server_name: &str) {
+        let prefix = format!("mcp_{server_name}_");
+        let all_defs = self.tool_registry.get_all_definitions().await;
+        let mut removed = 0usize;
+        for def in &all_defs {
+            if def.name.as_str().starts_with(&prefix) {
+                self.tool_registry.unregister_tool(&def.name).await;
+                let mut set = self.tool_activation_set.write().await;
+                set.deactivate(&def.name);
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            info!(
+                server = %server_name,
+                removed,
+                "MCP server tools deactivated after disconnect"
+            );
+        }
     }
 
     /// Spawn per-provider tasks that drain metrics events and persist them.

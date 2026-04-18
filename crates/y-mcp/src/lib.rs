@@ -29,8 +29,10 @@ pub use client::{
     PromptMessage, ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
 };
 pub use error::McpError;
-pub use manager::{McpConnectionManager, McpServerConfigRef, McpServerStatus, ReconnectPolicy};
-pub use tool_adapter::McpToolAdapter;
+pub use manager::{
+    McpConnectionManager, McpEvent, McpServerConfigRef, McpServerStatus, ReconnectPolicy,
+};
+pub use tool_adapter::{McpManagedToolAdapter, McpToolAdapter};
 pub use transport::{
     HttpTransport, HttpTransportBuilder, McpTransport, NotificationHandler, RequestHandler,
     StdioTransport,

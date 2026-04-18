@@ -8,7 +8,7 @@
 // instances via a callback registry.
 // ---------------------------------------------------------------------------
 
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { transport, type UnlistenFn } from '../lib';
 import type {
   ChatCompletePayload,
   ChatErrorPayload,
@@ -75,14 +75,14 @@ async function initialiseChatBus() {
   if (chatBusInitialised) return;
   chatBusInitialised = true;
 
-  const u0 = await listen<ChatStartedPayload>('chat:started', (e) => {
+  const u0 = await transport.listen<ChatStartedPayload>('chat:started', (e) => {
     const { run_id, session_id } = e.payload;
     Object.assign(chatBusState, applyRunStarted(chatBusState, run_id, session_id));
     notifyChatSubscribers({ type: 'started', run_id, session_id });
   });
   chatUnlistenFns.push(u0);
 
-  const u1 = await listen<ChatCompletePayload>('chat:complete', (e) => {
+  const u1 = await transport.listen<ChatCompletePayload>('chat:complete', (e) => {
     const { run_id } = e.payload;
     Object.assign(
       chatBusState,
@@ -92,7 +92,7 @@ async function initialiseChatBus() {
   });
   chatUnlistenFns.push(u1);
 
-  const u2 = await listen<ChatErrorPayload>('chat:error', (e) => {
+  const u2 = await transport.listen<ChatErrorPayload>('chat:error', (e) => {
     const { run_id } = e.payload;
     Object.assign(
       chatBusState,
@@ -102,7 +102,7 @@ async function initialiseChatBus() {
   });
   chatUnlistenFns.push(u2);
 
-  const u3 = await listen<ProgressPayload>('chat:progress', (e) => {
+  const u3 = await transport.listen<ProgressPayload>('chat:progress', (e) => {
     const { run_id, event } = e.payload;
     if (event.type === 'stream_delta') {
       const session_id = chatBusState.runToSession[run_id];

@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { DiagnosticsPanel } from '../components/observation/DiagnosticsPanel';
 import { ObservabilityPanel } from '../components/observation/ObservabilityPanel';
-import { Activity, ArrowLeft, Eye } from 'lucide-react';
+import { Activity, Eye } from 'lucide-react';
 
 import { WindowControls } from '../components/ui/WindowControls';
 
@@ -59,7 +59,6 @@ export function MainLayout() {
   const selectedAgentName = navProps.activeAgentId
     ? agentHooks.agents.find((agent) => agent.id === navProps.activeAgentId)?.name ?? navProps.activeAgentId
     : null;
-  const showAgentBack = navProps.activeView === 'agents' && !!navProps.activeAgentId;
   const headerTitle = navProps.activeView === 'skills'
     ? 'Skills'
     : navProps.activeView === 'knowledge'

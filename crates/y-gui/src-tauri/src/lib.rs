@@ -161,6 +161,9 @@ pub fn run() {
 
                 #[cfg(target_os = "macos")]
                 {
+                    use tauri::utils::config::WindowEffectsConfig;
+                    use tauri::utils::{WindowEffect, WindowEffectState};
+
                     let style = if use_custom {
                         tauri::TitleBarStyle::Overlay
                     } else {
@@ -168,6 +171,16 @@ pub fn run() {
                     };
                     if let Err(e) = main_window.set_title_bar_style(style) {
                         tracing::warn!(error = %e, "Failed to apply title bar style");
+                    }
+
+                    let effects = WindowEffectsConfig {
+                        effects: vec![WindowEffect::Sidebar],
+                        state: Some(WindowEffectState::FollowsWindowActiveState),
+                        radius: None,
+                        color: None,
+                    };
+                    if let Err(e) = main_window.set_effects(Some(effects)) {
+                        tracing::warn!(error = %e, "Failed to apply vibrancy effects");
                     }
                 }
 
@@ -253,6 +266,7 @@ pub fn run() {
             commands::system::window_minimize,
             commands::system::window_toggle_maximize,
             commands::system::window_close,
+            commands::system::window_set_theme,
             commands::system::app_paths,
             // Workspaces
             commands::workspace::workspace_list,
