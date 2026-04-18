@@ -404,40 +404,29 @@ impl McpConnectionManager {
 
     /// List all tools across all connected servers.
     pub async fn list_all_tools(&self) -> Vec<(String, McpToolInfo)> {
-        let servers = self.servers.read().await;
-        let mut result = Vec::new();
-        for (name, state) in servers.iter() {
-            if state.status == McpServerStatus::Connected {
-                for tool in &state.tools {
-                    result.push((name.clone(), tool.clone()));
-                }
-            }
-        }
-        result
+        self.collect_from_connected(|s| &s.tools).await
     }
 
     /// List all resources across all connected servers.
     pub async fn list_all_resources(&self) -> Vec<(String, McpResource)> {
-        let servers = self.servers.read().await;
-        let mut result = Vec::new();
-        for (name, state) in servers.iter() {
-            if state.status == McpServerStatus::Connected {
-                for r in &state.resources {
-                    result.push((name.clone(), r.clone()));
-                }
-            }
-        }
-        result
+        self.collect_from_connected(|s| &s.resources).await
     }
 
     /// List all prompts across all connected servers.
     pub async fn list_all_prompts(&self) -> Vec<(String, McpPrompt)> {
+        self.collect_from_connected(|s| &s.prompts).await
+    }
+
+    async fn collect_from_connected<T: Clone>(
+        &self,
+        field: impl Fn(&ServerState) -> &Vec<T>,
+    ) -> Vec<(String, T)> {
         let servers = self.servers.read().await;
         let mut result = Vec::new();
         for (name, state) in servers.iter() {
             if state.status == McpServerStatus::Connected {
-                for p in &state.prompts {
-                    result.push((name.clone(), p.clone()));
+                for item in field(state) {
+                    result.push((name.clone(), item.clone()));
                 }
             }
         }

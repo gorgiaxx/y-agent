@@ -54,10 +54,12 @@ pub async fn rollback_scope(
         match &entry.operation {
             FileOperation::Create => {
                 // Tool created this file; rollback = delete it.
-                let path = std::path::Path::new(&entry.path);
+                let path = std::path::Path::new(&entry.path).to_path_buf();
                 if path.exists() {
-                    std::fs::remove_file(path).map_err(|e| JournalError::StorageError {
-                        message: format!("failed to delete {}: {e}", entry.path),
+                    tokio::fs::remove_file(&path).await.map_err(|e| {
+                        JournalError::StorageError {
+                            message: format!("failed to delete {}: {e}", entry.path),
+                        }
                     })?;
                 }
                 store.lock().await.mark_rolled_back(entry.entry_id);
@@ -74,9 +76,9 @@ pub async fn rollback_scope(
                                 // Ensure parent directory exists (may have been
                                 // removed when the file was missing).
                                 if let Some(parent) = std::path::Path::new(&entry.path).parent() {
-                                    let _ = std::fs::create_dir_all(parent);
+                                    let _ = tokio::fs::create_dir_all(parent).await;
                                 }
-                                std::fs::write(&entry.path, content).map_err(|e| {
+                                tokio::fs::write(&entry.path, content).await.map_err(|e| {
                                     JournalError::StorageError {
                                         message: format!("failed to restore {}: {e}", entry.path),
                                     }
@@ -97,7 +99,7 @@ pub async fn rollback_scope(
             FileOperation::Delete => {
                 // Tool deleted this file; rollback = recreate it.
                 if let Some(ref content) = entry.original_content {
-                    std::fs::write(&entry.path, content).map_err(|e| {
+                    tokio::fs::write(&entry.path, content).await.map_err(|e| {
                         JournalError::StorageError {
                             message: format!("failed to recreate {}: {e}", entry.path),
                         }

@@ -46,7 +46,10 @@ impl SessionManager {
 
     /// Hot-reload the session configuration.
     pub fn reload_config(&self, new_config: SessionConfig) {
-        let mut guard = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = new_config;
         tracing::info!("Session config hot-reloaded");
     }
@@ -581,7 +584,10 @@ impl std::fmt::Debug for SessionManager {
         f.debug_struct("SessionManager")
             .field(
                 "config",
-                &*self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner),
+                &*self
+                    .config
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
             )
             .finish_non_exhaustive()
     }

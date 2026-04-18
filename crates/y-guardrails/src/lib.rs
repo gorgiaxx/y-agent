@@ -16,10 +16,6 @@
 //! - [`middleware::tool_guard::ToolGuardMiddleware`] — pre-execution permission + risk (priority 10)
 //! - [`middleware::llm_guard::LlmGuardMiddleware`] — output safety validation (priority 900)
 //! - [`middleware::loop_detector::LoopDetectorMiddleware`] — loop detection (priority 20)
-//!
-//! # Structural Validation
-//!
-//! - [`structural::StructuralValidator`] — config-time workflow/tool/budget validation
 
 pub mod capability_gap;
 pub mod config;
@@ -32,7 +28,6 @@ pub mod permission;
 pub mod permission_pipeline;
 pub mod risk;
 pub mod rule_store;
-pub mod structural;
 pub mod taint;
 
 // Re-export primary types.
@@ -48,9 +43,6 @@ pub use permission::{PermissionAction, PermissionDecision, PermissionModel};
 pub use permission_pipeline::evaluate_pipeline;
 pub use risk::{RiskAssessment, RiskFactors, RiskScorer};
 pub use rule_store::PermissionRuleStore;
-pub use structural::{
-    Severity, StructuralValidator, StructuralViolation, TokenBudget, ValidationResult,
-};
 pub use taint::{TaintCheckResult, TaintTag, TaintTracker};
 
 /// Convenience builder that creates all guardrail middleware from a single config.
@@ -63,7 +55,10 @@ pub struct GuardrailManager {
 
 impl std::fmt::Debug for GuardrailManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let cfg = self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let cfg = self
+            .config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f.debug_struct("GuardrailManager")
             .field("config", &*cfg)
             .finish()
@@ -91,7 +86,10 @@ impl GuardrailManager {
     /// Atomically replaces the current config. Subsequent calls to
     /// `config()` and middleware constructors will use the new values.
     pub fn reload_config(&self, new_config: GuardrailConfig) {
-        let mut guard = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = new_config;
         tracing::info!("Guardrail config hot-reloaded");
     }

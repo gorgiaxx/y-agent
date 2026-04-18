@@ -49,7 +49,10 @@ impl ToolRegistryImpl {
 
     /// Hot-reload the tool registry configuration.
     pub fn reload_config(&self, new_config: ToolRegistryConfig) {
-        *self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner) = new_config;
+        *self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_config;
         tracing::info!("Tool registry config hot-reloaded");
     }
 

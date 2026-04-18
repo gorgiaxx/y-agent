@@ -173,7 +173,10 @@ impl TraceStore for InMemoryTraceStore {
     }
 
     async fn update_trace(&self, trace: Trace) -> Result<(), TraceStoreError> {
-        let mut map = self.traces.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = self
+            .traces
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !map.contains_key(&trace.id) {
             return Err(TraceStoreError::TraceNotFound { id: trace.id });
         }
@@ -187,7 +190,10 @@ impl TraceStore for InMemoryTraceStore {
         since: Option<DateTime<Utc>>,
         limit: usize,
     ) -> Result<Vec<Trace>, TraceStoreError> {
-        let map = self.traces.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = self
+            .traces
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut results: Vec<Trace> = map
             .values()
             .filter(|t| status.is_none_or(|s| t.status == s))
@@ -210,7 +216,10 @@ impl TraceStore for InMemoryTraceStore {
     }
 
     async fn update_observation(&self, obs: Observation) -> Result<(), TraceStoreError> {
-        let mut map = self.observations.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = self
+            .observations
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let entries = map
             .get_mut(&obs.trace_id)
             .ok_or(TraceStoreError::ObservationNotFound { id: obs.id })?;
@@ -253,7 +262,10 @@ impl TraceStore for InMemoryTraceStore {
     }
 
     async fn delete_before(&self, before: DateTime<Utc>) -> Result<u64, TraceStoreError> {
-        let mut traces = self.traces.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut traces = self
+            .traces
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let ids_to_remove: Vec<Uuid> = traces
             .values()
             .filter(|t| t.started_at < before)
@@ -261,8 +273,14 @@ impl TraceStore for InMemoryTraceStore {
             .collect();
         let count = ids_to_remove.len() as u64;
 
-        let mut obs_map = self.observations.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut score_map = self.scores.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut obs_map = self
+            .observations
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut score_map = self
+            .scores
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for id in &ids_to_remove {
             traces.remove(id);
             obs_map.remove(id);
@@ -277,7 +295,10 @@ impl TraceStore for InMemoryTraceStore {
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<Trace>, TraceStoreError> {
-        let map = self.traces.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = self
+            .traces
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let target = Uuid::parse_str(session_id).unwrap_or_default();
         let mut results: Vec<Trace> = map
             .values()
@@ -293,7 +314,10 @@ impl TraceStore for InMemoryTraceStore {
         &self,
         trace_ids: &[Uuid],
     ) -> Result<Vec<Observation>, TraceStoreError> {
-        let map = self.observations.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = self
+            .observations
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut all = Vec::new();
         for id in trace_ids {
             if let Some(obs) = map.get(id) {

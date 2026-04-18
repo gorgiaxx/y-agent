@@ -181,22 +181,27 @@ impl DelegationTracker {
             agent_name: agent_name.to_string(),
             start_time: Instant::now(),
         };
-        if let Ok(mut active) = self.active.write() {
-            active.push(entry);
-        }
+        self.active
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(entry);
         id
     }
 
     /// Deregister a delegation by its ID.
     fn deregister(&self, id: &str) {
-        if let Ok(mut active) = self.active.write() {
-            active.retain(|d| d.id != id);
-        }
+        self.active
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|d| d.id != id);
     }
 
     /// Snapshot of all active delegations.
     pub fn active_delegations(&self) -> Vec<ActiveDelegation> {
-        self.active.read().map(|v| v.clone()).unwrap_or_default()
+        self.active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 

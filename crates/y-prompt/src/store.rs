@@ -48,6 +48,18 @@ impl SectionStore {
     /// For file sources, reads from disk.
     /// For store sources, looks up the referenced key.
     pub fn load_content(&self, id: &str) -> Result<String, StoreError> {
+        self.load_content_with_depth(id, 0)
+    }
+
+    fn load_content_with_depth(&self, id: &str, depth: usize) -> Result<String, StoreError> {
+        const MAX_DEPTH: usize = 16;
+        if depth > MAX_DEPTH {
+            return Err(StoreError::ContentLoadError {
+                id: id.to_string(),
+                message: format!("store reference chain exceeded max depth ({MAX_DEPTH})"),
+            });
+        }
+
         let section = self
             .get(id)
             .ok_or_else(|| StoreError::NotFound { id: id.to_string() })?;
@@ -61,7 +73,6 @@ impl SectionStore {
                 })
             }
             ContentSource::Store(key) => {
-                // Recursively look up the referenced section.
                 if key == id {
                     return Err(StoreError::ContentLoadError {
                         id: id.to_string(),

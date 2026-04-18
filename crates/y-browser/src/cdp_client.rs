@@ -151,7 +151,10 @@ impl CdpClient {
 
     /// Update the CDP URL (e.g. when the launcher picks a different port).
     pub fn set_cdp_url(&self, url: String) {
-        *self.cdp_url.write().unwrap_or_else(std::sync::PoisonError::into_inner) = url;
+        *self
+            .cdp_url
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = url;
     }
 
     /// Connect to the CDP endpoint.

@@ -98,8 +98,14 @@ impl BrowserSession {
             new_config.allowed_domains.clone(),
             new_config.block_private_networks,
         );
-        *self.security.write().unwrap_or_else(std::sync::PoisonError::into_inner) = new_security;
-        *self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner) = new_config;
+        *self
+            .security
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_security;
+        *self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_config;
         info!("Browser config hot-reloaded");
     }
 
@@ -115,12 +121,16 @@ impl BrowserSession {
 
     /// Read the current security policy.
     pub fn security(&self) -> std::sync::RwLockReadGuard<'_, SecurityPolicy> {
-        self.security.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.security
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Read the current config.
     pub fn config(&self) -> std::sync::RwLockReadGuard<'_, BrowserConfig> {
-        self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Whether the session is connected.

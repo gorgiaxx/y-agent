@@ -241,8 +241,7 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
         .iter()
         .any(|t| DANGEROUS_TOOLS.contains(&t.as_str()));
 
-    if has_dangerous && def.definition.trust_tier < crate::agent::definition::TrustTier::UserDefined
-    {
+    if has_dangerous && def.definition.trust_tier < y_core::trust::TrustTier::UserDefined {
         return Err(ValidationError::SecurityViolation {
             reason: "dangerous tools require at least UserDefined trust tier".into(),
         });
@@ -644,13 +643,14 @@ mod tests {
             delegation_depth: 3,
         };
 
-        let agent = make_dynamic_agent(
+        let mut agent = make_dynamic_agent(
             "danger-agent",
             "dangerous test",
             "parent",
             &["ShellExec".to_string()],
             &creator,
         );
+        agent.definition.trust_tier = TrustTier::UserDefined;
 
         let result = validate_definition(&agent);
         assert!(result.is_ok());
