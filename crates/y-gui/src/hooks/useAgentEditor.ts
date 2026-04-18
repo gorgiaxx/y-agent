@@ -25,7 +25,7 @@ export function useAgentEditor({
   resetAgent,
   editorOpen,
   setEditorOpen,
-  editorTab,
+  editorTab: _editorTab,
   setEditorTab,
   editorSurface,
   setEditorSurface,

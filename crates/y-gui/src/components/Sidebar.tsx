@@ -144,7 +144,7 @@ export function Sidebar({ chat, nav, agentStudio }: SidebarProps) {
         <NavItem
           icon={<SettingsIcon size={15} />}
           label="Settings"
-          active={nav.activeView === 'settings'}
+          active={false}
           onClick={() => goTo('settings')}
         />
       }

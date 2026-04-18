@@ -1,4 +1,3 @@
-import { Save } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ScrollArea } from '../ui/ScrollArea';
 import { MonacoEditor } from '../ui/MonacoEditor';
@@ -77,9 +76,8 @@ export function AgentEditorPanel({
               Reset
             </Button>
           )}
-          <Button variant="primary" size="sm" onClick={onSave} disabled={saving}>
-            <Save size={12} />
-            {saving ? 'Saving' : 'Save'}
+          <Button variant="primary" onClick={onSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Changes'}
           </Button>
         </div>
       </div>

@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Globe, Code, FileText } from 'lucide-react';
+import { useState, useMemo, useCallback } from 'react';
+import { Globe, Code, FileText, Copy, Check } from 'lucide-react';
 import { computeLineDiff } from '../toolCallUtils';
 import type { FormattedResult } from '../toolCallUtils';
 
@@ -106,6 +106,17 @@ export function DetailSections({
   showRaw?: boolean;
   onToggleRaw?: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    if (!displayResult) return;
+    const text = displayResult.parts.map(part => part.text).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [displayResult]);
+
   return (
     <>
       {displayArgs && (
@@ -118,16 +129,25 @@ export function DetailSections({
         <div className="tool-call-section">
           <div className="tool-call-label-row">
             <div className="tool-call-label">{resultLabel}</div>
-            {onToggleRaw && (
+            <div className="tool-call-label-row-actions">
+              {onToggleRaw && (
+                <button
+                  className={`tool-call-raw-toggle ${showRaw ? 'active' : ''}`}
+                  onClick={(e) => { e.stopPropagation(); onToggleRaw(); }}
+                  title={showRaw ? 'Show formatted' : 'Show raw JSON'}
+                >
+                  {showRaw ? <FileText size={11} /> : <Code size={11} />}
+                  <span>{showRaw ? 'Formatted' : 'Raw'}</span>
+                </button>
+              )}
               <button
-                className={`tool-call-raw-toggle ${showRaw ? 'active' : ''}`}
-                onClick={(e) => { e.stopPropagation(); onToggleRaw(); }}
-                title={showRaw ? 'Show formatted' : 'Show raw JSON'}
+                className="tool-call-copy-button"
+                onClick={(e) => { e.stopPropagation(); handleCopy(); }}
+                title="Copy result"
               >
-                {showRaw ? <FileText size={11} /> : <Code size={11} />}
-                <span>{showRaw ? 'Formatted' : 'Raw'}</span>
+                {copied ? <Check size={11} /> : <Copy size={11} />}
               </button>
-            )}
+            </div>
           </div>
           <pre className="tool-call-code">
             {displayResult.parts.map((part, i) => (

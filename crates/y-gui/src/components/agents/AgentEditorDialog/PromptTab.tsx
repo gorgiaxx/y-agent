@@ -1,6 +1,6 @@
 import { Checkbox } from '../../ui/Checkbox';
 import { MonacoEditor } from '../../ui/MonacoEditor';
-import { SettingsGroup, SettingsItem } from '../../ui';
+import { SettingsGroup } from '../../ui';
 import type { PromptSectionInfo } from '../../../hooks/useAgents';
 import type { AgentDraft } from '../types';
 import { toggleItem } from '../utils';

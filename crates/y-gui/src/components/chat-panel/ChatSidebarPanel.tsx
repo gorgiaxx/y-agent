@@ -110,7 +110,7 @@ export function ChatSidebarPanel({
 
   const [internalSearchQuery, setInternalSearchQuery] = useState('');
   const searchQuery = searchQueryProp ?? internalSearchQuery;
-  const setSearchQuery = (next: string) => {
+  const _setSearchQuery = (next: string) => {
     if (onSearchQueryChange) onSearchQueryChange(next);
     else setInternalSearchQuery(next);
   };
@@ -645,7 +645,7 @@ export function ChatSidebarPanel({
   ], [onNewChat]);
 
   // -- Session item renderer --
-  const renderSessionItem = (session: SessionInfo, groupSessionIds: string[], isPinnedItem = false) => {
+  const renderSessionItem = (session: SessionInfo, groupSessionIds: string[], _isPinnedItem = false) => {
     const isStreaming = streamingSessionIds.has(session.id);
     const isActive = session.id === activeSessionId;
     const isSelected = selectedIds.has(session.id);
