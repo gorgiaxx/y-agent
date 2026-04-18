@@ -85,3 +85,4 @@ data/
 
 ### Test Artifacts
 crates/y-service/file-history/
+crates/y-gui/dist-web/
