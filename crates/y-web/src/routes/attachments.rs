@@ -82,7 +82,8 @@ async fn read_files(Json(body): Json<ReadFilesRequest>) -> Result<impl IntoRespo
             )));
         }
 
-        let metadata = std::fs::metadata(path)
+        let metadata = tokio::fs::metadata(path)
+            .await
             .map_err(|e| ApiError::Internal(format!("Failed to read metadata: {e}")))?;
 
         if metadata.len() > MAX_FILE_SIZE {
@@ -91,7 +92,8 @@ async fn read_files(Json(body): Json<ReadFilesRequest>) -> Result<impl IntoRespo
             )));
         }
 
-        let data = std::fs::read(path)
+        let data = tokio::fs::read(path)
+            .await
             .map_err(|e| ApiError::Internal(format!("Failed to read file: {e}")))?;
 
         let base64_data = base64::engine::general_purpose::STANDARD.encode(&data);

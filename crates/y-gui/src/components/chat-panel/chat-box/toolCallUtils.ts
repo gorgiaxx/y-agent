@@ -98,6 +98,7 @@ const KNOWN_TOOL_NAMES = [
   'FileWrite',
   'Glob',
   'Grep',
+  'KnowledgeSearch',
   'Plan',
   'PlanWriter',
   'ShellExec',
@@ -1128,4 +1129,54 @@ export function extractPlanDisplayMeta(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// KnowledgeSearch helpers
+// ---------------------------------------------------------------------------
+
+export interface KnowledgeSearchMeta {
+  query: string;
+  domain?: string;
+  limit?: number;
+}
+
+export interface KnowledgeSearchResultItem {
+  title: string;
+  relevance: string;
+  chunkId: string;
+}
+
+export interface KnowledgeSearchResult {
+  count: number;
+  results: KnowledgeSearchResultItem[];
+  truncated: boolean;
+}
+
+export function extractKnowledgeSearchMeta(argsRaw: string): KnowledgeSearchMeta | null {
+  const obj = tryParseJson(argsRaw);
+  if (!obj) return null;
+  const query = typeof obj.query === 'string' ? obj.query : '';
+  if (!query) return null;
+  return {
+    query,
+    domain: typeof obj.domain === 'string' ? obj.domain : undefined,
+    limit: typeof obj.limit === 'number' ? obj.limit : undefined,
+  };
+}
+
+export function parseKnowledgeSearchResult(raw: string): KnowledgeSearchResult | null {
+  const obj = tryParseJson(raw);
+  if (!obj) return null;
+  if (!Array.isArray(obj.results)) return null;
+  const results = (obj.results as Array<Record<string, unknown>>).map((r) => ({
+    title: typeof r.title === 'string' ? r.title : '',
+    relevance: typeof r.relevance === 'string' ? r.relevance : String(r.relevance ?? ''),
+    chunkId: typeof r.chunk_id === 'string' ? r.chunk_id : '',
+  }));
+  return {
+    count: typeof obj.count === 'number' ? obj.count : results.length,
+    results,
+    truncated: obj.truncated === true,
+  };
 }

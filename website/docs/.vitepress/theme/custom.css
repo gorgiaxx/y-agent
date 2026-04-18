@@ -82,8 +82,8 @@
 }
 
 :root .VPImage.image-src {
-  max-width: 240px;
-  max-height: 240px;
+  max-width: 160px;
+  max-height: 160px;
 }
 
 /* --- Feature card hover effect --- */

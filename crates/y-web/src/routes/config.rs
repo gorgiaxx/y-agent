@@ -96,9 +96,8 @@ async fn config_get_section(
     }
 
     let path = state.config_dir.join(format!("{section}.toml"));
-    let content = match tokio::fs::read_to_string(&path).await {
-        Ok(c) => c,
-        Err(_) => return Ok(Json(serde_json::json!({ "content": "" }))),
+    let Ok(content) = tokio::fs::read_to_string(&path).await else {
+        return Ok(Json(serde_json::json!({ "content": "" })));
     };
 
     Ok(Json(serde_json::json!({ "content": content })))
@@ -134,8 +133,6 @@ async fn config_save_section(
 
 /// `POST /api/v1/config/reload` -- hot-reload configuration.
 async fn config_reload(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let mut results: Vec<String> = Vec::new();
-
     async fn read_toml(
         config_dir: &std::path::Path,
         name: &str,
@@ -149,6 +146,8 @@ async fn config_reload(State(state): State<AppState>) -> Result<impl IntoRespons
             ))),
         }
     }
+
+    let mut results: Vec<String> = Vec::new();
 
     if let Some(content) = read_toml(&state.config_dir, "providers").await? {
         let count =
@@ -288,9 +287,8 @@ async fn provider_list_models(
 /// `GET /api/v1/config/mcp` -- get MCP server configuration.
 async fn mcp_config_get(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let path = state.config_dir.join("mcp.json");
-    let content = match tokio::fs::read_to_string(&path).await {
-        Ok(c) => c,
-        Err(_) => return Ok(Json(serde_json::json!({"mcpServers": {}}))),
+    let Ok(content) = tokio::fs::read_to_string(&path).await else {
+        return Ok(Json(serde_json::json!({"mcpServers": {}})));
     };
     let value: Value = serde_json::from_str(&content)
         .map_err(|e| ApiError::Internal(format!("Failed to parse mcp.json: {e}")))?;
@@ -320,9 +318,8 @@ async fn mcp_config_save(
 /// `GET /api/v1/config/prompts` -- list all prompt files.
 async fn prompt_list(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let prompts_dir = state.config_dir.join("prompts");
-    let mut entries = match tokio::fs::read_dir(&prompts_dir).await {
-        Ok(rd) => rd,
-        Err(_) => return Ok(Json(Vec::<String>::new())),
+    let Ok(mut entries) = tokio::fs::read_dir(&prompts_dir).await else {
+        return Ok(Json(Vec::<String>::new()));
     };
 
     let mut files: Vec<String> = Vec::new();
@@ -331,7 +328,13 @@ async fn prompt_list(State(state): State<AppState>) -> Result<impl IntoResponse,
         let is_txt = std::path::Path::new(&name)
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"));
-        if is_txt && entry.file_type().await.map(|ft| ft.is_file()).unwrap_or(false) {
+        if is_txt
+            && entry
+                .file_type()
+                .await
+                .map(|ft| ft.is_file())
+                .unwrap_or(false)
+        {
             files.push(name);
         }
     }
@@ -349,9 +352,8 @@ async fn prompt_get(
     }
 
     let path = state.config_dir.join("prompts").join(&filename);
-    let content = match tokio::fs::read_to_string(&path).await {
-        Ok(c) => c,
-        Err(_) => return Ok(Json(serde_json::json!({ "content": "" }))),
+    let Ok(content) = tokio::fs::read_to_string(&path).await else {
+        return Ok(Json(serde_json::json!({ "content": "" })));
     };
 
     Ok(Json(serde_json::json!({ "content": content })))
@@ -368,10 +370,12 @@ async fn prompt_save(
     }
 
     let prompts_dir = state.config_dir.join("prompts");
-    std::fs::create_dir_all(&prompts_dir)
+    tokio::fs::create_dir_all(&prompts_dir)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to create prompts dir: {e}")))?;
 
-    std::fs::write(prompts_dir.join(&filename), &body.content)
+    tokio::fs::write(prompts_dir.join(&filename), &body.content)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to write {filename}: {e}")))?;
 
     Ok(Json(serde_json::json!({"message": "saved"})))

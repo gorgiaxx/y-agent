@@ -16,4 +16,4 @@ pub mod routes;
 pub mod state;
 
 pub use routes::create_router;
-pub use state::{AppState, KnowledgeState, WebConfig};
+pub use state::{AppState, WebConfig};

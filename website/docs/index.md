@@ -13,7 +13,7 @@ hero:
   text: AI Agent Framework
   tagline: Async-first, model-agnostic, fully observable -- built in Rust for production workloads
   image:
-    src: /logo.svg
+    src: /logo-hero.png
     alt: y-agent
   actions:
     - theme: brand

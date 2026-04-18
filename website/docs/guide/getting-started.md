@@ -133,4 +133,3 @@ y-agent diag traces         # Diagnostics and observability
 - [Configuration Reference](/guide/configuration) -- Full config file reference
 - [GUI Desktop App](/guide/gui-desktop) -- Using the Tauri desktop GUI
 - [Knowledge Base](/guide/knowledge-base) -- Setting up RAG and semantic search
-- [Architecture](/architecture/) -- Understanding the system architecture

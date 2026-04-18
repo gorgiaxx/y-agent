@@ -9,8 +9,6 @@ use tokio_util::sync::CancellationToken;
 
 use y_bot::discord::DiscordBot;
 use y_bot::feishu::FeishuBot;
-use y_knowledge::config::KnowledgeConfig;
-use y_service::knowledge_service::KnowledgeService;
 use y_service::ServiceContainer;
 
 use crate::routes::events::SseEvent;
@@ -29,32 +27,6 @@ pub struct TurnMeta {
     pub cost_usd: f64,
     pub context_window: usize,
     pub context_tokens_used: u64,
-}
-
-// ---------------------------------------------------------------------------
-// Knowledge state wrapper
-// ---------------------------------------------------------------------------
-
-/// Thread-safe wrapper for storing a `KnowledgeService`.
-pub struct KnowledgeState {
-    pub service: Arc<tokio::sync::Mutex<KnowledgeService>>,
-}
-
-impl KnowledgeState {
-    /// Create from a shared `KnowledgeService`.
-    pub fn from_shared(service: Arc<tokio::sync::Mutex<KnowledgeService>>) -> Self {
-        Self { service }
-    }
-
-    /// Create a standalone instance with persistence to the given data directory.
-    pub fn with_data_dir(data_dir: PathBuf) -> Self {
-        Self {
-            service: Arc::new(tokio::sync::Mutex::new(KnowledgeService::with_data_dir(
-                KnowledgeConfig::default(),
-                data_dir,
-            ))),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +72,6 @@ pub struct AppState {
     pub pending_runs: Arc<Mutex<HashMap<String, CancellationToken>>>,
     /// Last completed turn metadata keyed by `session_id`.
     pub turn_meta_cache: Arc<Mutex<HashMap<String, TurnMeta>>>,
-    /// Knowledge service wrapper (None if not configured).
-    pub knowledge: Option<Arc<KnowledgeState>>,
     /// Broadcast channel for SSE events.
     pub event_tx: broadcast::Sender<SseEvent>,
 }
@@ -118,7 +88,6 @@ impl AppState {
             discord_bot: None,
             pending_runs: Arc::new(Mutex::new(HashMap::new())),
             turn_meta_cache: Arc::new(Mutex::new(HashMap::new())),
-            knowledge: None,
             event_tx,
         }
     }
@@ -127,13 +96,6 @@ impl AppState {
     #[must_use]
     pub fn with_config_dir(mut self, dir: PathBuf) -> Self {
         self.config_dir = dir;
-        self
-    }
-
-    /// Set the knowledge service.
-    #[must_use]
-    pub fn with_knowledge(mut self, ks: KnowledgeState) -> Self {
-        self.knowledge = Some(Arc::new(ks));
         self
     }
 

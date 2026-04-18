@@ -10,6 +10,8 @@ use axum::response::IntoResponse;
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
+use y_service::knowledge_service::KnowledgeService;
 
 use crate::error::ApiError;
 use crate::routes::events::SseEvent;
@@ -182,11 +184,8 @@ pub struct ExpandFolderRequest {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn require_knowledge(state: &AppState) -> Result<&Arc<crate::state::KnowledgeState>, ApiError> {
-    state
-        .knowledge
-        .as_ref()
-        .ok_or_else(|| ApiError::Internal("Knowledge service not configured".into()))
+fn knowledge_service(state: &AppState) -> &Arc<Mutex<KnowledgeService>> {
+    &state.container.knowledge_service
 }
 
 fn entry_to_info(e: &y_knowledge::KnowledgeEntry) -> EntryInfo {
@@ -220,8 +219,7 @@ fn entry_to_info(e: &y_knowledge::KnowledgeEntry) -> EntryInfo {
 
 /// `GET /api/v1/knowledge/collections`
 async fn collection_list(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let service = ks.service.lock().await;
+    let service = knowledge_service(&state).lock().await;
     let collections: Vec<CollectionInfo> = service
         .list_collections()
         .iter()
@@ -243,8 +241,8 @@ async fn collection_create(
     State(state): State<AppState>,
     Json(body): Json<CreateCollectionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let mut service = ks.service.lock().await;
+    let ks = knowledge_service(&state);
+    let mut service = ks.lock().await;
     service.create_collection(&body.name, &body.description);
 
     let collections = service.list_collections();
@@ -271,8 +269,7 @@ async fn collection_delete(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let service = Arc::clone(&ks.service);
+    let service = Arc::clone(knowledge_service(&state));
     tokio::task::spawn_blocking(move || {
         let mut guard = service.blocking_lock();
         if guard.delete_collection(&name) {
@@ -291,8 +288,7 @@ async fn collection_rename(
     Path(name): Path<String>,
     Json(body): Json<RenameCollectionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let mut service = ks.service.lock().await;
+    let mut service = knowledge_service(&state).lock().await;
     if service.rename_collection(&name, &body.new_name) {
         Ok(Json(serde_json::json!({"message": "renamed"})))
     } else {
@@ -307,8 +303,7 @@ async fn entry_list(
     State(state): State<AppState>,
     Path(collection): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let service = ks.service.lock().await;
+    let service = knowledge_service(&state).lock().await;
     let entries: Vec<EntryInfo> = service
         .list_entries(&collection)
         .iter()
@@ -325,8 +320,7 @@ async fn entry_detail(
 ) -> Result<impl IntoResponse, ApiError> {
     const MAX_L2_CHUNKS: usize = 200;
 
-    let ks = require_knowledge(&state)?;
-    let service = ks.service.lock().await;
+    let service = knowledge_service(&state).lock().await;
     let entry = service
         .get_entry(&entry_id)
         .ok_or_else(|| ApiError::NotFound(format!("Entry '{entry_id}' not found")))?;
@@ -381,8 +375,7 @@ async fn entry_delete(
     State(state): State<AppState>,
     Path(entry_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let service = Arc::clone(&ks.service);
+    let service = Arc::clone(knowledge_service(&state));
     tokio::task::spawn_blocking(move || {
         let mut guard = service.blocking_lock();
         if guard.delete_entry(&entry_id) {
@@ -401,8 +394,7 @@ async fn entry_update_metadata(
     Path(entry_id): Path<String>,
     Json(body): Json<UpdateMetadataRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let mut service = ks.service.lock().await;
+    let mut service = knowledge_service(&state).lock().await;
     let entry = service
         .get_entry_mut(&entry_id)
         .ok_or_else(|| ApiError::NotFound(format!("Entry '{entry_id}' not found")))?;
@@ -433,8 +425,7 @@ async fn kb_search(
     State(state): State<AppState>,
     Json(body): Json<SearchRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let service = ks.service.lock().await;
+    let service = knowledge_service(&state).lock().await;
     let params = y_knowledge::tools::KnowledgeSearchParams {
         query: body.query,
         domain: body.domain,
@@ -464,8 +455,7 @@ async fn kb_ingest(
     State(state): State<AppState>,
     Json(body): Json<IngestRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let mut service = ks.service.lock().await;
+    let mut service = knowledge_service(&state).lock().await;
     let params = y_knowledge::tools::KnowledgeIngestParams {
         source: body.source,
         domain: body.domain,
@@ -501,14 +491,13 @@ async fn kb_ingest_batch(
     State(state): State<AppState>,
     Json(body): Json<BatchIngestRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
     let total = body.sources.len();
     let mut succeeded = 0usize;
     let mut errors = Vec::<String>::new();
 
     let llm_summary = body.use_llm_summary.unwrap_or(false);
     let metadata_flag = body.extract_metadata.unwrap_or(false);
-    let service_handle = Arc::clone(&ks.service);
+    let service_handle = Arc::clone(knowledge_service(&state));
 
     for (i, source) in body.sources.iter().enumerate() {
         let _ = state.event_tx.send(SseEvent::KbBatchProgress {
@@ -600,8 +589,7 @@ async fn kb_expand_folder(
 
 /// `GET /api/v1/knowledge/stats`
 async fn kb_stats(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let ks = require_knowledge(&state)?;
-    let service = ks.service.lock().await;
+    let service = knowledge_service(&state).lock().await;
     let collections = service.list_collections();
 
     let total_entries: u64 = collections.iter().map(|c| c.stats.entry_count).sum();

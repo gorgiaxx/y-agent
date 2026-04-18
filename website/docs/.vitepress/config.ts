@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress';
 import { withMermaid } from 'vitepress-plugin-mermaid';
 
-const SITE_URL = 'https://y-agent.dev';
+const SITE_URL = 'https://ai.jiahao.li';
 
 export default withMermaid(defineConfig({
   title: 'y-agent',
@@ -92,7 +92,6 @@ export default withMermaid(defineConfig({
           { text: 'Home', link: '/' },
           { text: 'Download', link: '/download' },
           { text: 'Docs', link: '/guide/getting-started' },
-          { text: 'Architecture', link: '/architecture/' },
           { text: 'Development', link: '/development/' },
         ],
         sidebar: {
@@ -121,15 +120,6 @@ export default withMermaid(defineConfig({
                   link: '/guide/bot-adapters',
                 },
                 { text: 'Web API', link: '/guide/web-api' },
-              ],
-            },
-          ],
-          '/architecture/': [
-            {
-              text: 'Architecture',
-              items: [
-                { text: 'Overview', link: '/architecture/' },
-                { text: 'Crate Map', link: '/architecture/crate-map' },
               ],
             },
           ],
@@ -195,16 +185,16 @@ export default withMermaid(defineConfig({
   },
 
   themeConfig: {
-    logo: '/logo.svg',
+    logo: '/logo-nav.png',
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/gorgias/y-agent' },
+      { icon: 'github', link: 'https://github.com/gorgiaxx/y-agent' },
     ],
     search: {
       provider: 'local',
     },
     footer: {
       message: 'Released under the MIT License.',
-      copyright: 'Copyright 2024-present y-agent Team',
+      copyright: 'Copyright 2026 y-agent Team',
     },
   },
 }));

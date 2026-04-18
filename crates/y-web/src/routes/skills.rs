@@ -160,7 +160,11 @@ async fn get_files(
         )));
     }
 
-    Ok(Json(build_file_tree(&skill_dir, &skill_dir)))
+    let tree = tokio::task::spawn_blocking(move || build_file_tree(&skill_dir, &skill_dir))
+        .await
+        .map_err(|e| ApiError::Internal(format!("Task join error: {e}")))?;
+
+    Ok(Json(tree))
 }
 
 /// `GET /api/v1/skills/:name/files/*path`
@@ -183,7 +187,8 @@ async fn read_file(
         ));
     }
 
-    let content = std::fs::read_to_string(&canonical_target)
+    let content = tokio::fs::read_to_string(&canonical_target)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to read file: {e}")))?;
 
     Ok(Json(serde_json::json!({ "content": content })))
@@ -214,7 +219,8 @@ async fn save_file(
         ));
     }
 
-    std::fs::write(&target, &body.content)
+    tokio::fs::write(&target, &body.content)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to write file: {e}")))?;
 
     Ok(Json(serde_json::json!({"message": "saved"})))

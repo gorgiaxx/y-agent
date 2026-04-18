@@ -37,14 +37,6 @@
   position: relative;
   width: 100%;
   max-width: 960px;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
-  border: 1px solid var(--vp-c-divider);
-}
-
-.dark .screenshot-container {
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
 .screenshot-img {
@@ -72,10 +64,6 @@
     padding: 0 12px;
     margin-top: 16px;
     margin-bottom: 16px;
-  }
-
-  .screenshot-container {
-    border-radius: 8px;
   }
 }
 </style>

@@ -11,6 +11,7 @@ import { FileToolRenderer } from './FileToolRenderer';
 import { PlanWriterRenderer } from './PlanWriterRenderer';
 import { PlanRenderer } from './PlanRenderer';
 import { AskUserRenderer } from './AskUserRenderer';
+import { KnowledgeSearchRenderer } from './KnowledgeSearchRenderer';
 
 export type { ToolRendererProps } from './types';
 export { DefaultRenderer } from './DefaultRenderer';
@@ -32,4 +33,5 @@ export const TOOL_RENDERERS: Record<string, ComponentType<ToolRendererProps>> = 
   Plan: PlanRenderer,
   PlanWriter: PlanWriterRenderer,
   AskUser: AskUserRenderer,
+  KnowledgeSearch: KnowledgeSearchRenderer,
 };

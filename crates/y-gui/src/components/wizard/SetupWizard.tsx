@@ -731,7 +731,7 @@ export function SetupWizard({
   return (
     <div className="wizard-page">
       {/* Header */}
-      <div className="wizard-header">
+      <div className="wizard-header" data-tauri-drag-region>
         <img src="/logo-256x256.png" alt="y-agent" className="wizard-logo" />
         <h1 className="wizard-header-title">Setup Wizard</h1>
       </div>
