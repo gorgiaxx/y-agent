@@ -18,31 +18,7 @@
   grid-template-columns: 2fr 1fr;
 }
 
-/* Key-value list editor (env vars, volumes) */
-.pf-kv-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.pf-kv-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.pf-kv-sep {
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  user-select: none;
-  font-size: 12px;
-}
-
-.pf-kv-add {
-  align-self: flex-start;
-  font-size: 0.75rem;
-  padding: 2px 8px;
-}
+/* pf-kv-list / pf-kv-row / pf-kv-sep / pf-kv-add moved to SettingsForm.css */
 
 .pf-field {
   display: flex;

@@ -125,3 +125,29 @@
 .settings-item + .settings-item--custom-body {
   border-top: 1px solid var(--border);
 }
+
+/* ---- Key-value list editor (env vars, volumes, headers) ---- */
+.pf-kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pf-kv-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.pf-kv-sep {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  user-select: none;
+  font-size: 12px;
+}
+
+.pf-kv-add {
+  align-self: flex-start;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}

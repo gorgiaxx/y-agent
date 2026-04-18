@@ -11,7 +11,7 @@ import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { RUNTIME_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
+import { Checkbox, Input, Button, SettingsGroup, SettingsItem } from '../ui';
 
 interface RuntimeTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -328,15 +328,16 @@ export function RuntimeTab({
                 >x</button>
               </div>
             ))}
-            <button
-              type="button"
-              className="btn-test pf-kv-add"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="pf-kv-add"
               onClick={() => {
                 const newEnv = { ...runtimeForm.docker_default_env, '': '' };
                 setRuntimeForm({ ...runtimeForm, docker_default_env: newEnv });
                 setDirtyRuntime(true);
               }}
-            >+ Add Variable</button>
+            >+ Add Variable</Button>
           </div>
         </div>
       </SettingsGroup>
@@ -398,15 +399,16 @@ export function RuntimeTab({
                 >x</button>
               </div>
             ))}
-            <button
-              type="button"
-              className="btn-test pf-kv-add"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="pf-kv-add"
               onClick={() => {
                 const vols = [...runtimeForm.docker_default_volumes, { host_path: '', container_path: '', mode: 'ro' }];
                 setRuntimeForm({ ...runtimeForm, docker_default_volumes: vols });
                 setDirtyRuntime(true);
               }}
-            >+ Add Volume</button>
+            >+ Add Volume</Button>
           </div>
         </div>
       </SettingsGroup>

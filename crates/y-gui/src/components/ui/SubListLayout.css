@@ -129,6 +129,7 @@
 .sub-list-item-add {
   flex: 1;
   min-width: 0;
+  height: 30px;
   color: var(--text-muted);
   gap: var(--space-xs);
   justify-content: flex-start;

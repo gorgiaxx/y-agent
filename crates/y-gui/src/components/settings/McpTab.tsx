@@ -85,9 +85,9 @@ function McpServerTabPanel({
           </SettingsItem>
           <div className="settings-item--custom-body">
             <div className="settings-item-title" style={{ marginBottom: '6px' }}>Environment Variables</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div className="pf-kv-list">
               {Object.entries(server.env).map(([k, v], i) => (
-                <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                <div key={i} className="pf-kv-row">
                   <Input
                     style={{ flex: 1 }}
                     value={k}
@@ -98,7 +98,7 @@ function McpServerTabPanel({
                     }}
                     placeholder="KEY"
                   />
-                  <span style={{ color: 'var(--text-secondary)' }}>=</span>
+                  <span className="pf-kv-sep">=</span>
                   <Input
                     style={{ flex: 2 }}
                     value={v}
@@ -124,6 +124,7 @@ function McpServerTabPanel({
               <Button
                 variant="ghost"
                 size="sm"
+                className="pf-kv-add"
                 onClick={() => update({ env: { ...server.env, '': '' } })}
               >+ Add Variable</Button>
             </div>
@@ -148,9 +149,9 @@ function McpServerTabPanel({
           </SettingsItem>
           <div className="settings-item--custom-body">
             <div className="settings-item-title" style={{ marginBottom: '6px' }}>Headers</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div className="pf-kv-list">
               {Object.entries(server.headers).map(([k, v], i) => (
-                <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                <div key={i} className="pf-kv-row">
                   <Input
                     style={{ flex: 1 }}
                     value={k}
@@ -161,7 +162,7 @@ function McpServerTabPanel({
                     }}
                     placeholder="Header-Name"
                   />
-                  <span style={{ color: 'var(--text-secondary)' }}>:</span>
+                  <span className="pf-kv-sep">:</span>
                   <Input
                     style={{ flex: 2 }}
                     value={v}
@@ -187,6 +188,7 @@ function McpServerTabPanel({
               <Button
                 variant="ghost"
                 size="sm"
+                className="pf-kv-add"
                 onClick={() => update({ headers: { ...server.headers, '': '' } })}
               >+ Add Header</Button>
             </div>
