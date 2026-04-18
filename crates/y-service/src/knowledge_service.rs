@@ -456,6 +456,14 @@ impl KnowledgeService {
         self.collections.contains_key(name)
     }
 
+    /// Find an existing entry by collection + source URI.
+    fn find_entry_id_by_source(&self, collection: &str, source_uri: &str) -> Option<String> {
+        self.entries.iter().find_map(|(entry_id, entry)| {
+            (entry.collection == collection && entry.source.uri == source_uri)
+                .then(|| entry_id.clone())
+        })
+    }
+
     // -------------------------------------------------------------------
     // Ingestion
     // -------------------------------------------------------------------
@@ -516,6 +524,30 @@ impl KnowledgeService {
         if !self.has_collection(&params.collection) {
             self.create_collection(&params.collection, "Auto-created collection");
         }
+
+        // Manual re-imports should refresh the stored entry instead of being
+        // rejected by the process-local dedup cache. Replacing the existing
+        // entry also lets users rebuild summaries/embeddings after changing
+        // knowledge settings without having to restart the app.
+        if let Some(existing_entry_id) =
+            self.find_entry_id_by_source(&params.collection, &raw_doc.uri)
+        {
+            tracing::info!(
+                entry_id = existing_entry_id,
+                source = raw_doc.uri,
+                collection = params.collection,
+                "re-ingesting existing knowledge source by replacing stored entry"
+            );
+            let deleted = self.delete_entry(&existing_entry_id);
+            debug_assert!(
+                deleted,
+                "entry discovered by source lookup should be deletable"
+            );
+        }
+
+        // Keep dedup scoped to a single ingestion call. Cross-source duplicates
+        // are allowed by design, and same-source re-import is handled above.
+        self.quality_filter.reset_dedup();
 
         // Run ingestion pipeline.
         let entry = self.pipeline.ingest(
@@ -2083,5 +2115,119 @@ mod tests {
         assert_eq!(entry.summary.as_deref(), Some("LLM summary"));
         assert_eq!(entry.l1_sections.len(), 1);
         assert_eq!(entry.l1_sections[0].title, "Overview");
+    }
+
+    #[tokio::test]
+    async fn test_reingest_same_source_replaces_existing_entry() {
+        let dir = TempDir::new().expect("temp dir");
+        let content = [
+            "# ISO 26262-7",
+            "",
+            "Functional safety production, operation, service, and decommissioning guidance",
+            "with requirements, work products, verification activities, and traceability.",
+            "",
+            "## Requirements",
+            "Teams shall maintain production planning, service documentation,",
+            "decommissioning records, and safety confirmation evidence.",
+        ]
+        .join("\n");
+        let path = write_test_doc(&dir, "iso-26262-7.md", &content);
+        let mut service = KnowledgeService::new(KnowledgeConfig::default());
+
+        let params = KnowledgeIngestParams {
+            source: path.display().to_string(),
+            domain: None,
+            collection: "default".to_string(),
+            use_llm_summary: false,
+            extract_metadata: false,
+        };
+
+        let first = service
+            .ingest(&params, "default")
+            .await
+            .expect("first ingest");
+        let first_entry_id = first.entry_id.expect("first entry id");
+
+        let second = service
+            .ingest(&params, "default")
+            .await
+            .expect("second ingest");
+        let second_entry_id = second.entry_id.expect("second entry id");
+
+        assert_ne!(
+            first_entry_id, second_entry_id,
+            "re-ingest should replace the stored entry with a fresh one"
+        );
+        assert!(
+            service.get_entry(&first_entry_id).is_none(),
+            "old entry should be removed during re-ingest"
+        );
+        assert!(
+            service.get_entry(&second_entry_id).is_some(),
+            "new entry should be stored after re-ingest"
+        );
+
+        let default = service
+            .list_collections()
+            .into_iter()
+            .find(|c| c.name == "default")
+            .expect("default collection");
+        assert_eq!(
+            default.stats.entry_count, 1,
+            "re-ingest should not create a duplicate entry in the same collection"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ingest_same_content_from_different_sources_is_allowed() {
+        let dir = TempDir::new().expect("temp dir");
+        let content = [
+            "# Shared Content",
+            "",
+            "This document is intentionally duplicated across two files to verify",
+            "that service-level ingestion allows cross-source duplicates when the",
+            "source URI differs.",
+            "",
+            "## Details",
+            "Both files should remain importable because the provenance is distinct.",
+        ]
+        .join("\n");
+        let first_path = write_test_doc(&dir, "copy-a.md", &content);
+        let second_path = write_test_doc(&dir, "copy-b.md", &content);
+        let mut service = KnowledgeService::new(KnowledgeConfig::default());
+
+        let first_params = KnowledgeIngestParams {
+            source: first_path.display().to_string(),
+            domain: None,
+            collection: "default".to_string(),
+            use_llm_summary: false,
+            extract_metadata: false,
+        };
+        let second_params = KnowledgeIngestParams {
+            source: second_path.display().to_string(),
+            domain: None,
+            collection: "default".to_string(),
+            use_llm_summary: false,
+            extract_metadata: false,
+        };
+
+        service
+            .ingest(&first_params, "default")
+            .await
+            .expect("first ingest");
+        service
+            .ingest(&second_params, "default")
+            .await
+            .expect("second ingest");
+
+        let default = service
+            .list_collections()
+            .into_iter()
+            .find(|c| c.name == "default")
+            .expect("default collection");
+        assert_eq!(
+            default.stats.entry_count, 2,
+            "different source URIs should be ingestible even when content matches"
+        );
     }
 }
