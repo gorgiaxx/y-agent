@@ -203,15 +203,15 @@
 /* ---- Chat-specific session item styles ---- */
 
 .session-item--selected {
-  background: var(--info-subtle) !important;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-primary) 4%) !important;
 }
 
 .session-item--selected:hover {
-  background: rgba(96, 165, 250, 0.18) !important;
+  background: var(--accent-glow) !important;
 }
 
 .session-item--selected.session-item--active {
-  background: rgba(96, 165, 250, 0.15) !important;
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-primary) 22%) !important;
 }
 
 .session-item--renaming {
