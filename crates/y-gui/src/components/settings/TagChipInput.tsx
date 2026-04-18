@@ -49,7 +49,7 @@ export function TagChipInput({
         'min-h-8 px-2 py-1',
         'border border-solid border-[var(--border)]',
         'rounded-[var(--radius-sm)]',
-        'bg-[var(--surface-secondary)]',
+        'bg-[var(--surface-primary)]',
         'cursor-text',
         'transition-colors duration-150',
         'focus-within:border-[rgba(255,255,255,0.15)]',

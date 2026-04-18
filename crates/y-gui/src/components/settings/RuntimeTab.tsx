@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { X } from 'lucide-react';
 import { transport } from '../../lib';
 import { TagChipInput } from './TagChipInput';
 import type { RuntimeFormData } from './settingsTypes';
@@ -315,9 +316,9 @@ export function RuntimeTab({
                   }}
                   placeholder="value"
                 />
-                <button
-                  type="button"
-                  className="pf-tag-chip-remove"
+                <Button
+                  variant="icon"
+                  size="sm"
                   title="Remove"
                   onClick={() => {
                     const newEnv = { ...runtimeForm.docker_default_env };
@@ -325,7 +326,7 @@ export function RuntimeTab({
                     setRuntimeForm({ ...runtimeForm, docker_default_env: newEnv });
                     setDirtyRuntime(true);
                   }}
-                >x</button>
+                ><X size={12} /></Button>
               </div>
             ))}
             <Button
@@ -387,16 +388,16 @@ export function RuntimeTab({
                     <SelectItem value="rw">rw</SelectItem>
                   </SelectContent>
                 </Select>
-                <button
-                  type="button"
-                  className="pf-tag-chip-remove"
+                <Button
+                  variant="icon"
+                  size="sm"
                   title="Remove"
                   onClick={() => {
                     const vols = runtimeForm.docker_default_volumes.filter((_, j) => j !== i);
                     setRuntimeForm({ ...runtimeForm, docker_default_volumes: vols });
                     setDirtyRuntime(true);
                   }}
-                >x</button>
+                ><X size={12} /></Button>
               </div>
             ))}
             <Button
