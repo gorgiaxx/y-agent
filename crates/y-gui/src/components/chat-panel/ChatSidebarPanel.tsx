@@ -16,7 +16,6 @@ import { platform } from '../../lib';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
 import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
-import { Button } from '../ui';
 import { PanelToolbar, type SortField, type PanelToolbarAction } from '../common/PanelToolbar';
 import { useSessionDragReorder } from '../../hooks/useSessionDragReorder';
 import { STORAGE_KEYS } from '../../constants/storageKeys';
@@ -647,8 +646,17 @@ export function ChatSidebarPanel({
     }
 
     if (openMenu.kind === 'session' && openSession) {
+      const isBatchMode = selectedIds.size > 1 && selectedIds.has(openSession.id);
+      const batchIds = isBatchMode ? [...selectedIds] : null;
+
       menuBody = (
         <>
+          {isBatchMode && (
+            <>
+              <div className="context-menu-section">{selectedIds.size} selected</div>
+              <hr className="context-menu-divider" />
+            </>
+          )}
           {sortedWorkspaces.length > 0 && (
             <>
               <div className="context-menu-section">Move to workspace</div>
@@ -661,17 +669,21 @@ export function ChatSidebarPanel({
                     key={workspace.id}
                     className="context-menu-item"
                     onClick={() => {
-                      onAssignSession(workspace.id, openSession.id);
+                      if (batchIds) {
+                        for (const id of batchIds) onAssignSession(workspace.id, id);
+                      } else {
+                        onAssignSession(workspace.id, openSession.id);
+                      }
                       closeOpenMenu();
                     }}
                   >
                     <FolderOpen size={11} />
                     {workspace.name}
-                    {openSessionWorkspace?.id === workspace.id && <span className="context-menu-check">*</span>}
+                    {!isBatchMode && openSessionWorkspace?.id === workspace.id && <span className="context-menu-check">*</span>}
                   </button>
                 ))}
               </div>
-              {openSessionWorkspace && (
+              {!isBatchMode && openSessionWorkspace && (
                 <button
                   className="context-menu-item"
                   onClick={() => {
@@ -683,10 +695,24 @@ export function ChatSidebarPanel({
                   Remove from workspace
                 </button>
               )}
+              {isBatchMode && batchIds && batchIds.some((id) => sessionWorkspaceMap[id]) && (
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    for (const id of batchIds) {
+                      if (sessionWorkspaceMap[id]) onUnassignSession(id);
+                    }
+                    closeOpenMenu();
+                  }}
+                >
+                  <X size={11} />
+                  Remove from workspace
+                </button>
+              )}
               <hr className="context-menu-divider" />
             </>
           )}
-          {onForkSession && (
+          {onForkSession && !isBatchMode && (
             <>
               <button
                 className="context-menu-item"
@@ -714,12 +740,16 @@ export function ChatSidebarPanel({
           <button
             className="context-menu-item context-menu-item--danger"
             onClick={() => {
-              onDeleteSession(openSession.id);
+              if (batchIds) {
+                handleBatchDelete();
+              } else {
+                onDeleteSession(openSession.id);
+              }
               closeOpenMenu();
             }}
           >
             <Trash2 size={11} />
-            Delete session
+            {isBatchMode ? `Delete ${selectedIds.size} sessions` : 'Delete session'}
           </button>
         </>
       );
@@ -863,20 +893,7 @@ export function ChatSidebarPanel({
           </div>
         )}
 
-        {selectedIds.size > 0 && (
-          <div className="batch-action-bar">
-            <span className="batch-action-count">{selectedIds.size} selected</span>
-            <Button
-              variant="icon"
-              size="sm"
-              onClick={handleBatchDelete}
-              title="Delete"
-              className="batch-action-delete-btn"
-            >
-              <Trash2 size={14} />
-            </Button>
-          </div>
-        )}
+
       </div>
 
       {floatingMenu}
