@@ -36,6 +36,7 @@ const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_plannin
 const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
 const PROMPT_ORCHESTRATION: &str = include_str!("../../../config/prompts/core_orchestration.txt");
 const PROMPT_PLAN_MODE_ACTIVE: &str = include_str!("../../../config/prompts/plan_mode_hint.txt");
+const PROMPT_MCP_HINT: &str = include_str!("../../../config/prompts/mcp_hint.txt");
 
 /// Mapping from section ID to (compiled default content, override filename,
 /// `token_budget`, priority, condition, category).
@@ -139,6 +140,15 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         SectionCategoryTag::Behavioral,
         ConditionTag::OrchestrationEnabled,
     ),
+    (
+        "core.mcp_hint",
+        PROMPT_MCP_HINT,
+        "mcp_hint.txt",
+        200,
+        460,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::McpEnabled,
+    ),
 ];
 
 /// Internal tag for compact table — maps to `SectionCategory`.
@@ -175,6 +185,8 @@ enum ConditionTag {
     OrchestrationEnabled,
     /// Include `core.plan_mode_active` only when the agent has entered plan mode.
     PlanModeActive,
+    /// Include `core.mcp_hint` only when MCP tools are available.
+    McpEnabled,
 }
 
 impl ConditionTag {
@@ -188,6 +200,7 @@ impl ConditionTag {
                 SectionCondition::ConfigFlag("orchestration.enabled".into())
             }
             Self::PlanModeActive => SectionCondition::ConfigFlag("plan_mode.active".into()),
+            Self::McpEnabled => SectionCondition::ConfigFlag("mcp.enabled".into()),
         }
     }
 }
@@ -282,6 +295,7 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
     ("core_exploration.txt", PROMPT_EXPLORATION),
     ("core_orchestration.txt", PROMPT_ORCHESTRATION),
     ("plan_mode_hint.txt", PROMPT_PLAN_MODE_ACTIVE),
+    ("mcp_hint.txt", PROMPT_MCP_HINT),
 ];
 
 /// Create the default `PromptTemplate` referencing the built-in sections.
@@ -301,6 +315,7 @@ pub fn default_template() -> PromptTemplate {
         section_ref("core.planning"),
         section_ref("core.exploration"),
         section_ref("core.orchestration"),
+        section_ref("core.mcp_hint"),
     ];
 
     let mut mode_overlays = HashMap::new();
@@ -347,9 +362,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_store_has_11_sections() {
+    fn test_builtin_store_has_12_sections() {
         let store = builtin_section_store();
-        assert_eq!(store.len(), 11);
+        assert_eq!(store.len(), 12);
     }
 
     #[test]
@@ -366,6 +381,7 @@ mod tests {
             "core.planning",
             "core.exploration",
             "core.orchestration",
+            "core.mcp_hint",
             "core.plan_mode_active",
         ];
         for id in &ids {
@@ -471,9 +487,9 @@ mod tests {
     fn test_default_template_general_mode() {
         let template = default_template();
         let sections = template.effective_sections("general");
-        // general mode: all 11 sections in template, no overlay excludes any
+        // general mode: all 12 sections in template, no overlay excludes any
         // (conditions are evaluated later by the provider, not by effective_sections)
-        assert_eq!(sections.len(), 11);
+        assert_eq!(sections.len(), 12);
     }
 
     #[test]

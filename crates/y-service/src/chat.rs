@@ -1248,6 +1248,28 @@ impl ChatService {
             &input.mcp_servers,
         );
 
+        // 1a'. Set mcp.enabled flag so the MCP hint prompt section is included.
+        //
+        // MCP tools use lazy loading (not in ESSENTIAL_TOOL_NAMES), so we check
+        // the registry directly rather than the current tool_defs vec.
+        {
+            let mcp_mode = input.mcp_mode.as_deref().unwrap_or("auto");
+            let has_mcp = if mcp_mode == "disabled" {
+                false
+            } else {
+                let all_defs = container.tool_registry.get_all_definitions().await;
+                all_defs
+                    .iter()
+                    .any(|def| def.name.as_str().starts_with("mcp_"))
+            };
+            let mut pctx = container.prompt_context.write().await;
+            if has_mcp {
+                pctx.config_flags.insert("mcp.enabled".into(), true);
+            } else {
+                pctx.config_flags.remove("mcp.enabled");
+            }
+        }
+
         // 1b. Inject plan_mode.active config flag based on the user's mode selection.
         //
         // - "fast" (default/None): no plan mode prompts injected.

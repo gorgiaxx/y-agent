@@ -237,7 +237,7 @@ async fn get_agent_source(
         .container
         .get_agent_source(&id)
         .await
-        .map_err(|e| ApiError::NotFound(e))?;
+        .map_err(ApiError::NotFound)?;
 
     Ok(Json(AgentSource {
         path,

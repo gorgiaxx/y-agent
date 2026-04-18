@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import DefaultTheme from 'vitepress/theme';
 import DownloadHero from './DownloadHero.vue';
+import GuiScreenshot from './GuiScreenshot.vue';
 
 const { Layout } = DefaultTheme;
 </script>
 
 <template>
   <Layout>
+    <template #home-hero-after>
+      <GuiScreenshot />
+    </template>
     <template #home-features-before>
       <div class="home-download-section">
         <DownloadHero />

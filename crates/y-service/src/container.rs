@@ -1083,10 +1083,7 @@ impl ServiceContainer {
     ///
     /// Returns `(path, content, is_user_file)`. If a user override file exists
     /// on disk, returns its content; otherwise serializes the in-memory definition.
-    pub async fn get_agent_source(
-        &self,
-        id: &str,
-    ) -> Result<(String, String, bool), String> {
+    pub async fn get_agent_source(&self, id: &str) -> Result<(String, String, bool), String> {
         let registry = self.agent_registry.lock().await;
         let def = registry
             .get(id)
@@ -1104,8 +1101,8 @@ impl ServiceContainer {
             return Ok((file_path.display().to_string(), content, true));
         }
 
-        let content = toml::to_string_pretty(def)
-            .map_err(|e| format!("failed to serialize agent: {e}"))?;
+        let content =
+            toml::to_string_pretty(def).map_err(|e| format!("failed to serialize agent: {e}"))?;
         Ok((file_path.display().to_string(), content, false))
     }
 

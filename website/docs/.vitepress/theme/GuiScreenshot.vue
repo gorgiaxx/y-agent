@@ -9,12 +9,16 @@
         alt="y-agent GUI - Light theme"
         class="screenshot-img light-img"
         loading="lazy"
+        width="1280"
+        height="890"
       />
       <img
         src="/gui_dark.png"
         alt="y-agent GUI - Dark theme"
         class="screenshot-img dark-img"
         loading="lazy"
+        width="1280"
+        height="890"
       />
     </div>
   </div>
@@ -25,13 +29,22 @@
   display: flex;
   justify-content: center;
   padding: 0 24px;
-  margin-top: -24px;
+  margin-top: 24px;
+  margin-bottom: 24px;
 }
 
 .screenshot-container {
   position: relative;
   width: 100%;
   max-width: 960px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--vp-c-divider);
+}
+
+.dark .screenshot-container {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
 .screenshot-img {
@@ -40,7 +53,6 @@
   height: auto;
 }
 
-/* Light mode: show light screenshot, hide dark */
 .light-img {
   display: block;
 }
@@ -48,13 +60,6 @@
   display: none;
 }
 
-/* Dark mode: show dark screenshot, hide light */
-:root:not(.dark) .light-img {
-  display: block;
-}
-:root:not(.dark) .dark-img {
-  display: none;
-}
 .dark .light-img {
   display: none;
 }
@@ -65,7 +70,12 @@
 @media (max-width: 640px) {
   .gui-screenshot {
     padding: 0 12px;
-    margin-top: -16px;
+    margin-top: 16px;
+    margin-bottom: 16px;
+  }
+
+  .screenshot-container {
+    border-radius: 8px;
   }
 }
 </style>

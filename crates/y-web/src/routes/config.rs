@@ -74,9 +74,7 @@ async fn config_get(State(state): State<AppState>) -> Result<impl IntoResponse, 
 
     for section in ALLOWED_SECTIONS {
         let path = config_dir.join(format!("{section}.toml"));
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| ApiError::Internal(format!("Failed to read {section}.toml: {e}")))?;
+        if let Ok(content) = tokio::fs::read_to_string(&path).await {
             let value: Value = toml::from_str(&content)
                 .map_err(|e| ApiError::Internal(format!("Failed to parse {section}.toml: {e}")))?;
             merged.insert((*section).to_string(), value);
@@ -98,12 +96,10 @@ async fn config_get_section(
     }
 
     let path = state.config_dir.join(format!("{section}.toml"));
-    if !path.exists() {
-        return Ok(Json(serde_json::json!({ "content": "" })));
-    }
-
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| ApiError::Internal(format!("Failed to read {section}.toml: {e}")))?;
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(c) => c,
+        Err(_) => return Ok(Json(serde_json::json!({ "content": "" }))),
+    };
 
     Ok(Json(serde_json::json!({ "content": content })))
 }
@@ -125,10 +121,12 @@ async fn config_save_section(
         .map_err(|e| ApiError::BadRequest(format!("Invalid TOML syntax: {e}")))?;
 
     let path = state.config_dir.join(format!("{section}.toml"));
-    std::fs::create_dir_all(&state.config_dir)
+    tokio::fs::create_dir_all(&state.config_dir)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to create config dir: {e}")))?;
 
-    std::fs::write(&path, &body.content)
+    tokio::fs::write(&path, &body.content)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to write {section}.toml: {e}")))?;
 
     Ok(Json(serde_json::json!({"message": "saved"})))
@@ -138,17 +136,21 @@ async fn config_save_section(
 async fn config_reload(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let mut results: Vec<String> = Vec::new();
 
-    let read_toml = |name: &str| -> Result<Option<String>, ApiError> {
-        let path = state.config_dir.join(format!("{name}.toml"));
-        if !path.exists() {
-            return Ok(None);
+    async fn read_toml(
+        config_dir: &std::path::Path,
+        name: &str,
+    ) -> Result<Option<String>, ApiError> {
+        let path = config_dir.join(format!("{name}.toml"));
+        match tokio::fs::read_to_string(&path).await {
+            Ok(content) => Ok(Some(content)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(ApiError::Internal(format!(
+                "Failed to read {name}.toml: {e}"
+            ))),
         }
-        std::fs::read_to_string(&path)
-            .map(Some)
-            .map_err(|e| ApiError::Internal(format!("Failed to read {name}.toml: {e}")))
-    };
+    }
 
-    if let Some(content) = read_toml("providers")? {
+    if let Some(content) = read_toml(&state.config_dir, "providers").await? {
         let count =
             y_service::SystemService::reload_providers_from_toml(&state.container, &content)
                 .await
@@ -156,45 +158,45 @@ async fn config_reload(State(state): State<AppState>) -> Result<impl IntoRespons
         results.push(format!("{count} provider(s)"));
     }
 
-    if let Some(content) = read_toml("guardrails")? {
+    if let Some(content) = read_toml(&state.config_dir, "guardrails").await? {
         y_service::SystemService::reload_guardrails_from_toml(&state.container, &content)
             .map_err(ApiError::Internal)?;
         results.push("guardrails".to_string());
     }
 
-    if let Some(content) = read_toml("session")? {
+    if let Some(content) = read_toml(&state.config_dir, "session").await? {
         y_service::SystemService::reload_session_from_toml(&state.container, &content)
             .map_err(ApiError::Internal)?;
         results.push("session".to_string());
     }
 
-    if let Some(content) = read_toml("runtime")? {
+    if let Some(content) = read_toml(&state.config_dir, "runtime").await? {
         y_service::SystemService::reload_runtime_from_toml(&state.container, &content)
             .map_err(ApiError::Internal)?;
         results.push("runtime".to_string());
     }
 
-    if let Some(content) = read_toml("browser")? {
+    if let Some(content) = read_toml(&state.config_dir, "browser").await? {
         y_service::SystemService::reload_browser_from_toml(&state.container, &content)
             .await
             .map_err(ApiError::Internal)?;
         results.push("browser".to_string());
     }
 
-    if let Some(content) = read_toml("tools")? {
+    if let Some(content) = read_toml(&state.config_dir, "tools").await? {
         y_service::SystemService::reload_tools_from_toml(&state.container, &content)
             .map_err(ApiError::Internal)?;
         results.push("tools".to_string());
     }
 
-    if let Some(content) = read_toml("knowledge")? {
+    if let Some(content) = read_toml(&state.config_dir, "knowledge").await? {
         y_service::SystemService::reload_knowledge_from_toml(&state.container, &content)
             .await
             .map_err(ApiError::Internal)?;
         results.push("knowledge".to_string());
     }
 
-    if let Some(content) = read_toml("hooks")? {
+    if let Some(content) = read_toml(&state.config_dir, "hooks").await? {
         y_service::SystemService::reload_hooks_from_toml(&state.container, &content)
             .map_err(ApiError::Internal)?;
         results.push("hooks".to_string());
@@ -286,12 +288,10 @@ async fn provider_list_models(
 /// `GET /api/v1/config/mcp` -- get MCP server configuration.
 async fn mcp_config_get(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let path = state.config_dir.join("mcp.json");
-    if !path.exists() {
-        return Ok(Json(serde_json::json!({"mcpServers": {}})));
-    }
-
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| ApiError::Internal(format!("Failed to read mcp.json: {e}")))?;
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(c) => c,
+        Err(_) => return Ok(Json(serde_json::json!({"mcpServers": {}}))),
+    };
     let value: Value = serde_json::from_str(&content)
         .map_err(|e| ApiError::Internal(format!("Failed to parse mcp.json: {e}")))?;
     Ok(Json(value))
@@ -305,11 +305,13 @@ async fn mcp_config_save(
     let json_str = serde_json::to_string_pretty(&content)
         .map_err(|e| ApiError::Internal(format!("Failed to serialize MCP config: {e}")))?;
 
-    std::fs::create_dir_all(&state.config_dir)
+    tokio::fs::create_dir_all(&state.config_dir)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to create config dir: {e}")))?;
 
     let path = state.config_dir.join("mcp.json");
-    std::fs::write(&path, &json_str)
+    tokio::fs::write(&path, &json_str)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to write mcp.json: {e}")))?;
 
     Ok(Json(serde_json::json!({"message": "saved"})))
@@ -318,26 +320,21 @@ async fn mcp_config_save(
 /// `GET /api/v1/config/prompts` -- list all prompt files.
 async fn prompt_list(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let prompts_dir = state.config_dir.join("prompts");
-    if !prompts_dir.exists() {
-        return Ok(Json(Vec::<String>::new()));
-    }
+    let mut entries = match tokio::fs::read_dir(&prompts_dir).await {
+        Ok(rd) => rd,
+        Err(_) => return Ok(Json(Vec::<String>::new())),
+    };
 
-    let mut files: Vec<String> = std::fs::read_dir(&prompts_dir)
-        .map_err(|e| ApiError::Internal(format!("Failed to read prompts directory: {e}")))?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if std::path::Path::new(&name)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
-                && entry.file_type().ok()?.is_file()
-            {
-                Some(name)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut files: Vec<String> = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_txt = std::path::Path::new(&name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"));
+        if is_txt && entry.file_type().await.map(|ft| ft.is_file()).unwrap_or(false) {
+            files.push(name);
+        }
+    }
     files.sort();
     Ok(Json(files))
 }
@@ -352,12 +349,10 @@ async fn prompt_get(
     }
 
     let path = state.config_dir.join("prompts").join(&filename);
-    if !path.exists() {
-        return Ok(Json(serde_json::json!({ "content": "" })));
-    }
-
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| ApiError::Internal(format!("Failed to read {filename}: {e}")))?;
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(c) => c,
+        Err(_) => return Ok(Json(serde_json::json!({ "content": "" }))),
+    };
 
     Ok(Json(serde_json::json!({ "content": content })))
 }

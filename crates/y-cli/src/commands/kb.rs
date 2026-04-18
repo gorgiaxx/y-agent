@@ -73,13 +73,12 @@ pub enum CollectionAction {
 }
 
 /// Run a kb subcommand.
-pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
-    use y_service::config_types::KnowledgeConfig;
-    use y_service::knowledge_service::KnowledgeService;
-
-    // Create a service instance.
-    // In production, this would come from the ServiceContainer.
-    let mut service = KnowledgeService::new(KnowledgeConfig::default());
+pub async fn run(
+    action: &KbAction,
+    services: &y_service::ServiceContainer,
+    _mode: OutputMode,
+) -> Result<()> {
+    let service_handle = &services.knowledge_service;
 
     match action {
         KbAction::Ingest {
@@ -97,7 +96,7 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
 
             output::print_info(&format!("Ingesting from '{source}'..."));
 
-            match service.ingest(&params, "default").await {
+            match service_handle.lock().await.ingest(&params, "default").await {
                 Ok(result) => {
                     if result.success {
                         output::print_success(&format!(
@@ -119,7 +118,8 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
 
         KbAction::Collection { action } => match action {
             CollectionAction::List => {
-                let collections = service.list_collections();
+                let guard = service_handle.lock().await;
+                let collections = guard.list_collections();
                 let headers = &["Name", "Description", "Entries"];
                 let rows: Vec<TableRow> = collections
                     .iter()
@@ -131,6 +131,7 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
                         ],
                     })
                     .collect();
+                drop(guard);
 
                 if rows.is_empty() {
                     output::print_info("No collections found");
@@ -142,12 +143,15 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
             }
 
             CollectionAction::Create { name, description } => {
-                service.create_collection(name, description);
+                service_handle
+                    .lock()
+                    .await
+                    .create_collection(name, description);
                 output::print_success(&format!("Collection '{name}' created"));
             }
 
             CollectionAction::Delete { name } => {
-                if service.delete_collection(name) {
+                if service_handle.lock().await.delete_collection(name) {
                     output::print_success(&format!("Collection '{name}' deleted"));
                 } else {
                     output::print_error(&format!("Collection '{name}' not found"));
@@ -168,7 +172,7 @@ pub async fn run(action: &KbAction, _mode: OutputMode) -> Result<()> {
                 collection: None,
             };
 
-            let result = service.search(&params).await;
+            let result = service_handle.lock().await.search(&params).await;
 
             if result.results.is_empty() {
                 output::print_info("No results found");

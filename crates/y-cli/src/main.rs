@@ -195,7 +195,8 @@ async fn main() -> Result<()> {
             commands::skills::run(action, &services, mode).await?;
         }
         Some(Commands::Kb { ref action }) => {
-            commands::kb::run(action, mode).await?;
+            let services = wire::wire(&config).await?;
+            commands::kb::run(action, &services, mode).await?;
         }
         Some(Commands::Mcp { ref action }) => match action {
             commands::mcp::McpAction::Status => {

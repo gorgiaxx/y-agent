@@ -18,7 +18,6 @@ import {
   SkipForward,
   Eye,
   EyeOff,
-  Info,
   AlertTriangle,
   Settings,
   Zap,
@@ -27,12 +26,18 @@ import {
 import { ProviderIconImg } from '../common/ProviderIconPicker';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
 import {
+  Input,
+  Switch,
+  SettingsGroup,
+  SettingsItem,
   Select,
   SelectTrigger,
   SelectValue,
   SelectContent,
   SelectItem,
-} from '../ui/Select';
+  Button,
+} from '../ui';
+import '../settings/SettingsForm.css';
 import type { GuiConfig } from '../../types';
 import {
   type ProviderFormData,
@@ -60,8 +65,6 @@ const STEP_LABELS = [
   'Complete',
 ];
 
-// API types with LobeHub icon IDs, ordered per user request:
-// OpenAI-compat first, Anthropic second, OpenAI Response API third
 const API_TYPES = [
   { id: 'openai-compat', label: 'OpenAI Compatible', iconId: 'OpenAI' },
   { id: 'anthropic', label: 'Anthropic', iconId: 'Anthropic' },
@@ -130,17 +133,26 @@ export function SetupWizard({
   const [useUserProfile, setUseUserProfile] = useState(DEFAULT_BROWSER_FORM.use_user_profile);
 
   // -- Step 4: Guardrails state
-  const [defaultPermission, setDefaultPermission] = useState(DEFAULT_GUARDRAILS_FORM.default_permission);
-  const [hitlAutoApprove, setHitlAutoApprove] = useState(DEFAULT_GUARDRAILS_FORM.hitl_auto_approve_low_risk);
-  const [loopGuardMax, setLoopGuardMax] = useState(DEFAULT_GUARDRAILS_FORM.loop_guard_max_iterations);
+  const [defaultPermission, setDefaultPermission] = useState(
+    DEFAULT_GUARDRAILS_FORM.default_permission,
+  );
+  const [hitlAutoApprove, setHitlAutoApprove] = useState(
+    DEFAULT_GUARDRAILS_FORM.hitl_auto_approve_low_risk,
+  );
+  const [loopGuardMax, setLoopGuardMax] = useState(
+    DEFAULT_GUARDRAILS_FORM.loop_guard_max_iterations,
+  );
 
   // -- Step 5: Knowledge state
   const [knowledgeEnabled, setKnowledgeEnabled] = useState(false);
   const [embeddingModel, setEmbeddingModel] = useState(DEFAULT_KNOWLEDGE_FORM.embedding_model);
-  const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState(DEFAULT_KNOWLEDGE_FORM.embedding_base_url);
-  const [embeddingApiKeyEnv, setEmbeddingApiKeyEnv] = useState(DEFAULT_KNOWLEDGE_FORM.embedding_api_key_env);
+  const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState(
+    DEFAULT_KNOWLEDGE_FORM.embedding_base_url,
+  );
+  const [embeddingApiKeyEnv, setEmbeddingApiKeyEnv] = useState(
+    DEFAULT_KNOWLEDGE_FORM.embedding_api_key_env,
+  );
 
-  // Clear test result after a timeout
   useEffect(() => {
     if (!testResult) return;
     const t = setTimeout(() => setTestResult(null), 8000);
@@ -324,8 +336,8 @@ export function SetupWizard({
     <div key="step-0">
       <h2 className="wizard-step-title">Configure Your LLM Provider</h2>
       <p className="wizard-step-description">
-        At minimum, you need one provider tagged as <strong>general</strong> for the agent to function.
-        This will be the primary model used for all tasks.
+        At minimum, you need one provider tagged as <strong>general</strong> for the agent to
+        function. This will be the primary model used for all tasks.
       </p>
 
       {/* API Type selection */}
@@ -353,23 +365,18 @@ export function SetupWizard({
         </div>
       </div>
 
-      {/* Main fields */}
-      <div className="wizard-row">
-        <div className="wizard-field">
-          <label className="wizard-field-label">Provider ID</label>
-          <input
-            className="wizard-input"
+      <SettingsGroup title="Connection">
+        <SettingsItem title="Provider ID" wide>
+          <Input
             value={provider.id}
             onChange={(e) => updateProvider({ id: e.target.value })}
             placeholder="e.g. my-gpt4"
           />
-          <span className="wizard-field-hint">A unique identifier for this provider</span>
-        </div>
-        <div className="wizard-field">
-          <label className="wizard-field-label">Model</label>
-          <div className="wizard-model-group">
-            <input
-              className="wizard-input"
+        </SettingsItem>
+        <SettingsItem title="Model" wide>
+          <div className="wizard-model-group w-full">
+            <Input
+              className="flex-1 min-w-0 pr-[30px]"
               value={provider.model}
               onChange={(e) => updateProvider({ model: e.target.value })}
               placeholder="e.g. gpt-4o"
@@ -392,69 +399,60 @@ export function SetupWizard({
               </ModelPickerDropdown>
             )}
           </div>
-        </div>
-      </div>
-
-      <div className="wizard-row">
-        <div className="wizard-field">
-          <label className="wizard-field-label">Base URL</label>
-          <input
-            className="wizard-input"
+        </SettingsItem>
+        <SettingsItem title="Base URL" wide>
+          <Input
             value={provider.base_url ?? ''}
             onChange={(e) => updateProvider({ base_url: e.target.value || null })}
             placeholder={API_TYPE_URLS[provider.provider_type] ?? 'API endpoint URL'}
           />
-        </div>
-        <div className="wizard-field">
-          <label className="wizard-field-label">API Key Env Variable</label>
-          <input
-            className="wizard-input"
+        </SettingsItem>
+        <SettingsItem title="API Key Env Variable" description="Environment variable name containing the key" wide>
+          <Input
             value={provider.api_key_env ?? ''}
             onChange={(e) => updateProvider({ api_key_env: e.target.value || null })}
             placeholder="e.g. OPENAI_API_KEY"
           />
-          <span className="wizard-field-hint">Environment variable name containing the key</span>
-        </div>
-      </div>
-
-      <div className="wizard-field">
-        <label className="wizard-field-label">API Key (direct)</label>
-        <div className="wizard-key-group">
-          <input
-            className="wizard-input wizard-input-password"
-            type={showApiKey ? 'text' : 'password'}
-            value={provider.api_key ?? ''}
-            onChange={(e) => updateProvider({ api_key: e.target.value || null })}
-            placeholder="Direct API key (optional if env var is set)"
-          />
-          <button
-            className="wizard-key-toggle"
-            onClick={() => setShowApiKey(!showApiKey)}
-            type="button"
-            title={showApiKey ? 'Hide' : 'Reveal'}
-          >
-            {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        </div>
-      </div>
-
-      {/* Test connection */}
-      <div className="wizard-test-row">
-        <button
-          type="button"
-          className="wizard-test-btn"
-          onClick={handleTestProvider}
-          disabled={testing || !provider.model}
-        >
-          {testing ? <span className="wizard-spinner" /> : <Zap size={12} />}
-          {testing ? 'Testing...' : 'Test Connection'}
-        </button>
-        {testResult && (
-          <span className={`wizard-test-result ${testResult.ok ? 'ok' : 'error'}`}>
-            {testResult.message}
-          </span>
-        )}
-      </div>
+        </SettingsItem>
+        <SettingsItem title="API Key (direct)" wide>
+          <div className="wizard-key-group w-full">
+            <Input
+              className="flex-1 min-w-0 pr-[30px]"
+              variant="mono"
+              type={showApiKey ? 'text' : 'password'}
+              value={provider.api_key ?? ''}
+              onChange={(e) => updateProvider({ api_key: e.target.value || null })}
+              placeholder="Direct API key (optional if env var is set)"
+            />
+            <button
+              className="wizard-key-toggle"
+              onClick={() => setShowApiKey(!showApiKey)}
+              type="button"
+              title={showApiKey ? 'Hide' : 'Reveal'}
+            >
+              {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </SettingsItem>
+        <SettingsItem title="Test Connection" wide>
+          <div className="wizard-test-row">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTestProvider}
+              disabled={testing || !provider.model}
+            >
+              {testing ? <span className="wizard-spinner" /> : <Zap size={12} />}
+              {testing ? 'Testing...' : 'Test Connection'}
+            </Button>
+            {testResult && (
+              <span className={`wizard-test-result ${testResult.ok ? 'ok' : 'error'}`}>
+                {testResult.message}
+              </span>
+            )}
+          </div>
+        </SettingsItem>
+      </SettingsGroup>
 
       {/* Title provider prompt */}
       <div className="wizard-title-prompt">
@@ -495,27 +493,17 @@ export function SetupWizard({
         Control how the agent executes code and commands on your system.
       </p>
 
-      <div className="wizard-toggle-row">
-        <div className="wizard-toggle-label">
-          <span className="wizard-toggle-label-text">Allow Shell Execution</span>
-          <span className="wizard-toggle-label-hint">
-            Permit the agent to run shell commands (bash, zsh, etc.) directly on your machine.
-            Disable this for a more restricted sandbox environment.
-          </span>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={allowShell}
-          className={`raw-mode-switch-track ${allowShell ? 'raw-mode-switch-track--on' : ''}`}
-          onClick={() => setAllowShell(!allowShell)}
+      <SettingsGroup title="Execution">
+        <SettingsItem
+          title="Allow Shell Execution"
+          description="Permit the agent to run shell commands (bash, zsh, etc.) directly on your machine. Disable this for a more restricted sandbox environment."
         >
-          <span className="raw-mode-switch-thumb" />
-        </button>
-      </div>
+          <Switch checked={allowShell} onCheckedChange={setAllowShell} />
+        </SettingsItem>
+      </SettingsGroup>
 
       <div className="wizard-info-card">
-        <Info size={14} className="wizard-info-card-icon" />
+        <Settings size={14} className="wizard-info-card-icon" />
         <span>
           When disabled, the agent will still be able to read and write files,
           but cannot execute arbitrary commands. You can change this later in Settings.
@@ -528,70 +516,50 @@ export function SetupWizard({
     <div key="step-2">
       <h2 className="wizard-step-title">Browser Configuration</h2>
       <p className="wizard-step-description">
-        The agent can browse the web using a Chromium-based browser for research and data collection.
+        The agent can browse the web using a Chromium-based browser for research and data
+        collection.
       </p>
 
-      <div className="wizard-toggle-row">
-        <div className="wizard-toggle-label">
-          <span className="wizard-toggle-label-text">Enable Browser</span>
-          <span className="wizard-toggle-label-hint">
-            Allow the agent to launch and control a browser instance.
-          </span>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={browserEnabled}
-          className={`raw-mode-switch-track ${browserEnabled ? 'raw-mode-switch-track--on' : ''}`}
-          onClick={() => setBrowserEnabled(!browserEnabled)}
+      <SettingsGroup title="Browser">
+        <SettingsItem
+          title="Enable Browser"
+          description="Allow the agent to launch and control a browser instance."
         >
-          <span className="raw-mode-switch-thumb" />
-        </button>
-      </div>
+          <Switch checked={browserEnabled} onCheckedChange={setBrowserEnabled} />
+        </SettingsItem>
+
+        {browserEnabled && (
+          <>
+            <SettingsItem
+              title="Custom Chrome Path"
+              description="Only needed for non-standard Chromium browsers (Vivaldi, Arc, etc.)"
+              wide
+            >
+              <Input
+                value={chromePath}
+                onChange={(e) => setChromePath(e.target.value)}
+                placeholder="Leave empty for auto-detection"
+              />
+            </SettingsItem>
+            <SettingsItem
+              title="Use System User Profile"
+              description="Use your existing browser profile (cookies, extensions, history). When disabled, a clean temporary profile is used each time."
+            >
+              <Switch checked={useUserProfile} onCheckedChange={setUseUserProfile} />
+            </SettingsItem>
+          </>
+        )}
+      </SettingsGroup>
 
       {browserEnabled && (
-        <>
-          <div className="wizard-info-card info">
-            <Info size={14} className="wizard-info-card-icon" />
-            <span>
-              y-agent automatically detects <strong>Chrome</strong>, <strong>Brave</strong>,
-              and <strong>Microsoft Edge</strong> browser paths.
-              If you use a different Chromium-based browser, specify its path below.
-            </span>
-          </div>
-
-          <div className="wizard-field">
-            <label className="wizard-field-label">Custom Chrome Path (optional)</label>
-            <input
-              className="wizard-input"
-              value={chromePath}
-              onChange={(e) => setChromePath(e.target.value)}
-              placeholder="Leave empty for auto-detection"
-            />
-            <span className="wizard-field-hint">
-              Only needed for non-standard Chromium browsers (Vivaldi, Arc, etc.)
-            </span>
-          </div>
-
-          <div className="wizard-toggle-row">
-            <div className="wizard-toggle-label">
-              <span className="wizard-toggle-label-text">Use System User Profile</span>
-              <span className="wizard-toggle-label-hint">
-                Use your existing browser profile (cookies, extensions, history).
-                When disabled, a clean temporary profile is used each time.
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={useUserProfile}
-              className={`raw-mode-switch-track ${useUserProfile ? 'raw-mode-switch-track--on' : ''}`}
-              onClick={() => setUseUserProfile(!useUserProfile)}
-            >
-              <span className="raw-mode-switch-thumb" />
-            </button>
-          </div>
-        </>
+        <div className="wizard-info-card info">
+          <Settings size={14} className="wizard-info-card-icon" />
+          <span>
+            y-agent automatically detects <strong>Chrome</strong>, <strong>Brave</strong>,
+            and <strong>Microsoft Edge</strong> browser paths.
+            If you use a different Chromium-based browser, specify its path above.
+          </span>
+        </div>
       )}
     </div>
   );
@@ -603,58 +571,44 @@ export function SetupWizard({
         Configure how the agent handles permissions, human approval, and loop prevention.
       </p>
 
-      <div className="wizard-field">
-        <label className="wizard-field-label">Default Permission</label>
-        <Select value={defaultPermission} onValueChange={setDefaultPermission}>
-          <SelectTrigger className="wizard-select">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="allow">Allow -- execute without asking</SelectItem>
-            <SelectItem value="notify">Notify -- execute and notify user</SelectItem>
-            <SelectItem value="ask">Ask -- ask for permission before execution</SelectItem>
-            <SelectItem value="deny">Deny -- block execution by default</SelectItem>
-          </SelectContent>
-        </Select>
-        <span className="wizard-field-hint">
-          How tool executions are handled when no specific rule matches.
-          &quot;Notify&quot; is recommended for most use cases.
-        </span>
-      </div>
-
-      <div className="wizard-toggle-row">
-        <div className="wizard-toggle-label">
-          <span className="wizard-toggle-label-text">HITL Auto-Approve Low Risk</span>
-          <span className="wizard-toggle-label-hint">
-            Automatically approve tool calls classified as low-risk without
-            requiring manual confirmation.
-          </span>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={hitlAutoApprove}
-          className={`raw-mode-switch-track ${hitlAutoApprove ? 'raw-mode-switch-track--on' : ''}`}
-          onClick={() => setHitlAutoApprove(!hitlAutoApprove)}
+      <SettingsGroup title="Permissions">
+        <SettingsItem
+          title="Default Permission"
+          description='How tool executions are handled when no specific rule matches. "Notify" is recommended for most use cases.'
         >
-          <span className="raw-mode-switch-thumb" />
-        </button>
-      </div>
-
-      <div className="wizard-field">
-        <label className="wizard-field-label">Loop Guard Max Iterations</label>
-        <input
-          className="wizard-input-number"
-          type="number"
-          min={5}
-          max={200}
-          value={loopGuardMax}
-          onChange={(e) => setLoopGuardMax(Number(e.target.value) || 50)}
-        />
-        <span className="wizard-field-hint">
-          Maximum consecutive iterations before the agent is halted to prevent infinite loops.
-        </span>
-      </div>
+          <Select value={defaultPermission} onValueChange={setDefaultPermission}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="allow">Allow</SelectItem>
+              <SelectItem value="notify">Notify</SelectItem>
+              <SelectItem value="ask">Ask</SelectItem>
+              <SelectItem value="deny">Deny</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingsItem>
+        <SettingsItem
+          title="HITL Auto-Approve Low Risk"
+          description="Automatically approve tool calls classified as low-risk without requiring manual confirmation."
+        >
+          <Switch checked={hitlAutoApprove} onCheckedChange={setHitlAutoApprove} />
+        </SettingsItem>
+        <SettingsItem
+          title="Loop Guard Max Iterations"
+          description="Maximum consecutive iterations before the agent is halted to prevent infinite loops."
+        >
+          <Input
+            numeric
+            type="number"
+            min={5}
+            max={200}
+            className="w-[100px]"
+            value={loopGuardMax}
+            onChange={(e) => setLoopGuardMax(Number(e.target.value) || 50)}
+          />
+        </SettingsItem>
+      </SettingsGroup>
     </div>
   );
 
@@ -666,69 +620,53 @@ export function SetupWizard({
         This requires an embedding API service.
       </p>
 
-      <div className="wizard-toggle-row">
-        <div className="wizard-toggle-label">
-          <span className="wizard-toggle-label-text">Enable Knowledge Base</span>
-          <span className="wizard-toggle-label-hint">
-            Requires an embedding model API (e.g., OpenAI text-embedding-3-small).
-          </span>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={knowledgeEnabled}
-          className={`raw-mode-switch-track ${knowledgeEnabled ? 'raw-mode-switch-track--on' : ''}`}
-          onClick={() => setKnowledgeEnabled(!knowledgeEnabled)}
+      <SettingsGroup title="Embedding">
+        <SettingsItem
+          title="Enable Knowledge Base"
+          description="Requires an embedding model API (e.g., OpenAI text-embedding-3-small)."
         >
-          <span className="raw-mode-switch-thumb" />
-        </button>
-      </div>
+          <Switch checked={knowledgeEnabled} onCheckedChange={setKnowledgeEnabled} />
+        </SettingsItem>
+
+        {knowledgeEnabled && (
+          <>
+            <SettingsItem title="Embedding Model" wide>
+              <Input
+                value={embeddingModel}
+                onChange={(e) => setEmbeddingModel(e.target.value)}
+                placeholder="e.g. text-embedding-3-small"
+              />
+            </SettingsItem>
+            <SettingsItem title="Embedding API Base URL" wide>
+              <Input
+                value={embeddingBaseUrl}
+                onChange={(e) => setEmbeddingBaseUrl(e.target.value)}
+                placeholder="e.g. https://api.openai.com/v1"
+              />
+            </SettingsItem>
+            <SettingsItem
+              title="Embedding API Key Env"
+              description="Environment variable containing the API key for the embedding service"
+              wide
+            >
+              <Input
+                value={embeddingApiKeyEnv}
+                onChange={(e) => setEmbeddingApiKeyEnv(e.target.value)}
+                placeholder="e.g. OPENAI_API_KEY"
+              />
+            </SettingsItem>
+          </>
+        )}
+      </SettingsGroup>
 
       {!knowledgeEnabled && (
         <div className="wizard-info-card">
-          <Info size={14} className="wizard-info-card-icon" />
+          <Settings size={14} className="wizard-info-card-icon" />
           <span>
             If you are not sure what embedding APIs are, you can safely skip this step.
             The knowledge base can be configured later in Settings.
           </span>
         </div>
-      )}
-
-      {knowledgeEnabled && (
-        <>
-          <div className="wizard-field">
-            <label className="wizard-field-label">Embedding Model</label>
-            <input
-              className="wizard-input"
-              value={embeddingModel}
-              onChange={(e) => setEmbeddingModel(e.target.value)}
-              placeholder="e.g. text-embedding-3-small"
-            />
-          </div>
-
-          <div className="wizard-field">
-            <label className="wizard-field-label">Embedding API Base URL</label>
-            <input
-              className="wizard-input"
-              value={embeddingBaseUrl}
-              onChange={(e) => setEmbeddingBaseUrl(e.target.value)}
-              placeholder="e.g. https://api.openai.com/v1"
-            />
-          </div>
-
-          <div className="wizard-field">
-            <label className="wizard-field-label">Embedding API Key Env Variable</label>
-            <input
-              className="wizard-input"
-              value={embeddingApiKeyEnv}
-              onChange={(e) => setEmbeddingApiKeyEnv(e.target.value)}
-              placeholder="e.g. OPENAI_API_KEY"
-            />
-            <span className="wizard-field-hint">
-              Environment variable containing the API key for the embedding service
-            </span>
-          </div>
-        </>
       )}
     </div>
   );
@@ -736,7 +674,11 @@ export function SetupWizard({
   const renderStep5_Complete = () => (
     <div key="step-5">
       <div className="wizard-complete">
-        <div className="wizard-complete-icon">y</div>
+        <img
+          src="/logo-256x256.png"
+          alt="y-agent"
+          className="wizard-complete-logo"
+        />
         <h2 className="wizard-complete-title">Setup Complete</h2>
         <p className="wizard-complete-text">
           Your initial configuration is ready. You can start using y-agent right away.
@@ -787,66 +729,65 @@ export function SetupWizard({
   const isCompleteStep = step === TOTAL_STEPS - 1;
 
   return (
-    <div className="wizard-overlay">
-      <div className="wizard-container">
-        {/* Header */}
-        <div className="wizard-header">
-          <div className="wizard-logo">y</div>
-          <h1 className="wizard-header-title">Setup Wizard</h1>
-        </div>
+    <div className="wizard-page">
+      {/* Header */}
+      <div className="wizard-header">
+        <img src="/logo-256x256.png" alt="y-agent" className="wizard-logo" />
+        <h1 className="wizard-header-title">Setup Wizard</h1>
+      </div>
 
-        {/* Timeline step indicator */}
-        <div className="wizard-timeline">
-          {STEP_LABELS.map((label, i) => (
-            <div key={i} className={`wizard-timeline-step ${getStepState(i)}`}>
-              <div className="wizard-timeline-step-top">
-                <span className="wizard-timeline-dot" />
-              </div>
-              <span className="wizard-timeline-label">{label}</span>
+      {/* Timeline step indicator */}
+      <div className="wizard-timeline">
+        {STEP_LABELS.map((label, i) => (
+          <div key={i} className={`wizard-timeline-step ${getStepState(i)}`}>
+            <div className="wizard-timeline-step-top">
+              <span className="wizard-timeline-dot" />
             </div>
-          ))}
-        </div>
+            <span className="wizard-timeline-label">{label}</span>
+          </div>
+        ))}
+      </div>
 
-        {/* Body */}
-        <div className="wizard-body" key={step}>
+      {/* Body */}
+      <div className="wizard-body" key={step}>
+        <div className="wizard-body-inner">
           {renderCurrentStep()}
         </div>
+      </div>
 
-        {/* Footer */}
-        <div className="wizard-footer">
-          <div className="wizard-footer-left">
-            {step > 0 && !isCompleteStep && (
-              <button type="button" className="wizard-btn wizard-btn-back" onClick={handleBack}>
-                <ChevronLeft size={14} />
-                Back
-              </button>
-            )}
-          </div>
-          <div className="wizard-footer-right">
-            {!isCompleteStep && (
-              <button type="button" className="wizard-btn wizard-btn-skip" onClick={handleSkip}>
-                <SkipForward size={14} />
-                Skip
-              </button>
-            )}
-            {!isCompleteStep && (
-              <button
-                type="button"
-                className="wizard-btn wizard-btn-next"
-                onClick={handleNext}
-                disabled={!canProceed() && !skippedSteps.has(step)}
-              >
-                {isLastConfigStep ? 'Finish Setup' : 'Next'}
-                <ChevronRight size={14} />
-              </button>
-            )}
-            {isCompleteStep && (
-              <button type="button" className="wizard-btn wizard-btn-finish" onClick={handleFinish}>
-                Get Started
-                <ChevronRight size={14} />
-              </button>
-            )}
-          </div>
+      {/* Footer */}
+      <div className="wizard-footer">
+        <div className="wizard-footer-left">
+          {step > 0 && !isCompleteStep && (
+            <Button variant="outline" size="sm" onClick={handleBack}>
+              <ChevronLeft size={14} />
+              Back
+            </Button>
+          )}
+        </div>
+        <div className="wizard-footer-right">
+          {!isCompleteStep && (
+            <Button variant="ghost" size="sm" onClick={handleSkip}>
+              <SkipForward size={14} />
+              Skip
+            </Button>
+          )}
+          {!isCompleteStep && (
+            <Button
+              size="sm"
+              onClick={handleNext}
+              disabled={!canProceed() && !skippedSteps.has(step)}
+            >
+              {isLastConfigStep ? 'Finish Setup' : 'Next'}
+              <ChevronRight size={14} />
+            </Button>
+          )}
+          {isCompleteStep && (
+            <Button size="sm" onClick={handleFinish}>
+              Get Started
+              <ChevronRight size={14} />
+            </Button>
+          )}
         </div>
       </div>
     </div>
