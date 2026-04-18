@@ -150,8 +150,3 @@ impl WorkflowDispatcher for OrchestratorDispatcher {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

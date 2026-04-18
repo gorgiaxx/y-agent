@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   X,
   Plus,
+  Search,
   Puzzle,
   Loader2,
   CheckCircle2,
@@ -9,6 +10,8 @@ import {
   ChevronRight,
   ChevronDown,
 } from 'lucide-react';
+import { Badge } from '../ui/Badge';
+import { Button } from '../ui/Button';
 import type { SkillInfo } from '../../types';
 import type { ImportStatus } from '../../hooks/useSkills';
 
@@ -32,7 +35,20 @@ export function SkillsSidebarPanel({
   onClearImportStatus,
 }: SkillsSidebarPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [importStatusExpanded, setImportStatusExpanded] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (searchOpen) {
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+  }, [searchOpen]);
+
+  const closeSearch = useCallback(() => {
+    setSearchQuery('');
+    setSearchOpen(false);
+  }, []);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return skills;
@@ -47,22 +63,48 @@ export function SkillsSidebarPanel({
 
   return (
     <>
-      <div className="sidebar-header">
-        <div className="sidebar-search">
+      <div className="agent-session-toolbar">
+        <div className="agent-session-toolbar-label">
+          <span>Skills</span>
+          <div className="agent-session-toolbar-meta">
+            <Badge variant="outline">{skills.length}</Badge>
+          </div>
+        </div>
+        <div className="agent-session-toolbar-actions">
+          <Button
+            variant="icon"
+            size="sm"
+            onClick={() => {
+              if (searchOpen) {
+                closeSearch();
+              } else {
+                setSearchOpen(true);
+              }
+            }}
+            title="Search skills"
+          >
+            <Search size={14} />
+          </Button>
+          <Button variant="icon" size="sm" onClick={onImportClick} title="Import Skill">
+            <Plus size={14} />
+          </Button>
+        </div>
+      </div>
+      {searchOpen && (
+        <div className="sidebar-inline-search">
           <input
+            ref={searchInputRef}
             type="text"
             placeholder="Search skills..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="search-input"
+            className="sidebar-inline-search-input"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') closeSearch();
+            }}
           />
         </div>
-        <div className="sidebar-header-actions">
-          <button className="btn-new-chat" onClick={onImportClick} title="Import Skill">
-            <Plus size={16} />
-          </button>
-        </div>
-      </div>
+      )}
       <div className="sidebar-list">
         {filtered.length === 0 ? (
           <div className="session-empty">

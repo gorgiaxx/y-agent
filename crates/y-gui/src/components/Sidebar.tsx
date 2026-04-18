@@ -203,16 +203,16 @@ export function Sidebar({ chat, nav, agentStudio }: SidebarProps) {
 
       {/* 3-6. Feature nav */}
       <NavItem
-        icon={<Puzzle size={15} />}
-        label="Skills"
-        active={nav.activeView === 'skills'}
-        onClick={() => goTo('skills')}
-      />
-      <NavItem
         icon={<Bot size={15} />}
         label="Agents"
         active={nav.activeView === 'agents'}
         onClick={() => goTo('agents')}
+      />
+      <NavItem
+        icon={<Puzzle size={15} />}
+        label="Skills"
+        active={nav.activeView === 'skills'}
+        onClick={() => goTo('skills')}
       />
       <NavItem
         icon={<BookOpen size={15} />}

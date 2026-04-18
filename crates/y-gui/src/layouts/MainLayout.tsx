@@ -162,16 +162,6 @@ export function MainLayout() {
         {navProps.activeView !== 'settings' && !(navProps.activeView === 'agents' && navProps.agentEditing) && (
         <header className="main-header" data-tauri-drag-region>
           <div className="main-header-start" data-tauri-drag-region>
-            {showAgentBack && (
-              <button
-                className="btn-header"
-                onClick={() => navProps.setActiveAgentId(null)}
-                title="Back to agents"
-                aria-label="Back to agents"
-              >
-                <ArrowLeft size={16} />
-              </button>
-            )}
             <h1 className="app-title">{headerTitle}</h1>
           </div>
           <div className="header-actions">

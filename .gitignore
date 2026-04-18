@@ -65,7 +65,7 @@ coverage/
 .turbo/
 .parcel-cache/
 .eslintcache
-.images/
+images/
 
 ### Test
 

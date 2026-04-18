@@ -1022,6 +1022,93 @@ impl ServiceContainer {
         Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
     }
 
+    /// Save an agent definition from raw TOML content to the agents directory.
+    ///
+    /// Parses the TOML, writes the file to disk, and registers the definition
+    /// in the agent registry with `UserDefined` trust tier.
+    pub async fn save_agent(&self, id: &str, toml_content: &str) -> Result<(), String> {
+        let mut registry = self.agent_registry.lock().await;
+
+        let expanded_toml = registry.expand_templates(toml_content);
+        let mut def = y_agent::agent::definition::AgentDefinition::from_toml(&expanded_toml)
+            .map_err(|e| format!("Invalid agent TOML: {e}"))?;
+
+        def.id = id.to_string();
+
+        let dir = registry
+            .agents_dir()
+            .ok_or_else(|| "no agents directory configured".to_string())?
+            .to_path_buf();
+
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| format!("failed to create agents directory: {e}"))?;
+
+        let file_path = dir.join(format!("{id}.toml"));
+        tokio::fs::write(&file_path, toml_content)
+            .await
+            .map_err(|e| format!("failed to write agent file: {e}"))?;
+
+        def.trust_tier = y_agent::TrustTier::UserDefined;
+        let _ = registry.register_or_override(def);
+
+        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
+        Ok(())
+    }
+
+    /// Reset an overridden built-in agent to its original definition.
+    ///
+    /// Removes the user override file from disk and restores the built-in
+    /// definition in the registry.
+    pub async fn reset_agent(&self, id: &str) -> Result<(), String> {
+        let mut registry = self.agent_registry.lock().await;
+        registry
+            .reset_builtin(id)
+            .map_err(|e| format!("failed to reset agent: {e}"))?;
+
+        if let Some(dir) = registry.agents_dir() {
+            let file_path = dir.join(format!("{id}.toml"));
+            if file_path.exists() {
+                tokio::fs::remove_file(&file_path)
+                    .await
+                    .map_err(|e| format!("failed to remove override file: {e}"))?;
+            }
+        }
+
+        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
+        Ok(())
+    }
+
+    /// Read the raw TOML source for an agent definition.
+    ///
+    /// Returns `(path, content, is_user_file)`. If a user override file exists
+    /// on disk, returns its content; otherwise serializes the in-memory definition.
+    pub async fn get_agent_source(
+        &self,
+        id: &str,
+    ) -> Result<(String, String, bool), String> {
+        let registry = self.agent_registry.lock().await;
+        let def = registry
+            .get(id)
+            .ok_or_else(|| format!("agent not found: {id}"))?;
+
+        let file_path = registry
+            .agents_dir()
+            .map(|d| d.join(format!("{}.toml", def.id)))
+            .unwrap_or_default();
+
+        if file_path.exists() {
+            let content = tokio::fs::read_to_string(&file_path)
+                .await
+                .map_err(|e| format!("failed to read agent file: {e}"))?;
+            return Ok((file_path.display().to_string(), content, true));
+        }
+
+        let content = toml::to_string_pretty(def)
+            .map_err(|e| format!("failed to serialize agent: {e}"))?;
+        Ok((file_path.display().to_string(), content, false))
+    }
+
     /// Hot-reload prompt section files from disk.
     ///
     /// Looks up the `BuildSystemPromptProvider` in the context pipeline

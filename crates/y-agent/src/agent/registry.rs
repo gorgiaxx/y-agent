@@ -118,6 +118,11 @@ impl AgentRegistry {
         }
     }
 
+    /// Path to the user-defined agents directory, if configured.
+    pub fn agents_dir(&self) -> Option<&Path> {
+        self.agents_dir.as_deref()
+    }
+
     /// Add or update a template variable used for expanding agent TOML definitions.
     ///
     /// If a variable with the same `key` already exists, its value is replaced.

@@ -5,9 +5,10 @@
  * lists items with badges and supports selection and creation.
  */
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, Plus, GitBranch, Clock } from 'lucide-react';
+import { ChevronRight, ChevronDown, Plus } from 'lucide-react';
 import type { WorkflowInfo, ScheduleInfo } from '../../hooks/useAutomation';
 import { Badge } from '../ui';
+import { Button } from '../ui/Button';
 import { parseTags } from '../../utils/parseTags';
 import './AutomationPanel.css';
 
@@ -39,25 +40,28 @@ export function AutomationSidebarPanel({
     <div className="automation-sidebar">
       {/* Workflows section */}
       <div className="automation-sidebar-section">
-        <button
-          className="automation-sidebar-section-header"
-          onClick={() => setWorkflowsOpen(!workflowsOpen)}
-        >
-          {workflowsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <GitBranch size={14} />
-          <span className="automation-sidebar-section-title">Workflows</span>
-          <span className="automation-sidebar-count">{workflows.length}</span>
-          <button
-            className="automation-sidebar-add-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCreateWorkflow();
-            }}
-            title="Create Workflow"
+        <div className="agent-session-toolbar">
+          <div
+            className="agent-session-toolbar-label agent-session-toolbar-label--toggle"
+            onClick={() => setWorkflowsOpen(!workflowsOpen)}
           >
-            <Plus size={14} />
-          </button>
-        </button>
+            {workflowsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <span>Workflows</span>
+            <div className="agent-session-toolbar-meta">
+              <Badge variant="outline">{workflows.length}</Badge>
+            </div>
+          </div>
+          <div className="agent-session-toolbar-actions">
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={onCreateWorkflow}
+              title="Create Workflow"
+            >
+              <Plus size={14} />
+            </Button>
+          </div>
+        </div>
         {workflowsOpen && (
           <div className="automation-sidebar-list">
             {workflows.length === 0 ? (
@@ -96,25 +100,28 @@ export function AutomationSidebarPanel({
 
       {/* Schedules section */}
       <div className="automation-sidebar-section">
-        <button
-          className="automation-sidebar-section-header"
-          onClick={() => setSchedulesOpen(!schedulesOpen)}
-        >
-          {schedulesOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <Clock size={14} />
-          <span className="automation-sidebar-section-title">Schedules</span>
-          <span className="automation-sidebar-count">{schedules.length}</span>
-          <button
-            className="automation-sidebar-add-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCreateSchedule();
-            }}
-            title="Create Schedule"
+        <div className="agent-session-toolbar">
+          <div
+            className="agent-session-toolbar-label agent-session-toolbar-label--toggle"
+            onClick={() => setSchedulesOpen(!schedulesOpen)}
           >
-            <Plus size={14} />
-          </button>
-        </button>
+            {schedulesOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <span>Schedules</span>
+            <div className="agent-session-toolbar-meta">
+              <Badge variant="outline">{schedules.length}</Badge>
+            </div>
+          </div>
+          <div className="agent-session-toolbar-actions">
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={onCreateSchedule}
+              title="Create Schedule"
+            >
+              <Plus size={14} />
+            </Button>
+          </div>
+        </div>
         {schedulesOpen && (
           <div className="automation-sidebar-list">
             {schedules.length === 0 ? (

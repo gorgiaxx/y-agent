@@ -1,12 +1,15 @@
-import { useState, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   X,
   Plus,
+  Search,
   Database,
   Loader2,
   CheckCircle2,
   AlertCircle,
 } from 'lucide-react';
+import { Badge } from '../ui/Badge';
+import { Button } from '../ui/Button';
 import type { KnowledgeCollectionInfo } from '../../types';
 import type { KbIngestStatus, KbBatchProgress } from '../../hooks/useKnowledge';
 import './KnowledgeSidebarPanel.css';
@@ -35,9 +38,22 @@ export function KnowledgeSidebarPanel({
   onCancelKbIngest,
 }: KnowledgeSidebarPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [showNewCollection, setShowNewCollection] = useState(false);
   const [newCollName, setNewCollName] = useState('');
   const [newCollDesc, setNewCollDesc] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (searchOpen) {
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+  }, [searchOpen]);
+
+  const closeSearch = useCallback(() => {
+    setSearchQuery('');
+    setSearchOpen(false);
+  }, []);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return collections;
@@ -51,26 +67,53 @@ export function KnowledgeSidebarPanel({
 
   return (
     <>
-      <div className="sidebar-header">
-        <div className="sidebar-search">
+      <div className="agent-session-toolbar">
+        <div className="agent-session-toolbar-label">
+          <span>Collections</span>
+          <div className="agent-session-toolbar-meta">
+            <Badge variant="outline">{collections.length}</Badge>
+          </div>
+        </div>
+        <div className="agent-session-toolbar-actions">
+          <Button
+            variant="icon"
+            size="sm"
+            onClick={() => {
+              if (searchOpen) {
+                closeSearch();
+              } else {
+                setSearchOpen(true);
+              }
+            }}
+            title="Search collections"
+          >
+            <Search size={14} />
+          </Button>
+          <Button
+            variant="icon"
+            size="sm"
+            onClick={() => setShowNewCollection(true)}
+            title="New Collection"
+          >
+            <Plus size={14} />
+          </Button>
+        </div>
+      </div>
+      {searchOpen && (
+        <div className="sidebar-inline-search">
           <input
+            ref={searchInputRef}
             type="text"
             placeholder="Search collections..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="search-input"
+            className="sidebar-inline-search-input"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') closeSearch();
+            }}
           />
         </div>
-        <div className="sidebar-header-actions">
-          <button
-            className="btn-new-chat"
-            onClick={() => setShowNewCollection(true)}
-            title="New Collection"
-          >
-            <Plus size={16} />
-          </button>
-        </div>
-      </div>
+      )}
       <div className="sidebar-list">
         {filtered.length === 0 ? (
           <div className="session-empty">

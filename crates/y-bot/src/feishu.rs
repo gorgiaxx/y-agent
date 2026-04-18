@@ -390,14 +390,14 @@ impl BotPlatform for FeishuBot {
                 .await
             {
                 let temp_dir = std::env::temp_dir().join("y-agent-media");
-                let _ = std::fs::create_dir_all(&temp_dir);
+                let _ = tokio::fs::create_dir_all(&temp_dir).await;
                 let ext = guess_extension(&ctype);
                 let mut safe_name = res.file_name.clone();
                 if safe_name.is_empty() {
                     safe_name = format!("{}.{}", res.file_key, ext);
                 }
                 let path = temp_dir.join(format!("{message_id}_{safe_name}"));
-                let _ = std::fs::write(&path, &bytes);
+                let _ = tokio::fs::write(&path, &bytes).await;
 
                 attachments.push(crate::BotAttachment {
                     file_name: safe_name,

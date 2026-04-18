@@ -2,8 +2,6 @@
 //!
 //! Mirrors all agent-related Tauri commands from the GUI.
 
-use std::path::Path;
-
 use axum::extract::{Path as AxumPath, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -125,10 +123,6 @@ pub struct TranslateRequest {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn agents_dir(config_dir: &Path) -> std::path::PathBuf {
-    config_dir.join("agents")
-}
-
 fn detail_from_definition(
     def: &y_agent::agent::definition::AgentDefinition,
     is_overridden: bool,
@@ -239,28 +233,16 @@ async fn get_agent_source(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let registry = state.container.agent_registry.lock().await;
-    let def = registry
-        .get(&id)
-        .ok_or_else(|| ApiError::NotFound(format!("Agent not found: {id}")))?;
+    let (path, content, is_user_file) = state
+        .container
+        .get_agent_source(&id)
+        .await
+        .map_err(|e| ApiError::NotFound(e))?;
 
-    let file_path = agents_dir(&state.config_dir).join(format!("{}.toml", def.id));
-    if file_path.exists() {
-        let content = std::fs::read_to_string(&file_path)
-            .map_err(|e| ApiError::Internal(format!("Failed to read agent file: {e}")))?;
-        return Ok(Json(AgentSource {
-            path: file_path.display().to_string(),
-            content,
-            is_user_file: true,
-        }));
-    }
-
-    let content = toml::to_string_pretty(def)
-        .map_err(|e| ApiError::Internal(format!("Failed to serialize agent: {e}")))?;
     Ok(Json(AgentSource {
-        path: file_path.display().to_string(),
+        path,
         content,
-        is_user_file: false,
+        is_user_file,
     }))
 }
 
@@ -277,26 +259,11 @@ async fn save_agent(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<SaveAgentRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let mut registry = state.container.agent_registry.lock().await;
-
-    let expanded_toml = registry.expand_templates(&body.toml_content);
-    let mut def = y_agent::agent::definition::AgentDefinition::from_toml(&expanded_toml)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid agent TOML: {e}")))?;
-
-    def.id.clone_from(&id);
-
-    let dir = agents_dir(&state.config_dir);
-    tokio::fs::create_dir_all(&dir)
+    state
+        .container
+        .save_agent(&id, &body.toml_content)
         .await
-        .map_err(|e| ApiError::Internal(format!("Failed to create agents directory: {e}")))?;
-
-    let file_path = dir.join(format!("{id}.toml"));
-    tokio::fs::write(&file_path, &body.toml_content)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to write agent file: {e}")))?;
-
-    def.trust_tier = y_agent::TrustTier::UserDefined;
-    let _ = registry.register_or_override(def);
+        .map_err(ApiError::Internal)?;
 
     Ok(Json(serde_json::json!({"message": "saved"})))
 }
@@ -306,35 +273,21 @@ async fn reset_agent(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let mut registry = state.container.agent_registry.lock().await;
-    registry
-        .reset_builtin(&id)
-        .map_err(|e| ApiError::Internal(format!("Failed to reset agent: {e}")))?;
-
-    let file_path = agents_dir(&state.config_dir).join(format!("{id}.toml"));
-    if file_path.exists() {
-        tokio::fs::remove_file(&file_path)
-            .await
-            .map_err(|e| ApiError::Internal(format!("Failed to remove override file: {e}")))?;
-    }
+    state
+        .container
+        .reset_agent(&id)
+        .await
+        .map_err(ApiError::Internal)?;
 
     Ok(Json(serde_json::json!({"message": "reset"})))
 }
 
 /// `POST /api/v1/agents/reload` -- reload all user-defined agents.
 async fn reload_agents(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let dir = agents_dir(&state.config_dir);
-    if !dir.exists() {
-        return Ok(Json(serde_json::json!({"message": "no agents directory"})));
-    }
-
-    let mut registry = state.container.agent_registry.lock().await;
-    registry.load_user_agents(&dir).map_err(|errs| {
-        let msgs: Vec<String> = errs.iter().map(|(f, e)| format!("{f}: {e}")).collect();
-        ApiError::Internal(format!("Errors loading agents: {}", msgs.join("; ")))
-    })?;
-
-    Ok(Json(serde_json::json!({"message": "reloaded"})))
+    let (loaded, errored) = state.container.reload_agents().await;
+    Ok(Json(
+        serde_json::json!({"message": "reloaded", "loaded": loaded, "errored": errored}),
+    ))
 }
 
 /// `GET /api/v1/agents/tools` -- list all registered tool definitions.
