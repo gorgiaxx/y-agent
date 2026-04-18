@@ -282,8 +282,8 @@
   animation: import-status-in 0.2s ease;
 }
 
-.import-status--expanded {
-  max-height: 260px;
+.import-status--expanded .import-status-row {
+  align-items: flex-start;
 }
 
 @keyframes import-status-in {
@@ -328,6 +328,14 @@
   white-space: nowrap;
 }
 
+.import-status-msg--expanded {
+  overflow: auto;
+  text-overflow: unset;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+}
+
 .import-status-actions {
   display: flex;
   align-items: center;
@@ -337,6 +345,7 @@
 }
 
 .import-status-toggle,
+.import-status-copy,
 .import-status-dismiss {
   display: flex;
   align-items: center;
@@ -353,34 +362,18 @@
 }
 
 .import-status-toggle:hover,
+.import-status-copy:hover,
 .import-status-dismiss:hover {
   color: var(--text-primary);
   background: var(--accent-subtle);
 }
 
-/* ---- Expanded detail area (skill import) ---- */
-.import-status-detail {
-  border-top: 1px solid var(--border);
-  padding: var(--space-sm) var(--space-md);
-  max-height: 200px;
-  overflow-y: auto;
-  animation: import-detail-status-in 0.15s ease;
+.import-status-icon {
+  flex-shrink: 0;
 }
 
-@keyframes import-detail-status-in {
-  from { opacity: 0; max-height: 0; }
-  to   { opacity: 1; max-height: 200px; }
-}
-
-.import-status-pre {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  opacity: 0.85;
+.import-status-copy--copied {
+  color: var(--success);
 }
 
 /* ---- Agent studio sidebar: session toolbar ---- */

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   X,
   Plus,
@@ -9,6 +9,8 @@ import {
   AlertCircle,
   ChevronRight,
   ChevronDown,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -37,6 +39,15 @@ export function SkillsSidebarPanel({
 }: SkillsSidebarPanelProps) {
   const { searchQuery, setSearchQuery, searchOpen, setSearchOpen, searchInputRef, closeSearch } = useSidebarSearch();
   const [importStatusExpanded, setImportStatusExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copyError = useCallback(() => {
+    if (!importError) return;
+    navigator.clipboard.writeText(importError).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [importError]);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return skills;
@@ -132,7 +143,7 @@ export function SkillsSidebarPanel({
             {importStatus === 'importing' && (
               <>
                 <Loader2 size={14} className="import-status-spinner" />
-                <span className="import-status-msg">Importing skill…</span>
+                <span className={`import-status-msg ${importStatusExpanded ? 'import-status-msg--expanded' : ''}`}>Importing skill…</span>
               </>
             )}
             {importStatus === 'success' && (
@@ -143,12 +154,21 @@ export function SkillsSidebarPanel({
             )}
             {importStatus === 'error' && (
               <>
-                <AlertCircle size={14} />
-                <span className="import-status-msg">{importError || 'Import failed'}</span>
+                <AlertCircle size={14} className="import-status-icon" />
+                <span className={`import-status-msg ${importStatusExpanded ? 'import-status-msg--expanded' : ''}`}>{importError || 'Import failed'}</span>
               </>
             )}
             <div className="import-status-actions">
-              {(importError || importStatus === 'importing') && (
+              {importStatus === 'error' && (
+                <button
+                  className="import-status-copy"
+                  onClick={copyError}
+                  title="Copy error"
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                </button>
+              )}
+              {importStatus === 'error' && (
                 <button
                   className="import-status-toggle"
                   onClick={() => setImportStatusExpanded(!importStatusExpanded)}
@@ -164,11 +184,6 @@ export function SkillsSidebarPanel({
               )}
             </div>
           </div>
-          {importStatusExpanded && (importError || importStatus === 'importing') && (
-            <div className="import-status-detail">
-              <pre className="import-status-pre">{importError || 'Processing…'}</pre>
-            </div>
-          )}
         </div>
       )}
     </>

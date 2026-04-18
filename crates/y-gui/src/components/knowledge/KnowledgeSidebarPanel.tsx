@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   X,
   Plus,
@@ -7,6 +7,10 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  ChevronRight,
+  ChevronDown,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -43,6 +47,16 @@ export function KnowledgeSidebarPanel({
   const [showNewCollection, setShowNewCollection] = useState(false);
   const [newCollName, setNewCollName] = useState('');
   const [newCollDesc, setNewCollDesc] = useState('');
+  const [ingestStatusExpanded, setIngestStatusExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copyError = useCallback(() => {
+    if (!kbIngestError) return;
+    navigator.clipboard.writeText(kbIngestError).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [kbIngestError]);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return collections;
@@ -196,12 +210,12 @@ export function KnowledgeSidebarPanel({
 
       {/* Knowledge ingest status bar */}
       {kbIngestStatus !== 'idle' && (
-        <div className={`import-status import-status--${kbIngestStatus === 'ingesting' ? 'importing' : kbIngestStatus}`}>
+        <div className={`import-status import-status--${kbIngestStatus === 'ingesting' ? 'importing' : kbIngestStatus} ${ingestStatusExpanded ? 'import-status--expanded' : ''}`}>
           <div className="import-status-row">
             {kbIngestStatus === 'ingesting' && (
               <>
                 <Loader2 size={14} className="import-status-spinner" />
-                <span className="import-status-msg">
+                <span className={`import-status-msg ${ingestStatusExpanded ? 'import-status-msg--expanded' : ''}`}>
                   {kbBatchProgress
                     ? `Importing ${kbBatchProgress.current}/${kbBatchProgress.total}…`
                     : 'Importing…'}
@@ -220,18 +234,36 @@ export function KnowledgeSidebarPanel({
             )}
             {kbIngestStatus === 'error' && (
               <>
-                <AlertCircle size={14} />
-                <span className="import-status-msg">{kbIngestError || 'Import failed'}</span>
+                <AlertCircle size={14} className="import-status-icon" />
+                <span className={`import-status-msg ${ingestStatusExpanded ? 'import-status-msg--expanded' : ''}`}>{kbIngestError || 'Import failed'}</span>
               </>
             )}
             <div className="import-status-actions">
+              {kbIngestStatus === 'error' && (
+                <button
+                  className="import-status-copy"
+                  onClick={copyError}
+                  title="Copy error"
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                </button>
+              )}
+              {kbIngestStatus === 'error' && (
+                <button
+                  className="import-status-toggle"
+                  onClick={() => setIngestStatusExpanded(!ingestStatusExpanded)}
+                  title={ingestStatusExpanded ? 'Collapse' : 'Expand'}
+                >
+                  {ingestStatusExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                </button>
+              )}
               {kbIngestStatus === 'ingesting' && (
                 <button className="import-status-dismiss" onClick={onCancelKbIngest} title="Cancel">
                   <X size={12} />
                 </button>
               )}
               {kbIngestStatus !== 'ingesting' && (
-                <button className="import-status-dismiss" onClick={onClearKbIngestStatus} title="Dismiss">
+                <button className="import-status-dismiss" onClick={() => { onClearKbIngestStatus(); setIngestStatusExpanded(false); }} title="Dismiss">
                   <X size={12} />
                 </button>
               )}
