@@ -110,6 +110,7 @@ jobs:
       - name: Build Tauri app
         working-directory: crates/y-gui
         env:
+          NODE_OPTIONS: "--max-old-space-size=3072"
           CI: true
           TAURI_SIGNING_PRIVATE_KEY: ""
         run: npx @tauri-apps/cli build --ci --target ${{ matrix.target }}
