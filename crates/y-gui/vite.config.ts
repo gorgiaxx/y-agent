@@ -8,4 +8,14 @@ export default defineConfig({
     UnoCSS(),
     react(),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          monaco: ['monaco-editor', 'react-monaco-editor'],
+          mermaid: ['mermaid'],
+        },
+      },
+    },
+  },
 })
