@@ -735,23 +735,6 @@ struct OpenAiImageUrl {
     url: String,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Serialize, Deserialize)]
-struct OpenAiTool {
-    r#type: String,
-    function: OpenAiFunction,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Serialize, Deserialize)]
-struct OpenAiFunction {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    parameters: Option<serde_json::Value>,
-}
-
 #[derive(Debug, Deserialize)]
 struct OpenAiResponse {
     id: String,

@@ -698,7 +698,6 @@ impl DockerRuntime {
     }
 
     /// Get the effective timeout for a request.
-    #[allow(dead_code)]
     fn effective_timeout(&self, request: &ExecutionRequest) -> Duration {
         request
             .capabilities

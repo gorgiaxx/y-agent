@@ -452,7 +452,7 @@ fn expand_tilde(path: &str) -> String {
 /// Resolve an API key from a named environment variable.
 ///
 /// Will be consumed by provider initialization when LLM API keys are configured.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn resolve_secret(env_var_name: &str) -> Result<String> {
     std::env::var(env_var_name).with_context(|| format!("secret env var '{env_var_name}' not set"))
 }

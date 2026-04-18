@@ -705,6 +705,11 @@ export function ChatSidebarPanel({
           onClick={(e) => handleSessionClick(e, session.id)}
           onMouseDown={(e) => handleMouseDown(e, session.id, groupSessionIds)}
           onMouseMove={(e) => handleItemHover(e, session.id)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleMenu({ kind: 'session', id: session.id }, e.currentTarget);
+          }}
           actions={
             <button
               className="btn-session-action"

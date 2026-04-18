@@ -286,11 +286,13 @@ async fn save_agent(
     def.id.clone_from(&id);
 
     let dir = agents_dir(&state.config_dir);
-    std::fs::create_dir_all(&dir)
+    tokio::fs::create_dir_all(&dir)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to create agents directory: {e}")))?;
 
     let file_path = dir.join(format!("{id}.toml"));
-    std::fs::write(&file_path, &body.toml_content)
+    tokio::fs::write(&file_path, &body.toml_content)
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to write agent file: {e}")))?;
 
     def.trust_tier = y_agent::TrustTier::UserDefined;
@@ -311,7 +313,8 @@ async fn reset_agent(
 
     let file_path = agents_dir(&state.config_dir).join(format!("{id}.toml"));
     if file_path.exists() {
-        std::fs::remove_file(&file_path)
+        tokio::fs::remove_file(&file_path)
+            .await
             .map_err(|e| ApiError::Internal(format!("Failed to remove override file: {e}")))?;
     }
 

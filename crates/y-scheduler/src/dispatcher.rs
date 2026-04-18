@@ -132,9 +132,4 @@ mod tests {
         let e = DispatchError::Internal("db offline".into());
         assert!(e.to_string().contains("db offline"));
     }
-
-    /// Compile-time object-safety check -- `dyn WorkflowDispatcher` must be
-    /// constructible as a trait object.
-    #[allow(dead_code)]
-    fn assert_object_safe(_: Arc<dyn WorkflowDispatcher>) {}
 }

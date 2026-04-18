@@ -16,6 +16,7 @@ export interface SessionItemProps {
   onPinToggle?: (e: React.MouseEvent) => void;
   onMouseDown?: (e: React.MouseEvent) => void;
   onMouseMove?: (e: React.MouseEvent) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export function SessionItem({
@@ -30,6 +31,7 @@ export function SessionItem({
   onPinToggle,
   onMouseDown,
   onMouseMove,
+  onContextMenu,
 }: SessionItemProps) {
   const timeLabel = formatSessionRelativeTime(session.updated_at, isStreaming);
 
@@ -39,6 +41,7 @@ export function SessionItem({
       onClick={onClick}
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
+      onContextMenu={onContextMenu}
     >
       {isStreaming ? (
         <span className="session-item-spinner" aria-hidden="true" />

@@ -96,7 +96,7 @@ export function PromptsTab({
   }, [promptFiles, activePromptTab, setDirtyPrompts, setToast]);
 
   return (
-    <div className="settings-section">
+    <div className="settings-section settings-section--fill">
       <div className="settings-header">
         <h3 className="section-title section-title--flush">
           Builtin Prompts

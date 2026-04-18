@@ -36,6 +36,13 @@
   animation: settings-fadeIn 0.12s ease;
 }
 
+.settings-section--fill {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 @keyframes settings-fadeIn {
   from {
     opacity: 0;

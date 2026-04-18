@@ -14,6 +14,9 @@ import { NavSidebar, NavItem, NavDivider } from './common/NavSidebar';
 import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
 import { AgentEditorSidebarNav } from './agents/AgentEditorSidebarNav';
 import { AgentStudioSidebarNav } from './agents/AgentStudioSidebarNav';
+import { SkillsSidebarContent } from './skills/SkillsSidebarContent';
+import { KnowledgeSidebarContent } from './knowledge/KnowledgeSidebarContent';
+import { AutomationSidebarContent } from './automation/AutomationSidebarContent';
 import type { EditorTab, EditorSurface } from './agents/types';
 import './Sidebar.css';
 
@@ -226,31 +229,39 @@ export function Sidebar({ chat, nav, agentStudio }: SidebarProps) {
 
       <NavDivider />
 
-      {/* 7+8. Workspaces and chat sessions (master list). */}
+      {/* Feature sidebar panels or chat session list */}
       <div className="sidebar-chat-region">
-        <ChatSidebarPanel
-          sessions={chat.sessions}
-          activeSessionId={chat.activeSessionId}
-          streamingSessionIds={chat.streamingSessionIds}
-          workspaces={chat.workspaces}
-          sessionWorkspaceMap={chat.sessionWorkspaceMap}
-          onSelectSession={(id) => {
-            goTo('chat');
-            chat.onSelectSession(id);
-          }}
-          onNewChat={chat.onNewChat}
-          onNewChatInWorkspace={chat.onNewChatInWorkspace}
-          onDeleteSession={chat.onDeleteSession}
-          onForkSession={chat.onForkSession}
-          onRenameSession={chat.onRenameSession}
-          onCreateWorkspace={chat.onCreateWorkspace}
-          onUpdateWorkspace={chat.onUpdateWorkspace}
-          onDeleteWorkspace={chat.onDeleteWorkspace}
-          onAssignSession={chat.onAssignSession}
-          onUnassignSession={chat.onUnassignSession}
-          searchQuery={searchQuery}
-          onSearchQueryChange={setSearchQuery}
-        />
+        {nav.activeView === 'skills' ? (
+          <SkillsSidebarContent />
+        ) : nav.activeView === 'knowledge' ? (
+          <KnowledgeSidebarContent />
+        ) : nav.activeView === 'automation' ? (
+          <AutomationSidebarContent />
+        ) : (
+          <ChatSidebarPanel
+            sessions={chat.sessions}
+            activeSessionId={chat.activeSessionId}
+            streamingSessionIds={chat.streamingSessionIds}
+            workspaces={chat.workspaces}
+            sessionWorkspaceMap={chat.sessionWorkspaceMap}
+            onSelectSession={(id) => {
+              goTo('chat');
+              chat.onSelectSession(id);
+            }}
+            onNewChat={chat.onNewChat}
+            onNewChatInWorkspace={chat.onNewChatInWorkspace}
+            onDeleteSession={chat.onDeleteSession}
+            onForkSession={chat.onForkSession}
+            onRenameSession={chat.onRenameSession}
+            onCreateWorkspace={chat.onCreateWorkspace}
+            onUpdateWorkspace={chat.onUpdateWorkspace}
+            onDeleteWorkspace={chat.onDeleteWorkspace}
+            onAssignSession={chat.onAssignSession}
+            onUnassignSession={chat.onUnassignSession}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+          />
+        )}
       </div>
     </NavSidebar>
   );

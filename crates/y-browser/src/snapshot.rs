@@ -144,24 +144,6 @@ const CONTENT_ROLES: &[&str] = &[
     "rowheader",
 ];
 
-/// ARIA roles that are structural containers worth keeping as context
-/// to show hierarchy, even in interactive-only mode.
-#[allow(dead_code)]
-const STRUCTURAL_ROLES: &[&str] = &[
-    "navigation",
-    "main",
-    "form",
-    "dialog",
-    "alertdialog",
-    "menu",
-    "menubar",
-    "tablist",
-    "toolbar",
-    "group",
-    "heading",
-    "list",
-];
-
 /// Check if a role is interactive.
 fn is_interactive_role(role: &str) -> bool {
     let r = role.to_lowercase();
@@ -172,13 +154,6 @@ fn is_interactive_role(role: &str) -> bool {
 fn is_content_role(role: &str) -> bool {
     let r = role.to_lowercase();
     CONTENT_ROLES.iter().any(|&cr| r == cr)
-}
-
-/// Check if a role is structural (useful container).
-#[allow(dead_code)]
-fn is_structural_role(role: &str) -> bool {
-    let r = role.to_lowercase();
-    STRUCTURAL_ROLES.iter().any(|&sr| r == sr)
 }
 
 /// Format raw AX nodes from CDP into a flat ARIA snapshot.
