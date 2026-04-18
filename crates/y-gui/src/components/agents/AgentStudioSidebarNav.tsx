@@ -21,8 +21,6 @@ interface AgentStudioSidebarNavProps {
   onDeleteSession: (id: string) => void;
 }
 
-const SESSION_ORDER_STORAGE_KEY = 'y-gui:agent-session-order';
-
 export function AgentStudioSidebarNav({
   agentName,
   sessions,
