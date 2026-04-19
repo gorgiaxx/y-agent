@@ -39,7 +39,7 @@ export function ToolCallCard({
   );
 
   const statusIcon = {
-    running: <Loader size={13} className="collapsible-card-spinner" />,
+    running: <Loader size={13} className="tool-call-spinner" />,
     success: <CheckCircle size={13} />,
     error: <XCircle size={13} />,
   }[status];

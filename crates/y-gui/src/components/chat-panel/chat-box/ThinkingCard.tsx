@@ -1,8 +1,8 @@
 /**
  * ThinkingCard -- lightweight, borderless thinking indicator.
  *
- * Self-contained component (no CollapsibleCard dependency). Shows a pulsing
- * dot animation during streaming and a subtle expandable content block.
+ * Shows a pulsing dot animation during streaming and a subtle expandable
+ * content block.
  *
  * - During streaming: pulsing dot, "Thinking..." label, collapsed by default
  * - After completion: static dot, "Thought" label, final duration, collapsed

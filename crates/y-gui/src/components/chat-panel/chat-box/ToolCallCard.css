@@ -42,6 +42,15 @@
   50%       { opacity: 0.35; }
 }
 
+.tool-call-spinner {
+  animation: tool-call-spin 1s linear infinite;
+}
+
+@keyframes tool-call-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 .tool-call-duration {
   font-size: 11px;
   color: var(--text-muted);
@@ -304,6 +313,11 @@
 
 .tool-call-shell-command {
   max-width: 420px;
+}
+
+
+.tool-call-default-wrapper {
+  margin: var(--space-xs) 0;
 }
 
 /* ============================================================================

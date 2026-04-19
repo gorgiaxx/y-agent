@@ -1,14 +1,11 @@
 import { useState } from 'react';
-import { Wrench } from 'lucide-react';
+import { Wrench, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { CollapsibleCard } from '../CollapsibleCard';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
-const ACCENT_COLOR = 'var(--accent)';
-
 export function DefaultRenderer({
-  toolCall, status, durationMs,
+  toolCall, durationMs,
   statusIcon, statusClass,
   displayArgs, displayResult, displayResultFormatted,
 }: ToolRendererProps) {
@@ -18,34 +15,37 @@ export function DefaultRenderer({
   const activeResult = showRaw ? displayResult : (displayResultFormatted ?? displayResult);
   const hasExpandable = displayArgs || displayResult;
 
-  const statusLabel = { running: 'Running...', success: 'Done', error: 'Failed' }[status];
-
-  const headerRight = (
-    <>
-      <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
-      <span className={`tool-call-status ${statusClass}`}>{statusLabel}</span>
-      {durationMs !== undefined && (
-        <span className="tool-call-duration">{formatDuration(durationMs)}</span>
-      )}
-    </>
-  );
-
   return (
-    <CollapsibleCard
-      icon={<Wrench size={12} />}
-      label={<span className="tool-call-name">{toolCall.name}</span>}
-      accentColor={ACCENT_COLOR}
-      expanded={expanded}
-      onToggle={() => hasExpandable && setExpanded(!expanded)}
-      headerRight={headerRight}
-      className="tool-call-card"
-    >
-      <DetailSections
-        displayArgs={displayArgs}
-        displayResult={activeResult}
-        showRaw={showRaw}
-        onToggleRaw={() => setShowRaw(!showRaw)}
-      />
-    </CollapsibleCard>
+    <div className={`tool-call-default-wrapper ${statusClass}`}>
+      <div
+        className="tool-call-tag"
+        onClick={() => hasExpandable && setExpanded(!expanded)}
+        title={toolCall.name}
+      >
+        <span className="tool-call-action-group">
+          <Wrench size={14} className="tool-call-icon-muted" />
+          <span className="tool-call-key">{toolCall.name}</span>
+        </span>
+        <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
+        {durationMs !== undefined && (
+          <span className="tool-call-duration">{formatDuration(durationMs)}</span>
+        )}
+        {hasExpandable && (
+          <span className={`tool-call-chevron ${expanded ? 'expanded' : ''}`}>
+            <ChevronRight size={12} />
+          </span>
+        )}
+      </div>
+      {expanded && hasExpandable && (
+        <div className="tool-call-detail">
+          <DetailSections
+            displayArgs={displayArgs}
+            displayResult={activeResult}
+            showRaw={showRaw}
+            onToggleRaw={() => setShowRaw(!showRaw)}
+          />
+        </div>
+      )}
+    </div>
   );
 }

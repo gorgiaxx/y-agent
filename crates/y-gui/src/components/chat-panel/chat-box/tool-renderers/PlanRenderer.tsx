@@ -193,7 +193,7 @@ export function PlanRenderer({
       ? 'running'
       : status;
   const effectiveStatusIcon = {
-    running: <Loader2 size={13} className="collapsible-card-spinner" />,
+    running: <Loader2 size={13} className="tool-call-spinner" />,
     success: <CheckCircle2 size={13} />,
     error: <AlertCircle size={13} />,
   }[effectiveStatus];
