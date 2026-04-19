@@ -47,7 +47,6 @@
 .sidebar-search-toggle:hover {
   color: var(--text-primary);
   background: var(--accent-subtle);
-  border-color: var(--border);
 }
 
 .sidebar-search-overlay {
@@ -90,7 +89,7 @@
   padding: 7px 32px 7px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface-primary);
+  background: var(--surface-secondary);
   color: var(--text-primary);
   font-size: 12px;
   font-family: inherit;

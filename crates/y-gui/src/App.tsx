@@ -3,7 +3,8 @@ import { transport } from './lib';
 import { GlobalProviders } from './providers/GlobalProviders';
 import { MainLayout } from './layouts/MainLayout';
 import { SetupWizard } from './components/wizard/SetupWizard';
-import { ToastProvider } from './components/ui';
+import { ToastProvider } from './components/ui/Toast';
+import { TooltipProvider } from './components/ui/Tooltip';
 import { useConfigContext, useProvidersContext } from './providers/AppContexts';
 import './App.css';
 
@@ -83,15 +84,17 @@ export default function App() {
   }, []);
 
   return (
-    <ToastProvider>
-      <GlobalProviders onRunWizard={handleRunWizard}>
-        {showWizard ? (
-          <WizardWrapper onComplete={handleWizardClose} />
-        ) : (
-          <AppContent onRequestWizard={handleRunWizard} />
-        )}
-      </GlobalProviders>
-    </ToastProvider>
+    <TooltipProvider>
+      <ToastProvider>
+        <GlobalProviders onRunWizard={handleRunWizard}>
+          {showWizard ? (
+            <WizardWrapper onComplete={handleWizardClose} />
+          ) : (
+            <AppContent onRequestWizard={handleRunWizard} />
+          )}
+        </GlobalProviders>
+      </ToastProvider>
+    </TooltipProvider>
   );
 }
 

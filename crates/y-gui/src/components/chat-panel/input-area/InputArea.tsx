@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu } from 'lucide-react';
 import { transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
+import { Tooltip } from '../../ui/Tooltip';
 import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
@@ -13,6 +14,33 @@ import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
 import './InputArea.css';
+
+interface ToolbarTooltipButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  tooltip: string;
+  children: ReactNode;
+}
+
+function ToolbarTooltipButton({
+  tooltip,
+  children,
+  className,
+  type = 'button',
+  'aria-label': ariaLabel,
+  ...props
+}: ToolbarTooltipButtonProps) {
+  return (
+    <Tooltip content={tooltip}>
+      <button
+        type={type}
+        className={className}
+        aria-label={ariaLabel ?? tooltip}
+        {...props}
+      >
+        {children}
+      </button>
+    </Tooltip>
+  );
+}
 
 interface InputAreaProps {
   onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => void;
@@ -587,15 +615,15 @@ export function InputArea({
 
           {/* (b) Model / provider selection */}
           <div className="toolbar-btn-group" ref={providerDropdownRef}>
-            <button
-              className="toolbar-btn has-tooltip"
+            <ToolbarTooltipButton
+              className="toolbar-btn"
               onClick={() => setProviderDropdownOpen(!providerDropdownOpen)}
-              data-tooltip="Select model"
+              tooltip="Select model"
               disabled={disabled}
             >
               <AtSign size={14} />
               <span className="toolbar-btn-label">{selectedProviderLabel}</span>
-            </button>
+            </ToolbarTooltipButton>
             {providerDropdownOpen && (
               <div className="toolbar-provider-dropdown">
                 <button
@@ -623,20 +651,20 @@ export function InputArea({
           </div>
 
           {/* (f) Plan mode selector */}
-          <button
-            className={`toolbar-btn has-tooltip toolbar-btn--plan-${planMode}`}
+          <ToolbarTooltipButton
+            className={`toolbar-btn toolbar-btn--plan-${planMode}`}
             onClick={cyclePlanMode}
-            data-tooltip={`Mode: ${planMode}`}
+            tooltip={`Mode: ${planMode}`}
             disabled={disabled}
           >
             {planMode === 'fast' && <Zap size={14} />}
             {planMode === 'auto' && <ScanSearch size={14} />}
             {planMode === 'plan' && <ClipboardList size={14} />}
             <span className="toolbar-btn-label">{planMode}</span>
-          </button>
+          </ToolbarTooltipButton>
           {/* (a) Attachment picker */}
-          <button
-            className={`toolbar-btn has-tooltip ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
+          <ToolbarTooltipButton
+            className={`toolbar-btn ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
             onClick={async () => {
               try {
                 const result = await platform.openFileDialog({
@@ -652,58 +680,58 @@ export function InputArea({
                 console.error('[InputArea] attachment picker error:', e);
               }
             }}
-            data-tooltip="Attach images"
+            tooltip="Attach images"
             disabled={disabled}
           >
             <Paperclip size={14} />
             {attachments.length > 0 && (
               <span className="toolbar-btn-label">{attachments.length}</span>
             )}
-          </button>
+          </ToolbarTooltipButton>
 
           {/* (c) Clear all messages */}
-          <button
-            className="toolbar-btn toolbar-btn--danger has-tooltip"
+          <ToolbarTooltipButton
+            className="toolbar-btn toolbar-btn--danger"
             onClick={() => setClearConfirmOpen(true)}
-            data-tooltip="Clear chat"
+            tooltip="Clear chat"
             disabled={disabled}
           >
             <Paintbrush size={14} />
-          </button>
+          </ToolbarTooltipButton>
 
           {/* (d) Add context reset */}
-          <button
-            className="toolbar-btn has-tooltip"
+          <ToolbarTooltipButton
+            className="toolbar-btn"
             onClick={onAddContextReset}
-            data-tooltip="Reset context"
+            tooltip="Reset context"
             disabled={disabled}
           >
             <Eraser size={14} />
-          </button>
+          </ToolbarTooltipButton>
 
           {/* (d2) Session custom prompt */}
-          <button
-            className={`toolbar-btn has-tooltip ${hasCustomPrompt ? 'toolbar-btn--active' : ''}`}
+          <ToolbarTooltipButton
+            className={`toolbar-btn ${hasCustomPrompt ? 'toolbar-btn--active' : ''}`}
             onClick={() => setPromptDialogOpen(true)}
-            data-tooltip="Session prompt"
+            tooltip="Session prompt"
             disabled={disabled || !sessionId}
           >
             <ScrollText size={14} />
-          </button>
+          </ToolbarTooltipButton>
 
           {/* (e) Thinking effort selector */}
           <div className="toolbar-btn-group" ref={thinkingDropdownRef}>
-            <button
-              className={`toolbar-btn has-tooltip ${thinkingEffort ? 'toolbar-btn--active' : ''}`}
+            <ToolbarTooltipButton
+              className={`toolbar-btn ${thinkingEffort ? 'toolbar-btn--active' : ''}`}
               onClick={() => setThinkingDropdownOpen(!thinkingDropdownOpen)}
-              data-tooltip="Thinking effort"
+              tooltip="Thinking effort"
               disabled={disabled}
             >
               <Lightbulb size={14} />
               {thinkingEffort && (
                 <span className="toolbar-btn-label">{thinkingEffort}</span>
               )}
-            </button>
+            </ToolbarTooltipButton>
             {thinkingDropdownOpen && (
               <div className="toolbar-thinking-dropdown">
                 {([null, 'low', 'medium', 'high', 'max'] as const).map((level) => (
@@ -724,14 +752,14 @@ export function InputArea({
 
           {/* (g) MCP mode selector */}
           <div className="toolbar-btn-group" ref={mcpDropdownRef}>
-            <button
-              className={`toolbar-btn has-tooltip ${mcpMode !== 'disabled' ? 'toolbar-btn--active' : ''}`}
+            <ToolbarTooltipButton
+              className={`toolbar-btn ${mcpMode !== 'disabled' ? 'toolbar-btn--active' : ''}`}
               onClick={() => setMcpDropdownOpen(!mcpDropdownOpen)}
-              data-tooltip="MCP mode"
+              tooltip="MCP mode"
               disabled={disabled}
             >
               <Cpu size={14} />
-            </button>
+            </ToolbarTooltipButton>
             {mcpDropdownOpen && (
               <div className="toolbar-mcp-dropdown">
                 <div className="toolbar-mcp-section">
@@ -783,17 +811,17 @@ export function InputArea({
           {/* (f) Knowledge base picker */}
           {knowledgeCollections.length > 0 && (
             <div className="toolbar-btn-group" ref={kbPickerRef}>
-              <button
-                className={`toolbar-btn has-tooltip ${selectedKbCollections.length > 0 ? 'toolbar-btn--active' : ''}`}
+              <ToolbarTooltipButton
+                className={`toolbar-btn ${selectedKbCollections.length > 0 ? 'toolbar-btn--active' : ''}`}
                 onClick={() => setKbPickerOpen(!kbPickerOpen)}
-                data-tooltip="Knowledge bases"
+                tooltip="Knowledge bases"
                 disabled={disabled}
               >
                 <BookOpen size={14} />
                 {selectedKbCollections.length > 0 && (
                   <span className="toolbar-btn-label">{selectedKbCollections.length} selected</span>
                 )}
-              </button>
+              </ToolbarTooltipButton>
               {kbPickerOpen && (
                 <div className="toolbar-kb-dropdown">
                   <div className="toolbar-kb-header">
@@ -824,23 +852,23 @@ export function InputArea({
           )}
 
           {/* Translate input text */}
-          <button
-            className="toolbar-btn has-tooltip"
+          <ToolbarTooltipButton
+            className="toolbar-btn"
             onClick={handleTranslate}
-            data-tooltip="Translate"
+            tooltip="Translate"
             disabled={disabled || !inputHasText || translating}
           >
             <Languages size={14} />
-          </button>
+          </ToolbarTooltipButton>
 
           {/* (b) Expand / collapse input */}
-          <button
-            className="toolbar-btn has-tooltip"
+          <ToolbarTooltipButton
+            className="toolbar-btn"
             onClick={() => onExpandChange?.(!expanded)}
-            data-tooltip={expanded ? 'Collapse input' : 'Expand input'}
+            tooltip={expanded ? 'Collapse input' : 'Expand input'}
           >
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
+          </ToolbarTooltipButton>
         </div>
       </div>
 

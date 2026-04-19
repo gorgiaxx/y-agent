@@ -1,7 +1,7 @@
 .input-area {
-  border-top: 1px solid var(--border);
-  padding: var(--space-md) var(--space-lg);
-  background: var(--surface-secondary);
+  /* border-top: 1px solid var(--border); */
+  margin:  0 var(--space-lg) var(--space-md) var(--space-lg);
+  /* background: var(--surface-secondary); */
   flex-shrink: 0;
 }
 
@@ -9,8 +9,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--surface-primary);
+  background: var(--surface-secondary);
   border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.09);
   border-radius: var(--radius-lg);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -27,7 +28,8 @@
 
 .input-container:focus-within {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.03);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  border-radius: var(--radius-lg);
 }
 
 /* ---- Contenteditable input ---- */
@@ -220,36 +222,6 @@
 
 .toolbar-btn--danger:hover:not(:disabled) {
   color: var(--error);
-}
-
-/* Hover tooltip bubble */
-.has-tooltip {
-  position: relative;
-}
-
-.has-tooltip::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%) scale(0.95);
-  padding: 4px 10px;
-  background: var(--surface-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  font-size: 11px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  z-index: 300;
-}
-
-.has-tooltip:hover::after {
-  opacity: 1;
-  transform: translateX(-50%) scale(1);
 }
 
 /* Provider dropdown */
