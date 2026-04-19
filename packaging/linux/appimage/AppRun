@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+SELF="$(readlink -f "$0")"
+APPDIR="${APPDIR:-$(dirname "$SELF")}"
+
+export APPDIR
+
+# Prefer the more conservative GTK/WebKit path when launched from a Wayland
+# session. These defaults remain overridable by the caller for debugging.
+if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  export GDK_BACKEND="${GDK_BACKEND:-x11}"
+  export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
+  export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}"
+  export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
+fi
+
+exec "$APPDIR/AppRun.origin" "$@"

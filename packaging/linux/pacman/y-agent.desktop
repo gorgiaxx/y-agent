@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=y-agent
+Comment=Desktop GUI for y-agent
+Exec=y-gui %U
+Icon=y-agent
+Terminal=false
+Categories=Development;Utility;
+Keywords=ai;agent;chat;
+StartupWMClass=y-agent

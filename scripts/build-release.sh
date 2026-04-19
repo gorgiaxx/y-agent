@@ -4,7 +4,7 @@
 #
 # Produces two zip files per platform:
 #   y-agent-cli-{version}-{platform}.zip   CLI binary + config + skills + README
-#   y-agent-gui-{version}-{platform}.zip   GUI installer (.dmg/.deb/.msi) + README
+#   y-agent-gui-{version}-{platform}.zip   GUI installer bundle + README
 #
 # Usage:
 #   ./scripts/build-release.sh                                  Build CLI + GUI
@@ -29,6 +29,8 @@
 #   - Platform-specific:
 #     macOS:   Xcode Command Line Tools
 #     Linux:   libwebkit2gtk-4.1-dev, libappindicator3-dev, librsvg2-dev, patchelf
+#              appimagetool (for patched AppImage output)
+#              makepkg       (optional, for pacman/Arch package output)
 #     Windows: Visual Studio Build Tools
 # =============================================================================
 set -euo pipefail
@@ -327,6 +329,35 @@ if [[ "$BUILD_GUI" == true ]]; then
 
   # BUNDLE_DIR is already set above from TARGET_RELEASE_DIR
 
+  if [[ "$PLATFORM" == linux-* ]]; then
+    if compgen -G "$BUNDLE_DIR/appimage/*.AppImage" > /dev/null 2>&1; then
+      if [[ -n "${APPIMAGETOOL:-}" ]] || command -v appimagetool >/dev/null 2>&1; then
+        echo "  Patching AppImage for Wayland-compatible launch..."
+        PATCHED_APPIMAGE_DIR="$BUNDLE_DIR/appimage-patched"
+        mkdir -p "$PATCHED_APPIMAGE_DIR"
+        ORIGINAL_APPIMAGE="$(find "$BUNDLE_DIR/appimage" -maxdepth 1 -name '*.AppImage' | head -1)"
+        "$PROJECT_ROOT/scripts/package-linux-appimage.sh" \
+          --source-appimage "$ORIGINAL_APPIMAGE" \
+          --output-dir "$PATCHED_APPIMAGE_DIR"
+        rm -f "$BUNDLE_DIR"/appimage/*.AppImage
+        cp "$PATCHED_APPIMAGE_DIR"/*.AppImage "$BUNDLE_DIR/appimage/"
+      else
+        echo "  WARNING: appimagetool not found; keeping unpatched AppImage"
+      fi
+    fi
+
+    if command -v makepkg >/dev/null 2>&1; then
+      echo "  Building pacman package..."
+      mkdir -p "$BUNDLE_DIR/pacman"
+      "$PROJECT_ROOT/scripts/package-linux-pacman.sh" \
+        --version "$VERSION" \
+        --binary-path "$TARGET_RELEASE_DIR/y-gui" \
+        --output-dir "$BUNDLE_DIR/pacman"
+    else
+      echo "  NOTE: makepkg not found; skipping pacman package"
+    fi
+  fi
+
   # Unmount any DMGs that Tauri's create-dmg may have left mounted
   if [[ "$PLATFORM" == darwin-* ]]; then
     for vol in /Volumes/y-agent*; do
@@ -359,6 +390,10 @@ if [[ "$BUILD_GUI" == true ]]; then
       if compgen -G "$BUNDLE_DIR/appimage/*.AppImage" > /dev/null 2>&1; then
         cp "$BUNDLE_DIR"/appimage/*.AppImage "$GUI_STAGING/"
         echo "  Collected .AppImage"
+      fi
+      if compgen -G "$BUNDLE_DIR/pacman/*.pkg.tar.zst" > /dev/null 2>&1; then
+        cp "$BUNDLE_DIR"/pacman/*.pkg.tar.zst "$GUI_STAGING/"
+        echo "  Collected .pkg.tar.zst"
       fi
       ;;
     windows-*)
