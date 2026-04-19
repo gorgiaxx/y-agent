@@ -20,14 +20,15 @@ pub mod workspaces;
 
 use axum::Router;
 use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
+use crate::middleware::auth_middleware;
 use crate::state::AppState;
 
 /// Build the full application router with all route groups.
 pub fn create_router(state: AppState) -> Router {
-    Router::new()
-        .merge(health::router())
+    let protected = Router::new()
         .merge(sessions::router())
         .merge(chat::router())
         .merge(agents::router())
@@ -44,7 +45,23 @@ pub fn create_router(state: AppState) -> Router {
         .merge(observability::router())
         .merge(rewind::router())
         .merge(attachments::router())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ));
+
+    let mut app = Router::new()
+        .merge(health::router())
+        .merge(protected)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
-        .with_state(state)
+        .with_state(state.clone());
+
+    if let Some(ref static_dir) = state.static_dir {
+        let index = static_dir.join("index.html");
+        let serve = ServeDir::new(static_dir).fallback(ServeFile::new(index));
+        app = app.fallback_service(serve);
+    }
+
+    app
 }

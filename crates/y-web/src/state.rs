@@ -40,6 +40,10 @@ pub struct WebConfig {
     pub host: String,
     /// Port to bind to.
     pub port: u16,
+    /// Optional bearer token for authentication.
+    pub auth_token: Option<String>,
+    /// Optional path to static SPA assets (dist-web/).
+    pub static_dir: Option<PathBuf>,
 }
 
 impl Default for WebConfig {
@@ -47,6 +51,8 @@ impl Default for WebConfig {
         Self {
             host: "0.0.0.0".to_string(),
             port: 3000,
+            auth_token: None,
+            static_dir: None,
         }
     }
 }
@@ -74,6 +80,10 @@ pub struct AppState {
     pub turn_meta_cache: Arc<Mutex<HashMap<String, TurnMeta>>>,
     /// Broadcast channel for SSE events.
     pub event_tx: broadcast::Sender<SseEvent>,
+    /// Optional bearer token for authentication.
+    pub auth_token: Option<String>,
+    /// Optional path to static SPA assets for serving the web frontend.
+    pub static_dir: Option<PathBuf>,
 }
 
 impl AppState {
@@ -89,6 +99,8 @@ impl AppState {
             pending_runs: Arc::new(Mutex::new(HashMap::new())),
             turn_meta_cache: Arc::new(Mutex::new(HashMap::new())),
             event_tx,
+            auth_token: None,
+            static_dir: None,
         }
     }
 
@@ -96,6 +108,20 @@ impl AppState {
     #[must_use]
     pub fn with_config_dir(mut self, dir: PathBuf) -> Self {
         self.config_dir = dir;
+        self
+    }
+
+    /// Set the authentication token.
+    #[must_use]
+    pub fn with_auth_token(mut self, token: Option<String>) -> Self {
+        self.auth_token = token;
+        self
+    }
+
+    /// Set the static SPA directory.
+    #[must_use]
+    pub fn with_static_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.static_dir = dir;
         self
     }
 

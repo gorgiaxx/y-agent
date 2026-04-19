@@ -1,5 +1,6 @@
 //! `y-agent serve` -- start the Web API server.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -18,6 +19,14 @@ pub struct ServeArgs {
     /// Port to bind to.
     #[arg(long, default_value_t = 3000)]
     pub port: u16,
+
+    /// Bearer token for authentication (optional).
+    #[arg(long)]
+    pub auth_token: Option<String>,
+
+    /// Path to static SPA assets (dist-web/) to serve the web frontend.
+    #[arg(long)]
+    pub static_dir: Option<PathBuf>,
 }
 
 /// Run the web API server.
@@ -25,15 +34,18 @@ pub async fn run(services: Arc<ServiceContainer>, args: &ServeArgs) -> Result<()
     let config = WebConfig {
         host: args.host.clone(),
         port: args.port,
+        auth_token: args.auth_token.clone(),
+        static_dir: args.static_dir.clone(),
     };
 
-    let mut state = AppState::new(services, env!("CARGO_PKG_VERSION"));
+    let mut state = AppState::new(services, env!("CARGO_PKG_VERSION"))
+        .with_auth_token(args.auth_token.clone())
+        .with_static_dir(args.static_dir.clone());
 
     // Load bot adapters from bots.toml in the user config directory.
     load_bots(&mut state);
 
     // Start the Discord Gateway (WebSocket) if the bot is loaded.
-    // This makes the bot appear online and receive MESSAGE_CREATE events.
     if let Some(ref discord_bot) = state.discord_bot {
         start_discord_gateway(Arc::clone(discord_bot), Arc::clone(&state.container));
     }
@@ -43,6 +55,14 @@ pub async fn run(services: Arc<ServiceContainer>, args: &ServeArgs) -> Result<()
     let addr = format!("{}:{}", config.host, config.port);
     info!("Starting y-agent API server on http://{addr}");
     println!("y-agent API server listening on http://{addr}");
+    if config.auth_token.is_some() {
+        println!("   Auth:    Bearer token authentication enabled");
+    } else {
+        println!("   Auth:    No authentication (local mode)");
+    }
+    if let Some(ref dir) = config.static_dir {
+        println!("   GUI:     Serving web frontend from {}", dir.display());
+    }
     println!("   Health:  GET  http://{addr}/health");
     println!("   Status:  GET  http://{addr}/api/v1/status");
     println!("   Chat:    POST http://{addr}/api/v1/chat");
