@@ -92,7 +92,9 @@ impl ToolSearchOrchestrator {
         // At least one parameter must be present.
         if tool_name.is_none() && category.is_none() && query.is_none() && mcp_server.is_none() {
             return Err(y_core::tool::ToolError::ValidationError {
-                message: "at least one of 'tool', 'category', 'query', or 'mcp_server' must be provided".into(),
+                message:
+                    "at least one of 'tool', 'category', 'query', or 'mcp_server' must be provided"
+                        .into(),
             });
         }
 
@@ -107,7 +109,9 @@ impl ToolSearchOrchestrator {
             Self::handle_search(q, registry, taxonomy, activation_set, sources).await
         } else {
             Err(y_core::tool::ToolError::ValidationError {
-                message: "at least one of 'tool', 'category', 'query', or 'mcp_server' must be provided".into(),
+                message:
+                    "at least one of 'tool', 'category', 'query', or 'mcp_server' must be provided"
+                        .into(),
             })
         }
     }
@@ -686,6 +690,9 @@ tools = ["ToolSearch"]
 
         assert!(result.success);
         assert_eq!(result.content["count"], 0);
-        assert!(result.content["message"].as_str().unwrap().contains("nonexistent"));
+        assert!(result.content["message"]
+            .as_str()
+            .unwrap()
+            .contains("nonexistent"));
     }
 }

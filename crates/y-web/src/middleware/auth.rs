@@ -36,9 +36,7 @@ pub async fn auth_middleware(
         return (StatusCode::UNAUTHORIZED, "Missing Authorization header").into_response();
     };
 
-    let token = auth_value
-        .strip_prefix("Bearer ")
-        .unwrap_or(auth_value);
+    let token = auth_value.strip_prefix("Bearer ").unwrap_or(auth_value);
 
     if token != expected_token.as_str() {
         return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();

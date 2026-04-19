@@ -315,8 +315,7 @@ impl LlmProvider for OpenAiProvider {
         let (content, generated_images) = choice
             .message
             .content
-            .map(OpenAiContent::into_text_and_images)
-            .unwrap_or((None, vec![]));
+            .map_or((None, vec![]), OpenAiContent::into_text_and_images);
         let reasoning_content = choice.message.reasoning_content;
         let tool_calls = choice
             .message

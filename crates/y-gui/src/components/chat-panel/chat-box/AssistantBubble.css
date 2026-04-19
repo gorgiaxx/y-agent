@@ -59,3 +59,117 @@
 .tool-call-pending-text {
   font-style: italic;
 }
+
+/* ---- Generated images ---- */
+
+.generated-image-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.generated-image-card {
+  margin: 0;
+  padding: 0;
+}
+
+.generated-image-preview {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface-secondary);
+  cursor: zoom-in;
+}
+
+.generated-image-preview:hover {
+  border-color: var(--accent);
+}
+
+.generated-image-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  background: linear-gradient(135deg, var(--surface-secondary), var(--surface-tertiary));
+}
+
+.generated-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.generated-image-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.generated-image-action:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.generated-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xl);
+  background: rgba(16, 18, 24, 0.76);
+  backdrop-filter: blur(8px);
+}
+
+.generated-image-lightbox-dialog {
+  position: relative;
+  max-width: min(90vw, 1100px);
+  max-height: 90vh;
+  padding: var(--space-lg);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: calc(var(--radius-lg) + 4px);
+  background: rgba(20, 24, 31, 0.92);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+.generated-image-lightbox-close {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(10, 12, 18, 0.7);
+  color: #fff;
+  cursor: pointer;
+}
+
+.generated-image-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.generated-image-lightbox-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(90vh - 72px);
+  border-radius: var(--radius-lg);
+  object-fit: contain;
+}

@@ -5,7 +5,6 @@
 //! receive real-time events for chat progress, completions, errors,
 //! permission requests, title updates, diagnostics, and knowledge ingestion.
 
-
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -127,12 +126,9 @@ pub struct EventsQuery {
 /// every 15 seconds to prevent proxy/load-balancer timeouts.
 ///
 /// Authentication: supports `?token=xxx` query parameter as an alternative
-/// to the `Authorization: Bearer` header (useful for EventSource which
+/// to the `Authorization: Bearer` header (useful for `EventSource` which
 /// cannot set custom headers).
-async fn event_stream(
-    State(state): State<AppState>,
-    Query(query): Query<EventsQuery>,
-) -> Response {
+async fn event_stream(State(state): State<AppState>, Query(query): Query<EventsQuery>) -> Response {
     // Validate token if auth is enabled.
     if let Some(ref expected_token) = state.auth_token {
         let provided_token = query.token.as_deref();
@@ -172,7 +168,9 @@ async fn event_stream(
         }
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 /// SSE route group.

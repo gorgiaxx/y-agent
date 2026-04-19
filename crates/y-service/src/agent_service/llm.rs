@@ -5,7 +5,9 @@
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use y_core::provider::{ChatRequest, ProviderPool, RouteRequest};
+use y_core::provider::{
+    ChatRequest, GeneratedImage, ImageContentDelta, ProviderPool, RouteRequest,
+};
 use y_core::types::ProviderId;
 
 use crate::cost::CostService;
@@ -113,6 +115,7 @@ fn build_streaming_raw_response(
     content: &str,
     reasoning_content: Option<&str>,
     tool_calls: &[y_core::types::ToolCallRequest],
+    generated_images: &[GeneratedImage],
     finish_reason: &y_core::provider::FinishReason,
     input_tokens: u64,
     output_tokens: u64,
@@ -148,6 +151,10 @@ fn build_streaming_raw_response(
     if !tool_calls_json.is_empty() {
         message["tool_calls"] = serde_json::Value::Array(tool_calls_json);
     }
+    if !generated_images.is_empty() {
+        message["generated_images"] =
+            serde_json::to_value(generated_images).unwrap_or(serde_json::Value::Array(vec![]));
+    }
 
     serde_json::json!({
         "id": "",
@@ -163,6 +170,53 @@ fn build_streaming_raw_response(
             "completion_tokens": output_tokens,
         }
     })
+}
+
+#[derive(Default)]
+struct ImageAccumulator {
+    images: std::collections::BTreeMap<usize, AccumulatingImage>,
+}
+
+struct AccumulatingImage {
+    mime_type: String,
+    data_parts: Vec<String>,
+}
+
+impl ImageAccumulator {
+    fn push(&mut self, delta: &ImageContentDelta) {
+        let entry = self
+            .images
+            .entry(delta.index)
+            .or_insert_with(|| AccumulatingImage {
+                mime_type: delta.mime_type.clone(),
+                data_parts: Vec::new(),
+            });
+        if entry.mime_type.is_empty() {
+            entry.mime_type.clone_from(&delta.mime_type);
+        }
+        if !delta.partial_data.is_empty() {
+            entry.data_parts.push(delta.partial_data.clone());
+        }
+    }
+
+    fn complete_image(&self, index: usize) -> Option<GeneratedImage> {
+        self.images.get(&index).map(|img| GeneratedImage {
+            index,
+            mime_type: img.mime_type.clone(),
+            data: img.data_parts.join(""),
+        })
+    }
+
+    fn into_images(self) -> Vec<GeneratedImage> {
+        self.images
+            .into_iter()
+            .map(|(index, img)| GeneratedImage {
+                index,
+                mime_type: img.mime_type,
+                data: img.data_parts.join(""),
+            })
+            .collect()
+    }
 }
 
 /// Dispatch to streaming or non-streaming LLM call.
@@ -222,6 +276,7 @@ async fn call_llm_streaming(
     let mut content = String::new();
     let mut reasoning_content = String::new();
     let mut tool_calls = Vec::new();
+    let mut image_accumulator = ImageAccumulator::default();
     let mut usage = TokenUsage {
         input_tokens: 0,
         output_tokens: 0,
@@ -291,6 +346,29 @@ async fn call_llm_streaming(
                     }
                 }
 
+                for img_delta in &chunk.delta_images {
+                    image_accumulator.push(img_delta);
+                    if let Some(tx) = progress {
+                        if img_delta.is_complete {
+                            if let Some(image) = image_accumulator.complete_image(img_delta.index) {
+                                let _ = tx.send(TurnEvent::StreamImageComplete {
+                                    index: image.index,
+                                    mime_type: image.mime_type,
+                                    data: image.data,
+                                    agent_name: agent_name.to_string(),
+                                });
+                            }
+                        } else {
+                            let _ = tx.send(TurnEvent::StreamImageDelta {
+                                index: img_delta.index,
+                                mime_type: img_delta.mime_type.clone(),
+                                partial_data: img_delta.partial_data.clone(),
+                                agent_name: agent_name.to_string(),
+                            });
+                        }
+                    }
+                }
+
                 // Collect tool calls on finish.
                 if !chunk.delta_tool_calls.is_empty() {
                     tool_calls.extend(chunk.delta_tool_calls);
@@ -311,11 +389,13 @@ async fn call_llm_streaming(
     }
 
     // Build synthetic raw response for diagnostics.
+    let generated_images = image_accumulator.into_images();
     let raw_response = build_streaming_raw_response(
         &model_name,
         &content,
         (!reasoning_content.is_empty()).then_some(reasoning_content.as_str()),
         &tool_calls,
+        &generated_images,
         &finish_reason,
         u64::from(usage.input_tokens),
         u64::from(usage.output_tokens),
@@ -346,7 +426,7 @@ async fn call_llm_streaming(
         raw_request,
         raw_response: Some(raw_response),
         provider_id,
-        generated_images: vec![],
+        generated_images,
     };
     Ok((response, reasoning_duration_ms))
 }
@@ -357,9 +437,9 @@ mod tests {
     use futures::stream;
     use tokio::sync::mpsc;
     use y_core::provider::{
-        ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, ProviderError,
-        ProviderMetadata, ProviderPool, ProviderStatus, ProviderType, RoutePriority, RouteRequest,
-        ToolCallingMode,
+        ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, GeneratedImage,
+        ImageContentDelta, ProviderError, ProviderMetadata, ProviderPool, ProviderStatus,
+        ProviderType, RoutePriority, RouteRequest, ToolCallingMode,
     };
     use y_core::types::{Message, ProviderId, Role, TokenUsage};
 
@@ -492,6 +572,7 @@ mod tests {
                     "request": "Create a plan",
                 }),
             }],
+            &[],
             &FinishReason::ToolUse,
             123,
             45,
@@ -538,5 +619,186 @@ mod tests {
             raw_response["choices"][0]["message"]["content"].as_str(),
             Some("Final answer")
         );
+    }
+
+    struct MockStreamingImagePool {
+        provider_id: ProviderId,
+        metadata: ProviderMetadata,
+    }
+
+    impl MockStreamingImagePool {
+        fn new() -> Self {
+            let provider_id = ProviderId::from_string("mock-image-stream");
+            Self {
+                provider_id: provider_id.clone(),
+                metadata: ProviderMetadata {
+                    id: provider_id,
+                    provider_type: ProviderType::OpenAi,
+                    model: "gpt-image-test".into(),
+                    tags: vec!["image".into()],
+                    max_concurrency: 1,
+                    context_window: 128_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    tool_calling_mode: ToolCallingMode::Native,
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ProviderPool for MockStreamingImagePool {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            panic!("chat_completion should not be called in streaming image tests");
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            let chunks = vec![
+                Ok(ChatStreamChunk {
+                    delta_content: None,
+                    delta_reasoning_content: None,
+                    delta_tool_calls: vec![],
+                    usage: None,
+                    finish_reason: None,
+                    delta_images: vec![ImageContentDelta {
+                        index: 0,
+                        mime_type: "image/png".into(),
+                        partial_data: "iVBOR".into(),
+                        is_complete: false,
+                    }],
+                }),
+                Ok(ChatStreamChunk {
+                    delta_content: Some("Here is the generated image.".into()),
+                    delta_reasoning_content: None,
+                    delta_tool_calls: vec![],
+                    usage: None,
+                    finish_reason: None,
+                    delta_images: vec![ImageContentDelta {
+                        index: 0,
+                        mime_type: "image/png".into(),
+                        partial_data: "w0KGgo=".into(),
+                        is_complete: false,
+                    }],
+                }),
+                Ok(ChatStreamChunk {
+                    delta_content: None,
+                    delta_reasoning_content: None,
+                    delta_tool_calls: vec![],
+                    usage: Some(TokenUsage {
+                        input_tokens: 30,
+                        output_tokens: 10,
+                        cache_read_tokens: None,
+                        cache_write_tokens: None,
+                        ..Default::default()
+                    }),
+                    finish_reason: Some(FinishReason::Stop),
+                    delta_images: vec![ImageContentDelta {
+                        index: 0,
+                        mime_type: "image/png".into(),
+                        partial_data: String::new(),
+                        is_complete: true,
+                    }],
+                }),
+            ];
+
+            Ok(ChatStreamResponse {
+                stream: Box::pin(stream::iter(chunks)),
+                raw_request: Some(serde_json::json!({ "messages": [] })),
+                provider_id: Some(self.provider_id.clone()),
+                model: self.metadata.model.clone(),
+                context_window: self.metadata.context_window,
+            })
+        }
+
+        fn report_error(&self, _provider_id: &ProviderId, _error: &ProviderError) {}
+
+        async fn provider_statuses(&self) -> Vec<ProviderStatus> {
+            vec![]
+        }
+
+        async fn freeze(&self, _provider_id: &ProviderId, _reason: String) {}
+
+        async fn thaw(&self, _provider_id: &ProviderId) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_streaming_accumulates_generated_images_and_emits_image_events() {
+        let pool = MockStreamingImagePool::new();
+        let request = test_request();
+        let route = RouteRequest {
+            priority: RoutePriority::Normal,
+            ..Default::default()
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
+
+        let (response, _reasoning_duration_ms) =
+            call_llm(&pool, &request, &route, Some(&tx), None, "chat-turn")
+                .await
+                .expect("streaming image call should succeed");
+
+        assert_eq!(
+            response.content.as_deref(),
+            Some("Here is the generated image.")
+        );
+        assert_eq!(
+            response.generated_images,
+            vec![GeneratedImage {
+                index: 0,
+                mime_type: "image/png".into(),
+                data: "iVBORw0KGgo=".into(),
+            }]
+        );
+
+        let mut saw_partial = false;
+        let mut saw_complete = false;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                TurnEvent::StreamImageDelta {
+                    index,
+                    mime_type,
+                    partial_data,
+                    agent_name,
+                } => {
+                    saw_partial = true;
+                    assert_eq!(index, 0);
+                    assert_eq!(mime_type, "image/png");
+                    assert!(!partial_data.is_empty());
+                    assert_eq!(agent_name, "chat-turn");
+                }
+                TurnEvent::StreamImageComplete {
+                    index,
+                    mime_type,
+                    data,
+                    agent_name,
+                } => {
+                    saw_complete = true;
+                    assert_eq!(index, 0);
+                    assert_eq!(mime_type, "image/png");
+                    assert_eq!(data, "iVBORw0KGgo=");
+                    assert_eq!(agent_name, "chat-turn");
+                }
+                TurnEvent::StreamDelta { .. }
+                | TurnEvent::StreamReasoningDelta { .. }
+                | TurnEvent::LlmResponse { .. }
+                | TurnEvent::ToolResult { .. }
+                | TurnEvent::LoopLimitHit { .. }
+                | TurnEvent::LlmError { .. }
+                | TurnEvent::UserInteractionRequest { .. }
+                | TurnEvent::PermissionRequest { .. } => {}
+            }
+        }
+
+        assert!(saw_partial);
+        assert!(saw_complete);
     }
 }

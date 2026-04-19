@@ -37,6 +37,13 @@ import {
   shouldDisplayStreamingAgent,
   type ToolResultRecord,
 } from './chatStreamTypes';
+import {
+  applyGeneratedImageDelta,
+  extractGeneratedImages,
+  mergeGeneratedImages,
+  upsertGeneratedImage,
+} from '../lib/generatedImages';
+import type { GeneratedImage } from '../types';
 import { mergeToolResultMetadata } from './toolResultMetadata';
 import { upsertToolResultRecord, upsertToolResultSegment } from './toolResultUpdates';
 import type { InterleavedSegment } from './useInterleavedSegments';
@@ -309,6 +316,43 @@ export function useChat(
     }
   }, []);
 
+  const updateStreamingGeneratedImages = useCallback((
+    sessionId: string,
+    updater: (images: GeneratedImage[]) => GeneratedImage[],
+  ) => {
+    setCachedMessages(sessionMessagesRef.current, sessionId, (prev) => {
+      const streamingId = `streaming-${sessionId}`;
+      const messageIndex = prev.findIndex((message) => message.id === streamingId);
+      if (messageIndex >= 0) {
+        const updated = [...prev];
+        const existing = updated[messageIndex];
+        const metadata = { ...(existing.metadata || {}) };
+        metadata.generated_images = updater(extractGeneratedImages(metadata));
+        updated[messageIndex] = {
+          ...existing,
+          metadata,
+        };
+        return updated;
+      }
+
+      return [
+        ...prev,
+        {
+          id: streamingId,
+          role: 'assistant' as const,
+          content: '',
+          timestamp: new Date().toISOString(),
+          tool_calls: [],
+          _streaming: true,
+          metadata: {
+            generated_images: updater([]),
+          },
+        } as Message,
+      ];
+    });
+    syncVisible(sessionId);
+  }, [syncVisible]);
+
   // Subscribe to the chat bus on mount.
   useEffect(() => {
     setStreamingSessionIds(new Set(chatBusState.streamingSessions));
@@ -439,6 +483,32 @@ export function useChat(
           ];
         });
         syncVisible(sid);
+      } else if (event.type === 'stream_image_delta') {
+        if (!shouldDisplayStreamingAgent(event.agent_name, rootAgentNamesRef.current)) {
+          return;
+        }
+        const sid = event.session_id;
+        markSessionActivity(sid);
+        updateStreamingGeneratedImages(sid, (images) =>
+          applyGeneratedImageDelta(images, {
+            index: event.index,
+            mime_type: event.mime_type,
+            partial_data: event.partial_data,
+          }),
+        );
+      } else if (event.type === 'stream_image_complete') {
+        if (!shouldDisplayStreamingAgent(event.agent_name, rootAgentNamesRef.current)) {
+          return;
+        }
+        const sid = event.session_id;
+        markSessionActivity(sid);
+        updateStreamingGeneratedImages(sid, (images) =>
+          upsertGeneratedImage(images, {
+            index: event.index,
+            mime_type: event.mime_type,
+            data: event.data,
+          }),
+        );
       } else if (event.type === 'complete') {
         const payload = event.payload;
         // Resolve session: prefer payload (always available from backend),
@@ -466,6 +536,9 @@ export function useChat(
           // the full accumulated streaming content so multi-iteration
           // text (e.g. "I'll check" + analysis) is not lost.
           (async () => {
+            const streamingId = `streaming-${sessionId}`;
+            const cachedMessages = getCachedMessages(sessionMessagesRef.current, sessionId);
+            const streamingMsg = cachedMessages.find((m) => m.id === streamingId);
             try {
               const msgs = await transport.invoke<Message[]>('session_get_messages', { sessionId });
 
@@ -473,9 +546,6 @@ export function useChat(
               const mergedMsgs = mergeSkillsFromCache(msgs, sessionMessagesRef.current, sessionId);
 
               // Grab the accumulated streaming content before overwriting.
-              const streamingId = `streaming-${sessionId}`;
-              const cachedMessages = getCachedMessages(sessionMessagesRef.current, sessionId);
-              const streamingMsg = cachedMessages.find((m) => m.id === streamingId);
               const accumulatedContent = streamingMsg?.content ?? '';
               const snapToolResults = toolResultsRef.current.get(sessionId);
 
@@ -499,6 +569,13 @@ export function useChat(
                     // Fallback: if backend lacks reasoning_content but streaming had it
                     if (!mergedMeta.reasoning_content && streamMeta.reasoning_content) {
                       mergedMeta.reasoning_content = streamMeta.reasoning_content;
+                    }
+                    const mergedImages = mergeGeneratedImages(
+                      extractGeneratedImages(mergedMeta),
+                      extractGeneratedImages(streamMeta),
+                    );
+                    if (mergedImages.length > 0) {
+                      mergedMeta.generated_images = mergedImages;
                     }
                   }
 
@@ -561,6 +638,11 @@ export function useChat(
                       [],
                       toolResultsRef.current.get(sessionId),
                     ) ?? [],
+                    ...(extractGeneratedImages(streamingMsg?.metadata).length > 0
+                      ? {
+                        generated_images: extractGeneratedImages(streamingMsg?.metadata),
+                      }
+                      : {}),
                   },
                 };
                 if (filtered.some((m) => m.id === newMsg.id)) return filtered;
@@ -798,7 +880,7 @@ export function useChat(
     return () => {
       chatBusSubscribers.delete(handler);
     };
-  }, [markSessionActivity, syncVisible, setOp, setOpForSession]);
+  }, [markSessionActivity, setOp, setOpForSession, syncVisible, updateStreamingGeneratedImages]);
 
   // ------------------------------------------------------------------
   // Safety timeout: if opStatus stays non-idle for too long without any

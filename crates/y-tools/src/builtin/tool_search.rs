@@ -91,7 +91,9 @@ impl Tool for ToolSearchTool {
         // At least one parameter must be provided.
         if query.is_none() && category.is_none() && tool.is_none() && mcp_server.is_none() {
             return Err(ToolError::ValidationError {
-                message: "at least one of 'query', 'category', 'tool', or 'mcp_server' must be provided".into(),
+                message:
+                    "at least one of 'query', 'category', 'tool', or 'mcp_server' must be provided"
+                        .into(),
             });
         }
 

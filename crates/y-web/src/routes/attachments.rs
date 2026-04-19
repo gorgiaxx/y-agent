@@ -2,7 +2,7 @@
 //!
 //! Mirrors the GUI `attachment_read_files` command and adds multipart upload.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use axum::extract::Multipart;
 use axum::response::IntoResponse;
@@ -142,8 +142,7 @@ async fn upload_files(mut multipart: Multipart) -> Result<impl IntoResponse, Api
     {
         let filename = field
             .file_name()
-            .map(String::from)
-            .unwrap_or_else(|| format!("upload-{}", uuid::Uuid::new_v4()));
+            .map_or_else(|| format!("upload-{}", uuid::Uuid::new_v4()), String::from);
 
         let ext = Path::new(&filename)
             .extension()

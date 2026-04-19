@@ -39,6 +39,8 @@ export type ChatBusEvent =
   | { type: 'error'; payload: ChatErrorPayload }
   | { type: 'stream_delta'; run_id: string; session_id: string; content: string; agent_name?: string }
   | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string; agent_name?: string }
+  | { type: 'stream_image_delta'; run_id: string; session_id: string; index: number; mime_type: string; partial_data: string; agent_name?: string }
+  | { type: 'stream_image_complete'; run_id: string; session_id: string; index: number; mime_type: string; data: string; agent_name?: string }
   | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown> };
 
 // ---------------------------------------------------------------------------
@@ -123,6 +125,32 @@ async function initialiseChatBus() {
           run_id,
           session_id,
           content: event.content,
+          agent_name: event.agent_name,
+        });
+      }
+    } else if (event.type === 'stream_image_delta') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'stream_image_delta',
+          run_id,
+          session_id,
+          index: event.index,
+          mime_type: event.mime_type,
+          partial_data: event.partial_data,
+          agent_name: event.agent_name,
+        });
+      }
+    } else if (event.type === 'stream_image_complete') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'stream_image_complete',
+          run_id,
+          session_id,
+          index: event.index,
+          mime_type: event.mime_type,
+          data: event.data,
           agent_name: event.agent_name,
         });
       }

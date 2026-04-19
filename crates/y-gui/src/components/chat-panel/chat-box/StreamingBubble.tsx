@@ -21,9 +21,11 @@ import { ThinkingCard } from './ThinkingCard';
 import {
   AssistantMessageShell,
 } from './MessageShared';
+import { GeneratedImageGallery } from './GeneratedImageGallery';
 import { extractThinkTags } from './messageUtils';
 import { useAssistantBubble } from './useAssistantBubble';
 import { ThinkContentBlock } from './ThinkContentBlock';
+import { extractGeneratedImages } from '../../../lib/generatedImages';
 
 
 export interface StreamingBubbleProps {
@@ -38,6 +40,10 @@ export interface StreamingBubbleProps {
 
 export function StreamingBubble({ message, toolResults, streamSegments }: StreamingBubbleProps) {
   const effectiveContent = message.content;
+  const generatedImages = useMemo(
+    () => extractGeneratedImages(message.metadata),
+    [message.metadata],
+  );
 
   const {
     markdownComponents,
@@ -157,11 +163,15 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
         </div>
       ) : (
         /* Plain content (no tool calls at all) */
-        <ThinkContentBlock
-          content={effectiveContent}
-          markdownComponents={markdownComponents}
-        />
+        effectiveContent.trim() ? (
+          <ThinkContentBlock
+            content={effectiveContent}
+            markdownComponents={markdownComponents}
+          />
+        ) : null
       )}
+
+      <GeneratedImageGallery images={generatedImages} />
 
       {/* Post-completion native tool calls from message.tool_calls (no results). */}
       {!streamResult && (!streamSegments || streamSegments.length === 0) && message.tool_calls.length > 0 && (

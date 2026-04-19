@@ -50,7 +50,7 @@ pub async fn run(services: Arc<ServiceContainer>, args: &ServeArgs) -> Result<()
         start_discord_gateway(Arc::clone(discord_bot), Arc::clone(&state.container));
     }
 
-    let app = create_router(state);
+    let app = create_router(&state);
 
     let addr = format!("{}:{}", config.host, config.port);
     info!("Starting y-agent API server on http://{addr}");

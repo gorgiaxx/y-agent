@@ -42,6 +42,12 @@ export interface Message {
   metadata?: Record<string, unknown>;
 }
 
+export interface GeneratedImage {
+  index: number;
+  mime_type: string;
+  data: string;
+}
+
 export interface ToolCallBrief {
   id: string;
   name: string;
@@ -155,6 +161,22 @@ export interface StreamReasoningDeltaEvent {
   agent_name?: string;
 }
 
+export interface StreamImageDeltaEvent {
+  type: 'stream_image_delta';
+  index: number;
+  mime_type: string;
+  partial_data: string;
+  agent_name?: string;
+}
+
+export interface StreamImageCompleteEvent {
+  type: 'stream_image_complete';
+  index: number;
+  mime_type: string;
+  data: string;
+  agent_name?: string;
+}
+
 export interface LlmErrorEvent {
   type: 'llm_error';
   /** 1-based iteration where the error occurred. */
@@ -173,7 +195,16 @@ export interface LlmErrorEvent {
   agent_name?: string;
 }
 
-export type TurnEvent = LlmResponseEvent | ToolResultEvent | LoopLimitEvent | UserMessageEvent | StreamDeltaEvent | StreamReasoningDeltaEvent | LlmErrorEvent;
+export type TurnEvent =
+  | LlmResponseEvent
+  | ToolResultEvent
+  | LoopLimitEvent
+  | UserMessageEvent
+  | StreamDeltaEvent
+  | StreamReasoningDeltaEvent
+  | StreamImageDeltaEvent
+  | StreamImageCompleteEvent
+  | LlmErrorEvent;
 
 export interface ProgressPayload {
   run_id: string;

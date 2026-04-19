@@ -64,6 +64,7 @@ pub(crate) async fn handle_llm_error(
             output_tokens: ctx.cumulative_output_tokens,
             cost_usd: ctx.cumulative_cost,
             model: model.to_string(),
+            generated_images: Vec::new(),
         });
     }
 
@@ -192,6 +193,10 @@ pub(crate) fn build_assistant_msg(
     if let Some(ref rc) = response.reasoning_content {
         meta["reasoning_content"] = serde_json::Value::String(rc.clone());
     }
+    if !response.generated_images.is_empty() {
+        meta["generated_images"] = serde_json::to_value(&response.generated_images)
+            .unwrap_or(serde_json::Value::Array(vec![]));
+    }
     Message {
         message_id: y_core::types::generate_message_id(),
         role: Role::Assistant,
@@ -271,6 +276,7 @@ pub(crate) async fn build_final_result(
         cost_usd: ctx.cumulative_cost,
         tool_calls_executed: ctx.tool_calls_executed,
         iterations: ctx.iteration,
+        generated_images: response.generated_images.clone(),
         new_messages: ctx.new_messages,
         final_response: content.clone(),
         iteration_texts: ctx.iteration_texts,
@@ -280,4 +286,44 @@ pub(crate) async fn build_final_result(
         reasoning_content: response.reasoning_content.clone(),
         reasoning_duration_ms,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use y_core::provider::{ChatResponse, FinishReason, GeneratedImage};
+    use y_core::types::TokenUsage;
+
+    use super::build_assistant_msg;
+
+    #[test]
+    fn test_build_assistant_msg_persists_generated_images_in_metadata() {
+        let response = ChatResponse {
+            id: "resp-1".into(),
+            model: "gemini-2.5-flash-image".into(),
+            content: Some("Here is your image.".into()),
+            reasoning_content: None,
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            finish_reason: FinishReason::Stop,
+            raw_request: None,
+            raw_response: None,
+            provider_id: None,
+            generated_images: vec![GeneratedImage {
+                index: 0,
+                mime_type: "image/png".into(),
+                data: "iVBORw0KGgo=".into(),
+            }],
+        };
+
+        let message = build_assistant_msg(&response, "Here is your image.".into(), vec![]);
+
+        assert_eq!(
+            message.metadata["generated_images"][0]["mime_type"].as_str(),
+            Some("image/png")
+        );
+        assert_eq!(
+            message.metadata["generated_images"][0]["data"].as_str(),
+            Some("iVBORw0KGgo=")
+        );
+    }
 }

@@ -27,7 +27,7 @@ use crate::middleware::auth_middleware;
 use crate::state::AppState;
 
 /// Build the full application router with all route groups.
-pub fn create_router(state: AppState) -> Router {
+pub fn create_router(state: &AppState) -> Router {
     let protected = Router::new()
         .merge(sessions::router())
         .merge(chat::router())

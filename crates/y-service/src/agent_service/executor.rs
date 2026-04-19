@@ -176,6 +176,7 @@ pub(crate) async fn execute_inner(
                     output_tokens: ctx.cumulative_output_tokens,
                     cost_usd: ctx.cumulative_cost,
                     model: final_model.clone(),
+                    generated_images: Vec::new(),
                 });
             }
         }

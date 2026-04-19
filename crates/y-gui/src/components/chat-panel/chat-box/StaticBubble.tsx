@@ -23,9 +23,11 @@ import { ThinkingCard } from './ThinkingCard';
 import {
   AssistantMessageShell,
 } from './MessageShared';
+import { GeneratedImageGallery } from './GeneratedImageGallery';
 import { extractThinkTags } from './messageUtils';
 import { useAssistantBubble } from './useAssistantBubble';
 import { ThinkContentBlock } from './ThinkContentBlock';
+import { extractGeneratedImages } from '../../../lib/generatedImages';
 
 
 export interface StaticBubbleProps {
@@ -35,6 +37,10 @@ export interface StaticBubbleProps {
 
 export function StaticBubble({ message }: StaticBubbleProps) {
   const effectiveContent = message.content;
+  const generatedImages = useMemo(
+    () => extractGeneratedImages(message.metadata),
+    [message.metadata],
+  );
 
   // Parse tool results from persisted metadata.
   const metaToolResults = useMemo((): ToolResultRecord[] => {
@@ -208,11 +214,15 @@ export function StaticBubble({ message }: StaticBubbleProps) {
         </div>
       ) : (
         /* Path 3: Plain text, no tool calls */
-        <ThinkContentBlock
-          content={effectiveContent}
-          markdownComponents={markdownComponents}
-        />
+        effectiveContent.trim() ? (
+          <ThinkContentBlock
+            content={effectiveContent}
+            markdownComponents={markdownComponents}
+          />
+        ) : null
       )}
+
+      <GeneratedImageGallery images={generatedImages} />
     </AssistantMessageShell>
   );
 }
