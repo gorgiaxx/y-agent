@@ -61,6 +61,10 @@ if [[ -z "$SOURCE_APPIMAGE" || -z "$OUTPUT_DIR" ]]; then
   exit 1
 fi
 
+if [[ "$SOURCE_APPIMAGE" != /* ]]; then
+  SOURCE_APPIMAGE="$PWD/$SOURCE_APPIMAGE"
+fi
+
 if [[ ! -f "$SOURCE_APPIMAGE" ]]; then
   echo "error: AppImage not found: $SOURCE_APPIMAGE" >&2
   exit 1

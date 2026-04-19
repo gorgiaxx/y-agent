@@ -33,6 +33,9 @@ jobs:
         with:
           shared-key: "ci-shared"
 
+      - name: Package AppImage script regression test
+        run: bash scripts/tests/test-package-linux-appimage-relative-path.sh
+
       - name: Install system dependencies (cached)
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
