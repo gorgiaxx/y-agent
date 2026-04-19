@@ -1,9 +1,10 @@
-//! Attachment endpoints -- file reading for chat attachments.
+//! Attachment endpoints -- file reading and upload for chat attachments.
 //!
-//! Mirrors the GUI `attachment_read_files` command.
+//! Mirrors the GUI `attachment_read_files` command and adds multipart upload.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use axum::extract::Multipart;
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -38,6 +39,13 @@ pub struct AttachmentData {
     pub filename: String,
     pub mime_type: String,
     pub base64_data: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UploadResponse {
+    pub path: String,
+    pub filename: String,
     pub size: u64,
 }
 
@@ -115,11 +123,73 @@ async fn read_files(Json(body): Json<ReadFilesRequest>) -> Result<impl IntoRespo
     Ok(Json(results))
 }
 
+/// `POST /api/v1/attachments/upload` -- multipart file upload.
+///
+/// Accepts multipart form data with one or more file fields.
+/// Saves files to a temporary directory and returns server-side paths.
+async fn upload_files(mut multipart: Multipart) -> Result<impl IntoResponse, ApiError> {
+    let mut results = Vec::new();
+
+    let temp_dir = std::env::temp_dir().join("y-agent-uploads");
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to create upload dir: {e}")))?;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("Multipart error: {e}")))?
+    {
+        let filename = field
+            .file_name()
+            .map(String::from)
+            .unwrap_or_else(|| format!("upload-{}", uuid::Uuid::new_v4()));
+
+        let ext = Path::new(&filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_lowercase)
+            .unwrap_or_default();
+
+        if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
+            return Err(ApiError::BadRequest(format!(
+                "Unsupported file type: .{ext}"
+            )));
+        }
+
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| ApiError::BadRequest(format!("Failed to read field: {e}")))?;
+
+        if data.len() as u64 > MAX_FILE_SIZE {
+            return Err(ApiError::BadRequest(format!(
+                "File exceeds 20 MB limit: {filename}"
+            )));
+        }
+
+        let file_path = temp_dir.join(&filename);
+        tokio::fs::write(&file_path, &data)
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to write file: {e}")))?;
+
+        results.push(UploadResponse {
+            path: file_path.to_string_lossy().to_string(),
+            filename,
+            size: data.len() as u64,
+        });
+    }
+
+    Ok(Json(results))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
 /// Attachments route group.
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/v1/attachments/read", post(read_files))
+    Router::new()
+        .route("/api/v1/attachments/read", post(read_files))
+        .route("/api/v1/attachments/upload", post(upload_files))
 }

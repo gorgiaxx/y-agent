@@ -5,13 +5,13 @@
 //! receive real-time events for chat progress, completions, errors,
 //! permission requests, title updates, diagnostics, and knowledge ingestion.
 
-use std::convert::Infallible;
 
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
@@ -112,6 +112,8 @@ impl SseEvent {
 pub struct EventsQuery {
     /// When set, only events for this session are forwarded.
     pub session_id: Option<String>,
+    /// Optional bearer token for authentication (alternative to header).
+    pub token: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,10 +125,22 @@ pub struct EventsQuery {
 /// Clients receive all broadcast events (or a filtered subset when
 /// `?session_id=xxx` is provided). The stream sends keep-alive comments
 /// every 15 seconds to prevent proxy/load-balancer timeouts.
+///
+/// Authentication: supports `?token=xxx` query parameter as an alternative
+/// to the `Authorization: Bearer` header (useful for EventSource which
+/// cannot set custom headers).
 async fn event_stream(
     State(state): State<AppState>,
     Query(query): Query<EventsQuery>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Response {
+    // Validate token if auth is enabled.
+    if let Some(ref expected_token) = state.auth_token {
+        let provided_token = query.token.as_deref();
+        if provided_token != Some(expected_token.as_str()) {
+            return (StatusCode::UNAUTHORIZED, "Invalid or missing token").into_response();
+        }
+    }
+
     let mut rx = state.event_tx.subscribe();
     let filter_session = query.session_id;
 
@@ -145,7 +159,7 @@ async fn event_stream(
 
                     let name = event.event_name().to_string();
                     if let Ok(json) = serde_json::to_string(&event) {
-                        yield Ok(Event::default().event(name).data(json));
+                        yield Ok::<_, std::convert::Infallible>(Event::default().event(name).data(json));
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -158,7 +172,7 @@ async fn event_stream(
         }
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
 
 /// SSE route group.

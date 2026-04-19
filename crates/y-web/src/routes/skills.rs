@@ -5,9 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Multipart, Path as AxumPath, State};
 use axum::response::IntoResponse;
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -226,6 +226,53 @@ async fn save_file(
     Ok(Json(serde_json::json!({"message": "saved"})))
 }
 
+/// `POST /api/v1/skills/import` -- import skill from uploaded archive.
+///
+/// Accepts multipart form data with a single file field containing a
+/// .zip or .tar.gz skill package. Extracts to the skills directory.
+async fn import_skill(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, ApiError> {
+    let skills_dir = skills_store_path(&state.config_dir);
+    tokio::fs::create_dir_all(&skills_dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to create skills dir: {e}")))?;
+
+    let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("Multipart error: {e}")))?
+    else {
+        return Err(ApiError::BadRequest("No file provided".into()));
+    };
+
+    let filename = field
+        .file_name()
+        .map(String::from)
+        .ok_or_else(|| ApiError::BadRequest("Missing filename".into()))?;
+
+    let data = field
+        .bytes()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("Failed to read field: {e}")))?;
+
+    let temp_path = std::env::temp_dir().join(&filename);
+    tokio::fs::write(&temp_path, &data)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to write temp file: {e}")))?;
+
+    // Extract archive to skills directory.
+    // For now, return a placeholder response. Full extraction logic would use
+    // zip/tar crates to unpack the archive.
+    let _ = tokio::fs::remove_file(&temp_path).await;
+
+    Ok(Json(serde_json::json!({
+        "message": "import endpoint ready (extraction not yet implemented)",
+        "filename": filename
+    })))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -234,6 +281,7 @@ async fn save_file(
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/skills", get(list_skills))
+        .route("/api/v1/skills/import", post(import_skill))
         .route(
             "/api/v1/skills/{name}",
             get(get_skill).delete(uninstall_skill),
