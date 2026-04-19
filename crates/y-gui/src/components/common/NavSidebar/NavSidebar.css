@@ -38,6 +38,11 @@ html[data-platform="macos"] .nav-sidebar-footer {
   background: transparent;
 }
 
+/* Dark macOS vibrancy needs a slightly brighter muted tone for legibility. */
+html[data-platform="macos"][data-theme="dark"] .nav-sidebar {
+  --text-muted: #7d7973;
+}
+
 /* Traffic-light safe area on macOS custom decorations. */
 html.custom-decorations[data-platform="macos"] .nav-sidebar {
   padding-top: 28px;
