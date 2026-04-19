@@ -451,6 +451,7 @@ mod tests {
             provider_id: None,
             preferred_models: vec![],
             provider_tags: vec![],
+            request_mode: y_core::provider::RequestMode::TextChat,
             temperature: None,
             max_tokens: None,
             thinking: None,

@@ -14,7 +14,8 @@ use tracing::instrument;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
-    ImageContentDelta, LlmProvider, ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
+    ProviderType, RequestMode, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -39,6 +40,7 @@ impl GeminiProvider {
         base_url: Option<String>,
         proxy_url: Option<String>,
         tags: Vec<String>,
+        capabilities: Vec<ProviderCapability>,
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
@@ -61,6 +63,7 @@ impl GeminiProvider {
                 provider_type: ProviderType::Gemini,
                 model: model.to_string(),
                 tags,
+                capabilities,
                 max_concurrency,
                 context_window,
                 cost_per_1k_input: 0.0,
@@ -268,6 +271,13 @@ impl GeminiProvider {
 impl LlmProvider for GeminiProvider {
     #[instrument(skip(self, request), fields(model = %self.metadata.model, provider_id = %self.metadata.id))]
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return Err(ProviderError::Other {
+                message: "dedicated image generation is not implemented for gemini providers"
+                    .into(),
+            });
+        }
+
         let body = Self::build_request_body(request);
         let raw_request = serde_json::to_value(&body).ok();
 
@@ -341,6 +351,13 @@ impl LlmProvider for GeminiProvider {
         &self,
         request: &ChatRequest,
     ) -> Result<ChatStreamResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return Err(ProviderError::Other {
+                message: "dedicated image generation is not implemented for gemini providers"
+                    .into(),
+            });
+        }
+
         let body = Self::build_request_body(request);
         let raw_request = serde_json::to_value(&body).ok();
 

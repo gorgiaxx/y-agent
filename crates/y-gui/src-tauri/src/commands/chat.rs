@@ -7,6 +7,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
+use y_core::provider::RequestMode;
 use y_core::types::SessionId;
 use y_service::{
     ChatService, PermissionPromptResponse, PrepareTurnRequest, PreparedTurn, ResendTurnRequest,
@@ -103,6 +104,7 @@ pub async fn chat_send(
     message: String,
     session_id: Option<String>,
     provider_id: Option<String>,
+    request_mode: Option<RequestMode>,
     skills: Option<Vec<String>>,
     knowledge_collections: Option<Vec<String>>,
     context_start_index: Option<usize>,
@@ -141,6 +143,7 @@ pub async fn chat_send(
             session_id: session_id.map(SessionId),
             user_input: message.clone(),
             provider_id: provider_id.clone(),
+            request_mode,
             skills: skills.clone(),
             knowledge_collections: knowledge_collections.clone(),
             thinking,
@@ -722,6 +725,7 @@ pub async fn chat_resend(
     session_id: String,
     checkpoint_id: String,
     provider_id: Option<String>,
+    request_mode: Option<RequestMode>,
     knowledge_collections: Option<Vec<String>>,
     thinking_effort: Option<String>,
     plan_mode: Option<String>,
@@ -745,6 +749,7 @@ pub async fn chat_resend(
             session_id: SessionId(session_id.clone()),
             checkpoint_id,
             provider_id,
+            request_mode,
             knowledge_collections,
             thinking,
             plan_mode,

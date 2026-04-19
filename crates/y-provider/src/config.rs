@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ProviderPoolError;
 use crate::router::SelectionStrategy;
-use y_core::provider::ToolCallingMode;
+use y_core::provider::{ProviderCapability, ToolCallingMode};
 
 /// Configuration for the entire provider pool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +61,13 @@ pub struct ProviderConfig {
     /// Tags for routing (e.g., `["reasoning", "fast", "code"]`).
     #[serde(default = "default_tags", deserialize_with = "deserialize_tags")]
     pub tags: Vec<String>,
+
+    /// Explicit provider capabilities used for request shaping.
+    ///
+    /// When empty, capabilities are derived from legacy configuration hints
+    /// (primarily routing tags) for backward compatibility.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<ProviderCapability>,
 
     /// Maximum concurrent requests to this provider.
     #[serde(default = "default_max_concurrency")]
@@ -407,6 +414,39 @@ impl ProviderConfig {
             _ => ToolCallingMode::PromptBased,
         }
     }
+
+    /// Resolve the effective provider capabilities.
+    ///
+    /// Priority: explicit `capabilities` > legacy tag-based inference.
+    pub fn resolve_capabilities(&self) -> Vec<ProviderCapability> {
+        if !self.capabilities.is_empty() {
+            return self.capabilities.clone();
+        }
+
+        let tag_set = self
+            .tags
+            .iter()
+            .map(|tag| tag.to_ascii_lowercase())
+            .collect::<std::collections::HashSet<_>>();
+
+        let has_image_generation =
+            tag_set.contains("image") || tag_set.contains("image_generation");
+        let has_vision = tag_set.contains("vision");
+
+        let mut capabilities = Vec::new();
+        if has_image_generation {
+            capabilities.push(ProviderCapability::ImageGeneration);
+        }
+        if has_vision {
+            capabilities.push(ProviderCapability::Text);
+            capabilities.push(ProviderCapability::Vision);
+        }
+        if capabilities.is_empty() {
+            capabilities.push(ProviderCapability::Text);
+        }
+
+        capabilities
+    }
 }
 
 #[cfg(test)]
@@ -457,6 +497,7 @@ mod tests {
                     provider_type: "openai".into(),
                     model: "gpt-4".into(),
                     tags: vec![],
+                    capabilities: vec![],
                     max_concurrency: 5,
                     context_window: 128_000,
                     cost_per_1k_input: 0.0,
@@ -475,6 +516,7 @@ mod tests {
                     provider_type: "anthropic".into(),
                     model: "claude".into(),
                     tags: vec![],
+                    capabilities: vec![],
                     max_concurrency: 5,
                     context_window: 200_000,
                     cost_per_1k_input: 0.0,
@@ -515,6 +557,7 @@ mod tests {
             model: "gpt-4".into(),
             enabled: true,
             tags: vec![],
+            capabilities: vec![],
             max_concurrency: 5,
             context_window: 128_000,
             cost_per_1k_input: 0.0,
@@ -545,6 +588,7 @@ mod tests {
             model: "gpt-4".into(),
             enabled: true,
             tags: vec![],
+            capabilities: vec![],
             max_concurrency: 5,
             context_window: 128_000,
             cost_per_1k_input: 0.0,
@@ -847,6 +891,7 @@ mod tests {
             model: "test".into(),
             enabled: true,
             tags: vec![],
+            capabilities: vec![],
             max_concurrency: 5,
             context_window: 128_000,
             cost_per_1k_input: 0.0,
@@ -896,6 +941,33 @@ mod tests {
         assert_eq!(
             cfg.resolve_tool_calling_mode(),
             ToolCallingMode::PromptBased
+        );
+    }
+
+    #[test]
+    fn test_resolve_capabilities_defaults_to_text() {
+        let cfg = make_provider_config("openai");
+        assert_eq!(cfg.resolve_capabilities(), vec![ProviderCapability::Text]);
+    }
+
+    #[test]
+    fn test_resolve_capabilities_infers_image_generation_from_tags() {
+        let mut cfg = make_provider_config("openai-compat");
+        cfg.tags = vec!["image".into()];
+        assert_eq!(
+            cfg.resolve_capabilities(),
+            vec![ProviderCapability::ImageGeneration]
+        );
+    }
+
+    #[test]
+    fn test_resolve_capabilities_prefers_explicit_capabilities() {
+        let mut cfg = make_provider_config("openai-compat");
+        cfg.tags = vec!["image".into()];
+        cfg.capabilities = vec![ProviderCapability::Text, ProviderCapability::Vision];
+        assert_eq!(
+            cfg.resolve_capabilities(),
+            vec![ProviderCapability::Text, ProviderCapability::Vision]
         );
     }
 }

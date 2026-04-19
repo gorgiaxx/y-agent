@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ProviderCapability, ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
 };
 use y_core::types::{ProviderId, TokenUsage};
 
@@ -44,6 +44,7 @@ impl MockProvider {
                 provider_type: ProviderType::Custom,
                 model: "mock-model".into(),
                 tags: vec!["test".into()],
+                capabilities: vec![ProviderCapability::Text],
                 max_concurrency: 10,
                 context_window: 4096,
                 cost_per_1k_input: 0.0,
@@ -181,6 +182,7 @@ mod tests {
         ChatRequest {
             messages: vec![user_msg(msg)],
             model: Some("mock".into()),
+            request_mode: y_core::provider::RequestMode::TextChat,
             max_tokens: None,
             temperature: None,
             top_p: None,

@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason,
+    ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
+    ProviderType, RequestMode, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -50,6 +51,7 @@ impl AzureOpenAiProvider {
         base_url: Option<String>,
         proxy_url: Option<String>,
         tags: Vec<String>,
+        capabilities: Vec<ProviderCapability>,
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
@@ -73,6 +75,7 @@ impl AzureOpenAiProvider {
                 provider_type: ProviderType::Azure,
                 model: model.to_string(),
                 tags,
+                capabilities,
                 max_concurrency,
                 context_window,
                 cost_per_1k_input: 0.0,
@@ -89,6 +92,185 @@ impl AzureOpenAiProvider {
             self.endpoint.trim_end_matches('/'),
             self.api_version
         )
+    }
+
+    fn image_generation_url(&self) -> String {
+        format!(
+            "{}/images/generations?api-version={}",
+            self.endpoint.trim_end_matches('/'),
+            self.api_version
+        )
+    }
+
+    fn latest_user_prompt(request: &ChatRequest) -> Result<String, ProviderError> {
+        request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == y_core::types::Role::User)
+            .map(|message| message.content.trim().to_string())
+            .filter(|prompt| !prompt.is_empty())
+            .ok_or_else(|| ProviderError::Other {
+                message: "image generation requires a non-empty user prompt".into(),
+            })
+    }
+
+    fn build_image_generation_request_body(
+        request: &ChatRequest,
+        model: &str,
+    ) -> Result<AzureImageGenerationRequest, ProviderError> {
+        Ok(AzureImageGenerationRequest {
+            model: model.to_string(),
+            prompt: Self::latest_user_prompt(request)?,
+            response_format: Some("b64_json".to_string()),
+        })
+    }
+
+    async fn generate_images(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        let model = request.model.as_deref().unwrap_or(&self.metadata.model);
+        let body = Self::build_image_generation_request_body(request, model)?;
+        let raw_request = serde_json::to_value(&body).ok();
+
+        let mut request_builder = self
+            .client
+            .post(self.image_generation_url())
+            .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request_builder = request_builder.header("api-key", &self.api_key);
+        }
+
+        let response =
+            request_builder
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkError {
+                    message: e.to_string(),
+                })?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(60_u64);
+            return Err(ProviderError::RateLimited {
+                provider: self.metadata.id.to_string(),
+                retry_after_secs: retry_after,
+            });
+        }
+
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::AuthenticationFailed {
+                provider: self.metadata.id.to_string(),
+                message: error_body,
+            });
+        }
+
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::ServerError {
+                provider: self.metadata.id.to_string(),
+                message: format!("HTTP {status}: {error_body}"),
+            });
+        }
+
+        let response_text = response.text().await.map_err(|e| ProviderError::Other {
+            message: format!("read response body: {e}"),
+        })?;
+        let raw_response: serde_json::Value =
+            serde_json::from_str(&response_text).map_err(|e| ProviderError::Other {
+                message: format!("parse response JSON: {e}"),
+            })?;
+        let image_response: AzureImageGenerationResponse =
+            serde_json::from_value(raw_response.clone()).map_err(|e| ProviderError::Other {
+                message: format!("parse image generation response: {e}"),
+            })?;
+
+        let generated_images: Vec<_> = image_response
+            .data
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                item.b64_json.map(|data| y_core::provider::GeneratedImage {
+                    index,
+                    mime_type: "image/png".into(),
+                    data,
+                })
+            })
+            .collect();
+
+        if generated_images.is_empty() {
+            return Err(ProviderError::Other {
+                message: "image generation response contained no images".into(),
+            });
+        }
+
+        Ok(ChatResponse {
+            id: String::new(),
+            model: image_response
+                .model
+                .unwrap_or_else(|| self.metadata.model.clone()),
+            content: None,
+            reasoning_content: None,
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            finish_reason: FinishReason::Stop,
+            raw_request,
+            raw_response: Some(raw_response),
+            provider_id: None,
+            generated_images,
+        })
+    }
+
+    async fn generate_images_stream(
+        &self,
+        request: &ChatRequest,
+    ) -> Result<ChatStreamResponse, ProviderError> {
+        use futures::stream;
+
+        let response = self.generate_images(request).await?;
+        let raw_request = response.raw_request.clone();
+        let finish_reason = response.finish_reason.clone();
+        let usage = response.usage.clone();
+        let generated_images = response.generated_images.clone();
+
+        let mut chunks = Vec::new();
+        for image in generated_images {
+            chunks.push(Ok(ChatStreamChunk {
+                delta_content: None,
+                delta_reasoning_content: None,
+                delta_tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                delta_images: vec![ImageContentDelta {
+                    index: image.index,
+                    mime_type: image.mime_type,
+                    partial_data: image.data,
+                    is_complete: true,
+                }],
+            }));
+        }
+        chunks.push(Ok(ChatStreamChunk {
+            delta_content: None,
+            delta_reasoning_content: None,
+            delta_tool_calls: vec![],
+            usage: Some(usage),
+            finish_reason: Some(finish_reason),
+            delta_images: vec![],
+        }));
+
+        Ok(ChatStreamResponse {
+            stream: Box::pin(stream::iter(chunks)),
+            raw_request,
+            provider_id: None,
+            model: self.metadata.model.clone(),
+            context_window: self.metadata.context_window,
+        })
     }
 
     /// Build Azure/OpenAI message list from a `ChatRequest`.
@@ -153,6 +335,10 @@ impl AzureOpenAiProvider {
 impl LlmProvider for AzureOpenAiProvider {
     #[instrument(skip(self, request), fields(model = %self.metadata.model, provider_id = %self.metadata.id))]
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return self.generate_images(request).await;
+        }
+
         let body = Self::build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
@@ -281,6 +467,10 @@ impl LlmProvider for AzureOpenAiProvider {
         &self,
         request: &ChatRequest,
     ) -> Result<ChatStreamResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return self.generate_images_stream(request).await;
+        }
+
         let body = Self::build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 
@@ -568,6 +758,28 @@ struct AzureUsage {
     prompt_tokens: u32,
     #[serde(default)]
     completion_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AzureImageGenerationRequest {
+    model: String,
+    prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureImageGenerationResponse {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    data: Vec<AzureImageGenerationItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzureImageGenerationItem {
+    #[serde(default)]
+    b64_json: Option<String>,
 }
 
 // Streaming types

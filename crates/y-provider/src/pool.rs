@@ -168,6 +168,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
 
         let proxy_url = config.resolve_proxy_url(&cfg.id, &cfg.tags);
         let tool_calling_mode = cfg.resolve_tool_calling_mode();
+        let capabilities = cfg.resolve_capabilities();
 
         // DeepSeek uses an OpenAI-compatible REST API with a default base URL.
         let base_url_for_deepseek = || {
@@ -187,6 +188,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     $base,
                     proxy_url.clone(),
                     cfg.tags.clone(),
+                    capabilities.clone(),
                     cfg.max_concurrency,
                     cfg.context_window,
                     tool_calling_mode,

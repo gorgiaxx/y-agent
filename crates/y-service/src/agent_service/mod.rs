@@ -28,7 +28,7 @@ mod tool_handling;
 
 use uuid::Uuid;
 
-use y_core::provider::{GeneratedImage, ResponseFormat, ToolCallingMode};
+use y_core::provider::{GeneratedImage, RequestMode, ResponseFormat, ToolCallingMode};
 use y_core::trust::TrustTier;
 use y_core::types::{Message, SessionId};
 
@@ -71,6 +71,8 @@ pub struct AgentExecutionConfig {
     pub preferred_models: Vec<String>,
     /// Provider routing tags.
     pub provider_tags: Vec<String>,
+    /// High-level provider request mode.
+    pub request_mode: RequestMode,
     /// Temperature override (None = use provider default).
     pub temperature: Option<f64>,
     /// Max tokens to generate.

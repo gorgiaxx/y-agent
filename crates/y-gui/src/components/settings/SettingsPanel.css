@@ -243,6 +243,11 @@
   flex-shrink: 0;
   background: var(--surface-primary);
   height: 52px;
+  user-select: none;
+}
+
+html.custom-decorations .settings-action-bar {
+  -webkit-app-region: drag;
 }
 
 .settings-action-bar-title {
@@ -265,6 +270,10 @@
   align-items: center;
   gap: var(--space-sm);
   flex-shrink: 0;
+}
+
+html.custom-decorations .settings-action-bar-actions {
+  -webkit-app-region: no-drag;
 }
 
 /* ---- Path field (read-only input with inline copy button) ---- */

@@ -6,11 +6,22 @@ APPDIR="${APPDIR:-$(dirname "$SELF")}"
 
 export APPDIR
 
+# WebKitWebProcess uses bubblewrap to sandbox itself. Inside an AppImage FUSE
+# mount the nested namespaces frequently fail (especially on Arch/Fedora with
+# restrictive user-namespace or seccomp defaults), producing an opaque
+# "fatal error" crash. Disabling the sandbox is safe here because the
+# AppImage already runs as an unprivileged user process.
+export WEBKIT_DISABLE_SANDBOX="${WEBKIT_DISABLE_SANDBOX:-1}"
+
+# The bundled WebKit may try to use DMA-BUF for compositing, which can crash
+# when the host GPU driver/mesa version differs from what was used at build
+# time. Disable unconditionally inside the AppImage.
+export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
+
 # Prefer the more conservative GTK/WebKit path when launched from a Wayland
 # session. These defaults remain overridable by the caller for debugging.
 if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
   export GDK_BACKEND="${GDK_BACKEND:-x11}"
-  export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
   export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}"
   export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
 fi

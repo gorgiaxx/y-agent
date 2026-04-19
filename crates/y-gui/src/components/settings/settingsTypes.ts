@@ -19,6 +19,7 @@ export interface ProviderFormData {
   model: string;
   enabled: boolean;
   tags: string[];
+  capabilities: string[];
   max_concurrency: number;
   context_window: number;
   cost_per_1k_input: number;
@@ -180,6 +181,7 @@ export function emptyProvider(): ProviderFormData {
     model: '',
     enabled: true,
     tags: [],
+    capabilities: [],
     max_concurrency: 5,
     context_window: 128000,
     cost_per_1k_input: 0,
@@ -346,6 +348,11 @@ export function providersToToml(providers: ProviderFormData[]): string {
     if (p.tags.length > 0) {
       lines.push(`tags = [${p.tags.map((t) => `"${escapeTomlString(t)}"`).join(', ')}]`);
     }
+    if (p.capabilities.length > 0) {
+      lines.push(
+        `capabilities = [${p.capabilities.map((c) => `"${escapeTomlString(c)}"`).join(', ')}]`,
+      );
+    }
     lines.push(`max_concurrency = ${p.max_concurrency}`);
     lines.push(`context_window = ${p.context_window}`);
     if (p.cost_per_1k_input > 0) lines.push(`cost_per_1k_input = ${p.cost_per_1k_input}`);
@@ -381,6 +388,7 @@ export function jsonToProviders(json: unknown): ProviderFormData[] {
     model: (p.model as string) ?? '',
     enabled: p.enabled !== false,
     tags: Array.isArray(p.tags) ? (p.tags as string[]) : [],
+    capabilities: Array.isArray(p.capabilities) ? (p.capabilities as string[]) : [],
     max_concurrency: (p.max_concurrency as number) ?? 5,
     context_window: (p.context_window as number) ?? 128000,
     cost_per_1k_input: (p.cost_per_1k_input as number) ?? 0,

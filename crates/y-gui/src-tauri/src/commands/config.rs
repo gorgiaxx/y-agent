@@ -276,6 +276,9 @@ pub async fn provider_test(
     api_key: String,
     api_key_env: String,
     base_url: Option<String>,
+    tags: Option<Vec<String>>,
+    capabilities: Option<Vec<y_core::provider::ProviderCapability>>,
+    probe_mode: Option<String>,
 ) -> Result<String, String> {
     y_service::SystemService::test_provider(y_service::ProviderTestRequest {
         provider_type,
@@ -283,6 +286,9 @@ pub async fn provider_test(
         api_key,
         api_key_env,
         base_url,
+        tags: tags.unwrap_or_default(),
+        capabilities: capabilities.unwrap_or_default(),
+        probe_mode: probe_mode.unwrap_or_else(|| "auto".to_string()),
     })
     .await
 }

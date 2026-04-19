@@ -14,6 +14,7 @@ use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use y_core::provider::RequestMode;
 use y_core::session::ChatMessageStore;
 use y_core::types::SessionId;
 use y_service::{
@@ -35,6 +36,7 @@ pub struct ChatRequest {
     pub message: String,
     pub session_id: Option<String>,
     pub provider_id: Option<String>,
+    pub request_mode: Option<RequestMode>,
     pub skills: Option<Vec<String>>,
     pub knowledge_collections: Option<Vec<String>>,
     pub context_start_index: Option<usize>,
@@ -98,6 +100,7 @@ pub struct ResendRequest {
     pub session_id: String,
     pub checkpoint_id: String,
     pub provider_id: Option<String>,
+    pub request_mode: Option<RequestMode>,
     pub knowledge_collections: Option<Vec<String>>,
     pub thinking_effort: Option<String>,
     pub plan_mode: Option<String>,
@@ -400,6 +403,7 @@ async fn chat_turn(
             session_id: body.session_id.map(SessionId),
             user_input: body.message,
             provider_id: body.provider_id,
+            request_mode: body.request_mode,
             skills: body.skills,
             knowledge_collections: body.knowledge_collections,
             thinking,
@@ -462,6 +466,7 @@ async fn chat_send(
             session_id: body.session_id.map(SessionId),
             user_input: body.message,
             provider_id: body.provider_id,
+            request_mode: body.request_mode,
             skills: body.skills,
             knowledge_collections: body.knowledge_collections,
             thinking,
@@ -579,6 +584,7 @@ async fn chat_resend(
             session_id: SessionId(body.session_id.clone()),
             checkpoint_id: body.checkpoint_id,
             provider_id: body.provider_id,
+            request_mode: body.request_mode,
             knowledge_collections: body.knowledge_collections,
             thinking,
             plan_mode: body.plan_mode,

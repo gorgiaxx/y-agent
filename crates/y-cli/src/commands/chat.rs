@@ -152,6 +152,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 history: &history,
                 turn_number,
                 provider_id: None,
+                request_mode: y_core::provider::RequestMode::TextChat,
                 knowledge_collections: vec![],
                 thinking: None,
                 plan_mode: None,

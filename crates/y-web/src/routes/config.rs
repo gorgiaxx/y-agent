@@ -9,6 +9,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::Value;
+use y_core::provider::ProviderCapability;
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -47,6 +48,9 @@ pub struct ProviderTestRequest {
     pub api_key: String,
     pub api_key_env: String,
     pub base_url: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub capabilities: Option<Vec<ProviderCapability>>,
+    pub probe_mode: Option<String>,
 }
 
 /// Request body for listing models.
@@ -230,6 +234,9 @@ async fn provider_test(
         api_key: body.api_key,
         api_key_env: body.api_key_env,
         base_url: body.base_url,
+        tags: body.tags.unwrap_or_default(),
+        capabilities: body.capabilities.unwrap_or_default(),
+        probe_mode: body.probe_mode.unwrap_or_else(|| "auto".to_string()),
     })
     .await
     .map_err(ApiError::Internal)?;

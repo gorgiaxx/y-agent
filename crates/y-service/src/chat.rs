@@ -20,7 +20,7 @@ use uuid::Uuid;
 use y_agent::agent::definition::AgentDefinition;
 use y_context::AssembledContext;
 use y_core::permission_types::PermissionMode;
-use y_core::provider::{GeneratedImage, ThinkingConfig, ToolCallingMode};
+use y_core::provider::{GeneratedImage, RequestMode, ThinkingConfig, ToolCallingMode};
 use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore, SessionNode};
 use y_core::trust::TrustTier;
 use y_core::types::{Message, Role, SessionId};
@@ -350,6 +350,8 @@ pub struct TurnInput<'a> {
     pub turn_number: u32,
     /// User-selected provider ID. None means auto (pool assigns).
     pub provider_id: Option<String>,
+    /// High-level request mode for the turn.
+    pub request_mode: RequestMode,
     /// Knowledge collection names selected by the user via slash command.
     pub knowledge_collections: Vec<String>,
     /// Thinking/reasoning configuration (`None` = use model defaults).
@@ -436,6 +438,8 @@ pub struct PrepareTurnRequest {
     pub user_input: String,
     /// Provider to route to (`None` = default routing).
     pub provider_id: Option<String>,
+    /// High-level request mode for this turn.
+    pub request_mode: Option<RequestMode>,
     /// Skill names attached to this message by the user.
     pub skills: Option<Vec<String>>,
     /// Knowledge collection names selected by the user.
@@ -476,6 +480,8 @@ pub struct PreparedTurn {
     pub user_input: String,
     /// Provider routing preference.
     pub provider_id: Option<String>,
+    /// High-level request mode for the turn.
+    pub request_mode: RequestMode,
     /// Whether this was a newly created session.
     pub session_created: bool,
     /// Knowledge collection names selected by the user.
@@ -508,6 +514,7 @@ impl PreparedTurn {
             history: &self.history,
             turn_number: self.turn_number,
             provider_id: self.provider_id.clone(),
+            request_mode: self.request_mode,
             knowledge_collections: self.knowledge_collections.clone(),
             thinking: self.thinking.clone(),
             plan_mode: self.plan_mode.clone(),
@@ -592,6 +599,8 @@ pub struct ResendTurnRequest {
     pub checkpoint_id: String,
     /// User-selected provider ID (None = default routing).
     pub provider_id: Option<String>,
+    /// Optional override for the request mode.
+    pub request_mode: Option<RequestMode>,
     /// Knowledge collection names selected by the user.
     pub knowledge_collections: Option<Vec<String>>,
     /// Thinking/reasoning configuration (`None` = use model defaults).
@@ -704,6 +713,7 @@ impl ChatService {
             provider_id: input.provider_id.clone(),
             preferred_models: input.preferred_models.clone(),
             provider_tags: input.provider_tags.clone(),
+            request_mode: input.request_mode,
             temperature: input.temperature,
             max_tokens: input.max_completion_tokens,
             thinking: input.thinking.clone(),
@@ -817,6 +827,13 @@ impl ChatService {
         }
     }
 
+    fn request_mode_from_metadata(metadata: &serde_json::Value) -> Option<RequestMode> {
+        metadata
+            .get("request_mode")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+    }
+
     /// Prepare a turn: resolve/create session, persist user message, read
     /// transcript, compute turn number, and assemble all data needed for
     /// `execute_turn()`.
@@ -906,6 +923,7 @@ impl ChatService {
                 .as_ref()
                 .map_or_else(Vec::new, |config| config.mcp_servers.clone())
         });
+        let request_mode = request.request_mode.unwrap_or_default();
 
         // 2. Build and persist the user message.
         let metadata = {
@@ -919,6 +937,12 @@ impl ChatService {
                         meta.insert(k.clone(), v.clone());
                     }
                 }
+            }
+            if request_mode != RequestMode::TextChat {
+                meta.insert(
+                    "request_mode".into(),
+                    serde_json::to_value(request_mode).unwrap_or(serde_json::Value::Null),
+                );
             }
             if meta.is_empty() {
                 serde_json::Value::Null
@@ -1005,6 +1029,7 @@ impl ChatService {
             turn_number,
             user_input: request.user_input,
             provider_id,
+            request_mode,
             session_created,
             knowledge_collections,
             thinking,
@@ -1125,6 +1150,10 @@ impl ChatService {
                 .as_ref()
                 .and_then(|config| config.plan_mode.clone())
         });
+        let request_mode = request
+            .request_mode
+            .or_else(|| Self::request_mode_from_metadata(&last_msg.metadata))
+            .unwrap_or_default();
         let mcp_mode = agent_config
             .as_ref()
             .and_then(|config| config.mcp_mode.clone());
@@ -1152,6 +1181,7 @@ impl ChatService {
             turn_number,
             user_input,
             provider_id,
+            request_mode,
             session_created: false,
             knowledge_collections,
             thinking,
@@ -1251,7 +1281,8 @@ impl ChatService {
                     .map_or(ToolCallingMode::default(), |m| m.tool_calling_mode)
             }
         };
-        let mut tool_defs = if input.toolcall_enabled {
+        let mut tool_defs = if input.toolcall_enabled && input.request_mode == RequestMode::TextChat
+        {
             if input.trust_tier.is_none() && input.agent_allowed_tools.is_empty() {
                 Self::build_essential_tool_definitions(container).await
             } else {
@@ -1266,11 +1297,13 @@ impl ChatService {
         };
 
         // 1a. Apply MCP mode filtering.
-        Self::apply_mcp_mode_filter(
-            &mut tool_defs,
-            input.mcp_mode.as_deref(),
-            &input.mcp_servers,
-        );
+        if input.request_mode == RequestMode::TextChat {
+            Self::apply_mcp_mode_filter(
+                &mut tool_defs,
+                input.mcp_mode.as_deref(),
+                &input.mcp_servers,
+            );
+        }
 
         // 1a'. Set mcp.enabled flag so the MCP hint prompt section is included.
         //
@@ -1278,11 +1311,12 @@ impl ChatService {
         // so we check for connected MCP servers directly.
         {
             let mcp_mode = input.mcp_mode.as_deref().unwrap_or("auto");
-            let has_mcp = if mcp_mode == "disabled" {
-                false
-            } else {
-                container.mcp_manager.connected_count().await > 0
-            };
+            let has_mcp =
+                if input.request_mode != RequestMode::ImageGeneration && mcp_mode != "disabled" {
+                    container.mcp_manager.connected_count().await > 0
+                } else {
+                    false
+                };
             let mut pctx = container.prompt_context.write().await;
             if has_mcp {
                 pctx.config_flags.insert("mcp.enabled".into(), true);
@@ -1306,16 +1340,21 @@ impl ChatService {
             match plan_mode {
                 "plan" => {
                     let mut pctx = container.prompt_context.write().await;
-                    pctx.config_flags.insert("plan_mode.active".into(), true);
+                    if input.request_mode == RequestMode::TextChat {
+                        pctx.config_flags.insert("plan_mode.active".into(), true);
+                    } else {
+                        pctx.config_flags.remove("plan_mode.active");
+                    }
                     tracing::info!("plan_mode.active flag SET in prompt context");
                 }
                 "auto" => {
-                    let needs_plan = crate::plan_orchestrator::assess_complexity(
-                        container,
-                        input.user_input,
-                        input.provider_id.as_deref(),
-                    )
-                    .await;
+                    let needs_plan = input.request_mode == RequestMode::TextChat
+                        && crate::plan_orchestrator::assess_complexity(
+                            container,
+                            input.user_input,
+                            input.provider_id.as_deref(),
+                        )
+                        .await;
                     if needs_plan {
                         let mut pctx = container.prompt_context.write().await;
                         pctx.config_flags.insert("plan_mode.active".into(), true);
@@ -1334,7 +1373,9 @@ impl ChatService {
         }
 
         // 1c. Inject Plan tool schema when plan mode is active.
-        Self::apply_plan_mode_tool_adjustments(container, &mut tool_defs).await;
+        if input.request_mode == RequestMode::TextChat {
+            Self::apply_plan_mode_tool_adjustments(container, &mut tool_defs).await;
+        }
 
         // 2. Construct execution config for the root agent.
         let max_tool_iterations = container.guardrail_manager.config().max_tool_iterations;
@@ -1970,6 +2011,7 @@ mod tests {
             history: &history,
             turn_number: 2,
             provider_id: None,
+            request_mode: RequestMode::TextChat,
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,
@@ -2003,6 +2045,7 @@ mod tests {
             history: &history,
             turn_number: 2,
             provider_id: None,
+            request_mode: RequestMode::TextChat,
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,
@@ -2053,6 +2096,7 @@ mod tests {
             session_id: None,
             user_input: "hello".into(),
             provider_id: None,
+            request_mode: None,
             skills: None,
             knowledge_collections: None,
             thinking: None,
@@ -2089,6 +2133,7 @@ mod tests {
             session_id: Some(session.id.clone()),
             user_input: "hello".into(),
             provider_id: None,
+            request_mode: None,
             skills: None,
             knowledge_collections: None,
             thinking: None,
@@ -2111,6 +2156,7 @@ mod tests {
             session_id: Some(SessionId("nonexistent-id".into())),
             user_input: "hello".into(),
             provider_id: None,
+            request_mode: None,
             skills: None,
             knowledge_collections: None,
             thinking: None,
@@ -2132,6 +2178,7 @@ mod tests {
             session_id: None,
             user_input: "test message".into(),
             provider_id: None,
+            request_mode: None,
             skills: None,
             knowledge_collections: None,
             thinking: None,
@@ -2154,12 +2201,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prepare_turn_persists_image_generation_request_mode() {
+        let (container, _tmp) = make_test_container().await;
+        let request = PrepareTurnRequest {
+            session_id: None,
+            user_input: "draw a lighthouse".into(),
+            provider_id: None,
+            request_mode: Some(RequestMode::ImageGeneration),
+            skills: None,
+            knowledge_collections: None,
+            thinking: None,
+            user_message_metadata: None,
+            plan_mode: None,
+            mcp_mode: None,
+            mcp_servers: None,
+        };
+        let prepared = ChatService::prepare_turn(&container, request)
+            .await
+            .expect("prepare_turn should succeed");
+
+        let last = prepared
+            .history
+            .last()
+            .expect("history should not be empty");
+        assert_eq!(prepared.request_mode, RequestMode::ImageGeneration);
+        assert_eq!(
+            prepared.as_turn_input().request_mode,
+            RequestMode::ImageGeneration
+        );
+        assert_eq!(
+            last.metadata
+                .get("request_mode")
+                .and_then(|value| value.as_str()),
+            Some("image_generation")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_resend_turn_restores_request_mode_from_user_metadata() {
+        let (container, _tmp) = make_test_container().await;
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: None,
+                user_input: "generate a skyline at dusk".into(),
+                provider_id: None,
+                request_mode: Some(RequestMode::ImageGeneration),
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
+            },
+        )
+        .await
+        .expect("prepare_turn should succeed");
+
+        let assistant = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: "done".into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        };
+        container
+            .session_manager
+            .append_message(&prepared.session_id, &assistant)
+            .await
+            .expect("assistant message should persist");
+
+        let checkpoint = container
+            .chat_checkpoint_manager
+            .create_checkpoint(&prepared.session_id, 1, 0, "scope-1".to_string())
+            .await
+            .expect("checkpoint should create");
+
+        let resent = ChatService::prepare_resend_turn(
+            &container,
+            ResendTurnRequest {
+                session_id: prepared.session_id.clone(),
+                checkpoint_id: checkpoint.checkpoint_id,
+                provider_id: None,
+                request_mode: None,
+                knowledge_collections: None,
+                thinking: None,
+                plan_mode: None,
+            },
+        )
+        .await
+        .expect("prepare_resend_turn should succeed");
+
+        assert_eq!(resent.request_mode, RequestMode::ImageGeneration);
+        assert_eq!(
+            resent.as_turn_input().request_mode,
+            RequestMode::ImageGeneration
+        );
+        assert_eq!(resent.history.len(), 1);
+        assert_eq!(resent.history[0].role, Role::User);
+    }
+
+    #[tokio::test]
     async fn prepare_turn_as_turn_input_matches() {
         let (container, _tmp) = make_test_container().await;
         let request = PrepareTurnRequest {
             session_id: None,
             user_input: "hello".into(),
             provider_id: Some("test-provider".into()),
+            request_mode: None,
             skills: None,
             knowledge_collections: None,
             thinking: None,
@@ -2186,6 +2338,7 @@ mod tests {
             session_id: None,
             user_input: "first".into(),
             provider_id: None,
+            request_mode: None,
             skills: None,
             knowledge_collections: None,
             thinking: None,
@@ -2204,6 +2357,7 @@ mod tests {
             session_id: Some(p1.session_id.clone()),
             user_input: "second".into(),
             provider_id: None,
+            request_mode: None,
             skills: None,
             knowledge_collections: None,
             thinking: None,
@@ -2268,6 +2422,7 @@ thinking_effort = "high"
                 session_id: Some(session.id),
                 user_input: "hello".into(),
                 provider_id: None,
+                request_mode: None,
                 skills: None,
                 knowledge_collections: None,
                 thinking: None,
@@ -2333,6 +2488,7 @@ skills = ["workspace-skill"]
                 session_id: Some(session.id.clone()),
                 user_input: "first".into(),
                 provider_id: None,
+                request_mode: None,
                 skills: None,
                 knowledge_collections: None,
                 thinking: None,
@@ -2352,6 +2508,7 @@ skills = ["workspace-skill"]
                 session_id: Some(session.id),
                 user_input: "second".into(),
                 provider_id: None,
+                request_mode: None,
                 skills: None,
                 knowledge_collections: None,
                 thinking: None,
@@ -2409,6 +2566,7 @@ max_iterations = 1
                 session_id: Some(session.id.clone()),
                 user_input: "first".into(),
                 provider_id: None,
+                request_mode: None,
                 skills: None,
                 knowledge_collections: None,
                 thinking: None,
@@ -2427,6 +2585,7 @@ max_iterations = 1
                 session_id: Some(session.id),
                 user_input: "second".into(),
                 provider_id: None,
+                request_mode: None,
                 skills: None,
                 knowledge_collections: None,
                 thinking: None,

@@ -14,7 +14,8 @@ use tracing::instrument;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ProviderCapability, ProviderError, ProviderMetadata, ProviderType, RequestMode,
+    ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -41,6 +42,7 @@ impl OllamaProvider {
         base_url: Option<String>,
         proxy_url: Option<String>,
         tags: Vec<String>,
+        capabilities: Vec<ProviderCapability>,
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
@@ -65,6 +67,7 @@ impl OllamaProvider {
                 provider_type: ProviderType::Ollama,
                 model: model.to_string(),
                 tags,
+                capabilities,
                 max_concurrency,
                 context_window,
                 cost_per_1k_input: 0.0,
@@ -176,6 +179,13 @@ impl OllamaProvider {
 impl LlmProvider for OllamaProvider {
     #[instrument(skip(self, request), fields(model = %self.metadata.model, provider_id = %self.metadata.id))]
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return Err(ProviderError::Other {
+                message: "dedicated image generation is not implemented for ollama providers"
+                    .into(),
+            });
+        }
+
         let body = self.build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
@@ -274,6 +284,13 @@ impl LlmProvider for OllamaProvider {
         &self,
         request: &ChatRequest,
     ) -> Result<ChatStreamResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return Err(ProviderError::Other {
+                message: "dedicated image generation is not implemented for ollama providers"
+                    .into(),
+            });
+        }
+
         let body = self.build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 

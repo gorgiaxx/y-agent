@@ -200,6 +200,7 @@ pub fn submit_message(
             history: &history,
             turn_number: user_msg_count,
             provider_id: selected_provider_id,
+            request_mode: y_core::provider::RequestMode::TextChat,
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,

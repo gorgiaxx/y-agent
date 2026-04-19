@@ -67,6 +67,29 @@ url = "socks5://proxy.company.com:1080"
 enabled = false   # Local provider, no proxy
 ```
 
+## Provider Capabilities
+
+`providers.toml` may declare explicit capabilities for each provider. These are
+used for request shaping and GUI affordances, while `tags` remain a routing tool.
+
+```toml
+[[providers]]
+id = "seedream"
+provider_type = "openai-compat"
+model = "doubao-seedream-4-5-251128"
+tags = ["image"]
+capabilities = ["image_generation"]
+```
+
+Recommended conventions:
+
+- `tags`: `general`, `title`, `reasoning`, `fast`
+- `capabilities`: `text`, `vision`, `image_generation`
+
+When `capabilities` are omitted, y-agent may derive compatibility hints from the
+existing provider configuration for backward compatibility, but explicit
+capabilities are preferred.
+
 ## Browser Tool Configuration
 
 ```toml

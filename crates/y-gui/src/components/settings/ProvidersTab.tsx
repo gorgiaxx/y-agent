@@ -63,6 +63,9 @@ function ProviderTabPanel({
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
         baseUrl: provider.base_url ?? null,
+        tags: provider.tags,
+        capabilities: provider.capabilities,
+        probeMode: 'auto',
       });
       setTestResult({ ok: true, message: msg });
     } catch (e) {
@@ -275,6 +278,16 @@ function ProviderTabPanel({
           <TagChipInput
             tags={provider.tags}
             onChange={(next) => update({ tags: next })}
+          />
+        </SettingsItem>
+        <SettingsItem
+          title="Capabilities"
+          description="Used for request shaping. Examples: text, vision, image_generation"
+          wide
+        >
+          <TagChipInput
+            tags={provider.capabilities}
+            onChange={(next) => update({ capabilities: next })}
           />
         </SettingsItem>
       </SettingsGroup>

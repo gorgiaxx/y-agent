@@ -17,6 +17,7 @@ import type {
   PlanMode,
   McpMode,
   Attachment,
+  RequestMode,
 } from '../types';
 import {
   chatBusState,
@@ -89,7 +90,7 @@ interface UseChatReturn {
    *  order (stream_delta -> text, tool_result -> tool card) so the
    *  interleaving is inherently correct without character offsets. */
   getStreamSegments: () => InterleavedSegment[] | null;
-  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => Promise<ChatStarted | null>;
   cancelRun: () => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
@@ -100,7 +101,7 @@ interface UseChatReturn {
   cancelEdit: () => void;
   /** Execute edit and resend: undo to checkpoint then send new content.
    *  This is the transactional compound operation called from handleSend. */
-  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode) => Promise<ChatStarted | null>;
+  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode, requestMode?: RequestMode) => Promise<ChatStarted | null>;
   /** Undo to a specific message: rolls back all state to before that message was sent. */
   undoToMessage: (sessionId: string, messageId: string) => Promise<UndoResult | null>;
   /** Resend: keep user message, remove assistant reply, re-run LLM. */
@@ -243,6 +244,14 @@ export function useChat(
 
     return pendingRunId;
   }, []);
+
+  const getRequestModeFromMessage = useCallback(
+    (message: Message | undefined): RequestMode => {
+      const mode = message?.metadata?.request_mode;
+      return mode === 'image_generation' ? 'image_generation' : 'text_chat';
+    },
+    [],
+  );
 
   // Keep a ref in sync with activeSessionId.
   const activeSessionIdRef = useRef<string | null>(activeSessionId);
@@ -1080,7 +1089,7 @@ export function useChat(
   const sendingRef = useRef(false);
 
   const sendMessage = useCallback(
-    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]): Promise<ChatStarted | null> => {
+    async (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode): Promise<ChatStarted | null> => {
       // Guard: block if any operation is already in progress, including a
       // prior send.  The previous guard also allowed 'sending' through,
       // which could cause duplicate LLM calls when rapid double-fires
@@ -1127,6 +1136,7 @@ export function useChat(
           message,
           sessionId,
           providerId: providerId ?? null,
+          requestMode: requestMode ?? 'text_chat',
           skills: skills && skills.length > 0 ? skills : null,
           knowledgeCollections: knowledgeCollections && knowledgeCollections.length > 0 ? knowledgeCollections : null,
           contextStartIndex: resetIdx,
@@ -1177,7 +1187,7 @@ export function useChat(
   // ------------------------------------------------------------------
 
   const editAndResend = useCallback(
-    async (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode): Promise<ChatStarted | null> => {
+    async (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode, requestMode?: RequestMode): Promise<ChatStarted | null> => {
       if (opStatusRef.current !== 'idle') {
         console.warn(`[chat] editAndResend blocked: opStatus=${opStatusRef.current}`);
         return null;
@@ -1243,6 +1253,7 @@ export function useChat(
                 message: newContent,
                 sessionId,
                 providerId: providerId ?? null,
+                requestMode: requestMode ?? 'text_chat',
                 thinkingEffort: thinkingEffort ?? null,
                 planMode: planMode ?? null,
               });
@@ -1287,6 +1298,7 @@ export function useChat(
             message: newContent,
             sessionId,
             providerId: providerId ?? null,
+            requestMode: requestMode ?? 'text_chat',
             thinkingEffort: thinkingEffort ?? null,
             planMode: planMode ?? null,
           });
@@ -1452,6 +1464,7 @@ export function useChat(
                 message: content,
                 sessionId,
                 providerId: providerId ?? null,
+                requestMode: getRequestModeFromMessage(freshMsgs[userIdx]),
                 thinkingEffort: thinkingEffort ?? null,
                 planMode: planMode ?? null,
               });
@@ -1480,6 +1493,7 @@ export function useChat(
             sessionId,
             checkpointId: checkpoint.checkpoint_id,
             providerId: providerId ?? null,
+            requestMode: getRequestModeFromMessage(keptMsgs[keptMsgs.length - 1]),
             thinkingEffort: thinkingEffort ?? null,
             planMode: planMode ?? null,
           });
@@ -1496,7 +1510,7 @@ export function useChat(
         }
       });
     },
-    [syncVisible, setOp, loadMessages, invalidateStaleContextResets, markSessionActivity],
+    [syncVisible, setOp, loadMessages, invalidateStaleContextResets, markSessionActivity, getRequestModeFromMessage],
   );
 
   // ------------------------------------------------------------------

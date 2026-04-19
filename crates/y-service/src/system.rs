@@ -1,5 +1,6 @@
 //! System status service.
 
+use y_core::provider::ProviderCapability;
 use y_core::provider::ProviderPool;
 use y_core::runtime::RuntimeAdapter;
 use y_provider::ProviderPoolConfig;
@@ -39,6 +40,8 @@ pub struct ProviderInfo {
     pub model: String,
     /// Provider backend type (e.g. "openai", "anthropic").
     pub provider_type: String,
+    /// Provider capabilities used for request shaping.
+    pub capabilities: Vec<ProviderCapability>,
 }
 
 /// Request to test a provider configuration.
@@ -54,6 +57,24 @@ pub struct ProviderTestRequest {
     pub api_key_env: String,
     /// Optional base URL override.
     pub base_url: Option<String>,
+    /// Routing tags (legacy hint for capability inference).
+    pub tags: Vec<String>,
+    /// Explicit provider capabilities.
+    pub capabilities: Vec<ProviderCapability>,
+    /// Probe mode (`auto`, `text_chat`, `image_generation`).
+    pub probe_mode: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderProbeMode {
+    TextChat,
+    ImageGeneration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProbeSuccessKind {
+    TextChat,
+    ImageGeneration,
 }
 
 /// System-level service for status and health reporting.
@@ -99,6 +120,7 @@ impl SystemService {
                 id: m.id.to_string(),
                 model: m.model.clone(),
                 provider_type: format!("{:?}", m.provider_type),
+                capabilities: m.capabilities.clone(),
             })
             .collect()
     }
@@ -266,8 +288,13 @@ impl SystemService {
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
-        match request.provider_type.as_str() {
-            "openai" | "openai-compat" | "azure" | "ollama" | "deepseek" => {
+        let probe_mode = Self::resolve_probe_mode(&request);
+
+        match (request.provider_type.as_str(), probe_mode) {
+            (
+                "openai" | "openai-compat" | "azure" | "ollama" | "deepseek",
+                ProviderProbeMode::TextChat,
+            ) => {
                 let resolved_base = request
                     .base_url
                     .as_deref()
@@ -294,9 +321,61 @@ impl SystemService {
                     .send()
                     .await
                     .map_err(|e| format!("Network error reaching {url}: {e}"))?;
-                Self::interpret_response(response, &["model"]).await
+                Self::interpret_response(response, &["model"], ProbeSuccessKind::TextChat).await
             }
-            "anthropic" => {
+            ("openai" | "openai-compat" | "deepseek", ProviderProbeMode::ImageGeneration) => {
+                let resolved_base =
+                    request
+                        .base_url
+                        .as_deref()
+                        .unwrap_or(match request.provider_type.as_str() {
+                            "deepseek" => "https://api.deepseek.com/v1",
+                            _ => "https://api.openai.com/v1",
+                        });
+                let url = format!("{}/images/generations", resolved_base.trim_end_matches('/'));
+                let body = serde_json::json!({
+                    "model": request.model,
+                    "prompt": "ping",
+                    "response_format": "b64_json"
+                });
+                let mut req = client.post(&url).header("Content-Type", "application/json");
+                if !effective_key.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {effective_key}"));
+                }
+                let response = req
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                Self::interpret_response(response, &["model"], ProbeSuccessKind::ImageGeneration)
+                    .await
+            }
+            ("azure", ProviderProbeMode::ImageGeneration) => {
+                let resolved_base = request.base_url.as_deref().unwrap_or(
+                    "https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT",
+                );
+                let url = format!(
+                    "{}/images/generations?api-version=2024-10-21",
+                    resolved_base.trim_end_matches('/'),
+                );
+                let body = serde_json::json!({
+                    "model": request.model,
+                    "prompt": "ping",
+                    "response_format": "b64_json"
+                });
+                let mut req = client.post(&url).header("Content-Type", "application/json");
+                if !effective_key.is_empty() {
+                    req = req.header("api-key", effective_key.clone());
+                }
+                let response = req
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                Self::interpret_response(response, &["model"], ProbeSuccessKind::ImageGeneration)
+                    .await
+            }
+            ("anthropic", ProviderProbeMode::TextChat) => {
                 let resolved_base = request
                     .base_url
                     .as_deref()
@@ -319,9 +398,9 @@ impl SystemService {
                     .send()
                     .await
                     .map_err(|e| format!("Network error reaching {url}: {e}"))?;
-                Self::interpret_response(response, &["model"]).await
+                Self::interpret_response(response, &["model"], ProbeSuccessKind::TextChat).await
             }
-            "gemini" => {
+            ("gemini", ProviderProbeMode::TextChat) => {
                 let resolved_base = request
                     .base_url
                     .as_deref()
@@ -351,13 +430,43 @@ impl SystemService {
                     .send()
                     .await
                     .map_err(|e| format!("Network error reaching {url}: {e}"))?;
-                Self::interpret_response(response, &["modelVersion", "model"]).await
+                Self::interpret_response(
+                    response,
+                    &["modelVersion", "model"],
+                    ProbeSuccessKind::TextChat,
+                )
+                .await
             }
+            (_, ProviderProbeMode::ImageGeneration) => Err(format!(
+                "Active image-generation test is not yet implemented for provider type '{}'",
+                request.provider_type
+            )),
             _ => Ok(format!(
                 "Configuration accepted (active connection test is not yet implemented \
                  for provider type '{}')",
                 request.provider_type
             )),
+        }
+    }
+
+    fn resolve_probe_mode(request: &ProviderTestRequest) -> ProviderProbeMode {
+        match request.probe_mode.as_str() {
+            "text_chat" => ProviderProbeMode::TextChat,
+            "image_generation" => ProviderProbeMode::ImageGeneration,
+            _ => {
+                if request
+                    .capabilities
+                    .contains(&ProviderCapability::ImageGeneration)
+                    || request.tags.iter().any(|tag| {
+                        let normalized = tag.to_ascii_lowercase();
+                        normalized == "image" || normalized == "image_generation"
+                    })
+                {
+                    ProviderProbeMode::ImageGeneration
+                } else {
+                    ProviderProbeMode::TextChat
+                }
+            }
         }
     }
 
@@ -369,6 +478,7 @@ impl SystemService {
     async fn interpret_response(
         response: reqwest::Response,
         model_keys: &[&str],
+        success_kind: ProbeSuccessKind,
     ) -> Result<String, String> {
         let status = response.status();
         let body_text = response.text().await.unwrap_or_default();
@@ -382,10 +492,23 @@ impl SystemService {
                         .find_map(|k| v.get(*k).and_then(|m| m.as_str()).map(String::from))
                 });
             return match model_name {
-                Some(m) => Ok(format!(
-                    "Connection successful -- model '{m}' responded normally"
-                )),
-                None => Ok("Connection successful -- provider responded normally".into()),
+                Some(m) => Ok(match success_kind {
+                    ProbeSuccessKind::TextChat => {
+                        format!("Connection successful -- model '{m}' responded normally")
+                    }
+                    ProbeSuccessKind::ImageGeneration => format!(
+                        "Connection successful -- image generation model '{m}' responded normally"
+                    ),
+                }),
+                None => Ok(match success_kind {
+                    ProbeSuccessKind::TextChat => {
+                        "Connection successful -- provider responded normally".into()
+                    }
+                    ProbeSuccessKind::ImageGeneration => {
+                        "Connection successful -- image generation endpoint responded normally"
+                            .into()
+                    }
+                }),
             };
         }
 
@@ -412,5 +535,152 @@ impl SystemService {
         }
 
         Err(format!("Provider returned HTTP {status}: {detail}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use y_core::provider::ProviderCapability;
+
+    use super::*;
+
+    async fn spawn_single_response_server(
+        response_body: &'static str,
+    ) -> Option<(
+        String,
+        tokio::sync::oneshot::Receiver<String>,
+        tokio::sync::oneshot::Receiver<String>,
+    )> {
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping socket-based probe test in restricted sandbox: {error}");
+                return None;
+            }
+            Err(error) => panic!("bind test listener: {error}"),
+        };
+        let address = listener.local_addr().expect("listener address");
+        let (request_line_tx, request_line_rx) = tokio::sync::oneshot::channel();
+        let (body_tx, body_rx) = tokio::sync::oneshot::channel();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 2048];
+
+            loop {
+                let read = socket.read(&mut chunk).await.expect("read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+
+                let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+
+                let header_text = String::from_utf8_lossy(&buffer[..headers_end]);
+                let content_length = header_text
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        if name.eq_ignore_ascii_case("content-length") {
+                            value.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+
+                let body_start = headers_end + 4;
+                if buffer.len() >= body_start + content_length {
+                    let request_line = header_text.lines().next().unwrap_or_default().to_string();
+                    let body =
+                        String::from_utf8_lossy(&buffer[body_start..body_start + content_length])
+                            .to_string();
+                    let _ = request_line_tx.send(request_line);
+                    let _ = body_tx.send(body);
+                    break;
+                }
+            }
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+        });
+
+        Some((format!("http://{address}/v1"), request_line_rx, body_rx))
+    }
+
+    #[tokio::test]
+    async fn test_provider_auto_probe_uses_chat_completions_for_text_models() {
+        let Some((base_url, request_line_rx, body_rx)) =
+            spawn_single_response_server(r#"{"id":"x","model":"text-model"}"#).await
+        else {
+            return;
+        };
+
+        let result = SystemService::test_provider(ProviderTestRequest {
+            provider_type: "openai-compat".into(),
+            model: "text-model".into(),
+            api_key: String::new(),
+            api_key_env: String::new(),
+            base_url: Some(base_url),
+            tags: vec![],
+            capabilities: vec![ProviderCapability::Text],
+            probe_mode: "auto".into(),
+        })
+        .await
+        .expect("text probe should succeed");
+
+        assert!(request_line_rx
+            .await
+            .expect("request line")
+            .contains("/v1/chat/completions"),);
+        let body = body_rx.await.expect("request body");
+        assert!(body.contains("\"messages\""));
+        assert!(result.contains("text-model"));
+    }
+
+    #[tokio::test]
+    async fn test_provider_auto_probe_uses_image_generation_for_image_models() {
+        let Some((base_url, request_line_rx, body_rx)) = spawn_single_response_server(
+            r#"{"data":[{"b64_json":"aGVsbG8="}],"model":"seedream"}"#,
+        )
+        .await
+        else {
+            return;
+        };
+
+        let result = SystemService::test_provider(ProviderTestRequest {
+            provider_type: "openai-compat".into(),
+            model: "seedream".into(),
+            api_key: String::new(),
+            api_key_env: String::new(),
+            base_url: Some(base_url),
+            tags: vec!["image".into()],
+            capabilities: vec![ProviderCapability::ImageGeneration],
+            probe_mode: "auto".into(),
+        })
+        .await
+        .expect("image probe should succeed");
+
+        assert!(request_line_rx
+            .await
+            .expect("request line")
+            .contains("/v1/images/generations"),);
+        let body = body_rx.await.expect("request body");
+        assert!(body.contains("\"prompt\":\"ping\""));
+        assert!(body.contains("\"response_format\":\"b64_json\""));
+        assert!(result.contains("Connection successful"));
     }
 }

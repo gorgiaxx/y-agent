@@ -203,6 +203,9 @@ export function SetupWizard({
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
         baseUrl: provider.base_url ?? null,
+        tags: provider.tags,
+        capabilities: provider.capabilities,
+        probeMode: 'auto',
       });
       setTestResult({ ok: true, message: msg });
     } catch (e) {

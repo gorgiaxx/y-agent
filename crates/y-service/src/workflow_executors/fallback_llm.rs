@@ -66,6 +66,7 @@ impl TaskExecutor for FallbackLlmExecutor {
         let request = ChatRequest {
             messages: vec![make_message(Role::User, &prompt)],
             model: None,
+            request_mode: y_core::provider::RequestMode::TextChat,
             max_tokens: None,
             temperature: None,
             top_p: None,

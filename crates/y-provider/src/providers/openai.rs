@@ -11,7 +11,8 @@ use tracing::instrument;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
-    LlmProvider, ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
+    ProviderType, RequestMode, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -34,6 +35,7 @@ impl OpenAiProvider {
         base_url: Option<String>,
         proxy_url: Option<String>,
         tags: Vec<String>,
+        capabilities: Vec<ProviderCapability>,
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
@@ -56,6 +58,7 @@ impl OpenAiProvider {
                 provider_type: ProviderType::OpenAi,
                 model: model.to_string(),
                 tags,
+                capabilities,
                 max_concurrency,
                 context_window,
                 cost_per_1k_input: 0.0,
@@ -68,6 +71,215 @@ impl OpenAiProvider {
     /// Build the full API URL for a given endpoint.
     fn api_url(&self, endpoint: &str) -> String {
         format!("{}/{}", self.base_url.trim_end_matches('/'), endpoint)
+    }
+
+    fn latest_user_prompt(request: &ChatRequest) -> Result<String, ProviderError> {
+        request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == y_core::types::Role::User)
+            .map(|message| message.content.trim().to_string())
+            .filter(|prompt| !prompt.is_empty())
+            .ok_or_else(|| ProviderError::Other {
+                message: "image generation requires a non-empty user prompt".into(),
+            })
+    }
+
+    fn ensure_no_image_generation_attachments(request: &ChatRequest) -> Result<(), ProviderError> {
+        let has_attachments = request.messages.iter().rev().find_map(|message| {
+            message
+                .metadata
+                .get("attachments")
+                .and_then(|value| value.as_array())
+                .map(|attachments| !attachments.is_empty())
+        });
+
+        if has_attachments == Some(true) {
+            return Err(ProviderError::Other {
+                message:
+                    "dedicated image generation does not yet support attachments; use text-only prompts"
+                        .into(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn build_image_generation_request_body(
+        &self,
+        request: &ChatRequest,
+    ) -> Result<OpenAiImageGenerationRequest, ProviderError> {
+        Self::ensure_no_image_generation_attachments(request)?;
+        let model = request.model.as_deref().unwrap_or(&self.metadata.model);
+        let prompt = Self::latest_user_prompt(request)?;
+        Ok(OpenAiImageGenerationRequest {
+            model: model.to_string(),
+            prompt,
+            response_format: Some("b64_json".to_string()),
+        })
+    }
+
+    async fn generate_images(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        let body = self.build_image_generation_request_body(request)?;
+        let raw_request = serde_json::to_value(&body).ok();
+
+        let mut request_builder = self
+            .client
+            .post(self.api_url("images/generations"))
+            .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response =
+            request_builder
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkError {
+                    message: e.to_string(),
+                })?;
+
+        let status = response.status();
+
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(60_u64);
+
+            return Err(ProviderError::RateLimited {
+                provider: self.metadata.id.to_string(),
+                retry_after_secs: retry_after,
+            });
+        }
+
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::AuthenticationFailed {
+                provider: self.metadata.id.to_string(),
+                message: error_body,
+            });
+        }
+
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::ServerError {
+                provider: self.metadata.id.to_string(),
+                message: format!("HTTP {status}: {error_body}"),
+            });
+        }
+
+        let response_text = response.text().await.map_err(|e| ProviderError::Other {
+            message: format!("read response body: {e}"),
+        })?;
+        let raw_response: serde_json::Value =
+            serde_json::from_str(&response_text).map_err(|e| ProviderError::Other {
+                message: format!("parse response JSON: {e}"),
+            })?;
+        let image_response: OpenAiImageGenerationResponse =
+            serde_json::from_value(raw_response.clone()).map_err(|e| ProviderError::Other {
+                message: format!("parse image generation response: {e}"),
+            })?;
+
+        let mut content_parts = Vec::new();
+        let mut generated_images = Vec::new();
+
+        for (index, item) in image_response.data.into_iter().enumerate() {
+            if let Some(data) = item.b64_json.filter(|value| !value.is_empty()) {
+                generated_images.push(GeneratedImage {
+                    index,
+                    mime_type: "image/png".into(),
+                    data,
+                });
+            } else if let Some(url) = item.url.filter(|value| !value.is_empty()) {
+                content_parts.push(url);
+            }
+        }
+
+        if generated_images.is_empty() && content_parts.is_empty() {
+            return Err(ProviderError::Other {
+                message: "image generation response contained no images".into(),
+            });
+        }
+
+        Ok(ChatResponse {
+            id: String::new(),
+            model: image_response
+                .model
+                .unwrap_or_else(|| self.metadata.model.clone()),
+            content: (!content_parts.is_empty()).then(|| content_parts.join("\n")),
+            reasoning_content: None,
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            finish_reason: FinishReason::Stop,
+            raw_request,
+            raw_response: Some(raw_response),
+            provider_id: None,
+            generated_images,
+        })
+    }
+
+    async fn generate_images_stream(
+        &self,
+        request: &ChatRequest,
+    ) -> Result<ChatStreamResponse, ProviderError> {
+        use futures::stream;
+
+        let response = self.generate_images(request).await?;
+        let raw_request = response.raw_request.clone();
+        let content = response.content.clone();
+        let generated_images = response.generated_images.clone();
+        let finish_reason = response.finish_reason.clone();
+        let usage = response.usage.clone();
+
+        let mut chunks = Vec::new();
+        if let Some(delta_content) = content.filter(|value| !value.is_empty()) {
+            chunks.push(Ok(ChatStreamChunk {
+                delta_content: Some(delta_content),
+                delta_reasoning_content: None,
+                delta_tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                delta_images: vec![],
+            }));
+        }
+        for image in generated_images {
+            chunks.push(Ok(ChatStreamChunk {
+                delta_content: None,
+                delta_reasoning_content: None,
+                delta_tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                delta_images: vec![ImageContentDelta {
+                    index: image.index,
+                    mime_type: image.mime_type,
+                    partial_data: image.data,
+                    is_complete: true,
+                }],
+            }));
+        }
+        chunks.push(Ok(ChatStreamChunk {
+            delta_content: None,
+            delta_reasoning_content: None,
+            delta_tool_calls: vec![],
+            usage: Some(usage),
+            finish_reason: Some(finish_reason),
+            delta_images: vec![],
+        }));
+
+        Ok(ChatStreamResponse {
+            stream: Box::pin(stream::iter(chunks)),
+            raw_request,
+            provider_id: None,
+            model: self.metadata.model.clone(),
+            context_window: self.metadata.context_window,
+        })
     }
 
     /// Build `OpenAI` message list from a `ChatRequest`.
@@ -236,6 +448,10 @@ impl OpenAiProvider {
 impl LlmProvider for OpenAiProvider {
     #[instrument(skip(self, request), fields(model = %self.metadata.model, provider_id = %self.metadata.id))]
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return self.generate_images(request).await;
+        }
+
         let body = self.build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
@@ -368,6 +584,10 @@ impl LlmProvider for OpenAiProvider {
         &self,
         request: &ChatRequest,
     ) -> Result<ChatStreamResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return self.generate_images_stream(request).await;
+        }
+
         let body = self.build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 
@@ -780,6 +1000,30 @@ struct OpenAiUsage {
     prompt_tokens: u32,
     #[serde(default)]
     completion_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OpenAiImageGenerationRequest {
+    model: String,
+    prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiImageGenerationResponse {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    data: Vec<OpenAiImageGenerationItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiImageGenerationItem {
+    #[serde(default)]
+    b64_json: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

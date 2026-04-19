@@ -40,6 +40,7 @@ impl HealthChecker {
                 metadata: serde_json::Value::Null,
             }],
             model: None,
+            request_mode: y_core::provider::RequestMode::TextChat,
             max_tokens: Some(1),
             temperature: Some(0.0),
             top_p: None,

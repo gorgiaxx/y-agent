@@ -63,6 +63,7 @@ impl HookLlmRunner for ProviderPoolHookLlmRunner {
                 },
             ],
             model: model.map(std::string::ToString::to_string),
+            request_mode: y_core::provider::RequestMode::TextChat,
             max_tokens: Some(256),  // Hook responses are short JSON.
             temperature: Some(0.0), // Deterministic for safety decisions.
             top_p: None,

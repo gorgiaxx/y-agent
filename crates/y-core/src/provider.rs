@@ -109,6 +109,28 @@ pub enum ResponseFormat {
 }
 
 // ---------------------------------------------------------------------------
+// Provider capabilities / request mode
+// ---------------------------------------------------------------------------
+
+/// Capability advertised by a provider/model combination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderCapability {
+    Text,
+    Vision,
+    ImageGeneration,
+}
+
+/// High-level request mode sent to a provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestMode {
+    #[default]
+    TextChat,
+    ImageGeneration,
+}
+
+// ---------------------------------------------------------------------------
 // Image generation
 // ---------------------------------------------------------------------------
 
@@ -145,6 +167,8 @@ pub struct ImageContentDelta {
 pub struct ChatRequest {
     pub messages: Vec<Message>,
     pub model: Option<String>,
+    /// High-level request mode (`text_chat` by default).
+    pub request_mode: RequestMode,
     /// Maximum tokens to generate.
     pub max_tokens: Option<u32>,
     /// Sampling temperature (0.0 - 2.0).
@@ -257,6 +281,7 @@ pub struct ProviderMetadata {
     pub provider_type: ProviderType,
     pub model: String,
     pub tags: Vec<String>,
+    pub capabilities: Vec<ProviderCapability>,
     pub max_concurrency: usize,
     pub context_window: usize,
     pub cost_per_1k_input: f64,

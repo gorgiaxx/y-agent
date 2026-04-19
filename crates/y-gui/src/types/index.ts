@@ -297,6 +297,7 @@ export interface ProviderInfo {
   id: string;
   model: string;
   provider_type: string;
+  capabilities: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +311,9 @@ export type PlanMode = 'fast' | 'auto' | 'plan';
 
 /** MCP mode: controls which MCP server tools are included in requests. */
 export type McpMode = 'auto' | 'manual' | 'disabled';
+
+/** High-level provider request mode. */
+export type RequestMode = 'text_chat' | 'image_generation';
 
 /** Last-turn metadata cached per session by the backend (from `session_last_turn_meta`). */
 export interface TurnMeta {

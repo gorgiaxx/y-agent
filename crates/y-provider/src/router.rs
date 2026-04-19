@@ -93,6 +93,37 @@ impl TagBasedRouter {
         providers: &[RoutableProvider],
         route: &RouteRequest,
     ) -> Result<usize, ProviderError> {
+        // Step 0: Explicit provider selection bypasses freeze/priority
+        // prefiltering so manual user choice can retry a previously frozen
+        // provider and surface the real provider error.
+        if let Some(ref preferred_id) = route.preferred_provider_id {
+            let Some((idx, provider)) = providers
+                .iter()
+                .enumerate()
+                .find(|(_, p)| p.provider.metadata().id == *preferred_id)
+            else {
+                return Err(ProviderError::Other {
+                    message: format!("preferred provider '{preferred_id}' is not registered"),
+                });
+            };
+
+            let meta = provider.provider.metadata();
+            if route
+                .required_tags
+                .iter()
+                .all(|tag| meta.tags.contains(tag))
+            {
+                return Ok(idx);
+            }
+
+            return Err(ProviderError::Other {
+                message: format!(
+                    "preferred provider '{}' does not match required tags {:?}",
+                    preferred_id, route.required_tags
+                ),
+            });
+        }
+
         // Step 1: Filter to non-frozen providers matching all required tags.
         let candidates: Vec<usize> = providers
             .iter()
@@ -132,21 +163,7 @@ impl TagBasedRouter {
             });
         }
 
-        // Step 2: Prefer exact provider ID match if specified (highest priority).
-        if let Some(ref preferred_id) = route.preferred_provider_id {
-            for &idx in &candidates {
-                if providers[idx].provider.metadata().id == *preferred_id {
-                    return Ok(idx);
-                }
-            }
-            // The requested provider exists but is not among candidates
-            // (frozen, wrong tags, or at capacity).
-            return Err(ProviderError::NoProviderAvailable {
-                tags: route.required_tags.clone(),
-            });
-        }
-
-        // Step 3: Prefer exact model match if specified.
+        // Step 2: Prefer exact model match if specified.
         if let Some(ref preferred) = route.preferred_model {
             for &idx in &candidates {
                 if providers[idx].provider.metadata().model == *preferred {
@@ -155,7 +172,7 @@ impl TagBasedRouter {
             }
         }
 
-        // Step 4: Apply selection strategy among remaining candidates.
+        // Step 3: Apply selection strategy among remaining candidates.
         Ok(self.apply_strategy(providers, &candidates))
     }
 
@@ -231,6 +248,7 @@ mod tests {
                     provider_type: ProviderType::OpenAi,
                     model: model.into(),
                     tags: tags.into_iter().map(String::from).collect(),
+                    capabilities: vec![ProviderCapability::Text],
                     max_concurrency: 5,
                     context_window: 128_000,
                     cost_per_1k_input: 0.01,
@@ -247,6 +265,7 @@ mod tests {
                     provider_type: ProviderType::OpenAi,
                     model: model.into(),
                     tags: tags.into_iter().map(String::from).collect(),
+                    capabilities: vec![ProviderCapability::Text],
                     max_concurrency: 5,
                     context_window: 128_000,
                     cost_per_1k_input: cost_input,
@@ -377,6 +396,23 @@ mod tests {
 
         let idx = router.select(&providers, &route).unwrap();
         assert_eq!(idx, 1, "should skip frozen p1 and select p2");
+    }
+
+    #[test]
+    fn test_routing_preferred_provider_bypasses_freeze() {
+        let router = TagBasedRouter::new();
+        let providers = vec![
+            make_frozen_routable("p1", "seedream", vec!["image"]),
+            make_routable("p2", "gpt-4o", vec!["general"]),
+        ];
+
+        let route = RouteRequest {
+            preferred_provider_id: Some(y_core::types::ProviderId::from_string("p1")),
+            ..Default::default()
+        };
+
+        let idx = router.select(&providers, &route).unwrap();
+        assert_eq!(idx, 0, "preferred provider should bypass freeze prefilter");
     }
 
     #[test]

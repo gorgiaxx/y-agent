@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon } from 'lucide-react';
 import { transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
@@ -11,7 +11,7 @@ import { SessionPromptDialog } from '../SessionPromptDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
 import './InputArea.css';
 
@@ -43,7 +43,7 @@ function ToolbarTooltipButton({
 }
 
 interface InputAreaProps {
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -182,6 +182,7 @@ export function InputArea({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [translating, setTranslating] = useState(false);
   const [inputHasText, setInputHasText] = useState(false);
+  const [requestMode, setRequestMode] = useState<RequestMode>('text_chat');
 
   // Plan mode: defaults to a global preference, but can be controlled by a caller.
   const [uncontrolledPlanMode, setUncontrolledPlanMode] = useState<PlanMode>(() => {
@@ -254,6 +255,31 @@ export function InputArea({
   const selectedProviderLabel = selectedProviderId === 'auto'
     ? 'Auto'
     : providers.find((p) => p.id === selectedProviderId)?.model || selectedProviderId;
+  const selectedProvider = providers.find((p) => p.id === selectedProviderId);
+  const selectedProviderCapabilities = new Set(selectedProvider?.capabilities ?? []);
+  const providerSupportsImageGeneration =
+    selectedProviderId !== 'auto' && selectedProviderCapabilities.has('image_generation');
+  const providerSupportsText =
+    selectedProviderId === 'auto'
+    || selectedProviderCapabilities.size === 0
+    || selectedProviderCapabilities.has('text');
+  const canToggleRequestMode = providerSupportsImageGeneration && providerSupportsText;
+
+  useEffect(() => {
+    if (!providerSupportsImageGeneration) {
+      setRequestMode('text_chat');
+      return;
+    }
+    if (!providerSupportsText) {
+      setRequestMode('image_generation');
+    }
+  }, [providerSupportsImageGeneration, providerSupportsText, selectedProviderId]);
+
+  useEffect(() => {
+    if (requestMode === 'image_generation' && attachments.length > 0) {
+      setAttachments([]);
+    }
+  }, [requestMode, attachments.length]);
 
   const updateHasContent = useCallback(() => {
     const hasContent = contentEditableRef.current?.hasContent() ?? false;
@@ -357,6 +383,7 @@ export function InputArea({
       planMode,
       mcpMode,
       mcpMode === 'manual' ? selectedMcpServers : undefined,
+      requestMode,
     );
     resetInput();
     setAttachments([]);
@@ -651,6 +678,30 @@ export function InputArea({
           </div>
 
           {/* (f) Plan mode selector */}
+          {providerSupportsImageGeneration && (
+            <ToolbarTooltipButton
+              className={`toolbar-btn ${requestMode === 'image_generation' ? 'toolbar-btn--active' : ''}`}
+              onClick={() => {
+                if (!canToggleRequestMode) return;
+                setRequestMode((prev) =>
+                  prev === 'image_generation' ? 'text_chat' : 'image_generation',
+                );
+              }}
+              tooltip={
+                canToggleRequestMode
+                  ? `Request mode: ${requestMode === 'image_generation' ? 'image generation' : 'text chat'}`
+                  : 'Image generation only'
+              }
+              disabled={disabled}
+            >
+              <ImageIcon size={14} />
+              <span className="toolbar-btn-label">
+                {requestMode === 'image_generation' ? 'image' : 'chat'}
+              </span>
+            </ToolbarTooltipButton>
+          )}
+
+          {/* (f) Plan mode selector */}
           <ToolbarTooltipButton
             className={`toolbar-btn toolbar-btn--plan-${planMode}`}
             onClick={cyclePlanMode}
@@ -666,6 +717,7 @@ export function InputArea({
           <ToolbarTooltipButton
             className={`toolbar-btn ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
             onClick={async () => {
+              if (requestMode === 'image_generation') return;
               try {
                 const result = await platform.openFileDialog({
                   multiple: true,
@@ -680,8 +732,8 @@ export function InputArea({
                 console.error('[InputArea] attachment picker error:', e);
               }
             }}
-            tooltip="Attach images"
-            disabled={disabled}
+            tooltip={requestMode === 'image_generation' ? 'Attachments are not supported in image generation mode yet' : 'Attach images'}
+            disabled={disabled || requestMode === 'image_generation'}
           >
             <Paperclip size={14} />
             {attachments.length > 0 && (

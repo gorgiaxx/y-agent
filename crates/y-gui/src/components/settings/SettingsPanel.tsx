@@ -50,7 +50,7 @@ import { GuardrailsTab } from './GuardrailsTab';
 import { KnowledgeTab } from './KnowledgeTab';
 import { PromptsTab } from './PromptsTab';
 import { AboutTab } from './AboutTab';
-import { Button, Tabs, TabsContent } from '../ui';
+import { Button, Tabs, TabsContent, WindowControls } from '../ui';
 
 import './SettingsPanel.css';
 import './SettingsForm.css';
@@ -285,12 +285,13 @@ export function SettingsPanel({
 
   return (
     <div className="settings-panel">
-      <div className="settings-action-bar">
+      <div className="settings-action-bar" data-tauri-drag-region>
         <h2 className="settings-action-bar-title">{TAB_LABELS[activeTab] ?? activeTab}</h2>
         <div className="settings-action-bar-actions">
           <Button variant="primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save Changes'}
           </Button>
+          <WindowControls />
         </div>
       </div>
 

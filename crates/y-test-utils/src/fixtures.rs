@@ -1,7 +1,8 @@
 //! Factory functions for creating test data.
 
 use y_core::provider::{
-    ChatRequest, ChatResponse, FinishReason, ProviderMetadata, ProviderType, ToolCallingMode,
+    ChatRequest, ChatResponse, FinishReason, ProviderCapability, ProviderMetadata, ProviderType,
+    ToolCallingMode,
 };
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::types::{Message, ProviderId, Role, SessionId, TokenUsage, WorkflowId};
@@ -40,6 +41,7 @@ pub fn make_chat_request(user_input: &str) -> ChatRequest {
     ChatRequest {
         messages: vec![make_user_message(user_input)],
         model: Some("test-model".into()),
+        request_mode: y_core::provider::RequestMode::TextChat,
         max_tokens: Some(1024),
         temperature: Some(0.7),
         top_p: None,
@@ -84,6 +86,7 @@ pub fn make_provider_metadata(name: &str) -> ProviderMetadata {
         provider_type: ProviderType::Custom,
         model: "test-model".into(),
         tags: vec!["test".into()],
+        capabilities: vec![ProviderCapability::Text],
         max_concurrency: 10,
         context_window: 4096,
         cost_per_1k_input: 0.001,

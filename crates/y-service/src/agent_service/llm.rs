@@ -6,7 +6,7 @@ use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use y_core::provider::{
-    ChatRequest, GeneratedImage, ImageContentDelta, ProviderPool, RouteRequest,
+    ChatRequest, GeneratedImage, ImageContentDelta, ProviderPool, RequestMode, RouteRequest,
 };
 use y_core::types::ProviderId;
 
@@ -19,7 +19,9 @@ pub(crate) fn build_chat_request(
     ctx: &ToolExecContext,
 ) -> ChatRequest {
     // Merge essential (static) + dynamically activated tool definitions.
-    let tools = if ctx.dynamic_tool_defs.is_empty() {
+    let tools = if config.request_mode == RequestMode::ImageGeneration {
+        Vec::new()
+    } else if ctx.dynamic_tool_defs.is_empty() {
         config.tool_definitions.clone()
     } else {
         let mut merged = config.tool_definitions.clone();
@@ -46,6 +48,7 @@ pub(crate) fn build_chat_request(
     ChatRequest {
         messages: ctx.working_history.clone(),
         model: None,
+        request_mode: config.request_mode,
         max_tokens: config.max_tokens,
         temperature: config.temperature,
         top_p: None,
@@ -438,8 +441,8 @@ mod tests {
     use tokio::sync::mpsc;
     use y_core::provider::{
         ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, GeneratedImage,
-        ImageContentDelta, ProviderError, ProviderMetadata, ProviderPool, ProviderStatus,
-        ProviderType, RoutePriority, RouteRequest, ToolCallingMode,
+        ImageContentDelta, ProviderCapability, ProviderError, ProviderMetadata, ProviderPool,
+        ProviderStatus, ProviderType, RequestMode, RoutePriority, RouteRequest, ToolCallingMode,
     };
     use y_core::types::{Message, ProviderId, Role, TokenUsage};
 
@@ -463,6 +466,7 @@ mod tests {
                     provider_type: ProviderType::OpenAi,
                     model: "gpt-test".into(),
                     tags: vec!["reasoning".into()],
+                    capabilities: vec![ProviderCapability::Text],
                     max_concurrency: 1,
                     context_window: 128_000,
                     cost_per_1k_input: 0.0,
@@ -547,6 +551,7 @@ mod tests {
                 metadata: serde_json::Value::Null,
             }],
             model: None,
+            request_mode: RequestMode::TextChat,
             max_tokens: Some(128),
             temperature: None,
             top_p: None,
@@ -636,6 +641,7 @@ mod tests {
                     provider_type: ProviderType::OpenAi,
                     model: "gpt-image-test".into(),
                     tags: vec!["image".into()],
+                    capabilities: vec![ProviderCapability::ImageGeneration],
                     max_concurrency: 1,
                     context_window: 128_000,
                     cost_per_1k_input: 0.0,

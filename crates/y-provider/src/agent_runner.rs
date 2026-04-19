@@ -73,6 +73,7 @@ impl SingleTurnRunner {
             // model when the preferred model isn't available, causing 404 errors on
             // providers that don't support the requested model name.
             model: None,
+            request_mode: y_core::provider::RequestMode::TextChat,
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             top_p: None,

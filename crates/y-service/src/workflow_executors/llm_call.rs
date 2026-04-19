@@ -64,6 +64,7 @@ impl TaskExecutor for LlmCallExecutor {
         let request = ChatRequest {
             messages,
             model: None,
+            request_mode: y_core::provider::RequestMode::TextChat,
             max_tokens: None,
             temperature: None,
             top_p: None,

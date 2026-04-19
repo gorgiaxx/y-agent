@@ -8,7 +8,7 @@
 
 import { useCallback } from 'react';
 import { transport } from '../lib';
-import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, Attachment } from '../types';
+import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode } from '../types';
 import type { ViewType } from '../components/Sidebar';
 import type { CompactInfo, ChatOpStatus } from './useChat';
 
@@ -22,8 +22,8 @@ export interface ChatDeps {
   clearMessages: () => void;
 
   // Chat deps
-  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => Promise<ChatStarted | null>;
-  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode) => Promise<ChatStarted | null>;
+  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => Promise<ChatStarted | null>;
+  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode, requestMode?: RequestMode) => Promise<ChatStarted | null>;
   editMessage: (messageId: string, content: string) => void;
   cancelEdit: () => void;
   undoToMessage: (sessionId: string, messageId: string) => Promise<unknown>;
@@ -65,7 +65,7 @@ export interface ChatDeps {
 }
 
 export interface UseChatHandlersReturn {
-  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => Promise<void>;
+  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => Promise<void>;
   handleEditMessage: (content: string, messageId: string) => void;
   handleUndoMessage: (messageId: string) => Promise<void>;
   handleCancelEdit: () => void;
@@ -114,7 +114,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
   } = deps;
 
   const handleSend = useCallback(
-    async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => {
+    async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => {
       let sid = activeSessionId;
       if (!sid) {
         const session = await createSession();
@@ -132,7 +132,14 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
       // If in edit mode, use the transactional editAndResend.
       if (pendingEdit) {
         addUserMessage(message, sid);
-        const result = await editAndResend(sid, message, providerArg, thinkingEffort, planMode);
+        const result = await editAndResend(
+          sid,
+          message,
+          providerArg,
+          thinkingEffort,
+          planMode,
+          requestMode,
+        );
         if (result) {
           if (result.session_id !== activeSessionId) {
             selectSession(result.session_id);
@@ -144,7 +151,19 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
 
       // Normal send -- pass skills, knowledge collections, attachments, planMode, and mcp mode to the backend.
       addUserMessage(message, sid);
-      const result = await sendMessage(message, sid, providerArg, skillNames, knowledgeCollections, thinkingEffort, attachments, planMode, mcpMode, mcpServers);
+      const result = await sendMessage(
+        message,
+        sid,
+        providerArg,
+        skillNames,
+        knowledgeCollections,
+        thinkingEffort,
+        attachments,
+        planMode,
+        mcpMode,
+        mcpServers,
+        requestMode,
+      );
       if (result) {
         if (result.session_id !== activeSessionId) {
           selectSession(result.session_id);

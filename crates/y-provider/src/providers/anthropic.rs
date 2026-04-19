@@ -14,7 +14,8 @@ use tracing::instrument;
 
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
-    ImageContentDelta, LlmProvider, ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
+    ProviderType, RequestMode, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -40,6 +41,7 @@ impl AnthropicProvider {
         base_url: Option<String>,
         proxy_url: Option<String>,
         tags: Vec<String>,
+        capabilities: Vec<ProviderCapability>,
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
@@ -62,6 +64,7 @@ impl AnthropicProvider {
                 provider_type: ProviderType::Anthropic,
                 model: model.to_string(),
                 tags,
+                capabilities,
                 max_concurrency,
                 context_window,
                 cost_per_1k_input: 0.0,
@@ -312,6 +315,13 @@ impl AnthropicProvider {
 impl LlmProvider for AnthropicProvider {
     #[instrument(skip(self, request), fields(model = %self.metadata.model, provider_id = %self.metadata.id))]
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return Err(ProviderError::Other {
+                message: "dedicated image generation is not implemented for anthropic providers"
+                    .into(),
+            });
+        }
+
         let body = self.build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
@@ -474,6 +484,13 @@ impl LlmProvider for AnthropicProvider {
         &self,
         request: &ChatRequest,
     ) -> Result<ChatStreamResponse, ProviderError> {
+        if request.request_mode == RequestMode::ImageGeneration {
+            return Err(ProviderError::Other {
+                message: "dedicated image generation is not implemented for anthropic providers"
+                    .into(),
+            });
+        }
+
         let body = self.build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 

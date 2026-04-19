@@ -147,6 +147,7 @@ impl BotService {
             provider_id: None,
             preferred_models: vec![],
             provider_tags: vec![],
+            request_mode: y_core::provider::RequestMode::TextChat,
             temperature: Some(0.7),
             max_tokens: None,
             thinking: None, // Phase 1: no thinking config override.
@@ -313,6 +314,7 @@ impl BotService {
                 session_id: Some(session_id.clone()),
                 user_input: user_input.to_string(),
                 provider_id: None,
+                request_mode: None,
                 skills: None,
                 knowledge_collections: None,
                 thinking: None,
@@ -334,6 +336,7 @@ impl BotService {
                         session_id: None,
                         user_input: user_input.to_string(),
                         provider_id: None,
+                        request_mode: None,
                         skills: None,
                         knowledge_collections: None,
                         thinking: None,
