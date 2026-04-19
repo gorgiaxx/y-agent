@@ -272,6 +272,7 @@ impl LlmProvider for AzureOpenAiProvider {
             raw_request,
             raw_response: Some(raw_response),
             provider_id: None,
+            generated_images: vec![],
         })
     }
 
@@ -491,6 +492,7 @@ fn map_stream_chunk(
         delta_tool_calls,
         usage,
         finish_reason,
+        delta_images: vec![],
     }
 }
 

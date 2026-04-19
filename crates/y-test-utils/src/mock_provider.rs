@@ -127,6 +127,7 @@ impl LlmProvider for MockProvider {
             raw_request: None,
             raw_response: None,
             provider_id: None,
+            generated_images: vec![],
         })
     }
 
@@ -142,6 +143,7 @@ impl LlmProvider for MockProvider {
             delta_tool_calls: vec![],
             usage: None,
             finish_reason: Some(FinishReason::Stop),
+            delta_images: vec![],
         };
         Ok(ChatStreamResponse {
             stream: Box::pin(stream::iter(vec![Ok(chunk)])),

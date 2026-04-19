@@ -72,6 +72,7 @@ pub fn make_chat_response(content: &str) -> ChatResponse {
         raw_request: None,
         raw_response: None,
         provider_id: None,
+        generated_images: vec![],
     }
 }
 

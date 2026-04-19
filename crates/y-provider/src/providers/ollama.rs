@@ -265,6 +265,7 @@ impl LlmProvider for OllamaProvider {
             raw_request,
             raw_response: Some(raw_response),
             provider_id: None,
+            generated_images: vec![],
         })
     }
 
@@ -332,6 +333,7 @@ impl LlmProvider for OllamaProvider {
                                             delta_tool_calls: vec![],
                                             usage,
                                             finish_reason: Some(FinishReason::Stop),
+                                            delta_images: vec![],
                                         }),
                                         state,
                                     ));
@@ -350,6 +352,7 @@ impl LlmProvider for OllamaProvider {
                                         delta_tool_calls: vec![],
                                         usage: None,
                                         finish_reason: None,
+                                        delta_images: vec![],
                                     }),
                                     state,
                                 ));

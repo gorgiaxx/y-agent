@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
+    LlmProvider, ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -312,7 +312,11 @@ impl LlmProvider for OpenAiProvider {
                     message: "no choices in response".into(),
                 })?;
 
-        let content = choice.message.content.and_then(OpenAiContent::into_text);
+        let (content, generated_images) = choice
+            .message
+            .content
+            .map(OpenAiContent::into_text_and_images)
+            .unwrap_or((None, vec![]));
         let reasoning_content = choice.message.reasoning_content;
         let tool_calls = choice
             .message
@@ -356,6 +360,7 @@ impl LlmProvider for OpenAiProvider {
             raw_request,
             raw_response: Some(raw_response),
             provider_id: None,
+            generated_images,
         })
     }
 
@@ -601,6 +606,7 @@ fn map_stream_chunk(
         delta_tool_calls,
         usage,
         finish_reason,
+        delta_images: vec![],
     }
 }
 
@@ -688,31 +694,39 @@ enum OpenAiContent {
 }
 
 impl OpenAiContent {
-    /// Extract the text content from this value.
-    /// For `Text`, returns the string directly.
-    /// For `Parts`, concatenates all text-type parts.
-    fn into_text(self) -> Option<String> {
+    /// Extract text and generated images from this content value.
+    fn into_text_and_images(self) -> (Option<String>, Vec<GeneratedImage>) {
         match self {
             OpenAiContent::Text(s) => {
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s)
-                }
+                let text = if s.is_empty() { None } else { Some(s) };
+                (text, vec![])
             }
             OpenAiContent::Parts(parts) => {
-                let texts: Vec<String> = parts
-                    .into_iter()
-                    .filter_map(|p| match p {
-                        OpenAiContentPart::Text { text } => Some(text),
-                        OpenAiContentPart::ImageUrl { .. } => None,
-                    })
-                    .collect();
-                if texts.is_empty() {
+                let mut texts = Vec::new();
+                let mut images = Vec::new();
+                let mut img_index = 0usize;
+                for part in parts {
+                    match part {
+                        OpenAiContentPart::Text { text } => texts.push(text),
+                        OpenAiContentPart::GeneratedImage { image } => {
+                            if !image.data.is_empty() {
+                                images.push(GeneratedImage {
+                                    index: img_index,
+                                    mime_type: "image/png".to_string(),
+                                    data: image.data,
+                                });
+                                img_index += 1;
+                            }
+                        }
+                        OpenAiContentPart::ImageUrl { .. } => {}
+                    }
+                }
+                let text = if texts.is_empty() {
                     None
                 } else {
                     Some(texts.join(""))
-                }
+                };
+                (text, images)
             }
         }
     }
@@ -726,6 +740,18 @@ enum OpenAiContentPart {
     Text { text: String },
     #[serde(rename = "image_url")]
     ImageUrl { image_url: OpenAiImageUrl },
+    #[serde(rename = "generated_image")]
+    GeneratedImage {
+        #[serde(flatten)]
+        image: OpenAiGeneratedImage,
+    },
+}
+
+/// Image data from an LLM-generated image in a chat completion response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OpenAiGeneratedImage {
+    #[serde(default, alias = "b64_json")]
+    data: String,
 }
 
 /// Image URL payload for `OpenAI` vision API. Supports both HTTP URLs
@@ -970,7 +996,8 @@ mod tests {
                 .message
                 .content
                 .clone()
-                .and_then(super::OpenAiContent::into_text),
+                .map(super::OpenAiContent::into_text_and_images)
+                .and_then(|(text, _)| text),
             Some("Hello!".into())
         );
         let usage = response.usage.unwrap();
@@ -1275,12 +1302,16 @@ mod tests {
     }
 
     #[test]
-    fn test_openai_content_into_text() {
+    fn test_openai_content_into_text_and_images() {
         let text = OpenAiContent::Text("hello".into());
-        assert_eq!(text.into_text(), Some("hello".into()));
+        let (t, imgs) = text.into_text_and_images();
+        assert_eq!(t, Some("hello".into()));
+        assert!(imgs.is_empty());
 
         let empty = OpenAiContent::Text(String::new());
-        assert_eq!(empty.into_text(), None);
+        let (t, imgs) = empty.into_text_and_images();
+        assert_eq!(t, None);
+        assert!(imgs.is_empty());
 
         let parts = OpenAiContent::Parts(vec![
             OpenAiContentPart::ImageUrl {
@@ -1292,6 +1323,28 @@ mod tests {
                 text: "describe this".into(),
             },
         ]);
-        assert_eq!(parts.into_text(), Some("describe this".into()));
+        let (t, imgs) = parts.into_text_and_images();
+        assert_eq!(t, Some("describe this".into()));
+        assert!(imgs.is_empty());
+    }
+
+    #[test]
+    fn test_openai_content_extracts_generated_images() {
+        let parts = OpenAiContent::Parts(vec![
+            OpenAiContentPart::Text {
+                text: "Here is the image:".into(),
+            },
+            OpenAiContentPart::GeneratedImage {
+                image: OpenAiGeneratedImage {
+                    data: "iVBORw0KGgo=".into(),
+                },
+            },
+        ]);
+        let (t, imgs) = parts.into_text_and_images();
+        assert_eq!(t, Some("Here is the image:".into()));
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0].index, 0);
+        assert_eq!(imgs[0].mime_type, "image/png");
+        assert_eq!(imgs[0].data, "iVBORw0KGgo=");
     }
 }

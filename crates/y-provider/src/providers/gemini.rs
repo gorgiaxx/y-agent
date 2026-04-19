@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
+    LlmProvider, ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -224,6 +224,7 @@ impl GeminiProvider {
 
         let mut text_parts = Vec::new();
         let mut tool_calls = Vec::new();
+        let mut generated_images = Vec::new();
 
         for part in &candidate.content.parts {
             match part {
@@ -235,6 +236,13 @@ impl GeminiProvider {
                         id: format!("call_{}", &uuid::Uuid::new_v4().simple().to_string()[..24]),
                         name: function_call.name.clone(),
                         arguments: function_call.args.clone(),
+                    });
+                }
+                GeminiPart::InlineData { inline_data } => {
+                    generated_images.push(GeneratedImage {
+                        index: generated_images.len(),
+                        mime_type: inline_data.mime_type.clone(),
+                        data: inline_data.data.clone(),
                     });
                 }
                 GeminiPart::FunctionResponse { .. } => {}
@@ -289,6 +297,7 @@ impl GeminiProvider {
             raw_request,
             raw_response,
             provider_id: None,
+            generated_images,
         })
     }
 }
@@ -533,6 +542,7 @@ fn map_gemini_stream_chunk(resp: &GeminiResponse, _model: &str) -> ChatStreamChu
         delta_tool_calls,
         usage,
         finish_reason,
+        delta_images: vec![],
     }
 }
 
@@ -573,6 +583,18 @@ enum GeminiPart {
         #[serde(rename = "functionResponse")]
         function_response: GeminiFunctionResponse,
     },
+    #[serde(rename = "inlineData")]
+    InlineData {
+        #[serde(rename = "inlineData")]
+        inline_data: GeminiInlineData,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct GeminiInlineData {
+    #[serde(rename = "mimeType")]
+    mime_type: String,
+    data: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

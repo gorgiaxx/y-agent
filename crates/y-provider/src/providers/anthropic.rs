@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
+    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
+    ImageContentDelta, LlmProvider, ProviderError, ProviderMetadata, ProviderType, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -400,6 +400,7 @@ impl LlmProvider for AnthropicProvider {
         let mut text_parts = Vec::new();
         let mut thinking_parts = Vec::new();
         let mut tool_calls = Vec::new();
+        let mut generated_images = Vec::new();
 
         for block in &anthropic_response.content {
             match block {
@@ -418,7 +419,14 @@ impl LlmProvider for AnthropicProvider {
                         arguments: input.clone(),
                     });
                 }
-                AnthropicContentBlock::ToolResult { .. } | AnthropicContentBlock::Image { .. } => {}
+                AnthropicContentBlock::Image { source } => {
+                    generated_images.push(GeneratedImage {
+                        index: generated_images.len(),
+                        mime_type: source.media_type.clone(),
+                        data: source.data.clone(),
+                    });
+                }
+                AnthropicContentBlock::ToolResult { .. } => {}
             }
         }
 
@@ -457,6 +465,7 @@ impl LlmProvider for AnthropicProvider {
             raw_request,
             raw_response: Some(raw_response),
             provider_id: None,
+            generated_images,
         })
     }
 
@@ -531,6 +540,7 @@ impl LlmProvider for AnthropicProvider {
                 current_tool_args: String::new(),
                 current_thinking: String::new(),
                 accumulated_usage: None,
+                image_index: 0,
             },
             move |mut state| async move {
                 if state.sse.done {
@@ -549,6 +559,7 @@ impl LlmProvider for AnthropicProvider {
                                             delta_tool_calls: vec![],
                                             usage: None,
                                             finish_reason: None,
+                                            delta_images: vec![],
                                         }),
                                         state,
                                     ));
@@ -562,6 +573,7 @@ impl LlmProvider for AnthropicProvider {
                                             delta_tool_calls: vec![],
                                             usage: None,
                                             finish_reason: None,
+                                            delta_images: vec![],
                                         }),
                                         state,
                                     ));
@@ -585,6 +597,26 @@ impl LlmProvider for AnthropicProvider {
                                         }
                                         AnthropicContentBlock::Thinking { .. } => {
                                             state.current_thinking.clear();
+                                        }
+                                        AnthropicContentBlock::Image { source } => {
+                                            let idx = state.image_index;
+                                            state.image_index += 1;
+                                            return Some((
+                                                Ok(ChatStreamChunk {
+                                                    delta_content: None,
+                                                    delta_reasoning_content: None,
+                                                    delta_tool_calls: vec![],
+                                                    usage: None,
+                                                    finish_reason: None,
+                                                    delta_images: vec![ImageContentDelta {
+                                                        index: idx,
+                                                        mime_type: source.media_type.clone(),
+                                                        partial_data: source.data.clone(),
+                                                        is_complete: true,
+                                                    }],
+                                                }),
+                                                state,
+                                            ));
                                         }
                                         _ => {}
                                     }
@@ -610,6 +642,7 @@ impl LlmProvider for AnthropicProvider {
                                             }],
                                             usage: None,
                                             finish_reason: None,
+                                            delta_images: vec![],
                                         }),
                                         state,
                                     ));
@@ -671,6 +704,7 @@ impl LlmProvider for AnthropicProvider {
                                         delta_tool_calls: vec![],
                                         usage: usage_info,
                                         finish_reason,
+                                        delta_images: vec![],
                                     }),
                                     state,
                                 ));
@@ -730,6 +764,8 @@ struct AnthropicSseState {
     current_thinking: String,
     /// Usage accumulated from `message_start` event.
     accumulated_usage: Option<TokenUsage>,
+    /// Running index for generated images.
+    image_index: usize,
 }
 
 /// Parsed Anthropic SSE event types.
