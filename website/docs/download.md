@@ -31,7 +31,7 @@ cd crates/y-gui && npm install && cd ../..
 ./scripts/build-release.sh gui
 # Output: dist/y-agent-gui-<version>-<platform>.zip
 #   macOS:   .dmg, .app
-#   Linux:   .deb, .AppImage
+#   Linux:   .deb, .AppImage, .pkg.tar.zst
 #   Windows: .msi, .exe
 ```
 
@@ -62,6 +62,9 @@ nix develop          # Enter dev shell with all dependencies
 ```bash
 # Debian/Ubuntu
 sudo dpkg -i y-agent_<version>_amd64.deb
+
+# Arch Linux / pacman
+sudo pacman -U y-agent-gui-<version>-1-x86_64.pkg.tar.zst
 
 # AppImage
 chmod +x y-agent_<version>_amd64.AppImage

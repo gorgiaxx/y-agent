@@ -111,7 +111,7 @@ y-agent tui
 y-agent serve
 
 # Or launch the GUI desktop app
-# (built via build-release.sh -- .app / .dmg / .AppImage in dist/)
+# (built via build-release.sh -- .app / .dmg / .AppImage / .pkg.tar.zst in dist/)
 ```
 
 ### Other CLI Commands

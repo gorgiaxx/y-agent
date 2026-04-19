@@ -611,7 +611,7 @@ cd crates/y-gui && npm install && cd ../..
 ./scripts/build-release.sh gui
 # Output: dist/y-agent-gui-<version>-<platform>.zip
 #   macOS:   .dmg, .app
-#   Linux:   .deb, .AppImage
+#   Linux:   .deb, .AppImage, .pkg.tar.zst
 #   Windows: .msi, .exe
 ```
 
