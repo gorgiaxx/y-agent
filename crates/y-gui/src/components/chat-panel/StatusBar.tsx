@@ -1,5 +1,7 @@
 import { Bot } from 'lucide-react';
 import { ProviderIconImg } from '../common/ProviderIconPicker';
+import { useConnectionStatus } from '../../hooks/useConnectionStatus';
+import { platform } from '../../lib';
 import './StatusBar.css';
 
 interface StatusBarProps {
@@ -30,6 +32,8 @@ export function StatusBar({
   contextWindow,
   contextTokensUsed,
 }: StatusBarProps) {
+  const connStatus = useConnectionStatus();
+  const isWeb = !platform.isTauri();
   // Context occupancy: prefer the explicit context_tokens_used (last iteration's
   // prompt size), fall back to cumulative input tokens if not available.
   const occupancy = contextTokensUsed ?? (lastTokens ? lastTokens.input : 0);
@@ -72,6 +76,12 @@ export function StatusBar({
         )}
       </div>
       <div className="status-right">
+        {isWeb && (
+          <span className={`status-item status-connection status-connection--${connStatus}`}>
+            <span className="status-connection-dot" />
+            {connStatus === 'connected' ? 'Online' : connStatus === 'connecting' ? 'Connecting...' : 'Offline'}
+          </span>
+        )}
         {/* <span className="status-item">
           {providerCount} provider{providerCount !== 1 ? 's' : ''}
         </span> */}

@@ -9,6 +9,7 @@ import type { Platform } from './platform';
 import { createPlatform } from './platform';
 import { TauriTransport } from './tauriTransport';
 import { HttpTransport } from './httpTransport';
+import type { ConnectionStatus } from './sseAdapter';
 
 function detectBackend(): 'tauri' | 'http' {
   const env = import.meta.env.VITE_BACKEND as string | undefined;
@@ -37,6 +38,19 @@ function createTransport(): Transport {
 export const transport: Transport = createTransport();
 export const platform: Platform = createPlatform(getApiUrl());
 
+export function getConnectionStatus(): ConnectionStatus {
+  const t = transport;
+  if (t instanceof HttpTransport) return t.connectionStatus;
+  return 'connected';
+}
+
+export function onConnectionStatusChange(cb: (status: ConnectionStatus) => void): () => void {
+  const t = transport;
+  if (t instanceof HttpTransport) return t.onConnectionStatusChange(cb);
+  return () => {};
+}
+
 export type { Transport } from './transport';
 export type { UnlistenFn } from './transport';
 export type { Platform, OpenDialogOptions, FileFilter } from './platform';
+export type { ConnectionStatus } from './sseAdapter';

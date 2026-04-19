@@ -6,6 +6,7 @@
 import type { Transport, UnlistenFn } from './transport';
 import { COMMAND_MAP } from './commandMap';
 import { SseAdapter } from './sseAdapter';
+import type { ConnectionStatus } from './sseAdapter';
 
 const NOOP_COMMANDS = new Set([
   'show_window', 'toggle_devtools', 'window_set_decorations',
@@ -102,6 +103,14 @@ export class HttpTransport implements Transport {
     callback: (event: { payload: T }) => void,
   ): Promise<UnlistenFn> {
     return this.sse.listen(event, callback);
+  }
+
+  get connectionStatus(): ConnectionStatus {
+    return this.sse.status;
+  }
+
+  onConnectionStatusChange(cb: (status: ConnectionStatus) => void): () => void {
+    return this.sse.onStatusChange(cb);
   }
 
   dispose() {
