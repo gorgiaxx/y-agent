@@ -52,6 +52,7 @@
 }
 
 .tool-call-duration {
+  min-width: 44px;
   font-size: 11px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
