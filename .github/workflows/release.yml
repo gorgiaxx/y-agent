@@ -115,6 +115,80 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ""
         run: npx @tauri-apps/cli build --ci --target ${{ matrix.target }}
 
+      - name: Patch AppImage bundle (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APPIMAGETOOL_PATH="$RUNNER_TEMP/appimagetool-x86_64.AppImage"
+          curl -fsSL \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -o "$APPIMAGETOOL_PATH"
+          chmod +x "$APPIMAGETOOL_PATH"
+
+          BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
+          ORIGINAL_APPIMAGE="$(find "$BUNDLE_DIR/appimage" -maxdepth 1 -name '*.AppImage' | head -1)"
+          mkdir -p "$BUNDLE_DIR/appimage-patched"
+
+          APPIMAGETOOL="$APPIMAGETOOL_PATH" ./scripts/package-linux-appimage.sh \
+            --source-appimage "$ORIGINAL_APPIMAGE" \
+            --output-dir "$BUNDLE_DIR/appimage-patched"
+
+          rm -f "$BUNDLE_DIR"/appimage/*.AppImage
+          cp "$BUNDLE_DIR"/appimage-patched/*.AppImage "$BUNDLE_DIR/appimage/"
+
+      - name: Build pacman package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          docker run --rm \
+            -e VERSION="$VERSION" \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            archlinux:base-devel \
+            bash -lc '
+              set -euo pipefail
+
+              pacman -Syu --noconfirm --needed \
+                base-devel \
+                git \
+                nodejs \
+                npm \
+                rust \
+                webkit2gtk-4.1 \
+                gtk3 \
+                libsoup3 \
+                openssl \
+                sqlite \
+                pkgconf
+
+              useradd -m builder
+              cp -a /work /home/builder/work
+              chown -R builder:builder /home/builder/work
+
+              su builder -c "
+                set -euo pipefail
+                cd /home/builder/work/crates/y-gui
+                npm ci || npm install
+                npm run build
+                cd /home/builder/work
+                cargo build --release --manifest-path crates/y-gui/src-tauri/Cargo.toml --bin y-gui
+                ./scripts/package-linux-pacman.sh \
+                  --version \"$VERSION\" \
+                  --binary-path /home/builder/work/target/release/y-gui \
+                  --output-dir /home/builder/out
+              "
+
+              cp /home/builder/out/*.pkg.tar.zst /work/dist/
+            '
+
       # -- Package CLI (Unix) --------------------------------------------------
       - name: Package CLI (Unix)
         if: runner.os != 'Windows'
@@ -184,6 +258,7 @@ jobs:
             dist/*.deb
             dist/*.AppImage
             dist/*.rpm
+            dist/*.pkg.tar.zst
             dist/*.msi
             dist/*.exe
 
@@ -267,6 +342,7 @@ jobs:
             dist/*.deb
             dist/*.AppImage
             dist/*.rpm
+            dist/*.pkg.tar.zst
             dist/*.msi
             dist/*.exe
             dist/SHA256SUMS.txt

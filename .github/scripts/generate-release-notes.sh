@@ -287,6 +287,12 @@ EOF
     fi
   done
 
+  for pacman_pkg in ${DIST_DIR}/*.pkg.tar.zst; do
+    [[ -f "$pacman_pkg" ]] || continue
+    fname="$(basename "$pacman_pkg")"
+    echo "| **Linux** | Pacman (x64) | $(badge "Pacman" "x64" "1793D1" "archlinux" "${BASE_URL}/${fname}") |"
+  done
+
   # Windows GUI
   for msi in ${DIST_DIR}/*.msi; do
     [[ -f "$msi" ]] || continue
