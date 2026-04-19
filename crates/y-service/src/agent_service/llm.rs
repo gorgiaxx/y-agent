@@ -346,6 +346,7 @@ async fn call_llm_streaming(
         raw_request,
         raw_response: Some(raw_response),
         provider_id,
+        generated_images: vec![],
     };
     Ok((response, reasoning_duration_ms))
 }
@@ -414,6 +415,7 @@ mod tests {
                     delta_tool_calls: vec![],
                     usage: None,
                     finish_reason: None,
+                    delta_images: vec![],
                 }),
                 Ok(ChatStreamChunk {
                     delta_content: Some("Final answer".into()),
@@ -427,6 +429,7 @@ mod tests {
                         ..Default::default()
                     }),
                     finish_reason: Some(FinishReason::Stop),
+                    delta_images: vec![],
                 }),
             ];
 

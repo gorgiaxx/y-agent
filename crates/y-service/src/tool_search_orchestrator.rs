@@ -87,25 +87,27 @@ impl ToolSearchOrchestrator {
         let tool_name = arguments.get("tool").and_then(|v| v.as_str());
         let category = arguments.get("category").and_then(|v| v.as_str());
         let query = arguments.get("query").and_then(|v| v.as_str());
+        let mcp_server = arguments.get("mcp_server").and_then(|v| v.as_str());
 
         // At least one parameter must be present.
-        if tool_name.is_none() && category.is_none() && query.is_none() {
+        if tool_name.is_none() && category.is_none() && query.is_none() && mcp_server.is_none() {
             return Err(y_core::tool::ToolError::ValidationError {
-                message: "at least one of 'tool', 'category', or 'query' must be provided".into(),
+                message: "at least one of 'tool', 'category', 'query', or 'mcp_server' must be provided".into(),
             });
         }
 
-        // Precedence: tool > category > query.
+        // Precedence: tool > mcp_server > category > query.
         if let Some(name) = tool_name {
             Self::handle_get_tool(name, registry, activation_set).await
+        } else if let Some(server) = mcp_server {
+            Self::handle_search_mcp_server(server, registry, activation_set).await
         } else if let Some(cat) = category {
             Self::handle_browse_category(cat, taxonomy, registry, activation_set).await
         } else if let Some(q) = query {
             Self::handle_search(q, registry, taxonomy, activation_set, sources).await
         } else {
-            // Unreachable: the is_none() guard above ensures at least one param is present.
             Err(y_core::tool::ToolError::ValidationError {
-                message: "at least one of 'tool', 'category', or 'query' must be provided".into(),
+                message: "at least one of 'tool', 'category', 'query', or 'mcp_server' must be provided".into(),
             })
         }
     }
@@ -135,6 +137,60 @@ impl ToolSearchOrchestrator {
             content: Self::definition_to_json(&definition),
             warnings: vec![],
             metadata: serde_json::json!({"action": "get_tool", "activated": true}),
+        })
+    }
+
+    /// Search for all tools from a specific MCP server and activate them.
+    async fn handle_search_mcp_server(
+        server_name: &str,
+        registry: &ToolRegistryImpl,
+        activation_set: &Arc<RwLock<ToolActivationSet>>,
+    ) -> Result<ToolOutput, y_core::tool::ToolError> {
+        let prefix = format!("mcp_{server_name}_");
+        let all_defs = registry.get_all_definitions().await;
+        let mcp_defs: Vec<&ToolDefinition> = all_defs
+            .iter()
+            .filter(|d| d.name.as_str().starts_with(&prefix))
+            .collect();
+
+        if mcp_defs.is_empty() {
+            return Ok(ToolOutput {
+                success: true,
+                content: serde_json::json!({
+                    "mcp_server": server_name,
+                    "tools": [],
+                    "count": 0,
+                    "message": format!(
+                        "No tools found for MCP server '{server_name}'. \
+                         Check that the server is configured and connected."
+                    ),
+                }),
+                warnings: vec![],
+                metadata: serde_json::json!({"action": "search_mcp_server"}),
+            });
+        }
+
+        let mut activated_names = Vec::new();
+        let mut tool_defs = Vec::new();
+        {
+            let mut set = activation_set.write().await;
+            for def in &mcp_defs {
+                set.activate((*def).clone());
+                activated_names.push(def.name.as_str().to_string());
+                tool_defs.push(Self::summary_to_json(def));
+            }
+        }
+
+        Ok(ToolOutput {
+            success: true,
+            content: serde_json::json!({
+                "mcp_server": server_name,
+                "tools": tool_defs,
+                "count": tool_defs.len(),
+                "activated": activated_names,
+            }),
+            warnings: vec![],
+            metadata: serde_json::json!({"action": "search_mcp_server"}),
         })
     }
 
@@ -579,5 +635,57 @@ tools = ["ToolSearch"]
         assert!(skills.is_empty());
         let agents = result.content["agents"].as_array().unwrap();
         assert!(agents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_mcp_server_returns_matching_tools() {
+        let (registry, taxonomy, activation_set) = setup().await;
+
+        // Register MCP tools.
+        use y_core::tool::ToolRegistry;
+        for (name, desc) in &[
+            ("mcp_github_search_repos", "Search GitHub repositories"),
+            ("mcp_github_list_issues", "List GitHub issues"),
+            ("mcp_filesystem_read_file", "Read file via MCP filesystem"),
+        ] {
+            let def = sample_def(name, desc);
+            registry.register(def).await.unwrap();
+        }
+
+        let args = serde_json::json!({"mcp_server": "github"});
+        let result = ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.content["mcp_server"], "github");
+        assert_eq!(result.content["count"], 2);
+
+        let tools = result.content["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        assert!(names.contains(&"mcp_github_search_repos"));
+        assert!(names.contains(&"mcp_github_list_issues"));
+        // filesystem tool should NOT be included.
+        assert!(!names.contains(&"mcp_filesystem_read_file"));
+
+        // Verify activation.
+        let set = activation_set.read().await;
+        assert!(set.contains(&ToolName::from_string("mcp_github_search_repos")));
+        assert!(set.contains(&ToolName::from_string("mcp_github_list_issues")));
+    }
+
+    #[tokio::test]
+    async fn test_search_mcp_server_no_match() {
+        let (registry, taxonomy, activation_set) = setup().await;
+
+        let args = serde_json::json!({"mcp_server": "nonexistent"});
+        let result = ToolSearchOrchestrator::handle(&args, &registry, &taxonomy, &activation_set)
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.content["count"], 0);
+        assert!(result.content["message"].as_str().unwrap().contains("nonexistent"));
     }
 }

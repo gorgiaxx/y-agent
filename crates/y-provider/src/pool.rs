@@ -665,6 +665,7 @@ mod tests {
                 raw_request: None,
                 raw_response: None,
                 provider_id: None,
+                generated_images: vec![],
             })
         }
 

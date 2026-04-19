@@ -162,6 +162,7 @@ mod tests {
             raw_request: None,
             raw_response: None,
             provider_id: None,
+            generated_images: vec![],
         }
     }
 
@@ -177,6 +178,7 @@ mod tests {
             raw_request: None,
             raw_response: None,
             provider_id: None,
+            generated_images: vec![],
         }
     }
 
@@ -224,6 +226,7 @@ mod tests {
                 raw_request: None,
                 raw_response: None,
                 provider_id: None,
+                generated_images: vec![],
             },
         });
         let runner = ProviderPoolHookLlmRunner::new(pool);

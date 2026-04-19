@@ -38,7 +38,7 @@ impl ToolSearchTool {
         ToolDefinition {
             name: ToolName::from_string("ToolSearch"),
             description: "Discover capabilities (tools, skills, agents) by keyword, \
-                category, or name."
+                category, name, or MCP namespace."
                 .into(),
             help: None,
             parameters: serde_json::json!({
@@ -46,7 +46,8 @@ impl ToolSearchTool {
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Keyword search across tools, skills, and agents"
+                        "description": "Keyword search across tools, skills, and agents. \
+                            For MCP tools, use 'mcp' or server name (e.g., 'filesystem', 'github')"
                     },
                     "category": {
                         "type": "string",
@@ -54,7 +55,13 @@ impl ToolSearchTool {
                     },
                     "tool": {
                         "type": "string",
-                        "description": "Specific tool name to retrieve full schema for"
+                        "description": "Specific tool name to retrieve full schema for. \
+                            For MCP tools, use full name (e.g., 'mcp_filesystem_read_file')"
+                    },
+                    "mcp_server": {
+                        "type": "string",
+                        "description": "Filter by MCP server name (e.g., 'filesystem', 'github'). \
+                            Returns all tools from that server"
                     }
                 }
             }),
@@ -79,17 +86,20 @@ impl Tool for ToolSearchTool {
         let query = input.arguments.get("query").and_then(|v| v.as_str());
         let category = input.arguments.get("category").and_then(|v| v.as_str());
         let tool = input.arguments.get("tool").and_then(|v| v.as_str());
+        let mcp_server = input.arguments.get("mcp_server").and_then(|v| v.as_str());
 
         // At least one parameter must be provided.
-        if query.is_none() && category.is_none() && tool.is_none() {
+        if query.is_none() && category.is_none() && tool.is_none() && mcp_server.is_none() {
             return Err(ToolError::ValidationError {
-                message: "at least one of 'query', 'category', or 'tool' must be provided".into(),
+                message: "at least one of 'query', 'category', 'tool', or 'mcp_server' must be provided".into(),
             });
         }
 
         // Determine the search action type for the orchestrator.
         let action = if tool.is_some() {
             "get_tool"
+        } else if mcp_server.is_some() {
+            "search_mcp_server"
         } else if category.is_some() {
             "browse_category"
         } else {
@@ -106,6 +116,7 @@ impl Tool for ToolSearchTool {
                 "query": query,
                 "category": category,
                 "tool": tool,
+                "mcp_server": mcp_server,
                 "status": "pending"
             }),
             warnings: vec![],
@@ -173,6 +184,15 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn test_tool_search_with_mcp_server() {
+        let tool = ToolSearchTool::new();
+        let input = make_input(serde_json::json!({"mcp_server": "filesystem"}));
+        let output = tool.execute(input).await.unwrap();
+        assert_eq!(output.content["action"], "search_mcp_server");
+        assert_eq!(output.content["mcp_server"], "filesystem");
+    }
+
     #[test]
     fn test_tool_search_definition() {
         let def = ToolSearchTool::tool_definition();
@@ -180,10 +200,11 @@ mod tests {
         assert_eq!(def.category, ToolCategory::Custom);
         assert_eq!(def.tool_type, ToolType::BuiltIn);
         assert!(!def.is_dangerous);
-        // Should have query, category, and tool properties.
+        // Should have query, category, tool, and mcp_server properties.
         let props = def.parameters["properties"].as_object().unwrap();
         assert!(props.contains_key("query"));
         assert!(props.contains_key("category"));
         assert!(props.contains_key("tool"));
+        assert!(props.contains_key("mcp_server"));
     }
 }
