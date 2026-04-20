@@ -3,13 +3,13 @@ import { Button } from '../ui/Button';
 import { StatusBar } from '../chat-panel/StatusBar';
 import { ChatPanel } from '../chat-panel/ChatPanel';
 import { InputArea } from '../chat-panel/input-area/InputArea';
+import type { InputProviderProps, InputMcpProps, InputDialogProps, InputEditProps, InputFeatureProps } from '../chat-panel/input-area/InputArea';
 import type { AgentInfo, AgentDetail } from '../../hooks/useAgents';
 import type { SessionInfo } from '../../types';
-import type { Message, ThinkingEffort, PlanMode, McpMode, Attachment, SkillInfo, KnowledgeCollectionInfo, ProviderInfo } from '../../types';
+import type { Message, ThinkingEffort, PlanMode, McpMode, Attachment, SkillInfo, KnowledgeCollectionInfo } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
-import type { PendingEdit, CompactInfo } from '../../hooks/useChat';
-import type { AskUserDialogState, PermissionDialogState } from '../../hooks/useSessionInteractions';
+import type { CompactInfo } from '../../hooks/useChat';
 
 interface AgentStudioProps {
   agentSummary: AgentInfo | AgentDetail | null;
@@ -34,27 +34,13 @@ interface AgentStudioProps {
   lastCost: number | undefined;
   contextWindow: number | undefined;
   contextTokensUsed: number | undefined;
-  selectedProviderId: string;
-  thinkingEffort: ThinkingEffort | null;
-  planMode: PlanMode;
   inputDisabled: boolean;
   sendOnEnter: boolean;
-  providers: ProviderInfo[];
-  providerIcons: Record<string, string>;
   visibleSkills: SkillInfo[];
   visibleKnowledge: KnowledgeCollectionInfo[];
   inputExpanded: boolean;
-  pendingEdit: PendingEdit | null;
   isCompacting: boolean;
   hasCustomPrompt: boolean;
-  rewindDraft: string | null;
-  mcpMode: McpMode;
-  onMcpModeChange: (mode: McpMode) => void;
-  mcpServerList: { name: string; disabled: boolean }[];
-  selectedMcpServers: string[];
-  onMcpServerToggle: (name: string) => void;
-  askUserData: AskUserDialogState | null;
-  permissionData: PermissionDialogState | null;
   onNewSession: () => void;
   // ChatPanel callbacks (content first, then messageId)
   onEditMessage: (content: string, messageId: string) => void;
@@ -66,20 +52,16 @@ interface AgentStudioProps {
   onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => void;
   onStop: () => void;
   onCommand: (command: string) => boolean;
-  onSelectProvider: (id: string) => void;
-  onThinkingEffortChange: (effort: ThinkingEffort | null) => void;
-  onPlanModeChange: (mode: PlanMode) => void;
   onExpandChange: (expanded: boolean) => void;
-  onCancelEdit: () => void;
   onClearSession: () => void;
   onAddContextReset: () => void;
   onCustomPromptChange: (hasPrompt: boolean) => void;
-  onRewindDraftConsumed: () => void;
-  onAskUserSubmit: (interactionId: string, answers: Record<string, string>) => void;
-  onAskUserDismiss: (interactionId: string) => void;
-  onPermissionApprove: (requestId: string) => void;
-  onPermissionDeny: (requestId: string) => void;
-  onPermissionAllowAllForSession: (requestId: string) => void;
+  // Grouped InputArea prop objects
+  provider: InputProviderProps;
+  mcp: InputMcpProps;
+  dialogs: InputDialogProps;
+  edit: InputEditProps;
+  features: InputFeatureProps;
 }
 
 export function AgentStudio({
@@ -104,27 +86,13 @@ export function AgentStudio({
   lastCost,
   contextWindow,
   contextTokensUsed,
-  selectedProviderId,
-  thinkingEffort,
-  planMode,
   inputDisabled,
   sendOnEnter,
-  providers,
-  providerIcons,
   visibleSkills,
   visibleKnowledge,
   inputExpanded,
-  pendingEdit,
   isCompacting,
   hasCustomPrompt,
-  rewindDraft,
-  mcpMode,
-  onMcpModeChange,
-  mcpServerList,
-  selectedMcpServers,
-  onMcpServerToggle,
-  askUserData,
-  permissionData,
   onNewSession,
   onEditMessage,
   onUndoMessage,
@@ -134,20 +102,15 @@ export function AgentStudio({
   onSend,
   onStop,
   onCommand,
-  onSelectProvider,
-  onThinkingEffortChange,
-  onPlanModeChange,
   onExpandChange,
-  onCancelEdit,
   onClearSession,
   onAddContextReset,
   onCustomPromptChange,
-  onRewindDraftConsumed,
-  onAskUserSubmit,
-  onAskUserDismiss,
-  onPermissionApprove,
-  onPermissionDeny,
-  onPermissionAllowAllForSession,
+  provider,
+  mcp,
+  dialogs,
+  edit,
+  features,
 }: AgentStudioProps) {
   return (
     <section className="agents-chat-stage">
@@ -198,41 +161,21 @@ export function AgentStudio({
         onCommand={onCommand}
         disabled={inputDisabled}
         sendOnEnter={sendOnEnter}
-        providers={providers}
-        selectedProviderId={selectedProviderId}
-        onSelectProvider={onSelectProvider}
-        pendingEdit={pendingEdit}
-        onCancelEdit={onCancelEdit}
         skills={visibleSkills}
         knowledgeCollections={visibleKnowledge}
         expanded={inputExpanded}
         onExpandChange={onExpandChange}
         onClearSession={onClearSession}
         onAddContextReset={onAddContextReset}
-        providerIcons={providerIcons}
-        thinkingEffort={thinkingEffort}
-        onThinkingEffortChange={onThinkingEffortChange}
-        planMode={planMode}
-        onPlanModeChange={onPlanModeChange}
-        persistPlanMode={false}
-        askUserData={askUserData}
-        onAskUserSubmit={onAskUserSubmit}
-        onAskUserDismiss={onAskUserDismiss}
-        permissionData={permissionData}
-        onPermissionApprove={onPermissionApprove}
-        onPermissionDeny={onPermissionDeny}
-        onPermissionAllowAllForSession={onPermissionAllowAllForSession}
         isCompacting={isCompacting}
         sessionId={activeSessionId}
         hasCustomPrompt={hasCustomPrompt}
         onCustomPromptChange={onCustomPromptChange}
-        rewindDraft={rewindDraft}
-        onRewindDraftConsumed={onRewindDraftConsumed}
-        mcpMode={mcpMode}
-        onMcpModeChange={onMcpModeChange}
-        mcpServerList={mcpServerList}
-        selectedMcpServers={selectedMcpServers}
-        onMcpServerToggle={onMcpServerToggle}
+        provider={provider}
+        mcp={mcp}
+        dialogs={dialogs}
+        edit={edit}
+        features={features}
       />
 
       <StatusBar

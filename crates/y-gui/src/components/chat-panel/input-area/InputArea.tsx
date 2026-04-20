@@ -42,35 +42,28 @@ function ToolbarTooltipButton({
   );
 }
 
-interface InputAreaProps {
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => void;
-  onStop?: () => void;
-  onCommand?: (commandName: string) => boolean;
-  disabled: boolean;
-  sendOnEnter: boolean;
+export interface InputProviderProps {
   providers: ProviderInfo[];
   selectedProviderId: string;
   onSelectProvider: (id: string) => void;
-  pendingEdit?: PendingEdit | null;
-  onCancelEdit?: () => void;
-  skills?: SkillInfo[];
-  knowledgeCollections?: KnowledgeCollectionInfo[];
-  expanded?: boolean;
-  onExpandChange?: (expanded: boolean) => void;
-  onClearSession?: () => void;
-  onAddContextReset?: () => void;
   /** Map from provider ID to icon identifier. */
   providerIcons?: Record<string, string>;
-  /** Current thinking effort level (null = model default). */
-  thinkingEffort?: ThinkingEffort | null;
-  /** Callback when user changes thinking effort. */
-  onThinkingEffortChange?: (effort: ThinkingEffort | null) => void;
-  /** Controlled plan-mode value. When omitted, InputArea uses local state. */
-  planMode?: PlanMode;
-  /** Callback when user changes plan mode. Enables controlled usage. */
-  onPlanModeChange?: (mode: PlanMode) => void;
-  /** Persist uncontrolled plan mode to localStorage. Defaults to true. */
-  persistPlanMode?: boolean;
+}
+
+export interface InputMcpProps {
+  /** MCP mode for the current session. */
+  mcpMode?: McpMode;
+  /** Callback when MCP mode changes. */
+  onMcpModeChange?: (mode: McpMode) => void;
+  /** List of configured MCP servers (for manual mode selection). */
+  mcpServerList?: { name: string; disabled: boolean }[];
+  /** Selected MCP server names (for manual mode). */
+  selectedMcpServers?: string[];
+  /** Callback when manual-mode server selection changes. */
+  onMcpServerToggle?: (serverName: string) => void;
+}
+
+export interface InputDialogProps {
   /** Pending AskUser interaction data. */
   askUserData?: {
     interactionId: string;
@@ -98,72 +91,83 @@ interface InputAreaProps {
   onPermissionDeny?: (requestId: string) => void;
   /** Callback when user allows all future tool calls for this session. */
   onPermissionAllowAllForSession?: (requestId: string) => void;
-  /** Whether context compaction is in progress. */
-  isCompacting?: boolean;
-  /** Active session ID (for per-session features like custom prompt). */
-  sessionId?: string | null;
-  /** Whether the active session has a custom system prompt. */
-  hasCustomPrompt?: boolean;
-  /** Callback when custom prompt state changes. */
-  onCustomPromptChange?: (hasPrompt: boolean) => void;
+}
+
+export interface InputEditProps {
+  pendingEdit?: PendingEdit | null;
+  onCancelEdit?: () => void;
   /** Draft text to populate after rewind/undo (normal draft, not edit mode). */
   rewindDraft?: string | null;
   /** Called after rewindDraft is consumed to clear the state. */
   onRewindDraftConsumed?: () => void;
-  /** MCP mode for the current session. */
-  mcpMode?: McpMode;
-  /** Callback when MCP mode changes. */
-  onMcpModeChange?: (mode: McpMode) => void;
-  /** List of configured MCP servers (for manual mode selection). */
-  mcpServerList?: { name: string; disabled: boolean }[];
-  /** Selected MCP server names (for manual mode). */
-  selectedMcpServers?: string[];
-  /** Callback when manual-mode server selection changes. */
-  onMcpServerToggle?: (serverName: string) => void;
 }
 
-export function InputArea({
-  onSend,
-  onStop,
-  onCommand,
-  disabled,
-  sendOnEnter,
-  providers,
-  selectedProviderId,
-  onSelectProvider,
-  pendingEdit,
-  onCancelEdit,
-  skills = [],
-  knowledgeCollections = [],
-  expanded = false,
-  onExpandChange,
-  onClearSession,
-  onAddContextReset,
-  providerIcons,
-  thinkingEffort,
-  onThinkingEffortChange,
-  planMode: controlledPlanMode,
-  onPlanModeChange,
-  persistPlanMode = true,
-  askUserData,
-  onAskUserSubmit,
-  onAskUserDismiss,
-  permissionData,
-  onPermissionApprove,
-  onPermissionDeny,
-  onPermissionAllowAllForSession,
-  isCompacting = false,
-  sessionId,
-  hasCustomPrompt = false,
-  onCustomPromptChange,
-  rewindDraft,
-  onRewindDraftConsumed,
-  mcpMode = 'disabled',
-  onMcpModeChange,
-  mcpServerList = [],
-  selectedMcpServers = [],
-  onMcpServerToggle,
-}: InputAreaProps) {
+export interface InputFeatureProps {
+  /** Current thinking effort level (null = model default). */
+  thinkingEffort?: ThinkingEffort | null;
+  /** Callback when user changes thinking effort. */
+  onThinkingEffortChange?: (effort: ThinkingEffort | null) => void;
+  /** Controlled plan-mode value. When omitted, InputArea uses local state. */
+  planMode?: PlanMode;
+  /** Callback when user changes plan mode. Enables controlled usage. */
+  onPlanModeChange?: (mode: PlanMode) => void;
+  /** Persist uncontrolled plan mode to localStorage. Defaults to true. */
+  persistPlanMode?: boolean;
+}
+
+interface InputAreaProps {
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => void;
+  onStop?: () => void;
+  onCommand?: (commandName: string) => boolean;
+  disabled: boolean;
+  sendOnEnter: boolean;
+  expanded?: boolean;
+  onExpandChange?: (expanded: boolean) => void;
+  onClearSession?: () => void;
+  onAddContextReset?: () => void;
+  /** Whether context compaction is in progress. */
+  isCompacting?: boolean;
+  /** Active session ID (for per-session features like custom prompt). */
+  sessionId?: string | null;
+  skills?: SkillInfo[];
+  knowledgeCollections?: KnowledgeCollectionInfo[];
+  /** Whether the active session has a custom system prompt. */
+  hasCustomPrompt?: boolean;
+  /** Callback when custom prompt state changes. */
+  onCustomPromptChange?: (hasPrompt: boolean) => void;
+  provider: InputProviderProps;
+  mcp: InputMcpProps;
+  dialogs: InputDialogProps;
+  edit: InputEditProps;
+  features: InputFeatureProps;
+}
+
+export function InputArea(props: InputAreaProps) {
+  const {
+    onSend, onStop, onCommand, disabled, sendOnEnter,
+    expanded = false, onExpandChange, onClearSession, onAddContextReset,
+    isCompacting = false, sessionId, skills = [], knowledgeCollections = [],
+    hasCustomPrompt = false, onCustomPromptChange,
+    provider, mcp, dialogs, edit, features,
+  } = props;
+
+  // Destructure grouped props with defaults.
+  const { providers, selectedProviderId, onSelectProvider, providerIcons } = provider;
+  const {
+    mcpMode = 'disabled', onMcpModeChange,
+    mcpServerList = [], selectedMcpServers = [], onMcpServerToggle,
+  } = mcp;
+  const {
+    askUserData, onAskUserSubmit, onAskUserDismiss,
+    permissionData, onPermissionApprove, onPermissionDeny, onPermissionAllowAllForSession,
+  } = dialogs;
+  const { pendingEdit, onCancelEdit, rewindDraft, onRewindDraftConsumed } = edit;
+  const {
+    thinkingEffort, onThinkingEffortChange,
+    planMode: controlledPlanMode, onPlanModeChange,
+    persistPlanMode = true,
+  } = features;
+
   const [commandMode, setCommandMode] = useState(false);
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
