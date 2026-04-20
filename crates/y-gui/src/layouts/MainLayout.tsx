@@ -14,13 +14,15 @@ import { AgentsView } from '../views/AgentsView';
 import { AutomationView } from '../views/AutomationView';
 import { SettingsView } from '../views/SettingsView';
 
-import { useNavigationContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext, useAgentSessionsContext } from '../providers/AppContexts';
+import { useViewRouting, usePanelContext, useAgentEditorContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext, useAgentSessionsContext } from '../providers/AppContexts';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useObservability, type TimeRange } from '../hooks/useObservability';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
 
 export function MainLayout() {
-  const navProps = useNavigationContext();
+  const viewRouting = useViewRouting();
+  const panelCtx = usePanelContext();
+  const agentEditor = useAgentEditorContext();
   const sessionHooks = useSessionsContext();
   const skillHooks = useSkillsContext();
   const agentHooks = useAgentsContext();
@@ -28,7 +30,7 @@ export function MainLayout() {
   const workspaceHooks = useWorkspacesContext();
   const chatHooks = useChatContext();
 
-  const diagnosticsScope = resolveDiagnosticsScope(navProps.activeView, sessionHooks.activeSessionId);
+  const diagnosticsScope = resolveDiagnosticsScope(viewRouting.activeView, sessionHooks.activeSessionId);
   const {
     entries: diagEntries,
     summary: diagSummary,
@@ -42,7 +44,7 @@ export function MainLayout() {
     loading: obsLoading,
     error: obsError,
   } = useObservability({
-    active: navProps.obsOpen,
+    active: panelCtx.obsOpen,
     timeRange: obsTimeRange,
   });
 
@@ -50,22 +52,22 @@ export function MainLayout() {
   // imported skills appear immediately (the import runs asynchronously
   // and the user may switch views during the long agent execution).
   useEffect(() => {
-    if (navProps.activeView === 'skills') {
+    if (viewRouting.activeView === 'skills') {
       skillHooks.refresh();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navProps.activeView]);
+  }, [viewRouting.activeView]);
 
-  const selectedAgentName = navProps.activeAgentId
-    ? agentHooks.agents.find((agent) => agent.id === navProps.activeAgentId)?.name ?? navProps.activeAgentId
+  const selectedAgentName = agentEditor.activeAgentId
+    ? agentHooks.agents.find((agent) => agent.id === agentEditor.activeAgentId)?.name ?? agentEditor.activeAgentId
     : null;
-  const headerTitle = navProps.activeView === 'skills'
+  const headerTitle = viewRouting.activeView === 'skills'
     ? 'Skills'
-    : navProps.activeView === 'knowledge'
+    : viewRouting.activeView === 'knowledge'
       ? 'Knowledge Base'
-      : navProps.activeView === 'agents'
+      : viewRouting.activeView === 'agents'
         ? selectedAgentName ?? 'Agents'
-        : navProps.activeView === 'automation'
+        : viewRouting.activeView === 'automation'
           ? 'Automation'
           : sessionHooks.activeSessionId
             ? sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)?.title || 'Untitled'
@@ -75,21 +77,21 @@ export function MainLayout() {
     <div className="app">
       <Sidebar
         nav={{
-          activeView: navProps.activeView,
+          activeView: viewRouting.activeView,
           onSelectView: (v) => {
-            navProps.setActiveView(v);
+            viewRouting.setActiveView(v);
             if (v !== 'chat') {
-              navProps.setInputExpanded(false);
+              viewRouting.setInputExpanded(false);
             }
           },
-          activeSettingsTab: navProps.activeSettingsTab,
-          onSelectSettingsTab: (t: string) => navProps.setActiveSettingsTab(t as never),
-          agentEditing: navProps.agentEditing,
-          agentEditorTab: navProps.agentEditorTab,
-          agentEditorSurface: navProps.agentEditorSurface,
-          onAgentEditorTabChange: navProps.setAgentEditorTab,
-          onAgentEditorSurfaceChange: navProps.onAgentEditorSurfaceChange,
-          onAgentEditorBack: navProps.onAgentEditorBack,
+          activeSettingsTab: viewRouting.activeSettingsTab,
+          onSelectSettingsTab: (t: string) => viewRouting.setActiveSettingsTab(t as never),
+          agentEditing: agentEditor.agentEditing,
+          agentEditorTab: agentEditor.agentEditorTab,
+          agentEditorSurface: agentEditor.agentEditorSurface,
+          onAgentEditorTabChange: agentEditor.setAgentEditorTab,
+          onAgentEditorSurfaceChange: agentEditor.onAgentEditorSurfaceChange,
+          onAgentEditorBack: agentEditor.onAgentEditorBack,
         }}
         chat={{
           sessions: sessionHooks.sessions,
@@ -138,16 +140,16 @@ export function MainLayout() {
              await workspaceHooks.unassignSession(sessionId);
           },
         }}
-        agentStudio={navProps.activeAgentId && !navProps.agentEditing ? {
-          agentName: selectedAgentName ?? navProps.activeAgentId,
+        agentStudio={agentEditor.activeAgentId && !agentEditor.agentEditing ? {
+          agentName: selectedAgentName ?? agentEditor.activeAgentId,
           sessions: agentSessionHooks.sessions,
           activeSessionId: agentSessionHooks.activeSessionId,
           loading: agentSessionHooks.loading,
           streamingSessionIds: chatHooks.streamingSessionIds,
-          onBack: () => navProps.setActiveAgentId(null),
-          onEdit: () => navProps.onAgentStudioEdit(),
+          onBack: () => agentEditor.setActiveAgentId(null),
+          onEdit: () => agentEditor.onAgentStudioEdit(),
           onNewSession: async () => {
-            const newSession = await agentSessionHooks.createSession(undefined, { agentId: navProps.activeAgentId });
+            const newSession = await agentSessionHooks.createSession(undefined, { agentId: agentEditor.activeAgentId });
             if (newSession) agentSessionHooks.selectSession(newSession.id);
           },
           onSelectSession: agentSessionHooks.selectSession,
@@ -158,23 +160,23 @@ export function MainLayout() {
       />
 
       <main className="main-panel">
-        {navProps.activeView !== 'settings' && !(navProps.activeView === 'agents' && navProps.agentEditing) && (
+        {viewRouting.activeView !== 'settings' && !(viewRouting.activeView === 'agents' && agentEditor.agentEditing) && (
         <header className="main-header" data-tauri-drag-region>
           <div className="main-header-start" data-tauri-drag-region>
             <h1 className="app-title">{headerTitle}</h1>
           </div>
           <div className="header-actions">
             <button
-              className={`btn-header ${navProps.diagOpen ? 'active' : ''}`}
-              onClick={() => navProps.setDiagOpen(!navProps.diagOpen)}
+              className={`btn-header ${panelCtx.diagOpen ? 'active' : ''}`}
+              onClick={() => panelCtx.setDiagOpen(!panelCtx.diagOpen)}
               title="Diagnostics"
               id="btn-diagnostics"
             >
               <Activity size={16} />
             </button>
             <button
-              className={`btn-header ${navProps.obsOpen ? 'active' : ''}`}
-              onClick={() => navProps.setObsOpen(!navProps.obsOpen)}
+              className={`btn-header ${panelCtx.obsOpen ? 'active' : ''}`}
+              onClick={() => panelCtx.setObsOpen(!panelCtx.obsOpen)}
               title="Observability"
               id="btn-observability"
             >
@@ -185,36 +187,36 @@ export function MainLayout() {
         </header>
         )}
 
-        {navProps.activeView === 'chat' && <ChatView />}
-        {navProps.activeView === 'skills' && <SkillsView />}
-        {navProps.activeView === 'knowledge' && <KnowledgeView />}
-        {navProps.activeView === 'agents' && <AgentsView />}
-        {navProps.activeView === 'automation' && <AutomationView />}
-        {navProps.activeView === 'settings' && <SettingsView />}
+        {viewRouting.activeView === 'chat' && <ChatView />}
+        {viewRouting.activeView === 'skills' && <SkillsView />}
+        {viewRouting.activeView === 'knowledge' && <KnowledgeView />}
+        {viewRouting.activeView === 'agents' && <AgentsView />}
+        {viewRouting.activeView === 'automation' && <AutomationView />}
+        {viewRouting.activeView === 'settings' && <SettingsView />}
       </main>
 
-      {navProps.diagOpen && (
+      {panelCtx.diagOpen && (
         <DiagnosticsPanel
           entries={diagEntries}
           summary={diagSummary}
           isActive={diagActive}
           isGlobal={diagnosticsScope.isGlobal}
-          expanded={navProps.diagExpanded}
+          expanded={panelCtx.diagExpanded}
           sessionId={diagnosticsScope.sessionId}
-          onToggleExpand={() => navProps.setDiagExpanded(!navProps.diagExpanded)}
+          onToggleExpand={() => panelCtx.setDiagExpanded(!panelCtx.diagExpanded)}
           onClear={clearDiagnostics}
-          onClose={() => navProps.setDiagOpen(false)}
+          onClose={() => panelCtx.setDiagOpen(false)}
         />
       )}
 
-      {navProps.obsOpen && (
+      {panelCtx.obsOpen && (
         <ObservabilityPanel
           snapshot={obsSnapshot}
           loading={obsLoading}
           error={obsError}
-          expanded={navProps.obsExpanded}
-          onToggleExpand={() => navProps.setObsExpanded(!navProps.obsExpanded)}
-          onClose={() => navProps.setObsOpen(false)}
+          expanded={panelCtx.obsExpanded}
+          onToggleExpand={() => panelCtx.setObsExpanded(!panelCtx.obsExpanded)}
+          onClose={() => panelCtx.setObsOpen(false)}
           timeRange={obsTimeRange}
           onTimeRangeChange={(r: string) => setObsTimeRange(r as TimeRange)}
         />

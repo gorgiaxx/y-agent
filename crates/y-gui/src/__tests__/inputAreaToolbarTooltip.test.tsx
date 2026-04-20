@@ -69,9 +69,15 @@ describe('InputArea toolbar tooltips', () => {
           onSend={() => {}}
           disabled={false}
           sendOnEnter
-          providers={[]}
-          selectedProviderId="auto"
-          onSelectProvider={() => {}}
+          provider={{
+            providers: [],
+            selectedProviderId: 'auto',
+            onSelectProvider: () => {},
+          }}
+          mcp={{}}
+          dialogs={{}}
+          edit={{}}
+          features={{}}
         />
       </TooltipProvider>,
     );
