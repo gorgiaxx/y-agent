@@ -21,6 +21,7 @@ import { useAgentEditor } from '../hooks/useAgentEditor';
 import type { AgentDetail } from '../hooks/useAgents';
 import type { PlanMode, ThinkingEffort, McpMode } from '../types';
 import { useMcpServers } from '../hooks/useMcpServers';
+import { DEFAULT_ROOT_AGENT_NAME } from '../constants/agents';
 import './AgentsView.css';
 
 export function AgentsView() {
@@ -49,7 +50,7 @@ export function AgentsView() {
     refreshSessions: refreshAgentSessions,
   } = sessionHooks;
   const agentRootNames = useMemo(
-    () => (nav.activeAgentId ? [nav.activeAgentId] : ['chat-turn']),
+    () => (nav.activeAgentId ? [nav.activeAgentId] : [DEFAULT_ROOT_AGENT_NAME]),
     [nav.activeAgentId],
   );
   const agentChatHooks = useChat(agentActiveSessionId, agentRootNames);
@@ -212,35 +213,45 @@ export function AgentsView() {
     || (agentChatHooks.opStatus !== 'idle' && agentChatHooks.opStatus !== 'sending');
 
   const chatHandlers = useChatHandlers({
-    activeSessionId: sessionHooks.activeSessionId,
-    createSession: sessionHooks.createSession,
-    selectSession: sessionHooks.selectSession,
-    deleteSession: sessionHooks.deleteSession,
-    refreshSessions: sessionHooks.refreshSessions,
-    clearMessages: agentChatHooks.clearMessages,
-    sendMessage: agentChatHooks.sendMessage,
-    editAndResend: agentChatHooks.editAndResend,
-    editMessage: agentChatHooks.editMessage,
-    cancelEdit: agentChatHooks.cancelEdit,
-    undoToMessage: agentChatHooks.undoToMessage,
-    resendLastTurn: agentChatHooks.resendLastTurn,
-    restoreBranch: agentChatHooks.restoreBranch,
-    pendingEdit: agentChatHooks.pendingEdit,
-    loadMessages: agentChatHooks.loadMessages,
-    selectedProviderId,
-    thinkingEffort,
-    planMode,
-    welcomeWorkspaceId: null,
-    assignSession: async () => {},
-    refreshWorkspaces: async () => {},
-    addUserMessage: diagnostics.addUserMessage,
-    addCompactPoint: agentChatHooks.addCompactPoint,
-    setOp: agentChatHooks.setOp,
-    setActiveView: nav.setActiveView,
-    setDiagOpen: (fn) => nav.setDiagOpen(fn(nav.diagOpen)),
-    setObsOpen: (fn) => nav.setObsOpen(fn(nav.obsOpen)),
-    messages: agentChatHooks.messages,
-    onSetRewindDraft: setRewindDraft,
+    session: {
+      activeSessionId: sessionHooks.activeSessionId,
+      createSession: sessionHooks.createSession,
+      selectSession: sessionHooks.selectSession,
+      deleteSession: sessionHooks.deleteSession,
+      refreshSessions: sessionHooks.refreshSessions,
+    },
+    chat: {
+      clearMessages: agentChatHooks.clearMessages,
+      sendMessage: agentChatHooks.sendMessage,
+      editAndResend: agentChatHooks.editAndResend,
+      editMessage: agentChatHooks.editMessage,
+      cancelEdit: agentChatHooks.cancelEdit,
+      undoToMessage: agentChatHooks.undoToMessage,
+      resendLastTurn: agentChatHooks.resendLastTurn,
+      restoreBranch: agentChatHooks.restoreBranch,
+      pendingEdit: agentChatHooks.pendingEdit,
+      loadMessages: agentChatHooks.loadMessages,
+      messages: agentChatHooks.messages,
+      addCompactPoint: agentChatHooks.addCompactPoint,
+      setOp: agentChatHooks.setOp,
+    },
+    workspace: {
+      welcomeWorkspaceId: null,
+      assignSession: async () => {},
+      refreshWorkspaces: async () => {},
+    },
+    config: {
+      selectedProviderId,
+      thinkingEffort,
+      planMode,
+    },
+    callbacks: {
+      addUserMessage: diagnostics.addUserMessage,
+      setActiveView: nav.setActiveView,
+      setDiagOpen: (fn) => nav.setDiagOpen(fn(nav.diagOpen)),
+      setObsOpen: (fn) => nav.setObsOpen(fn(nav.obsOpen)),
+      onSetRewindDraft: setRewindDraft,
+    },
   });
 
   const selectedAgentSummary = useMemo(() => {
@@ -356,37 +367,19 @@ export function AgentsView() {
                   lastCost={statusBarMeta.cost}
                   contextWindow={statusBarMeta.contextWindow}
                   contextTokensUsed={statusBarMeta.contextTokensUsed}
-                  selectedProviderId={selectedProviderId}
-                  thinkingEffort={thinkingEffort}
-                  planMode={planMode}
                   inputDisabled={inputDisabled}
                   sendOnEnter={configHooks.config.send_on_enter}
-                  providers={providerHooks.providers}
-                  providerIcons={providerHooks.providerIconMap}
                   visibleSkills={visibleSkills}
                   visibleKnowledge={visibleKnowledge}
                   inputExpanded={nav.inputExpanded}
-                  pendingEdit={agentChatHooks.pendingEdit}
                   isCompacting={agentChatHooks.opStatus === 'compacting'}
                   hasCustomPrompt={sessionHooks.sessions.find((session) => session.id === sessionHooks.activeSessionId)?.has_custom_prompt ?? false}
-                  rewindDraft={rewindDraft}
-                  mcpMode={mcpMode}
-                  onMcpModeChange={handleMcpModeChange}
-                  mcpServerList={mcpServerList}
-                  selectedMcpServers={selectedMcpServers}
-                  onMcpServerToggle={handleMcpServerToggle}
-                  askUserData={interactions.askUserData}
-                  permissionData={interactions.permissionData}
                   onNewSession={() => void chatHandlers.handleNewChat()}
                   onForkMessage={(messageIndex) => void handleForkMessage(messageIndex)}
                   onSend={chatHandlers.handleSend}
                   onStop={agentChatHooks.cancelRun}
                   onCommand={chatHandlers.handleCommand}
-                  onSelectProvider={setSelectedProviderId}
-                  onThinkingEffortChange={setThinkingEffort}
-                  onPlanModeChange={setPlanMode}
                   onExpandChange={nav.setInputExpanded}
-                  onCancelEdit={chatHandlers.handleCancelEdit}
                   onClearSession={() => void chatHandlers.handleClearSession()}
                   onAddContextReset={agentChatHooks.addContextReset}
                   onEditMessage={chatHandlers.handleEditMessage}
@@ -394,12 +387,41 @@ export function AgentsView() {
                   onResendMessage={chatHandlers.handleResendMessage}
                   onRestoreBranch={chatHandlers.handleRestoreBranch}
                   onCustomPromptChange={() => { void refreshAgentSessions(); }}
-                  onRewindDraftConsumed={() => setRewindDraft(null)}
-                  onAskUserSubmit={interactions.handleAskUserSubmit}
-                  onAskUserDismiss={interactions.handleAskUserDismiss}
-                  onPermissionApprove={interactions.handlePermissionApprove}
-                  onPermissionDeny={interactions.handlePermissionDeny}
-                  onPermissionAllowAllForSession={interactions.handlePermissionAllowAllForSession}
+                  provider={{
+                    providers: providerHooks.providers,
+                    selectedProviderId,
+                    onSelectProvider: setSelectedProviderId,
+                    providerIcons: providerHooks.providerIconMap,
+                  }}
+                  mcp={{
+                    mcpMode,
+                    onMcpModeChange: handleMcpModeChange,
+                    mcpServerList,
+                    selectedMcpServers,
+                    onMcpServerToggle: handleMcpServerToggle,
+                  }}
+                  dialogs={{
+                    askUserData: interactions.askUserData,
+                    onAskUserSubmit: interactions.handleAskUserSubmit,
+                    onAskUserDismiss: interactions.handleAskUserDismiss,
+                    permissionData: interactions.permissionData,
+                    onPermissionApprove: interactions.handlePermissionApprove,
+                    onPermissionDeny: interactions.handlePermissionDeny,
+                    onPermissionAllowAllForSession: interactions.handlePermissionAllowAllForSession,
+                  }}
+                  edit={{
+                    pendingEdit: agentChatHooks.pendingEdit,
+                    onCancelEdit: chatHandlers.handleCancelEdit,
+                    rewindDraft,
+                    onRewindDraftConsumed: () => setRewindDraft(null),
+                  }}
+                  features={{
+                    thinkingEffort,
+                    onThinkingEffortChange: setThinkingEffort,
+                    planMode,
+                    onPlanModeChange: setPlanMode,
+                    persistPlanMode: false,
+                  }}
                 />
               </section>
           ) : (

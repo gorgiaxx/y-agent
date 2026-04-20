@@ -8,7 +8,7 @@ import { RewindPanel } from '../components/chat-panel/RewindPanel';
 import { useRewind } from '../hooks/useRewind';
 import { useMcpServers } from '../hooks/useMcpServers';
 
-import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useNavigationContext } from '../providers/AppContexts';
+import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useViewRouting, usePanelContext } from '../providers/AppContexts';
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
@@ -24,7 +24,8 @@ export function ChatView() {
   const knowledgeHooks = useKnowledgeContext();
   const providerHooks = useProvidersContext();
   const configHooks = useConfigContext();
-  const navProps = useNavigationContext();
+  const viewRouting = useViewRouting();
+  const panelCtx = usePanelContext();
 
   const rewind = useRewind();
 
@@ -63,7 +64,7 @@ export function ChatView() {
     handlePermissionAllowAllForSession,
   } = useSessionInteractions(sessionHooks.activeSessionId);
 
-  const diagnosticsScope = resolveDiagnosticsScope(navProps.activeView, sessionHooks.activeSessionId);
+  const diagnosticsScope = resolveDiagnosticsScope(viewRouting.activeView, sessionHooks.activeSessionId);
   const { entries, isActive, addUserMessage } = useDiagnostics(diagnosticsScope.sessionId);
 
   const {
@@ -77,40 +78,50 @@ export function ChatView() {
     handleCreateWorkspace,
     handleCommand,
   } = useChatHandlers({
-    activeSessionId: sessionHooks.activeSessionId,
-    createSession: sessionHooks.createSession,
-    selectSession: sessionHooks.selectSession,
-    deleteSession: sessionHooks.deleteSession,
-    refreshSessions: sessionHooks.refreshSessions,
-    clearMessages: chatHooks.clearMessages,
-    sendMessage: chatHooks.sendMessage,
-    editAndResend: chatHooks.editAndResend,
-    editMessage: chatHooks.editMessage,
-    cancelEdit: chatHooks.cancelEdit,
-    undoToMessage: chatHooks.undoToMessage,
-    resendLastTurn: chatHooks.resendLastTurn,
-    restoreBranch: chatHooks.restoreBranch,
-    pendingEdit: chatHooks.pendingEdit,
-    loadMessages: chatHooks.loadMessages,
-    messages: chatHooks.messages,
-    selectedProviderId: providerHooks.selectedProviderId,
-    thinkingEffort,
-    planMode: 'fast' as PlanMode,
-    welcomeWorkspaceId: navProps.welcomeWorkspaceId,
-    assignSession: workspaceHooks.assignSession,
-    refreshWorkspaces: workspaceHooks.refreshWorkspaces,
-    addUserMessage,
-    addCompactPoint: chatHooks.addCompactPoint,
-    setOp: chatHooks.setOp,
-    setActiveView: navProps.setActiveView,
-    setDiagOpen: (fn: (prev: boolean) => boolean) => navProps.setDiagOpen(fn(navProps.diagOpen)),
-    setObsOpen: (fn: (prev: boolean) => boolean) => navProps.setObsOpen(fn(navProps.obsOpen)),
-    onRewind: () => {
-      if (sessionHooks.activeSessionId) {
-        rewind.open(sessionHooks.activeSessionId);
-      }
+    session: {
+      activeSessionId: sessionHooks.activeSessionId,
+      createSession: sessionHooks.createSession,
+      selectSession: sessionHooks.selectSession,
+      deleteSession: sessionHooks.deleteSession,
+      refreshSessions: sessionHooks.refreshSessions,
     },
-    onSetRewindDraft: setRewindDraft,
+    chat: {
+      clearMessages: chatHooks.clearMessages,
+      sendMessage: chatHooks.sendMessage,
+      editAndResend: chatHooks.editAndResend,
+      editMessage: chatHooks.editMessage,
+      cancelEdit: chatHooks.cancelEdit,
+      undoToMessage: chatHooks.undoToMessage,
+      resendLastTurn: chatHooks.resendLastTurn,
+      restoreBranch: chatHooks.restoreBranch,
+      pendingEdit: chatHooks.pendingEdit,
+      loadMessages: chatHooks.loadMessages,
+      messages: chatHooks.messages,
+      addCompactPoint: chatHooks.addCompactPoint,
+      setOp: chatHooks.setOp,
+    },
+    workspace: {
+      welcomeWorkspaceId: viewRouting.welcomeWorkspaceId,
+      assignSession: workspaceHooks.assignSession,
+      refreshWorkspaces: workspaceHooks.refreshWorkspaces,
+    },
+    config: {
+      selectedProviderId: providerHooks.selectedProviderId,
+      thinkingEffort,
+      planMode: 'fast' as PlanMode,
+    },
+    callbacks: {
+      addUserMessage,
+      setActiveView: viewRouting.setActiveView,
+      setDiagOpen: (fn: (prev: boolean) => boolean) => panelCtx.setDiagOpen(fn(panelCtx.diagOpen)),
+      setObsOpen: (fn: (prev: boolean) => boolean) => panelCtx.setObsOpen(fn(panelCtx.obsOpen)),
+      onRewind: () => {
+        if (sessionHooks.activeSessionId) {
+          rewind.open(sessionHooks.activeSessionId);
+        }
+      },
+      onSetRewindDraft: setRewindDraft,
+    },
   });
 
   const [wsDialogOpen, setWsDialogOpen] = useState(false);
@@ -142,7 +153,7 @@ export function ChatView() {
 
   return (
     <>
-      {!navProps.inputExpanded && sessionHooks.activeSessionId && (
+      {!viewRouting.inputExpanded && sessionHooks.activeSessionId && (
         <ChatPanel 
           messages={chatHooks.messages} 
           isStreaming={chatHooks.isStreaming} 
@@ -159,7 +170,7 @@ export function ChatView() {
           compactPoints={chatHooks.compactPoints}
         />
       )}
-      {!navProps.inputExpanded && !sessionHooks.activeSessionId && (
+      {!viewRouting.inputExpanded && !sessionHooks.activeSessionId && (
         <WelcomePage
           workspaces={workspaceHooks.workspaces}
           selectedWorkspaceId={navProps.welcomeWorkspaceId}
@@ -174,44 +185,53 @@ export function ChatView() {
         onCommand={handleCommand}
         disabled={inputDisabled}
         sendOnEnter={configHooks.config.send_on_enter}
-        providers={providerHooks.providers}
-        selectedProviderId={providerHooks.selectedProviderId}
-        onSelectProvider={providerHooks.setSelectedProviderId}
-        pendingEdit={chatHooks.pendingEdit}
-        onCancelEdit={handleCancelEdit}
         skills={skillHooks.skills.filter((s) => s.enabled)}
         knowledgeCollections={knowledgeHooks.collections}
         expanded={navProps.inputExpanded}
         onExpandChange={navProps.setInputExpanded}
         onClearSession={handleClearSession}
         onAddContextReset={chatHooks.addContextReset}
-        providerIcons={providerHooks.providerIconMap}
-        thinkingEffort={thinkingEffort}
-        onThinkingEffortChange={setThinkingEffort}
-        askUserData={askUserData}
-        onAskUserSubmit={handleAskUserSubmit}
-        onAskUserDismiss={handleAskUserDismiss}
-        permissionData={permissionData}
-        onPermissionApprove={handlePermissionApprove}
-        onPermissionDeny={handlePermissionDeny}
-        onPermissionAllowAllForSession={handlePermissionAllowAllForSession}
         isCompacting={chatHooks.opStatus === 'compacting'}
         sessionId={sessionHooks.activeSessionId}
         hasCustomPrompt={
           sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)
             ?.has_custom_prompt ?? false
         }
-        onCustomPromptChange={(hasPrompt) => {
+        onCustomPromptChange={() => {
           sessionHooks.refreshSessions?.();
-          void hasPrompt;
         }}
-        rewindDraft={rewindDraft}
-        onRewindDraftConsumed={() => setRewindDraft(null)}
-        mcpMode={mcpMode}
-        onMcpModeChange={handleMcpModeChange}
-        mcpServerList={mcpServerList}
-        selectedMcpServers={selectedMcpServers}
-        onMcpServerToggle={handleMcpServerToggle}
+        provider={{
+          providers: providerHooks.providers,
+          selectedProviderId: providerHooks.selectedProviderId,
+          onSelectProvider: providerHooks.setSelectedProviderId,
+          providerIcons: providerHooks.providerIconMap,
+        }}
+        mcp={{
+          mcpMode,
+          onMcpModeChange: handleMcpModeChange,
+          mcpServerList,
+          selectedMcpServers,
+          onMcpServerToggle: handleMcpServerToggle,
+        }}
+        dialogs={{
+          askUserData,
+          onAskUserSubmit: handleAskUserSubmit,
+          onAskUserDismiss: handleAskUserDismiss,
+          permissionData,
+          onPermissionApprove: handlePermissionApprove,
+          onPermissionDeny: handlePermissionDeny,
+          onPermissionAllowAllForSession: handlePermissionAllowAllForSession,
+        }}
+        edit={{
+          pendingEdit: chatHooks.pendingEdit,
+          onCancelEdit: handleCancelEdit,
+          rewindDraft,
+          onRewindDraftConsumed: () => setRewindDraft(null),
+        }}
+        features={{
+          thinkingEffort,
+          onThinkingEffortChange: setThinkingEffort,
+        }}
       />
       <StatusBar
         providerCount={providerHooks.systemStatus?.provider_count ?? 0}
