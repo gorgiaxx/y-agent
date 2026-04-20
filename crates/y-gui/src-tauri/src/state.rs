@@ -10,31 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use y_service::ServiceContainer;
 
-// ---------------------------------------------------------------------------
-// Per-session turn metadata (last completed turn)
-// ---------------------------------------------------------------------------
-
-/// Cached metadata for the last completed LLM turn in a session.
-///
-/// Stored in memory in `AppState` so the frontend can restore the status bar
-/// when switching between sessions without re-running the turn.
-#[derive(Debug, Clone, Serialize)]
-pub struct TurnMeta {
-    /// Provider ID that handled the turn (e.g. "custom-main").
-    pub provider_id: Option<String>,
-    /// Model name used (e.g. "gpt-4o").
-    pub model: String,
-    /// Number of input tokens consumed.
-    pub input_tokens: u64,
-    /// Number of output tokens generated.
-    pub output_tokens: u64,
-    /// Estimated cost in USD.
-    pub cost_usd: f64,
-    /// Provider context-window size in tokens.
-    pub context_window: usize,
-    /// Tokens occupying the context window (from last LLM iteration).
-    pub context_tokens_used: u64,
-}
+pub use y_service::chat_types::TurnMeta;
 
 /// GUI-specific configuration (persisted to `gui.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]

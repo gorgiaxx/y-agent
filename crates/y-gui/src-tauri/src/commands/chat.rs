@@ -1,20 +1,23 @@
-//! Chat command handlers — send messages and stream LLM responses.
+//! Chat command handlers -- send messages and stream LLM responses.
 
 use std::sync::Arc;
 
-use futures::FutureExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use y_core::provider::RequestMode;
 use y_core::types::SessionId;
+use y_service::chat_types::{
+    ChatCheckpointInfo, CompactResult, MessageWithStatus, RestoreResult, TurnMeta, UndoResult,
+};
+use y_service::event_sink::EventSink;
 use y_service::{
     ChatService, PermissionPromptResponse, PrepareTurnRequest, PreparedTurn, ResendTurnRequest,
     TurnEvent,
 };
 
-use crate::state::{AppState, TurnMeta};
+use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
 // Response / event types
@@ -37,7 +40,7 @@ pub struct ChatStartedPayload {
 }
 
 /// Payload emitted on `chat:complete`.
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatCompletePayload {
     pub run_id: String,
     pub session_id: String,
@@ -57,7 +60,8 @@ pub struct ChatCompletePayload {
 }
 
 /// Tool call summary in the completion payload.
-#[derive(Debug, Serialize, Clone)]
+/// Tool call summary in the completion payload.
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ToolCallInfo {
     pub name: String,
     pub success: bool,
@@ -211,8 +215,8 @@ pub async fn chat_send(
         runs.insert(run_id.clone(), cancel_token.clone());
     }
 
-    spawn_llm_worker(
-        app,
+    y_service::chat_worker::spawn_llm_worker(
+        TauriEventSink(app),
         state.container.clone(),
         prepared,
         run_id.clone(),
@@ -229,259 +233,104 @@ pub async fn chat_send(
 }
 
 // ---------------------------------------------------------------------------
-// Shared LLM spawn helper
+// Tauri EventSink implementation
 // ---------------------------------------------------------------------------
 
-/// Spawn the LLM worker task with progress forwarding and event emission.
-///
-/// Shared by `chat_send` and `chat_resend` to avoid duplicating the ~50-line
-/// `tokio::spawn` block. Owns all data needed for the task.
-fn spawn_llm_worker(
-    app: AppHandle,
-    container: Arc<y_service::ServiceContainer>,
-    prepared: PreparedTurn,
-    run_id: String,
-    turn_meta_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, TurnMeta>>>,
-    pending_runs: Arc<std::sync::Mutex<std::collections::HashMap<String, CancellationToken>>>,
-    cancel_token: CancellationToken,
-    should_generate_title: bool,
-) {
-    let sid_clone = prepared.session_id.clone();
-    let run_id_clone = run_id;
-    // Keep a copy outside the catch_unwind boundary so the panic
-    // handler can emit the correct run_id to the frontend.
-    let panic_run_id = run_id_clone.clone();
-    let cancel_clone = cancel_token;
+/// Tauri-based [`EventSink`] implementation that translates chat lifecycle
+/// events into Tauri `emit()` calls with typed payloads.
+struct TauriEventSink(AppHandle);
 
-    tokio::spawn(async move {
-        // Wrap the entire body in catch_unwind so that panics are caught
-        // and the frontend always receives a terminal event.
-        let result = std::panic::AssertUnwindSafe(async {
-            let input = prepared.as_turn_input();
+impl EventSink for TauriEventSink {
+    fn emit_started(&self, run_id: &str, session_id: &str) {
+        let _ = self.0.emit(
+            "chat:started",
+            ChatStartedPayload {
+                run_id: run_id.to_owned(),
+                session_id: session_id.to_owned(),
+            },
+        );
+    }
 
-            // Check whether title generation should actually fire for this turn.
-            let do_title = if should_generate_title {
-                match container.session_manager.get_session(&sid_clone).await {
-                    Ok(session) if session.session_type.is_user_facing() => {
-                        if session.manual_title.is_some() {
-                            false
-                        } else {
-                            ChatService::should_generate_title(&container, &prepared.history)
-                        }
-                    }
-                    Ok(_) => false,
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            session_id = %sid_clone.0,
-                            "failed to resolve session type for title generation"
-                        );
-                        false
-                    }
-                }
-            } else {
-                false
-            };
+    fn emit_progress(&self, run_id: &str, event: &TurnEvent) {
+        let _ = self.0.emit(
+            "chat:progress",
+            ProgressPayload {
+                run_id: run_id.to_owned(),
+                event: event.clone(),
+            },
+        );
+    }
 
-            // Set up progress channel -- forward TurnEvents as Tauri events.
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let app_progress = app.clone();
-            let run_id_progress = run_id_clone.clone();
-            let session_id_progress = sid_clone.0.clone();
-            let progress_task = tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    // Intercept AskUser events and emit a dedicated event
-                    // so the frontend can render the AskUserDialog.
-                    if let TurnEvent::UserInteractionRequest {
-                        ref interaction_id,
-                        ref questions,
-                    } = event
-                    {
-                        let _ = app_progress.emit(
-                            "chat:AskUser",
-                            AskUserPayload {
-                                run_id: run_id_progress.clone(),
-                                session_id: session_id_progress.clone(),
-                                interaction_id: interaction_id.clone(),
-                                questions: questions.clone(),
-                            },
-                        );
-                    }
+    fn emit_ask_user(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        interaction_id: &str,
+        questions: &serde_json::Value,
+    ) {
+        let _ = self.0.emit(
+            "chat:AskUser",
+            AskUserPayload {
+                run_id: run_id.to_owned(),
+                session_id: session_id.to_owned(),
+                interaction_id: interaction_id.to_owned(),
+                questions: questions.clone(),
+            },
+        );
+    }
 
-                    // Intercept PermissionRequest events and emit a dedicated
-                    // event so the frontend can render the permission prompt.
-                    if let TurnEvent::PermissionRequest {
-                        ref request_id,
-                        ref tool_name,
-                        ref action_description,
-                        ref reason,
-                        ref content_preview,
-                    } = event
-                    {
-                        let _ = app_progress.emit(
-                            "chat:PermissionRequest",
-                            PermissionRequestPayload {
-                                run_id: run_id_progress.clone(),
-                                session_id: session_id_progress.clone(),
-                                request_id: request_id.clone(),
-                                tool_name: tool_name.clone(),
-                                action_description: action_description.clone(),
-                                reason: reason.clone(),
-                                content_preview: content_preview.clone(),
-                            },
-                        );
-                    }
+    fn emit_permission_request(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        request_id: &str,
+        tool_name: &str,
+        action_description: &str,
+        reason: &str,
+        content_preview: Option<&str>,
+    ) {
+        let _ = self.0.emit(
+            "chat:PermissionRequest",
+            PermissionRequestPayload {
+                run_id: run_id.to_owned(),
+                session_id: session_id.to_owned(),
+                request_id: request_id.to_owned(),
+                tool_name: tool_name.to_owned(),
+                action_description: action_description.to_owned(),
+                reason: reason.to_owned(),
+                content_preview: content_preview.map(String::from),
+            },
+        );
+    }
 
-                    let _ = app_progress.emit(
-                        "chat:progress",
-                        ProgressPayload {
-                            run_id: run_id_progress.clone(),
-                            event,
-                        },
-                    );
-                }
-            });
-
-            // `tx` is moved into execute_turn_with_progress; when the call
-            // returns (Ok or Err), tx is dropped, which closes the channel.
-            // Awaiting progress_task guarantees all queued events are forwarded
-            // to the frontend BEFORE we emit the terminal event.
-            let turn_result =
-                ChatService::execute_turn_with_progress(&container, &input, tx, Some(cancel_clone))
-                    .await;
-
-            // Flush all remaining progress events before emitting the terminal
-            // event. This prevents late-arriving stream_delta events from
-            // re-creating a streaming message after the frontend has already
-            // processed chat:complete / chat:error.
-            let _ = progress_task.await;
-
-            match turn_result {
-                Ok(result) => {
-                    // Cache last-turn metadata so the frontend can restore the
-                    // status bar when switching back to this session.
-                    let meta = TurnMeta {
-                        provider_id: result.provider_id.clone(),
-                        model: result.model.clone(),
-                        input_tokens: result.input_tokens,
-                        output_tokens: result.output_tokens,
-                        cost_usd: result.cost_usd,
-                        context_window: result.context_window,
-                        context_tokens_used: result.last_input_tokens,
-                    };
-                    if let Ok(mut cache) = turn_meta_cache.lock() {
-                        cache.insert(sid_clone.0.clone(), meta);
-                    }
-
-                    let _ = app.emit(
-                        "chat:complete",
-                        ChatCompletePayload {
-                            run_id: run_id_clone.clone(),
-                            session_id: sid_clone.0.clone(),
-                            content: result.content,
-                            model: result.model,
-                            provider_id: result.provider_id,
-                            input_tokens: result.input_tokens,
-                            output_tokens: result.output_tokens,
-                            cost_usd: result.cost_usd,
-                            tool_calls: result
-                                .tool_calls_executed
-                                .iter()
-                                .map(|tc| ToolCallInfo {
-                                    name: tc.name.clone(),
-                                    success: tc.success,
-                                    duration_ms: tc.duration_ms,
-                                })
-                                .collect(),
-                            iterations: result.iterations,
-                            context_window: result.context_window,
-                            context_tokens_used: result.last_input_tokens,
-                        },
-                    );
-
-                    // Trigger title generation if the interval is reached.
-                    if do_title {
-                        match container.session_manager.read_transcript(&sid_clone).await {
-                            Ok(transcript) => {
-                                match container
-                                    .session_manager
-                                    .generate_title(
-                                        &*container.agent_delegator,
-                                        &sid_clone,
-                                        &transcript,
-                                    )
-                                    .await
-                                {
-                                    Ok(title) => {
-                                        let _ = app.emit(
-                                            "session:title_updated",
-                                            TitleUpdatedPayload {
-                                                session_id: sid_clone.0.clone(),
-                                                title,
-                                            },
-                                        );
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            error = %e,
-                                            "title generation failed"
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    "failed to read transcript for title generation"
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = app.emit(
-                        "chat:error",
-                        ChatErrorPayload {
-                            run_id: run_id_clone.clone(),
-                            session_id: sid_clone.0.clone(),
-                            error: e.to_string(),
-                        },
-                    );
-                }
-            }
-
-            run_id_clone
-        })
-        .catch_unwind()
-        .await;
-
-        // Clean up pending_runs regardless of success/panic.
-        let final_run_id = if let Ok(rid) = result {
-            rid
-        } else {
-            // The task panicked. Emit chat:error so the frontend is
-            // never left in a permanent streaming/sending state.
-            tracing::error!(
-                session_id = %sid_clone.0,
-                "LLM worker panicked; emitting chat:error"
-            );
-            let _ = app.emit(
-                "chat:error",
-                ChatErrorPayload {
-                    run_id: panic_run_id.clone(),
-                    session_id: sid_clone.0.clone(),
-                    error: "Internal error: LLM worker panicked".to_string(),
-                },
-            );
-            panic_run_id
-        };
-
-        if !final_run_id.is_empty() {
-            if let Ok(mut runs) = pending_runs.lock() {
-                runs.remove(&final_run_id);
-            }
+    fn emit_complete(&self, payload: &serde_json::Value) {
+        // Deserialize the generic JSON payload into the typed
+        // ChatCompletePayload that the Tauri frontend expects.
+        if let Ok(typed) = serde_json::from_value::<ChatCompletePayload>(payload.clone()) {
+            let _ = self.0.emit("chat:complete", typed);
         }
-    });
+    }
+
+    fn emit_error(&self, run_id: &str, session_id: &str, error: &str) {
+        let _ = self.0.emit(
+            "chat:error",
+            ChatErrorPayload {
+                run_id: run_id.to_owned(),
+                session_id: session_id.to_owned(),
+                error: error.to_owned(),
+            },
+        );
+    }
+
+    fn emit_title_updated(&self, session_id: &str, title: &str) {
+        let _ = self.0.emit(
+            "session:title_updated",
+            TitleUpdatedPayload {
+                session_id: session_id.to_owned(),
+                title: title.to_owned(),
+            },
+        );
+    }
 }
 
 async fn apply_prepared_prompt_context(
@@ -668,17 +517,6 @@ pub async fn session_last_turn_meta(
 // Chat undo (rollback) command
 // ---------------------------------------------------------------------------
 
-/// Result of an undo (rollback) operation.
-#[derive(Debug, Serialize, Clone)]
-pub struct UndoResult {
-    /// Number of messages removed from the transcript.
-    pub messages_removed: usize,
-    /// Turn number the session was rolled back to.
-    pub restored_turn_number: u32,
-    /// Number of file journal scopes that need rollback (for info).
-    pub files_restored: u32,
-}
-
 /// Roll the conversation back to a specific checkpoint.
 ///
 /// Truncates the JSONL transcript to the checkpoint's `message_count_before`,
@@ -717,7 +555,7 @@ pub async fn chat_undo(
 /// the assistant reply + subsequent tool messages. Then re-run the LLM.
 ///
 /// Delegates domain logic to `ChatService::prepare_resend_turn()` and
-/// spawns the LLM worker using the shared `spawn_llm_worker` helper.
+/// spawns the LLM worker using the shared `chat_worker::spawn_llm_worker` helper.
 #[tauri::command]
 pub async fn chat_resend(
     app: AppHandle,
@@ -783,8 +621,8 @@ pub async fn chat_resend(
         cache.remove(&session_id);
     }
 
-    spawn_llm_worker(
-        app,
+    y_service::chat_worker::spawn_llm_worker(
+        TauriEventSink(app),
         state.container.clone(),
         prepared,
         run_id.clone(),
@@ -803,16 +641,6 @@ pub async fn chat_resend(
 // ---------------------------------------------------------------------------
 // Chat checkpoint list command
 // ---------------------------------------------------------------------------
-
-/// Info about a single chat checkpoint (for the frontend).
-#[derive(Debug, Serialize, Clone)]
-pub struct ChatCheckpointInfo {
-    pub checkpoint_id: String,
-    pub session_id: String,
-    pub turn_number: u32,
-    pub message_count_before: u32,
-    pub created_at: String,
-}
 
 /// List all non-invalidated checkpoints for a session, ordered by turn number DESC.
 #[tauri::command]
@@ -934,22 +762,6 @@ pub async fn chat_find_checkpoint_for_resend(
 // Chat messages with status (Phase 2 — session history tree)
 // ---------------------------------------------------------------------------
 
-/// A message with its active/tombstone status for the frontend.
-#[derive(Debug, Serialize, Clone)]
-pub struct MessageWithStatus {
-    pub id: String,
-    pub role: String,
-    pub content: String,
-    pub status: String,
-    pub checkpoint_id: Option<String>,
-    pub model: Option<String>,
-    pub input_tokens: Option<i64>,
-    pub output_tokens: Option<i64>,
-    pub cost_usd: Option<f64>,
-    pub context_window: Option<i64>,
-    pub created_at: String,
-}
-
 /// Get all messages for a session, including tombstoned ones, with status.
 #[tauri::command]
 pub async fn chat_get_messages_with_status(
@@ -995,13 +807,6 @@ pub async fn chat_get_messages_with_status(
 // Chat restore branch (Phase 2)
 // ---------------------------------------------------------------------------
 
-/// Result of a branch restoration.
-#[derive(Debug, Serialize, Clone)]
-pub struct RestoreResult {
-    pub tombstoned_count: u32,
-    pub restored_count: u32,
-}
-
 /// Swap the active and tombstoned branches at a checkpoint boundary.
 #[tauri::command]
 pub async fn chat_restore_branch(
@@ -1033,16 +838,6 @@ pub async fn chat_restore_branch(
 // ---------------------------------------------------------------------------
 // Context compaction command (/compact slash command)
 // ---------------------------------------------------------------------------
-
-/// Compact report returned to the frontend.
-#[derive(Debug, Serialize, Clone)]
-pub struct CompactResult {
-    pub messages_pruned: usize,
-    pub messages_compacted: usize,
-    pub tokens_saved: u32,
-    /// The compaction summary text (for display in the chat panel).
-    pub summary: String,
-}
 
 /// Manually trigger context compaction for a session.
 ///
