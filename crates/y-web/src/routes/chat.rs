@@ -245,6 +245,7 @@ async fn chat_turn(
             plan_mode: body.plan_mode,
             mcp_mode: body.mcp_mode,
             mcp_servers: body.mcp_servers,
+            image_generation_options: None,
         },
     )
     .await
@@ -308,6 +309,7 @@ async fn chat_send(
             plan_mode: body.plan_mode,
             mcp_mode: body.mcp_mode,
             mcp_servers: body.mcp_servers,
+            image_generation_options: None,
         },
     )
     .await

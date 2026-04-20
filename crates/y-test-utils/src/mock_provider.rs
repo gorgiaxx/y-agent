@@ -192,6 +192,7 @@ mod tests {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         }
     }
 

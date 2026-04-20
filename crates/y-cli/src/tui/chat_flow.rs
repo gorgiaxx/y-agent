@@ -217,6 +217,7 @@ pub fn submit_message(
             prune_tool_history: false,
             mcp_mode: None,
             mcp_servers: vec![],
+            image_generation_options: None,
         };
 
         // Set up a progress channel to receive streaming deltas.
