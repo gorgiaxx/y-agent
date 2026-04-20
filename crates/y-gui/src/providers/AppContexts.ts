@@ -1,29 +1,31 @@
 import { createContext, useContext } from 'react';
-import type { useChat } from '../hooks/useChat';
-import type { useSessions } from '../hooks/useSessions';
-import type { useWorkspaces } from '../hooks/useWorkspaces';
-import type { useSkills } from '../hooks/useSkills';
-import type { useKnowledge } from '../hooks/useKnowledge';
-import type { useAgents } from '../hooks/useAgents';
-import type { useAutomation } from '../hooks/useAutomation';
-import type { useProviders } from '../hooks/useProviders';
-import type { useConfig } from '../hooks/useConfig';
+import type { UseChatReturn } from '../hooks/useChat';
+import type { UseSessionsReturn } from '../hooks/useSessions';
+import type { UseWorkspacesReturn } from '../hooks/useWorkspaces';
+import type { UseSkillsReturn } from '../hooks/useSkills';
+import type { UseKnowledgeReturn } from '../hooks/useKnowledge';
+import type { UseAgentsReturn } from '../hooks/useAgents';
+import type { UseAutomationReturn } from '../hooks/useAutomation';
+import type { UseProvidersReturn } from '../hooks/useProviders';
+import type { UseConfigReturn } from '../hooks/useConfig';
 import type { ViewType } from '../components/Sidebar';
 import type { SettingsTab } from '../components/settings/SettingsPanel';
 import type { EditorTab, EditorSurface } from '../components/agents/types';
 
-export const ChatContext = createContext<ReturnType<typeof useChat> | null>(null);
-export const SessionsContext = createContext<ReturnType<typeof useSessions> | null>(null);
-export const AgentSessionsContext = createContext<ReturnType<typeof useSessions> | null>(null);
-export const WorkspacesContext = createContext<ReturnType<typeof useWorkspaces> | null>(null);
-export const SkillsContext = createContext<ReturnType<typeof useSkills> | null>(null);
-export const KnowledgeContext = createContext<ReturnType<typeof useKnowledge> | null>(null);
-export const AgentsContext = createContext<ReturnType<typeof useAgents> | null>(null);
-export const AutomationContext = createContext<ReturnType<typeof useAutomation> | null>(null);
-export const ProvidersContext = createContext<ReturnType<typeof useProviders> | null>(null);
-export const ConfigContext = createContext<ReturnType<typeof useConfig> | null>(null);
+export const ChatContext = createContext<UseChatReturn | null>(null);
+export const SessionsContext = createContext<UseSessionsReturn | null>(null);
+export const AgentSessionsContext = createContext<UseSessionsReturn | null>(null);
+export const WorkspacesContext = createContext<UseWorkspacesReturn | null>(null);
+export const SkillsContext = createContext<UseSkillsReturn | null>(null);
+export const KnowledgeContext = createContext<UseKnowledgeReturn | null>(null);
+export const AgentsContext = createContext<UseAgentsReturn | null>(null);
+export const AutomationContext = createContext<UseAutomationReturn | null>(null);
+export const ProvidersContext = createContext<UseProvidersReturn | null>(null);
+export const ConfigContext = createContext<UseConfigReturn | null>(null);
 
-export interface NavigationState {
+// -- Focused sub-contexts for navigation state --
+
+export interface ViewRoutingState {
   activeView: ViewType;
   setActiveView: (view: ViewType) => void;
   activeSettingsTab: SettingsTab;
@@ -32,6 +34,10 @@ export interface NavigationState {
   setInputExpanded: (expanded: boolean) => void;
   welcomeWorkspaceId: string | null;
   setWelcomeWorkspaceId: (id: string | null) => void;
+  onRunWizard?: () => void;
+}
+
+export interface PanelState {
   diagOpen: boolean;
   setDiagOpen: (open: boolean) => void;
   diagExpanded: boolean;
@@ -40,18 +46,11 @@ export interface NavigationState {
   setObsOpen: (open: boolean) => void;
   obsExpanded: boolean;
   setObsExpanded: (expanded: boolean) => void;
+}
 
-  activeSkillName: string | null;
-  setActiveSkillName: (name: string | null) => void;
-  importDialogOpen: boolean;
-  setImportDialogOpen: (open: boolean) => void;
-
-  selectedKbCollection: string | null;
-  setSelectedKbCollection: (name: string | null) => void;
-
+export interface AgentEditorState {
   activeAgentId: string | null;
   setActiveAgentId: (id: string | null) => void;
-
   agentEditing: boolean;
   agentEditorTab: EditorTab;
   agentEditorSurface: EditorSurface;
@@ -63,17 +62,40 @@ export interface NavigationState {
   onAgentEditorBack: () => void;
   onAgentStudioEdit: () => void;
   setAgentStudioEditHandler: (handler: (() => void) | null) => void;
+}
 
+export interface SkillsNavState {
+  activeSkillName: string | null;
+  setActiveSkillName: (name: string | null) => void;
+  importDialogOpen: boolean;
+  setImportDialogOpen: (open: boolean) => void;
+}
+
+export interface AutomationNavState {
   automationSelectedType: 'workflow' | 'schedule' | null;
   setAutomationSelectedType: (type: 'workflow' | 'schedule' | null) => void;
   automationSelectedId: string | null;
   setAutomationSelectedId: (id: string | null) => void;
   automationCreating: 'workflow' | 'schedule' | null;
   setAutomationCreating: (type: 'workflow' | 'schedule' | null) => void;
-
-  onRunWizard?: () => void;
 }
+
+export interface NavigationState extends
+  ViewRoutingState,
+  PanelState,
+  AgentEditorState,
+  SkillsNavState,
+  AutomationNavState {
+  selectedKbCollection: string | null;
+  setSelectedKbCollection: (name: string | null) => void;
+}
+
 export const NavigationContext = createContext<NavigationState | null>(null);
+export const ViewRoutingContext = createContext<ViewRoutingState | null>(null);
+export const PanelContext = createContext<PanelState | null>(null);
+export const AgentEditorContext = createContext<AgentEditorState | null>(null);
+export const SkillsNavContext = createContext<SkillsNavState | null>(null);
+export const AutomationNavContext = createContext<AutomationNavState | null>(null);
 
 export function useChatContext() {
   const ctx = useContext(ChatContext);
@@ -128,5 +150,30 @@ export function useConfigContext() {
 export function useNavigationContext() {
   const ctx = useContext(NavigationContext);
   if (!ctx) throw new Error('useNavigationContext must be used within NavigationProvider');
+  return ctx;
+}
+export function useViewRouting() {
+  const ctx = useContext(ViewRoutingContext);
+  if (!ctx) throw new Error('useViewRouting must be used within ViewRoutingProvider');
+  return ctx;
+}
+export function usePanelContext() {
+  const ctx = useContext(PanelContext);
+  if (!ctx) throw new Error('usePanelContext must be used within PanelProvider');
+  return ctx;
+}
+export function useAgentEditorContext() {
+  const ctx = useContext(AgentEditorContext);
+  if (!ctx) throw new Error('useAgentEditorContext must be used within AgentEditorProvider');
+  return ctx;
+}
+export function useSkillsNavContext() {
+  const ctx = useContext(SkillsNavContext);
+  if (!ctx) throw new Error('useSkillsNavContext must be used within SkillsNavProvider');
+  return ctx;
+}
+export function useAutomationNavContext() {
+  const ctx = useContext(AutomationNavContext);
+  if (!ctx) throw new Error('useAutomationNavContext must be used within AutomationNavProvider');
   return ctx;
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 
 import { useChat } from '../hooks/useChat';
 import { useSessions } from '../hooks/useSessions';
@@ -27,6 +27,19 @@ import {
   ProvidersContext,
   ConfigContext,
   NavigationContext,
+  ViewRoutingContext,
+  PanelContext,
+  AgentEditorContext,
+  SkillsNavContext,
+  AutomationNavContext,
+} from './AppContexts';
+import type {
+  NavigationState,
+  ViewRoutingState,
+  PanelState,
+  AgentEditorState,
+  SkillsNavState,
+  AutomationNavState,
 } from './AppContexts';
 
 interface GlobalProvidersProps {
@@ -111,30 +124,53 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     }
   }, [activeSessionId, loadMessages, clearMessages]);
 
-  const navState = {
+  const viewRouting = useMemo<ViewRoutingState>(() => ({
     activeView, setActiveView,
     activeSettingsTab, setActiveSettingsTab,
     inputExpanded, setInputExpanded,
     welcomeWorkspaceId, setWelcomeWorkspaceId,
+    onRunWizard,
+  }), [activeView, activeSettingsTab, inputExpanded, welcomeWorkspaceId, onRunWizard]);
+
+  const panelState = useMemo<PanelState>(() => ({
     diagOpen, setDiagOpen,
     diagExpanded, setDiagExpanded,
     obsOpen, setObsOpen,
     obsExpanded, setObsExpanded,
-    activeSkillName, setActiveSkillName,
-    importDialogOpen, setImportDialogOpen,
-    selectedKbCollection: knowledgeHooks.selectedCollection,
-    setSelectedKbCollection: knowledgeHooks.setSelectedCollection,
+  }), [diagOpen, diagExpanded, obsOpen, obsExpanded]);
+
+  const agentEditorState = useMemo<AgentEditorState>(() => ({
     activeAgentId, setActiveAgentId,
     agentEditing, agentEditorTab, agentEditorSurface,
     setAgentEditing, setAgentEditorTab, setAgentEditorSurface,
     onAgentEditorSurfaceChange, setAgentEditorSurfaceHandler,
-    onAgentStudioEdit, setAgentStudioEditHandler,
     onAgentEditorBack: () => { setAgentEditing(false); },
+    onAgentStudioEdit, setAgentStudioEditHandler,
+  }), [activeAgentId, agentEditing, agentEditorTab, agentEditorSurface,
+       onAgentEditorSurfaceChange, setAgentEditorSurfaceHandler,
+       onAgentStudioEdit, setAgentStudioEditHandler]);
+
+  const skillsNavState = useMemo<SkillsNavState>(() => ({
+    activeSkillName, setActiveSkillName,
+    importDialogOpen, setImportDialogOpen,
+  }), [activeSkillName, importDialogOpen]);
+
+  const automationNavState = useMemo<AutomationNavState>(() => ({
     automationSelectedType, setAutomationSelectedType,
     automationSelectedId, setAutomationSelectedId,
     automationCreating, setAutomationCreating,
-    onRunWizard,
-  };
+  }), [automationSelectedType, automationSelectedId, automationCreating]);
+
+  const navState = useMemo<NavigationState>(() => ({
+    ...viewRouting,
+    ...panelState,
+    ...agentEditorState,
+    ...skillsNavState,
+    ...automationNavState,
+    selectedKbCollection: knowledgeHooks.selectedCollection,
+    setSelectedKbCollection: knowledgeHooks.setSelectedCollection,
+  }), [viewRouting, panelState, agentEditorState, skillsNavState, automationNavState,
+       knowledgeHooks.selectedCollection, knowledgeHooks.setSelectedCollection]);
 
   return (
     <ThemeContext.Provider value={themeCtx}>
@@ -148,9 +184,19 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
                   <AgentsContext.Provider value={agentHooks}>
                     <AutomationContext.Provider value={automationHooks}>
                       <ProvidersContext.Provider value={providerHooks}>
-                        <NavigationContext.Provider value={navState}>
-                          {children}
-                        </NavigationContext.Provider>
+                        <ViewRoutingContext.Provider value={viewRouting}>
+                          <PanelContext.Provider value={panelState}>
+                            <AgentEditorContext.Provider value={agentEditorState}>
+                              <SkillsNavContext.Provider value={skillsNavState}>
+                                <AutomationNavContext.Provider value={automationNavState}>
+                                  <NavigationContext.Provider value={navState}>
+                                    {children}
+                                  </NavigationContext.Provider>
+                                </AutomationNavContext.Provider>
+                              </SkillsNavContext.Provider>
+                            </AgentEditorContext.Provider>
+                          </PanelContext.Provider>
+                        </ViewRoutingContext.Provider>
                       </ProvidersContext.Provider>
                     </AutomationContext.Provider>
                   </AgentsContext.Provider>
