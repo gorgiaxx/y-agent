@@ -50,6 +50,7 @@ impl HealthChecker {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         };
 
         let result = tokio::time::timeout(self.timeout, provider.chat_completion(&request)).await;

@@ -1315,6 +1315,7 @@ mod tests {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         };
 
         let system = AnthropicProvider::extract_system(&request);
@@ -1382,6 +1383,7 @@ mod tests {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         };
 
         let messages = AnthropicProvider::build_messages(&request);
@@ -1639,6 +1641,7 @@ mod tests {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         };
 
         let messages = AnthropicProvider::build_messages(&request);
@@ -1683,6 +1686,7 @@ mod tests {
                 effort: ThinkingEffort::Max,
             }),
             response_format: None,
+            image_generation_options: None,
         };
 
         let provider = AnthropicProvider::new(

@@ -86,37 +86,57 @@ impl OpenAiProvider {
             })
     }
 
-    fn ensure_no_image_generation_attachments(request: &ChatRequest) -> Result<(), ProviderError> {
-        let has_attachments = request.messages.iter().rev().find_map(|message| {
+    fn extract_image_attachment(request: &ChatRequest) -> Option<String> {
+        request.messages.iter().rev().find_map(|message| {
             message
                 .metadata
                 .get("attachments")
                 .and_then(|value| value.as_array())
-                .map(|attachments| !attachments.is_empty())
-        });
-
-        if has_attachments == Some(true) {
-            return Err(ProviderError::Other {
-                message:
-                    "dedicated image generation does not yet support attachments; use text-only prompts"
-                        .into(),
-            });
-        }
-
-        Ok(())
+                .and_then(|attachments| {
+                    attachments.iter().find_map(|att| {
+                        let mime = att.get("mime_type")?.as_str()?;
+                        if !mime.starts_with("image/") {
+                            return None;
+                        }
+                        let b64 = att.get("base64_data")?.as_str()?;
+                        Some(format!("data:{mime};base64,{b64}"))
+                    })
+                })
+        })
     }
 
     fn build_image_generation_request_body(
         &self,
         request: &ChatRequest,
     ) -> Result<OpenAiImageGenerationRequest, ProviderError> {
-        Self::ensure_no_image_generation_attachments(request)?;
         let model = request.model.as_deref().unwrap_or(&self.metadata.model);
         let prompt = Self::latest_user_prompt(request)?;
+        let opts = request.image_generation_options.as_ref();
+
+        let image = Self::extract_image_attachment(request);
+
+        let watermark = opts.map(|o| o.watermark);
+        let size = opts.and_then(|o| o.size.clone());
+        let max_images = opts.map_or(1, |o| o.max_images);
+
+        let (sequential, sequential_opts) = if max_images > 1 {
+            (
+                Some("auto".to_string()),
+                Some(SequentialImageGenOptions { max_images }),
+            )
+        } else {
+            (None, None)
+        };
+
         Ok(OpenAiImageGenerationRequest {
             model: model.to_string(),
             prompt,
             response_format: Some("b64_json".to_string()),
+            size,
+            watermark,
+            sequential_image_generation: sequential,
+            sequential_image_generation_options: sequential_opts,
+            image,
         })
     }
 
@@ -1008,6 +1028,21 @@ struct OpenAiImageGenerationRequest {
     prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    watermark: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sequential_image_generation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sequential_image_generation_options: Option<SequentialImageGenOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SequentialImageGenOptions {
+    max_images: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1490,6 +1525,7 @@ mod tests {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         };
 
         let messages = OpenAiProvider::build_messages(&request);
@@ -1534,6 +1570,7 @@ mod tests {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         };
 
         let messages = OpenAiProvider::build_messages(&request);

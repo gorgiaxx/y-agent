@@ -83,6 +83,7 @@ impl SingleTurnRunner {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: config.response_format.clone(),
+            image_generation_options: None,
         }
     }
 
