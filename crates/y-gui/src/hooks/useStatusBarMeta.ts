@@ -14,6 +14,7 @@ import { useState, useEffect, useCallback, useRef, startTransition } from 'react
 import { transport } from '../lib';
 
 import type { Message, TurnMeta, ChatCompletePayload, DiagnosticsEntry } from '../types';
+import { DEFAULT_ROOT_AGENT_NAME } from '../constants/agents';
 
 export interface StatusBarMeta {
   provider?: string;
@@ -44,7 +45,7 @@ export function useStatusBarMeta({
   isLoadingMessages,
   diagnosticEntries,
   isDiagnosticsActive,
-  rootAgentNames = ['chat-turn'],
+  rootAgentNames = [DEFAULT_ROOT_AGENT_NAME],
 }: UseStatusBarMetaParams): StatusBarMeta {
   const [meta, setMeta] = useState<StatusBarMeta>({});
 

@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { transport } from '../lib';
 import type { WorkspaceInfo } from '../types';
 
-interface UseWorkspacesReturn {
+export interface UseWorkspacesReturn {
   workspaces: WorkspaceInfo[];
   sessionWorkspaceMap: Record<string, string>;
   createWorkspace: (name: string, path: string) => Promise<WorkspaceInfo | null>;

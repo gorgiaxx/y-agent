@@ -10,19 +10,18 @@ import { useCallback } from 'react';
 import { transport } from '../lib';
 import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode } from '../types';
 import type { ViewType } from '../components/Sidebar';
-import type { CompactInfo, ChatOpStatus } from './useChat';
+import type { CompactInfo, ChatOpStatus, SendMessageOptions } from './useChat';
 
-export interface ChatDeps {
-  // Session deps
+export interface SessionOps {
   activeSessionId: string | null;
   createSession: (title?: string) => Promise<{ id: string; title: string | null } | null>;
   selectSession: (id: string) => void;
   deleteSession: (id: string) => Promise<void>;
   refreshSessions: () => void;
-  clearMessages: () => void;
+}
 
-  // Chat deps
-  sendMessage: (message: string, sessionId: string, providerId?: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => Promise<ChatStarted | null>;
+export interface ChatOps {
+  sendMessage: (opts: SendMessageOptions) => Promise<ChatStarted | null>;
   editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode, requestMode?: RequestMode) => Promise<ChatStarted | null>;
   editMessage: (messageId: string, content: string) => void;
   cancelEdit: () => void;
@@ -31,37 +30,40 @@ export interface ChatDeps {
   restoreBranch: (sessionId: string, checkpointId: string) => Promise<unknown>;
   pendingEdit: { messageId: string; content: string } | null;
   loadMessages: (sessionId: string) => Promise<void>;
+  clearMessages: () => void;
+  messages: Message[];
+  addCompactPoint: (info: Omit<CompactInfo, 'atIndex'>) => void;
+  setOp: (status: ChatOpStatus) => void;
+}
 
-  // Provider
-  selectedProviderId: string;
-
-  // Thinking / Plan mode
-  thinkingEffort: ThinkingEffort | null;
-  planMode: PlanMode;
-
-  // Workspace
+export interface WorkspaceOps {
   welcomeWorkspaceId: string | null;
   assignSession: (workspaceId: string, sessionId: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
+}
 
-  // Diagnostics integration
+export interface ChatHandlerConfig {
+  selectedProviderId: string;
+  thinkingEffort: ThinkingEffort | null;
+  planMode: PlanMode;
+}
+
+export interface ChatHandlerCallbacks {
   addUserMessage: (content: string, sessionId: string) => void;
-
-  // Compact
-  addCompactPoint: (info: Omit<CompactInfo, 'atIndex'>) => void;
-  setOp: (status: ChatOpStatus) => void;
-
-  // Navigation
   setActiveView: (view: ViewType) => void;
   setDiagOpen: (fn: (prev: boolean) => boolean) => void;
   setObsOpen: (fn: (prev: boolean) => boolean) => void;
-
-  // Rewind
   onRewind?: () => void;
   /** Callback to set the input box draft after rewind/undo. */
   onSetRewindDraft?: (content: string) => void;
-  /** Current messages (for finding content on undo). */
-  messages: Message[];
+}
+
+export interface ChatDeps {
+  session: SessionOps;
+  chat: ChatOps;
+  workspace: WorkspaceOps;
+  config: ChatHandlerConfig;
+  callbacks: ChatHandlerCallbacks;
 }
 
 export interface UseChatHandlersReturn {
@@ -80,38 +82,16 @@ export interface UseChatHandlersReturn {
 }
 
 export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
+  const { session, chat, workspace, config, callbacks } = deps;
+  const { activeSessionId, createSession, selectSession, deleteSession, refreshSessions } = session;
   const {
-    activeSessionId,
-    createSession,
-    selectSession,
-    deleteSession,
-    refreshSessions,
-    clearMessages,
-    sendMessage,
-    editAndResend,
-    editMessage,
-    cancelEdit,
-    undoToMessage,
-    resendLastTurn,
-    restoreBranch,
-    pendingEdit,
-    loadMessages,
-    selectedProviderId,
-    thinkingEffort,
-    planMode,
-    welcomeWorkspaceId,
-    assignSession,
-    refreshWorkspaces,
-    addUserMessage,
-    addCompactPoint,
-    setOp,
-    setActiveView,
-    setDiagOpen,
-    setObsOpen,
-    onRewind,
-    onSetRewindDraft,
-    messages,
-  } = deps;
+    sendMessage, editAndResend, editMessage, cancelEdit, undoToMessage,
+    resendLastTurn, restoreBranch, pendingEdit, loadMessages, clearMessages,
+    messages, addCompactPoint, setOp,
+  } = chat;
+  const { welcomeWorkspaceId, assignSession, refreshWorkspaces } = workspace;
+  const { selectedProviderId, thinkingEffort, planMode } = config;
+  const { addUserMessage, setActiveView, setDiagOpen, setObsOpen, onRewind, onSetRewindDraft } = callbacks;
 
   const handleSend = useCallback(
     async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => {
@@ -151,11 +131,11 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
 
       // Normal send -- pass skills, knowledge collections, attachments, planMode, and mcp mode to the backend.
       addUserMessage(message, sid);
-      const result = await sendMessage(
+      const result = await sendMessage({
         message,
-        sid,
-        providerArg,
-        skillNames,
+        sessionId: sid,
+        providerId: providerArg,
+        skills: skillNames,
         knowledgeCollections,
         thinkingEffort,
         attachments,
@@ -163,7 +143,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
         mcpMode,
         mcpServers,
         requestMode,
-      );
+      });
       if (result) {
         if (result.session_id !== activeSessionId) {
           selectSession(result.session_id);

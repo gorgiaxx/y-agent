@@ -16,7 +16,32 @@ import {
 export type KbIngestStatus = 'idle' | 'ingesting' | 'success' | 'error';
 export type KbBatchProgress = { current: number; total: number };
 
-export function useKnowledge() {
+export interface UseKnowledgeReturn {
+  collections: KnowledgeCollectionInfo[];
+  entries: KnowledgeEntryInfo[];
+  selectedCollection: string | null;
+  stats: KnowledgeStats | null;
+  loading: boolean;
+  ingestStatus: KbIngestStatus;
+  ingestError: string | null;
+  batchProgress: KbBatchProgress | null;
+  refreshCollections: () => Promise<void>;
+  createCollection: (name: string, description: string) => Promise<void>;
+  deleteCollection: (name: string) => Promise<void>;
+  renameCollection: (oldName: string, newName: string) => Promise<void>;
+  setSelectedCollection: (name: string | null) => void;
+  loadEntries: (collection: string) => Promise<void>;
+  getEntryDetail: (entryId: string, resolution?: string) => Promise<KnowledgeEntryDetail | null>;
+  deleteEntry: (entryId: string) => Promise<void>;
+  search: (query: string, domain?: string, limit?: number) => Promise<KnowledgeSearchResult[]>;
+  ingest: (source: string, domain: string | undefined, collection: string, options?: { useLlmSummary?: boolean; extractMetadata?: boolean }) => Promise<void>;
+  ingestBatch: (sources: string[], domain: string | undefined, collection: string, options?: { useLlmSummary?: boolean; extractMetadata?: boolean }) => Promise<void>;
+  cancelIngest: () => void;
+  clearIngestStatus: () => void;
+  refreshStats: () => Promise<void>;
+}
+
+export function useKnowledge(): UseKnowledgeReturn {
   const [collections, setCollections] = useState<KnowledgeCollectionInfo[]>([]);
   const [entries, setEntries] = useState<KnowledgeEntryInfo[]>([]);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);

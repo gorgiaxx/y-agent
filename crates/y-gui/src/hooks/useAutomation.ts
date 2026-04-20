@@ -92,11 +92,34 @@ export interface ExecutionRecord {
   error_message: string | null;
 }
 
+export interface UseAutomationReturn {
+  workflows: WorkflowInfo[];
+  schedules: ScheduleInfo[];
+  loading: boolean;
+  refreshAll: () => Promise<void>;
+  getWorkflow: (id: string) => Promise<WorkflowInfo | null>;
+  createWorkflow: (name: string, definition: string, format: string, description?: string, tags?: string) => Promise<WorkflowInfo | null>;
+  updateWorkflow: (id: string, definition?: string, format?: string, description?: string, tags?: string) => Promise<WorkflowInfo | null>;
+  deleteWorkflow: (id: string) => Promise<boolean>;
+  validateWorkflow: (definition: string, format: string) => Promise<ValidationResult | null>;
+  getWorkflowDag: (id: string) => Promise<DagVisualization | null>;
+  getSchedule: (id: string) => Promise<ScheduleInfo | null>;
+  createSchedule: (request: { name: string; trigger: unknown; workflow_id: string; parameter_values?: unknown; description?: string; tags?: string[] }) => Promise<ScheduleInfo | null>;
+  updateSchedule: (id: string, request: { name?: string; trigger?: unknown; workflow_id?: string; description?: string }) => Promise<ScheduleInfo | null>;
+  deleteSchedule: (id: string) => Promise<boolean>;
+  pauseSchedule: (id: string) => Promise<boolean>;
+  resumeSchedule: (id: string) => Promise<boolean>;
+  getExecutionHistory: (scheduleId: string) => Promise<ExecutionRecord[]>;
+  getExecution: (executionId: string) => Promise<ExecutionRecord | null>;
+  triggerScheduleNow: (scheduleId: string) => Promise<ExecutionRecord | null>;
+  executeWorkflow: (workflowId: string) => Promise<ExecutionRecord | null>;
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
-export function useAutomation(active = true) {
+export function useAutomation(active = true): UseAutomationReturn {
   const [workflows, setWorkflows] = useState<WorkflowInfo[]>([]);
   const [schedules, setSchedules] = useState<ScheduleInfo[]>([]);
   const [loading, setLoading] = useState(false);

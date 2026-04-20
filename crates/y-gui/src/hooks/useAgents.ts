@@ -76,7 +76,21 @@ export interface AgentSourceInfo {
   is_user_file: boolean;
 }
 
-export function useAgents() {
+export interface UseAgentsReturn {
+  agents: AgentInfo[];
+  tools: AgentToolInfo[];
+  promptSections: PromptSectionInfo[];
+  loading: boolean;
+  refreshAgents: () => Promise<void>;
+  getAgentDetail: (id: string) => Promise<AgentDetail | null>;
+  getAgentSource: (id: string) => Promise<AgentSourceInfo | null>;
+  parseAgentToml: (tomlContent: string) => Promise<AgentDetail | null>;
+  saveAgent: (id: string, tomlContent: string) => Promise<boolean>;
+  resetAgent: (id: string) => Promise<boolean>;
+  reloadAgents: () => Promise<boolean>;
+}
+
+export function useAgents(): UseAgentsReturn {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [tools, setTools] = useState<AgentToolInfo[]>([]);
   const [promptSections, setPromptSections] = useState<PromptSectionInfo[]>([]);

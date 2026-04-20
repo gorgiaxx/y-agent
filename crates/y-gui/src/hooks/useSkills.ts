@@ -4,7 +4,24 @@ import type { SkillInfo, SkillDetail, SkillFileEntry, SkillImportResult } from '
 
 export type ImportStatus = 'idle' | 'importing' | 'success' | 'error';
 
-export function useSkills() {
+export interface UseSkillsReturn {
+  skills: SkillInfo[];
+  loading: boolean;
+  refresh: () => Promise<void>;
+  getSkillDetail: (name: string) => Promise<SkillDetail | null>;
+  uninstallSkill: (name: string) => Promise<void>;
+  setEnabled: (name: string, enabled: boolean) => Promise<void>;
+  openFolder: (name: string) => Promise<void>;
+  importSkill: (path: string, sanitize: boolean) => void;
+  importStatus: ImportStatus;
+  importError: string | null;
+  clearImportStatus: () => void;
+  getSkillFiles: (name: string) => Promise<SkillFileEntry[]>;
+  readSkillFile: (name: string, relativePath: string) => Promise<string | null>;
+  saveSkillFile: (name: string, relativePath: string, content: string) => Promise<boolean>;
+}
+
+export function useSkills(): UseSkillsReturn {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [importStatus, setImportStatus] = useState<ImportStatus>('idle');

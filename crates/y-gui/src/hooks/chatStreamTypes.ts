@@ -1,3 +1,5 @@
+import { DEFAULT_ROOT_AGENT_NAME } from '../constants/agents';
+
 export interface ToolResultRecord {
   name: string;
   /** Serialised tool arguments (JSON string). Available from persisted metadata. */
@@ -13,7 +15,7 @@ export interface ToolResultRecord {
 
 export function shouldDisplayStreamingAgent(
   agentName?: string,
-  rootAgentNames: Iterable<string> = ['chat-turn'],
+  rootAgentNames: Iterable<string> = [DEFAULT_ROOT_AGENT_NAME],
 ): boolean {
   if (agentName == null || agentName === '') {
     return true;

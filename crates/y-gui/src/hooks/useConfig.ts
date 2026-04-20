@@ -15,7 +15,7 @@ const defaultConfig: GuiConfig = {
   use_custom_decorations: false,
 };
 
-interface UseConfigReturn {
+export interface UseConfigReturn {
   config: GuiConfig;
   updateConfig: (updates: Partial<GuiConfig>) => Promise<void>;
   loading: boolean;

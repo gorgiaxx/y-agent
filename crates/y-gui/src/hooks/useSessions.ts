@@ -5,7 +5,7 @@ import { transport } from '../lib';
 
 import type { SessionInfo } from '../types';
 
-interface UseSessionsReturn {
+export interface UseSessionsReturn {
   sessions: SessionInfo[];
   activeSessionId: string | null;
   loading: boolean;
