@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use y_core::hook::{Event, EventCategory, EventFilter, EventSubscriber};
+use y_core::hook::{Event, EventCategory, EventFilter, EventSubscriber, LlmEvent};
 
 // ---------------------------------------------------------------------------
 // B1: Skill Usage Audit Subscriber
@@ -140,11 +140,11 @@ impl SkillUsageAuditSubscriber {
 #[async_trait]
 impl EventSubscriber for SkillUsageAuditSubscriber {
     async fn on_event(&self, event: &Event) {
-        if let Event::LlmCallCompleted {
+        if let Event::Llm(LlmEvent::CallCompleted {
             input_tokens,
             output_tokens,
             ..
-        } = event
+        }) = event
         {
             let tracker = self.tracker.read().await;
             if tracker.injected_skills.is_empty() {
