@@ -950,160 +950,46 @@ impl ServiceContainer {
         hs.reload_config(new_config);
     }
 
+    // -- Agent management (delegated to AgentManagementService) ----------------
+
     /// Hot-reload agent definitions from the agents directory.
-    ///
-    /// Re-scans all `*.toml` files in the user agents directory and
-    /// registers (or overrides) definitions. Built-in agents are preserved.
-    /// Newly created agent files take effect immediately without restart.
     ///
     /// Returns `(loaded, errored)` counts.
     pub async fn reload_agents(&self) -> (usize, usize) {
-        let mut registry = self.agent_registry.lock().await;
-        let (loaded, errored) = registry.reload_user_agents_from_dir();
-        info!(loaded, errored, "Agent definitions hot-reloaded");
-        // Refresh the callable agents text injected into the orchestration prompt.
-        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
-        (loaded, errored)
+        crate::agent_management::AgentManagementService::reload_agents(self).await
     }
 
     /// Register a single agent from raw TOML content at runtime.
     ///
-    /// Useful when `agent-architect` creates a new agent definition and
-    /// wants it to take effect immediately without a full directory scan.
-    ///
     /// Returns the registered agent's ID on success.
     pub async fn register_agent_from_toml(&self, toml_content: &str) -> Result<String, String> {
-        let mut registry = self.agent_registry.lock().await;
-        let id = registry.register_agent_from_toml(toml_content)?;
-        info!(agent_id = %id, "Agent definition registered at runtime");
-        // Refresh callable agents text after registering a new agent.
-        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
-        Ok(id)
-    }
-
-    /// Refresh the callable agents text injected into the orchestration prompt.
-    ///
-    /// Reads all definitions from the registry where `user_callable == true`
-    /// and writes a markdown-formatted summary into the shared handle.
-    async fn refresh_callable_agents_text(registry: &AgentRegistry, handle: &Arc<RwLock<String>>) {
-        let callable: Vec<_> = registry
-            .list()
-            .into_iter()
-            .filter(|d| d.user_callable)
-            .collect();
-
-        let text = if callable.is_empty() {
-            String::from("### User-Callable Agents\n\n(none currently registered)")
-        } else {
-            let mut buf = String::from("### User-Callable Agents\n\n");
-            for agent in &callable {
-                use std::fmt::Write;
-                let _ = writeln!(
-                    buf,
-                    "- **{}**: {} (mode: {:?}, capabilities: [{}])",
-                    agent.id,
-                    agent.description,
-                    agent.mode,
-                    agent.capabilities.join(", "),
-                );
-            }
-            buf
-        };
-
-        let mut guard = handle.write().await;
-        *guard = text;
+        crate::agent_management::AgentManagementService::register_agent_from_toml(
+            self,
+            toml_content,
+        )
+        .await
     }
 
     /// Populate the callable agents text at startup.
-    ///
-    /// Called once after construction so the first prompt assembly has the list.
     pub async fn init_callable_agents_text(&self) {
-        let registry = self.agent_registry.lock().await;
-        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
+        crate::agent_management::AgentManagementService::init_callable_agents_text(self).await;
     }
 
     /// Save an agent definition from raw TOML content to the agents directory.
-    ///
-    /// Parses the TOML, writes the file to disk, and registers the definition
-    /// in the agent registry with `UserDefined` trust tier.
     pub async fn save_agent(&self, id: &str, toml_content: &str) -> Result<(), String> {
-        let mut registry = self.agent_registry.lock().await;
-
-        let expanded_toml = registry.expand_templates(toml_content);
-        let mut def = y_agent::agent::definition::AgentDefinition::from_toml(&expanded_toml)
-            .map_err(|e| format!("Invalid agent TOML: {e}"))?;
-
-        def.id = id.to_string();
-
-        let dir = registry
-            .agents_dir()
-            .ok_or_else(|| "no agents directory configured".to_string())?
-            .to_path_buf();
-
-        tokio::fs::create_dir_all(&dir)
-            .await
-            .map_err(|e| format!("failed to create agents directory: {e}"))?;
-
-        let file_path = dir.join(format!("{id}.toml"));
-        tokio::fs::write(&file_path, toml_content)
-            .await
-            .map_err(|e| format!("failed to write agent file: {e}"))?;
-
-        def.trust_tier = y_agent::TrustTier::UserDefined;
-        let _ = registry.register_or_override(def);
-
-        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
-        Ok(())
+        crate::agent_management::AgentManagementService::save_agent(self, id, toml_content).await
     }
 
     /// Reset an overridden built-in agent to its original definition.
-    ///
-    /// Removes the user override file from disk and restores the built-in
-    /// definition in the registry.
     pub async fn reset_agent(&self, id: &str) -> Result<(), String> {
-        let mut registry = self.agent_registry.lock().await;
-        registry
-            .reset_builtin(id)
-            .map_err(|e| format!("failed to reset agent: {e}"))?;
-
-        if let Some(dir) = registry.agents_dir() {
-            let file_path = dir.join(format!("{id}.toml"));
-            if file_path.exists() {
-                tokio::fs::remove_file(&file_path)
-                    .await
-                    .map_err(|e| format!("failed to remove override file: {e}"))?;
-            }
-        }
-
-        Self::refresh_callable_agents_text(&registry, &self.callable_agents_text).await;
-        Ok(())
+        crate::agent_management::AgentManagementService::reset_agent(self, id).await
     }
 
     /// Read the raw TOML source for an agent definition.
     ///
-    /// Returns `(path, content, is_user_file)`. If a user override file exists
-    /// on disk, returns its content; otherwise serializes the in-memory definition.
+    /// Returns `(path, content, is_user_file)`.
     pub async fn get_agent_source(&self, id: &str) -> Result<(String, String, bool), String> {
-        let registry = self.agent_registry.lock().await;
-        let def = registry
-            .get(id)
-            .ok_or_else(|| format!("agent not found: {id}"))?;
-
-        let file_path = registry
-            .agents_dir()
-            .map(|d| d.join(format!("{}.toml", def.id)))
-            .unwrap_or_default();
-
-        if file_path.exists() {
-            let content = tokio::fs::read_to_string(&file_path)
-                .await
-                .map_err(|e| format!("failed to read agent file: {e}"))?;
-            return Ok((file_path.display().to_string(), content, true));
-        }
-
-        let content =
-            toml::to_string_pretty(def).map_err(|e| format!("failed to serialize agent: {e}"))?;
-        Ok((file_path.display().to_string(), content, false))
+        crate::agent_management::AgentManagementService::get_agent_source(self, id).await
     }
 
     /// Hot-reload prompt section files from disk.
@@ -1202,9 +1088,9 @@ impl ServiceContainer {
         self.init_scheduler().await;
         self.init_callable_agents_text().await;
         self.init_knowledge_llm_services().await;
-        self.init_mcp_connections().await;
-        self.register_mcp_tools().await;
-        self.start_mcp_event_consumer().await;
+        crate::mcp_service::McpService::init_mcp_connections(self).await;
+        crate::mcp_service::McpService::register_mcp_tools(self).await;
+        crate::mcp_service::McpService::start_mcp_event_consumer(self).await;
     }
 
     /// Wire LLM-backed knowledge services (tag generator, metadata
@@ -1233,250 +1119,6 @@ impl ServiceContainer {
         ks.set_summary_generator(summary_gen);
 
         tracing::info!("Knowledge LLM services wired (tagger, metadata, summarizer)");
-    }
-
-    /// Connect to configured MCP servers via the connection manager.
-    ///
-    /// Converts `McpServerConfig` entries from the tool config into
-    /// `McpServerConfigRef` and starts concurrent connections. Disabled
-    /// servers are skipped. Called as part of `start_background_services`.
-    async fn init_mcp_connections(self: &Arc<Self>) {
-        let mcp_configs = &self.tool_registry.config().mcp_servers;
-        if mcp_configs.is_empty() {
-            return;
-        }
-
-        let configs: Vec<y_mcp::McpServerConfigRef> = mcp_configs
-            .iter()
-            .filter(|c| c.enabled)
-            .map(|c| y_mcp::McpServerConfigRef {
-                name: c.name.clone(),
-                transport: c.transport.clone(),
-                command: c.command.clone(),
-                args: c.args.clone(),
-                url: c.url.clone(),
-                env: c.env.clone(),
-                headers: c.headers.clone(),
-                startup_timeout_secs: c.startup_timeout_secs,
-                tool_timeout_secs: c.tool_timeout_secs,
-                cwd: c.cwd.clone(),
-                bearer_token: c.bearer_token.clone(),
-                auto_reconnect: c.auto_reconnect,
-                max_reconnect_attempts: c.max_reconnect_attempts,
-            })
-            .collect();
-
-        if configs.is_empty() {
-            return;
-        }
-
-        let count = configs.len();
-        self.mcp_manager.connect_all(configs).await;
-        let connected = self.mcp_manager.connected_count().await;
-        info!(
-            total = count,
-            connected = connected,
-            "MCP server connections initialized"
-        );
-    }
-
-    /// Register MCP tools discovered from connected servers into the tool
-    /// registry and taxonomy so they are discoverable via `ToolSearch` and
-    /// executable through the standard tool dispatch pipeline.
-    async fn register_mcp_tools(self: &Arc<Self>) {
-        let all_tools = self.mcp_manager.list_all_tools().await;
-        if all_tools.is_empty() {
-            return;
-        }
-
-        let mcp_configs = self.tool_registry.config().mcp_servers;
-        let mut registered_names: Vec<String> = Vec::new();
-
-        for (server_name, tool_info) in &all_tools {
-            if let Some(cfg) = mcp_configs.iter().find(|c| c.name == *server_name) {
-                if let Some(ref whitelist) = cfg.enabled_tools {
-                    if !whitelist.contains(&tool_info.name) {
-                        continue;
-                    }
-                }
-                if let Some(ref blacklist) = cfg.disabled_tools {
-                    if blacklist.contains(&tool_info.name) {
-                        continue;
-                    }
-                }
-            }
-
-            let prefixed = format!("mcp_{}_{}", server_name, tool_info.name);
-            let adapter = y_mcp::McpManagedToolAdapter::new(
-                Arc::clone(&self.mcp_manager),
-                server_name,
-                &tool_info.name,
-                &prefixed,
-                tool_info.description.as_deref().unwrap_or(""),
-                tool_info
-                    .input_schema
-                    .clone()
-                    .unwrap_or(serde_json::json!({})),
-            );
-            let def = adapter.definition().clone();
-            match self
-                .tool_registry
-                .register_tool(Arc::new(adapter), def)
-                .await
-            {
-                Ok(()) => registered_names.push(prefixed),
-                Err(e) => {
-                    warn!(tool = %prefixed, error = %e, "failed to register MCP tool");
-                }
-            }
-        }
-
-        if !registered_names.is_empty() {
-            let mut taxonomy = self.tool_taxonomy.write().await;
-            taxonomy.add_dynamic_category(
-                "mcp",
-                "MCP tools from external servers",
-                registered_names.clone(),
-            );
-        }
-
-        info!(
-            count = registered_names.len(),
-            "MCP tools registered in tool registry"
-        );
-
-        // Inject MCP server instructions into prompt context so they appear
-        // in the system prompt alongside the MCP hint section.
-        let instructions = self.mcp_manager.collect_server_instructions().await;
-        if !instructions.is_empty() {
-            use std::fmt::Write;
-            let mut text = String::from("## MCP Server Instructions\n");
-            for (server_name, instruction) in &instructions {
-                let _ = write!(text, "\n### {server_name}\n{instruction}\n");
-            }
-            let mut pctx = self.prompt_context.write().await;
-            pctx.mcp_server_instructions = Some(text);
-        }
-    }
-
-    /// Spawn a background task that listens for MCP lifecycle events
-    /// (reconnect / disconnect) and updates the tool registry accordingly.
-    async fn start_mcp_event_consumer(self: &Arc<Self>) {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        self.mcp_manager.set_event_sender(tx).await;
-
-        let container = Arc::clone(self);
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    y_mcp::McpEvent::ServerReconnected { server_name } => {
-                        container.refresh_mcp_server_tools(&server_name).await;
-                    }
-                    y_mcp::McpEvent::ServerDisconnected { server_name } => {
-                        container.deactivate_mcp_server_tools(&server_name).await;
-                    }
-                }
-            }
-        });
-    }
-
-    /// Re-discover and re-register tools for a single MCP server after reconnection.
-    async fn refresh_mcp_server_tools(self: &Arc<Self>, server_name: &str) {
-        let prefix = format!("mcp_{server_name}_");
-
-        // Remove old tools for this server from the registry.
-        let all_defs = self.tool_registry.get_all_definitions().await;
-        for def in &all_defs {
-            if def.name.as_str().starts_with(&prefix) {
-                self.tool_registry.unregister_tool(&def.name).await;
-                let mut set = self.tool_activation_set.write().await;
-                set.deactivate(&def.name);
-            }
-        }
-
-        // Re-discover tools from the reconnected server.
-        let all_tools = self.mcp_manager.list_all_tools().await;
-        let server_tools: Vec<_> = all_tools
-            .into_iter()
-            .filter(|(name, _)| name == server_name)
-            .collect();
-
-        let mcp_configs = self.tool_registry.config().mcp_servers;
-        let mut registered_names = Vec::new();
-
-        for (sname, tool_info) in &server_tools {
-            if let Some(cfg) = mcp_configs.iter().find(|c| c.name == *sname) {
-                if let Some(ref wl) = cfg.enabled_tools {
-                    if !wl.contains(&tool_info.name) {
-                        continue;
-                    }
-                }
-                if let Some(ref bl) = cfg.disabled_tools {
-                    if bl.contains(&tool_info.name) {
-                        continue;
-                    }
-                }
-            }
-
-            let prefixed = format!("mcp_{}_{}", sname, tool_info.name);
-            let adapter = y_mcp::McpManagedToolAdapter::new(
-                Arc::clone(&self.mcp_manager),
-                sname,
-                &tool_info.name,
-                &prefixed,
-                tool_info.description.as_deref().unwrap_or(""),
-                tool_info
-                    .input_schema
-                    .clone()
-                    .unwrap_or(serde_json::json!({})),
-            );
-            let def = adapter.definition().clone();
-            if self
-                .tool_registry
-                .register_tool(Arc::new(adapter), def)
-                .await
-                .is_ok()
-            {
-                registered_names.push(prefixed);
-            }
-        }
-
-        if !registered_names.is_empty() {
-            let mut taxonomy = self.tool_taxonomy.write().await;
-            taxonomy.add_dynamic_category(
-                "mcp",
-                "MCP tools from external servers",
-                registered_names.clone(),
-            );
-        }
-
-        info!(
-            server = %server_name,
-            count = registered_names.len(),
-            "MCP server tools refreshed after reconnection"
-        );
-    }
-
-    /// Deactivate tools from a disconnected MCP server.
-    async fn deactivate_mcp_server_tools(&self, server_name: &str) {
-        let prefix = format!("mcp_{server_name}_");
-        let all_defs = self.tool_registry.get_all_definitions().await;
-        let mut removed = 0usize;
-        for def in &all_defs {
-            if def.name.as_str().starts_with(&prefix) {
-                self.tool_registry.unregister_tool(&def.name).await;
-                let mut set = self.tool_activation_set.write().await;
-                set.deactivate(&def.name);
-                removed += 1;
-            }
-        }
-        if removed > 0 {
-            info!(
-                server = %server_name,
-                removed,
-                "MCP server tools deactivated after disconnect"
-            );
-        }
     }
 
     /// Spawn per-provider tasks that drain metrics events and persist them.

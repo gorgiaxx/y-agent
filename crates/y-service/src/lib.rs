@@ -4,27 +4,32 @@
 //! layers (CLI, TUI, future Web API). It follows MVC principles:
 //!
 //! - **Model**: Domain crates (`y-core`, `y-provider`, `y-session`, etc.)
-//! - **Service**: This crate (`y-service`) — orchestration, workflows, cost, diagnostics
+//! - **Service**: This crate (`y-service`) -- orchestration, workflows, cost, diagnostics
 //! - **View**: Presentation crates (`y-cli` for CLI/TUI, future `y-web` for API)
 //!
 //! ## Key Components
 //!
-//! - [`ServiceContainer`] — DI container that wires all domain services from config
-//! - [`ChatService`] — LLM turn lifecycle (context → LLM → tools → diagnostics)
-//! - [`CostService`] — Token cost computation and daily summaries
-//! - [`DiagnosticsService`] — Trace queries and health checks
-//! - [`SystemService`] — System status reporting
+//! - [`ServiceContainer`] -- DI container that wires all domain services from config
+//! - [`ChatService`] -- LLM turn lifecycle (context -> LLM -> tools -> diagnostics)
+//! - [`CostService`] -- Token cost computation and daily summaries
+//! - [`DiagnosticsService`] -- Trace queries and health checks
+//! - [`SystemService`] -- System status reporting
 
+pub mod agent_management;
 pub mod agent_service;
 pub mod bot;
 pub mod chat;
+pub mod chat_types;
+pub mod chat_worker;
 pub mod config;
 pub mod container;
 pub mod context_optimization;
 pub mod cost;
 pub mod diagnostics;
+pub mod event_sink;
 pub mod init;
 pub mod knowledge_service;
+pub mod mcp_service;
 pub mod message_builder;
 pub mod observability;
 pub mod orchestrator_dispatcher;
@@ -44,6 +49,7 @@ pub mod workflow_service;
 pub mod workspace;
 
 // Re-export primary types for convenience.
+pub use agent_management::AgentManagementService;
 pub use agent_service::{
     AgentExecutionConfig, AgentExecutionError, AgentExecutionResult, AgentService,
     ServiceAgentRunner,
@@ -58,6 +64,8 @@ pub use config::ServiceConfig;
 pub use container::ServiceContainer;
 pub use cost::CostService;
 pub use diagnostics::{DiagnosticsAgentDelegator, DiagnosticsService, HistoricalEntry};
+pub use event_sink::EventSink;
+pub use mcp_service::McpService;
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,
