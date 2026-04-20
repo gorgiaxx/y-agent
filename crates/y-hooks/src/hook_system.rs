@@ -418,16 +418,19 @@ mod tests {
         let mut sub = system.subscribe_events(EventFilter::all()).await;
 
         system
-            .publish_event(Event::ToolExecuted {
+            .publish_event(Event::Tool(y_core::hook::ToolEvent::Executed {
                 tool_name: "search".into(),
                 success: true,
                 duration_ms: 42,
-            })
+            }))
             .await
             .unwrap();
 
         let event = sub.recv().await.unwrap();
-        assert!(matches!(event.as_ref(), Event::ToolExecuted { .. }));
+        assert!(matches!(
+            event.as_ref(),
+            Event::Tool(y_core::hook::ToolEvent::Executed { .. })
+        ));
     }
 
     #[tokio::test]

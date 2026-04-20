@@ -220,67 +220,83 @@ pub enum EventCategory {
     Custom,
 }
 
-/// Event types for the async event bus (fire-and-forget).
-///
-/// Events are delivered to subscribers via per-subscriber bounded channels.
-/// Slow subscribers drop oldest events (no backpressure on publishers).
+// ---------------------------------------------------------------------------
+// Domain sub-enums
+// ---------------------------------------------------------------------------
+
+/// LLM lifecycle events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Event {
-    // --- LLM events ---
-    LlmCallStarted {
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LlmEvent {
+    CallStarted {
         model: String,
         message_count: u32,
         tool_count: u32,
     },
-    LlmCallCompleted {
+    CallCompleted {
         provider: String,
         model: String,
         input_tokens: u32,
         output_tokens: u32,
         duration_ms: u64,
     },
-    LlmCallFailed {
+    CallFailed {
         model: String,
         error: String,
         retry_attempt: u32,
     },
+}
 
-    // --- Tool events ---
-    ToolExecuted {
+/// Tool execution events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolEvent {
+    Executed {
         tool_name: String,
         success: bool,
         duration_ms: u64,
     },
-    ToolFailed {
+    Failed {
         tool_name: String,
         error_type: String,
         args_summary: String,
     },
+}
 
-    // --- Memory events ---
-    MemoryStored {
+/// Memory storage and retrieval events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MemoryEvent {
+    Stored {
         memory_id: String,
         memory_type: String,
         importance: f64,
     },
-    MemoryRecalled {
+    Recalled {
         query_summary: String,
         result_count: u32,
         top_score: f64,
     },
+}
 
-    // --- Session events ---
-    SessionCreated {
+/// Session lifecycle events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionEvent {
+    Created {
         session_id: String,
         parent_session_id: Option<String>,
     },
-    SessionClosed {
+    Closed {
         session_id: String,
         message_count: u32,
     },
+}
 
-    // --- Compaction events ---
+/// Context management events (compaction, overflow, pruning, sync, repair).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ContextEvent {
     CompactionTriggered {
         session_id: String,
         strategy: String,
@@ -292,9 +308,7 @@ pub enum Event {
         error: String,
         fallback_used: bool,
     },
-
-    // --- Context events ---
-    ContextOverflow {
+    Overflow {
         session_id: String,
         estimated_tokens: u32,
         budget: u32,
@@ -308,8 +322,6 @@ pub enum Event {
         session_id: String,
         fixes: serde_json::Value,
     },
-
-    // --- Pruning events ---
     PruningApplied {
         session_id: String,
         strategy: String,
@@ -326,39 +338,41 @@ pub enum Event {
         strategy: String,
         error: String,
     },
+}
 
-    // --- Orchestration events ---
-    WorkflowEvent {
-        workflow_id: String,
-        event: String,
-    },
-
-    // --- Agent events ---
-    AgentLoopIteration {
+/// Agent loop events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentEvent {
+    LoopIteration {
         run_id: String,
         iteration: u32,
         tool_calls_count: u32,
     },
+}
 
-    // --- Pipeline events ---
-    PipelineStarted {
+/// Multi-step pipeline events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PipelineEvent {
+    Started {
         pipeline_id: String,
         template_name: String,
         step_count: u32,
     },
-    PipelineStepCompleted {
+    StepCompleted {
         pipeline_id: String,
         step_name: String,
         duration_ms: u64,
         tokens_used: u32,
     },
-    PipelineStepFailed {
+    StepFailed {
         pipeline_id: String,
         step_name: String,
         error: String,
         retry_count: u32,
     },
-    PipelineCompleted {
+    Completed {
         pipeline_id: String,
         total_duration_ms: u64,
         total_tokens: u32,
@@ -369,8 +383,12 @@ pub enum Event {
         category: String,
         token_estimate: u32,
     },
+}
 
-    // --- Autonomy events ---
+/// Self-evolution and autonomy events (tool/agent gaps, dynamic registration).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AutonomyEvent {
     ToolGapDetected {
         gap_id: String,
         gap_type: String,
@@ -418,14 +436,38 @@ pub enum Event {
         parameter_count: u32,
         created_by: String,
     },
+}
 
-    // --- Runtime events ---
-    RuntimeEvent {
+// ---------------------------------------------------------------------------
+// Top-level Event enum
+// ---------------------------------------------------------------------------
+
+/// Event types for the async event bus (fire-and-forget).
+///
+/// Events are delivered to subscribers via per-subscriber bounded channels.
+/// Slow subscribers drop oldest events (no backpressure on publishers).
+///
+/// Each domain has its own sub-enum; the top-level `Event` delegates to
+/// the appropriate variant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Event {
+    Llm(LlmEvent),
+    Tool(ToolEvent),
+    Memory(MemoryEvent),
+    Session(SessionEvent),
+    Context(ContextEvent),
+    Agent(AgentEvent),
+    Pipeline(PipelineEvent),
+    Autonomy(AutonomyEvent),
+    Orchestration {
+        workflow_id: String,
+        event: String,
+    },
+    Runtime {
         backend: String,
         event: String,
     },
-
-    // --- Custom events ---
     Custom {
         name: String,
         payload: serde_json::Value,
@@ -436,48 +478,20 @@ impl Event {
     /// Get the category of this event for filtering.
     pub fn category(&self) -> EventCategory {
         match self {
-            Self::LlmCallStarted { .. }
-            | Self::LlmCallCompleted { .. }
-            | Self::LlmCallFailed { .. } => EventCategory::Llm,
-
-            Self::ToolExecuted { .. } | Self::ToolFailed { .. } => EventCategory::Tool,
-
-            Self::MemoryStored { .. } | Self::MemoryRecalled { .. } => EventCategory::Memory,
-
-            Self::SessionCreated { .. } | Self::SessionClosed { .. } => EventCategory::Session,
-
-            Self::CompactionTriggered { .. } | Self::CompactionFailed { .. } => {
-                EventCategory::Compaction
-            }
-
-            Self::ContextOverflow { .. }
-            | Self::CanonicalSynced { .. }
-            | Self::SessionRepaired { .. }
-            | Self::PruningApplied { .. }
-            | Self::PruningSkipped { .. }
-            | Self::PruningFailed { .. } => EventCategory::Context,
-
-            Self::WorkflowEvent { .. } => EventCategory::Orchestration,
-
-            Self::AgentLoopIteration { .. } => EventCategory::Agent,
-
-            Self::PipelineStarted { .. }
-            | Self::PipelineStepCompleted { .. }
-            | Self::PipelineStepFailed { .. }
-            | Self::PipelineCompleted { .. }
-            | Self::WorkingMemorySlotWritten { .. } => EventCategory::Pipeline,
-
-            Self::ToolGapDetected { .. }
-            | Self::ToolGapResolved { .. }
-            | Self::AgentGapDetected { .. }
-            | Self::AgentGapResolved { .. }
-            | Self::DynamicToolRegistered { .. }
-            | Self::DynamicAgentRegistered { .. }
-            | Self::DynamicAgentDeactivated { .. }
-            | Self::WorkflowTemplateCreated { .. } => EventCategory::Autonomy,
-
-            Self::RuntimeEvent { .. } => EventCategory::Runtime,
-
+            Self::Llm(_) => EventCategory::Llm,
+            Self::Tool(_) => EventCategory::Tool,
+            Self::Memory(_) => EventCategory::Memory,
+            Self::Session(_) => EventCategory::Session,
+            Self::Context(ctx) => match ctx {
+                ContextEvent::CompactionTriggered { .. }
+                | ContextEvent::CompactionFailed { .. } => EventCategory::Compaction,
+                _ => EventCategory::Context,
+            },
+            Self::Agent(_) => EventCategory::Agent,
+            Self::Pipeline(_) => EventCategory::Pipeline,
+            Self::Autonomy(_) => EventCategory::Autonomy,
+            Self::Orchestration { .. } => EventCategory::Orchestration,
+            Self::Runtime { .. } => EventCategory::Runtime,
             Self::Custom { .. } => EventCategory::Custom,
         }
     }

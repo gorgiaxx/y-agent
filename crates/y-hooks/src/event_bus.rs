@@ -208,24 +208,24 @@ impl std::fmt::Debug for EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use y_core::hook::EventCategory;
+    use y_core::hook::{EventCategory, LlmEvent, ToolEvent};
 
     fn tool_event(name: &str) -> Event {
-        Event::ToolExecuted {
+        Event::Tool(ToolEvent::Executed {
             tool_name: name.to_string(),
             success: true,
             duration_ms: 42,
-        }
+        })
     }
 
     fn llm_event() -> Event {
-        Event::LlmCallCompleted {
+        Event::Llm(LlmEvent::CallCompleted {
             provider: "openai".into(),
             model: "gpt-4".into(),
             input_tokens: 100,
             output_tokens: 50,
             duration_ms: 500,
-        }
+        })
     }
 
     fn custom_event(name: &str) -> Event {
@@ -244,7 +244,7 @@ mod tests {
 
         let event = sub.recv().await.unwrap();
         match event.as_ref() {
-            Event::ToolExecuted { tool_name, .. } => {
+            Event::Tool(ToolEvent::Executed { tool_name, .. }) => {
                 assert_eq!(tool_name, "search");
             }
             _ => panic!("unexpected event type"),
@@ -266,9 +266,18 @@ mod tests {
         let e3 = sub3.recv().await.unwrap();
 
         // All should be ToolExecuted events.
-        assert!(matches!(e1.as_ref(), Event::ToolExecuted { .. }));
-        assert!(matches!(e2.as_ref(), Event::ToolExecuted { .. }));
-        assert!(matches!(e3.as_ref(), Event::ToolExecuted { .. }));
+        assert!(matches!(
+            e1.as_ref(),
+            Event::Tool(ToolEvent::Executed { .. })
+        ));
+        assert!(matches!(
+            e2.as_ref(),
+            Event::Tool(ToolEvent::Executed { .. })
+        ));
+        assert!(matches!(
+            e3.as_ref(),
+            Event::Tool(ToolEvent::Executed { .. })
+        ));
     }
 
     #[tokio::test]
@@ -285,9 +294,15 @@ mod tests {
 
         // tool_sub should only get Tool events.
         let e1 = tool_sub.recv().await.unwrap();
-        assert!(matches!(e1.as_ref(), Event::ToolExecuted { .. }));
+        assert!(matches!(
+            e1.as_ref(),
+            Event::Tool(ToolEvent::Executed { .. })
+        ));
         let e2 = tool_sub.recv().await.unwrap();
-        assert!(matches!(e2.as_ref(), Event::ToolExecuted { .. }));
+        assert!(matches!(
+            e2.as_ref(),
+            Event::Tool(ToolEvent::Executed { .. })
+        ));
 
         // all_sub gets all 3.
         let _ = all_sub.recv().await.unwrap();
@@ -313,7 +328,10 @@ mod tests {
 
         // Can still receive remaining events.
         let event = sub.recv().await.unwrap();
-        assert!(matches!(event.as_ref(), Event::ToolExecuted { .. }));
+        assert!(matches!(
+            event.as_ref(),
+            Event::Tool(ToolEvent::Executed { .. })
+        ));
     }
 
     #[tokio::test]

@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use y_core::hook::{
-    ChainType, Event, EventFilter, Middleware, MiddlewareContext, MiddlewareError, MiddlewareResult,
+    ChainType, Event, EventFilter, Middleware, MiddlewareContext, MiddlewareError,
+    MiddlewareResult, ToolEvent,
 };
 use y_hooks::chain::MiddlewareChain;
 use y_hooks::event_bus::EventBus;
@@ -96,11 +97,11 @@ fn bench_event_bus(c: &mut Criterion) {
                 let bus = EventBus::new(2048);
                 let _sub = bus.subscribe(EventFilter::all()).await;
                 for i in 0..1000 {
-                    let event = Event::ToolExecuted {
+                    let event = Event::Tool(ToolEvent::Executed {
                         tool_name: format!("tool-{i}"),
                         success: true,
                         duration_ms: 42,
-                    };
+                    });
                     let _ = bus.publish(black_box(event)).await;
                 }
             });

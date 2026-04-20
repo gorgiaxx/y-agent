@@ -1,6 +1,6 @@
 //! Integration tests for the event bus under load.
 
-use y_core::hook::{Event, EventCategory, EventFilter};
+use y_core::hook::{Event, EventCategory, EventFilter, LlmEvent, ToolEvent};
 use y_hooks::event_bus::EventBus;
 
 // T-HOOK-INT-04: Event bus under load.
@@ -22,19 +22,19 @@ async fn test_event_bus_under_load() {
     // Publish 1000 mixed events.
     for i in 0..1000 {
         let event = if i % 3 == 0 {
-            Event::ToolExecuted {
+            Event::Tool(ToolEvent::Executed {
                 tool_name: format!("tool-{i}"),
                 success: true,
                 duration_ms: 42,
-            }
+            })
         } else {
-            Event::LlmCallCompleted {
+            Event::Llm(LlmEvent::CallCompleted {
                 provider: "openai".into(),
                 model: "gpt-4".into(),
                 input_tokens: 100,
                 output_tokens: 50,
                 duration_ms: 500,
-            }
+            })
         };
         bus.publish(event).await.unwrap();
     }
@@ -64,7 +64,10 @@ async fn test_event_bus_under_load() {
     for i in (1..10).step_by(2) {
         let mut count = 0;
         while let Ok(event) = subs[i].receiver.try_recv() {
-            assert!(matches!(event.as_ref(), Event::ToolExecuted { .. }));
+            assert!(matches!(
+                event.as_ref(),
+                Event::Tool(ToolEvent::Executed { .. })
+            ));
             count += 1;
         }
         assert_eq!(
