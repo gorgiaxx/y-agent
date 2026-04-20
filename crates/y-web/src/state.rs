@@ -13,21 +13,7 @@ use y_service::ServiceContainer;
 
 use crate::routes::events::SseEvent;
 
-// ---------------------------------------------------------------------------
-// Turn metadata (mirrors y-gui TurnMeta)
-// ---------------------------------------------------------------------------
-
-/// Cached metadata for the last completed LLM turn in a session.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TurnMeta {
-    pub provider_id: Option<String>,
-    pub model: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost_usd: f64,
-    pub context_window: usize,
-    pub context_tokens_used: u64,
-}
+pub use y_service::chat_types::TurnMeta;
 
 // ---------------------------------------------------------------------------
 // Configuration

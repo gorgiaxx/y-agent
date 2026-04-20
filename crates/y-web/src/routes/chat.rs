@@ -10,16 +10,19 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use y_core::provider::RequestMode;
 use y_core::session::ChatMessageStore;
 use y_core::types::SessionId;
+use y_service::chat_types::{
+    parse_thinking, ChatCheckpointInfo, CompactResult, MessageWithStatus, RestoreResult, UndoResult,
+};
+use y_service::event_sink::EventSink;
 use y_service::{
-    ChatService, PermissionPromptResponse, PrepareTurnError, PrepareTurnRequest, PreparedTurn,
-    ResendTurnRequest, TurnEvent,
+    ChatService, PermissionPromptResponse, PrepareTurnError, PrepareTurnRequest, ResendTurnRequest,
+    TurnEvent,
 };
 
 use crate::error::ApiError;
@@ -43,6 +46,8 @@ pub struct ChatRequest {
     pub thinking_effort: Option<String>,
     pub attachments: Option<Vec<serde_json::Value>>,
     pub plan_mode: Option<String>,
+    pub mcp_mode: Option<String>,
+    pub mcp_servers: Option<Vec<String>>,
 }
 
 /// Returned when an async chat turn is started.
@@ -86,14 +91,6 @@ pub struct UndoRequest {
     pub checkpoint_id: String,
 }
 
-/// Result of an undo (rollback) operation.
-#[derive(Debug, Serialize)]
-pub struct UndoResult {
-    pub messages_removed: usize,
-    pub restored_turn_number: u32,
-    pub files_restored: u32,
-}
-
 /// Request body for `POST /api/v1/chat/resend`.
 #[derive(Debug, Deserialize)]
 pub struct ResendRequest {
@@ -106,16 +103,6 @@ pub struct ResendRequest {
     pub plan_mode: Option<String>,
 }
 
-/// Chat checkpoint info.
-#[derive(Debug, Serialize)]
-pub struct ChatCheckpointInfo {
-    pub checkpoint_id: String,
-    pub session_id: String,
-    pub turn_number: u32,
-    pub message_count_before: u32,
-    pub created_at: String,
-}
-
 /// Request body for `POST /api/v1/chat/find-checkpoint`.
 #[derive(Debug, Deserialize)]
 pub struct FindCheckpointRequest {
@@ -124,43 +111,11 @@ pub struct FindCheckpointRequest {
     pub message_id: Option<String>,
 }
 
-/// A message with its active/tombstone status.
-#[derive(Debug, Serialize)]
-pub struct MessageWithStatus {
-    pub id: String,
-    pub role: String,
-    pub content: String,
-    pub status: String,
-    pub checkpoint_id: Option<String>,
-    pub model: Option<String>,
-    pub input_tokens: Option<i64>,
-    pub output_tokens: Option<i64>,
-    pub cost_usd: Option<f64>,
-    pub context_window: Option<i64>,
-    pub created_at: String,
-}
-
 /// Request body for `POST /api/v1/chat/restore-branch`.
 #[derive(Debug, Deserialize)]
 pub struct RestoreBranchRequest {
     pub session_id: String,
     pub checkpoint_id: String,
-}
-
-/// Result of a branch restoration.
-#[derive(Debug, Serialize)]
-pub struct RestoreResult {
-    pub tombstoned_count: u32,
-    pub restored_count: u32,
-}
-
-/// Compact report.
-#[derive(Debug, Serialize)]
-pub struct CompactResult {
-    pub messages_pruned: usize,
-    pub messages_compacted: usize,
-    pub tokens_saved: u32,
-    pub summary: String,
 }
 
 /// Request body for `POST /api/v1/chat/answer-question`.
@@ -178,205 +133,84 @@ pub struct AnswerPermissionRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// SseEventSink -- EventSink implementation for SSE transport
 // ---------------------------------------------------------------------------
 
-fn parse_thinking(effort: Option<String>) -> Option<y_core::provider::ThinkingConfig> {
-    effort.and_then(|e| {
-        use y_core::provider::{ThinkingConfig, ThinkingEffort};
-        let effort = match e.as_str() {
-            "low" => ThinkingEffort::Low,
-            "medium" => ThinkingEffort::Medium,
-            "high" => ThinkingEffort::High,
-            "max" => ThinkingEffort::Max,
-            _ => return None,
-        };
-        Some(ThinkingConfig { effort })
-    })
-}
+/// SSE-based [`EventSink`] implementation that translates chat lifecycle
+/// events into [`SseEvent`] variants sent over a broadcast channel.
+struct SseEventSink(tokio::sync::broadcast::Sender<SseEvent>);
 
-/// Spawn the LLM worker task that emits SSE events via the broadcast channel.
-fn spawn_llm_worker(
-    event_tx: tokio::sync::broadcast::Sender<SseEvent>,
-    container: Arc<y_service::ServiceContainer>,
-    prepared: PreparedTurn,
-    run_id: String,
-    turn_meta_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, TurnMeta>>>,
-    pending_runs: Arc<std::sync::Mutex<std::collections::HashMap<String, CancellationToken>>>,
-    cancel_token: CancellationToken,
-    should_generate_title: bool,
-) {
-    let sid_clone = prepared.session_id.clone();
-    let run_id_clone = run_id;
-    let panic_run_id = run_id_clone.clone();
-    let cancel_clone = cancel_token;
+impl EventSink for SseEventSink {
+    fn emit_started(&self, run_id: &str, session_id: &str) {
+        let _ = self.0.send(SseEvent::ChatStarted {
+            run_id: run_id.to_owned(),
+            session_id: session_id.to_owned(),
+        });
+    }
 
-    tokio::spawn(async move {
-        let result = std::panic::AssertUnwindSafe(async {
-            let input = prepared.as_turn_input();
-
-            let do_title = if should_generate_title {
-                match container.session_manager.get_session(&sid_clone).await {
-                    Ok(session) if session.session_type.is_user_facing() => {
-                        if session.manual_title.is_some() {
-                            false
-                        } else {
-                            ChatService::should_generate_title(&container, &prepared.history)
-                        }
-                    }
-                    _ => false,
-                }
-            } else {
-                false
-            };
-
-            // Set up progress channel -- forward TurnEvents as SSE events.
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let event_tx_progress = event_tx.clone();
-            let run_id_progress = run_id_clone.clone();
-            let session_id_progress = sid_clone.0.clone();
-            let progress_task = tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    // Intercept AskUser events.
-                    if let TurnEvent::UserInteractionRequest {
-                        ref interaction_id,
-                        ref questions,
-                    } = event
-                    {
-                        let _ = event_tx_progress.send(SseEvent::AskUser {
-                            run_id: run_id_progress.clone(),
-                            session_id: session_id_progress.clone(),
-                            interaction_id: interaction_id.clone(),
-                            questions: questions.clone(),
-                        });
-                    }
-
-                    // Intercept PermissionRequest events.
-                    if let TurnEvent::PermissionRequest {
-                        ref request_id,
-                        ref tool_name,
-                        ref action_description,
-                        ref reason,
-                        ref content_preview,
-                    } = event
-                    {
-                        let _ = event_tx_progress.send(SseEvent::PermissionRequest {
-                            run_id: run_id_progress.clone(),
-                            session_id: session_id_progress.clone(),
-                            request_id: request_id.clone(),
-                            tool_name: tool_name.clone(),
-                            action_description: action_description.clone(),
-                            reason: reason.clone(),
-                            content_preview: content_preview.clone(),
-                        });
-                    }
-
-                    // Forward as generic progress event.
-                    if let Ok(json) = serde_json::to_value(&event) {
-                        let _ = event_tx_progress.send(SseEvent::ChatProgress {
-                            run_id: run_id_progress.clone(),
-                            event: json,
-                        });
-                    }
-                }
+    fn emit_progress(&self, run_id: &str, event: &TurnEvent) {
+        if let Ok(json) = serde_json::to_value(event) {
+            let _ = self.0.send(SseEvent::ChatProgress {
+                run_id: run_id.to_owned(),
+                event: json,
             });
-
-            let turn_result =
-                ChatService::execute_turn_with_progress(&container, &input, tx, Some(cancel_clone))
-                    .await;
-
-            let _ = progress_task.await;
-
-            match turn_result {
-                Ok(result) => {
-                    let meta = TurnMeta {
-                        provider_id: result.provider_id.clone(),
-                        model: result.model.clone(),
-                        input_tokens: result.input_tokens,
-                        output_tokens: result.output_tokens,
-                        cost_usd: result.cost_usd,
-                        context_window: result.context_window,
-                        context_tokens_used: result.last_input_tokens,
-                    };
-                    if let Ok(mut cache) = turn_meta_cache.lock() {
-                        cache.insert(sid_clone.0.clone(), meta);
-                    }
-
-                    let payload = serde_json::json!({
-                        "run_id": run_id_clone,
-                        "session_id": sid_clone.0,
-                        "content": result.content,
-                        "model": result.model,
-                        "provider_id": result.provider_id,
-                        "input_tokens": result.input_tokens,
-                        "output_tokens": result.output_tokens,
-                        "cost_usd": result.cost_usd,
-                        "tool_calls": result.tool_calls_executed.iter().map(|tc| {
-                            serde_json::json!({
-                                "name": tc.name,
-                                "success": tc.success,
-                                "duration_ms": tc.duration_ms,
-                            })
-                        }).collect::<Vec<_>>(),
-                        "iterations": result.iterations,
-                        "context_window": result.context_window,
-                        "context_tokens_used": result.last_input_tokens,
-                    });
-                    let _ = event_tx.send(SseEvent::ChatComplete(payload));
-
-                    // Title generation.
-                    if do_title {
-                        if let Ok(transcript) =
-                            container.session_manager.read_transcript(&sid_clone).await
-                        {
-                            if let Ok(title) = container
-                                .session_manager
-                                .generate_title(
-                                    &*container.agent_delegator,
-                                    &sid_clone,
-                                    &transcript,
-                                )
-                                .await
-                            {
-                                let _ = event_tx.send(SseEvent::TitleUpdated {
-                                    session_id: sid_clone.0.clone(),
-                                    title,
-                                });
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = event_tx.send(SseEvent::ChatError {
-                        run_id: run_id_clone.clone(),
-                        session_id: sid_clone.0.clone(),
-                        error: e.to_string(),
-                    });
-                }
-            }
-
-            run_id_clone
-        })
-        .catch_unwind()
-        .await;
-
-        let final_run_id = if let Ok(rid) = result {
-            rid
-        } else {
-            let _ = event_tx.send(SseEvent::ChatError {
-                run_id: panic_run_id.clone(),
-                session_id: sid_clone.0.clone(),
-                error: "Internal error: LLM worker panicked".to_string(),
-            });
-            panic_run_id
-        };
-
-        if !final_run_id.is_empty() {
-            if let Ok(mut runs) = pending_runs.lock() {
-                runs.remove(&final_run_id);
-            }
         }
-    });
+    }
+
+    fn emit_ask_user(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        interaction_id: &str,
+        questions: &serde_json::Value,
+    ) {
+        let _ = self.0.send(SseEvent::AskUser {
+            run_id: run_id.to_owned(),
+            session_id: session_id.to_owned(),
+            interaction_id: interaction_id.to_owned(),
+            questions: questions.clone(),
+        });
+    }
+
+    fn emit_permission_request(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        request_id: &str,
+        tool_name: &str,
+        action_description: &str,
+        reason: &str,
+        content_preview: Option<&str>,
+    ) {
+        let _ = self.0.send(SseEvent::PermissionRequest {
+            run_id: run_id.to_owned(),
+            session_id: session_id.to_owned(),
+            request_id: request_id.to_owned(),
+            tool_name: tool_name.to_owned(),
+            action_description: action_description.to_owned(),
+            reason: reason.to_owned(),
+            content_preview: content_preview.map(String::from),
+        });
+    }
+
+    fn emit_complete(&self, payload: &serde_json::Value) {
+        let _ = self.0.send(SseEvent::ChatComplete(payload.clone()));
+    }
+
+    fn emit_error(&self, run_id: &str, session_id: &str, error: &str) {
+        let _ = self.0.send(SseEvent::ChatError {
+            run_id: run_id.to_owned(),
+            session_id: session_id.to_owned(),
+            error: error.to_owned(),
+        });
+    }
+
+    fn emit_title_updated(&self, session_id: &str, title: &str) {
+        let _ = self.0.send(SseEvent::TitleUpdated {
+            session_id: session_id.to_owned(),
+            title: title.to_owned(),
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -409,8 +243,8 @@ async fn chat_turn(
             thinking,
             user_message_metadata,
             plan_mode: body.plan_mode,
-            mcp_mode: None,
-            mcp_servers: None,
+            mcp_mode: body.mcp_mode,
+            mcp_servers: body.mcp_servers,
         },
     )
     .await
@@ -472,8 +306,8 @@ async fn chat_send(
             thinking,
             user_message_metadata,
             plan_mode: body.plan_mode,
-            mcp_mode: None,
-            mcp_servers: None,
+            mcp_mode: body.mcp_mode,
+            mcp_servers: body.mcp_servers,
         },
     )
     .await
@@ -505,8 +339,8 @@ async fn chat_send(
         runs.insert(run_id.clone(), cancel_token.clone());
     }
 
-    spawn_llm_worker(
-        state.event_tx.clone(),
+    y_service::chat_worker::spawn_llm_worker(
+        SseEventSink(state.event_tx.clone()),
         state.container.clone(),
         prepared,
         run_id,
@@ -611,8 +445,8 @@ async fn chat_resend(
         cache.remove(&body.session_id);
     }
 
-    spawn_llm_worker(
-        state.event_tx.clone(),
+    y_service::chat_worker::spawn_llm_worker(
+        SseEventSink(state.event_tx.clone()),
         state.container.clone(),
         prepared,
         run_id,
