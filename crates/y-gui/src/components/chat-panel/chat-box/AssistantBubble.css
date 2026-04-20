@@ -63,9 +63,12 @@
 /* ---- Generated images ---- */
 
 .generated-image-gallery {
+  --generated-image-thumb-size: 100px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, var(--generated-image-thumb-size));
   gap: var(--space-md);
+  justify-content: start;
+  align-items: start;
   margin-top: var(--space-md);
 }
 
@@ -76,7 +79,7 @@
 
 .generated-image-preview {
   display: block;
-  width: 100%;
+  width: var(--generated-image-thumb-size);
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -95,32 +98,6 @@
   aspect-ratio: 1 / 1;
   object-fit: cover;
   background: linear-gradient(135deg, var(--surface-secondary), var(--surface-tertiary));
-}
-
-.generated-image-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-  margin-top: var(--space-sm);
-}
-
-.generated-image-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.generated-image-action:hover {
-  color: var(--text-primary);
-  border-color: var(--accent);
-  background: var(--surface-hover);
 }
 
 .generated-image-lightbox {
@@ -164,6 +141,15 @@
 
 .generated-image-lightbox-close:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+.generated-image-lightbox-nav:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.generated-image-lightbox-nav:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
 .generated-image-lightbox-image {
