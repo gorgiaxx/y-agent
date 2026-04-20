@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
-use y_core::provider::RequestMode;
+use y_core::provider::{ImageGenerationOptions, RequestMode};
 use y_core::types::SessionId;
 use y_service::chat_types::{
     ChatCheckpointInfo, CompactResult, MessageWithStatus, RestoreResult, TurnMeta, UndoResult,
@@ -117,6 +117,7 @@ pub async fn chat_send(
     plan_mode: Option<String>,
     mcp_mode: Option<String>,
     mcp_servers: Option<Vec<String>>,
+    image_generation_options: Option<ImageGenerationOptions>,
 ) -> Result<ChatStarted, String> {
     tracing::info!(plan_mode = ?plan_mode, "chat_send: plan_mode received from frontend");
     if message.trim().is_empty() {
@@ -155,6 +156,7 @@ pub async fn chat_send(
             plan_mode,
             mcp_mode,
             mcp_servers,
+            image_generation_options,
         },
     )
     .await

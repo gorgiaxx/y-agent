@@ -49,6 +49,7 @@ export interface SendMessageOptions {
   mcpMode?: import('../types').McpMode | null;
   mcpServers?: string[];
   requestMode?: import('../types').RequestMode;
+  imageGenerationOptions?: import('../types').ImageGenerationOptions;
 }
 
 /** Operation status for guarding concurrent actions. */

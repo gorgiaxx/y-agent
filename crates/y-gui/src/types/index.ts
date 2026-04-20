@@ -315,6 +315,19 @@ export type McpMode = 'auto' | 'manual' | 'disabled';
 /** High-level provider request mode. */
 export type RequestMode = 'text_chat' | 'image_generation';
 
+/** Image generation options (persisted via localStorage). */
+export interface ImageGenerationOptions {
+  watermark: boolean;
+  max_images: number;
+  size: string | null;
+}
+
+export const DEFAULT_IMAGE_GENERATION_OPTIONS: ImageGenerationOptions = {
+  watermark: false,
+  max_images: 1,
+  size: null,
+};
+
 /** Last-turn metadata cached per session by the backend (from `session_last_turn_meta`). */
 export interface TurnMeta {
   provider_id: string | null;

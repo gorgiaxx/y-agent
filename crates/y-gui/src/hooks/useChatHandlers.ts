@@ -8,7 +8,7 @@
 
 import { useCallback } from 'react';
 import { transport } from '../lib';
-import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode } from '../types';
+import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode, ImageGenerationOptions } from '../types';
 import type { ViewType } from '../components/Sidebar';
 import type { CompactInfo, ChatOpStatus, SendMessageOptions } from './useChat';
 
@@ -67,7 +67,7 @@ export interface ChatDeps {
 }
 
 export interface UseChatHandlersReturn {
-  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => Promise<void>;
+  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => Promise<void>;
   handleEditMessage: (content: string, messageId: string) => void;
   handleUndoMessage: (messageId: string) => Promise<void>;
   handleCancelEdit: () => void;
@@ -94,7 +94,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
   const { addUserMessage, setActiveView, setDiagOpen, setObsOpen, onRewind, onSetRewindDraft } = callbacks;
 
   const handleSend = useCallback(
-    async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => {
+    async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => {
       let sid = activeSessionId;
       if (!sid) {
         const session = await createSession();
@@ -143,6 +143,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
         mcpMode,
         mcpServers,
         requestMode,
+        imageGenerationOptions,
       });
       if (result) {
         if (result.session_id !== activeSessionId) {

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal } from 'lucide-react';
 import { transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
@@ -11,7 +11,8 @@ import { SessionPromptDialog } from '../SessionPromptDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode, ImageGenerationOptions } from '../../../types';
+import { DEFAULT_IMAGE_GENERATION_OPTIONS } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
 import './InputArea.css';
 
@@ -116,7 +117,7 @@ export interface InputFeatureProps {
 }
 
 interface InputAreaProps {
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -187,6 +188,22 @@ export function InputArea(props: InputAreaProps) {
   const [translating, setTranslating] = useState(false);
   const [inputHasText, setInputHasText] = useState(false);
   const [requestMode, setRequestMode] = useState<RequestMode>('text_chat');
+  const [imageGenOptions, setImageGenOptions] = useState<ImageGenerationOptions>(() => {
+    try {
+      const stored = localStorage.getItem('y-agent-image-gen-options');
+      if (stored) return { ...DEFAULT_IMAGE_GENERATION_OPTIONS, ...JSON.parse(stored) };
+    } catch { /* ignore */ }
+    return { ...DEFAULT_IMAGE_GENERATION_OPTIONS };
+  });
+  const [imageGenDropdownOpen, setImageGenDropdownOpen] = useState(false);
+  const imageGenDropdownRef = useRef<HTMLDivElement>(null);
+  const updateImageGenOptions = useCallback((patch: Partial<ImageGenerationOptions>) => {
+    setImageGenOptions(prev => {
+      const next = { ...prev, ...patch };
+      localStorage.setItem('y-agent-image-gen-options', JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   // Plan mode: defaults to a global preference, but can be controlled by a caller.
   const [uncontrolledPlanMode, setUncontrolledPlanMode] = useState<PlanMode>(() => {
@@ -255,6 +272,18 @@ export function InputArea(props: InputAreaProps) {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [mcpDropdownOpen]);
 
+  // Close image gen dropdown on outside click.
+  useEffect(() => {
+    if (!imageGenDropdownOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (imageGenDropdownRef.current && !imageGenDropdownRef.current.contains(e.target as Node)) {
+        setImageGenDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [imageGenDropdownOpen]);
+
   // Derive display label for selected provider.
   const selectedProviderLabel = selectedProviderId === 'auto'
     ? 'Auto'
@@ -278,12 +307,6 @@ export function InputArea(props: InputAreaProps) {
       setRequestMode('image_generation');
     }
   }, [providerSupportsImageGeneration, providerSupportsText, selectedProviderId]);
-
-  useEffect(() => {
-    if (requestMode === 'image_generation' && attachments.length > 0) {
-      setAttachments([]);
-    }
-  }, [requestMode, attachments.length]);
 
   const updateHasContent = useCallback(() => {
     const hasContent = contentEditableRef.current?.hasContent() ?? false;
@@ -382,19 +405,20 @@ export function InputArea(props: InputAreaProps) {
       trimmed,
       extractedSkills.length > 0 ? extractedSkills : undefined,
       selectedKbCollections.length > 0 ? selectedKbCollections : undefined,
-      thinkingEffort,
+      requestMode === 'image_generation' ? undefined : thinkingEffort,
       attachments.length > 0 ? attachments : undefined,
       planMode,
-      mcpMode,
+      requestMode === 'image_generation' ? 'disabled' : mcpMode,
       mcpMode === 'manual' ? selectedMcpServers : undefined,
       requestMode,
+      requestMode === 'image_generation' ? imageGenOptions : undefined,
     );
     resetInput();
     setAttachments([]);
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, mcpMode, selectedMcpServers]);
+  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     // Check for pasted images first.
@@ -638,7 +662,7 @@ export function InputArea(props: InputAreaProps) {
         {/* Toolbar row with action buttons -- inside the input border */}
         <div
           className={`input-toolbar${
-            providerDropdownOpen || kbPickerOpen || thinkingDropdownOpen || mcpDropdownOpen
+            providerDropdownOpen || kbPickerOpen || thinkingDropdownOpen || mcpDropdownOpen || imageGenDropdownOpen
               ? ' input-toolbar--dropdown-open'
               : ''
           }`}
@@ -681,7 +705,7 @@ export function InputArea(props: InputAreaProps) {
             )}
           </div>
 
-          {/* (f) Plan mode selector */}
+          {/* Image generation mode toggle */}
           {providerSupportsImageGeneration && (
             <ToolbarTooltipButton
               className={`toolbar-btn ${requestMode === 'image_generation' ? 'toolbar-btn--active' : ''}`}
@@ -705,7 +729,62 @@ export function InputArea(props: InputAreaProps) {
             </ToolbarTooltipButton>
           )}
 
-          {/* (f) Plan mode selector */}
+          {/* Image generation settings (only visible in image mode) */}
+          {requestMode === 'image_generation' && (
+            <div className="toolbar-btn-group" ref={imageGenDropdownRef}>
+              <ToolbarTooltipButton
+                className="toolbar-btn toolbar-btn--active"
+                onClick={() => setImageGenDropdownOpen(!imageGenDropdownOpen)}
+                tooltip="Image generation settings"
+                disabled={disabled}
+              >
+                <SlidersHorizontal size={14} />
+                {imageGenOptions.max_images > 1 && (
+                  <span className="toolbar-btn-label">x{imageGenOptions.max_images}</span>
+                )}
+              </ToolbarTooltipButton>
+              {imageGenDropdownOpen && (
+                <div className="toolbar-imagegen-dropdown">
+                  <div className="toolbar-imagegen-row">
+                    <label className="toolbar-imagegen-label">Max images</label>
+                    <select
+                      className="toolbar-imagegen-select"
+                      value={imageGenOptions.max_images}
+                      onChange={(e) => updateImageGenOptions({ max_images: Number(e.target.value) })}
+                    >
+                      {[1, 2, 3, 4].map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="toolbar-imagegen-row">
+                    <label className="toolbar-imagegen-label">Size</label>
+                    <select
+                      className="toolbar-imagegen-select"
+                      value={imageGenOptions.size ?? ''}
+                      onChange={(e) => updateImageGenOptions({ size: e.target.value || null })}
+                    >
+                      <option value="">Default</option>
+                      <option value="1024x1024">1024x1024</option>
+                      <option value="2K">2K</option>
+                    </select>
+                  </div>
+                  <div className="toolbar-imagegen-row">
+                    <label className="toolbar-imagegen-label">
+                      <input
+                        type="checkbox"
+                        checked={imageGenOptions.watermark}
+                        onChange={(e) => updateImageGenOptions({ watermark: e.target.checked })}
+                      />
+                      Watermark
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Plan mode selector */}
           <ToolbarTooltipButton
             className={`toolbar-btn toolbar-btn--plan-${planMode}`}
             onClick={cyclePlanMode}
@@ -717,11 +796,10 @@ export function InputArea(props: InputAreaProps) {
             {planMode === 'plan' && <ClipboardList size={14} />}
             <span className="toolbar-btn-label">{planMode}</span>
           </ToolbarTooltipButton>
-          {/* (a) Attachment picker */}
+          {/* Attachment picker (also used for image-to-image in generation mode) */}
           <ToolbarTooltipButton
             className={`toolbar-btn ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
             onClick={async () => {
-              if (requestMode === 'image_generation') return;
               try {
                 const result = await platform.openFileDialog({
                   multiple: true,
@@ -736,8 +814,8 @@ export function InputArea(props: InputAreaProps) {
                 console.error('[InputArea] attachment picker error:', e);
               }
             }}
-            tooltip={requestMode === 'image_generation' ? 'Attachments are not supported in image generation mode yet' : 'Attach images'}
-            disabled={disabled || requestMode === 'image_generation'}
+            tooltip={requestMode === 'image_generation' ? 'Reference image (image-to-image)' : 'Attach images'}
+            disabled={disabled}
           >
             <Paperclip size={14} />
             {attachments.length > 0 && (
@@ -745,7 +823,7 @@ export function InputArea(props: InputAreaProps) {
             )}
           </ToolbarTooltipButton>
 
-          {/* (c) Clear all messages */}
+          {/* Clear all messages */}
           <ToolbarTooltipButton
             className="toolbar-btn toolbar-btn--danger"
             onClick={() => setClearConfirmOpen(true)}
@@ -755,7 +833,7 @@ export function InputArea(props: InputAreaProps) {
             <Paintbrush size={14} />
           </ToolbarTooltipButton>
 
-          {/* (d) Add context reset */}
+          {/* Add context reset */}
           <ToolbarTooltipButton
             className="toolbar-btn"
             onClick={onAddContextReset}
@@ -765,49 +843,52 @@ export function InputArea(props: InputAreaProps) {
             <Eraser size={14} />
           </ToolbarTooltipButton>
 
-          {/* (d2) Session custom prompt */}
-          <ToolbarTooltipButton
-            className={`toolbar-btn ${hasCustomPrompt ? 'toolbar-btn--active' : ''}`}
-            onClick={() => setPromptDialogOpen(true)}
-            tooltip="Session prompt"
-            disabled={disabled || !sessionId}
-          >
-            <ScrollText size={14} />
-          </ToolbarTooltipButton>
+          {/* Session prompt, thinking effort, MCP -- hidden in image generation mode */}
+          {requestMode !== 'image_generation' && (
+            <>
+              {/* Session custom prompt */}
+              <ToolbarTooltipButton
+                className={`toolbar-btn ${hasCustomPrompt ? 'toolbar-btn--active' : ''}`}
+                onClick={() => setPromptDialogOpen(true)}
+                tooltip="Session prompt"
+                disabled={disabled || !sessionId}
+              >
+                <ScrollText size={14} />
+              </ToolbarTooltipButton>
 
-          {/* (e) Thinking effort selector */}
-          <div className="toolbar-btn-group" ref={thinkingDropdownRef}>
-            <ToolbarTooltipButton
-              className={`toolbar-btn ${thinkingEffort ? 'toolbar-btn--active' : ''}`}
-              onClick={() => setThinkingDropdownOpen(!thinkingDropdownOpen)}
-              tooltip="Thinking effort"
-              disabled={disabled}
-            >
-              <Lightbulb size={14} />
-              {thinkingEffort && (
-                <span className="toolbar-btn-label">{thinkingEffort}</span>
-              )}
-            </ToolbarTooltipButton>
-            {thinkingDropdownOpen && (
-              <div className="toolbar-thinking-dropdown">
-                {([null, 'low', 'medium', 'high', 'max'] as const).map((level) => (
-                  <button
-                    key={level ?? 'default'}
-                    className={`toolbar-thinking-item ${(thinkingEffort ?? null) === level ? 'selected' : ''}`}
-                    onClick={() => {
-                      onThinkingEffortChange?.(level);
-                      setThinkingDropdownOpen(false);
-                    }}
-                  >
-                    {level === null ? 'Default' : level.charAt(0).toUpperCase() + level.slice(1)}
-                  </button>
-                ))}
+              {/* Thinking effort selector */}
+              <div className="toolbar-btn-group" ref={thinkingDropdownRef}>
+                <ToolbarTooltipButton
+                  className={`toolbar-btn ${thinkingEffort ? 'toolbar-btn--active' : ''}`}
+                  onClick={() => setThinkingDropdownOpen(!thinkingDropdownOpen)}
+                  tooltip="Thinking effort"
+                  disabled={disabled}
+                >
+                  <Lightbulb size={14} />
+                  {thinkingEffort && (
+                    <span className="toolbar-btn-label">{thinkingEffort}</span>
+                  )}
+                </ToolbarTooltipButton>
+                {thinkingDropdownOpen && (
+                  <div className="toolbar-thinking-dropdown">
+                    {([null, 'low', 'medium', 'high', 'max'] as const).map((level) => (
+                      <button
+                        key={level ?? 'default'}
+                        className={`toolbar-thinking-item ${(thinkingEffort ?? null) === level ? 'selected' : ''}`}
+                        onClick={() => {
+                          onThinkingEffortChange?.(level);
+                          setThinkingDropdownOpen(false);
+                        }}
+                      >
+                        {level === null ? 'Default' : level.charAt(0).toUpperCase() + level.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* (g) MCP mode selector */}
-          <div className="toolbar-btn-group" ref={mcpDropdownRef}>
+              {/* MCP mode selector */}
+              <div className="toolbar-btn-group" ref={mcpDropdownRef}>
             <ToolbarTooltipButton
               className={`toolbar-btn ${mcpMode !== 'disabled' ? 'toolbar-btn--active' : ''}`}
               onClick={() => setMcpDropdownOpen(!mcpDropdownOpen)}
@@ -863,8 +944,10 @@ export function InputArea(props: InputAreaProps) {
               </div>
             )}
           </div>
+            </>
+          )}
 
-          {/* (f) Knowledge base picker */}
+          {/* Knowledge base picker */}
           {knowledgeCollections.length > 0 && (
             <div className="toolbar-btn-group" ref={kbPickerRef}>
               <ToolbarTooltipButton

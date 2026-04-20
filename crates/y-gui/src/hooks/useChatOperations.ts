@@ -115,6 +115,7 @@ export function useChatOperations(
         mcpMode,
         mcpServers,
         requestMode,
+        imageGenerationOptions,
       } = opts;
       if (refs.opStatusRef.current !== 'idle') {
         console.warn(
@@ -179,8 +180,8 @@ export function useChatOperations(
           mcpMode: mcpMode ?? null,
           mcpServers:
             mcpServers && mcpServers.length > 0 ? mcpServers : null,
-        });
-        return result;
+          imageGenerationOptions: imageGenerationOptions ?? null,
+        });        return result;
       } catch (e) {
         setError(String(e));
         chatBusState.streamingSessions.delete(sessionId);

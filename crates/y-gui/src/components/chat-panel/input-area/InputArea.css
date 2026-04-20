@@ -672,6 +672,62 @@
   background: var(--accent-glow);
 }
 
+/* ---- Image generation settings dropdown ---- */
+
+.toolbar-imagegen-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  min-width: 200px;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 200;
+  padding: var(--space-sm);
+  animation: toolbarDropdownIn 0.1s ease-out;
+}
+
+.toolbar-imagegen-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  gap: var(--space-sm);
+}
+
+.toolbar-imagegen-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.toolbar-imagegen-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.toolbar-imagegen-select {
+  padding: 2px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.toolbar-imagegen-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 /* ---- MCP mode dropdown ---- */
 
 .toolbar-mcp-dropdown {
