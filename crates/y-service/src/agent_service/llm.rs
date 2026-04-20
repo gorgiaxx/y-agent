@@ -58,6 +58,7 @@ pub(crate) fn build_chat_request(
         extra: serde_json::Value::Null,
         thinking: config.thinking.clone(),
         response_format: config.response_format.clone(),
+        image_generation_options: config.image_generation_options.clone(),
     }
 }
 

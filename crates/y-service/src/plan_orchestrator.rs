@@ -361,6 +361,7 @@ impl PlanOrchestrator {
             agent_allowed_tools: settings.allowed_tools.clone(),
             prune_tool_history: settings.prune_tool_history,
             response_format: None,
+            image_generation_options: None,
         };
 
         let result =
@@ -462,6 +463,7 @@ impl PlanOrchestrator {
             agent_allowed_tools: settings.allowed_tools.clone(),
             prune_tool_history: settings.prune_tool_history,
             response_format: None,
+            image_generation_options: None,
         };
 
         let result =
@@ -577,6 +579,7 @@ impl PlanOrchestrator {
             agent_allowed_tools: settings.allowed_tools.clone(),
             prune_tool_history: settings.prune_tool_history,
             response_format: None,
+            image_generation_options: None,
         };
 
         let result =
@@ -1180,6 +1183,7 @@ fn build_phase_execution_config(
         // implementation work; pruning old tool pairs would discard context.
         prune_tool_history: settings.prune_tool_history,
         response_format: None,
+        image_generation_options: None,
     }
 }
 
@@ -1567,6 +1571,7 @@ pub async fn assess_complexity(
         agent_allowed_tools: vec![],
         prune_tool_history,
         response_format: None,
+        image_generation_options: None,
     };
 
     match AgentService::execute(container, &exec_config, None, None).await {

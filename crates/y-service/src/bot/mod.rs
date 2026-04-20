@@ -161,6 +161,7 @@ impl BotService {
             agent_allowed_tools: persona.config.persona.tools.allowed_tools.clone(),
             prune_tool_history: false,
             response_format: None,
+            image_generation_options: None,
         };
 
         // Execute the agent.
@@ -322,6 +323,7 @@ impl BotService {
                 plan_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
+                image_generation_options: None,
             },
         )
         .await;
@@ -344,6 +346,7 @@ impl BotService {
                         plan_mode: None,
                         mcp_mode: None,
                         mcp_servers: None,
+                        image_generation_options: None,
                     },
                 )
                 .await

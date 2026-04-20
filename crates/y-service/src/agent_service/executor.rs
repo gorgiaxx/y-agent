@@ -465,6 +465,7 @@ mod tests {
             agent_allowed_tools: vec![],
             prune_tool_history: false,
             response_format: None,
+            image_generation_options: None,
         };
 
         let (_assembled, trace_id, owns_trace) = init_context_and_trace(&container, &config).await;

@@ -2,11 +2,12 @@
 
 use serde::Serialize;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use y_core::permission_types::PermissionMode;
-use y_core::provider::{GeneratedImage, RequestMode, ThinkingConfig, ThinkingEffort};
+use y_core::provider::{
+    GeneratedImage, ImageGenerationOptions, RequestMode, ThinkingConfig, ThinkingEffort,
+};
 use y_core::trust::TrustTier;
 use y_core::types::{Message, SessionId};
 
@@ -276,9 +277,10 @@ pub struct TurnInput<'a> {
     pub prune_tool_history: bool,
     pub mcp_mode: Option<String>,
     pub mcp_servers: Vec<String>,
+    pub image_generation_options: Option<ImageGenerationOptions>,
 }
 
-pub type TurnCancellationToken = CancellationToken;
+pub type TurnCancellationToken = tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
 // Session agent config
@@ -336,6 +338,7 @@ pub struct PrepareTurnRequest {
     pub plan_mode: Option<String>,
     pub mcp_mode: Option<String>,
     pub mcp_servers: Option<Vec<String>>,
+    pub image_generation_options: Option<ImageGenerationOptions>,
 }
 
 #[derive(Debug)]
@@ -355,6 +358,7 @@ pub struct PreparedTurn {
     pub mcp_servers: Vec<String>,
     pub skills: Vec<String>,
     pub agent_config: Option<SessionAgentConfig>,
+    pub image_generation_options: Option<ImageGenerationOptions>,
 }
 
 impl PreparedTurn {
@@ -414,6 +418,7 @@ impl PreparedTurn {
                 .is_some_and(|config| config.prune_tool_history),
             mcp_mode: self.mcp_mode.clone(),
             mcp_servers: self.mcp_servers.clone(),
+            image_generation_options: self.image_generation_options.clone(),
         }
     }
 }

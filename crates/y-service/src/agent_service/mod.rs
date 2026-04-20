@@ -28,7 +28,9 @@ mod tool_handling;
 
 use uuid::Uuid;
 
-use y_core::provider::{GeneratedImage, RequestMode, ResponseFormat, ToolCallingMode};
+use y_core::provider::{
+    GeneratedImage, ImageGenerationOptions, RequestMode, ResponseFormat, ToolCallingMode,
+};
 use y_core::trust::TrustTier;
 use y_core::types::{Message, SessionId};
 
@@ -118,6 +120,8 @@ pub struct AgentExecutionConfig {
     /// When set, the provider enforces the response conforms to the
     /// specified format (e.g., a JSON Schema).
     pub response_format: Option<ResponseFormat>,
+    /// Image generation options (only used when `request_mode` is `ImageGeneration`).
+    pub image_generation_options: Option<ImageGenerationOptions>,
 }
 
 /// Result of agent execution.

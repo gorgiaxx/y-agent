@@ -76,6 +76,7 @@ impl TaskExecutor for FallbackLlmExecutor {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         };
 
         let route = RouteRequest::default();

@@ -104,6 +104,7 @@ impl ChatService {
             agent_allowed_tools: input.agent_allowed_tools.clone(),
             prune_tool_history: input.prune_tool_history,
             response_format: None,
+            image_generation_options: input.image_generation_options.clone(),
         }
     }
 
@@ -415,6 +416,7 @@ impl ChatService {
             mcp_servers,
             skills,
             agent_config,
+            image_generation_options: request.image_generation_options,
         })
     }
 
@@ -567,6 +569,7 @@ impl ChatService {
             mcp_servers,
             skills,
             agent_config,
+            image_generation_options: None,
         })
     }
 

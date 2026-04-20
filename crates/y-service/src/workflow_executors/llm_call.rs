@@ -74,6 +74,7 @@ impl TaskExecutor for LlmCallExecutor {
             extra: serde_json::Value::Null,
             thinking: None,
             response_format: None,
+            image_generation_options: None,
         };
 
         // Route to provider by tag or use default.
