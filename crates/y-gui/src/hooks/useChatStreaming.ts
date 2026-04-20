@@ -628,9 +628,8 @@ export function useChatStreaming(
     return () => {
       chatBusSubscribers.delete(handler);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    refs,
-    activeRunIdRef,
     markSessionActivity,
     setOp,
     setOpForSession,
@@ -683,7 +682,7 @@ export function useChatStreaming(
     checkForStuckSession();
     const timer = setInterval(checkForStuckSession, SAFETY_POLL_MS);
     return () => clearInterval(timer);
-  }, [opStatus, refs, activeRunIdRef, setOpForSession]);
+  }, [opStatus, setOpForSession]);
 
   return {
     streamingSessionIds,
