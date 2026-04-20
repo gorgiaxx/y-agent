@@ -80,17 +80,6 @@ export interface AutomationNavState {
   setAutomationCreating: (type: 'workflow' | 'schedule' | null) => void;
 }
 
-export interface NavigationState extends
-  ViewRoutingState,
-  PanelState,
-  AgentEditorState,
-  SkillsNavState,
-  AutomationNavState {
-  selectedKbCollection: string | null;
-  setSelectedKbCollection: (name: string | null) => void;
-}
-
-export const NavigationContext = createContext<NavigationState | null>(null);
 export const ViewRoutingContext = createContext<ViewRoutingState | null>(null);
 export const PanelContext = createContext<PanelState | null>(null);
 export const AgentEditorContext = createContext<AgentEditorState | null>(null);
@@ -145,11 +134,6 @@ export function useProvidersContext() {
 export function useConfigContext() {
   const ctx = useContext(ConfigContext);
   if (!ctx) throw new Error('useConfigContext must be used within ConfigProvider');
-  return ctx;
-}
-export function useNavigationContext() {
-  const ctx = useContext(NavigationContext);
-  if (!ctx) throw new Error('useNavigationContext must be used within NavigationProvider');
   return ctx;
 }
 export function useViewRouting() {

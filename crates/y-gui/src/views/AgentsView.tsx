@@ -3,7 +3,9 @@ import { AgentEditorPanel } from '../components/agents/AgentEditorPanel';
 import { AgentOverview } from '../components/agents/AgentOverview';
 import { AgentStudio } from '../components/agents/AgentStudio';
 import {
-  useNavigationContext,
+  useViewRouting,
+  usePanelContext,
+  useAgentEditorContext,
   useAgentsContext,
   useProvidersContext,
   useConfigContext,
@@ -25,7 +27,9 @@ import { DEFAULT_ROOT_AGENT_NAME } from '../constants/agents';
 import './AgentsView.css';
 
 export function AgentsView() {
-  const nav = useNavigationContext();
+  const viewRouting = useViewRouting();
+  const panelCtx = usePanelContext();
+  const agentEditor = useAgentEditorContext();
   const {
     agents,
     tools,
@@ -50,8 +54,8 @@ export function AgentsView() {
     refreshSessions: refreshAgentSessions,
   } = sessionHooks;
   const agentRootNames = useMemo(
-    () => (nav.activeAgentId ? [nav.activeAgentId] : [DEFAULT_ROOT_AGENT_NAME]),
-    [nav.activeAgentId],
+    () => (agentEditor.activeAgentId ? [agentEditor.activeAgentId] : [DEFAULT_ROOT_AGENT_NAME]),
+    [agentEditor.activeAgentId],
   );
   const agentChatHooks = useChat(agentActiveSessionId, agentRootNames);
   const { loadMessages, clearMessages } = agentChatHooks;
@@ -92,35 +96,35 @@ export function AgentsView() {
     parseAgentToml,
     saveAgent,
     resetAgent,
-    editorOpen: nav.agentEditing,
-    setEditorOpen: nav.setAgentEditing,
-    editorTab: nav.agentEditorTab,
-    setEditorTab: nav.setAgentEditorTab,
-    editorSurface: nav.agentEditorSurface,
-    setEditorSurface: nav.setAgentEditorSurface,
+    editorOpen: agentEditor.agentEditing,
+    setEditorOpen: agentEditor.setAgentEditing,
+    editorTab: agentEditor.agentEditorTab,
+    setEditorTab: agentEditor.setAgentEditorTab,
+    editorSurface: agentEditor.agentEditorSurface,
+    setEditorSurface: agentEditor.setAgentEditorSurface,
   });
 
   // Register the editor's surface change handler so the sidebar toggle
   // goes through TOML validation before switching raw <-> form.
   useEffect(() => {
-    nav.setAgentEditorSurfaceHandler(
-      nav.agentEditing ? (surface) => { void editor.handleEditorSurfaceChange(surface); } : null,
+    agentEditor.setAgentEditorSurfaceHandler(
+      agentEditor.agentEditing ? (surface) => { void editor.handleEditorSurfaceChange(surface); } : null,
     );
-    return () => nav.setAgentEditorSurfaceHandler(null);
-  }, [nav.agentEditing, editor.handleEditorSurfaceChange, nav.setAgentEditorSurfaceHandler]);
+    return () => agentEditor.setAgentEditorSurfaceHandler(null);
+  }, [agentEditor.agentEditing, editor.handleEditorSurfaceChange, agentEditor.setAgentEditorSurfaceHandler]);
 
   // Register the agent studio edit handler so the sidebar's edit button
   // triggers the full editor flow (loading source, building draft, etc.).
   useEffect(() => {
-    if (nav.activeAgentId) {
-      nav.setAgentStudioEditHandler(() => {
-        void editor.handleOpenEdit(nav.activeAgentId!);
+    if (agentEditor.activeAgentId) {
+      agentEditor.setAgentStudioEditHandler(() => {
+        void editor.handleOpenEdit(agentEditor.activeAgentId!);
       });
     } else {
-      nav.setAgentStudioEditHandler(null);
+      agentEditor.setAgentStudioEditHandler(null);
     }
-    return () => nav.setAgentStudioEditHandler(null);
-  }, [nav.activeAgentId, editor.handleOpenEdit, nav.setAgentStudioEditHandler]);
+    return () => agentEditor.setAgentStudioEditHandler(null);
+  }, [agentEditor.activeAgentId, editor.handleOpenEdit, agentEditor.setAgentStudioEditHandler]);
 
   const loadSelectedAgentDetail = useCallback(async (agentId: string) => {
     setDetailLoading(true);
@@ -146,7 +150,7 @@ export function AgentsView() {
   }, [getAgentDetail, mcpSessionKey]);
 
   useEffect(() => {
-    if (!nav.activeAgentId) {
+    if (!agentEditor.activeAgentId) {
       setSelectedAgentDetail(null);
       setSelectedProviderId('auto');
       setThinkingEffort(null);
@@ -154,21 +158,21 @@ export function AgentsView() {
       return;
     }
 
-    void loadSelectedAgentDetail(nav.activeAgentId);
-  }, [loadSelectedAgentDetail, nav.activeAgentId]);
+    void loadSelectedAgentDetail(agentEditor.activeAgentId);
+  }, [loadSelectedAgentDetail, agentEditor.activeAgentId]);
 
   useEffect(() => {
-    if (!nav.activeAgentId || agentActiveSessionId || agentSessions.length === 0) return;
+    if (!agentEditor.activeAgentId || agentActiveSessionId || agentSessions.length === 0) return;
     selectAgentSession(agentSessions[0].id);
-  }, [agentActiveSessionId, agentSessions, nav.activeAgentId, selectAgentSession]);
+  }, [agentActiveSessionId, agentSessions, agentEditor.activeAgentId, selectAgentSession]);
 
   useEffect(() => {
     if (agentActiveSessionId) {
       void loadMessages(agentActiveSessionId);
-    } else if (nav.activeAgentId) {
+    } else if (agentEditor.activeAgentId) {
       clearMessages();
     }
-  }, [agentActiveSessionId, clearMessages, loadMessages, nav.activeAgentId]);
+  }, [agentActiveSessionId, clearMessages, loadMessages, agentEditor.activeAgentId]);
 
   const diagnostics = useDiagnostics(sessionHooks.activeSessionId);
   const statusBarMeta = useStatusBarMeta({
@@ -187,13 +191,13 @@ export function AgentsView() {
 
     try {
       const ok = await reloadAgents();
-      if (ok && nav.activeAgentId) {
-        await loadSelectedAgentDetail(nav.activeAgentId);
+      if (ok && agentEditor.activeAgentId) {
+        await loadSelectedAgentDetail(agentEditor.activeAgentId);
       }
     } finally {
       setReloadingAgents(false);
     }
-  }, [loadSelectedAgentDetail, nav.activeAgentId, reloadAgents]);
+  }, [loadSelectedAgentDetail, agentEditor.activeAgentId, reloadAgents]);
 
   const handleForkMessage = useCallback(async (messageIndex: number) => {
     if (!sessionHooks.activeSessionId) return;
@@ -247,20 +251,20 @@ export function AgentsView() {
     },
     callbacks: {
       addUserMessage: diagnostics.addUserMessage,
-      setActiveView: nav.setActiveView,
-      setDiagOpen: (fn) => nav.setDiagOpen(fn(nav.diagOpen)),
-      setObsOpen: (fn) => nav.setObsOpen(fn(nav.obsOpen)),
+      setActiveView: viewRouting.setActiveView,
+      setDiagOpen: (fn) => panelCtx.setDiagOpen(fn(panelCtx.diagOpen)),
+      setObsOpen: (fn) => panelCtx.setObsOpen(fn(panelCtx.obsOpen)),
       onSetRewindDraft: setRewindDraft,
     },
   });
 
   const selectedAgentSummary = useMemo(() => {
-    if (!nav.activeAgentId) {
+    if (!agentEditor.activeAgentId) {
       return null;
     }
 
-    return selectedAgentDetail ?? agents.find((agent) => agent.id === nav.activeAgentId) ?? null;
-  }, [agents, nav.activeAgentId, selectedAgentDetail]);
+    return selectedAgentDetail ?? agents.find((agent) => agent.id === agentEditor.activeAgentId) ?? null;
+  }, [agents, agentEditor.activeAgentId, selectedAgentDetail]);
 
   const filteredAgents = useMemo(() => {
     const query = agentQuery.trim().toLowerCase();
@@ -301,12 +305,12 @@ export function AgentsView() {
 
   return (
     <div className="agents-view">
-      {nav.agentEditing ? (
+      {agentEditor.agentEditing ? (
         <AgentEditorPanel
           mode={editor.editorMode}
           draft={editor.editorDraft}
-          tab={nav.agentEditorTab}
-          surface={nav.agentEditorSurface}
+          tab={agentEditor.agentEditorTab}
+          surface={agentEditor.agentEditorSurface}
           rawToml={editor.editorRawToml}
           rawPath={editor.editorRawPath}
           rawUsesSourceFile={editor.editorRawUsesSourceFile}
@@ -325,24 +329,24 @@ export function AgentsView() {
           onApplyTemplate={editor.handleApplyTemplate}
           onSave={async () => {
             const ok = await editor.handleSaveEditor();
-            if (ok && nav.activeAgentId) {
-              await loadSelectedAgentDetail(nav.activeAgentId);
+            if (ok && agentEditor.activeAgentId) {
+              await loadSelectedAgentDetail(agentEditor.activeAgentId);
             }
           }}
           onReset={async () => {
             const ok = await editor.handleResetEditor();
-            if (ok && nav.activeAgentId) {
-              await loadSelectedAgentDetail(nav.activeAgentId);
+            if (ok && agentEditor.activeAgentId) {
+              await loadSelectedAgentDetail(agentEditor.activeAgentId);
             }
           }}
         />
       ) : (
         <div className="agents-shell">
-          {nav.activeAgentId ? (
+          {agentEditor.activeAgentId ? (
               <section className="agents-main-panel">
                 <AgentStudio
                   agentSummary={selectedAgentSummary}
-                  agentId={nav.activeAgentId}
+                  agentId={agentEditor.activeAgentId}
                   detailLoading={detailLoading}
                   sessions={sessionHooks.sessions}
                   activeSessionId={sessionHooks.activeSessionId}
@@ -371,7 +375,7 @@ export function AgentsView() {
                   sendOnEnter={configHooks.config.send_on_enter}
                   visibleSkills={visibleSkills}
                   visibleKnowledge={visibleKnowledge}
-                  inputExpanded={nav.inputExpanded}
+                  inputExpanded={viewRouting.inputExpanded}
                   isCompacting={agentChatHooks.opStatus === 'compacting'}
                   hasCustomPrompt={sessionHooks.sessions.find((session) => session.id === sessionHooks.activeSessionId)?.has_custom_prompt ?? false}
                   onNewSession={() => void chatHandlers.handleNewChat()}
@@ -379,7 +383,7 @@ export function AgentsView() {
                   onSend={chatHandlers.handleSend}
                   onStop={agentChatHooks.cancelRun}
                   onCommand={chatHandlers.handleCommand}
-                  onExpandChange={nav.setInputExpanded}
+                  onExpandChange={viewRouting.setInputExpanded}
                   onClearSession={() => void chatHandlers.handleClearSession()}
                   onAddContextReset={agentChatHooks.addContextReset}
                   onEditMessage={chatHandlers.handleEditMessage}
@@ -431,7 +435,7 @@ export function AgentsView() {
                 agentQuery={agentQuery}
                 reloading={reloadingAgents}
                 onQueryChange={setAgentQuery}
-                onSelectAgent={nav.setActiveAgentId}
+                onSelectAgent={agentEditor.setActiveAgentId}
                 onOpenEdit={(id) => void editor.handleOpenEdit(id)}
                 onReload={() => void handleReloadAgents()}
                 onNewAgent={editor.handleOpenCreate}

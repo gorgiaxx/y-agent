@@ -173,8 +173,8 @@ export function ChatView() {
       {!viewRouting.inputExpanded && !sessionHooks.activeSessionId && (
         <WelcomePage
           workspaces={workspaceHooks.workspaces}
-          selectedWorkspaceId={navProps.welcomeWorkspaceId}
-          onSelectWorkspace={navProps.setWelcomeWorkspaceId}
+          selectedWorkspaceId={viewRouting.welcomeWorkspaceId}
+          onSelectWorkspace={viewRouting.setWelcomeWorkspaceId}
           onCreateWorkspace={() => setWsDialogOpen(true)}
         />
       )}
@@ -187,8 +187,8 @@ export function ChatView() {
         sendOnEnter={configHooks.config.send_on_enter}
         skills={skillHooks.skills.filter((s) => s.enabled)}
         knowledgeCollections={knowledgeHooks.collections}
-        expanded={navProps.inputExpanded}
-        onExpandChange={navProps.setInputExpanded}
+        expanded={viewRouting.inputExpanded}
+        onExpandChange={viewRouting.setInputExpanded}
         onClearSession={handleClearSession}
         onAddContextReset={chatHooks.addContextReset}
         isCompacting={chatHooks.opStatus === 'compacting'}

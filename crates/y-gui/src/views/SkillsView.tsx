@@ -1,10 +1,10 @@
 import { SkillsPanel } from '../components/skills/SkillsPanel';
 import { SkillImportDialog } from '../components/skills/SkillImportDialog';
-import { useSkillsContext, useNavigationContext } from '../providers/AppContexts';
+import { useSkillsContext, useSkillsNavContext } from '../providers/AppContexts';
 
 export function SkillsView() {
   const skillHooks = useSkillsContext();
-  const navProps = useNavigationContext();
+  const navProps = useSkillsNavContext();
 
   return (
     <>

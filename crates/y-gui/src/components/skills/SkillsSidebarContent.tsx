@@ -1,9 +1,9 @@
-import { useSkillsContext, useNavigationContext } from '../../providers/AppContexts';
+import { useSkillsContext, useSkillsNavContext } from '../../providers/AppContexts';
 import { SkillsSidebarPanel } from './SkillsSidebarPanel';
 
 export function SkillsSidebarContent() {
   const skillHooks = useSkillsContext();
-  const navProps = useNavigationContext();
+  const navProps = useSkillsNavContext();
 
   return (
     <SkillsSidebarPanel

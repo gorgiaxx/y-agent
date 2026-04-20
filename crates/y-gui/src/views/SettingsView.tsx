@@ -1,15 +1,15 @@
 import { SettingsPanel } from '../components/settings/SettingsPanel';
-import { useConfigContext, useProvidersContext, useNavigationContext } from '../providers/AppContexts';
+import { useConfigContext, useProvidersContext, useViewRouting } from '../providers/AppContexts';
 
 export function SettingsView() {
   const configHooks = useConfigContext();
   const providerHooks = useProvidersContext();
-  const navProps = useNavigationContext();
+  const viewRouting = useViewRouting();
 
   return (
     <SettingsPanel
       config={configHooks.config}
-      activeTab={navProps.activeSettingsTab}
+      activeTab={viewRouting.activeSettingsTab}
       onSave={async (updates) => {
         await configHooks.updateConfig(updates);
         providerHooks.refreshProviders();
@@ -22,7 +22,7 @@ export function SettingsView() {
         providerHooks.refreshProviders();
         return '';
       }}
-      onRunWizard={navProps.onRunWizard}
+      onRunWizard={viewRouting.onRunWizard}
     />
   );
 }

@@ -1,9 +1,9 @@
-import { useAutomationContext, useNavigationContext } from '../../providers/AppContexts';
+import { useAutomationContext, useAutomationNavContext } from '../../providers/AppContexts';
 import { AutomationSidebarPanel } from './AutomationSidebarPanel';
 
 export function AutomationSidebarContent() {
   const autoHooks = useAutomationContext();
-  const navProps = useNavigationContext();
+  const navProps = useAutomationNavContext();
 
   return (
     <AutomationSidebarPanel

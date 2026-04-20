@@ -1,16 +1,15 @@
 import { KnowledgePanel } from '../components/knowledge/KnowledgePanel';
-import { useKnowledgeContext, useNavigationContext } from '../providers/AppContexts';
+import { useKnowledgeContext } from '../providers/AppContexts';
 
 export function KnowledgeView() {
   const knowledgeHooks = useKnowledgeContext();
-  const navProps = useNavigationContext();
 
   return (
     <KnowledgePanel
       collections={knowledgeHooks.collections}
       entries={knowledgeHooks.entries}
-      selectedCollection={navProps.selectedKbCollection}
-      onSelectCollection={navProps.setSelectedKbCollection}
+      selectedCollection={knowledgeHooks.selectedCollection}
+      onSelectCollection={knowledgeHooks.setSelectedCollection}
       onCreateCollection={knowledgeHooks.createCollection}
       onDeleteCollection={knowledgeHooks.deleteCollection}
       onRenameCollection={knowledgeHooks.renameCollection}

@@ -26,7 +26,6 @@ import {
   AutomationContext,
   ProvidersContext,
   ConfigContext,
-  NavigationContext,
   ViewRoutingContext,
   PanelContext,
   AgentEditorContext,
@@ -34,7 +33,6 @@ import {
   AutomationNavContext,
 } from './AppContexts';
 import type {
-  NavigationState,
   ViewRoutingState,
   PanelState,
   AgentEditorState,
@@ -161,17 +159,6 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     automationCreating, setAutomationCreating,
   }), [automationSelectedType, automationSelectedId, automationCreating]);
 
-  const navState = useMemo<NavigationState>(() => ({
-    ...viewRouting,
-    ...panelState,
-    ...agentEditorState,
-    ...skillsNavState,
-    ...automationNavState,
-    selectedKbCollection: knowledgeHooks.selectedCollection,
-    setSelectedKbCollection: knowledgeHooks.setSelectedCollection,
-  }), [viewRouting, panelState, agentEditorState, skillsNavState, automationNavState,
-       knowledgeHooks.selectedCollection, knowledgeHooks.setSelectedCollection]);
-
   return (
     <ThemeContext.Provider value={themeCtx}>
       <ConfigContext.Provider value={configHooks}>
@@ -189,10 +176,8 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
                             <AgentEditorContext.Provider value={agentEditorState}>
                               <SkillsNavContext.Provider value={skillsNavState}>
                                 <AutomationNavContext.Provider value={automationNavState}>
-                                  <NavigationContext.Provider value={navState}>
                                     {children}
-                                  </NavigationContext.Provider>
-                                </AutomationNavContext.Provider>
+                                  </AutomationNavContext.Provider>
                               </SkillsNavContext.Provider>
                             </AgentEditorContext.Provider>
                           </PanelContext.Provider>

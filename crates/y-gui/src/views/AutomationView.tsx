@@ -1,9 +1,9 @@
 import { AutomationPanel } from '../components/automation/AutomationPanel';
-import { useAutomationContext, useNavigationContext } from '../providers/AppContexts';
+import { useAutomationContext, useAutomationNavContext } from '../providers/AppContexts';
 
 export function AutomationView() {
   const autoHooks = useAutomationContext();
-  const navProps = useNavigationContext();
+  const navProps = useAutomationNavContext();
 
   return (
     <AutomationPanel
