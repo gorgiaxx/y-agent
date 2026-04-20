@@ -12,7 +12,7 @@
 // All sub-hooks share mutable state via ChatSharedRefs.
 // ---------------------------------------------------------------------------
 
-import { useRef, useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useRef, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import type { Message } from '../types';
 import type { ToolResultRecord } from './chatStreamTypes';
 import type { InterleavedSegment } from './useInterleavedSegments';
@@ -147,7 +147,11 @@ export function useChat(
     rootAgentNamesRef.current = names.length > 0 ? names : [DEFAULT_ROOT_AGENT_NAME];
   }, [rootAgentNames]);
 
-  const refs: ChatSharedRefs = {
+  // Stable refs object -- all members are useRef results (referentially stable),
+  // so this memo never invalidates. This prevents sub-hooks from re-running
+  // effects that depend on the container object.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const refs: ChatSharedRefs = useMemo(() => ({
     activeSessionIdRef,
     sessionMessagesRef,
     sessionActivityRef,
@@ -158,7 +162,7 @@ export function useChat(
     contextResetMapRef,
     compactMapRef,
     rootAgentNamesRef,
-  };
+  }), []);
 
   // -----------------------------------------------------------------------
   // 1. Session state (opStatus, pendingEdit, context/compact points)
