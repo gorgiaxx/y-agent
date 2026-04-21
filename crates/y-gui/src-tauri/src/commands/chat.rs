@@ -1,5 +1,6 @@
 //! Chat command handlers -- send messages and stream LLM responses.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -353,7 +354,7 @@ async fn apply_prepared_prompt_context(
             || {
                 (
                     String::new(),
-                    workspace_path.clone(),
+                    resolve_turn_working_directory(None, workspace_path.clone(), &state.state_dir),
                     Vec::new(),
                     None,
                     None,
@@ -363,10 +364,11 @@ async fn apply_prepared_prompt_context(
             |config| {
                 (
                     config.agent_mode.clone(),
-                    config
-                        .working_directory
-                        .clone()
-                        .or_else(|| workspace_path.clone()),
+                    resolve_turn_working_directory(
+                        config.working_directory.clone(),
+                        workspace_path.clone(),
+                        &state.state_dir,
+                    ),
                     if !config.features.toolcall || config.allowed_tools.is_empty() {
                         Vec::new()
                     } else {
@@ -406,6 +408,23 @@ async fn apply_prepared_prompt_context(
             .entry(session_id.clone())
             .or_insert(default_permission);
     }
+}
+
+fn resolve_turn_working_directory(
+    agent_working_directory: Option<String>,
+    workspace_path: Option<String>,
+    state_dir: &Path,
+) -> Option<String> {
+    normalize_directory(agent_working_directory)
+        .or_else(|| normalize_directory(workspace_path))
+        .or_else(|| Some(state_dir.join("tmp").to_string_lossy().to_string()))
+}
+
+fn normalize_directory(path: Option<String>) -> Option<String> {
+    path.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -953,4 +972,40 @@ pub async fn chat_answer_permission(
     }
 
     Ok(delivered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn resolve_turn_working_directory_uses_tmp_when_session_has_no_workspace() {
+        let state_dir = Path::new("/tmp/y-agent-state");
+
+        assert_eq!(
+            resolve_turn_working_directory(None, None, state_dir).as_deref(),
+            Some("/tmp/y-agent-state/tmp")
+        );
+    }
+
+    #[test]
+    fn resolve_turn_working_directory_prefers_agent_then_workspace() {
+        let state_dir = Path::new("/tmp/y-agent-state");
+
+        assert_eq!(
+            resolve_turn_working_directory(
+                Some("/tmp/agent".to_string()),
+                Some("/tmp/workspace".to_string()),
+                state_dir,
+            )
+            .as_deref(),
+            Some("/tmp/agent")
+        );
+        assert_eq!(
+            resolve_turn_working_directory(None, Some("/tmp/workspace".to_string()), state_dir)
+                .as_deref(),
+            Some("/tmp/workspace")
+        );
+    }
 }

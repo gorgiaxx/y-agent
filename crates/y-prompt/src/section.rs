@@ -68,7 +68,7 @@ pub struct PromptContext {
     /// Configuration flags (key-value).
     pub config_flags: std::collections::HashMap<String, bool>,
     /// Working directory override for the session.
-    /// When set, `generate_environment()` uses this instead of `std::env::current_dir()`.
+    /// When set, `generate_environment()` injects it as the session workspace path.
     pub working_directory: Option<String>,
     /// Per-session custom system prompt override.
     ///

@@ -148,6 +148,7 @@ fn ensure_directories(config_dir: &Path, data_dir: &Path) -> Result<()> {
         config_dir.to_path_buf(),
         data_dir.to_path_buf(),
         data_dir.join("transcripts"),
+        data_dir.join("tmp"),
     ] {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("creating directory: {}", dir.display()))?;
@@ -400,6 +401,7 @@ mod tests {
         // Verify files exist
         assert!(config_dir.join("y-agent.toml").exists());
         assert!(config_dir.join("providers.toml").exists());
+        assert!(data_dir.join("tmp").is_dir());
         assert!(config_dir.join("prompts").is_dir());
         assert!(config_dir.join("skills").is_dir());
         assert!(config_dir.join("skills/test-skill/skill.toml").exists());

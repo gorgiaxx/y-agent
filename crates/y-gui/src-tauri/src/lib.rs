@@ -63,6 +63,7 @@ pub fn run() {
             // so we create a temporary one for async initialization.
             let config_path = config_dir();
             let data_dir = state_dir();
+            let state_path = data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
             let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
             // First-run auto-init: seed configs, prompts, skills, agents
@@ -145,7 +146,7 @@ pub fn run() {
                 });
             }
 
-            let app_state = AppState::new(Arc::clone(&container), config_path.clone());
+            let app_state = AppState::new(Arc::clone(&container), config_path.clone(), state_path);
 
             // Apply the persisted window-decoration preference to the main
             // window before it is shown.

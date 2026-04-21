@@ -187,7 +187,6 @@ impl BuildSystemPromptProvider {
 
     /// Generate dynamic content for `core.environment`.
     ///
-    /// `cwd` always reflects the process working directory.
     /// When `workspace_path` is provided (e.g. from a workspace-bound
     /// session), it is appended as an extra field.
     fn generate_environment(workspace_path: Option<&str>, venv_info: &VenvPromptInfo) -> String {
@@ -195,16 +194,12 @@ impl BuildSystemPromptProvider {
 
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
-        let cwd = std::env::current_dir()
-            .map_or_else(|_| "(unknown)".into(), |p| p.display().to_string());
-        tracing::debug!(workspace_path = ?workspace_path, cwd = %cwd, "generate_environment");
+        tracing::debug!(workspace_path = ?workspace_path, "generate_environment");
 
-        let mut env_str = match workspace_path.filter(|s| !s.is_empty()) {
-            Some(ws) => {
-                format!("Environment: OS={os}, arch={arch}, workspace_path={ws}, shell_cwd(optional)={cwd}")
-            }
-            None => format!("Environment: OS={os}, arch={arch}, shell_cwd={cwd}"),
-        };
+        let mut env_str = format!("Environment: OS={os}, arch={arch}");
+        if let Some(ws) = workspace_path.filter(|s| !s.is_empty()) {
+            let _ = write!(&mut env_str, ", workspace_path={ws}");
+        }
 
         // Append Python (uv) venv info.
         if let Some(ref py) = venv_info.python {
@@ -491,6 +486,17 @@ mod tests {
         assert!(item.content.contains("Tool Usage Protocol"));
         // Token estimate should be reasonable.
         assert!(item.token_estimate > 0);
+    }
+
+    #[test]
+    fn test_environment_prompt_omits_shell_cwd() {
+        let content = BuildSystemPromptProvider::generate_environment(
+            Some("/tmp/session-workspace"),
+            &VenvPromptInfo::default(),
+        );
+
+        assert!(content.contains("workspace_path=/tmp/session-workspace"));
+        assert!(!content.contains("shell_cwd"));
     }
 
     #[tokio::test]

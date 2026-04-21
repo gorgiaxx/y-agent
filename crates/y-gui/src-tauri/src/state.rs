@@ -63,6 +63,8 @@ pub struct AppState {
     pub gui_config: RwLock<GuiConfig>,
     /// Path to the user config directory (`~/.config/y-agent/`).
     pub config_dir: PathBuf,
+    /// Path to the user state directory (`~/.local/state/y-agent/`).
+    pub state_dir: PathBuf,
     /// In-flight LLM cancellation tokens keyed by `run_id`.
     ///
     /// Arc-wrapped so the spawned LLM worker task can clean up its entry
@@ -77,12 +79,13 @@ pub struct AppState {
 
 impl AppState {
     /// Create a new `AppState`.
-    pub fn new(container: Arc<ServiceContainer>, config_dir: PathBuf) -> Self {
+    pub fn new(container: Arc<ServiceContainer>, config_dir: PathBuf, state_dir: PathBuf) -> Self {
         let gui_config = load_gui_config(&config_dir);
         Self {
             container,
             gui_config: RwLock::new(gui_config),
             config_dir,
+            state_dir,
             pending_runs: Arc::new(Mutex::new(HashMap::new())),
             turn_meta_cache: Arc::new(Mutex::new(HashMap::new())),
         }

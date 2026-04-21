@@ -599,11 +599,14 @@ pub fn seed_builtin_agents(config_dir: &Path) -> Result<Vec<String>> {
 /// - `base` is the config directory (`~/.config/y-agent/`) — config files live
 ///   directly here, no subdirectory.
 /// - `data_dir` is the state data directory (`~/.local/state/y-agent/data/`).
+/// - `tmp` is created as a sibling of `data_dir` (`~/.local/state/y-agent/tmp/`).
 pub fn ensure_directories(base: &Path, data_dir: &Path) -> Result<Vec<PathBuf>> {
+    let tmp_dir = state_tmp_dir_from_data_dir(data_dir);
     let dirs = [
         base.to_path_buf(),
         data_dir.to_path_buf(),
         data_dir.join("transcripts"),
+        tmp_dir,
     ];
 
     for dir in &dirs {
@@ -612,6 +615,12 @@ pub fn ensure_directories(base: &Path, data_dir: &Path) -> Result<Vec<PathBuf>> 
     }
 
     Ok(dirs.to_vec())
+}
+
+fn state_tmp_dir_from_data_dir(data_dir: &Path) -> PathBuf {
+    data_dir
+        .parent()
+        .map_or_else(|| data_dir.join("tmp"), |state_dir| state_dir.join("tmp"))
 }
 
 /// Write a file if it doesn't exist, or if force/confirm allows overwrite.
@@ -1218,10 +1227,11 @@ mod tests {
         let data_dir = tmp.path().join("state").join("data");
         let dirs = ensure_directories(&config_dir, &data_dir).unwrap();
 
-        assert_eq!(dirs.len(), 3);
+        assert_eq!(dirs.len(), 4);
         assert!(config_dir.is_dir());
         assert!(data_dir.is_dir());
         assert!(data_dir.join("transcripts").is_dir());
+        assert!(tmp.path().join("state").join("tmp").is_dir());
     }
 
     // T-INIT-009: copy_example_configs creates all 10 files directly in base.
