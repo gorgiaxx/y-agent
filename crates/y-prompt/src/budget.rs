@@ -172,6 +172,6 @@ mod tests {
 
     #[test]
     fn test_max_tool_result_chars_constant() {
-        assert_eq!(MAX_TOOL_RESULT_CHARS, 10_000);
+        assert_eq!(MAX_TOOL_RESULT_CHARS, 20_000);
     }
 }
