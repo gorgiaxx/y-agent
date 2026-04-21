@@ -100,6 +100,7 @@ class WebPlatform implements Platform {
   }
 
   async revealInFileManager(_path: string): Promise<void> {
+    void _path;
     // not available in browser
   }
 
@@ -124,3 +125,12 @@ export function createPlatform(apiUrl: string): Platform {
   }
   return new WebPlatform(apiUrl);
 }
+
+function getDefaultApiUrl(): string {
+  return (
+    (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, '')
+    ?? 'http://localhost:3000'
+  );
+}
+
+export const platform: Platform = createPlatform(getDefaultApiUrl());

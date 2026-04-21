@@ -5,8 +5,7 @@
 //   const sessions = await transport.invoke<Session[]>('session_list');
 
 import type { Transport } from './transport';
-import type { Platform } from './platform';
-import { createPlatform } from './platform';
+import { platform } from './platform';
 import { TauriTransport } from './tauriTransport';
 import { HttpTransport } from './httpTransport';
 import type { ConnectionStatus } from './sseAdapter';
@@ -36,7 +35,7 @@ function createTransport(): Transport {
 }
 
 export const transport: Transport = createTransport();
-export const platform: Platform = createPlatform(getApiUrl());
+export { platform };
 
 export function getConnectionStatus(): ConnectionStatus {
   const t = transport;

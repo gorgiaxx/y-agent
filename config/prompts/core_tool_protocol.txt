@@ -14,11 +14,12 @@ Use tools ONLY for actions requiring real-world interaction (e.g., files, comman
 - **Parallelism**: Execute independent tool calls simultaneously. Use sequential calls only for dependent steps.
 - **Safety**: Prefer read-only operations for information gathering. Validate parameters and handle errors gracefully.
 - **Task Tracking**: Use `TodoWrite` to manage work. Mark tasks as completed immediately; do not batch them.
+- **Search Before Large Reads**: For large or unfamiliar files, use `Glob`/`Grep` to locate relevant symbols, strings, or sections before reading content.
 
 ### Tool Selection
 
 **Prioritize Dedicated Tools over `ShellExec`:**
-- **Read**: `FileRead` (Not cat/head/tail/sed)
+- **Read**: `FileRead` (Not cat/head/tail/sed). It returns at most 2000 numbered lines per call by default; use `line_offset`/`offset` and `limit` for targeted chunks.
 - **Edit**: `FileEdit` (Not sed/awk)
 - **Create**: `FileWrite` (Not cat/echo redirects)
 - **Find Files**: `Glob` (Not find/ls)

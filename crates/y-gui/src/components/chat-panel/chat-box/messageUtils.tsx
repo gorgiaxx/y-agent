@@ -1,13 +1,54 @@
 import React from 'react';
+import { platform } from '../../../lib/platform';
 import { CodeBlock } from './MessageShared';
 import { MermaidBlock } from './MermaidBlock';
 
 /* ---- makeMarkdownComponents ---- */
 
+function isAbsoluteWebUrl(href: unknown): href is string {
+  return typeof href === 'string' && /^https?:\/\//i.test(href);
+}
+
 /** Shared markdown renderer config -- needs theme to pick syntax style. */
 export function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSProperties>) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const components: any = {
+    a({
+      href,
+      children,
+      node,
+      ...props
+    }: {
+      href?: string;
+      children?: React.ReactNode;
+      node?: unknown;
+      [key: string]: unknown;
+    }) {
+      void node;
+
+      const isWebUrl = isAbsoluteWebUrl(href);
+      const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+        if (!isWebUrl) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        platform.openUrl(href).catch((err) =>
+          console.error('[MessageMarkdown] failed to open URL:', href, err),
+        );
+      };
+
+      return (
+        <a
+          {...props}
+          href={href}
+          target={isWebUrl ? '_blank' : undefined}
+          rel={isWebUrl ? 'noopener noreferrer' : undefined}
+          onClick={handleClick}
+        >
+          {children}
+        </a>
+      );
+    },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     code({ className, children, node, ...props }: { className?: string; children?: React.ReactNode; node?: any; [key: string]: unknown }) {
       const match = /language-(\w+)/.exec(className || '');

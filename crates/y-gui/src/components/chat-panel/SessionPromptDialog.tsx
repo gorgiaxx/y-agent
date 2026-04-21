@@ -7,6 +7,7 @@ import {
   Button,
 } from '../ui';
 import { MonacoEditor } from '../ui/MonacoEditor';
+import './SessionPromptDialog.css';
 
 interface SessionPromptDialogProps {
   sessionId: string;
@@ -92,14 +93,15 @@ export function SessionPromptDialog({
               Loading...
             </div>
           ) : (
-            <MonacoEditor
-              className="prompt-editor-monaco"
-              value={prompt}
-              onChange={(val) => setPrompt(val)}
-              language="plaintext"
-              placeholder="Enter custom system prompt for this session..."
-              height="280px"
-            />
+            <div className="session-prompt-editor">
+              <MonacoEditor
+                className="session-prompt-editor__monaco"
+                value={prompt}
+                onChange={(val) => setPrompt(val)}
+                language="plaintext"
+                placeholder="Enter custom system prompt for this session..."
+              />
+            </div>
           )}
 
           <div className="flex gap-2 justify-between mt-1">

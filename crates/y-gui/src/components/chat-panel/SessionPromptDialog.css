@@ -1,0 +1,23 @@
+.session-prompt-editor {
+  height: 280px;
+  flex: 0 0 280px;
+  min-height: 220px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  position: relative;
+}
+
+.session-prompt-editor__monaco {
+  height: 100%;
+  width: 100%;
+}
+
+.session-prompt-editor__monaco .react-monaco-editor-container {
+  height: 100% !important;
+}
+
+.session-prompt-editor .monaco-editor,
+.session-prompt-editor .monaco-editor .overflow-guard {
+  border-radius: var(--radius-md) !important;
+}
