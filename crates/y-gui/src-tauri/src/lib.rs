@@ -148,6 +148,32 @@ pub fn run() {
 
             let app_state = AppState::new(Arc::clone(&container), config_path.clone(), state_path);
 
+            // Periodic sweep of stale pending_runs entries.
+            // If an LLM worker panics before cleanup, its CancellationToken
+            // remains in the map. This sweep removes entries older than 10 min.
+            {
+                let pending = Arc::clone(&app_state.pending_runs);
+                rt.spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                    interval.tick().await; // skip first immediate tick
+                    loop {
+                        interval.tick().await;
+                        if let Ok(mut map) = pending.lock() {
+                            let before = map.len();
+                            map.retain(|_, token| !token.is_cancelled());
+                            let removed = before - map.len();
+                            if removed > 0 {
+                                tracing::info!(
+                                    removed,
+                                    remaining = map.len(),
+                                    "swept stale pending_runs entries"
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+
             // Apply the persisted window-decoration preference to the main
             // window before it is shown.
             // - macOS: switch title bar style between Overlay (custom) and
