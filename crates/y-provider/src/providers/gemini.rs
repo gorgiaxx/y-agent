@@ -106,8 +106,12 @@ impl GeminiProvider {
     }
 
     /// Build Gemini contents from `ChatRequest` messages (excluding system).
+    ///
+    /// Consecutive messages with the same role are merged into a single content
+    /// entry. This handles multiple `Role::Tool` results from parallel tool
+    /// calls, which must be sent as one `function` content with multiple parts.
     fn build_contents(request: &ChatRequest) -> Vec<GeminiContent> {
-        request
+        let raw: Vec<GeminiContent> = request
             .messages
             .iter()
             .filter(|m| m.role != y_core::types::Role::System)
@@ -143,7 +147,19 @@ impl GeminiProvider {
                     }],
                 }
             })
-            .collect()
+            .collect();
+
+        let mut merged: Vec<GeminiContent> = Vec::with_capacity(raw.len());
+        for content in raw {
+            if let Some(last) = merged.last_mut() {
+                if last.role == content.role {
+                    last.parts.extend(content.parts);
+                    continue;
+                }
+            }
+            merged.push(content);
+        }
+        merged
     }
 
     /// Build tool declarations for Gemini format.

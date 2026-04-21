@@ -98,8 +98,14 @@ impl AnthropicProvider {
     }
 
     /// Build Anthropic messages from a `ChatRequest` (excluding system messages).
+    ///
+    /// Consecutive messages with the same role are merged into a single message
+    /// (the Anthropic API requires strictly alternating roles). This is essential
+    /// when multiple `Role::Tool` results follow an assistant message with
+    /// parallel tool calls -- they must be sent as one `user` message containing
+    /// multiple `tool_result` content blocks.
     fn build_messages(request: &ChatRequest) -> Vec<AnthropicMessage> {
-        request
+        let raw: Vec<AnthropicMessage> = request
             .messages
             .iter()
             .filter(|m| m.role != y_core::types::Role::System)
@@ -184,7 +190,20 @@ impl AnthropicProvider {
                     }]),
                 }
             })
-            .collect()
+            .collect();
+
+        // Merge consecutive messages with the same role into one message.
+        let mut merged: Vec<AnthropicMessage> = Vec::with_capacity(raw.len());
+        for msg in raw {
+            if let Some(last) = merged.last_mut() {
+                if last.role == msg.role {
+                    last.content.0.extend(msg.content.0);
+                    continue;
+                }
+            }
+            merged.push(msg);
+        }
+        merged
     }
 
     /// Build the Anthropic request body.
@@ -1418,6 +1437,116 @@ mod tests {
                 ));
             }
         }
+    }
+
+    #[test]
+    fn test_build_messages_merges_parallel_tool_results() {
+        use y_core::types::{Message, Role, ToolCallRequest};
+
+        let tc1 = ToolCallRequest {
+            id: "call_aaa".into(),
+            name: "ReadFile".into(),
+            arguments: serde_json::json!({ "path": "/tmp/a.txt" }),
+        };
+        let tc2 = ToolCallRequest {
+            id: "call_bbb".into(),
+            name: "ReadFile".into(),
+            arguments: serde_json::json!({ "path": "/tmp/b.txt" }),
+        };
+        let tc3 = ToolCallRequest {
+            id: "call_ccc".into(),
+            name: "Glob".into(),
+            arguments: serde_json::json!({ "pattern": "*.rs" }),
+        };
+
+        let request = ChatRequest {
+            messages: vec![
+                Message {
+                    message_id: String::new(),
+                    role: Role::User,
+                    content: "Read these files".into(),
+                    tool_call_id: None,
+                    tool_calls: vec![],
+                    timestamp: chrono::Utc::now(),
+                    metadata: serde_json::Value::Null,
+                },
+                Message {
+                    message_id: String::new(),
+                    role: Role::Assistant,
+                    content: String::new(),
+                    tool_call_id: None,
+                    tool_calls: vec![tc1.clone(), tc2.clone(), tc3.clone()],
+                    timestamp: chrono::Utc::now(),
+                    metadata: serde_json::Value::Null,
+                },
+                Message {
+                    message_id: String::new(),
+                    role: Role::Tool,
+                    content: "contents of a".into(),
+                    tool_call_id: Some("call_aaa".into()),
+                    tool_calls: vec![],
+                    timestamp: chrono::Utc::now(),
+                    metadata: serde_json::Value::Null,
+                },
+                Message {
+                    message_id: String::new(),
+                    role: Role::Tool,
+                    content: "contents of b".into(),
+                    tool_call_id: Some("call_bbb".into()),
+                    tool_calls: vec![],
+                    timestamp: chrono::Utc::now(),
+                    metadata: serde_json::Value::Null,
+                },
+                Message {
+                    message_id: String::new(),
+                    role: Role::Tool,
+                    content: r#"["main.rs","lib.rs"]"#.into(),
+                    tool_call_id: Some("call_ccc".into()),
+                    tool_calls: vec![],
+                    timestamp: chrono::Utc::now(),
+                    metadata: serde_json::Value::Null,
+                },
+            ],
+            model: None,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: ToolCallingMode::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let messages = AnthropicProvider::build_messages(&request);
+
+        // 3 tool results should be merged into 1 user message.
+        assert_eq!(messages.len(), 3, "user + assistant + merged tool results");
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[2].role, "user");
+
+        // The merged user message should contain all 3 tool_result blocks.
+        let AnthropicContent(ref blocks) = messages[2].content;
+        assert_eq!(blocks.len(), 3);
+
+        assert!(matches!(
+            &blocks[0],
+            AnthropicContentBlock::ToolResult { tool_use_id, content }
+                if tool_use_id == "call_aaa" && content == "contents of a"
+        ));
+        assert!(matches!(
+            &blocks[1],
+            AnthropicContentBlock::ToolResult { tool_use_id, content }
+                if tool_use_id == "call_bbb" && content == "contents of b"
+        ));
+        assert!(matches!(
+            &blocks[2],
+            AnthropicContentBlock::ToolResult { tool_use_id, content }
+                if tool_use_id == "call_ccc" && content == r#"["main.rs","lib.rs"]"#
+        ));
     }
 
     #[test]
