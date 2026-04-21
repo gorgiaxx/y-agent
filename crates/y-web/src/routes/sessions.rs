@@ -313,6 +313,7 @@ async fn delete_session(
         .delete_session(&id)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to delete session: {e}")))?;
+    state.container.cleanup_session_state(&id).await;
 
     Ok(Json(MessageResponse {
         message: format!("session {session_id} deleted"),

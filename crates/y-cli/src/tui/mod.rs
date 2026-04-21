@@ -797,6 +797,7 @@ impl TuiApp {
 
                 match self.services.session_manager.delete_session(&sid).await {
                     Ok(()) => {
+                        self.services.cleanup_session_state(&sid).await;
                         self.state.push_toast(
                             format!("Deleted session: {}", &sid.to_string()[..8]),
                             ToastLevel::Info,

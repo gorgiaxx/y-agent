@@ -950,6 +950,29 @@ impl ServiceContainer {
         hs.reload_config(new_config);
     }
 
+    /// Release all in-memory state associated with a session.
+    ///
+    /// Called when a session is deleted so that per-session `HashMaps` do not
+    /// grow unboundedly over the application lifetime.
+    pub async fn cleanup_session_state(&self, session_id: &SessionId) {
+        self.pruning_watermarks.write().await.remove(session_id);
+        self.session_permission_modes
+            .write()
+            .await
+            .remove(session_id);
+        crate::rewind::RewindService::cleanup_session(&self.file_history_managers, session_id)
+            .await;
+        {
+            let mut interactions = self.pending_interactions.lock().await;
+            interactions.remove(&session_id.0);
+        }
+        {
+            let mut permissions = self.pending_permissions.lock().await;
+            permissions.remove(&session_id.0);
+        }
+        info!(session = %session_id.0, "cleaned up in-memory state for deleted session");
+    }
+
     // -- Agent management (delegated to AgentManagementService) ----------------
 
     /// Hot-reload agent definitions from the agents directory.

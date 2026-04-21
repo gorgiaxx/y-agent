@@ -238,6 +238,10 @@ pub async fn session_delete(state: State<'_, AppState>, session_id: String) -> R
         .delete_session(&sid)
         .await
         .map_err(|e| format!("Failed to delete session: {e}"))?;
+    state.container.cleanup_session_state(&sid).await;
+    if let Ok(mut cache) = state.turn_meta_cache.lock() {
+        cache.remove(&sid.0);
+    }
     Ok(())
 }
 
