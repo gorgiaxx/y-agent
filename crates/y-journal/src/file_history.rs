@@ -259,8 +259,11 @@ impl FileHistoryManager {
         self.snapshots.push_back(snapshot);
 
         // Enforce retention cap (O(1) eviction with VecDeque).
+        // Also remove orphaned backup files from evicted snapshots.
         while self.snapshots.len() > MAX_SNAPSHOTS_PER_SESSION {
-            self.snapshots.pop_front();
+            if let Some(evicted) = self.snapshots.pop_front() {
+                self.remove_snapshot_backups(&evicted);
+            }
         }
 
         self.save_state();
@@ -521,6 +524,35 @@ impl FileHistoryManager {
     }
 
     // -- Private helpers --------------------------------------------------
+
+    /// Delete backup files referenced by an evicted snapshot that are not
+    /// referenced by any remaining snapshot.
+    fn remove_snapshot_backups(&self, evicted: &FileHistorySnapshot) {
+        let live_backups: HashSet<&str> = self
+            .snapshots
+            .iter()
+            .flat_map(|s| s.file_backups.values())
+            .filter_map(|b| b.backup_file_name.as_deref())
+            .collect();
+
+        for backup in evicted.file_backups.values() {
+            if let Some(ref name) = backup.backup_file_name {
+                if !live_backups.contains(name.as_str()) {
+                    let path = self.backup_dir.join(name);
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            warn!(
+                                session = %self.session_id,
+                                backup = %name,
+                                error = %e,
+                                "failed to remove evicted backup file"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// Get the next version number for a file and increment the counter.
     fn next_version(&mut self, file_path: &str) -> u32 {

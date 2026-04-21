@@ -200,6 +200,8 @@ pub struct ExperienceCaptureSubscriber {
     store: Arc<RwLock<Vec<CapturedExperience>>>,
 }
 
+const MAX_EXPERIENCES: usize = 500;
+
 /// A simplified captured experience record (stored in-memory for now).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CapturedExperience {
@@ -271,6 +273,10 @@ impl EventSubscriber for ExperienceCaptureSubscriber {
 
                 let mut store = self.store.write().await;
                 store.push(experience);
+                if store.len() > MAX_EXPERIENCES {
+                    let drain_count = store.len() - MAX_EXPERIENCES / 2;
+                    store.drain(..drain_count);
+                }
 
                 info!(
                     skill_id = %skill_id,
