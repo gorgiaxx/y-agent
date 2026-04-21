@@ -5,7 +5,7 @@ import { Eye, X, Maximize2, Minimize2, Server, Bot, ChevronDown, ChevronRight, F
 import { ProviderIconImg } from '../common/ProviderIconPicker';
 import { Button } from '../ui';
 
-import type { SystemSnapshot, ProviderSnapshot as ProviderSnap, AgentInstanceSnapshot } from '../../types';
+import type { SystemSnapshot, ProviderSnapshot as ProviderSnap, AgentInstanceSnapshot, MemoryStats } from '../../types';
 import type { TimeRange } from '../../hooks/useObservability';
 import './ObservabilityPanel.css';
 
@@ -140,6 +140,7 @@ function AgentCard({ agent }: { agent: AgentInstanceSnapshot }) {
 
 interface ObservabilityPanelProps {
   snapshot: SystemSnapshot | null;
+  memoryStats?: MemoryStats | null;
   loading: boolean;
   error: string | null;
   expanded: boolean;
@@ -160,9 +161,10 @@ const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
   { value: 'all', label: 'All time' },
 ];
 
-export function ObservabilityPanel({ snapshot, loading, error, expanded, onToggleExpand, onClose, timeRange, onTimeRangeChange, providerIcons }: ObservabilityPanelProps) {
+export function ObservabilityPanel({ snapshot, memoryStats, loading, error, expanded, onToggleExpand, onClose, timeRange, onTimeRangeChange, providerIcons }: ObservabilityPanelProps) {
   const [providersOpen, setProvidersOpen] = useState(true);
   const [agentsOpen, setAgentsOpen] = useState(true);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
 
@@ -305,6 +307,55 @@ export function ObservabilityPanel({ snapshot, loading, error, expanded, onToggl
                 )
               )}
             </div>
+            {/* Memory Section */}
+            {memoryStats && (
+              <div className="obs-section">
+                <div className="obs-section-header" onClick={() => setMemoryOpen(!memoryOpen)}>
+                  <span className="obs-section-chevron">
+                    {memoryOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </span>
+                  <span className="obs-section-title">Memory</span>
+                </div>
+                {memoryOpen && (
+                  <div className="obs-provider-card">
+                    <div className="obs-metrics">
+                      <div className="obs-metric">
+                        <span className="obs-metric-label">Pending Runs</span>
+                        <span className="obs-metric-value">{memoryStats.pending_runs}</span>
+                      </div>
+                      <div className="obs-metric">
+                        <span className="obs-metric-label">Turn Meta Cache</span>
+                        <span className="obs-metric-value">{memoryStats.turn_meta_cache}</span>
+                      </div>
+                      <div className="obs-metric">
+                        <span className="obs-metric-label">Pruning Watermarks</span>
+                        <span className="obs-metric-value">{memoryStats.pruning_watermarks}</span>
+                      </div>
+                      <div className="obs-metric">
+                        <span className="obs-metric-label">Permission Modes</span>
+                        <span className="obs-metric-value">{memoryStats.session_permission_modes}</span>
+                      </div>
+                      <div className="obs-metric">
+                        <span className="obs-metric-label">Pending Interactions</span>
+                        <span className="obs-metric-value">{memoryStats.pending_interactions}</span>
+                      </div>
+                      <div className="obs-metric">
+                        <span className="obs-metric-label">Pending Permissions</span>
+                        <span className="obs-metric-value">{memoryStats.pending_permissions}</span>
+                      </div>
+                      <div className="obs-metric">
+                        <span className="obs-metric-label">File History Sessions</span>
+                        <span className="obs-metric-value">{memoryStats.file_history_sessions}</span>
+                      </div>
+                      <div className="obs-metric">
+                        <span className="obs-metric-label">Total Snapshots</span>
+                        <span className="obs-metric-value">{memoryStats.file_history_total_snapshots}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

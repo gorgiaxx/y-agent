@@ -41,6 +41,7 @@ export function MainLayout() {
   const [obsTimeRange, setObsTimeRange] = useState<TimeRange>('all');
   const {
     snapshot: obsSnapshot,
+    memoryStats: obsMemoryStats,
     loading: obsLoading,
     error: obsError,
   } = useObservability({
@@ -212,6 +213,7 @@ export function MainLayout() {
       {panelCtx.obsOpen && (
         <ObservabilityPanel
           snapshot={obsSnapshot}
+          memoryStats={obsMemoryStats}
           loading={obsLoading}
           error={obsError}
           expanded={panelCtx.obsExpanded}

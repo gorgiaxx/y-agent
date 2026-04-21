@@ -12,11 +12,12 @@
 // All sub-hooks share mutable state via ChatSharedRefs.
 // ---------------------------------------------------------------------------
 
-import { useRef, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { useRef, useEffect, useMemo, useCallback, type Dispatch, type SetStateAction } from 'react';
 import type { Message } from '../types';
 import type { ToolResultRecord } from './chatStreamTypes';
 import type { InterleavedSegment } from './useInterleavedSegments';
 import { DEFAULT_ROOT_AGENT_NAME } from '../constants/agents';
+import { purgeSessionCache } from './chatHelpers';
 import type { ChatSharedRefs } from './chatSharedState';
 import { useChatSessionState } from './useChatSessionState';
 import { useChatMessages } from './useChatMessages';
@@ -108,6 +109,8 @@ export interface UseChatReturn {
   addCompactPoint: (info: Omit<CompactInfo, 'atIndex'>) => void;
   /** Set the operation status (used by handlers for compacting state). */
   setOp: (status: ChatOpStatus) => void;
+  /** Remove all cached data for a session from memory. */
+  purgeSession: (sessionId: string) => void;
 }
 
 /** Info about a completed compaction for rendering a divider + summary bubble. */
@@ -151,7 +154,6 @@ export function useChat(
   // Stable refs object -- all members are useRef results (referentially stable),
   // so this memo never invalidates. This prevents sub-hooks from re-running
   // effects that depend on the container object.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const refs: ChatSharedRefs = useMemo(() => ({
     activeSessionIdRef,
     sessionMessagesRef,
@@ -243,6 +245,19 @@ export function useChat(
     ? streaming.streamingSessionIds.has(activeSessionId)
     : false;
 
+  const purgeSession = useCallback((sessionId: string) => {
+    purgeSessionCache(
+      sessionId,
+      refs.sessionMessagesRef.current,
+      refs.toolResultsRef.current,
+      refs.streamSegsRef.current,
+      refs.contextResetMapRef.current,
+      refs.compactMapRef.current,
+      refs.opStatusMapRef.current,
+      refs.sessionActivityRef.current,
+    );
+  }, [refs]);
+
   // -----------------------------------------------------------------------
   // Return -- identical to the original UseChatReturn contract.
   // -----------------------------------------------------------------------
@@ -273,5 +288,6 @@ export function useChat(
     compactPoints: sessionState.compactPoints,
     addCompactPoint: sessionState.addCompactPoint,
     setOp: sessionState.setOp,
+    purgeSession,
   };
 }

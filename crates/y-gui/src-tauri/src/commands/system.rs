@@ -208,6 +208,53 @@ pub async fn window_close(window: tauri::WebviewWindow) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Memory stats (diagnostics endpoint for monitoring memory growth)
+// ---------------------------------------------------------------------------
+
+/// Snapshot of in-memory collection sizes for debugging memory growth.
+#[derive(Debug, Serialize, Clone)]
+pub struct MemoryStats {
+    pub pending_runs: usize,
+    pub turn_meta_cache: usize,
+    pub pruning_watermarks: usize,
+    pub session_permission_modes: usize,
+    pub pending_interactions: usize,
+    pub pending_permissions: usize,
+    pub file_history_sessions: usize,
+    pub file_history_total_snapshots: usize,
+}
+
+/// Return current sizes of key in-memory collections.
+///
+/// Intended for the diagnostics / observability panel so users can spot
+/// unbounded growth without attaching a profiler.
+#[tauri::command]
+pub async fn memory_stats(state: State<'_, AppState>) -> Result<MemoryStats, String> {
+    let pending_runs = state.pending_runs.lock().map(|m| m.len()).unwrap_or(0);
+    let turn_meta_cache = state.turn_meta_cache.lock().map(|m| m.len()).unwrap_or(0);
+    let pruning_watermarks = state.container.pruning_watermarks.read().await.len();
+    let session_permission_modes = state.container.session_permission_modes.read().await.len();
+    let pending_interactions = state.container.pending_interactions.lock().await.len();
+    let pending_permissions = state.container.pending_permissions.lock().await.len();
+
+    let fhm = state.container.file_history_managers.read().await;
+    let file_history_sessions = fhm.len();
+    let file_history_total_snapshots: usize = fhm.values().map(|m| m.snapshots().len()).sum();
+    drop(fhm);
+
+    Ok(MemoryStats {
+        pending_runs,
+        turn_meta_cache,
+        pruning_watermarks,
+        session_permission_modes,
+        pending_interactions,
+        pending_permissions,
+        file_history_sessions,
+        file_history_total_snapshots,
+    })
+}
+
 /// Sync the native window theme with the app's resolved theme.
 ///
 /// On macOS this drives the vibrancy material appearance so the frosted-glass

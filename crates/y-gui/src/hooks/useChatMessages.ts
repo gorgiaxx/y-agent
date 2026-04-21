@@ -14,8 +14,10 @@ import {
   getCachedMessages,
   setCachedMessages,
   mergeSkillsFromCache,
+  evictStaleSessions,
 } from './chatHelpers';
 import { extractGeneratedImages } from '../lib/generatedImages';
+import { chatBusState } from './chatBus';
 import type { ChatSharedRefs } from './chatSharedState';
 import type { ChatOpStatus, PendingEdit } from './useChat';
 
@@ -93,6 +95,18 @@ export function useChatMessages(
 
   const loadMessages = useCallback(async (sessionId: string) => {
     refs.activeSessionIdRef.current = sessionId;
+
+    evictStaleSessions(
+      sessionId,
+      chatBusState.streamingSessions,
+      refs.sessionActivityRef.current,
+      refs.sessionMessagesRef.current,
+      refs.toolResultsRef.current,
+      refs.streamSegsRef.current,
+      refs.contextResetMapRef.current,
+      refs.compactMapRef.current,
+      refs.opStatusMapRef.current,
+    );
 
     const cachedMsgs = getCachedMessages(refs.sessionMessagesRef.current, sessionId);
     // Show the loading skeleton only when the cache is empty -- if we already
@@ -182,7 +196,7 @@ export function useChatMessages(
         });
       }
     }
-  }, [refs.activeSessionIdRef, refs.sessionMessagesRef, refs.contextResetMapRef, setContextResetPoints]);
+  }, [refs.activeSessionIdRef, refs.sessionMessagesRef, refs.contextResetMapRef, refs.sessionActivityRef, refs.toolResultsRef, refs.streamSegsRef, refs.compactMapRef, refs.opStatusMapRef, setContextResetPoints]);
 
   const clearMessages = useCallback(() => {
     const sid = refs.activeSessionIdRef.current;

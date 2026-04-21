@@ -3,8 +3,10 @@
    ============================================ */
 
 .diag-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   width: 380px;
   min-width: 380px;
   height: 100%;
@@ -25,6 +27,47 @@
   z-index: 110;
   box-shadow: var(--shadow-lg);
   animation: diag-expand-in 0.22s ease;
+}
+
+.diag-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 4;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.diag-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.diag-resize-handle:hover::after,
+.diag-resize-handle:focus-visible::after,
+.diag-panel.diag-resizing .diag-resize-handle::after {
+  background: color-mix(in srgb, var(--accent) 54%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 10px 3px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.diag-resize-handle:focus-visible {
+  outline: none;
+}
+
+body.y-gui-diag-resizing,
+body.y-gui-diag-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .diag-backdrop {

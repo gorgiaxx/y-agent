@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ReactNode } from 'react';
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(async () => () => {}),
@@ -9,7 +10,27 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async () => []),
 }));
 
+vi.mock('../lib', () => ({
+  transport: {
+    invoke: vi.fn(async () => []),
+    listen: vi.fn(async () => () => {}),
+  },
+}));
+
+vi.mock('../components/ui', async () => {
+  const React = await import('react');
+  return {
+    Button: ({ children, ...props }: { children?: ReactNode } & Record<string, unknown>) =>
+      React.createElement('button', props, children),
+  };
+});
+
 import { DiagnosticsPanel } from '../components/observation/DiagnosticsPanel';
+import {
+  MAX_DIAGNOSTICS_PANEL_WIDTH,
+  MIN_DIAGNOSTICS_PANEL_WIDTH,
+  diagnosticsPanelWidthFromPointer,
+} from '../components/observation/diagnosticsPanelResize';
 import { computeSummary } from '../hooks/useDiagnostics';
 import { ThemeContext } from '../hooks/useTheme';
 import type { DiagnosticsEntry } from '../types';
@@ -68,5 +89,37 @@ describe('DiagnosticsPanel', () => {
 
     expect(html).toContain('subagent:plan-writer');
     expect(html).toContain('chat-turn');
+  });
+
+  it('exposes a resize separator when docked beside the main panel', () => {
+    const html = renderToStaticMarkup(
+      <ThemeContext.Provider value={{ resolvedTheme: 'dark' }}>
+        <DiagnosticsPanel
+          entries={[]}
+          summary={computeSummary([])}
+          isActive={false}
+          isGlobal={false}
+          sessionId={null}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onClear={() => {}}
+          onClose={() => {}}
+        />
+      </ThemeContext.Provider>,
+    );
+
+    expect(html).toContain('role="separator"');
+    expect(html).toContain('aria-label="Resize diagnostics panel"');
+    expect(html).toContain('aria-orientation="vertical"');
+  });
+
+  it('maps divider drag position to a constrained diagnostics panel width', () => {
+    expect(diagnosticsPanelWidthFromPointer({ clientX: 800, viewportWidth: 1200 })).toBe(400);
+    expect(diagnosticsPanelWidthFromPointer({ clientX: 1100, viewportWidth: 1200 })).toBe(
+      MIN_DIAGNOSTICS_PANEL_WIDTH,
+    );
+    expect(diagnosticsPanelWidthFromPointer({ clientX: 20, viewportWidth: 1440 })).toBe(
+      MAX_DIAGNOSTICS_PANEL_WIDTH,
+    );
   });
 });

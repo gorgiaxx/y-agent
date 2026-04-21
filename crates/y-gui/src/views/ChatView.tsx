@@ -87,6 +87,7 @@ export function ChatView() {
     },
     chat: {
       clearMessages: chatHooks.clearMessages,
+      purgeSession: chatHooks.purgeSession,
       sendMessage: chatHooks.sendMessage,
       editAndResend: chatHooks.editAndResend,
       editMessage: chatHooks.editMessage,

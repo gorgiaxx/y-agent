@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { transport } from '../lib';
-import type { SystemSnapshot } from '../types';
+import type { SystemSnapshot, MemoryStats } from '../types';
 
 export type TimeRange = '15m' | '30m' | '1h' | '6h' | '24h' | 'all';
 
@@ -37,6 +37,7 @@ export interface UseObservabilityOptions {
 
 export interface UseObservabilityResult {
   snapshot: SystemSnapshot | null;
+  memoryStats: MemoryStats | null;
   loading: boolean;
   error: string | null;
 }
@@ -54,6 +55,7 @@ export function useObservability({
   timeRange = 'all',
 }: UseObservabilityOptions): UseObservabilityResult {
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
+  const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -99,6 +101,13 @@ export function useObservability({
         // No historical data available -- show live snapshot as-is.
         setSnapshot(liveSnap);
       }
+      // Fetch memory stats in parallel with the snapshot.
+      try {
+        const stats = await transport.invoke<MemoryStats>('memory_stats');
+        setMemoryStats(stats);
+      } catch {
+        // Non-critical -- older backends may not have this command.
+      }
     } catch (err) {
       console.error('observability snapshot failed:', err);
       setError(String(err));
@@ -128,5 +137,5 @@ export function useObservability({
     };
   }, [active, intervalMs, fetchData]);
 
-  return { snapshot, loading, error };
+  return { snapshot, memoryStats, loading, error };
 }

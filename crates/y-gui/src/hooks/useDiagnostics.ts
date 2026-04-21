@@ -115,6 +115,9 @@ const unlistenFns: UnlistenFn[] = [];
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
+const MAX_DIAG_ENTRIES_PER_SESSION = 200;
+const DIAG_TRIM_TARGET = 100;
+
 /**
  * Map a raw backend diagnostics record to a typed DiagnosticsEntry.
  * Shared by loadSubagentHistory, reloadSessionHistory, and the session
@@ -279,13 +282,14 @@ async function initialiseBus() {
         timestamp: new Date().toISOString(),
         event: turnEvent,
       };
+      let existing = [...(prev.sessionEntries[sid] ?? []), entry];
+      if (existing.length > MAX_DIAG_ENTRIES_PER_SESSION) {
+        existing = existing.slice(existing.length - DIAG_TRIM_TARGET);
+      }
       return {
         ...prev,
         counter,
-        sessionEntries: {
-          ...prev.sessionEntries,
-          [sid]: [...(prev.sessionEntries[sid] ?? []), entry],
-        },
+        sessionEntries: { ...prev.sessionEntries, [sid]: existing },
       };
     });
   });
@@ -296,6 +300,7 @@ async function initialiseBus() {
     broadcastUpdate((prev) => {
       const next = new Set(prev.activeRuns);
       next.delete(run_id);
+      delete prev.runToSession[run_id];
       return { ...prev, activeRuns: next };
     });
   });
@@ -306,6 +311,7 @@ async function initialiseBus() {
     broadcastUpdate((prev) => {
       const next = new Set(prev.activeRuns);
       next.delete(run_id);
+      delete prev.runToSession[run_id];
       return { ...prev, activeRuns: next };
     });
   });
@@ -385,14 +391,17 @@ async function initialiseBus() {
 
     // Always route to Global view. Session-bound events are already
     // covered by chat:progress, so we avoid inserting duplicates.
-    broadcastUpdate((prev) => ({
-      ...prev,
-      counter: prev.counter + 1,
-      sessionEntries: {
-        ...prev.sessionEntries,
-        [NIL_UUID]: [...(prev.sessionEntries[NIL_UUID] ?? []), diagEntry!],
-      },
-    }));
+    broadcastUpdate((prev) => {
+      let existing = [...(prev.sessionEntries[NIL_UUID] ?? []), diagEntry!];
+      if (existing.length > MAX_DIAG_ENTRIES_PER_SESSION) {
+        existing = existing.slice(existing.length - DIAG_TRIM_TARGET);
+      }
+      return {
+        ...prev,
+        counter: prev.counter + 1,
+        sessionEntries: { ...prev.sessionEntries, [NIL_UUID]: existing },
+      };
+    });
   });
   unlistenFns.push(u4);
 
@@ -473,10 +482,11 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
         sessionEntries: { ...prev.sessionEntries, [sid]: [] },
       }));
     } else {
-      // Global clear: wipe all session entries.
+      // Global clear: wipe all session entries and stale run mappings.
       broadcastUpdate((prev) => ({
         ...prev,
         sessionEntries: {},
+        runToSession: {},
       }));
     }
   }, [activeSessionId]);

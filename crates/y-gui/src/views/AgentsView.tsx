@@ -226,6 +226,7 @@ export function AgentsView() {
     },
     chat: {
       clearMessages: agentChatHooks.clearMessages,
+      purgeSession: agentChatHooks.purgeSession,
       sendMessage: agentChatHooks.sendMessage,
       editAndResend: agentChatHooks.editAndResend,
       editMessage: agentChatHooks.editMessage,

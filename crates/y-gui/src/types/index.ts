@@ -300,6 +300,18 @@ export interface ProviderInfo {
   capabilities: string[];
 }
 
+/** Snapshot of backend in-memory collection sizes (from `memory_stats`). */
+export interface MemoryStats {
+  pending_runs: number;
+  turn_meta_cache: number;
+  pruning_watermarks: number;
+  session_permission_modes: number;
+  pending_interactions: number;
+  pending_permissions: number;
+  file_history_sessions: number;
+  file_history_total_snapshots: number;
+}
+
 // ---------------------------------------------------------------------------
 // Thinking / Reasoning
 // ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ export interface ChatOps {
   pendingEdit: { messageId: string; content: string } | null;
   loadMessages: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
+  purgeSession: (sessionId: string) => void;
   messages: Message[];
   addCompactPoint: (info: Omit<CompactInfo, 'atIndex'>) => void;
   setOp: (status: ChatOpStatus) => void;
@@ -87,7 +88,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
   const {
     sendMessage, editAndResend, editMessage, cancelEdit, undoToMessage,
     resendLastTurn, restoreBranch, pendingEdit, loadMessages, clearMessages,
-    messages, addCompactPoint, setOp,
+    purgeSession, messages, addCompactPoint, setOp,
   } = chat;
   const { welcomeWorkspaceId, assignSession, refreshWorkspaces } = workspace;
   const { selectedProviderId, thinkingEffort, planMode } = config;
@@ -238,11 +239,12 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
   const handleDeleteSession = useCallback(
     async (id: string) => {
       await deleteSession(id);
+      purgeSession(id);
       if (activeSessionId === id) {
         clearMessages();
       }
     },
-    [deleteSession, activeSessionId, clearMessages],
+    [deleteSession, purgeSession, activeSessionId, clearMessages],
   );
 
   const handleCreateWorkspace = useCallback(

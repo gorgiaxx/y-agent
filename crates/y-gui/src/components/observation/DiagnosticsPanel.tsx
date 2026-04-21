@@ -1,6 +1,7 @@
 // Diagnostics panel -- real-time observability into LLM turn lifecycle.
 
 import { useRef, useEffect, useState, useMemo } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { Activity, X, Cpu, Wrench, AlertTriangle, ChevronDown, ChevronRight, Trash2, Maximize2, Minimize2, User, Copy, Check, Filter } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -11,6 +12,13 @@ import { computeSummary } from '../../hooks/useDiagnostics';
 import type { DiagnosticsSummary } from '../../hooks/useDiagnostics';
 import { useResolvedTheme } from '../../hooks/useTheme';
 import { Button } from '../ui';
+import {
+  DEFAULT_DIAGNOSTICS_PANEL_WIDTH,
+  MAX_DIAGNOSTICS_PANEL_WIDTH,
+  MIN_DIAGNOSTICS_PANEL_WIDTH,
+  constrainDiagnosticsPanelWidth,
+  diagnosticsPanelWidthFromPointer,
+} from './diagnosticsPanelResize';
 import './DiagnosticsPanel.css';
 
 // Strip hardcoded background from every token rule so the highlighter
@@ -70,6 +78,9 @@ function filterByTimeRange(entries: DiagnosticsEntry[], range: TimeRange): Diagn
   const cutoff = Date.now() - ms;
   return entries.filter(e => new Date(e.timestamp).getTime() >= cutoff);
 }
+
+const KEYBOARD_RESIZE_STEP = 16;
+const KEYBOARD_RESIZE_LARGE_STEP = 40;
 
 interface DiagnosticsPanelProps {
   entries: DiagnosticsEntry[];
@@ -712,15 +723,19 @@ export function DiagnosticsPanel({ entries, isActive, isGlobal, sessionId, expan
   const endRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
+  const resizeHandleRef = useRef<HTMLDivElement>(null);
+  const resizePointerId = useRef<number | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>('1h');
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_DIAGNOSTICS_PANEL_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
   const userScrolledAway = useRef(false);
+  const prevEntryCount = useRef(0);
 
   const filteredEntries = useMemo(() => filterByTimeRange(entries, timeRange), [entries, timeRange]);
   const summary = useMemo(() => computeSummary(filteredEntries), [filteredEntries]);
 
   // Track whether the user has scrolled away from the bottom.
-  // When they are near the bottom (within 60px), re-enable auto-scroll.
   useEffect(() => {
     const el = timelineRef.current;
     if (!el) return;
@@ -730,11 +745,14 @@ export function DiagnosticsPanel({ entries, isActive, isGlobal, sessionId, expan
     };
     el.addEventListener('scroll', handleScroll, { passive: true });
     return () => el.removeEventListener('scroll', handleScroll);
-  }, [expanded]); // re-attach when expanded state changes (different DOM)
+  }, [expanded]);
 
-  // Auto-scroll to bottom only when the user has not scrolled away.
+  // Auto-scroll only when new entries are appended and user is near the bottom.
   useEffect(() => {
-    if (!userScrolledAway.current) {
+    const count = filteredEntries.length;
+    const grew = count > prevEntryCount.current;
+    prevEntryCount.current = count;
+    if (grew && !userScrolledAway.current) {
       endRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [filteredEntries]);
@@ -751,8 +769,110 @@ export function DiagnosticsPanel({ entries, isActive, isGlobal, sessionId, expan
     return () => document.removeEventListener('mousedown', handleClick);
   }, [filterOpen]);
 
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setPanelWidth((width) => constrainDiagnosticsPanelWidth(width, window.innerWidth));
+    };
+
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      event.preventDefault();
+      setPanelWidth(diagnosticsPanelWidthFromPointer({
+        clientX: event.clientX,
+        viewportWidth: window.innerWidth,
+      }));
+    };
+    const stopResize = () => {
+      const pointerId = resizePointerId.current;
+      const handle = resizeHandleRef.current;
+      if (pointerId !== null && handle?.hasPointerCapture(pointerId)) {
+        handle.releasePointerCapture(pointerId);
+      }
+      resizePointerId.current = null;
+      setIsResizing(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') stopResize();
+    };
+
+    document.body.classList.add('y-gui-diag-resizing');
+    document.addEventListener('pointermove', handlePointerMove);
+    document.addEventListener('pointerup', stopResize);
+    document.addEventListener('pointercancel', stopResize);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.classList.remove('y-gui-diag-resizing');
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', stopResize);
+      document.removeEventListener('pointercancel', stopResize);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isResizing]);
+
+  const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (expanded || (event.pointerType === 'mouse' && event.button !== 0)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    resizePointerId.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setPanelWidth(diagnosticsPanelWidthFromPointer({
+      clientX: event.clientX,
+      viewportWidth: window.innerWidth,
+    }));
+    setIsResizing(true);
+  };
+
+  const handleResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    let nextWidth: number | null = null;
+    const step = event.shiftKey ? KEYBOARD_RESIZE_LARGE_STEP : KEYBOARD_RESIZE_STEP;
+
+    if (event.key === 'ArrowLeft') {
+      nextWidth = panelWidth + step;
+    } else if (event.key === 'ArrowRight') {
+      nextWidth = panelWidth - step;
+    } else if (event.key === 'Home') {
+      nextWidth = MIN_DIAGNOSTICS_PANEL_WIDTH;
+    } else if (event.key === 'End') {
+      nextWidth = MAX_DIAGNOSTICS_PANEL_WIDTH;
+    }
+
+    if (nextWidth === null) return;
+
+    event.preventDefault();
+    setPanelWidth(constrainDiagnosticsPanelWidth(nextWidth, window.innerWidth));
+  };
+
+  const panelClassName = [
+    'diag-panel',
+    expanded ? 'diag-expanded' : '',
+    isResizing ? 'diag-resizing' : '',
+  ].filter(Boolean).join(' ');
+
   const panelContent = (
-    <div className={`diag-panel ${expanded ? 'diag-expanded' : ''}`}>
+    <div className={panelClassName} style={expanded ? undefined : { width: panelWidth, minWidth: panelWidth }}>
+      {!expanded && (
+        <div
+          ref={resizeHandleRef}
+          className="diag-resize-handle"
+          role="separator"
+          aria-label="Resize diagnostics panel"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_DIAGNOSTICS_PANEL_WIDTH}
+          aria-valuemax={MAX_DIAGNOSTICS_PANEL_WIDTH}
+          aria-valuenow={panelWidth}
+          tabIndex={0}
+          onPointerDown={handleResizePointerDown}
+          onKeyDown={handleResizeKeyDown}
+        />
+      )}
       <div className="diag-header">
         <div className="diag-header-left">
           <Activity size={16} className="diag-header-icon" />

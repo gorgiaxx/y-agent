@@ -295,6 +295,7 @@ pub fn run() {
             commands::system::window_close,
             commands::system::window_set_theme,
             commands::system::app_paths,
+            commands::system::memory_stats,
             // Workspaces
             commands::workspace::workspace_list,
             commands::workspace::workspace_create,

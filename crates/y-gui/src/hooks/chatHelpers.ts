@@ -13,6 +13,8 @@ import type { Message, ChatCheckpointInfo } from '../types';
 // Per-session message cache
 // ---------------------------------------------------------------------------
 
+const MAX_CACHED_SESSIONS = 5;
+
 export function getCachedMessages(
   cache: Map<string, Message[]>,
   sessionId: string,
@@ -29,6 +31,60 @@ export function setCachedMessages(
   const next = typeof updater === 'function' ? updater(prev) : updater;
   cache.set(sessionId, next);
   return next;
+}
+
+/**
+ * Evict least-recently-used sessions from all shared ref Maps.
+ *
+ * Uses `sessionActivityRef` timestamps to determine staleness.
+ * The active session and any streaming sessions are never evicted.
+ */
+export function evictStaleSessions(
+  activeSessionId: string | null,
+  streamingSessionIds: Set<string>,
+  sessionActivityRef: Map<string, number>,
+  ...caches: Map<string, unknown>[]
+): void {
+  const candidateIds = [...sessionActivityRef.keys()].filter(
+    (id) => id !== activeSessionId && !streamingSessionIds.has(id),
+  );
+
+  if (candidateIds.length + (activeSessionId ? 1 : 0) <= MAX_CACHED_SESSIONS) {
+    return;
+  }
+
+  candidateIds.sort(
+    (a, b) => (sessionActivityRef.get(a) ?? 0) - (sessionActivityRef.get(b) ?? 0),
+  );
+
+  const evictCount =
+    candidateIds.length + (activeSessionId ? 1 : 0) - MAX_CACHED_SESSIONS;
+  const toEvict = candidateIds.slice(0, Math.max(0, evictCount));
+
+  for (const id of toEvict) {
+    for (const cache of caches) {
+      cache.delete(id);
+    }
+    sessionActivityRef.delete(id);
+  }
+
+  if (toEvict.length > 0) {
+    console.log(`[chat] evicted ${toEvict.length} stale session cache(s)`);
+  }
+}
+
+/**
+ * Remove all cached data for a specific session from every shared ref Map.
+ *
+ * Called when a session is deleted so its data does not linger in memory.
+ */
+export function purgeSessionCache(
+  sessionId: string,
+  ...caches: Map<string, unknown>[]
+): void {
+  for (const cache of caches) {
+    cache.delete(sessionId);
+  }
 }
 
 /**
