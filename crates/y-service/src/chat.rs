@@ -1408,6 +1408,7 @@ mod tests {
             prune_tool_history: false,
             mcp_mode: None,
             mcp_servers: vec![],
+            image_generation_options: None,
         };
 
         let config =
@@ -1442,6 +1443,7 @@ mod tests {
             prune_tool_history: false,
             mcp_mode: None,
             mcp_servers: vec![],
+            image_generation_options: None,
         };
 
         let config =
@@ -1484,6 +1486,7 @@ mod tests {
             plan_mode: None,
             mcp_mode: None,
             mcp_servers: None,
+            image_generation_options: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1521,6 +1524,7 @@ mod tests {
             plan_mode: None,
             mcp_mode: None,
             mcp_servers: None,
+            image_generation_options: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1544,6 +1548,7 @@ mod tests {
             plan_mode: None,
             mcp_mode: None,
             mcp_servers: None,
+            image_generation_options: None,
         };
         let err = ChatService::prepare_turn(&container, request)
             .await
@@ -1566,6 +1571,7 @@ mod tests {
             plan_mode: None,
             mcp_mode: None,
             mcp_servers: None,
+            image_generation_options: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1595,6 +1601,7 @@ mod tests {
             plan_mode: None,
             mcp_mode: None,
             mcp_servers: None,
+            image_generation_options: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1634,6 +1641,7 @@ mod tests {
                 plan_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
+                image_generation_options: None,
             },
         )
         .await
@@ -1699,6 +1707,7 @@ mod tests {
             plan_mode: None,
             mcp_mode: None,
             mcp_servers: None,
+            image_generation_options: None,
         };
         let prepared = ChatService::prepare_turn(&container, request)
             .await
@@ -1726,6 +1735,7 @@ mod tests {
             plan_mode: None,
             mcp_mode: None,
             mcp_servers: None,
+            image_generation_options: None,
         };
         let p1 = ChatService::prepare_turn(&container, request)
             .await
@@ -1745,6 +1755,7 @@ mod tests {
             plan_mode: None,
             mcp_mode: None,
             mcp_servers: None,
+            image_generation_options: None,
         };
         let p2 = ChatService::prepare_turn(&container, request2)
             .await
@@ -1810,6 +1821,7 @@ thinking_effort = "high"
                 plan_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
+                image_generation_options: None,
             },
         )
         .await
@@ -1876,6 +1888,7 @@ skills = ["workspace-skill"]
                 plan_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
+                image_generation_options: None,
             },
         )
         .await
@@ -1896,6 +1909,7 @@ skills = ["workspace-skill"]
                 plan_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
+                image_generation_options: None,
             },
         )
         .await
@@ -1954,6 +1968,7 @@ max_iterations = 1
                 plan_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
+                image_generation_options: None,
             },
         )
         .await
@@ -1973,6 +1988,7 @@ max_iterations = 1
                 plan_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
+                image_generation_options: None,
             },
         )
         .await
