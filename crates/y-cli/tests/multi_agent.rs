@@ -1,6 +1,6 @@
 //! E2E integration test: Multi-agent delegation patterns.
 
-use y_core::provider::{LlmProvider, ToolCallingMode};
+use y_core::provider::{LlmProvider, RequestMode, ToolCallingMode};
 use y_core::session::{
     CreateSessionOptions, SessionState, SessionStore, SessionType, TranscriptStore,
 };
@@ -61,6 +61,7 @@ async fn e2e_parent_delegates_to_child() {
     let child_request = y_core::provider::ChatRequest {
         messages: child_messages,
         model: Some("mock".into()),
+        request_mode: RequestMode::TextChat,
         max_tokens: None,
         temperature: None,
         top_p: None,
@@ -138,6 +139,7 @@ async fn e2e_sequential_multi_agent_pipeline() {
     let req = y_core::provider::ChatRequest {
         messages: transcript_store.read_all(&stage1.id).await.unwrap(),
         model: Some("mock".into()),
+        request_mode: RequestMode::TextChat,
         max_tokens: None,
         temperature: None,
         top_p: None,
@@ -174,6 +176,7 @@ async fn e2e_sequential_multi_agent_pipeline() {
     let req2 = y_core::provider::ChatRequest {
         messages: transcript_store.read_all(&stage2.id).await.unwrap(),
         model: Some("mock".into()),
+        request_mode: RequestMode::TextChat,
         max_tokens: None,
         temperature: None,
         top_p: None,

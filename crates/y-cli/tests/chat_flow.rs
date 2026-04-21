@@ -5,7 +5,7 @@
 //! - Multi-turn conversation (message history preserved)
 //! - Provider failure propagation
 
-use y_core::provider::{ChatRequest, LlmProvider, ToolCallingMode};
+use y_core::provider::{ChatRequest, LlmProvider, RequestMode, ToolCallingMode};
 use y_core::session::{CreateSessionOptions, SessionStore, SessionType, TranscriptStore};
 use y_core::types::{Message, Role};
 use y_test_utils::{MockProvider, MockSessionStore, MockTranscriptStore};
@@ -51,6 +51,7 @@ async fn e2e_single_turn_chat() {
     let request = ChatRequest {
         messages,
         model: Some("mock".into()),
+        request_mode: RequestMode::TextChat,
         max_tokens: Some(1024),
         temperature: None,
         top_p: None,
@@ -106,6 +107,7 @@ async fn e2e_multi_turn_conversation() {
     let req = ChatRequest {
         messages,
         model: Some("mock".into()),
+        request_mode: RequestMode::TextChat,
         max_tokens: None,
         temperature: None,
         top_p: None,
@@ -131,6 +133,7 @@ async fn e2e_multi_turn_conversation() {
     let req2 = ChatRequest {
         messages,
         model: Some("mock".into()),
+        request_mode: RequestMode::TextChat,
         max_tokens: None,
         temperature: None,
         top_p: None,
@@ -157,6 +160,7 @@ async fn e2e_provider_failure_propagation() {
     let req = ChatRequest {
         messages: vec![make_msg(Role::User, "hello")],
         model: Some("mock".into()),
+        request_mode: RequestMode::TextChat,
         max_tokens: None,
         temperature: None,
         top_p: None,
