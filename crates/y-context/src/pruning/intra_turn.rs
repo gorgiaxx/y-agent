@@ -204,12 +204,16 @@ impl IntraTurnPruner {
 
     /// Signal 2: Find repeated similar assistant messages.
     ///
-    /// Skips comparisons when both messages have empty content. In native
-    /// function-calling mode the assistant carries all call information in the
-    /// `tool_calls` field and the text content is empty. Two empty strings have
-    /// `content_similarity` of 1.0, which would incorrectly classify legitimate
-    /// progressive tool call sequences (e.g. consecutive `FileRead` calls with
-    /// increasing `line_offset`) as duplicates and delete earlier results.
+    /// Never prunes an assistant message that carries `tool_calls`. Similarity
+    /// pruning targets pure-text retry noise; an assistant with `tool_calls`
+    /// represents a real tool invocation whose result is referenced by later
+    /// messages. Dropping it (and its paired `Role::Tool` result) would leave
+    /// the LLM with no record of the call and trigger re-invocation in the
+    /// next iteration -- the symptom being an infinite tool-call loop.
+    ///
+    /// Legitimate progressive sequences (e.g. consecutive `FileRead` with
+    /// increasing `line_offset`) and even identical retry calls are preserved;
+    /// the error/empty-result signals (1 and 3) already handle genuine failures.
     fn detect_repeated_calls(
         messages: &[Message],
         last_boundary: Option<usize>,
@@ -241,12 +245,18 @@ impl IntraTurnPruner {
                 continue;
             }
 
+            // Never prune an assistant that actually invoked tools. The
+            // tool_calls + tool_result pair is load-bearing context; removing
+            // it makes the LLM re-request the same call on the next turn.
+            if !msg_a.tool_calls.is_empty() {
+                j += 1;
+                continue;
+            }
+
             // Skip the similarity check when both messages have empty text
-            // content. This happens in native function-calling mode where the
-            // assistant embeds all call information in `tool_calls` and the
-            // text content field is intentionally empty. Comparing two empty
-            // strings yields similarity = 1.0, triggering false-positive
-            // removal of valid progressive tool call chains.
+            // content. Two empty strings have `content_similarity` of 1.0,
+            // which would incorrectly classify legitimate progressive calls
+            // as duplicates.
             if msg_a.content.trim().is_empty() && msg_b.content.trim().is_empty() {
                 j += 1;
                 continue;
@@ -708,5 +718,40 @@ mod tests {
             ids.contains(&"t2"),
             "second FileRead result must be preserved"
         );
+    }
+
+    /// Regression: when the model emits short explanatory text alongside each
+    /// tool call (e.g. "Let me read the next chunk"), similarity between
+    /// consecutive assistant messages can exceed `SIMILARITY_THRESHOLD`. The
+    /// previous implementation deleted the earlier assistant + its tool result,
+    /// stripping a real tool invocation from history and causing the LLM to
+    /// re-issue the same call on the next iteration -- an infinite loop.
+    /// An assistant carrying `tool_calls` must never be pruned by the
+    /// repeated-calls signal.
+    #[test]
+    fn test_no_pruning_for_similar_text_when_assistant_has_tool_calls() {
+        let pruner = IntraTurnPruner::from_config(&default_config());
+
+        let mut history = vec![
+            make_msg("s1", Role::System, "system"),
+            make_msg("u1", Role::User, "list files in src/ then in tests/"),
+            make_assistant_with_tool_calls("a1", "Let me list the directory.", &["tc1"]),
+            make_tool_msg("t1", "{\"files\": [\"main.rs\"]}", "tc1"),
+            make_assistant_with_tool_calls("a2", "Let me list the directory.", &["tc2"]),
+            make_tool_msg("t2", "{\"files\": [\"test.rs\"]}", "tc2"),
+        ];
+
+        let report = pruner.prune_working_history(&mut history, 3);
+        assert!(
+            report.skipped || report.messages_removed == 0,
+            "tool-calling assistant pair was incorrectly pruned: {} messages removed",
+            report.messages_removed
+        );
+        assert_eq!(history.len(), 6, "all tool_call messages must be preserved");
+        let ids: Vec<&str> = history.iter().map(|m| m.message_id.as_str()).collect();
+        assert!(ids.contains(&"a1"));
+        assert!(ids.contains(&"t1"));
+        assert!(ids.contains(&"a2"));
+        assert!(ids.contains(&"t2"));
     }
 }
