@@ -172,6 +172,8 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
                          query: (a) => a.limit ? { limit: String(a.limit) } : {} },
   diagnostics_get_subagent_history: { method: 'GET', path: '/api/v1/diagnostics/subagents',
                          query: (a) => a.limit ? { limit: String(a.limit) } : {} },
+  diagnostics_clear_by_session: { method: 'DELETE', path: pathWith('/api/v1/diagnostics/sessions/{sessionId}', 'sessionId') },
+  diagnostics_clear_all: { method: 'DELETE', path: '/api/v1/diagnostics' },
 
   // -- Observability --
   observability_snapshot: { method: 'GET', path: '/api/v1/observability/snapshot' },

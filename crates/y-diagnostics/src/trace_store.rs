@@ -61,6 +61,16 @@ pub trait TraceStore: Send + Sync {
     /// Delete traces older than a given date (retention cleanup).
     async fn delete_before(&self, before: DateTime<Utc>) -> Result<u64, TraceStoreError>;
 
+    /// Delete all traces belonging to a specific session.
+    ///
+    /// Implementations must also remove related observations and scores.
+    async fn delete_traces_by_session(&self, session_id: &str) -> Result<u64, TraceStoreError>;
+
+    /// Delete every diagnostics trace.
+    ///
+    /// Implementations must also remove related observations and scores.
+    async fn delete_all_traces(&self) -> Result<u64, TraceStoreError>;
+
     /// List traces belonging to a specific session.
     async fn list_traces_by_session(
         &self,
@@ -123,6 +133,12 @@ impl<T: TraceStore + ?Sized> TraceStore for std::sync::Arc<T> {
     }
     async fn delete_before(&self, before: DateTime<Utc>) -> Result<u64, TraceStoreError> {
         (**self).delete_before(before).await
+    }
+    async fn delete_traces_by_session(&self, session_id: &str) -> Result<u64, TraceStoreError> {
+        (**self).delete_traces_by_session(session_id).await
+    }
+    async fn delete_all_traces(&self) -> Result<u64, TraceStoreError> {
+        (**self).delete_all_traces().await
     }
     async fn list_traces_by_session(
         &self,
@@ -290,6 +306,54 @@ impl TraceStore for InMemoryTraceStore {
         Ok(count)
     }
 
+    async fn delete_traces_by_session(&self, session_id: &str) -> Result<u64, TraceStoreError> {
+        let target = Uuid::parse_str(session_id).unwrap_or_default();
+        let mut traces = self
+            .traces
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ids_to_remove: Vec<Uuid> = traces
+            .values()
+            .filter(|t| t.session_id == target)
+            .map(|t| t.id)
+            .collect();
+        let count = ids_to_remove.len() as u64;
+
+        let mut obs_map = self
+            .observations
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut score_map = self
+            .scores
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for id in &ids_to_remove {
+            traces.remove(id);
+            obs_map.remove(id);
+            score_map.remove(id);
+        }
+
+        Ok(count)
+    }
+
+    async fn delete_all_traces(&self) -> Result<u64, TraceStoreError> {
+        let mut traces = self
+            .traces
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let count = traces.len() as u64;
+        traces.clear();
+        self.observations
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.scores
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        Ok(count)
+    }
+
     async fn list_traces_by_session(
         &self,
         session_id: &str,
@@ -420,5 +484,66 @@ mod tests {
 
         let remaining = store.list_traces(None, None, 100).await.unwrap();
         assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_traces_by_session_removes_related_rows_only() {
+        let store = InMemoryTraceStore::new();
+        let session = Uuid::new_v4();
+        let other_session = Uuid::new_v4();
+
+        let trace = Trace::new(session, "target");
+        let other_trace = Trace::new(other_session, "other");
+        store.insert_trace(trace.clone()).await.unwrap();
+        store.insert_trace(other_trace.clone()).await.unwrap();
+
+        let observation = Observation::new(trace.id, ObservationType::Generation, "target");
+        let observation_id = observation.id;
+        store.insert_observation(observation).await.unwrap();
+        let mut score = Score::numeric(trace.id, "quality", 1.0, ScoreSource::System);
+        score.observation_id = Some(observation_id);
+        store.insert_score(score).await.unwrap();
+
+        let other_observation =
+            Observation::new(other_trace.id, ObservationType::Generation, "other");
+        store.insert_observation(other_observation).await.unwrap();
+
+        let deleted = store
+            .delete_traces_by_session(&session.to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, 1);
+        assert!(store.get_trace(trace.id).await.is_err());
+        assert!(store.get_observations(trace.id).await.unwrap().is_empty());
+        assert!(store.get_scores(trace.id).await.unwrap().is_empty());
+        assert!(store.get_trace(other_trace.id).await.is_ok());
+        assert_eq!(
+            store.get_observations(other_trace.id).await.unwrap().len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_all_traces_removes_every_diagnostics_row() {
+        let store = InMemoryTraceStore::new();
+        let first = Trace::new(Uuid::new_v4(), "first");
+        let second = Trace::new(Uuid::new_v4(), "second");
+        store.insert_trace(first.clone()).await.unwrap();
+        store.insert_trace(second.clone()).await.unwrap();
+        store
+            .insert_observation(Observation::new(
+                first.id,
+                ObservationType::Generation,
+                "first",
+            ))
+            .await
+            .unwrap();
+
+        let deleted = store.delete_all_traces().await.unwrap();
+
+        assert_eq!(deleted, 2);
+        assert!(store.list_traces(None, None, 10).await.unwrap().is_empty());
+        assert!(store.get_observations(first.id).await.unwrap().is_empty());
     }
 }

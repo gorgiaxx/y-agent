@@ -8,6 +8,7 @@ mod commands;
 mod state;
 
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
@@ -229,6 +230,56 @@ pub fn run() {
                 );
             }
 
+            // Webview health monitor: detect WKWebView content process
+            // termination on macOS. The frontend sends a heartbeat_pong
+            // every 15s. If no pong arrives for 120s after at least one
+            // was received AND the window is visible+focused, assume
+            // macOS killed the content process and reload the webview.
+            // When the window is minimized or unfocused, macOS throttles
+            // JS timers aggressively, so we skip the check to avoid
+            // false-positive reloads.
+            {
+                let app_handle = app.handle().clone();
+                let heartbeat = Arc::clone(&app_state.last_heartbeat_pong);
+                rt.spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                    interval.tick().await;
+                    loop {
+                        interval.tick().await;
+                        let last_pong = heartbeat.load(Ordering::Relaxed);
+                        if last_pong == 0 {
+                            continue;
+                        }
+                        let Some(window) = app_handle.get_webview_window("main") else {
+                            continue;
+                        };
+                        let visible = window.is_visible().unwrap_or(false);
+                        let focused = window.is_focused().unwrap_or(false);
+                        if !visible || !focused {
+                            continue;
+                        }
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let elapsed = now.saturating_sub(last_pong);
+                        if elapsed > 120 {
+                            tracing::warn!(
+                                elapsed_secs = elapsed,
+                                "webview heartbeat timeout -- reloading webview"
+                            );
+                            if let Err(e) = window.eval("window.location.reload()") {
+                                tracing::error!(
+                                    error = %e,
+                                    "failed to reload webview via eval"
+                                );
+                            }
+                            heartbeat.store(0, Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+
             app.manage(app_state);
             app.manage(knowledge_state);
 
@@ -263,6 +314,8 @@ pub fn run() {
             // Diagnostics
             commands::diagnostics::diagnostics_get_by_session,
             commands::diagnostics::diagnostics_get_subagent_history,
+            commands::diagnostics::diagnostics_clear_by_session,
+            commands::diagnostics::diagnostics_clear_all,
             // Observability
             commands::observability::observability_snapshot,
             commands::observability::observability_history,
@@ -288,6 +341,7 @@ pub fn run() {
             commands::system::health_check,
             commands::system::provider_list,
             commands::system::show_window,
+            commands::system::heartbeat_pong,
             commands::system::toggle_devtools,
             commands::system::window_set_decorations,
             commands::system::window_minimize,

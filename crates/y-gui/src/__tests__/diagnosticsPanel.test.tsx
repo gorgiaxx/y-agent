@@ -31,8 +31,9 @@ import {
   MIN_DIAGNOSTICS_PANEL_WIDTH,
   diagnosticsPanelWidthFromPointer,
 } from '../components/observation/diagnosticsPanelResize';
-import { computeSummary } from '../hooks/useDiagnostics';
+import { clearPersistedDiagnostics, computeSummary } from '../hooks/useDiagnostics';
 import { ThemeContext } from '../hooks/useTheme';
+import { transport } from '../lib';
 import type { DiagnosticsEntry } from '../types';
 
 describe('DiagnosticsPanel', () => {
@@ -121,5 +122,23 @@ describe('DiagnosticsPanel', () => {
     expect(diagnosticsPanelWidthFromPointer({ clientX: 20, viewportWidth: 1440 })).toBe(
       MAX_DIAGNOSTICS_PANEL_WIDTH,
     );
+  });
+
+  it('deletes persisted diagnostics for the active session when clearing', async () => {
+    const invoke = vi.mocked(transport.invoke);
+    invoke.mockClear();
+
+    await clearPersistedDiagnostics('session-1');
+
+    expect(invoke).toHaveBeenCalledWith('diagnostics_clear_by_session', { sessionId: 'session-1' });
+  });
+
+  it('deletes all persisted diagnostics from the global view when clearing', async () => {
+    const invoke = vi.mocked(transport.invoke);
+    invoke.mockClear();
+
+    await clearPersistedDiagnostics(null);
+
+    expect(invoke).toHaveBeenCalledWith('diagnostics_clear_all');
   });
 });

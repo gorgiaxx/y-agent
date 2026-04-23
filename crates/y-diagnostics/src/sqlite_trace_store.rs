@@ -642,6 +642,77 @@ impl TraceStore for SqliteTraceStore {
         Ok(n)
     }
 
+    async fn delete_traces_by_session(&self, session_id: &str) -> Result<u64, TraceStoreError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| storage_err(format!("delete_traces_by_session begin: {e}")))?;
+
+        sqlx::query(
+            "DELETE FROM diag_scores \
+             WHERE trace_id IN (SELECT id FROM diag_traces WHERE session_id = ?1)",
+        )
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| storage_err(format!("delete_traces_by_session scores: {e}")))?;
+
+        sqlx::query(
+            "DELETE FROM diag_observations \
+             WHERE trace_id IN (SELECT id FROM diag_traces WHERE session_id = ?1)",
+        )
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| storage_err(format!("delete_traces_by_session observations: {e}")))?;
+
+        let n = sqlx::query("DELETE FROM diag_traces WHERE session_id = ?1")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| storage_err(format!("delete_traces_by_session traces: {e}")))?
+            .rows_affected();
+
+        tx.commit()
+            .await
+            .map_err(|e| storage_err(format!("delete_traces_by_session commit: {e}")))?;
+
+        Ok(n)
+    }
+
+    async fn delete_all_traces(&self) -> Result<u64, TraceStoreError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| storage_err(format!("delete_all_traces begin: {e}")))?;
+
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM diag_traces")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| storage_err(format!("delete_all_traces count: {e}")))?;
+
+        sqlx::query("DELETE FROM diag_scores")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| storage_err(format!("delete_all_traces scores: {e}")))?;
+        sqlx::query("DELETE FROM diag_observations")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| storage_err(format!("delete_all_traces observations: {e}")))?;
+        sqlx::query("DELETE FROM diag_traces")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| storage_err(format!("delete_all_traces traces: {e}")))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| storage_err(format!("delete_all_traces commit: {e}")))?;
+
+        Ok(u64::try_from(count).unwrap_or(0))
+    }
+
     async fn list_traces_by_session(
         &self,
         session_id: &str,

@@ -77,6 +77,14 @@ export function computeSummary(entries: DiagnosticsEntry[]): DiagnosticsSummary 
   return s;
 }
 
+export async function clearPersistedDiagnostics(activeSessionId: string | null): Promise<void> {
+  if (activeSessionId) {
+    await transport.invoke('diagnostics_clear_by_session', { sessionId: activeSessionId });
+    return;
+  }
+  await transport.invoke('diagnostics_clear_all');
+}
+
 // ---------------------------------------------------------------------------
 // Module-level event bus singleton
 //
@@ -115,8 +123,8 @@ const unlistenFns: UnlistenFn[] = [];
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
-const MAX_DIAG_ENTRIES_PER_SESSION = 200;
-const DIAG_TRIM_TARGET = 100;
+const MAX_DIAG_ENTRIES_PER_SESSION = 1000;
+const DIAG_TRIM_TARGET = 800;
 
 /**
  * Map a raw backend diagnostics record to a typed DiagnosticsEntry.
@@ -195,7 +203,7 @@ async function loadSubagentHistory() {
 async function reloadSessionHistory(sessionId: string) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await transport.invoke<any[]>('diagnostics_get_by_session', { sessionId, limit: 50 });
+    const raw = await transport.invoke<any[]>('diagnostics_get_by_session', { sessionId, limit: 500 });
     if (!raw || raw.length === 0) return;
 
     const histEntries = raw.map((item, idx) => mapRawToEntry(item, `hist-${sessionId}`, idx));
@@ -332,6 +340,14 @@ async function initialiseBus() {
       if (ev.session_id) {
         reloadSessionHistory(ev.session_id);
       }
+      // Also reload all active parent sessions so their diagnostics
+      // include descendant sub-agent entries.
+      const parentSids = new Set(Object.values(sharedState.runToSession));
+      for (const parentSid of parentSids) {
+        if (parentSid && parentSid !== ev.session_id) {
+          reloadSessionHistory(parentSid);
+        }
+      }
       return;
     }
 
@@ -453,7 +469,7 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
 
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const raw = await transport.invoke<any[]>('diagnostics_get_by_session', { sessionId: sid, limit: 50 });
+        const raw = await transport.invoke<any[]>('diagnostics_get_by_session', { sessionId: sid, limit: 500 });
         if (!raw || raw.length === 0) return;
 
         const histEntries = raw.map((item, idx) => mapRawToEntry(item, `hist-${sid}`, idx));
@@ -475,20 +491,27 @@ export function useDiagnostics(activeSessionId: string | null): UseDiagnosticsRe
 
 
   const clear = useCallback(() => {
-    if (activeSessionId) {
-      const sid = activeSessionId;
-      broadcastUpdate((prev) => ({
-        ...prev,
-        sessionEntries: { ...prev.sessionEntries, [sid]: [] },
-      }));
-    } else {
-      // Global clear: wipe all session entries and stale run mappings.
-      broadcastUpdate((prev) => ({
-        ...prev,
-        sessionEntries: {},
-        runToSession: {},
-      }));
-    }
+    const sid = activeSessionId;
+    void (async () => {
+      try {
+        await clearPersistedDiagnostics(sid);
+      } catch (err) {
+        console.warn('diagnostics clear failed:', err);
+        return;
+      }
+
+      if (sid) {
+        broadcastUpdate((prev) => ({
+          ...prev,
+          sessionEntries: { ...prev.sessionEntries, [sid]: [] },
+        }));
+      } else {
+        broadcastUpdate((prev) => ({
+          ...prev,
+          sessionEntries: {},
+        }));
+      }
+    })();
   }, [activeSessionId]);
 
   const addUserMessage = useCallback((content: string, sessionId: string) => {

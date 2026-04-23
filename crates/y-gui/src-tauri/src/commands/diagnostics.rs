@@ -45,3 +45,19 @@ pub async fn diagnostics_get_subagent_history(
     let store = state.container.diagnostics.store();
     DiagnosticsService::get_subagent_history(store, limit.unwrap_or(50)).await
 }
+
+/// Delete stored diagnostics for a session and its descendant sessions.
+#[tauri::command]
+pub async fn diagnostics_clear_by_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<u64, String> {
+    DiagnosticsService::clear_session_history_including_descendants(&state.container, &session_id)
+        .await
+}
+
+/// Delete all stored diagnostics history.
+#[tauri::command]
+pub async fn diagnostics_clear_all(state: State<'_, AppState>) -> Result<u64, String> {
+    DiagnosticsService::clear_all_history(state.container.diagnostics.store()).await
+}

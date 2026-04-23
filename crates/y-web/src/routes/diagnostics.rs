@@ -5,7 +5,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{delete, get};
 use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -115,6 +115,30 @@ async fn get_subagent_history(
     Ok(Json(serde_json::to_value(entries).unwrap_or_default()))
 }
 
+/// `DELETE /api/v1/diagnostics/sessions/:session_id` -- clear session diagnostics.
+async fn clear_by_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let deleted = DiagnosticsService::clear_session_history_including_descendants(
+        &state.container,
+        &session_id,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
+/// `DELETE /api/v1/diagnostics` -- clear all diagnostics.
+async fn clear_all(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let deleted = DiagnosticsService::clear_all_history(state.container.diagnostics.store())
+        .await
+        .map_err(ApiError::Internal)?;
+
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -122,11 +146,12 @@ async fn get_subagent_history(
 /// Diagnostics route group.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/v1/diagnostics", delete(clear_all))
         .route("/api/v1/diagnostics/traces", get(list_traces))
         .route("/api/v1/diagnostics/traces/{trace_id}", get(get_trace))
         .route(
             "/api/v1/diagnostics/sessions/{session_id}",
-            get(get_by_session),
+            get(get_by_session).delete(clear_by_session),
         )
         .route("/api/v1/diagnostics/subagents", get(get_subagent_history))
 }

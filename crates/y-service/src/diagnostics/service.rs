@@ -152,6 +152,30 @@ impl DiagnosticsService {
         Self::build_history_entries(store, subagent_traces).await
     }
 
+    /// Delete diagnostics history for a session and all descendant sessions.
+    pub async fn clear_session_history_including_descendants(
+        container: &ServiceContainer,
+        session_id: &str,
+    ) -> Result<u64, String> {
+        let session_id = y_core::types::SessionId::from_string(session_id);
+        let nodes = container
+            .session_manager
+            .descendants_including_self(&session_id)
+            .await
+            .map_err(|e| format!("Failed to collect descendant sessions: {e}"))?;
+        let session_ids: Vec<String> = nodes.into_iter().map(|node| node.id.to_string()).collect();
+
+        Self::clear_history_for_session_ids(container.diagnostics.store(), &session_ids).await
+    }
+
+    /// Delete every diagnostics trace and related row.
+    pub async fn clear_all_history(store: Arc<dyn TraceStore>) -> Result<u64, String> {
+        store
+            .delete_all_traces()
+            .await
+            .map_err(|e| format!("Failed to delete diagnostics history: {e}"))
+    }
+
     /// System health check.
     pub async fn health_check(container: &ServiceContainer) -> HealthCheckResult {
         let store = container.diagnostics.store();
@@ -207,6 +231,20 @@ impl DiagnosticsService {
         }
 
         Self::build_history_entries(store, traces).await
+    }
+
+    async fn clear_history_for_session_ids(
+        store: Arc<dyn TraceStore>,
+        session_ids: &[String],
+    ) -> Result<u64, String> {
+        let mut deleted = 0;
+        for session_id in session_ids {
+            deleted += store
+                .delete_traces_by_session(session_id)
+                .await
+                .map_err(|e| format!("Failed to delete traces for session {session_id}: {e}"))?;
+        }
+        Ok(deleted)
     }
 
     async fn build_history_entries(
