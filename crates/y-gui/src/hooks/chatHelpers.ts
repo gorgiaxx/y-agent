@@ -137,6 +137,9 @@ export async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>
     return await fn();
   } finally {
     resolve!();
+    if (sessionLocks.get(sessionId) === next) {
+      sessionLocks.delete(sessionId);
+    }
   }
 }
 

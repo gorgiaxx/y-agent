@@ -13,11 +13,17 @@ export interface ToolResultRecord {
   metadata?: Record<string, unknown>;
 }
 
+const PLAN_AGENT_PREFIX = 'plan-';
+
 export function shouldDisplayStreamingAgent(
   agentName?: string,
   rootAgentNames: Iterable<string> = [DEFAULT_ROOT_AGENT_NAME],
 ): boolean {
   if (agentName == null || agentName === '') {
+    return true;
+  }
+
+  if (agentName.startsWith(PLAN_AGENT_PREFIX)) {
     return true;
   }
 

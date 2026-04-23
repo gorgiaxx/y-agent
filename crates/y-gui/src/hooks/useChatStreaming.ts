@@ -10,6 +10,7 @@ import { useState, useCallback, useEffect, useRef, type Dispatch, type SetStateA
 import { startTransition } from 'react';
 import { transport } from '../lib';
 import type { Message, GeneratedImage } from '../types';
+import { capSegments, capToolResults } from './streamCapping';
 import {
   chatBusState,
   chatBusSubscribers,
@@ -412,6 +413,10 @@ export function useChatStreaming(
         }
 
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+        if (sessionId && !sessionStillActive) {
+          refs.toolResultsRef.current.delete(sessionId);
+          refs.streamSegsRef.current.delete(sessionId);
+        }
         if (activeRunIdRef.current === payload.run_id) {
           activeRunIdRef.current = null;
           setActiveRunId(null);
@@ -579,6 +584,8 @@ export function useChatStreaming(
         if (sessionId) {
           if (!sessionStillActive) {
             setOpForSession(sessionId, 'idle');
+            refs.toolResultsRef.current.delete(sessionId);
+            refs.streamSegsRef.current.delete(sessionId);
           }
         } else if (refs.opStatusRef.current !== 'idle') {
           setOp('idle');
@@ -598,9 +605,10 @@ export function useChatStreaming(
         };
         const existing = refs.toolResultsRef.current.get(sid) ?? [];
         const nextToolResults = upsertToolResultRecord(existing, record);
-        refs.toolResultsRef.current.set(sid, nextToolResults.records);
+        const cappedResults = capToolResults(nextToolResults.records);
+        refs.toolResultsRef.current.set(sid, cappedResults);
         if (sid === refs.activeSessionIdRef.current) {
-          setVisibleToolResults(nextToolResults.records);
+          setVisibleToolResults(cappedResults);
         }
         // Push or replace a tool_result segment and bump version to force re-render.
         const segs = refs.streamSegsRef.current.get(sid);
@@ -618,7 +626,7 @@ export function useChatStreaming(
             };
           }
           const nextSegments = upsertToolResultSegment(preparedSegs, record);
-          refs.streamSegsRef.current.set(sid, nextSegments.segments);
+          refs.streamSegsRef.current.set(sid, capSegments(nextSegments.segments));
           setStreamSegsVersion((v) => v + 1);
         }
       }
