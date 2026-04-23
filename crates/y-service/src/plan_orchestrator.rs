@@ -14,17 +14,19 @@ use uuid::Uuid;
 
 use y_agent::orchestrator::dag::{DagError, TaskDag, TaskNode, TaskPriority};
 use y_agent::AgentDefinition;
+use y_core::provider::ResponseFormat;
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::tool::{ToolError, ToolOutput};
 use y_core::trust::TrustTier;
 use y_core::types::{Message, SessionId};
+
+use y_diagnostics::DiagnosticsEvent;
 
 use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentService};
 use crate::chat::{TurnEvent, TurnEventSender};
 use crate::container::ServiceContainer;
 
 const PLAN_CANCELLED_MESSAGE: &str = "Cancelled";
-const PLAN_ANALYST_AGENT_ID: &str = "plan-analyst";
 const PHASE_EXECUTOR_AGENT_ID: &str = "plan-phase-executor";
 /// Default maximum number of phases to execute concurrently.
 const DEFAULT_MAX_PARALLEL_PHASES: usize = 4;
@@ -46,26 +48,40 @@ const PHASE_EXECUTOR_FALLBACK_ALLOWED_TOOLS: &[&str] = &[
 // ---------------------------------------------------------------------------
 
 /// Status of a single task in the plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
+    #[default]
+    #[serde(alias = "blocked")]
     Pending,
     InProgress,
     Completed,
     Failed,
 }
 
+fn default_estimated_iterations() -> usize {
+    15
+}
+
 /// A structured task extracted from the plan.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlanTask {
+    #[serde(alias = "task_id")]
     pub id: String,
+    #[serde(default)]
     pub phase: usize,
     pub title: String,
+    #[serde(default, alias = "objective")]
     pub description: String,
+    #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
     pub status: TaskStatus,
+    #[serde(default = "default_estimated_iterations")]
     pub estimated_iterations: usize,
+    #[serde(default)]
     pub key_files: Vec<String>,
+    #[serde(default)]
     pub acceptance_criteria: Vec<String>,
 }
 
@@ -97,13 +113,13 @@ struct ResolvedAgentConfig {
     trust_tier: Option<TrustTier>,
     allowed_tools: Vec<String>,
     prune_tool_history: bool,
+    response_format: Option<ResponseFormat>,
 }
 
 impl PlanOrchestrator {
     /// Handle a `Plan` tool call.
     ///
     /// Workflow:
-    /// 0. (optional) Run plan-analyst for pre-planning analysis
     /// 1. Create a child session for the `plan-writer` sub-agent
     /// 2. Execute plan-writer (codebase exploration + plan generation)
     /// 3. Create a child session for the `task-decomposer` sub-agent
@@ -158,41 +174,6 @@ impl PlanOrchestrator {
             });
         }
 
-        // Phase 0: Pre-planning analysis (optional)
-        let skip_analysis = arguments
-            .get("skip_analysis")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-
-        let analysis = if skip_analysis {
-            String::new()
-        } else {
-            tracing::info!(
-                request = %request,
-                "plan orchestrator: starting plan-analyst"
-            );
-            match Self::run_plan_analyst(
-                container,
-                parent_session_id,
-                request,
-                context,
-                progress,
-                cancel.as_ref(),
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(e) => {
-                    // Non-fatal: log and continue without analysis.
-                    tracing::warn!(
-                        error = %e,
-                        "plan-analyst failed, continuing without analysis"
-                    );
-                    String::new()
-                }
-            }
-        };
-
         // Phase 1: Plan writing
         tracing::info!(request = %request, "plan orchestrator: starting plan-writer");
         let plan_content = Self::run_plan_writer(
@@ -200,7 +181,6 @@ impl PlanOrchestrator {
             parent_session_id,
             request,
             context,
-            &analysis,
             &plan_path,
             progress,
             cancel.as_ref(),
@@ -271,127 +251,12 @@ impl PlanOrchestrator {
         })
     }
 
-    /// Create a child session and run the plan-analyst agent.
-    ///
-    /// Returns the analyst's structured analysis text. The caller should
-    /// treat failures as non-fatal (analysis is optional enrichment).
-    async fn run_plan_analyst(
-        container: &ServiceContainer,
-        parent_session_id: &SessionId,
-        request: &str,
-        context: &str,
-        progress: Option<&TurnEventSender>,
-        cancel: Option<&CancellationToken>,
-    ) -> Result<String, ToolError> {
-        if is_cancelled(cancel) {
-            return Err(cancelled_tool_error());
-        }
-
-        let child_session = container
-            .session_manager
-            .create_session(CreateSessionOptions {
-                parent_id: Some(parent_session_id.clone()),
-                session_type: SessionType::SubAgent,
-                agent_id: Some(y_core::types::AgentId::from_string(PLAN_ANALYST_AGENT_ID)),
-                title: Some("Plan Analyst".to_string()),
-            })
-            .await
-            .map_err(|e| ToolError::RuntimeError {
-                name: "Plan".into(),
-                message: format!("failed to create plan-analyst session: {e}"),
-            })?;
-
-        let child_uuid =
-            Uuid::parse_str(child_session.id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
-
-        let settings = Self::resolve_agent_config(
-            container,
-            PLAN_ANALYST_AGENT_ID,
-            ResolvedAgentConfig {
-                system_prompt: String::new(),
-                max_iterations: 10,
-                max_tool_calls: 10,
-                preferred_models: vec![],
-                provider_tags: vec!["general".to_string()],
-                temperature: Some(0.3),
-                max_tokens: None,
-                trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
-                allowed_tools: vec!["FileRead".into(), "Glob".into(), "Grep".into()],
-                prune_tool_history: false,
-            },
-        )
-        .await;
-
-        let user_msg = if context.is_empty() {
-            format!("Analyze this request for pre-planning:\n\n{request}")
-        } else {
-            format!(
-                "Analyze this request for pre-planning:\n\n\
-                 Request: {request}\n\n\
-                 Context:\n{context}"
-            )
-        };
-
-        let messages = build_subagent_messages(&settings.system_prompt, user_msg);
-        let tool_defs =
-            Self::load_tool_schemas_for_allowed_tools(container, &settings.allowed_tools).await;
-
-        let exec_config = AgentExecutionConfig {
-            agent_name: PLAN_ANALYST_AGENT_ID.to_string(),
-            system_prompt: settings.system_prompt.clone(),
-            max_iterations: settings.max_iterations,
-            max_tool_calls: settings.max_tool_calls,
-            tool_definitions: tool_defs,
-            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
-            messages,
-            provider_id: None,
-            preferred_models: settings.preferred_models.clone(),
-            provider_tags: settings.provider_tags.clone(),
-            request_mode: y_core::provider::RequestMode::TextChat,
-            temperature: settings.temperature,
-            max_tokens: settings.max_tokens,
-            thinking: None,
-            session_id: Some(child_session.id.clone()),
-            session_uuid: child_uuid,
-            knowledge_collections: vec![],
-            use_context_pipeline: false,
-            user_query: request.to_string(),
-            external_trace_id: None,
-            trust_tier: settings.trust_tier,
-            agent_allowed_tools: settings.allowed_tools.clone(),
-            prune_tool_history: settings.prune_tool_history,
-            response_format: None,
-            image_generation_options: None,
-        };
-
-        let result =
-            AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
-                .await
-                .map_err(|e| map_plan_agent_error(PLAN_ANALYST_AGENT_ID, e))?;
-
-        if let Some(tx) = progress {
-            let _ = tx.send(TurnEvent::ToolResult {
-                name: "Plan".into(),
-                success: true,
-                duration_ms: 0,
-                input_preview: "plan-analyst completed".into(),
-                result_preview: "Pre-planning analysis done".into(),
-                agent_name: "plan-orchestrator".into(),
-                url_meta: None,
-                metadata: None,
-            });
-        }
-
-        Ok(result.content)
-    }
-
     /// Create a child session under the parent and run the plan-writer agent.
     async fn run_plan_writer(
         container: &ServiceContainer,
         parent_session_id: &SessionId,
         request: &str,
         context: &str,
-        analysis: &str,
         plan_path: &std::path::Path,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
@@ -427,12 +292,13 @@ impl PlanOrchestrator {
                 trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
                 allowed_tools: vec!["FileRead".into(), "Glob".into(), "Grep".into()],
                 prune_tool_history: false,
+                response_format: None,
             },
         )
         .await;
 
         // Build the user message for the plan-writer as structured JSON.
-        let user_msg = build_plan_writer_input(request, context, plan_path, analysis);
+        let user_msg = build_plan_writer_input(request, context, plan_path);
 
         let messages = build_subagent_messages(&settings.system_prompt, user_msg);
         let tool_defs =
@@ -470,6 +336,8 @@ impl PlanOrchestrator {
             AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
                 .await
                 .map_err(|e| map_plan_agent_error("plan-writer", e))?;
+
+        emit_subagent_completed(container, child_uuid, "plan-writer", true);
 
         // Prefer the content already present in the FileWrite tool call so we
         // can pass it directly to task-decomposer without re-reading from
@@ -545,6 +413,7 @@ impl PlanOrchestrator {
                 trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
                 allowed_tools: vec![],
                 prune_tool_history: false,
+                response_format: None,
             },
         )
         .await;
@@ -578,7 +447,7 @@ impl PlanOrchestrator {
             trust_tier: settings.trust_tier,
             agent_allowed_tools: settings.allowed_tools.clone(),
             prune_tool_history: settings.prune_tool_history,
-            response_format: None,
+            response_format: settings.response_format.clone(),
             image_generation_options: None,
         };
 
@@ -587,20 +456,29 @@ impl PlanOrchestrator {
                 .await
                 .map_err(|e| map_plan_agent_error("task-decomposer", e))?;
 
+        emit_subagent_completed(container, child_uuid, "task-decomposer", true);
+
         // Parse the JSON output. Try to extract from markdown code block if
-        // the LLM wrapped it.
+        // the LLM wrapped it, then attempt lenient parsing.
         let json_text = extract_json_from_response(&result.content);
-        let plan: StructuredPlan = serde_json::from_str(&json_text).map_err(|e| {
+        let json_text = repair_json(&json_text);
+        let mut plan: StructuredPlan = parse_structured_plan(&json_text).map_err(|msg| {
             tracing::error!(
                 raw_output = %result.content,
-                error = %e,
+                error = %msg,
                 "failed to parse task-decomposer output"
             );
             ToolError::RuntimeError {
                 name: "Plan".into(),
-                message: format!("failed to parse task-decomposer output: {e}"),
+                message: format!("failed to parse task-decomposer output: {msg}"),
             }
         })?;
+
+        for (i, task) in plan.tasks.iter_mut().enumerate() {
+            if task.phase == 0 {
+                task.phase = i + 1;
+            }
+        }
 
         if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::ToolResult {
@@ -958,6 +836,7 @@ impl PlanOrchestrator {
                     .map(|tool| (*tool).to_string())
                     .collect(),
                 prune_tool_history: false,
+                response_format: None,
             },
         )
         .await;
@@ -981,6 +860,8 @@ impl PlanOrchestrator {
             AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
                 .await
                 .map_err(|e| map_plan_agent_error(&phase_name, e))?;
+
+        emit_subagent_completed(container, child_uuid, PHASE_EXECUTOR_AGENT_ID, true);
 
         Ok(result.content)
     }
@@ -1012,6 +893,7 @@ impl PlanOrchestrator {
             trust_tier: Some(def.trust_tier),
             allowed_tools: def.allowed_tools.clone(),
             prune_tool_history: def.prune_tool_history,
+            response_format: def.resolved_response_format().ok().flatten(),
         }
     }
 
@@ -1066,6 +948,157 @@ fn slug_from_request(request: &str) -> String {
     }
 }
 
+fn emit_subagent_completed(
+    container: &ServiceContainer,
+    session_uuid: Uuid,
+    agent_name: &str,
+    success: bool,
+) {
+    let _ = container
+        .diagnostics_broadcast
+        .send(DiagnosticsEvent::SubagentCompleted {
+            trace_id: Uuid::new_v4(),
+            session_id: Some(session_uuid),
+            agent_name: agent_name.to_string(),
+            success,
+        });
+}
+
+/// Best-effort repair of malformed JSON from LLM output.
+///
+/// Handles common issues: trailing commas before `]`/`}`, single-line
+/// `// ...` comments, unescaped control characters in strings, and
+/// truncated output (unclosed brackets/braces).
+fn repair_json(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut prev_char = '\0';
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+
+    let mut i = 0;
+    while i < len {
+        let ch = chars[i];
+
+        if in_string {
+            if ch == '"' && prev_char != '\\' {
+                // Heuristic: look ahead past whitespace. If the next
+                // non-whitespace character is a JSON structural token
+                // (or another quote, or end-of-input), this is a real
+                // string terminator. Otherwise the LLM forgot to escape
+                // an interior quote -- escape it for them.
+                let mut j = i + 1;
+                while j < len && chars[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                let next_is_structural =
+                    j >= len || matches!(chars[j], ',' | ']' | '}' | ':' | '"');
+                if next_is_structural {
+                    in_string = false;
+                } else {
+                    out.push('\\');
+                    out.push('"');
+                    prev_char = '"';
+                    i += 1;
+                    continue;
+                }
+            } else if ch == '\n' || ch == '\r' || ch == '\t' {
+                // Escape bare control characters inside strings.
+                match ch {
+                    '\n' => {
+                        out.push_str("\\n");
+                        prev_char = 'n';
+                        i += 1;
+                        continue;
+                    }
+                    '\r' => {
+                        out.push_str("\\r");
+                        prev_char = 'r';
+                        i += 1;
+                        continue;
+                    }
+                    '\t' => {
+                        out.push_str("\\t");
+                        prev_char = 't';
+                        i += 1;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            out.push(ch);
+            prev_char = ch;
+            i += 1;
+            continue;
+        }
+
+        // Outside a string.
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            prev_char = ch;
+            i += 1;
+            continue;
+        }
+
+        // Strip single-line comments.
+        if ch == '/' && i + 1 < len && chars[i + 1] == '/' {
+            while i < len && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Remove trailing commas: `,` followed (ignoring whitespace) by `]` or `}`.
+        if ch == ',' {
+            let mut j = i + 1;
+            while j < len && chars[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < len && (chars[j] == ']' || chars[j] == '}') {
+                // Skip the comma.
+                i += 1;
+                continue;
+            }
+        }
+
+        out.push(ch);
+        prev_char = ch;
+        i += 1;
+    }
+
+    // Close unclosed brackets/braces for truncated output.
+    let mut open_braces: i32 = 0;
+    let mut open_brackets: i32 = 0;
+    let mut scan_in_string = false;
+    let mut scan_prev = '\0';
+    for c in out.chars() {
+        if scan_in_string {
+            if c == '"' && scan_prev != '\\' {
+                scan_in_string = false;
+            }
+        } else {
+            match c {
+                '"' => scan_in_string = true,
+                '{' => open_braces += 1,
+                '}' => open_braces -= 1,
+                '[' => open_brackets += 1,
+                ']' => open_brackets -= 1,
+                _ => {}
+            }
+        }
+        scan_prev = c;
+    }
+    for _ in 0..open_brackets {
+        out.push(']');
+    }
+    for _ in 0..open_braces {
+        out.push('}');
+    }
+
+    out
+}
+
 /// Extract JSON from a response that may be wrapped in markdown code blocks.
 fn extract_json_from_response(text: &str) -> String {
     let trimmed = text.trim();
@@ -1088,6 +1121,147 @@ fn extract_json_from_response(text: &str) -> String {
         }
     }
     trimmed.to_string()
+}
+
+/// Leniently parse `StructuredPlan` from JSON text.
+///
+/// Tries strict deserialization first. On failure, falls back to
+/// `serde_json::Value`-based extraction so that minor schema deviations
+/// from the LLM (e.g. `plan_title` being an object, missing fields,
+/// extra wrapper layers) do not crash the plan pipeline.
+fn parse_structured_plan(json_text: &str) -> Result<StructuredPlan, String> {
+    if let Ok(plan) = serde_json::from_str::<StructuredPlan>(json_text) {
+        return Ok(plan);
+    }
+
+    let val: serde_json::Value = serde_json::from_str(json_text).map_err(|e| e.to_string())?;
+
+    // Handle bare arrays: wrap into the expected object shape.
+    if let Some(arr) = val.as_array() {
+        return Ok(parse_structured_plan_from_tasks(arr));
+    }
+
+    let obj = val.as_object().ok_or("expected JSON object")?;
+
+    let plan_title = obj
+        .get("plan_title")
+        .and_then(|v| match v {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Object(m) => m
+                .get("title")
+                .or_else(|| m.get("name"))
+                .and_then(|v2| v2.as_str())
+                .map(String::from),
+            _ => v.to_string().into(),
+        })
+        .unwrap_or_else(|| "Untitled Plan".to_string());
+
+    let plan_file = obj
+        .get("plan_file")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let tasks_val = obj
+        .get("tasks")
+        .ok_or("missing 'tasks' array in task-decomposer output")?;
+
+    let tasks_arr = tasks_val.as_array().ok_or("'tasks' is not an array")?;
+
+    let tasks = parse_plan_tasks(tasks_arr);
+
+    Ok(StructuredPlan {
+        plan_title,
+        plan_file,
+        tasks,
+    })
+}
+
+/// Parse a bare JSON array as a `StructuredPlan` with a default title.
+fn parse_structured_plan_from_tasks(arr: &[serde_json::Value]) -> StructuredPlan {
+    let tasks = parse_plan_tasks(arr);
+    StructuredPlan {
+        plan_title: "Untitled Plan".to_string(),
+        plan_file: String::new(),
+        tasks,
+    }
+}
+
+/// Leniently parse an array of JSON values into `PlanTask` items.
+///
+/// Tries strict deserialization first per item, then falls back to
+/// manual field extraction with common LLM field-name variations
+/// (`task_id` for `id`, `objective` for `description`).
+fn parse_plan_tasks(arr: &[serde_json::Value]) -> Vec<PlanTask> {
+    let mut tasks = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        let task: PlanTask = serde_json::from_value(item.clone()).unwrap_or_else(|_| {
+            let o = item.as_object();
+            PlanTask {
+                id: o
+                    .and_then(|m| m.get("id").or_else(|| m.get("task_id")))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                phase: o
+                    .and_then(|m| m.get("phase"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize,
+                title: o
+                    .and_then(|m| m.get("title"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Untitled Task")
+                    .to_string(),
+                description: o
+                    .and_then(|m| m.get("description").or_else(|| m.get("objective")))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                depends_on: o
+                    .and_then(|m| m.get("depends_on"))
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                status: TaskStatus::Pending,
+                estimated_iterations: o
+                    .and_then(|m| m.get("estimated_iterations"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(15) as usize,
+                key_files: o
+                    .and_then(|m| m.get("key_files"))
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                acceptance_criteria: o
+                    .and_then(|m| m.get("acceptance_criteria"))
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }
+        });
+        let task = if task.id.is_empty() {
+            PlanTask {
+                id: format!("task-{}", i + 1),
+                ..task
+            }
+        } else {
+            task
+        };
+        tasks.push(task);
+    }
+    tasks
 }
 
 fn build_subagent_messages(system_prompt: &str, user_content: String) -> Vec<Message> {
@@ -1353,24 +1527,14 @@ fn resolve_task_status(task: &PlanTask, phase_results: &[serde_json::Value]) -> 
 
 /// Build the structured JSON user message passed to `plan-writer`.
 ///
-/// Always includes `task`, `context`, and `plan_path`. Includes `analysis`
-/// only when non-empty so plan-writer can detect whether pre-planning
-/// analysis is available.
-fn build_plan_writer_input(
-    request: &str,
-    context: &str,
-    plan_path: &Path,
-    analysis: &str,
-) -> String {
-    let mut input = serde_json::json!({
+/// Includes `task`, `context`, and `plan_path`.
+fn build_plan_writer_input(request: &str, context: &str, plan_path: &Path) -> String {
+    serde_json::json!({
         "task": request,
         "context": context,
         "plan_path": plan_path.display().to_string(),
-    });
-    if !analysis.is_empty() {
-        input["analysis"] = serde_json::Value::String(analysis.to_string());
-    }
-    input.to_string()
+    })
+    .to_string()
 }
 
 /// Resolve the max-parallel-phases setting from Plan tool arguments.
@@ -1834,6 +1998,7 @@ Fix the plan stream rendering.
             trust_tier: Some(TrustTier::BuiltIn),
             allowed_tools: vec!["FileWrite".into(), "ShellExec".into()],
             prune_tool_history: false,
+            response_format: None,
         };
         let task = PlanTask {
             id: "task-1".into(),
@@ -1962,6 +2127,7 @@ Fix the plan stream rendering.
                 trust_tier: None,
                 allowed_tools: vec![],
                 prune_tool_history: false,
+                response_format: None,
             },
         )
         .await;
@@ -2000,11 +2166,12 @@ Fix the plan stream rendering.
                 trust_tier: None,
                 allowed_tools: vec!["FallbackTool".into()],
                 prune_tool_history: true,
+                response_format: None,
             },
         )
         .await;
 
-        assert!(config.system_prompt.contains("Output ONLY valid JSON"));
+        assert!(config.system_prompt.contains("task decomposer"));
         assert_eq!(config.max_iterations, 50);
         assert_eq!(config.max_tool_calls, 0);
         assert_eq!(config.allowed_tools, Vec::<String>::new());
@@ -2028,6 +2195,7 @@ Fix the plan stream rendering.
                 trust_tier: None,
                 allowed_tools: vec!["FallbackTool".into()],
                 prune_tool_history: true,
+                response_format: None,
             },
         )
         .await;
@@ -2218,27 +2386,131 @@ Fix the plan stream rendering.
     }
 
     #[test]
-    fn test_build_plan_writer_input_includes_analysis_when_present() {
+    fn test_build_plan_writer_input_includes_required_fields() {
         let plan_path = Path::new("/tmp/plan.md");
-        let raw = build_plan_writer_input(
-            "refactor auth",
-            "src/auth/",
-            plan_path,
-            "intent: REFACTORING\ngap: none",
-        );
+        let raw = build_plan_writer_input("refactor auth", "src/auth/", plan_path);
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["task"], "refactor auth");
         assert_eq!(parsed["context"], "src/auth/");
         assert_eq!(parsed["plan_path"], "/tmp/plan.md");
-        assert_eq!(parsed["analysis"], "intent: REFACTORING\ngap: none");
     }
 
     #[test]
-    fn test_build_plan_writer_input_omits_analysis_when_empty() {
+    fn test_build_plan_writer_input_with_empty_context() {
         let plan_path = Path::new("/tmp/plan.md");
-        let raw = build_plan_writer_input("task", "ctx", plan_path, "");
+        let raw = build_plan_writer_input("task", "", plan_path);
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(parsed.get("analysis").is_none());
         assert_eq!(parsed["task"], "task");
+        assert_eq!(parsed["context"], "");
+    }
+
+    #[test]
+    fn test_repair_json_escapes_unescaped_interior_quotes() {
+        let input = r#"["text with "interior" quotes"]"#;
+        let repaired = repair_json(input);
+        let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr[0].as_str().unwrap(), r#"text with "interior" quotes"#);
+    }
+
+    #[test]
+    fn test_repair_json_preserves_valid_json() {
+        let input = r#"{"key": "value", "arr": [1, 2]}"#;
+        let repaired = repair_json(input);
+        assert_eq!(repaired, input);
+    }
+
+    #[test]
+    fn test_repair_json_handles_cjk_unescaped_quotes() {
+        let input = concat!(
+            r#"["normal step", "#,
+            r#""record "#,
+            "\"this CVE\"",
+            r#" as conclusion"]"#,
+        );
+        let repaired = repair_json(input);
+        let parsed: serde_json::Result<serde_json::Value> = serde_json::from_str(&repaired);
+        assert!(parsed.is_ok(), "repaired JSON should parse: {repaired}");
+    }
+
+    #[test]
+    fn test_parse_structured_plan_handles_bare_array() {
+        let input = r#"[
+            {
+                "task_id": "phase_1",
+                "title": "Search NVD",
+                "objective": "Query the NVD database",
+                "steps": ["step 1"],
+                "depends_on": [],
+                "estimated_iterations": 12,
+                "key_files": [],
+                "acceptance_criteria": ["found or not"],
+                "status": "pending"
+            }
+        ]"#;
+        let plan = parse_structured_plan(input).unwrap();
+        assert_eq!(plan.plan_title, "Untitled Plan");
+        assert_eq!(plan.tasks.len(), 1);
+        assert_eq!(plan.tasks[0].id, "phase_1");
+        assert_eq!(plan.tasks[0].description, "Query the NVD database");
+    }
+
+    #[test]
+    fn test_parse_structured_plan_aliases_task_id_and_objective() {
+        let input = r#"{
+            "plan_title": "Test",
+            "plan_file": "",
+            "tasks": [{
+                "task_id": "p1",
+                "phase": 1,
+                "title": "Do work",
+                "objective": "The objective",
+                "depends_on": [],
+                "status": "pending",
+                "estimated_iterations": 10,
+                "key_files": [],
+                "acceptance_criteria": []
+            }]
+        }"#;
+        let plan = parse_structured_plan(input).unwrap();
+        assert_eq!(plan.tasks[0].id, "p1");
+        assert_eq!(plan.tasks[0].description, "The objective");
+    }
+
+    #[test]
+    fn test_repair_json_then_parse_bare_array_with_interior_quotes() {
+        let raw = concat!(
+            "```json\n",
+            "[\n",
+            "  {\n",
+            r#"    "task_id": "phase_1","#,
+            "\n",
+            r#"    "title": "Search","#,
+            "\n",
+            r#"    "objective": "Find the CVE","#,
+            "\n",
+            r#"    "steps": ["check NVD", "if not found, record "#,
+            "\"not found in DB\"",
+            r#" as conclusion"],"#,
+            "\n",
+            r#"    "depends_on": [],"#,
+            "\n",
+            r#"    "estimated_iterations": 10,"#,
+            "\n",
+            r#"    "key_files": [],"#,
+            "\n",
+            r#"    "acceptance_criteria": ["done"],"#,
+            "\n",
+            r#"    "status": "pending""#,
+            "\n",
+            "  }\n",
+            "]\n",
+            "```",
+        );
+        let extracted = extract_json_from_response(raw);
+        let repaired = repair_json(&extracted);
+        let plan = parse_structured_plan(&repaired).unwrap();
+        assert_eq!(plan.tasks.len(), 1);
+        assert_eq!(plan.tasks[0].id, "phase_1");
     }
 }
