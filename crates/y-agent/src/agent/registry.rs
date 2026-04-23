@@ -103,6 +103,10 @@ impl AgentRegistry {
             .template_vars
             .push(("{{YAGENT_CONFIG_PATH}}".to_string(), path_str));
 
+        for (key, val) in y_core::template::RuntimeTemplateVars::static_vars() {
+            registry.template_vars.push((key, val));
+        }
+
         registry.register_builtins();
         registry
     }
@@ -787,6 +791,39 @@ mod tests {
         assert!(
             aa.system_prompt.contains("./agents/"),
             "fallback path '.' should produce './agents/' in system_prompt"
+        );
+    }
+
+    /// Static runtime vars (OS, ARCH) are expanded in agent TOML at load time.
+    #[test]
+    fn test_registry_expands_os_arch() {
+        let registry = AgentRegistry::new();
+
+        let toml_with_os = r#"
+id = "test-os-agent"
+name = "Test OS Agent"
+description = "Agent that uses {{OS}} and {{ARCH}}"
+mode = "explore"
+trust_tier = "built_in"
+system_prompt = "You run on {{OS}} ({{ARCH}})."
+"#;
+        let expanded = registry.expand_templates(toml_with_os);
+
+        assert!(
+            !expanded.contains("{{OS}}"),
+            "{{{{OS}}}} should be expanded"
+        );
+        assert!(
+            !expanded.contains("{{ARCH}}"),
+            "{{{{ARCH}}}} should be expanded"
+        );
+        assert!(
+            expanded.contains(std::env::consts::OS),
+            "expanded content should contain the actual OS"
+        );
+        assert!(
+            expanded.contains(std::env::consts::ARCH),
+            "expanded content should contain the actual ARCH"
         );
     }
 

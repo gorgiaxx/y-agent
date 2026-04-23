@@ -32,6 +32,7 @@ pub mod provider;
 pub mod runtime;
 pub mod session;
 pub mod skill;
+pub mod template;
 pub mod tool;
 pub mod trust;
 pub mod types;

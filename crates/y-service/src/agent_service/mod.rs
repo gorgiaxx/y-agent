@@ -579,6 +579,10 @@ mod tests {
         }
     }
 
+    fn default_template_vars() -> y_core::template::RuntimeTemplateVars {
+        y_core::template::RuntimeTemplateVars::from_runtime(None)
+    }
+
     #[test]
     fn test_subagent_prompt_unchanged_without_tools() {
         let base = "You are a test agent.";
@@ -587,6 +591,7 @@ mod tests {
             &[],
             ToolCallingMode::PromptBased,
             &y_core::runtime::RuntimeBackend::Native,
+            &default_template_vars(),
         );
         assert_eq!(result, base);
     }
@@ -600,6 +605,7 @@ mod tests {
             &defs,
             ToolCallingMode::PromptBased,
             &y_core::runtime::RuntimeBackend::Native,
+            &default_template_vars(),
         );
 
         assert!(result.starts_with(base));
@@ -617,6 +623,7 @@ mod tests {
             &defs,
             ToolCallingMode::Native,
             &y_core::runtime::RuntimeBackend::Native,
+            &default_template_vars(),
         );
 
         // Native mode: tools are sent via API field, prompt includes rules but no XML/summary.
@@ -635,10 +642,56 @@ mod tests {
             &defs,
             ToolCallingMode::PromptBased,
             &y_core::runtime::RuntimeBackend::Native,
+            &default_template_vars(),
         );
 
         assert!(result.starts_with(base));
         assert!(result.contains("FileRead"));
+    }
+
+    #[test]
+    fn test_subagent_prompt_expands_datetime() {
+        let base = "Current time: {{DATETIME}}. You are a helpful agent.";
+        let result = subagent::build_subagent_system_prompt(
+            base,
+            &[],
+            ToolCallingMode::Native,
+            &y_core::runtime::RuntimeBackend::Native,
+            &default_template_vars(),
+        );
+
+        assert!(!result.contains("{{DATETIME}}"));
+        assert!(result.contains("UTC"));
+    }
+
+    #[test]
+    fn test_subagent_prompt_expands_os_arch_workspace() {
+        let vars = y_core::template::RuntimeTemplateVars::from_runtime(Some("/test/workspace"));
+        let base = "OS={{OS}}, ARCH={{ARCH}}, WS={{WORKSPACE}}";
+        let result = subagent::build_subagent_system_prompt(
+            base,
+            &[],
+            ToolCallingMode::Native,
+            &y_core::runtime::RuntimeBackend::Native,
+            &vars,
+        );
+
+        assert!(result.contains(std::env::consts::OS));
+        assert!(result.contains(std::env::consts::ARCH));
+        assert!(result.contains("/test/workspace"));
+    }
+
+    #[test]
+    fn test_subagent_prompt_no_template_passthrough() {
+        let base = "No templates in this prompt.";
+        let result = subagent::build_subagent_system_prompt(
+            base,
+            &[],
+            ToolCallingMode::Native,
+            &y_core::runtime::RuntimeBackend::Native,
+            &default_template_vars(),
+        );
+        assert_eq!(result, base);
     }
 
     #[test]
