@@ -75,6 +75,27 @@ function AppContent({ onRequestWizard }: { onRequestWizard: () => void }) {
 export default function App() {
   const [showWizard, setShowWizard] = useState(false);
 
+  useEffect(() => {
+    const sendPong = () => transport.invoke('heartbeat_pong').catch(() => {});
+    sendPong();
+    let timer = setInterval(sendPong, 15_000);
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        sendPong();
+        clearInterval(timer);
+        timer = setInterval(sendPong, 15_000);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', () => sendPong());
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
   const handleRunWizard = useCallback(() => {
     setShowWizard(true);
   }, []);

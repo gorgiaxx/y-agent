@@ -1,6 +1,8 @@
 //! System status and health command handlers.
 
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::State;
@@ -97,6 +99,21 @@ fn data_dir() -> Option<PathBuf> {
 #[tauri::command]
 pub async fn health_check() -> Result<String, String> {
     Ok("ok".to_string())
+}
+
+/// Heartbeat pong from the frontend webview.
+///
+/// Called periodically by the frontend to signal that the `WKWebView` content
+/// process is alive. The Rust-side monitor checks this timestamp to detect
+/// when macOS has terminated the content process (blank screen).
+#[tauri::command]
+pub async fn heartbeat_pong(state: State<'_, AppState>) -> Result<(), String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    state.last_heartbeat_pong.store(now, Ordering::Relaxed);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

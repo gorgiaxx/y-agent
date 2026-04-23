@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -75,6 +76,11 @@ pub struct AppState {
     /// Arc-wrapped so the spawned chat task can clone it and write after a
     /// successful turn without holding a reference to `AppState`.
     pub turn_meta_cache: Arc<Mutex<HashMap<String, TurnMeta>>>,
+    /// Timestamp (UNIX epoch seconds) of the last heartbeat pong from the
+    /// frontend. Used by the webview health monitor to detect `WKWebView`
+    /// content process termination on macOS. Value of 0 means the frontend
+    /// has not yet initialized.
+    pub last_heartbeat_pong: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -88,6 +94,7 @@ impl AppState {
             state_dir,
             pending_runs: Arc::new(Mutex::new(HashMap::new())),
             turn_meta_cache: Arc::new(Mutex::new(HashMap::new())),
+            last_heartbeat_pong: Arc::new(AtomicU64::new(0)),
         }
     }
 }
