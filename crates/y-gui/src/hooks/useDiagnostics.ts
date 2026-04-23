@@ -337,7 +337,33 @@ async function initialiseBus() {
     broadcastUpdate((prev) => {
       const next = new Set(prev.activeRuns);
       next.delete(run_id);
+      const sid = prev.runToSession[run_id];
       delete prev.runToSession[run_id];
+
+      if (sid && prev.sessionEntries[sid]) {
+        const entries = prev.sessionEntries[sid].map((e) => {
+          if (e.event.type === 'tool_start') {
+            return {
+              ...e,
+              event: {
+                type: 'tool_result' as const,
+                name: e.event.name,
+                success: false,
+                duration_ms: 0,
+                result_preview: 'Cancelled',
+                agent_name: e.event.agent_name,
+              },
+            };
+          }
+          return e;
+        });
+        return {
+          ...prev,
+          activeRuns: next,
+          sessionEntries: { ...prev.sessionEntries, [sid]: entries },
+        };
+      }
+
       return { ...prev, activeRuns: next };
     });
   });
