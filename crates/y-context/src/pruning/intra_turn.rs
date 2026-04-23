@@ -171,6 +171,14 @@ impl IntraTurnPruner {
     }
 
     /// Signal 1: Find tool messages with error patterns.
+    ///
+    /// Skips tool results whose parent assistant carries `tool_calls`. The
+    /// error-pattern heuristic (`"error:"`, `"not found"`, etc.) fires on
+    /// informative outcomes (e.g. `FileRead` on a missing path) that the LLM
+    /// needs to see to avoid re-requesting the same call. Removing the pair
+    /// would strip the `tool_call` from history and trigger an infinite loop
+    /// where the model re-invokes the call, gets the same "error" result,
+    /// and repeats. Pure-text retry noise is left to Signal 2.
     fn detect_error_tool_results(
         &self,
         messages: &[Message],
@@ -183,6 +191,14 @@ impl IntraTurnPruner {
                 continue;
             }
             if Self::is_protected(i, last_boundary) {
+                continue;
+            }
+            // Never prune a tool result whose parent assistant carries
+            // tool_calls: the call + result pair is load-bearing context.
+            if i > 0
+                && messages[i - 1].role == Role::Assistant
+                && !messages[i - 1].tool_calls.is_empty()
+            {
                 continue;
             }
             if matches_error_patterns(&msg.content, &self.extra_patterns) {
@@ -284,6 +300,11 @@ impl IntraTurnPruner {
     }
 
     /// Signal 3: Find tool messages with empty result patterns.
+    ///
+    /// Same safety rule as Signal 1: never prune a tool result whose parent
+    /// assistant carries `tool_calls`. An empty result (e.g. `Glob` with no
+    /// matches) is meaningful context; dropping it causes the LLM to re-issue
+    /// the same search.
     fn detect_empty_tool_results(
         messages: &[Message],
         last_boundary: Option<usize>,
@@ -295,6 +316,12 @@ impl IntraTurnPruner {
                 continue;
             }
             if Self::is_protected(i, last_boundary) {
+                continue;
+            }
+            if i > 0
+                && messages[i - 1].role == Role::Assistant
+                && !messages[i - 1].tool_calls.is_empty()
+            {
                 continue;
             }
             if matches_empty_patterns(&msg.content) {
@@ -608,14 +635,14 @@ mod tests {
         ];
 
         let report = pruner.prune_working_history(&mut history, 5);
-        // t1 has error -> a1 should be removed -> t2 (same group) must also be removed.
-        assert!(!report.skipped);
+        // a1 carries tool_calls -> t1 (error) must NOT be pruned even though
+        // its content matches error patterns. Removing the call+result pair
+        // would strip causal history and cause the LLM to re-issue the call.
+        assert!(report.skipped || report.messages_removed == 0);
         let ids: Vec<&str> = history.iter().map(|m| m.message_id.as_str()).collect();
-        // a1, t1, t2 should all be removed together.
-        assert!(!ids.contains(&"a1"));
-        assert!(!ids.contains(&"t1"));
-        assert!(!ids.contains(&"t2"));
-        // u1, a2, t3 remain.
+        assert!(ids.contains(&"a1"));
+        assert!(ids.contains(&"t1"));
+        assert!(ids.contains(&"t2"));
         assert!(ids.contains(&"u1"));
         assert!(ids.contains(&"a2"));
         assert!(ids.contains(&"t3"));
@@ -753,5 +780,39 @@ mod tests {
         assert!(ids.contains(&"t1"));
         assert!(ids.contains(&"a2"));
         assert!(ids.contains(&"t2"));
+    }
+
+    /// Regression: `FileRead` on a missing path returns `"error": "not found"`,
+    /// which matches `ERROR_PATTERNS`. The previous implementation pruned the
+    /// tool_result AND the parent assistant (the `tool_call`), so the LLM
+    /// reissued the same `FileRead` on the next iteration and entered an
+    /// infinite loop. A tool_result whose parent assistant has `tool_calls`
+    /// must be preserved regardless of content heuristics.
+    #[test]
+    fn test_no_pruning_for_error_tool_results_with_tool_calls() {
+        let pruner = IntraTurnPruner::from_config(&default_config());
+        let mut history = vec![
+            make_msg("s1", Role::System, "system"),
+            make_msg("u1", Role::User, "read README.md and access.go"),
+            make_assistant_with_tool_calls("a1", "", &["tc_readme"]),
+            make_tool_msg(
+                "t1",
+                "{\"error\": \"file not found: README.md\"}",
+                "tc_readme",
+            ),
+            make_assistant_with_tool_calls("a2", "", &["tc_go"]),
+            make_tool_msg("t2", "{\"content\": \"package biz\"}", "tc_go"),
+        ];
+
+        let report = pruner.prune_working_history(&mut history, 3);
+        assert!(
+            report.skipped || report.messages_removed == 0,
+            "tool_call pair with error result was wrongly pruned: {} removed",
+            report.messages_removed
+        );
+        assert_eq!(history.len(), 6, "all tool_call pairs must survive");
+        let ids: Vec<&str> = history.iter().map(|m| m.message_id.as_str()).collect();
+        assert!(ids.contains(&"a1"), "earlier FileRead call must survive");
+        assert!(ids.contains(&"t1"), "earlier error result must survive");
     }
 }
