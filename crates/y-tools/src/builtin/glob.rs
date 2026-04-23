@@ -8,6 +8,8 @@
 //! Reference: cursor Glob.js tool implementation.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use ignore::overrides::OverrideBuilder;
@@ -24,6 +26,18 @@ const MAX_RESULT_SIZE_CHARS: usize = 10_000;
 
 /// Default timeout for the search (seconds).
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// Sets the inner `AtomicBool` to `true` when dropped, signalling
+/// the blocking walker thread to stop early.
+struct DropGuard(Option<Arc<AtomicBool>>);
+
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        if let Some(flag) = self.0.take() {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+}
 
 /// Built-in Glob tool for file pattern matching.
 ///
@@ -141,7 +155,11 @@ impl GlobTool {
     }
 
     /// Execute the glob search using the `ignore` crate's `WalkBuilder`.
-    fn execute_walk(glob_pattern: &str, search_path: &str) -> Result<Vec<String>, ToolError> {
+    fn execute_walk(
+        glob_pattern: &str,
+        search_path: &str,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<String>, ToolError> {
         let search_dir = Path::new(search_path);
 
         // Build an override matcher for the glob pattern.
@@ -168,6 +186,9 @@ impl GlobTool {
 
         let mut entries: Vec<(String, std::time::SystemTime)> = Vec::new();
         for result in walker {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(ToolError::Cancelled);
+            }
             match result {
                 Ok(entry) => {
                     // Skip directories -- only collect files.
@@ -260,12 +281,18 @@ impl Tool for GlobTool {
         tracing::debug!("Glob tool: pattern={glob_pattern:?}, search_path={resolved_path:?}");
 
         // Execute the walk in a blocking task with timeout.
+        // The AtomicBool is set when this future is dropped (e.g. by
+        // tokio::select! on a CancellationToken) so the blocking thread
+        // stops iterating promptly instead of running to completion.
         let rp = resolved_path.clone();
         let gp = glob_pattern.clone();
         let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_clone = Arc::clone(&cancelled);
+        let guard = DropGuard(Some(cancelled));
         let all_matches = tokio::time::timeout(
             timeout,
-            tokio::task::spawn_blocking(move || Self::execute_walk(&gp, &rp)),
+            tokio::task::spawn_blocking(move || Self::execute_walk(&gp, &rp, &cancelled_clone)),
         )
         .await
         .map_err(|_| ToolError::Timeout {
@@ -275,6 +302,7 @@ impl Tool for GlobTool {
             name: "Glob".into(),
             message: format!("search task failed: {e}"),
         })??;
+        drop(guard);
 
         // Truncate.
         let total_count = all_matches.len();

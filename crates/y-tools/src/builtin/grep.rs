@@ -9,7 +9,8 @@
 use std::collections::HashSet;
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use grep_matcher::Matcher;
@@ -34,6 +35,18 @@ const DEFAULT_HEAD_LIMIT: u64 = 250;
 
 /// Default timeout for the search (seconds).
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// Sets the inner `AtomicBool` to `true` when dropped, signalling
+/// the blocking search thread to stop early.
+struct DropGuard(Option<Arc<AtomicBool>>);
+
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        if let Some(flag) = self.0.take() {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+}
 
 /// Built-in Grep tool for file content searching.
 ///
@@ -228,7 +241,10 @@ impl GrepTool {
     /// Execute the grep search using ripgrep library crates.
     ///
     /// Returns raw output lines appropriate for the given mode.
-    fn execute_search(params: &SearchParams) -> Result<Vec<String>, ToolError> {
+    fn execute_search(
+        params: &SearchParams,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<String>, ToolError> {
         let search_path = Path::new(&params.search_path);
 
         // Build regex matcher.
@@ -370,6 +386,9 @@ impl GrepTool {
             // Walk directory and search each file.
             let mut searcher = searcher_builder.build();
             for entry in walk_builder.build() {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err(ToolError::Cancelled);
+                }
                 match entry {
                     Ok(entry) => {
                         if entry.file_type().is_none_or(|ft| ft.is_dir()) {
@@ -518,10 +537,16 @@ impl Tool for GrepTool {
         );
 
         // Execute search in a blocking task with timeout.
+        // The AtomicBool is set when this future is dropped (e.g. by
+        // tokio::select! on a CancellationToken) so the blocking thread
+        // stops iterating promptly instead of running to completion.
         let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_clone = Arc::clone(&cancelled);
+        let guard = DropGuard(Some(cancelled));
         let raw_lines = tokio::time::timeout(
             timeout,
-            tokio::task::spawn_blocking(move || Self::execute_search(&params)),
+            tokio::task::spawn_blocking(move || Self::execute_search(&params, &cancelled_clone)),
         )
         .await
         .map_err(|_| ToolError::Timeout {
@@ -531,6 +556,7 @@ impl Tool for GrepTool {
             name: "Grep".into(),
             message: format!("search task failed: {e}"),
         })??;
+        drop(guard);
 
         // Format the result based on output mode.
         match mode.as_str() {
