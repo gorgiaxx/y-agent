@@ -9,6 +9,7 @@
 // Used by both StaticBubble and StreamingBubble in multiple rendering paths.
 // ---------------------------------------------------------------------------
 
+import { memo, useMemo } from 'react';
 import { MarkdownSegment } from './MessageShared';
 import { extractThinkTags } from './messageUtils';
 import { ThinkingCard } from './ThinkingCard';
@@ -28,13 +29,13 @@ interface ThinkContentBlockProps {
  * Extracts the thinking block, renders it as a ThinkingCard,
  * and renders the remaining content as markdown.
  */
-export function ThinkContentBlock({
+export const ThinkContentBlock = memo(function ThinkContentBlock({
   content,
   markdownComponents,
   isStreaming = false,
   className = 'message-content markdown-body',
 }: ThinkContentBlockProps) {
-  const think = extractThinkTags(content);
+  const think = useMemo(() => extractThinkTags(content), [content]);
   return (
     <>
       {think.thinkContent && (
@@ -50,4 +51,4 @@ export function ThinkContentBlock({
       )}
     </>
   );
-}
+});

@@ -10,6 +10,9 @@
   gap: var(--space-md);
   padding: var(--space-md) var(--space-lg);
   transition: background-color 0.12s ease;
+  contain: content;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 
 .message-bubble:hover {

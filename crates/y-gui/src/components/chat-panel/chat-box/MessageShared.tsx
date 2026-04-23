@@ -12,7 +12,7 @@
  *   AssistantMessageShell -- shared layout wrapper for assistant messages
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useLayoutEffect, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -44,7 +44,7 @@ export function Avatar({ role }: { role: string }) {
 /* ---- CodeBlock ---- */
 
 /** Fenced code block with language label and copy button. */
-export function CodeBlock({
+export const CodeBlock = memo(function CodeBlock({
   language,
   children,
   themeStyle,
@@ -54,6 +54,11 @@ export function CodeBlock({
   themeStyle: Record<string, React.CSSProperties>;
 }) {
   const [copied, setCopied] = useState(false);
+  const [highlighted, setHighlighted] = useState(false);
+
+  useLayoutEffect(() => {
+    setHighlighted(true);
+  }, []);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(children).then(() => {
@@ -74,34 +79,45 @@ export function CodeBlock({
           {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
       </div>
-      <SyntaxHighlighter
-        style={themeStyle}
-        language={language || 'text'}
-        PreTag="div"
-        customStyle={{
-          margin: 0,
-          borderRadius: 0,
-          fontSize: '13px',
-        }}
-      >
-        {children}
-      </SyntaxHighlighter>
+      {highlighted ? (
+        <SyntaxHighlighter
+          style={themeStyle}
+          language={language || 'text'}
+          PreTag="div"
+          customStyle={{
+            margin: 0,
+            borderRadius: 0,
+            fontSize: '13px',
+          }}
+        >
+          {children}
+        </SyntaxHighlighter>
+      ) : (
+        <div style={{ margin: 0, borderRadius: 0, fontSize: '13px', padding: '1em' }}>
+          <code>{children}</code>
+        </div>
+      )}
     </div>
   );
-}
+});
 
 
 
 /* ---- MarkdownSegment ---- */
+
+const REMARK_PLUGINS = [remarkGfm];
+
 /** Render a markdown text segment. */
-export function MarkdownSegment({ text, components }: { text: string; components: Record<string, unknown> }) {
+export const MarkdownSegment = memo(function MarkdownSegment(
+  { text, components }: { text: string; components: Record<string, unknown> },
+) {
   if (!text.trim()) return null;
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
       {escapeThinkTags(text)}
     </ReactMarkdown>
   );
-}
+});
 
 /* ---- ActionBar ---- */
 

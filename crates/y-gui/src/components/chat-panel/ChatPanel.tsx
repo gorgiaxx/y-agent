@@ -44,7 +44,7 @@ interface ChatPanelProps {
 // ---------------------------------------------------------------------------
 
 type DisplayItem =
-  | { kind: 'message'; msg: Message; toolResults?: ToolResultRecord[] }
+  | { kind: 'message'; msg: Message; msgIdx: number; toolResults?: ToolResultRecord[] }
   | { kind: 'restore-divider'; segment: TombstonedSegment }
   | { kind: 'context-reset'; pointIndex: number }
   | { kind: 'compact-divider'; info: CompactInfo; pointIndex: number }
@@ -110,6 +110,7 @@ function buildDisplayItems(
     items.push({
       kind: 'message',
       msg,
+      msgIdx: idx,
       toolResults: isLive ? toolResults : undefined,
     });
   });
@@ -198,7 +199,7 @@ function ChatPanelInner({
       behavior,
       align: 'end',
     });
-  }, [displayItems.length, messages, toolResults, getStreamSegments, isStreaming, error]);
+  }, [displayItems.length, isStreaming]);
 
   const handleScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     shouldAutoScrollRef.current = isNearBottom({
@@ -264,13 +265,11 @@ function ChatPanelInner({
         );
 
       case 'message': {
-        // Compute the 0-based message index from the display-item list.
-        const msgIdx = messages.indexOf(item.msg);
         if (item.msg.role === 'user') {
           return (
             <UserBubble
               message={item.msg}
-              messageIndex={msgIdx >= 0 ? msgIdx : undefined}
+              messageIndex={item.msgIdx >= 0 ? item.msgIdx : undefined}
               onEdit={(content) => onEditMessage?.(content, item.msg.id)}
               onUndo={onUndoMessage}
               onResend={(content) => onResendMessage?.(content, item.msg.id)}
@@ -291,7 +290,7 @@ function ChatPanelInner({
       default:
         return null;
     }
-  }, [messages, isStreaming, onEditMessage, onUndoMessage, onResendMessage, onForkMessage, onRestoreBranch, getStreamSegments]);
+  }, [isStreaming, onEditMessage, onUndoMessage, onResendMessage, onForkMessage, onRestoreBranch, getStreamSegments]);
 
   if (isLoading) {
     return (
@@ -339,8 +338,8 @@ function ChatPanelInner({
           }}
           itemContent={renderItem}
           onScroll={handleScroll}
-          overscan={600}
-          increaseViewportBy={{ top: 400, bottom: 400 }}
+          overscan={1200}
+          increaseViewportBy={{ top: 800, bottom: 800 }}
           initialTopMostItemIndex={Math.max(0, displayItems.length - 1)}
           style={{ height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         />

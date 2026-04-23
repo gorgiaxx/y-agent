@@ -5,6 +5,7 @@
  * This preserves the original export so ChatPanel.tsx needs zero changes.
  */
 
+import { memo } from 'react';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../../hooks/useInterleavedSegments';
@@ -22,16 +23,16 @@ export interface AssistantBubbleProps {
 }
 
 
-export function AssistantBubble({ message, toolResults, getStreamSegments }: AssistantBubbleProps) {
+export const AssistantBubble = memo(function AssistantBubble(
+  { message, toolResults, getStreamSegments }: AssistantBubbleProps,
+) {
   const isStreamingMsg = message.id.startsWith('streaming-')
     || message.id.startsWith('cancelled-')
     || message.id.startsWith('error-');
 
   if (isStreamingMsg) {
-    // Only call the getter for streaming messages -- avoids unnecessary
-    // evaluation for every history message in the list.
     const streamSegments = getStreamSegments?.() ?? null;
     return <StreamingBubble message={message} toolResults={toolResults} streamSegments={streamSegments} />;
   }
   return <StaticBubble message={message} />;
-}
+});

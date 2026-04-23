@@ -10,7 +10,7 @@
  * falling back to the last text segment after the last tool call.
  */
 
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import {
@@ -35,7 +35,7 @@ export interface StaticBubbleProps {
 }
 
 
-export function StaticBubble({ message }: StaticBubbleProps) {
+export const StaticBubble = memo(function StaticBubble({ message }: StaticBubbleProps) {
   const effectiveContent = message.content;
   const generatedImages = useMemo(
     () => extractGeneratedImages(message.metadata),
@@ -225,4 +225,4 @@ export function StaticBubble({ message }: StaticBubbleProps) {
       <GeneratedImageGallery images={generatedImages} />
     </AssistantMessageShell>
   );
-}
+});
