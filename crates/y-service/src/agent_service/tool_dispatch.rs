@@ -25,6 +25,27 @@ pub(crate) async fn execute_and_record_tool(
 ) -> (bool, String) {
     let tool_start = std::time::Instant::now();
 
+    if ctx
+        .cancel_token
+        .as_ref()
+        .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
+    {
+        let error_content = "[SYSTEM] Cancelled by user.".to_string();
+        if let Some(tx) = progress {
+            let _ = tx.send(TurnEvent::ToolResult {
+                name: tc.name.clone(),
+                success: false,
+                duration_ms: 0,
+                input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                result_preview: error_content.clone(),
+                agent_name: config.agent_name.clone(),
+                url_meta: None,
+                metadata: None,
+            });
+        }
+        return (false, error_content);
+    }
+
     if ctx.tool_calls_executed.len() >= config.max_tool_calls {
         let error_content = format!(
             "[SYSTEM] Tool call limit ({}) reached. Do NOT request more tools. \
@@ -183,9 +204,18 @@ pub(crate) async fn execute_and_record_tool(
                 });
             }
 
-            // Block until the user responds (or the channel is dropped).
-            match resp_rx.await {
-                Ok(crate::chat::PermissionPromptResponse::Approve) => {
+            // Block until the user responds, the channel is dropped,
+            // or the run is cancelled via the Stop button.
+            let user_response = if let Some(ref tok) = ctx.cancel_token {
+                tokio::select! {
+                    resp = resp_rx => resp.ok(),
+                    () = tok.cancelled() => None,
+                }
+            } else {
+                resp_rx.await.ok()
+            };
+            match user_response {
+                Some(crate::chat::PermissionPromptResponse::Approve) => {
                     tracing::info!(
                         tool = %tc.name,
                         request_id = %request_id,
@@ -193,7 +223,7 @@ pub(crate) async fn execute_and_record_tool(
                     );
                     // Fall through to execute the tool.
                 }
-                Ok(crate::chat::PermissionPromptResponse::AllowAllForSession) => {
+                Some(crate::chat::PermissionPromptResponse::AllowAllForSession) => {
                     tracing::info!(
                         tool = %tc.name,
                         request_id = %request_id,
@@ -207,7 +237,7 @@ pub(crate) async fn execute_and_record_tool(
                     .await;
                     // Fall through to execute the tool.
                 }
-                Ok(crate::chat::PermissionPromptResponse::Deny) | Err(_) => {
+                Some(crate::chat::PermissionPromptResponse::Deny) | None => {
                     let denied_msg = "[SYSTEM] User denied permission for this tool call.";
                     tracing::info!(
                         tool = %tc.name,
@@ -259,34 +289,19 @@ pub(crate) async fn execute_and_record_tool(
         }
     }
 
-    // ---------------------------------------------------------------
-    // File history tracking (rewind support)
-    // ---------------------------------------------------------------
-    // Before executing file-mutating tools, capture the current file
-    // state so we can restore it during a rewind operation.
-    {
-        let file_path = match tc.name.as_str() {
-            "FileWrite" | "FileCreate" | "FileDelete" | "FileMove" => tc
-                .arguments
-                .get("path")
-                .or_else(|| tc.arguments.get("source"))
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            _ => None,
-        };
-        if let Some(ref path) = file_path {
-            crate::rewind::RewindService::track_edit(
-                &container.file_history_managers,
-                &ctx.session_id,
-                path,
-            )
-            .await;
-        }
-    }
+    track_file_history(container, tc, &ctx.session_id).await;
 
     // ---------------------------------------------------------------
     // Actual tool execution
     // ---------------------------------------------------------------
+    if let Some(tx) = progress {
+        let _ = tx.send(TurnEvent::ToolStart {
+            name: tc.name.clone(),
+            input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+            agent_name: config.agent_name.clone(),
+        });
+    }
+
     let (tool_success, full_result, result_content, tool_metadata) = match execute_tool_call(
         container,
         tc,
@@ -468,6 +483,31 @@ pub(crate) async fn set_session_permission_mode(
     modes.insert(session_id.clone(), mode);
 }
 
+/// Capture file state before mutating tools so rewind can restore it.
+async fn track_file_history(
+    container: &ServiceContainer,
+    tc: &ToolCallRequest,
+    session_id: &SessionId,
+) {
+    let file_path = match tc.name.as_str() {
+        "FileWrite" | "FileCreate" | "FileDelete" | "FileMove" => tc
+            .arguments
+            .get("path")
+            .or_else(|| tc.arguments.get("source"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        _ => None,
+    };
+    if let Some(ref path) = file_path {
+        crate::rewind::RewindService::track_edit(
+            &container.file_history_managers,
+            session_id,
+            path,
+        )
+        .await;
+    }
+}
+
 /// Execute a tool call -- delegates to the tool registry.
 ///
 /// Special handling for `ToolSearch` and `task`: these meta-tools are
@@ -565,7 +605,14 @@ async fn execute_tool_call(
         command_runner: Some(Arc::clone(&container.runtime_manager) as Arc<dyn CommandRunner>),
     };
 
-    tool.execute(input).await
+    if let Some(tok) = cancel {
+        tokio::select! {
+            result = tool.execute(input) => result,
+            () = tok.cancelled() => Err(y_core::tool::ToolError::Cancelled),
+        }
+    } else {
+        tool.execute(input).await
+    }
 }
 
 /// Check if a successful `FileWrite` just created an agent TOML and, if

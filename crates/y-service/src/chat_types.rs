@@ -112,6 +112,11 @@ pub enum TurnEvent {
         context_window: usize,
         agent_name: String,
     },
+    ToolStart {
+        name: String,
+        input_preview: String,
+        agent_name: String,
+    },
     ToolResult {
         name: String,
         success: bool,

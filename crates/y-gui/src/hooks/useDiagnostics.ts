@@ -290,7 +290,25 @@ async function initialiseBus() {
         timestamp: new Date().toISOString(),
         event: turnEvent,
       };
-      let existing = [...(prev.sessionEntries[sid] ?? []), entry];
+      let existing = prev.sessionEntries[sid] ?? [];
+
+      if (turnEvent.type === 'tool_result') {
+        const startIdx = existing.findIndex(
+          (e) =>
+            e.event.type === 'tool_start' &&
+            e.event.name === turnEvent.name &&
+            e.event.agent_name === turnEvent.agent_name,
+        );
+        if (startIdx !== -1) {
+          existing = [...existing];
+          existing[startIdx] = { ...existing[startIdx], event: turnEvent };
+        } else {
+          existing = [...existing, entry];
+        }
+      } else {
+        existing = [...existing, entry];
+      }
+
       if (existing.length > MAX_DIAG_ENTRIES_PER_SESSION) {
         existing = existing.slice(existing.length - DIAG_TRIM_TARGET);
       }

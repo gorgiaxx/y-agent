@@ -119,6 +119,13 @@ export interface LlmResponseEvent {
   agent_name?: string;
 }
 
+export interface ToolStartEvent {
+  type: 'tool_start';
+  name: string;
+  input_preview?: string;
+  agent_name?: string;
+}
+
 export interface ToolResultEvent {
   type: 'tool_result';
   name: string;
@@ -197,6 +204,7 @@ export interface LlmErrorEvent {
 
 export type TurnEvent =
   | LlmResponseEvent
+  | ToolStartEvent
   | ToolResultEvent
   | LoopLimitEvent
   | UserMessageEvent

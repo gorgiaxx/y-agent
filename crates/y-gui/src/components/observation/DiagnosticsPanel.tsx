@@ -2,12 +2,12 @@
 
 import { useRef, useEffect, useState, useMemo } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { Activity, X, Cpu, Wrench, AlertTriangle, ChevronDown, ChevronRight, Trash2, Maximize2, Minimize2, User, Copy, Check, Filter } from 'lucide-react';
+import { Activity, X, Cpu, Wrench, AlertTriangle, ChevronDown, ChevronRight, Trash2, Maximize2, Minimize2, User, Copy, Check, Filter, Loader } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-import type { DiagnosticsEntry, LlmResponseEvent, LlmErrorEvent, ToolResultEvent, LoopLimitEvent, UserMessageEvent } from '../../types';
+import type { DiagnosticsEntry, LlmResponseEvent, LlmErrorEvent, ToolStartEvent, ToolResultEvent, LoopLimitEvent, UserMessageEvent } from '../../types';
 import { computeSummary } from '../../hooks/useDiagnostics';
 import type { DiagnosticsSummary } from '../../hooks/useDiagnostics';
 import { useResolvedTheme } from '../../hooks/useTheme';
@@ -339,6 +339,27 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ToolStartEntry({ event, timestamp }: { event: ToolStartEvent; timestamp: string }) {
+  const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return (
+    <div className="diag-entry diag-tool diag-tool-running">
+      <div className="diag-entry-header">
+        <div className="diag-entry-icon">
+          <Loader size={14} className="diag-spin" />
+        </div>
+        <div className="diag-entry-main">
+          <span className="diag-entry-title">{event.name}</span>
+          <AgentLabel agentName={event.agent_name} />
+        </div>
+        <div className="diag-entry-badges">
+          <span className="diag-badge diag-badge-running">RUNNING</span>
+          <span className="diag-badge diag-badge-time">{time}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -978,6 +999,8 @@ export function DiagnosticsPanel({ entries, isActive, isGlobal, sessionId, expan
           switch (entry.event.type) {
             case 'llm_response':
               return <LlmEntry key={entry.id} event={entry.event} timestamp={entry.timestamp} />;
+            case 'tool_start':
+              return <ToolStartEntry key={entry.id} event={entry.event} timestamp={entry.timestamp} />;
             case 'tool_result':
               return <ToolEntry key={entry.id} event={entry.event} timestamp={entry.timestamp} />;
             case 'loop_limit_hit':

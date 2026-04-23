@@ -479,6 +479,25 @@ body.y-gui-diag-resizing * {
   color: var(--error);
 }
 
+.diag-tool-running .diag-entry-icon {
+  background: rgba(100, 160, 255, 0.10);
+  color: var(--accent);
+}
+
+.diag-badge-running {
+  background: rgba(100, 160, 255, 0.10);
+  color: var(--accent);
+}
+
+@keyframes diag-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.diag-spin {
+  animation: diag-spin 1s linear infinite;
+}
+
 .diag-expand-icon {
   display: flex;
   align-items: center;

@@ -166,6 +166,9 @@ pub enum ToolError {
     #[error("external service error in {name}: {message}")]
     ExternalServiceError { name: String, message: String },
 
+    #[error("cancelled by user")]
+    Cancelled,
+
     #[error("{message}")]
     Other { message: String },
 }
