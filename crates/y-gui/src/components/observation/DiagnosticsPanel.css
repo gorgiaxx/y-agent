@@ -54,10 +54,9 @@
 .diag-resize-handle:hover::after,
 .diag-resize-handle:focus-visible::after,
 .diag-panel.diag-resizing .diag-resize-handle::after {
-  background: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
-    0 0 10px 3px color-mix(in srgb, var(--accent) 24%, transparent);
+    0 0 4px 2px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .diag-resize-handle:focus-visible {
