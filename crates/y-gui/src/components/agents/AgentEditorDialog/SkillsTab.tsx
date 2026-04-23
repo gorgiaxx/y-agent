@@ -21,7 +21,7 @@ export function SkillsTab({ draft, availableSkills, onChange }: SkillsTabProps) 
         </SettingsItem>
       </SettingsGroup>
 
-      <SettingsGroup title="Available Skills">
+      <SettingsGroup title="Available Skills" bodyVariant="plain">
         <div className="settings-item--custom-body">
           <div className="agent-editor-checkbox-grid">
             {availableSkills.map((skill) => (

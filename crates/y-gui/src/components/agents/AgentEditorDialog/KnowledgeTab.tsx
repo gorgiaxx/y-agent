@@ -21,7 +21,7 @@ export function KnowledgeTab({ draft, knowledgeCollections, onChange }: Knowledg
         </SettingsItem>
       </SettingsGroup>
 
-      <SettingsGroup title="Collections">
+      <SettingsGroup title="Collections" bodyVariant="plain">
         <div className="settings-item--custom-body">
           <div className="agent-editor-checkbox-grid">
             {knowledgeCollections.map((collection) => (

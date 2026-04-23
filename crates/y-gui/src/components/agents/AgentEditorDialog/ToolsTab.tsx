@@ -22,7 +22,7 @@ export function ToolsTab({ draft, tools, onChange }: ToolsTabProps) {
         </SettingsItem>
       </SettingsGroup>
 
-      <SettingsGroup title="Allowed Tools">
+      <SettingsGroup title="Allowed Tools" bodyVariant="plain">
         <div className="settings-item--custom-body">
           <div className="agent-editor-checkbox-grid">
             {tools.map((tool) => (

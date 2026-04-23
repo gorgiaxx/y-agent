@@ -14,7 +14,7 @@ interface PromptTabProps {
 export function PromptTab({ draft, promptSections, onChange }: PromptTabProps) {
   return (
     <div className="settings-form-wrap">
-      <SettingsGroup title="System Prompt">
+      <SettingsGroup title="System Prompt" bodyVariant="plain">
         <div className="settings-item--custom-body">
           <div className="prompt-editor-monaco" style={{ height: 260 }}>
             <MonacoEditor
@@ -26,7 +26,7 @@ export function PromptTab({ draft, promptSections, onChange }: PromptTabProps) {
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title="Prompt Sections">
+      <SettingsGroup title="Prompt Sections" bodyVariant="plain">
         <div className="settings-item--custom-body">
           <div className="agent-editor-checkbox-grid agent-editor-checkbox-grid--short">
             {promptSections.map((section) => (

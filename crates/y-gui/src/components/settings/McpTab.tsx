@@ -62,7 +62,7 @@ function McpServerTabPanel({
       </SettingsGroup>
 
       {server.transport === 'stdio' ? (
-        <SettingsGroup title="STDIO Configuration">
+        <SettingsGroup title="STDIO Configuration" bodyVariant="plain">
           <SettingsItem title="Command" description="Executable to launch the MCP server process" wide>
             <Input
               value={server.command}
@@ -131,7 +131,7 @@ function McpServerTabPanel({
           </div>
         </SettingsGroup>
       ) : (
-        <SettingsGroup title="HTTP Configuration">
+        <SettingsGroup title="HTTP Configuration" bodyVariant="plain">
           <SettingsItem title="Server URL" description="HTTP endpoint for the remote MCP server" wide>
             <Input
               value={server.url}

@@ -37,6 +37,13 @@
   background: var(--surface-secondary);
 }
 
+.settings-group-body--plain {
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+}
+
 /* ---- Item row ---- */
 .settings-item {
   display: flex;

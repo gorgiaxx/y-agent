@@ -288,7 +288,7 @@ export function RuntimeTab({
           />
         </SettingsItem>
       </SettingsGroup>
-      <SettingsGroup title="Docker Environment Variables">
+      <SettingsGroup title="Docker Environment Variables" bodyVariant="plain">
         <div className="settings-item--custom-body">
           <div className="pf-kv-list">
             {Object.entries(runtimeForm.docker_default_env).map(([k, v], i) => (
@@ -343,7 +343,7 @@ export function RuntimeTab({
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title="Docker Volume Mappings">
+      <SettingsGroup title="Docker Volume Mappings" bodyVariant="plain">
         <div className="settings-item--custom-body">
           <div className="pf-kv-list">
             {runtimeForm.docker_default_volumes.map((vol, i) => (
