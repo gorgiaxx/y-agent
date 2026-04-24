@@ -18,6 +18,10 @@ import {
 } from './chatHelpers';
 import { extractGeneratedImages } from '../lib/generatedImages';
 import { chatBusState } from './chatBus';
+import {
+  mergeBackendMessagesPreservingLocalStreamState,
+  streamingAssistantMessageId,
+} from './chatStreamingMessages';
 import type { ChatSharedRefs } from './chatSharedState';
 import type { ChatOpStatus, PendingEdit } from './useChat';
 
@@ -61,7 +65,7 @@ export function useChatMessages(
     updater: (images: GeneratedImage[]) => GeneratedImage[],
   ) => {
     setCachedMessages(refs.sessionMessagesRef.current, sessionId, (prev) => {
-      const streamingId = `streaming-${sessionId}`;
+      const streamingId = streamingAssistantMessageId(sessionId);
       const messageIndex = prev.findIndex((message) => message.id === streamingId);
       if (messageIndex >= 0) {
         const updated = [...prev];
@@ -153,28 +157,12 @@ export function useChatMessages(
         `[chat] loadMessages: got ${mergedMsgs.length} messages for session=${sessionId}, active=${refs.activeSessionIdRef.current}`,
       );
       if (refs.activeSessionIdRef.current === sessionId) {
-        const streamingId = `streaming-${sessionId}`;
         // Re-read from cache (may have been updated by sendMessage in the meantime).
         const currentCached = getCachedMessages(refs.sessionMessagesRef.current, sessionId);
-        const existingStreaming = currentCached.find((m) => m.id === streamingId);
-
-        // Preserve optimistic user messages (id starts with "user-") that
-        // exist in the cache but are not yet in the backend response.
-        const backendIds = new Set(mergedMsgs.map((m) => m.id));
-        const backendUserContents = new Set(
-          mergedMsgs.filter((m) => m.role === 'user').map((m) => m.content),
+        const merged = mergeBackendMessagesPreservingLocalStreamState(
+          mergedMsgs,
+          currentCached,
         );
-        const optimisticUserMsgs = currentCached.filter(
-          (m) =>
-            m.id.startsWith('user-') &&
-            !backendIds.has(m.id) &&
-            !backendUserContents.has(m.content),
-        );
-
-        let merged = [...mergedMsgs, ...optimisticUserMsgs];
-        if (existingStreaming) {
-          merged = [...merged, existingStreaming];
-        }
 
         setCachedMessages(refs.sessionMessagesRef.current, sessionId, merged);
         startTransition(() => {

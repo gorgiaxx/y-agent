@@ -24,7 +24,12 @@ import {
   setCachedMessages,
   mergeSkillsFromCache,
 } from './chatHelpers';
-import { ensureStreamingAssistantMessage } from './chatStreamingMessages';
+import {
+  ensureStreamingAssistantMessage,
+  finalizeStreamingAssistantMessage,
+  mergeBackendMessagesPreservingLocalStreamState,
+  streamingAssistantMessageId,
+} from './chatStreamingMessages';
 import {
   shouldDisplayStreamingAgent,
   type ToolResultRecord,
@@ -135,7 +140,7 @@ export function useChatStreaming(
           }
         }
         setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) => {
-          const streamingId = `streaming-${sid}`;
+          const streamingId = streamingAssistantMessageId(sid);
           const lastIdx = prev.findIndex((m) => m.id === streamingId);
           if (lastIdx >= 0) {
             const updated = [...prev];
@@ -196,7 +201,7 @@ export function useChatStreaming(
         }
         // Also merge into metadata for backward compat (copy, etc.).
         setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) => {
-          const streamingId = `streaming-${sid}`;
+          const streamingId = streamingAssistantMessageId(sid);
           const lastIdx = prev.findIndex((m) => m.id === streamingId);
           if (lastIdx >= 0) {
             const updated = [...prev];
@@ -306,7 +311,7 @@ export function useChatStreaming(
         if (sessionId) {
           // Merge streaming content with backend messages.
           (async () => {
-            const streamingId = `streaming-${sessionId}`;
+            const streamingId = streamingAssistantMessageId(sessionId);
             const cachedMessages = getCachedMessages(
               refs.sessionMessagesRef.current,
               sessionId,
@@ -380,10 +385,23 @@ export function useChatStreaming(
                 }
               }
 
-              setCachedMessages(refs.sessionMessagesRef.current, sessionId, mergedMsgs);
+              const localMessagesWithoutCompletedStream = getCachedMessages(
+                refs.sessionMessagesRef.current,
+                sessionId,
+              ).filter((message) => message.id !== streamingId);
+              const mergedWithLocalState =
+                mergeBackendMessagesPreservingLocalStreamState(
+                  mergedMsgs,
+                  localMessagesWithoutCompletedStream,
+                );
+              setCachedMessages(
+                refs.sessionMessagesRef.current,
+                sessionId,
+                mergedWithLocalState,
+              );
               if (refs.activeSessionIdRef.current === sessionId) {
                 startTransition(() => {
-                  setVisibleMessages(mergedMsgs);
+                  setVisibleMessages(mergedWithLocalState);
                 });
               }
             } catch (e) {
@@ -488,32 +506,17 @@ export function useChatStreaming(
             // Stop/cancel: preserve streamed content by finalizing the
             // streaming message.
             const snapToolResults = refs.toolResultsRef.current.get(sessionId);
+            const cancelledMessageId = `cancelled-${payload.run_id}`;
 
             setCachedMessages(refs.sessionMessagesRef.current, sessionId, (prev) => {
-              const streamingId = `streaming-${sessionId}`;
-              return prev
-                .map((m) => {
-                  if (m.id === streamingId && m.content) {
-                    const meta = { ...(m.metadata ?? {}) };
-                    const merged = mergeToolResultMetadata(
-                      meta.tool_results,
-                      snapToolResults,
-                    );
-                    if (merged) {
-                      meta.tool_results = merged;
-                    }
-                    return {
-                      ...m,
-                      id: `cancelled-${payload.run_id}`,
-                      metadata: meta,
-                      _streaming: undefined,
-                    } as Message;
-                  }
-                  if (m.id === streamingId) return null;
-                  return m;
-                })
-                .filter(Boolean) as Message[];
+              return finalizeStreamingAssistantMessage(
+                prev,
+                sessionId,
+                cancelledMessageId,
+                snapToolResults,
+              );
             });
+            syncVisible(sessionId);
 
             // Reload from backend so the cache has real backend IDs.
             (async () => {
@@ -522,13 +525,19 @@ export function useChatStreaming(
                   'session_get_messages',
                   { sessionId },
                 );
-                const cancelledMsg = getCachedMessages(
+                const mergedBack = mergeSkillsFromCache(
+                  backendMsgs,
                   refs.sessionMessagesRef.current,
                   sessionId,
-                ).find((m) => m.id === `cancelled-${payload.run_id}`);
-                const merged = cancelledMsg
-                  ? [...backendMsgs, cancelledMsg]
-                  : backendMsgs;
+                );
+                const currentCached = getCachedMessages(
+                  refs.sessionMessagesRef.current,
+                  sessionId,
+                );
+                const merged = mergeBackendMessagesPreservingLocalStreamState(
+                  mergedBack,
+                  currentCached,
+                );
                 setCachedMessages(refs.sessionMessagesRef.current, sessionId, merged);
                 if (refs.activeSessionIdRef.current === sessionId) {
                   startTransition(() => setVisibleMessages(merged));
@@ -540,31 +549,15 @@ export function useChatStreaming(
           } else {
             // Non-cancel error: preserve streamed content.
             const snapToolResultsErr = refs.toolResultsRef.current.get(sessionId);
+            const errorMessageId = `error-${payload.run_id || Date.now()}`;
 
             setCachedMessages(refs.sessionMessagesRef.current, sessionId, (prev) => {
-              const streamingId = `streaming-${sessionId}`;
-              return prev
-                .map((m) => {
-                  if (m.id === streamingId && m.content) {
-                    const meta = { ...(m.metadata ?? {}) };
-                    const merged = mergeToolResultMetadata(
-                      meta.tool_results,
-                      snapToolResultsErr,
-                    );
-                    if (merged) {
-                      meta.tool_results = merged;
-                    }
-                    return {
-                      ...m,
-                      id: `error-${payload.run_id || Date.now()}`,
-                      metadata: meta,
-                      _streaming: undefined,
-                    } as Message;
-                  }
-                  if (m.id === streamingId) return null;
-                  return m;
-                })
-                .filter(Boolean) as Message[];
+              return finalizeStreamingAssistantMessage(
+                prev,
+                sessionId,
+                errorMessageId,
+                snapToolResultsErr,
+              );
             });
             syncVisible(sessionId);
 
@@ -575,16 +568,19 @@ export function useChatStreaming(
                   'session_get_messages',
                   { sessionId },
                 );
-                const errorMsg = getCachedMessages(
-                  refs.sessionMessagesRef.current,
-                  sessionId,
-                ).find((m) => m.id.startsWith('error-'));
                 const mergedBack = mergeSkillsFromCache(
                   backendMsgs,
                   refs.sessionMessagesRef.current,
                   sessionId,
                 );
-                const final_ = errorMsg ? [...mergedBack, errorMsg] : mergedBack;
+                const currentCached = getCachedMessages(
+                  refs.sessionMessagesRef.current,
+                  sessionId,
+                );
+                const final_ = mergeBackendMessagesPreservingLocalStreamState(
+                  mergedBack,
+                  currentCached,
+                );
                 setCachedMessages(refs.sessionMessagesRef.current, sessionId, final_);
                 if (refs.activeSessionIdRef.current === sessionId) {
                   startTransition(() => setVisibleMessages(final_));

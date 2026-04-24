@@ -4,6 +4,7 @@ import { Sparkles, AlertTriangle, ChevronDown } from 'lucide-react';
 import type { Message } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { CompactInfo } from '../../hooks/useChat';
+import { isLiveStreamingAssistantMessage } from '../../hooks/chatStreamingMessages';
 import { UserBubble } from './chat-box/UserBubble';
 import { AssistantBubble } from './chat-box/AssistantBubble';
 import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
@@ -110,14 +111,11 @@ function buildDisplayItems(
     }
 
     // The message itself.
-    const isLive = msg.id.startsWith('streaming-')
-      || msg.id.startsWith('cancelled-')
-      || msg.id.startsWith('error-');
     items.push({
       kind: 'message',
       msg,
       msgIdx: idx,
-      toolResults: isLive ? toolResults : undefined,
+      toolResults: isLiveStreamingAssistantMessage(msg) ? toolResults : undefined,
     });
   });
 

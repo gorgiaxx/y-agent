@@ -9,6 +9,7 @@ import { memo } from 'react';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../../hooks/useInterleavedSegments';
+import { isLiveStreamingAssistantMessage } from '../../../hooks/chatStreamingMessages';
 import { StreamingBubble } from './StreamingBubble';
 import { StaticBubble } from './StaticBubble';
 import './AssistantBubble.css';
@@ -26,11 +27,7 @@ export interface AssistantBubbleProps {
 export const AssistantBubble = memo(function AssistantBubble(
   { message, toolResults, getStreamSegments }: AssistantBubbleProps,
 ) {
-  const isStreamingMsg = message.id.startsWith('streaming-')
-    || message.id.startsWith('cancelled-')
-    || message.id.startsWith('error-');
-
-  if (isStreamingMsg) {
+  if (isLiveStreamingAssistantMessage(message)) {
     const streamSegments = getStreamSegments?.() ?? null;
     return <StreamingBubble message={message} toolResults={toolResults} streamSegments={streamSegments} />;
   }
