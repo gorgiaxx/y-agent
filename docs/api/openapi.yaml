@@ -6,7 +6,7 @@ info:
     RESTful API for y-agent -- exposes the same business logic as the CLI/TUI
     and the Tauri desktop GUI.  All endpoints return JSON.  Real-time push
     events are delivered via Server-Sent Events (SSE).
-    Errors follow RFC 7807 Problem Details.
+    Errors use a compact JSON body with `error` and `message` fields.
   contact:
     name: y-agent team
   license:
@@ -1410,6 +1410,57 @@ paths:
                 items:
                   type: object
 
+  /api/v1/skills/import:
+    post:
+      operationId: importSkill
+      tags: [Skills]
+      summary: Import a skill from a local source path
+      description: |
+        Imports a skill from a path visible to the y-agent server process.
+        Trusted TOML skills may be imported directly with `sanitize=false`;
+        other formats use the agent-assisted ingestion pipeline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                sanitize:
+                  type: boolean
+                  default: true
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [decision, classification, security_issues]
+                properties:
+                  decision:
+                    type: string
+                    enum: [accepted, optimized, partial_accept, rejected]
+                  classification:
+                    type: string
+                  skill_id:
+                    type: [string, "null"]
+                  error:
+                    type: [string, "null"]
+                  security_issues:
+                    type: array
+                    items:
+                      type: string
+                  permissions_needed:
+                    type: [object, "null"]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/skills/{name}:
     get:
       operationId: getSkill
@@ -2014,6 +2065,46 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /api/v1/attachments/upload:
+    post:
+      operationId: attachmentUploadFiles
+      tags: [Attachments]
+      summary: Upload image files for chat attachments
+      description: |
+        Accepts multipart file fields, stores images in the server temporary
+        upload directory, and returns server-side paths.
+        Only simple filenames and image extensions are accepted.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Uploaded files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [path, filename, size]
+                  properties:
+                    path:
+                      type: string
+                    filename:
+                      type: string
+                    size:
+                      type: integer
+                      format: int64
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   # ================================================================
   #  Diagnostics
   # ================================================================
@@ -2487,6 +2578,12 @@ components:
             $ref: "#/components/schemas/ApiError"
     BadRequest:
       description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Unauthorized:
+      description: Missing or invalid bearer token
       content:
         application/json:
           schema:

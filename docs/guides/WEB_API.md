@@ -332,6 +332,11 @@ curl -X PUT http://localhost:3000/api/v1/skills/SKILL_NAME/enabled \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}'
 
+# Import a trusted y-agent TOML skill from a local server path
+curl -X POST http://localhost:3000/api/v1/skills/import \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/path/to/skill.toml", "sanitize": false}'
+
 # List files in skill directory
 curl http://localhost:3000/api/v1/skills/SKILL_NAME/files
 
@@ -431,6 +436,10 @@ curl -X POST http://localhost:3000/api/v1/rewind/SESSION_ID/restore-files \
 curl -X POST http://localhost:3000/api/v1/attachments/read \
   -H "Content-Type: application/json" \
   -d '{"paths": ["/path/to/image.png"]}'
+
+# Upload an image attachment
+curl -X POST http://localhost:3000/api/v1/attachments/upload \
+  -F "file=@/path/to/image.png"
 ```
 
 ### Workflows
@@ -546,6 +555,7 @@ All errors return JSON:
 | HTTP Status | Error Code | Description |
 |-------------|-----------|-------------|
 | 400 | `bad_request` | Invalid request body or parameters |
+| 401 | `unauthorized` | Missing or invalid bearer token |
 | 404 | `not_found` | Resource not found |
 | 500 | `internal_error` | Server-side error |
 
@@ -554,9 +564,8 @@ All errors return JSON:
 > [!WARNING]
 > The following features are **not yet implemented**:
 
-- **Authentication** -- No API key or token-based auth middleware
 - **Rate Limiting** -- No request throttling
-- **Request Size Limits** -- No body size constraints
+- **Request Size Limits** -- No global body size constraints beyond endpoint-local checks
 
 ## OpenAPI Specification
 
