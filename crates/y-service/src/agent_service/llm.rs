@@ -798,6 +798,7 @@ mod tests {
                 TurnEvent::StreamDelta { .. }
                 | TurnEvent::StreamReasoningDelta { .. }
                 | TurnEvent::LlmResponse { .. }
+                | TurnEvent::ToolStart { .. }
                 | TurnEvent::ToolResult { .. }
                 | TurnEvent::LoopLimitHit { .. }
                 | TurnEvent::LlmError { .. }
