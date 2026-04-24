@@ -24,6 +24,7 @@ import {
   setCachedMessages,
   mergeSkillsFromCache,
 } from './chatHelpers';
+import { ensureStreamingAssistantMessage } from './chatStreamingMessages';
 import {
   shouldDisplayStreamingAgent,
   type ToolResultRecord,
@@ -252,6 +253,35 @@ export function useChatStreaming(
             data: event.data,
           }),
         );
+      } else if (event.type === 'tool_start') {
+        if (!shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+          return;
+        }
+        const sid = event.session_id;
+        markSessionActivity(sid);
+        const record: ToolResultRecord = {
+          name: event.name,
+          arguments: event.input_preview,
+          success: true,
+          durationMs: 0,
+          resultPreview: '',
+          state: 'running',
+        };
+        const existing = refs.toolResultsRef.current.get(sid) ?? [];
+        const nextToolResults = upsertToolResultRecord(existing, record);
+        const cappedResults = capToolResults(nextToolResults.records);
+        refs.toolResultsRef.current.set(sid, cappedResults);
+        if (sid === refs.activeSessionIdRef.current) {
+          setVisibleToolResults(cappedResults);
+        }
+        const segs = refs.streamSegsRef.current.get(sid) ?? [];
+        const nextSegments = upsertToolResultSegment(segs, record);
+        refs.streamSegsRef.current.set(sid, capSegments(nextSegments.segments));
+        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
+          ensureStreamingAssistantMessage(prev, sid),
+        );
+        setStreamSegsVersion((v) => v + 1);
+        syncVisible(sid);
       } else if (event.type === 'complete') {
         const payload = event.payload;
         // Resolve session: prefer payload (always available from backend),
@@ -600,6 +630,7 @@ export function useChatStreaming(
           success: event.success,
           durationMs: event.duration_ms,
           resultPreview: event.result_preview,
+          state: 'completed',
           urlMeta: event.url_meta,
           metadata: event.metadata,
         };
@@ -611,24 +642,26 @@ export function useChatStreaming(
           setVisibleToolResults(cappedResults);
         }
         // Push or replace a tool_result segment and bump version to force re-render.
-        const segs = refs.streamSegsRef.current.get(sid);
-        if (segs) {
-          let preparedSegs = segs;
-          const lastSeg = segs[segs.length - 1];
-          if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
-            preparedSegs = [...segs];
-            preparedSegs[preparedSegs.length - 1] = {
-              ...lastSeg,
-              isStreaming: false,
-              durationMs: lastSeg._startTs
-                ? Date.now() - lastSeg._startTs
-                : lastSeg.durationMs,
-            };
-          }
-          const nextSegments = upsertToolResultSegment(preparedSegs, record);
-          refs.streamSegsRef.current.set(sid, capSegments(nextSegments.segments));
-          setStreamSegsVersion((v) => v + 1);
+        const segs = refs.streamSegsRef.current.get(sid) ?? [];
+        let preparedSegs = segs;
+        const lastSeg = segs[segs.length - 1];
+        if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
+          preparedSegs = [...segs];
+          preparedSegs[preparedSegs.length - 1] = {
+            ...lastSeg,
+            isStreaming: false,
+            durationMs: lastSeg._startTs
+              ? Date.now() - lastSeg._startTs
+              : lastSeg.durationMs,
+          };
         }
+        const nextSegments = upsertToolResultSegment(preparedSegs, record);
+        refs.streamSegsRef.current.set(sid, capSegments(nextSegments.segments));
+        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
+          ensureStreamingAssistantMessage(prev, sid),
+        );
+        setStreamSegsVersion((v) => v + 1);
+        syncVisible(sid);
       }
     };
 

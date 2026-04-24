@@ -59,6 +59,27 @@ function shouldReplacePlanProgress(
   return currentKey != null && nextKey != null && currentKey === nextKey;
 }
 
+function shouldReplaceRunningTool(
+  current: ToolResultRecord,
+  next: ToolResultRecord,
+): boolean {
+  return current.state === 'running'
+    && current.name === next.name
+    && (current.arguments ?? '') === (next.arguments ?? '');
+}
+
+function findRunningToolIndex(
+  records: ToolResultRecord[],
+  next: ToolResultRecord,
+): number {
+  for (let i = records.length - 1; i >= 0; i--) {
+    if (shouldReplaceRunningTool(records[i], next)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function findPendingAskUserIndex(
   records: ToolResultRecord[],
   next: ToolResultRecord,
@@ -87,6 +108,13 @@ export function upsertToolResultRecord(
   records: ToolResultRecord[],
   next: ToolResultRecord,
 ): ToolResultRecordUpdate {
+  const runningIdx = findRunningToolIndex(records, next);
+  if (runningIdx >= 0) {
+    const updated = [...records];
+    updated[runningIdx] = next;
+    return { records: updated, replacedIndex: runningIdx };
+  }
+
   const replaceIdx = findPendingAskUserIndex(records, next);
   if (replaceIdx >= 0) {
     const updated = [...records];
@@ -119,6 +147,15 @@ export function upsertToolResultSegment(
       ): entry is { segment: Extract<InterleavedSegment, { type: 'tool_result' }>; index: number } =>
         entry.segment.type === 'tool_result',
     );
+
+  for (let i = toolSegments.length - 1; i >= 0; i--) {
+    const { segment, index } = toolSegments[i];
+    if (shouldReplaceRunningTool(segment.record, next)) {
+      const updated = [...segments];
+      updated[index] = { type: 'tool_result', record: next };
+      return { segments: updated, replacedIndex: index };
+    }
+  }
 
   for (let i = toolSegments.length - 1; i >= 0; i--) {
     const { segment, index } = toolSegments[i];
