@@ -33,7 +33,7 @@ export function StatusBar({
   contextTokensUsed,
 }: StatusBarProps) {
   const connStatus = useConnectionStatus();
-  const isWeb = !platform.isTauri();
+  const showConnectionStatus = platform.capabilities.sseEvents;
   // Context occupancy: prefer the explicit context_tokens_used (last iteration's
   // prompt size), fall back to cumulative input tokens if not available.
   const occupancy = contextTokensUsed ?? (lastTokens ? lastTokens.input : 0);
@@ -76,7 +76,7 @@ export function StatusBar({
         )}
       </div>
       <div className="status-right">
-        {isWeb && (
+        {showConnectionStatus && (
           <span className={`status-item status-connection status-connection--${connStatus}`}>
             <span className="status-connection-dot" />
             {connStatus === 'connected' ? 'Online' : connStatus === 'connecting' ? 'Connecting...' : 'Offline'}

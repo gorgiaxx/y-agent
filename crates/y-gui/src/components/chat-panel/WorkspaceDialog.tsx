@@ -26,6 +26,7 @@ export function WorkspaceDialog({
   const [name, setName] = useState(initialName);
   const [path, setPath] = useState(initialPath);
   const [picking, setPicking] = useState(false);
+  const supportsNativePaths = platform.capabilities.nativeFilePaths;
 
   const handlePickFolder = async () => {
     setPicking(true);
@@ -76,29 +77,42 @@ export function WorkspaceDialog({
               Folder
             </label>
             <div className="flex gap-2 items-center">
-              <div
-                className={[
-                  'flex-1 min-w-0 px-2 py-1.5',
-                  'text-12px',
-                  'border border-solid border-[var(--border)]',
-                  'rounded-[var(--radius-sm)]',
-                  'bg-[var(--surface-secondary)]',
-                  'overflow-hidden text-ellipsis whitespace-nowrap',
-                  path ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]',
-                ].join(' ')}
-                title={path}
-              >
-                {path || 'No folder selected'}
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handlePickFolder}
-                disabled={picking}
-              >
-                <FolderOpen size={13} />
-                {picking ? 'Opening...' : 'Choose'}
-              </Button>
+              {supportsNativePaths ? (
+                <>
+                  <div
+                    className={[
+                      'flex-1 min-w-0 px-2 py-1.5',
+                      'text-12px',
+                      'border border-solid border-[var(--border)]',
+                      'rounded-[var(--radius-sm)]',
+                      'bg-[var(--surface-secondary)]',
+                      'overflow-hidden text-ellipsis whitespace-nowrap',
+                      path ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]',
+                    ].join(' ')}
+                    title={path}
+                  >
+                    {path || 'No folder selected'}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handlePickFolder}
+                    disabled={picking}
+                  >
+                    <FolderOpen size={13} />
+                    {picking ? 'Opening...' : 'Choose'}
+                  </Button>
+                </>
+              ) : (
+                <Input
+                  type="text"
+                  placeholder="/srv/project"
+                  value={path}
+                  onChange={(event) => setPath(event.target.value)}
+                  variant="mono"
+                  className="flex-1"
+                />
+              )}
             </div>
           </div>
 

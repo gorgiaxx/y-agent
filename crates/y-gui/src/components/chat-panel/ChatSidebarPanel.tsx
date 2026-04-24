@@ -619,16 +619,18 @@ export function ChatSidebarPanel({
             <Pencil size={11} />
             Edit
           </button>
-          <button
-            className="context-menu-item"
-            onClick={() => {
-              platform.revealInFileManager(openWorkspace.path);
-              closeOpenMenu();
-            }}
-          >
-            <FolderSymlink size={11} />
-            Open in file manager
-          </button>
+          {platform.capabilities.revealFileManager && (
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                platform.revealInFileManager(openWorkspace.path);
+                closeOpenMenu();
+              }}
+            >
+              <FolderSymlink size={11} />
+              Open in file manager
+            </button>
+          )}
           <hr className="context-menu-divider" />
           <button
             className="context-menu-item context-menu-item--danger"

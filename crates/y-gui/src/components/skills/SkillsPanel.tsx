@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Puzzle, FolderOpen, Trash2, ToggleLeft, ToggleRight, ChevronRight, File, Folder, Save } from 'lucide-react';
 import type { SkillDetail, SkillFileEntry } from '../../types';
+import { platform } from '../../lib';
 import { Button, Badge } from '../ui';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { MonacoEditor } from '../ui/MonacoEditor';
@@ -236,14 +237,16 @@ export function SkillsPanel({
           )}
         </div>
         <div className="skill-editor-actions">
-          <Button
-            variant="icon"
-            size="sm"
-            onClick={() => onOpenFolder(detail.name)}
-            title="Open Folder"
-          >
-            <FolderOpen size={14} />
-          </Button>
+          {platform.capabilities.revealFileManager && (
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={() => onOpenFolder(detail.name)}
+              title="Open Folder"
+            >
+              <FolderOpen size={14} />
+            </Button>
+          )}
           <Button
             variant="icon"
             size="sm"

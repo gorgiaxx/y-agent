@@ -18,7 +18,7 @@ export function WindowControls() {
   useEffect(() => {
     setIsMac(typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform));
 
-    if (!platform.isTauri()) return;
+    if (!platform.capabilities.nativeWindowControls) return;
 
     let unlisten: (() => void) | undefined;
     import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {

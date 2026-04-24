@@ -800,9 +800,22 @@ export function InputArea(props: InputAreaProps) {
             className={`toolbar-btn ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
             onClick={async () => {
               try {
+                const imageFilters = [
+                  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+                ];
+                if (!platform.capabilities.nativeFilePaths) {
+                  const atts = await platform.openImageAttachments({
+                    multiple: true,
+                    filters: imageFilters,
+                  });
+                  if (atts) {
+                    setAttachments((prev) => [...prev, ...atts]);
+                  }
+                  return;
+                }
                 const result = await platform.openFileDialog({
                   multiple: true,
-                  filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+                  filters: imageFilters,
                 });
                 if (result) {
                   const paths = result;
