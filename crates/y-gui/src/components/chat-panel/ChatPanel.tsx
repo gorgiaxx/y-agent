@@ -1,6 +1,6 @@
-import { useRef, useEffect, useCallback, useMemo, memo, type UIEvent } from 'react';
+import { useRef, useEffect, useCallback, useMemo, useState, memo, type UIEvent } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
-import { Sparkles, AlertTriangle } from 'lucide-react';
+import { Sparkles, AlertTriangle, ChevronDown } from 'lucide-react';
 import type { Message } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { CompactInfo } from '../../hooks/useChat';
@@ -10,7 +10,13 @@ import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import { RestoreDivider } from './chat-box/RestoreDivider';
 import { ContextResetDivider } from './chat-box/ContextResetDivider';
 import { CompactDivider } from './chat-box/CompactDivider';
-import { isNearBottom, resolveAutoScrollBehavior } from './chatAutoScroll';
+import {
+  INITIAL_CHAT_SCROLL_STATE,
+  reduceChatScrollState,
+  resolveAutoScrollBehavior,
+  shouldShowScrollToBottomButton,
+  type ChatScrollState,
+} from './chatAutoScroll';
 import './ChatPanel.css';
 
 /** A tombstoned segment for rendering restore dividers. */
@@ -170,8 +176,8 @@ function ChatPanelInner({
   compactPoints,
 }: ChatPanelProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  /** Whether auto-scroll should remain enabled for new output. */
-  const shouldAutoScrollRef = useRef(true);
+  const [scrollState, setScrollState] = useState<ChatScrollState>(INITIAL_CHAT_SCROLL_STATE);
+  const scrollStateRef = useRef<ChatScrollState>(INITIAL_CHAT_SCROLL_STATE);
   /** Track display item count so new items can animate while streaming growth stays instant. */
   const prevDisplayItemCountRef = useRef(0);
 
@@ -181,12 +187,23 @@ function ChatPanelInner({
     [messages, tombstonedSegments, contextResetPoints, compactPoints, toolResults, isStreaming, error],
   );
 
+  const updateScrollState = useCallback((next: ChatScrollState) => {
+    scrollStateRef.current = next;
+    setScrollState((current) => (
+      current.isAtBottom === next.isAtBottom
+        && current.shouldAutoScroll === next.shouldAutoScroll
+        ? current
+        : next
+    ));
+  }, []);
+
   // Keep following new output only while the user stays near the bottom.
   useEffect(() => {
     const behavior = resolveAutoScrollBehavior({
-      shouldAutoScroll: shouldAutoScrollRef.current,
+      shouldAutoScroll: scrollStateRef.current.shouldAutoScroll,
       previousItemCount: prevDisplayItemCountRef.current,
       nextItemCount: displayItems.length,
+      isStreaming,
     });
     prevDisplayItemCountRef.current = displayItems.length;
 
@@ -199,15 +216,31 @@ function ChatPanelInner({
       behavior,
       align: 'end',
     });
-  }, [displayItems.length, isStreaming]);
+  }, [displayItems, isStreaming]);
 
   const handleScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
-    shouldAutoScrollRef.current = isNearBottom({
-      scrollHeight: event.currentTarget.scrollHeight,
-      scrollTop: event.currentTarget.scrollTop,
-      clientHeight: event.currentTarget.clientHeight,
+    updateScrollState(
+      reduceChatScrollState(scrollStateRef.current, {
+        type: 'viewport-scroll',
+        metrics: {
+          scrollHeight: event.currentTarget.scrollHeight,
+          scrollTop: event.currentTarget.scrollTop,
+          clientHeight: event.currentTarget.clientHeight,
+        },
+      }),
+    );
+  }, [updateScrollState]);
+
+  const scrollToBottom = useCallback(() => {
+    updateScrollState(reduceChatScrollState(scrollStateRef.current, { type: 'jump-to-bottom' }));
+    virtuosoRef.current?.scrollToIndex({
+      index: Math.max(0, displayItems.length - 1),
+      behavior: 'auto',
+      align: 'end',
     });
-  }, []);
+  }, [displayItems.length, updateScrollState]);
+
+  const showScrollToBottom = shouldShowScrollToBottomButton(scrollState, isStreaming);
 
   // Render a single display item.
   const renderItem = useCallback((_index: number, item: DisplayItem) => {
@@ -343,6 +376,17 @@ function ChatPanelInner({
           initialTopMostItemIndex={Math.max(0, displayItems.length - 1)}
           style={{ height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         />
+        {showScrollToBottom && (
+          <button
+            type="button"
+            className="chat-scroll-to-bottom"
+            aria-label="Scroll to bottom"
+            title="Scroll to bottom"
+            onClick={scrollToBottom}
+          >
+            <ChevronDown size={18} aria-hidden="true" />
+          </button>
+        )}
       </div>
     </div>
   );
