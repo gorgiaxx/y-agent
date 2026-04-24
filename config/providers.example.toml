@@ -31,6 +31,8 @@ health_check_interval_secs = 30
 #
 # Custom HTTP headers: add a `[providers.headers]` table inside a provider
 # entry when an LLM gateway requires extra header validation.
+# HTTP protocol: defaults to `http1`, which sends title-case HTTP/1.1 headers.
+# Set `http_protocol = "http2"` only for gateways that require HTTP/2.
 #
 # Tool Calling Mode (two-layer system):
 #   Auto-detected from provider_type -- override with `tool_calling_mode`:
@@ -54,6 +56,7 @@ base_url = "https://example.com/v1"
 temperature = 0.4
 top_p = 0.95
 icon = "deepseek"
+# http_protocol = "http1"
 # api_key_env = "OPENAI_API_KEY"   # alternative: read from env var
 # base_url = "https://api.openai.com/v1"
 # temperature = 0.4     # per-provider default (0.0-2.0), optional
