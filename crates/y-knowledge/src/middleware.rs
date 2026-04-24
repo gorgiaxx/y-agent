@@ -180,7 +180,30 @@ impl<T: Tokenizer> InjectKnowledge<T> {
         query_embedding: Option<&[f32]>,
         domain_hint: Option<&str>,
     ) -> Vec<KnowledgeContextItem> {
-        self.retrieve_for_context_in_collection(user_query, query_embedding, domain_hint, None)
+        self.retrieve_for_context_with_limit(
+            user_query,
+            query_embedding,
+            domain_hint,
+            self.config.max_chunks,
+        )
+    }
+
+    /// Retrieve knowledge items with a caller-provided result limit.
+    pub fn retrieve_for_context_with_limit(
+        &self,
+        user_query: &str,
+        query_embedding: Option<&[f32]>,
+        domain_hint: Option<&str>,
+        limit: usize,
+    ) -> Vec<KnowledgeContextItem> {
+        self.retrieve_for_context_filtered_with_limit(
+            user_query,
+            query_embedding,
+            domain_hint,
+            None,
+            None,
+            limit,
+        )
     }
 
     /// Retrieve knowledge items with an optional collection scope.
@@ -209,23 +232,51 @@ impl<T: Tokenizer> InjectKnowledge<T> {
         collection_filter: Option<&str>,
         level_filter: Option<ChunkLevel>,
     ) -> Vec<KnowledgeContextItem> {
-        let filter = RetrievalFilter {
+        self.retrieve_for_context_filtered_with_limit(
+            user_query,
+            query_embedding,
+            domain_hint,
+            collection_filter,
+            level_filter,
+            self.config.max_chunks,
+        )
+    }
+
+    /// Retrieve knowledge items with full filter control and result limit.
+    pub fn retrieve_for_context_filtered_with_limit(
+        &self,
+        user_query: &str,
+        query_embedding: Option<&[f32]>,
+        domain_hint: Option<&str>,
+        collection_filter: Option<&str>,
+        level_filter: Option<ChunkLevel>,
+        limit: usize,
+    ) -> Vec<KnowledgeContextItem> {
+        let limit = if limit == 0 {
+            self.config.max_chunks
+        } else {
+            limit
+        };
+        let mut filter = RetrievalFilter {
             domain: domain_hint.map(String::from),
             collection: collection_filter.map(String::from),
             level: level_filter,
-            limit: self.config.max_chunks,
+            limit,
             ..Default::default()
         };
 
-        let results = self
-            .retriever
-            .search_with_embedding(user_query, query_embedding, &filter);
+        let mut results =
+            self.retriever
+                .search_with_embedding(user_query, query_embedding, &filter);
+        results.retain(|r| r.relevance >= self.config.min_relevance);
 
-        // Filter by minimum relevance.
-        let filtered: Vec<&RetrievalResult> = results
-            .iter()
-            .filter(|r| r.relevance >= self.config.min_relevance)
-            .collect();
+        if results.is_empty() && domain_hint.is_some() {
+            filter.domain = None;
+            results = self
+                .retriever
+                .search_with_embedding(user_query, query_embedding, &filter);
+            results.retain(|r| r.relevance >= self.config.min_relevance);
+        }
 
         // Deduplicate by (document_id, chunk_level, l1_section) to avoid
         // injecting identical or overlapping content. Unlike the previous
@@ -250,7 +301,7 @@ impl<T: Tokenizer> InjectKnowledge<T> {
         let mut items = Vec::new();
         let mut remaining_budget = self.config.token_budget;
 
-        for result in filtered {
+        for result in &results {
             let doc_id = &result.chunk.document_id;
             let metadata = self.entry_metadata.get(doc_id);
 
@@ -535,6 +586,42 @@ mod tests {
     }
 
     #[test]
+    fn test_retrieve_for_context_relaxes_unmatched_domain_hint() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        retriever.index(Chunk {
+            id: "c1".to_string(),
+            document_id: "doc-1".to_string(),
+            level: ChunkLevel::L2,
+            content: "The safety plan shall include safety responsibilities, required safety activities, inputs, outputs, and planned duration. It is part of the project planning context.".to_string(),
+            token_estimate: 32,
+            metadata: ChunkMetadata {
+                source: "iso-26262.md".to_string(),
+                domain: "functional-safety".to_string(),
+                title: "Functional Safety Planning".to_string(),
+                section_index: 0,
+                ..Default::default()
+            },
+        });
+        let mw = InjectKnowledge::new(retriever);
+
+        let items = mw.retrieve_for_context(
+            "safety plan relationship with overall project plan and other testing plans",
+            None,
+            Some("ISO"),
+        );
+
+        assert!(
+            !items.is_empty(),
+            "a mismatched caller-provided domain hint should not erase relevant lexical results"
+        );
+    }
+
+    #[test]
     fn test_retrieve_for_context_respects_budget() {
         let config = InjectKnowledgeConfig {
             token_budget: 10, // Very small budget.
@@ -550,6 +637,43 @@ mod tests {
         let items = mw.retrieve_for_context("anything", None, None);
         let total_tokens: u32 = items.iter().map(|i| i.token_estimate).sum();
         assert!(total_tokens <= 10, "should respect budget");
+    }
+
+    #[test]
+    fn test_retrieve_for_context_with_limit_overrides_default_chunk_limit() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        for i in 0..7 {
+            retriever.index(Chunk {
+                id: format!("c{i}"),
+                document_id: format!("doc-{i}"),
+                level: ChunkLevel::L2,
+                content: format!(
+                    "Rust error handling result pattern number {i} with unique context."
+                ),
+                token_estimate: 12,
+                metadata: ChunkMetadata {
+                    source: format!("doc-{i}.md"),
+                    domain: "rust".to_string(),
+                    title: format!("Rust Result Pattern {i}"),
+                    section_index: 0,
+                    ..Default::default()
+                },
+            });
+        }
+        let mw = InjectKnowledge::new(retriever);
+
+        let items = mw.retrieve_for_context_with_limit("Rust error handling", None, None, 7);
+
+        assert_eq!(
+            items.len(),
+            7,
+            "caller-provided limit should control retrieval candidate count"
+        );
     }
 
     #[test]

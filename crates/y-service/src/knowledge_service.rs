@@ -49,10 +49,47 @@ fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+fn normalize_domain_hint(value: &str) -> Option<String> {
+    let mut normalized = String::new();
+    let mut previous_was_separator = true;
+
+    for ch in value.trim().chars() {
+        if ch.is_alphanumeric() {
+            for lower in ch.to_lowercase() {
+                normalized.push(lower);
+            }
+            previous_was_separator = false;
+        } else if !previous_was_separator && !normalized.is_empty() {
+            normalized.push(' ');
+            previous_was_separator = true;
+        }
+    }
+
+    if previous_was_separator {
+        normalized.pop();
+    }
+
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn merge_domain_hint(domains: &mut Vec<String>, hint: Option<&str>) {
+    let Some(normalized_hint) = hint.and_then(normalize_domain_hint) else {
+        return;
+    };
+
+    domains.retain(|domain| {
+        normalize_domain_hint(domain)
+            .as_deref()
+            .is_none_or(|existing| existing != normalized_hint)
+    });
+    domains.insert(0, normalized_hint);
+}
+
 /// Snapshot of entry data used during re-indexing to avoid borrow conflicts.
 struct ReindexEntryData {
     entry_id: String,
     collection: String,
+    domains: Vec<String>,
     chunks: Vec<String>,
     source_uri: String,
     title: String,
@@ -550,13 +587,14 @@ impl KnowledgeService {
         self.quality_filter.reset_dedup();
 
         // Run ingestion pipeline.
-        let entry = self.pipeline.ingest(
+        let mut entry = self.pipeline.ingest(
             raw_doc,
             workspace_id,
             &params.collection,
             Some(&self.classifier),
             Some(&self.quality_filter),
         )?;
+        merge_domain_hint(&mut entry.domains, params.domain.as_deref());
 
         let chunk_count = entry.chunks.len();
         let domains = entry.domains.clone();
@@ -566,7 +604,6 @@ impl KnowledgeService {
 
         // Generate LLM-driven L0/L1 summaries first so that the metadata
         // extractor can use them as input (it expects l0_summary + l1 sections).
-        let mut entry = entry;
         let mut llm_summary_status: Option<&str> = None;
         if params.use_llm_summary {
             let has_gen = self.summary_generator.is_some();
@@ -804,12 +841,13 @@ impl KnowledgeService {
             .inject_knowledge
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let items = knowledge.retrieve_for_context_filtered(
+        let items = knowledge.retrieve_for_context_filtered_with_limit(
             &params.query,
             query_embedding.as_deref(),
             domain,
             collection,
             level_filter,
+            params.limit,
         );
 
         let results: Vec<SearchResultItem> = items
@@ -990,6 +1028,7 @@ impl KnowledgeService {
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
+                    domains: domains.to_vec(),
                     title: entry.source.title.clone(),
                     section_index: i,
                     collection: entry.collection.clone(),
@@ -1022,6 +1061,7 @@ impl KnowledgeService {
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
+                    domains: domains.to_vec(),
                     title: entry.source.title.clone(),
                     section_index: usize::MAX, // L0 sentinel: never collides with L2 sections.
                     collection: entry.collection.clone(),
@@ -1045,6 +1085,7 @@ impl KnowledgeService {
                 metadata: ChunkMetadata {
                     source: entry.source.uri.clone(),
                     domain: domain.clone(),
+                    domains: domains.to_vec(),
                     title: entry.source.title.clone(),
                     section_index: section.index,
                     collection: entry.collection.clone(),
@@ -1103,6 +1144,7 @@ impl KnowledgeService {
             .map(|(entry_id, entry)| ReindexEntryData {
                 entry_id: entry_id.clone(),
                 collection: entry.collection.clone(),
+                domains: entry.domains.clone(),
                 chunks: entry.chunks.clone(),
                 source_uri: entry.source.uri.clone(),
                 title: entry.source.title.clone(),
@@ -1131,11 +1173,7 @@ impl KnowledgeService {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         for entry in &entries_data {
-            let domain = self
-                .entries
-                .get(&entry.entry_id)
-                .and_then(|e| e.domains.first().cloned())
-                .unwrap_or_default();
+            let domain = entry.domains.first().cloned().unwrap_or_default();
 
             // Compute L1-to-L2 alignment.
             let l1_alignment =
@@ -1155,6 +1193,7 @@ impl KnowledgeService {
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),
+                        domains: entry.domains.clone(),
                         title: entry.title.clone(),
                         section_index: i,
                         collection: entry.collection.clone(),
@@ -1205,6 +1244,7 @@ impl KnowledgeService {
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),
+                        domains: entry.domains.clone(),
                         title: entry.title.clone(),
                         section_index: usize::MAX, // L0 sentinel: never collides with L2 sections.
                         collection: entry.collection.clone(),
@@ -1236,6 +1276,7 @@ impl KnowledgeService {
                     metadata: ChunkMetadata {
                         source: entry.source_uri.clone(),
                         domain: domain.clone(),
+                        domains: entry.domains.clone(),
                         title: entry.title.clone(),
                         section_index: *section_idx,
                         collection: entry.collection.clone(),
@@ -2005,6 +2046,44 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(entry.tags.is_empty());
         assert!(entry.metadata.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ingest_merges_user_domain_hint_into_entry_domains() {
+        let dir = TempDir::new().expect("temp dir");
+        let content = [
+            "# Safety Planning",
+            "",
+            "The safety plan defines responsibilities, planned safety activities,",
+            "required inputs, required outputs, verification evidence, and review",
+            "timing for a project. The plan is maintained with enough structure",
+            "for teams to trace work products across development milestones.",
+            "",
+            "## Work Products",
+            "The document records activity owners, expected outputs, dependencies,",
+            "and planned duration so downstream reviewers can assess readiness.",
+        ]
+        .join("\n");
+        let path = write_test_doc(&dir, "safety-plan.md", &content);
+        let mut service = KnowledgeService::new(KnowledgeConfig::default());
+
+        let params = KnowledgeIngestParams {
+            source: path.display().to_string(),
+            domain: Some("ISO".to_string()),
+            collection: "default".to_string(),
+            use_llm_summary: false,
+            extract_metadata: false,
+        };
+
+        let result = service.ingest(&params, "default").await.expect("ingest");
+        let entry_id = result.entry_id.expect("entry id");
+        let entry = service.get_entry(&entry_id).expect("stored entry");
+
+        assert!(
+            entry.domains.iter().any(|domain| domain == "iso"),
+            "user-provided domain hint should be normalized and persisted, got {:?}",
+            entry.domains
+        );
     }
 
     #[tokio::test]

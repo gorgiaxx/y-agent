@@ -62,6 +62,12 @@ pub struct ChunkMetadata {
     pub source: String,
     /// Domain classification.
     pub domain: String,
+    /// All domain classifications for this chunk.
+    ///
+    /// `domain` is retained for backward compatibility and stores the
+    /// primary domain; this field lets retrieval match secondary domains.
+    #[serde(default)]
+    pub domains: Vec<String>,
     /// Document title.
     pub title: String,
     /// Section index within the document.

@@ -461,10 +461,52 @@ impl<T: Tokenizer> HybridRetriever<T> {
         }
     }
 
+    fn canonical_domain_key(value: &str) -> String {
+        let mut normalized = String::new();
+        let mut previous_was_separator = true;
+
+        for ch in value.trim().chars() {
+            if ch.is_alphanumeric() {
+                for lower in ch.to_lowercase() {
+                    normalized.push(lower);
+                }
+                previous_was_separator = false;
+            } else if !previous_was_separator && !normalized.is_empty() {
+                normalized.push(' ');
+                previous_was_separator = true;
+            }
+        }
+
+        if previous_was_separator {
+            normalized.pop();
+        }
+        normalized
+    }
+
+    fn domain_value_matches_filter(candidate: &str, filter: &str) -> bool {
+        let candidate_key = Self::canonical_domain_key(candidate);
+        let filter_key = Self::canonical_domain_key(filter);
+
+        if candidate_key.is_empty() || filter_key.is_empty() {
+            return false;
+        }
+
+        candidate_key == filter_key
+            || candidate_key
+                .strip_prefix(&filter_key)
+                .is_some_and(|suffix| suffix.starts_with(' '))
+    }
+
     /// Check if a chunk matches the given filter.
     fn matches_filter(chunk: &Chunk, filter: &RetrievalFilter) -> bool {
         if let Some(ref domain) = filter.domain {
-            if chunk.metadata.domain != *domain {
+            let matches_primary = Self::domain_value_matches_filter(&chunk.metadata.domain, domain);
+            let matches_secondary = chunk
+                .metadata
+                .domains
+                .iter()
+                .any(|candidate| Self::domain_value_matches_filter(candidate, domain));
+            if !matches_primary && !matches_secondary {
                 return false;
             }
         }
@@ -763,6 +805,33 @@ mod tests {
         for r in &results {
             assert_eq!(r.chunk.metadata.domain, "rust");
         }
+    }
+
+    #[test]
+    fn test_retrieval_domain_filter_is_case_insensitive_and_prefix_aware() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        retriever.index(make_chunk(
+            "c1",
+            "A safety plan describes safety activities and work products.",
+            "iso 26262/part4",
+        ));
+
+        let filter = RetrievalFilter {
+            domain: Some("ISO 26262".to_string()),
+            limit: 10,
+            ..Default::default()
+        };
+        let results = retriever.search("safety plan", &filter);
+
+        assert!(
+            !results.is_empty(),
+            "parent domain filter should match child domains case-insensitively"
+        );
     }
 
     // --- Limit ---

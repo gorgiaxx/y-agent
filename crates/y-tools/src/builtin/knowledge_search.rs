@@ -172,7 +172,7 @@ impl Tool for KnowledgeSearchTool {
                 })?;
 
         let domain = input.arguments.get("domain").and_then(|v| v.as_str());
-        let _limit = input
+        let limit = input
             .arguments
             .get("limit")
             .and_then(serde_json::Value::as_u64)
@@ -196,7 +196,12 @@ impl Tool for KnowledgeSearchTool {
             .knowledge
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let items = knowledge.retrieve_for_context(query, query_embedding.as_deref(), domain);
+        let items = knowledge.retrieve_for_context_with_limit(
+            query,
+            query_embedding.as_deref(),
+            domain,
+            limit,
+        );
 
         if items.is_empty() {
             return Ok(ToolOutput {
