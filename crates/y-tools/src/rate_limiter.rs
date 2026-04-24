@@ -8,7 +8,7 @@
 //!
 //! Design reference: tools-design.md §Execution Pipeline
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -166,26 +166,18 @@ impl RateLimiter {
     /// Returns `Allowed` if the request can proceed, or `Denied` with
     /// a retry-after duration if rate limited.
     ///
-    /// # Panics
-    ///
-    /// Panics if the internal lock is poisoned.
     pub async fn check(&self, tool_name: &str) -> RateLimitResult {
         let mut inner = self.inner.lock().await;
-
-        // If there's no bucket for this tool, create one from defaults.
-        if !inner.buckets.contains_key(tool_name) {
-            let default = inner.default_config.clone();
-            if let Some(default) = default {
-                inner
-                    .buckets
-                    .insert(tool_name.to_string(), TokenBucket::new(default));
-            } else {
-                // No rate limit configured for this tool.
-                return RateLimitResult::Allowed;
+        let default_config = inner.default_config.clone();
+        let bucket = match inner.buckets.entry(tool_name.to_string()) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let Some(default) = default_config else {
+                    return RateLimitResult::Allowed;
+                };
+                entry.insert(TokenBucket::new(default))
             }
-        }
-
-        let bucket = inner.buckets.get_mut(tool_name).unwrap();
+        };
         if bucket.try_acquire() {
             RateLimitResult::Allowed
         } else {
