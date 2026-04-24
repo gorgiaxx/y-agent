@@ -30,7 +30,12 @@ pub struct ServeArgs {
 }
 
 /// Run the web API server.
-pub async fn run(services: Arc<ServiceContainer>, args: &ServeArgs) -> Result<()> {
+pub async fn run(
+    services: Arc<ServiceContainer>,
+    args: &ServeArgs,
+    user_config_dir: Option<&str>,
+) -> Result<()> {
+    let config_dir = resolve_web_config_dir(user_config_dir);
     let config = WebConfig {
         host: args.host.clone(),
         port: args.port,
@@ -39,11 +44,12 @@ pub async fn run(services: Arc<ServiceContainer>, args: &ServeArgs) -> Result<()
     };
 
     let mut state = AppState::new(services, env!("CARGO_PKG_VERSION"))
+        .with_config_dir(config_dir.clone())
         .with_auth_token(args.auth_token.clone())
         .with_static_dir(args.static_dir.clone());
 
     // Load bot adapters from bots.toml in the user config directory.
-    load_bots(&mut state);
+    load_bots(&mut state, &config_dir);
 
     // Start the Discord Gateway (WebSocket) if the bot is loaded.
     if let Some(ref discord_bot) = state.discord_bot {
@@ -76,6 +82,13 @@ pub async fn run(services: Arc<ServiceContainer>, args: &ServeArgs) -> Result<()
     Ok(())
 }
 
+pub(crate) fn resolve_web_config_dir(user_config_dir: Option<&str>) -> PathBuf {
+    user_config_dir
+        .map(PathBuf::from)
+        .or_else(crate::config::dirs_user_config)
+        .unwrap_or_default()
+}
+
 // ---------------------------------------------------------------------------
 // Bot loading
 // ---------------------------------------------------------------------------
@@ -90,11 +103,7 @@ struct BotFileConfig {
 }
 
 /// Load bot adapters from `~/.config/y-agent/bots.toml` and inject into `AppState`.
-fn load_bots(state: &mut AppState) {
-    let Some(config_dir) = crate::config::dirs_user_config() else {
-        return;
-    };
-
+fn load_bots(state: &mut AppState, config_dir: &std::path::Path) {
     let bots_path = config_dir.join("bots.toml");
     if !bots_path.exists() {
         return;
@@ -174,4 +183,23 @@ fn start_discord_gateway(
 
         warn!("Discord Gateway: message channel closed");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_web_config_dir_prefers_override() {
+        let path = resolve_web_config_dir(Some("/tmp/custom-y-agent"));
+
+        assert_eq!(path, PathBuf::from("/tmp/custom-y-agent"));
+    }
+
+    #[test]
+    fn test_resolve_web_config_dir_defaults_to_user_config() {
+        let path = resolve_web_config_dir(None);
+
+        assert!(path.ends_with("y-agent"));
+    }
 }

@@ -229,7 +229,7 @@ async fn main() -> Result<()> {
             let services = wire::wire(&config).await?;
             let services = std::sync::Arc::new(services);
             services.start_background_services().await;
-            commands::serve::run(services, args).await?;
+            commands::serve::run(services, args, cli.user_config_dir.as_deref()).await?;
         }
         #[cfg(feature = "tui")]
         Some(Commands::Resume { ref session }) => {
