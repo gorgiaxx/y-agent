@@ -77,7 +77,7 @@ impl Channel {
 }
 
 /// Workflow context: manages typed channels.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WorkflowContext {
     channels: std::collections::HashMap<String, Channel>,
 }

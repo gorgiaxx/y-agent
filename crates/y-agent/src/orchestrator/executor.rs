@@ -16,7 +16,7 @@ use crate::orchestrator::checkpoint::{
 use crate::orchestrator::dag::{TaskDag, TaskId};
 use crate::orchestrator::failure::FailureStrategy;
 use crate::orchestrator::io_mapping::{self, InputMapping, OutputMapping};
-use crate::orchestrator::task_executor::TaskExecutor;
+use crate::orchestrator::task_executor::{TaskExecuteError, TaskExecutor};
 
 /// Workflow execution state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,10 +106,6 @@ impl WorkflowExecutor {
     /// resolves input mappings, calls the appropriate `TaskExecutor`, applies
     /// output mappings, and checkpoints after each round.
     ///
-    /// # Panics
-    ///
-    /// Panics if the internal concurrency semaphore is closed (should never
-    /// happen during normal operation).
     pub async fn execute(
         &mut self,
         dag: &TaskDag,
@@ -120,6 +116,11 @@ impl WorkflowExecutor {
     ) -> Result<(), WorkflowExecuteError> {
         dag.validate()
             .map_err(|e| WorkflowExecuteError::DagInvalid(e.to_string()))?;
+        if self.config.max_concurrent_tasks == 0 {
+            return Err(WorkflowExecuteError::InvalidConfig {
+                message: "max_concurrent_tasks must be greater than zero".into(),
+            });
+        }
 
         self.state = WorkflowState::Running;
         let execution_id = format!("exec-{}", uuid::Uuid::new_v4());
@@ -141,6 +142,7 @@ impl WorkflowExecutor {
             for task in &ready {
                 let task_clone = task.clone();
                 let sem = semaphore.clone();
+                let context_snapshot = self.context.clone();
 
                 // Resolve inputs for this task.
                 let resolved_inputs = if let Some(mappings) = input_mappings.get(&task.id) {
@@ -181,7 +183,9 @@ impl WorkflowExecutor {
 
                 let retry_config = task_clone.retry.clone();
                 handles.push(tokio::spawn(async move {
-                    let _permit = sem.acquire().await.expect("semaphore closed");
+                    let Ok(_permit) = sem.acquire().await else {
+                        return (task_clone, Err(TaskExecuteError::Cancelled));
+                    };
 
                     // Retry loop: respects task's RetryConfig.
                     let max_attempts = retry_config.as_ref().map_or(1, |r| r.max_attempts.max(1));
@@ -189,11 +193,7 @@ impl WorkflowExecutor {
 
                     for attempt in 1..=max_attempts {
                         match executor
-                            .execute(
-                                &task_clone,
-                                resolved_inputs.clone(),
-                                &WorkflowContext::new(),
-                            )
+                            .execute(&task_clone, resolved_inputs.clone(), &context_snapshot)
                             .await
                         {
                             Ok(output) => return (task_clone, Ok(output)),
@@ -215,7 +215,10 @@ impl WorkflowExecutor {
                         }
                     }
 
-                    (task_clone, Err(last_err.expect("at least one attempt")))
+                    let error = last_err.unwrap_or_else(|| TaskExecuteError::Permanent {
+                        message: "task retry loop exited without an execution attempt".into(),
+                    });
+                    (task_clone, Err(error))
                 }));
             }
 
@@ -422,6 +425,9 @@ impl WorkflowExecutor {
 /// Error during workflow execution.
 #[derive(Debug, thiserror::Error)]
 pub enum WorkflowExecuteError {
+    #[error("invalid execution config: {message}")]
+    InvalidConfig { message: String },
+
     #[error("invalid DAG: {0}")]
     DagInvalid(String),
 
@@ -654,6 +660,107 @@ mod tests {
 
         assert_eq!(executor.state, WorkflowState::Completed);
         assert_eq!(executor.completed_count(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_async_execute_rejects_zero_concurrency() {
+        let mut dag = TaskDag::new();
+        dag.add_task(task("a", &[])).unwrap();
+
+        let mut executor = WorkflowExecutor::new(ExecutionConfig {
+            max_concurrent_tasks: 0,
+            ..ExecutionConfig::default()
+        });
+        executor.register_executor(Arc::new(NoopExecutor::new()));
+        let mut cp_store = CheckpointStore::new();
+        let wf_inputs = serde_json::Map::new();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            executor.execute(
+                &dag,
+                &mut cp_store,
+                &wf_inputs,
+                &HashMap::new(),
+                &HashMap::new(),
+            ),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Ok(Err(WorkflowExecuteError::InvalidConfig { .. }))
+        ));
+        assert_eq!(executor.state, WorkflowState::Defined);
+    }
+
+    #[tokio::test]
+    async fn test_async_execute_passes_workflow_context_to_task_executor() {
+        use async_trait::async_trait;
+
+        use crate::orchestrator::dag::TaskType;
+        use crate::orchestrator::task_executor::{TaskExecuteError, TaskExecutor};
+
+        struct ContextReaderExecutor;
+
+        #[async_trait]
+        impl TaskExecutor for ContextReaderExecutor {
+            async fn execute(
+                &self,
+                task: &TaskNode,
+                _inputs: HashMap<String, serde_json::Value>,
+                ctx: &WorkflowContext,
+            ) -> Result<TaskOutput, TaskExecuteError> {
+                Ok(TaskOutput {
+                    task_id: task.id.clone(),
+                    output: ctx
+                        .read("source.output")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                    completed_at: Utc::now(),
+                })
+            }
+
+            fn supports(&self, task_type: &TaskType) -> bool {
+                matches!(task_type, TaskType::Script { .. })
+            }
+        }
+
+        let mut dag = TaskDag::new();
+        dag.add_task(task("source", &[])).unwrap();
+        dag.add_task(TaskNode {
+            id: "reader".into(),
+            name: "Reader".into(),
+            dependencies: vec!["source".into()],
+            task_type: TaskType::Script {
+                command: "read-context".into(),
+                args: Vec::new(),
+            },
+            ..TaskNode::default()
+        })
+        .unwrap();
+
+        let mut executor = WorkflowExecutor::new(ExecutionConfig::default());
+        executor.register_executor(Arc::new(NoopExecutor::new()));
+        executor.register_executor(Arc::new(ContextReaderExecutor));
+        let mut cp_store = CheckpointStore::new();
+        let wf_inputs = serde_json::Map::new();
+
+        executor
+            .execute(
+                &dag,
+                &mut cp_store,
+                &wf_inputs,
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            executor.get_output("reader").map(|output| &output.output),
+            Some(&serde_json::json!({}))
+        );
     }
 
     /// T-P2-04: `OutputMapping::Context` writes to channel via reducer.
