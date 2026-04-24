@@ -76,7 +76,7 @@ export function StorageTab({
       <>
         <div className="settings-header">
           <h3 className="section-title section-title--flush">
-            <span className="settings-header-with-toggle">Storage <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+            <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
           </h3>
         </div>
         <RawTomlEditor
@@ -96,7 +96,7 @@ export function StorageTab({
     <>
       <div className="settings-header">
         <h3 className="section-title section-title--flush">
-          <span className="settings-header-with-toggle">Storage <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+          <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
         </h3>
       </div>
       <div className="settings-form-wrap">

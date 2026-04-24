@@ -307,7 +307,7 @@ export function McpTab({
       <>
         <div className="settings-header">
           <h3 className="section-title section-title--flush">
-            <span className="settings-header-with-toggle">MCP Servers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+            <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
           </h3>
         </div>
         <RawTomlEditor
@@ -328,7 +328,7 @@ export function McpTab({
     <>
     <div className="settings-header">
       <h3 className="section-title section-title--flush">
-        <span className="settings-header-with-toggle">MCP Servers <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
+        <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
       </h3>
     </div>
     <SubListLayout

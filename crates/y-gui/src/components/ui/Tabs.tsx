@@ -17,7 +17,8 @@ export const TabsList = forwardRef<
       'border border-solid border-border',
       'rounded-[var(--radius-md)]',
       'p-[3px]',
-    ].join(' ')}
+      className,
+    ].filter(Boolean).join(' ')}
     {...props}
   />
 ))
@@ -41,7 +42,8 @@ export const TabsTrigger = forwardRef<
       'transition-all duration-150',
       'hover:(text-text-primary bg-surface-hover)',
       'data-[state=active]:(bg-accent text-accent-contrast)',
-    ].join(' ')}
+      className,
+    ].filter(Boolean).join(' ')}
     {...props}
   />
 ))
