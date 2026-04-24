@@ -268,7 +268,13 @@ impl BrowserSession {
             *launcher_guard = Some(chrome);
         } else {
             // Launcher exists but connection was lost. Update URL and reconnect.
-            let actual_port = launcher_guard.as_ref().unwrap().cdp_port();
+            let Some(launcher) = launcher_guard.as_ref() else {
+                return Err(ToolError::ExternalServiceError {
+                    name: "browser".into(),
+                    message: "Chrome launcher state was lost during reconnect".into(),
+                });
+            };
+            let actual_port = launcher.cdp_port();
             let cdp_url = format!("http://127.0.0.1:{actual_port}");
             self.client.set_cdp_url(cdp_url);
         }

@@ -331,12 +331,14 @@ impl CdpClient {
             if let Ok(resp) = reqwest::get(&list_url).await {
                 if let Ok(targets) = resp.json::<Vec<CdpTarget>>().await {
                     // Pick the first "page" target that has a WebSocket URL.
-                    if let Some(target) = targets
-                        .iter()
-                        .find(|t| t.target_type == "page" && t.ws_url.is_some())
-                    {
-                        let ws_url = target.ws_url.as_ref().unwrap();
-                        debug!(ws_url, target_url = %target.url, attempt, "using existing page target");
+                    if let Some((ws_url, target_url)) = targets.iter().find_map(|target| {
+                        if target.target_type == "page" {
+                            target.ws_url.as_ref().map(|ws_url| (ws_url, &target.url))
+                        } else {
+                            None
+                        }
+                    }) {
+                        debug!(ws_url, target_url = %target_url, attempt, "using existing page target");
                         return Ok(normalize_ws_url(ws_url, url));
                     }
                 }
@@ -489,7 +491,9 @@ impl CdpClient {
                 ))
             })?;
 
-        let ws_url = target.ws_url.as_ref().unwrap();
+        let ws_url = target.ws_url.as_ref().ok_or_else(|| {
+            CdpError::DiscoveryFailed(format!("target {target_id} has no WebSocket debugger URL"))
+        })?;
         let cdp_url_owned2 = self
             .cdp_url
             .read()
@@ -563,7 +567,9 @@ impl CdpClient {
                 continue;
             }
 
-            let id = resp.id.unwrap();
+            let Some(id) = resp.id else {
+                continue;
+            };
             let result = if let Some(err) = resp.error {
                 Err(CdpError::ProtocolError {
                     code: err.code,
