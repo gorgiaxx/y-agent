@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use y_core::provider::ProviderCapability;
 use y_core::provider::ProviderPool;
 use y_core::runtime::RuntimeAdapter;
+pub use y_provider::HttpProtocol;
 use y_provider::ProviderPoolConfig;
 
 use crate::container::ServiceContainer;
@@ -61,6 +62,8 @@ pub struct ProviderTestRequest {
     pub base_url: Option<String>,
     /// Additional HTTP headers to send with active probe requests.
     pub headers: HashMap<String, String>,
+    /// HTTP protocol used for active probe requests.
+    pub http_protocol: HttpProtocol,
     /// Routing tags (legacy hint for capability inference).
     pub tags: Vec<String>,
     /// Explicit provider capabilities.
@@ -99,6 +102,11 @@ impl SystemService {
         headers: &reqwest::header::HeaderMap,
     ) -> reqwest::RequestBuilder {
         y_provider::http_headers::apply_custom_headers(request_builder, headers)
+    }
+
+    /// Build a provider-facing HTTP client builder with the configured protocol.
+    pub fn provider_http_client_builder(http_protocol: HttpProtocol) -> reqwest::ClientBuilder {
+        y_provider::http_headers::provider_http_client_builder(http_protocol, None)
     }
 
     /// Gather system status report.
@@ -303,7 +311,7 @@ impl SystemService {
             String::new()
         };
 
-        let client = reqwest::Client::builder()
+        let client = Self::provider_http_client_builder(request.http_protocol)
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
@@ -672,6 +680,7 @@ mod tests {
             api_key_env: String::new(),
             base_url: Some(server.base_url),
             headers: std::collections::HashMap::new(),
+            http_protocol: HttpProtocol::Http1,
             tags: vec![],
             capabilities: vec![ProviderCapability::Text],
             probe_mode: "auto".into(),
@@ -706,6 +715,7 @@ mod tests {
             api_key_env: String::new(),
             base_url: Some(server.base_url),
             headers: std::collections::HashMap::new(),
+            http_protocol: HttpProtocol::Http1,
             tags: vec!["image".into()],
             capabilities: vec![ProviderCapability::ImageGeneration],
             probe_mode: "auto".into(),
@@ -742,6 +752,7 @@ mod tests {
             api_key_env: String::new(),
             base_url: Some(server.base_url),
             headers,
+            http_protocol: HttpProtocol::Http1,
             tags: vec![],
             capabilities: vec![ProviderCapability::Text],
             probe_mode: "auto".into(),
@@ -750,6 +761,6 @@ mod tests {
         .expect("text probe should succeed");
 
         let header_text = server.header_text_rx.await.expect("request headers");
-        assert!(header_text.contains("x-llm-tenant: workspace-a"));
+        assert!(header_text.contains("X-Llm-Tenant: workspace-a"));
     }
 }

@@ -12,6 +12,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::Value;
 use y_core::provider::ProviderCapability;
+use y_service::HttpProtocol;
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -54,6 +55,8 @@ pub struct ProviderTestRequest {
     pub tags: Option<Vec<String>>,
     pub capabilities: Option<Vec<ProviderCapability>>,
     pub probe_mode: Option<String>,
+    #[serde(default)]
+    pub http_protocol: HttpProtocol,
 }
 
 /// Request body for listing models.
@@ -63,6 +66,8 @@ pub struct ListModelsRequest {
     pub api_key: String,
     pub api_key_env: String,
     pub headers: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub http_protocol: HttpProtocol,
 }
 
 /// Request body for saving a prompt file.
@@ -239,6 +244,7 @@ async fn provider_test(
         api_key_env: body.api_key_env,
         base_url: body.base_url,
         headers: body.headers.unwrap_or_default(),
+        http_protocol: body.http_protocol,
         tags: body.tags.unwrap_or_default(),
         capabilities: body.capabilities.unwrap_or_default(),
         probe_mode: body.probe_mode.unwrap_or_else(|| "auto".to_string()),
@@ -266,7 +272,7 @@ async fn provider_list_models(
         String::new()
     };
 
-    let client = reqwest::Client::builder()
+    let client = y_service::SystemService::provider_http_client_builder(body.http_protocol)
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| ApiError::Internal(format!("Failed to build HTTP client: {e}")))?;

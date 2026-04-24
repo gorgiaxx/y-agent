@@ -81,7 +81,9 @@ pub use skill_evolution::{
 };
 pub use skill_ingestion::{ImportDecision, ImportError, ImportResult, SkillIngestionService};
 pub use skill_service::{SkillDetail, SkillInfo, SkillService};
-pub use system::{HealthReport, ProviderInfo, ProviderTestRequest, StatusReport, SystemService};
+pub use system::{
+    HealthReport, HttpProtocol, ProviderInfo, ProviderTestRequest, StatusReport, SystemService,
+};
 pub use workflow_service::{
     CreateWorkflowRequest, DagEdge, DagNode, DagVisualization, UpdateWorkflowRequest,
     ValidationResult, WorkflowService, WorkflowServiceError,
