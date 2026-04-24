@@ -65,6 +65,7 @@ function ProviderTabPanel({
         apiKeyEnv: provider.api_key_env ?? '',
         baseUrl: provider.base_url ?? null,
         headers: provider.headers,
+        httpProtocol: provider.http_protocol,
         tags: provider.tags,
         capabilities: provider.capabilities,
         probeMode: 'auto',
@@ -96,6 +97,7 @@ function ProviderTabPanel({
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
         headers: provider.headers,
+        httpProtocol: provider.http_protocol,
       });
       // OpenAI format: { data: [{ id, display_name?, ... }] }
       const items: ModelItem[] = (result?.data ?? []).map(
@@ -258,6 +260,20 @@ function ProviderTabPanel({
             onChange={(e) => update({ api_key_env: e.target.value || null })}
             placeholder="e.g. OPENAI_API_KEY"
           />
+        </SettingsItem>
+        <SettingsItem title="HTTP Protocol">
+          <Select
+            value={provider.http_protocol}
+            onValueChange={(val) => update({ http_protocol: val === 'http2' ? 'http2' : 'http1' })}
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Protocol" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="http1">HTTP/1.1</SelectItem>
+              <SelectItem value="http2">HTTP/2</SelectItem>
+            </SelectContent>
+          </Select>
         </SettingsItem>
         <SettingsItem title="Test Connection" wide>
           <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>

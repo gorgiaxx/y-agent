@@ -26,6 +26,7 @@ describe('provider custom headers settings', () => {
         'HTTP-Referer': 'https://y-agent.local',
         '': 'ignored',
       },
+      http_protocol: 'http2',
     };
 
     const toml = providersToToml([provider]);
@@ -33,6 +34,7 @@ describe('provider custom headers settings', () => {
     expect(toml).toContain('[providers.headers]');
     expect(toml).toContain('"X-LLM-Tenant" = "workspace-a"');
     expect(toml).toContain('"HTTP-Referer" = "https://y-agent.local"');
+    expect(toml).toContain('http_protocol = "http2"');
     expect(toml).not.toContain('"" = "ignored"');
   });
 
@@ -48,6 +50,7 @@ describe('provider custom headers settings', () => {
               'X-LLM-Tenant': 'workspace-a',
               'X-Feature': 'strict-validation',
             },
+            http_protocol: 'http2',
           },
         ],
       },
@@ -57,6 +60,18 @@ describe('provider custom headers settings', () => {
       'X-LLM-Tenant': 'workspace-a',
       'X-Feature': 'strict-validation',
     });
+    expect(providers[0].http_protocol).toBe('http2');
+  });
+
+  it('defaults provider HTTP protocol to HTTP/1.1', () => {
+    const providers = jsonToProviders({
+      providers: {
+        providers: [{ id: 'default', provider_type: 'openai', model: 'gpt-4o' }],
+      },
+    });
+
+    expect(providers[0].http_protocol).toBe('http1');
+    expect(providersToToml(providers)).not.toContain('http_protocol');
   });
 
   it('renders the provider header key-value editor', () => {

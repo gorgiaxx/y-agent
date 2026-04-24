@@ -280,6 +280,7 @@ pub async fn provider_test(
     tags: Option<Vec<String>>,
     capabilities: Option<Vec<y_core::provider::ProviderCapability>>,
     probe_mode: Option<String>,
+    http_protocol: Option<y_provider::HttpProtocol>,
 ) -> Result<String, String> {
     y_service::SystemService::test_provider(y_service::ProviderTestRequest {
         provider_type,
@@ -288,6 +289,7 @@ pub async fn provider_test(
         api_key_env,
         base_url,
         headers: headers.unwrap_or_default(),
+        http_protocol: http_protocol.unwrap_or_default(),
         tags: tags.unwrap_or_default(),
         capabilities: capabilities.unwrap_or_default(),
         probe_mode: probe_mode.unwrap_or_else(|| "auto".to_string()),
@@ -304,6 +306,7 @@ pub async fn provider_list_models(
     api_key: String,
     api_key_env: String,
     headers: Option<std::collections::HashMap<String, String>>,
+    http_protocol: Option<y_provider::HttpProtocol>,
 ) -> Result<serde_json::Value, String> {
     let effective_key = if !api_key.is_empty() {
         api_key
@@ -314,10 +317,11 @@ pub async fn provider_list_models(
         String::new()
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+    let client =
+        y_service::SystemService::provider_http_client_builder(http_protocol.unwrap_or_default())
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
     let custom_headers =
         y_service::SystemService::provider_custom_header_map(&headers.unwrap_or_default())?;
 

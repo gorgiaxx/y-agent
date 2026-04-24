@@ -28,6 +28,7 @@ export interface ProviderFormData {
   api_key_env: string | null;
   base_url: string | null;
   headers: Record<string, string>;
+  http_protocol: 'http1' | 'http2';
   temperature: number | null;
   top_p: number | null;
   tool_calling_mode: string | null;
@@ -191,6 +192,7 @@ export function emptyProvider(): ProviderFormData {
     api_key_env: null,
     base_url: null,
     headers: {},
+    http_protocol: 'http1',
     temperature: null,
     top_p: null,
     tool_calling_mode: null,
@@ -365,6 +367,7 @@ export function providersToToml(providers: ProviderFormData[]): string {
     if (p.api_key) lines.push(`api_key = "${escapeTomlString(p.api_key)}"`);
     if (p.api_key_env) lines.push(`api_key_env = "${escapeTomlString(p.api_key_env)}"`);
     if (p.base_url) lines.push(`base_url = "${escapeTomlString(p.base_url)}"`);
+    if (p.http_protocol === 'http2') lines.push('http_protocol = "http2"');
     if (p.temperature !== null) lines.push(`temperature = ${p.temperature}`);
     if (p.top_p !== null) lines.push(`top_p = ${p.top_p}`);
     if (p.tool_calling_mode) lines.push(`tool_calling_mode = "${escapeTomlString(p.tool_calling_mode)}"`);
@@ -416,6 +419,7 @@ export function jsonToProviders(json: unknown): ProviderFormData[] {
     api_key_env: (p.api_key_env as string) ?? null,
     base_url: (p.base_url as string) ?? null,
     headers: stringRecord(p.headers),
+    http_protocol: p.http_protocol === 'http2' ? 'http2' : 'http1',
     temperature: (p.temperature as number) ?? null,
     top_p: (p.top_p as number) ?? null,
     tool_calling_mode: (p.tool_calling_mode as string) ?? null,
