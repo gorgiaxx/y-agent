@@ -4,7 +4,7 @@ Scope: entire repository. All rules are mandatory.
 
 ## 1) Project Snapshot
 
-**y-agent** — Rust-first modular AI Agent framework. Phase: **active implementation**. Design docs: `docs/design/`.
+**y-agent** — Rust-first modular AI Agent framework. Phase: **active implementation**.
 
 Goals: async-first (P95 tool dispatch < 100ms) · model-agnostic · full observability · WAL-based recoverability · self-evolving skills.
 
@@ -110,6 +110,7 @@ After completing frontend changes in `crates/y-gui`, run the following checks **
 - **`npm test`** — Full Vitest suite must pass. Do not rely only on focused test runs at completion time.
 - **`npm run lint`** — ESLint must pass cleanly with zero errors and zero warnings.
 - **`npm run build`** — TypeScript compilation and Vite production build must succeed. Investigate new non-fatal warnings introduced by the change; existing non-blocking bundle-size warnings should still be mentioned if they materially worsen.
+- **`npm run build:web`** — Required when the change affects shared desktop/web UI behavior, transport contracts, platform capabilities, or y-web static frontend serving. Follow `docs/standards/FRONTEND_REUSE_STANDARD.md`.
 
 #### Mixed-surface changes
 
@@ -134,6 +135,7 @@ This strips compilation progress, download noise, and individual test-pass lines
 - Before finishing, always rerun the full frontend suite with `npm test`.
 - Shared browser-like test environment requirements (for example `EventSource`, `matchMedia`, or similar globals) belong in shared Vitest setup files, not copy-pasted stubs across many tests.
 - When a renderer or UI contract changes intentionally, update the affected tests in the same change. Do not preserve outdated assertions just to keep old snapshots or CSS class names alive.
+- Shared desktop/web frontend work must follow `docs/standards/FRONTEND_REUSE_STANDARD.md`; host differences belong in transport or platform adapters, not duplicated UI implementations.
 
 ## 5) Key References
 
@@ -143,9 +145,10 @@ This strips compilation progress, download noise, and individual test-pass lines
 - `docs/standards/DATABASE_SCHEMA.md` -- SQLite / Qdrant schema
 - `docs/standards/AGENT_AUTONOMY.md` -- Sub-agent autonomy model & delegation protocol
 - `docs/standards/DSL_STANDARD.md` -- DSL specification
+- `docs/standards/FRONTEND_REUSE_STANDARD.md` -- Shared React frontend reuse across y-web and y-gui
 - `docs/standards/SKILLS_STANDARD.md` -- Skills format and authoring standard
 - `docs/standards/TOOL_CALL_PROTOCOL.md` -- Tool call protocol specification
 
 ## 6) Formatting Constraints
 
-- **No emoji anywhere.** All repository content -- source code, documentation, comments, commit messages, Mermaid diagrams, log output, and AI-generated responses -- must be free of emoji characters. Use plain-text markers, ASCII symbols, or descriptive words instead.
+- **No emoji anywhere.**
