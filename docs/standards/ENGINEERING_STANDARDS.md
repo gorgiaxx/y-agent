@@ -403,7 +403,7 @@ evolution_fast_path = []
 Rules:
 - Every non-trivial subsystem gates behind a feature flag
 - `default` includes the minimum viable feature set
-- Heavy dependencies (Docker, PostgreSQL, Qdrant) are opt-in
+- Heavy dependencies (Docker, Qdrant) are opt-in
 - Feature flag names use `snake_case`
 
 ---
@@ -498,21 +498,19 @@ pub trait RuntimeAdapter: Send + Sync {
 
 - WAL mode enabled at connection time
 - Connection pool via `sqlx::SqlitePool`
-- Versioned migrations in `migrations/sqlite/`
+- Embedded schema in `crates/y-storage/src/schema.sql`
 - Tables prefixed by owning module (e.g., `orchestrator_checkpoints`, `session_metadata`)
 - All timestamps stored as ISO 8601 TEXT (SQLite has no native datetime)
 - Foreign keys enforced (`PRAGMA foreign_keys = ON`)
 - Indexes on all columns used in WHERE clauses
 
-### 10.2 PostgreSQL (Analytics/Diagnostics)
+### 10.2 SQLite Diagnostics
 
-- Schema: `observability`
-- Connection pool via `sqlx::PgPool`
-- Versioned migrations in `migrations/postgres/`
-- JSONB for flexible metadata columns
-- GIN indexes for full-text search
-- Materialized paths (UUID arrays) for tree queries
-- TTL-based retention with periodic cleanup
+- Diagnostics tables share the same `SQLite` database file as operational state
+- Schema compatibility tracked via `PRAGMA user_version`
+- Incompatible on-disk schemas are archived and recreated during startup
+- JSON payloads stored as TEXT
+- Retention handled by application-level cleanup jobs
 
 ### 10.3 Vector Store (Qdrant)
 
@@ -521,12 +519,11 @@ pub trait RuntimeAdapter: Send + Sync {
 - HNSW index with tunable `ef` and `m` parameters
 - Batch upsert for bulk operations
 
-### 10.4 Migration Discipline
+### 10.4 Schema Discipline
 
-- Every schema change is a new migration file (never modify existing migrations)
-- Migration files are numbered sequentially: `001_initial_schema.sql`, `002_add_file_journal.sql`
-- Down migrations are required for every up migration
-- Migrations run automatically at startup (with opt-out flag)
+- Update the embedded schema in `crates/y-storage/src/schema.sql`
+- Bump the compatibility contract in `crates/y-storage/src/migration.rs` when the runtime shape changes
+- Startup must either adopt a compatible database or archive and recreate an incompatible one
 - Schema changes require review regardless of risk tier
 
 ---
@@ -580,4 +577,3 @@ ci: add cargo-deny license check to pipeline
 - Squash merge to `main` (clean linear history)
 - PR title becomes the squash commit message (follow format above)
 - Delete branch after merge
-

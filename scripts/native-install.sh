@@ -155,14 +155,6 @@ else
     info "Config already exists at ${CONFIG_DIR}/, skipping."
 fi
 
-# ── Copy Migrations ─────────────────────────────────────────────────────────
-
-MIGRATIONS_DIR="${DATA_DIR}/migrations"
-if [ -d "${PROJECT_DIR}/migrations" ]; then
-    log "Copying migrations..."
-    cp -r "${PROJECT_DIR}/migrations" "${DATA_DIR}/"
-fi
-
 # -- Copy Skills --------------------------------------------------------------
 
 SKILLS_SRC="${PROJECT_DIR}/skills"

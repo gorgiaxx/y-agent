@@ -51,11 +51,8 @@ routing_strategy = "tag_match"        # or "round_robin", "least_loaded"
 
 ```toml
 [storage]
-# SQLite for operational state (sessions, checkpoints)
-sqlite_path = "~/.local/share/y-agent/state.db"
-
-# PostgreSQL for diagnostics (optional)
-postgres_url = "postgresql://localhost:5432/y_agent"
+# SQLite for operational + diagnostics state
+db_path = "~/.local/share/y-agent/state.db"
 
 # Qdrant for semantic search (optional)
 qdrant_url = "http://localhost:6334"

@@ -2,7 +2,7 @@
 //!
 //! Creates configuration files, detects environment dependencies,
 //! guides the user through LLM provider selection, and initializes
-//! the `SQLite` database with all embedded migrations.
+//! the `SQLite` database with the embedded schema.
 
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -401,19 +401,6 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             }
         },
         {
-            let found = check_tcp_port(5432);
-            DependencyStatus {
-                name: "PostgreSQL",
-                required: false,
-                found,
-                detail: if found {
-                    "port 5432 reachable".to_string()
-                } else {
-                    "not found (optional \u{2014} for diagnostics)".to_string()
-                },
-            }
-        },
-        {
             let found = check_tcp_port(6333);
             DependencyStatus {
                 name: "Qdrant",
@@ -424,16 +411,6 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
                 } else {
                     "not found (optional \u{2014} for vector search)".to_string()
                 },
-            }
-        },
-        {
-            let version = run_version_command("sqlx", &["--version"]);
-            DependencyStatus {
-                name: "sqlx-cli",
-                required: false,
-                found: version.is_some(),
-                detail: version
-                    .unwrap_or_else(|| "not found (optional \u{2014} for migrations)".to_string()),
             }
         },
     ]
@@ -791,7 +768,7 @@ pub fn select_providers(args: &InitArgs, prompter: &dyn Prompter) -> Result<Prov
 /// - `config_base` is `~/.config/y-agent/` where config files live.
 /// - `data_dir` is `~/.local/state/y-agent/data/` where the database lives.
 ///
-/// Only one connection is needed since init just runs migrations.
+/// Only one connection is needed since init only prepares and initializes the schema.
 fn build_init_storage_config(
     _config_base: &Path,
     data_dir: &Path,
@@ -805,7 +782,7 @@ fn build_init_storage_config(
     }
 }
 
-/// Create the `SQLite` database and run all embedded migrations.
+/// Create the `SQLite` database and apply the embedded schema.
 ///
 /// - `config_base` is `~/.config/y-agent/` where config files live.
 /// - `data_dir` is `~/.local/state/y-agent/data/` where the database lives.
@@ -815,13 +792,17 @@ pub async fn initialize_database(config_base: &Path, data_dir: &Path) -> Result<
     let config = build_init_storage_config(config_base, data_dir);
     let db_path = PathBuf::from(&config.db_path);
 
+    y_service::migration::prepare_database(&config)
+        .await
+        .context("failed to prepare SQLite database")?;
+
     let pool = y_service::create_pool(&config)
         .await
         .context("failed to create SQLite database")?;
 
     y_service::migration::run_embedded_migrations(&pool)
         .await
-        .context("failed to run database migrations")?;
+        .context("failed to initialize database schema")?;
 
     pool.close().await;
 
@@ -831,12 +812,15 @@ pub async fn initialize_database(config_base: &Path, data_dir: &Path) -> Result<
 /// Determine whether database initialization should proceed.
 ///
 /// If the database file already exists and `force` is false, the user is
-/// prompted. Migrations are idempotent, so the default answer is yes.
+/// prompted. Schema initialization is idempotent, so the default answer is yes.
 pub fn should_initialize_db(db_path: &Path, force: bool, prompter: &dyn Prompter) -> Result<bool> {
     if !db_path.exists() || force {
         return Ok(true);
     }
-    prompter.confirm("Database already exists. Re-run migrations?", true)
+    prompter.confirm(
+        "Database already exists. Re-apply schema initialization?",
+        true,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1397,7 +1381,7 @@ mod tests {
     #[test]
     fn test_check_dependencies_structure() {
         let deps = check_dependencies();
-        assert_eq!(deps.len(), 8);
+        assert_eq!(deps.len(), 6);
 
         // At least rustc + cargo should be found (we're running Rust tests).
         let rustc = deps.iter().find(|d| d.name == "rustc").unwrap();
@@ -1482,9 +1466,9 @@ mod tests {
         );
     }
 
-    // T-INIT-021: after init, all 6 migration tables exist in the DB.
+    // T-INIT-021: after init, all active schema tables exist in the DB.
     #[tokio::test]
-    async fn test_initialize_database_runs_all_migrations() {
+    async fn test_initialize_database_initializes_all_active_tables() {
         let tmp = tempfile::tempdir().unwrap();
         let config_dir = tmp.path().join("config");
         let data_dir = tmp.path().join("state").join("data");
@@ -1509,13 +1493,14 @@ mod tests {
             "session_metadata",
             "orchestrator_checkpoints",
             "orchestrator_workflows",
-            "file_journal_entries",
-            "tool_dynamic_definitions",
-            "tool_activation_log",
-            "agent_definitions",
             "schedule_definitions",
             "schedule_executions",
-            "stm_experience_store",
+            "chat_checkpoints",
+            "chat_messages",
+            "diag_traces",
+            "diag_observations",
+            "diag_scores",
+            "provider_metrics_log",
         ];
 
         for expected_table in &expected {

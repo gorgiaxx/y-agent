@@ -70,7 +70,7 @@ impl CheckpointStorage for SqliteCheckpointStorage {
         } else {
             // Insert a new checkpoint with pending_state.
             let id = uuid::Uuid::new_v4().to_string();
-            let committed = serde_json::to_string(&serde_json::json!({})).unwrap();
+            let committed = "{}";
             sqlx::query(
                 r"INSERT INTO orchestrator_checkpoints (id, workflow_id, session_id, step_number, status, committed_state, pending_state, versions_seen)
                   VALUES (?1, ?2, ?3, ?4, 'running', ?5, ?6, '{}')",
@@ -79,7 +79,7 @@ impl CheckpointStorage for SqliteCheckpointStorage {
             .bind(wf_id)
             .bind(sess_id)
             .bind(step)
-            .bind(&committed)
+            .bind(committed)
             .bind(&state_json)
             .execute(&self.pool)
             .await

@@ -42,7 +42,7 @@ pub struct ServiceConfig {
     /// Provider pool configuration.
     pub providers: ProviderPoolConfig,
 
-    /// Storage configuration (`SQLite` + `PostgreSQL`).
+    /// Storage configuration (`SQLite`).
     pub storage: StorageConfig,
 
     /// Session lifecycle configuration.

@@ -8,7 +8,8 @@
 //! - [`SqliteSessionStore`] — session tree metadata in `SQLite`
 //! - [`JsonlTranscriptStore`] — JSONL file-based message transcripts
 //!
-//! It also manages `SQLite` connection pools (WAL mode) and migration execution.
+//! It also manages `SQLite` connection pools (WAL mode) and embedded schema
+//! initialization.
 
 pub mod chat_message;
 pub mod checkpoint;

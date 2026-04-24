@@ -84,89 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_checkpoint_session  ON orchestrator_checkpoints(s
 CREATE INDEX IF NOT EXISTS idx_checkpoint_status   ON orchestrator_checkpoints(status);
 
 ------------------------------------------------------------------------
--- 3. File mutation journal
-------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS file_journal_entries (
-    id              TEXT PRIMARY KEY,
-    scope_id        TEXT NOT NULL,
-    scope_type      TEXT NOT NULL CHECK (scope_type IN ('workflow', 'task', 'step')),
-    file_path       TEXT NOT NULL,
-    storage_tier    TEXT NOT NULL CHECK (storage_tier IN ('inline', 'blob', 'git_ref')),
-    original_hash   TEXT NOT NULL,
-    original_size   INTEGER NOT NULL,
-    inline_content  BLOB,
-    blob_path       TEXT,
-    git_ref         TEXT,
-    file_existed    INTEGER NOT NULL DEFAULT 1,
-    status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN (
-                        'active', 'rolled_back', 'committed', 'conflict'
-                    )),
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_journal_scope  ON file_journal_entries(scope_id, scope_type);
-CREATE INDEX IF NOT EXISTS idx_journal_path   ON file_journal_entries(file_path);
-CREATE INDEX IF NOT EXISTS idx_journal_status ON file_journal_entries(status);
-
-------------------------------------------------------------------------
--- 4. Dynamic tool definitions, activation log, agent definitions
-------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS tool_dynamic_definitions (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL UNIQUE,
-    description     TEXT NOT NULL,
-    tool_type       TEXT NOT NULL CHECK (tool_type IN ('script', 'http_api', 'composite')),
-    implementation  TEXT NOT NULL,
-    parameters      TEXT NOT NULL,
-    result_schema   TEXT,
-    capabilities    TEXT NOT NULL,
-    is_sandboxed    INTEGER NOT NULL DEFAULT 1,
-    creator_agent   TEXT,
-    validation_status TEXT NOT NULL DEFAULT 'pending' CHECK (validation_status IN (
-                        'pending', 'validated', 'failed', 'disabled'
-                    )),
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_tool_name   ON tool_dynamic_definitions(name);
-CREATE INDEX IF NOT EXISTS idx_tool_status ON tool_dynamic_definitions(validation_status);
-
-CREATE TABLE IF NOT EXISTS tool_activation_log (
-    id              TEXT PRIMARY KEY,
-    session_id      TEXT NOT NULL REFERENCES session_metadata(id),
-    tool_name       TEXT NOT NULL,
-    activated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    activation_source TEXT NOT NULL CHECK (activation_source IN (
-                        'tool_search', 'always_active', 'dependency', 'user_request'
-                    ))
-);
-
-CREATE INDEX IF NOT EXISTS idx_tool_activation_session ON tool_activation_log(session_id);
-
-CREATE TABLE IF NOT EXISTS agent_definitions (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL UNIQUE,
-    description     TEXT NOT NULL,
-    source          TEXT NOT NULL CHECK (source IN ('static', 'dynamic')),
-    mode            TEXT NOT NULL CHECK (mode IN ('build', 'plan', 'explore', 'general')),
-    definition      TEXT NOT NULL,
-    trust_tier      TEXT NOT NULL DEFAULT 'untrusted' CHECK (trust_tier IN (
-                        'trusted', 'verified', 'untrusted'
-                    )),
-    permission_snapshot TEXT,
-    creator_agent   TEXT,
-    is_active       INTEGER NOT NULL DEFAULT 1,
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_name   ON agent_definitions(name);
-CREATE INDEX IF NOT EXISTS idx_agent_active ON agent_definitions(is_active);
-CREATE INDEX IF NOT EXISTS idx_agent_mode   ON agent_definitions(mode);
-
-------------------------------------------------------------------------
--- 5. Schedules (with policy columns baked in)
+-- 3. Schedules (with policy columns baked in)
 ------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS schedule_definitions (
     id              TEXT PRIMARY KEY,
@@ -215,52 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_schedule_exec_schedule ON schedule_executions(sch
 CREATE INDEX IF NOT EXISTS idx_schedule_exec_status   ON schedule_executions(status);
 
 ------------------------------------------------------------------------
--- 6. Short-term memory experience store
-------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS stm_experience_store (
-    id              TEXT PRIMARY KEY,
-    session_id      TEXT NOT NULL REFERENCES session_metadata(id),
-    slot_index      INTEGER NOT NULL,
-    summary         TEXT NOT NULL,
-    evidence_type   TEXT NOT NULL CHECK (evidence_type IN (
-                        'user_stated', 'user_correction', 'task_outcome', 'agent_observation'
-                    )),
-    skill_id        TEXT,
-    token_estimate  INTEGER NOT NULL,
-    metadata        TEXT NOT NULL DEFAULT '{}',
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_experience_session ON stm_experience_store(session_id);
-CREATE INDEX IF NOT EXISTS idx_experience_skill   ON stm_experience_store(skill_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_experience_slot ON stm_experience_store(session_id, slot_index);
-
-------------------------------------------------------------------------
--- 7. Dynamic agents
-------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS dynamic_agents (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL,
-    definition_json TEXT NOT NULL,
-    trust_tier      TEXT NOT NULL DEFAULT 'dynamic',
-    delegation_depth INTEGER NOT NULL DEFAULT 0,
-    version         INTEGER NOT NULL DEFAULT 1,
-    status          TEXT NOT NULL DEFAULT 'active',
-    effective_permissions_json TEXT,
-    created_by      TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    deactivated_at  TEXT,
-    deactivation_reason TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_dynamic_agents_status     ON dynamic_agents(status);
-CREATE INDEX IF NOT EXISTS idx_dynamic_agents_trust_tier ON dynamic_agents(trust_tier);
-CREATE INDEX IF NOT EXISTS idx_dynamic_agents_created_by ON dynamic_agents(created_by);
-CREATE INDEX IF NOT EXISTS idx_dynamic_agents_name       ON dynamic_agents(name);
-
-------------------------------------------------------------------------
--- 8. Chat checkpoints (turn-level rollback)
+-- 4. Chat checkpoints (turn-level rollback)
 ------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS chat_checkpoints (
     checkpoint_id TEXT PRIMARY KEY,
@@ -277,7 +150,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_cp_session
     ON chat_checkpoints(session_id, turn_number DESC);
 
 ------------------------------------------------------------------------
--- 9. Chat messages
+-- 5. Chat messages
 ------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS chat_messages (
     id              TEXT PRIMARY KEY,
@@ -303,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_cm_parent          ON chat_messages(parent_messag
 CREATE INDEX IF NOT EXISTS idx_cm_pruning_group   ON chat_messages(session_id, pruning_group_id);
 
 ------------------------------------------------------------------------
--- 10. Diagnostics (traces, observations, scores -- v2 columns baked in)
+-- 6. Diagnostics (traces, observations, scores -- v2 columns baked in)
 ------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS diag_traces (
     id          TEXT PRIMARY KEY,
@@ -372,7 +245,7 @@ CREATE INDEX IF NOT EXISTS idx_diag_scores_obs
     ON diag_scores(observation_id);
 
 ------------------------------------------------------------------------
--- 11. Provider metrics event log (observability persistence)
+-- 7. Provider metrics event log (observability persistence)
 ------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS provider_metrics_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

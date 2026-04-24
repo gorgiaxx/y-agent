@@ -243,7 +243,7 @@ impl ServiceContainer {
     ///
     /// Panics if the fallback tool taxonomy TOML is invalid.
     pub async fn from_config(config: &ServiceConfig) -> Result<Self> {
-        // 1. Storage -- SQLite pool + migrations.
+        // 1. Storage -- SQLite pool + schema compatibility handling.
         let pool = Self::init_storage(config).await?;
 
         // 2. Session infrastructure.
@@ -376,14 +376,17 @@ impl ServiceContainer {
 
     // -- Init helpers (private) --------------------------------------------
 
-    /// Create `SQLite` pool and run migrations.
+    /// Create a `SQLite` pool and reconcile the on-disk schema if needed.
     async fn init_storage(config: &ServiceConfig) -> Result<y_storage::SqlitePool> {
+        y_storage::migration::prepare_database(&config.storage)
+            .await
+            .context("failed to prepare SQLite database")?;
         let pool = y_storage::create_pool(&config.storage)
             .await
             .context("failed to create SQLite pool")?;
         y_storage::migration::run_embedded_migrations(&pool)
             .await
-            .context("failed to run SQLite migrations")?;
+            .context("failed to initialize SQLite schema")?;
         Ok(pool)
     }
 

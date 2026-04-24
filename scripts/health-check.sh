@@ -15,8 +15,6 @@ set -euo pipefail
 
 MAX_WAIT=60
 AGENT_URL="${AGENT_URL:-http://localhost:8080}"
-PG_HOST="${PG_HOST:-localhost}"
-PG_PORT="${PG_PORT:-5432}"
 QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
 
 # Parse arguments
@@ -59,24 +57,6 @@ done
 
 if [ "$HEALTHY" = true ] || curl -sf "${AGENT_URL}/health" > /dev/null 2>&1; then
     pass "HTTP health endpoint OK"
-fi
-
-# ── PostgreSQL ───────────────────────────────────────────────────────────────
-
-echo ""
-echo "PostgreSQL:"
-if command -v pg_isready &> /dev/null; then
-    if pg_isready -h "${PG_HOST}" -p "${PG_PORT}" > /dev/null 2>&1; then
-        pass "Connection OK (${PG_HOST}:${PG_PORT})"
-    else
-        fail "Connection failed (${PG_HOST}:${PG_PORT})"
-        HEALTHY=false
-    fi
-elif docker compose exec -T postgres pg_isready > /dev/null 2>&1; then
-    pass "Connection OK (via docker compose)"
-else
-    fail "Connection check failed"
-    HEALTHY=false
 fi
 
 # ── Qdrant ───────────────────────────────────────────────────────────────────

@@ -147,8 +147,9 @@ pub use y_prompt::{PromptContext, BUILTIN_PROMPT_FILES};
 // Re-export storage functions (used by CLI `init` command for DB setup).
 pub use y_storage::create_pool;
 
-/// Storage migration helpers re-exported for presentation layers.
+/// Storage schema helpers re-exported for presentation layers.
 pub mod migration {
+    pub use y_storage::migration::prepare_database;
     pub use y_storage::migration::run_embedded_migrations;
 }
 

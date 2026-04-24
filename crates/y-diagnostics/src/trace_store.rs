@@ -155,7 +155,7 @@ impl<T: TraceStore + ?Sized> TraceStore for std::sync::Arc<T> {
     }
 }
 
-/// In-memory trace store for testing (no `PostgreSQL` required).
+/// In-memory trace store for testing (no on-disk `SQLite` database required).
 #[derive(Debug, Default)]
 pub struct InMemoryTraceStore {
     traces: RwLock<HashMap<Uuid, Trace>>,

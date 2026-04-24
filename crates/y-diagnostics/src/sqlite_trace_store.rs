@@ -1,8 +1,8 @@
 // SQLite-backed TraceStore implementation for persistent diagnostics storage.
 //
 // Stores trace and observation records in the shared SQLite database so that
-// diagnostic data survives application restarts.  The schema is managed by
-// migration 011_diagnostics.
+// diagnostic data survives application restarts. The schema is created from
+// the embedded `y-storage` schema initializer.
 //
 // All queries use `sqlx::query_as` / `sqlx::query` (no compile-time
 // verification) to avoid requiring DATABASE_URL during builds.
