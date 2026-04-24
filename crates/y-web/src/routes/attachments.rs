@@ -2,7 +2,7 @@
 //!
 //! Mirrors the GUI `attachment_read_files` command and adds multipart upload.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use axum::extract::Multipart;
 use axum::response::IntoResponse;
@@ -61,6 +61,36 @@ fn mime_from_ext(ext: &str) -> &'static str {
         "webp" => "image/webp",
         _ => "application/octet-stream",
     }
+}
+
+fn upload_target_path(base_dir: &Path, filename: &str) -> Result<PathBuf, ApiError> {
+    if filename.is_empty()
+        || filename == "."
+        || filename == ".."
+        || filename.contains('/')
+        || filename.contains('\\')
+    {
+        return Err(ApiError::BadRequest("Invalid filename".to_string()));
+    }
+
+    let path = Path::new(filename);
+    if path.components().count() != 1 {
+        return Err(ApiError::BadRequest("Invalid filename".to_string()));
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .unwrap_or_default();
+
+    if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(ApiError::BadRequest(format!(
+            "Unsupported file type: .{ext}"
+        )));
+    }
+
+    Ok(base_dir.join(filename))
 }
 
 // ---------------------------------------------------------------------------
@@ -144,17 +174,7 @@ async fn upload_files(mut multipart: Multipart) -> Result<impl IntoResponse, Api
             .file_name()
             .map_or_else(|| format!("upload-{}", uuid::Uuid::new_v4()), String::from);
 
-        let ext = Path::new(&filename)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_lowercase)
-            .unwrap_or_default();
-
-        if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
-            return Err(ApiError::BadRequest(format!(
-                "Unsupported file type: .{ext}"
-            )));
-        }
+        let file_path = upload_target_path(&temp_dir, &filename)?;
 
         let data = field
             .bytes()
@@ -167,7 +187,6 @@ async fn upload_files(mut multipart: Multipart) -> Result<impl IntoResponse, Api
             )));
         }
 
-        let file_path = temp_dir.join(&filename);
         tokio::fs::write(&file_path, &data)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to write file: {e}")))?;
@@ -191,4 +210,26 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/attachments/read", post(read_files))
         .route("/api/v1/attachments/upload", post(upload_files))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_upload_target_path_accepts_simple_image_filename() {
+        let base = PathBuf::from("/tmp/y-agent-uploads");
+        let target = upload_target_path(&base, "photo.PNG").unwrap();
+
+        assert_eq!(target, base.join("photo.PNG"));
+    }
+
+    #[test]
+    fn test_upload_target_path_rejects_path_traversal_filename() {
+        let base = PathBuf::from("/tmp/y-agent-uploads");
+        let error = upload_target_path(&base, "../escape.png").unwrap_err();
+
+        assert!(error.to_string().contains("Invalid filename"));
+    }
 }
