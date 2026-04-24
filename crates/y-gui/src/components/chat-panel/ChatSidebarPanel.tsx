@@ -102,7 +102,6 @@ export function ChatSidebarPanel({
   onAssignSession,
   onUnassignSession,
   searchQuery: searchQueryProp,
-  onSearchQueryChange: _onSearchQueryChange,
 }: ChatSidebarPanelProps) {
   const {
     draggedSessionId,
@@ -184,9 +183,18 @@ export function ChatSidebarPanel({
     return new Set();
   });
 
+  const existingSessionIds = useMemo(
+    () => new Set(sessions.map((session) => session.id)),
+    [sessions],
+  );
+  const effectivePinnedIds = useMemo(
+    () => new Set([...pinnedIds].filter((id) => existingSessionIds.has(id))),
+    [existingSessionIds, pinnedIds],
+  );
+
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.PINNED_SESSIONS, JSON.stringify([...pinnedIds]));
-  }, [pinnedIds]);
+    localStorage.setItem(STORAGE_KEYS.PINNED_SESSIONS, JSON.stringify([...effectivePinnedIds]));
+  }, [effectivePinnedIds]);
 
   const togglePin = useCallback((sessionId: string) => {
     setPinnedIds((prev) => {
@@ -196,15 +204,6 @@ export function ChatSidebarPanel({
       return next;
     });
   }, []);
-
-  // Prune pinned IDs for sessions that no longer exist.
-  useEffect(() => {
-    const currentIds = new Set(sessions.map((s) => s.id));
-    setPinnedIds((prev) => {
-      const next = new Set([...prev].filter((id) => currentIds.has(id)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [sessions]);
 
   // Sorted workspaces.
   const sortedWorkspaces = useMemo(
@@ -314,18 +313,18 @@ export function ChatSidebarPanel({
       (ws) => ({
         workspace: ws,
         sessions: sortByUserOrder(
-          filtered.filter((s) => sessionWorkspaceMap[s.id] === ws.id && !pinnedIds.has(s.id)),
+          filtered.filter((s) => sessionWorkspaceMap[s.id] === ws.id && !effectivePinnedIds.has(s.id)),
         ),
       }),
     );
-    const u = sortByUserOrder(filtered.filter((s) => !sessionWorkspaceMap[s.id] && !pinnedIds.has(s.id)));
+    const u = sortByUserOrder(filtered.filter((s) => !sessionWorkspaceMap[s.id] && !effectivePinnedIds.has(s.id)));
     return { groups: g, ungrouped: u };
-  }, [sortedWorkspaces, filtered, sessionWorkspaceMap, sortByUserOrder, pinnedIds]);
+  }, [sortedWorkspaces, filtered, sessionWorkspaceMap, sortByUserOrder, effectivePinnedIds]);
 
   // Pinned sessions (from filtered list, sorted separately)
   const pinnedSessions = useMemo(
-    () => sortByUserOrder(filtered.filter((s) => pinnedIds.has(s.id))),
-    [filtered, pinnedIds, sortByUserOrder],
+    () => sortByUserOrder(filtered.filter((s) => effectivePinnedIds.has(s.id))),
+    [filtered, effectivePinnedIds, sortByUserOrder],
   );
 
   const sessionPaneLayout = useMemo(
@@ -510,12 +509,12 @@ export function ChatSidebarPanel({
   ], [onNewChat]);
 
   // -- Session item renderer --
-  const renderSessionItem = (session: SessionInfo, groupSessionIds: string[], _isPinnedItem = false) => {
+  const renderSessionItem = (session: SessionInfo, groupSessionIds: string[]) => {
     const isStreaming = streamingSessionIds.has(session.id);
     const isActive = session.id === activeSessionId;
     const isSelected = selectedIds.has(session.id);
     const isDragging = draggedSessionId === session.id;
-    const isPinned = pinnedIds.has(session.id);
+    const isPinned = effectivePinnedIds.has(session.id);
 
     if (renamingSessionId === session.id) {
       return (
@@ -791,7 +790,7 @@ export function ChatSidebarPanel({
             />
             {!sectionCollapsed['pinned'] && (
               <div className="session-list-pinned-items">
-                {getPreviewList(pinnedSessions).map((session) => renderSessionItem(session, pinnedSessions.map((s) => s.id), true))}
+                {getPreviewList(pinnedSessions).map((session) => renderSessionItem(session, pinnedSessions.map((s) => s.id)))}
               </div>
             )}
           </div>
