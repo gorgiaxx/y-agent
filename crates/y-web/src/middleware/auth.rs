@@ -4,10 +4,10 @@
 //! token. Used to secure y-web when exposed over the network.
 
 use axum::extract::{Request, State};
-use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
+use crate::error::ApiError;
 use crate::state::AppState;
 
 /// Middleware that validates bearer token authentication.
@@ -33,13 +33,13 @@ pub async fn auth_middleware(
         .and_then(|v| v.to_str().ok());
 
     let Some(auth_value) = auth_header else {
-        return (StatusCode::UNAUTHORIZED, "Missing Authorization header").into_response();
+        return ApiError::Unauthorized("Missing Authorization header".to_string()).into_response();
     };
 
     let token = auth_value.strip_prefix("Bearer ").unwrap_or(auth_value);
 
     if token != expected_token.as_str() {
-        return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
+        return ApiError::Unauthorized("Invalid token".to_string()).into_response();
     }
 
     next.run(request).await

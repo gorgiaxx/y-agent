@@ -6,13 +6,13 @@
 //! permission requests, title updates, diagnostics, and knowledge ingestion.
 
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use serde::{Deserialize, Serialize};
 
+use crate::error::ApiError;
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ async fn event_stream(State(state): State<AppState>, Query(query): Query<EventsQ
     if let Some(ref expected_token) = state.auth_token {
         let provided_token = query.token.as_deref();
         if provided_token != Some(expected_token.as_str()) {
-            return (StatusCode::UNAUTHORIZED, "Invalid or missing token").into_response();
+            return ApiError::Unauthorized("Invalid or missing token".to_string()).into_response();
         }
     }
 
