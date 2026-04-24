@@ -1,6 +1,6 @@
 # y-agent Shared Frontend Reuse Standard
 
-**Version**: v0.1
+**Version**: v0.2
 **Created**: 2026-04-24
 **Status**: Active
 
@@ -196,13 +196,14 @@ Minimum capability groups:
 
 | Capability | Required for |
 |------------|--------------|
-| `native_window_controls` | Minimize, maximize, close, custom decorations |
-| `native_file_paths` | Reading local paths directly from the frontend |
-| `browser_file_upload` | Uploading browser-selected files to y-web |
-| `reveal_file_manager` | Opening a file or folder in the OS file manager |
-| `skill_import_from_path` | Importing a skill by local path |
-| `remote_auth` | Bearer-token protected y-web access |
-| `sse_events` | Real-time browser event stream |
+| `nativeWindowControls` | Minimize, maximize, close, custom decorations |
+| `nativeFilePaths` | Reading local paths directly from the frontend |
+| `browserFileUpload` | Uploading or encoding browser-selected files through a Web-safe flow |
+| `revealFileManager` | Opening a file or folder in the OS file manager |
+| `skillImportFromPath` | Importing a skill from a path reachable by the active backend |
+| `knowledgeIngestFromPath` | Ingesting knowledge from a path reachable by the active backend |
+| `remoteAuth` | Bearer-token protected y-web access |
+| `sseEvents` | Real-time browser event stream |
 
 UI components must branch on capabilities, not on ad hoc environment checks.
 Environment detection may exist inside the platform adapter.
@@ -304,17 +305,32 @@ Before merging any shared frontend, y-web, or Tauri GUI change, verify:
 
 ---
 
-## 11. Known Follow-Up Work
+## 11. Current Compliance Baseline
 
-The current codebase already has the correct direction, but the following work
-is required to fully comply with this standard:
+The shared frontend baseline is:
 
-1. Add contract tests for the HTTP command map.
-2. Normalize camel-case frontend arguments to snake-case y-web request bodies.
-3. Replace Web-mode no-ops for user-visible commands with capabilities or real
-   y-web endpoint mappings.
-4. Route browser attachments through upload-safe Web flows.
-5. Add API version and feature negotiation metadata.
-6. Consider moving the shared frontend to `apps/y-ui` only after the adapter
-   and contract test layers are stable.
+1. `HttpTransport` maps shared command names to y-web endpoints, including
+   path/query encoding, camel-case to snake-case request bodies, and response
+   normalization back to Tauri-shaped payloads.
+2. `SseAdapter` unwraps y-web SSE payloads to the same semantic payload shape
+   used by Tauri events.
+3. `Platform` exposes named host capabilities. Shared UI components must use
+   these capabilities instead of direct environment checks.
+4. Browser chat attachments use browser `File` objects encoded into shared
+   attachment payloads. Browser code must not pass local filenames as backend
+   paths.
+5. y-web `/health` exposes `api_schema_version`, `app_version`, and `features`.
+6. y-web exposes `/api/v1/memory-stats` for observability parity with the Tauri
+   command.
 
+No mandatory frontend fork or root-level package move is required for the
+current architecture.
+
+## 12. Optional Future Work
+
+Optional future work must remain separate from behavior changes:
+
+1. Move `crates/y-gui/src` to `apps/y-ui` only after a dedicated migration plan
+   updates Tauri build paths, y-web static serving, and frontend gates.
+2. Add a startup compatibility banner if `/health.api_schema_version` is newer
+   than the frontend contract version.

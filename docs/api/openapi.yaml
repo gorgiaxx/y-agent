@@ -117,6 +117,19 @@ paths:
                   data_dir:
                     type: string
 
+  /api/v1/memory-stats:
+    get:
+      operationId: memoryStats
+      tags: [System]
+      summary: Return in-memory diagnostic counters
+      responses:
+        "200":
+          description: Memory counters for the shared observability UI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryStats"
+
   # ================================================================
   #  Events (SSE)
   # ================================================================
@@ -2612,13 +2625,25 @@ components:
     # -- Health --
     HealthResponse:
       type: object
-      required: [status, version]
+      required: [status, version, api_schema_version, app_version, features]
       properties:
         status:
           type: string
           enum: [ok]
         version:
           type: string
+          description: Application version, kept for backward compatibility
+        api_schema_version:
+          type: string
+          description: Web API schema version used by shared frontend compatibility checks
+        app_version:
+          type: string
+          description: Application version used by shared frontend compatibility checks
+        features:
+          type: array
+          description: Feature flags supported by this y-web instance
+          items:
+            type: string
 
     HealthReport:
       type: object
@@ -2656,6 +2681,35 @@ components:
           type: integer
         pg_feature_enabled:
           type: boolean
+
+    MemoryStats:
+      type: object
+      required:
+        - pending_runs
+        - turn_meta_cache
+        - pruning_watermarks
+        - session_permission_modes
+        - pending_interactions
+        - pending_permissions
+        - file_history_sessions
+        - file_history_total_snapshots
+      properties:
+        pending_runs:
+          type: integer
+        turn_meta_cache:
+          type: integer
+        pruning_watermarks:
+          type: integer
+        session_permission_modes:
+          type: integer
+        pending_interactions:
+          type: integer
+        pending_permissions:
+          type: integer
+        file_history_sessions:
+          type: integer
+        file_history_total_snapshots:
+          type: integer
 
     # -- Session --
     SessionInfo:
