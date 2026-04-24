@@ -7,6 +7,8 @@ export interface ToolResultRecord {
   success: boolean;
   durationMs: number;
   resultPreview: string;
+  /** Live-only state used before a tool result has arrived. */
+  state?: 'running' | 'completed';
   /** Compact URL metadata JSON (url, title, favicon_url) for Browser/WebFetch. */
   urlMeta?: string;
   /** Optional structured metadata for presentation layers. */

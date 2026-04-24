@@ -41,6 +41,7 @@ export type ChatBusEvent =
   | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string; agent_name?: string }
   | { type: 'stream_image_delta'; run_id: string; session_id: string; index: number; mime_type: string; partial_data: string; agent_name?: string }
   | { type: 'stream_image_complete'; run_id: string; session_id: string; index: number; mime_type: string; data: string; agent_name?: string }
+  | { type: 'tool_start'; session_id: string; name: string; input_preview: string; agent_name?: string }
   | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown> };
 
 // ---------------------------------------------------------------------------
@@ -151,6 +152,17 @@ async function initialiseChatBus() {
           index: event.index,
           mime_type: event.mime_type,
           data: event.data,
+          agent_name: event.agent_name,
+        });
+      }
+    } else if (event.type === 'tool_start') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'tool_start',
+          session_id,
+          name: event.name,
+          input_preview: event.input_preview ?? '',
           agent_name: event.agent_name,
         });
       }
