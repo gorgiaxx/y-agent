@@ -97,19 +97,12 @@ export function SkillsPanel({
   const [fileContent, setFileContent] = useState<string>('');
   const [originalContent, setOriginalContent] = useState<string>('');
   const [saving, setSaving] = useState(false);
-  const [_uninstalling, setUninstalling] = useState(false);
   const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
 
   // Load skill detail and files when skill changes.
   useEffect(() => {
     if (!skillName) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDetail(null);
-      setFiles([]);
-      setSelectedFilePath(null);
-      setFileContent('');
-      setOriginalContent('');
       return;
     }
 
@@ -172,13 +165,8 @@ export function SkillsPanel({
 
   const handleUninstall = useCallback(async () => {
     if (!skillName) return;
-    setUninstalling(true);
-    try {
-      await onUninstall(skillName);
-      setShowUninstallConfirm(false);
-    } finally {
-      setUninstalling(false);
-    }
+    await onUninstall(skillName);
+    setShowUninstallConfirm(false);
   }, [skillName, onUninstall]);
 
   const handleToggleDir = useCallback((path: string) => {
@@ -213,7 +201,7 @@ export function SkillsPanel({
   }
 
   // Loading state.
-  if (!detail) {
+  if (!detail || detail.name !== skillName) {
     return (
       <div className="skills-panel">
         <div className="skills-loading">Loading skill...</div>

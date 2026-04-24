@@ -5,7 +5,7 @@
 // Wraps content in a Radix Popover for accessibility (escape, focus trap, aria).
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Search } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui';
 import './ModelPickerDropdown.css';
@@ -37,22 +37,22 @@ export function ModelPickerDropdown({
   const [filter, setFilter] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-focus the filter input when dropdown opens.
-  useEffect(() => {
-    if (open) {
-      setFilter('');
-      // Defer to let the popover content mount.
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [open]);
-
   const filtered = models.filter((m) =>
     m.id.toLowerCase().includes(filter.toLowerCase()) ||
     (m.display_name ?? '').toLowerCase().includes(filter.toLowerCase()),
   );
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) {
+          setFilter('');
+          requestAnimationFrame(() => inputRef.current?.focus());
+        }
+      }}
+    >
       <PopoverTrigger asChild>
         {children}
       </PopoverTrigger>

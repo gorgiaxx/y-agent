@@ -639,7 +639,6 @@ export function InputArea(props: InputAreaProps) {
           onCompositionEnd={() => {
             lastCompEndRef.current = Date.now();
           }}
-          lastCompEndRef={lastCompEndRef}
         />
 
         {isCompacting && (

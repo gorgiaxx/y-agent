@@ -135,7 +135,6 @@ interface ContentEditableInputProps {
   onPaste: (e: React.ClipboardEvent) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   onCompositionEnd: () => void;
-  lastCompEndRef: React.RefObject<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +153,6 @@ export const ContentEditableInput = forwardRef<ContentEditableInputHandle, Conte
       onPaste,
       onKeyDown,
       onCompositionEnd,
-      lastCompEndRef: _lastCompEndRef,
     },
     ref,
   ) {

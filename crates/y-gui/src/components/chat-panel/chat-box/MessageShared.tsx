@@ -12,7 +12,7 @@
  *   AssistantMessageShell -- shared layout wrapper for assistant messages
  */
 
-import { useState, useCallback, useLayoutEffect, memo } from 'react';
+import { useState, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -54,11 +54,6 @@ export const CodeBlock = memo(function CodeBlock({
   themeStyle: Record<string, React.CSSProperties>;
 }) {
   const [copied, setCopied] = useState(false);
-  const [highlighted, setHighlighted] = useState(false);
-
-  useLayoutEffect(() => {
-    setHighlighted(true);
-  }, []);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(children).then(() => {
@@ -79,24 +74,18 @@ export const CodeBlock = memo(function CodeBlock({
           {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
       </div>
-      {highlighted ? (
-        <SyntaxHighlighter
-          style={themeStyle}
-          language={language || 'text'}
-          PreTag="div"
-          customStyle={{
-            margin: 0,
-            borderRadius: 0,
-            fontSize: '13px',
-          }}
-        >
-          {children}
-        </SyntaxHighlighter>
-      ) : (
-        <div style={{ margin: 0, borderRadius: 0, fontSize: '13px', padding: '1em' }}>
-          <code>{children}</code>
-        </div>
-      )}
+      <SyntaxHighlighter
+        style={themeStyle}
+        language={language || 'text'}
+        PreTag="div"
+        customStyle={{
+          margin: 0,
+          borderRadius: 0,
+          fontSize: '13px',
+        }}
+      >
+        {children}
+      </SyntaxHighlighter>
     </div>
   );
 });
