@@ -53,26 +53,11 @@ impl<S: TraceStore> CostIntelligence<S> {
     }
 
     /// Generate a daily cost summary for the given date.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the date cannot be converted to a valid timestamp.
     pub async fn daily_summary(
         &self,
         date: NaiveDate,
     ) -> Result<DailyCostSummary, TraceStoreError> {
-        let start = date
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        let end = date
-            .succ_opt()
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let (start, end) = day_bounds(date)?;
 
         let traces = self.store.list_traces(None, Some(start), 10_000).await?;
 
@@ -111,6 +96,29 @@ impl<S: TraceStore> CostIntelligence<S> {
             by_model: by_model.into_values().collect(),
         })
     }
+}
+
+fn day_bounds(
+    date: NaiveDate,
+) -> Result<(chrono::DateTime<Utc>, chrono::DateTime<Utc>), TraceStoreError> {
+    let start = date
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| TraceStoreError::Storage {
+            message: format!("invalid daily summary start date: {date}"),
+        })?;
+    let next_day = date.succ_opt().ok_or_else(|| TraceStoreError::Storage {
+        message: format!("daily summary date has no following day: {date}"),
+    })?;
+    let end = next_day
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| TraceStoreError::Storage {
+            message: format!("invalid daily summary end date: {next_day}"),
+        })?;
+
+    Ok((
+        chrono::DateTime::from_naive_utc_and_offset(start, Utc),
+        chrono::DateTime::from_naive_utc_and_offset(end, Utc),
+    ))
 }
 
 #[cfg(test)]
@@ -175,5 +183,15 @@ mod tests {
         assert_eq!(summary.total_traces, 1);
         assert!((summary.total_cost_usd - 0.02).abs() < f64::EPSILON);
         assert_eq!(summary.by_model.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_daily_summary_rejects_unrepresentable_date() {
+        let store = InMemoryTraceStore::new();
+        let cost = CostIntelligence::new(store);
+
+        let result = cost.daily_summary(NaiveDate::MAX).await;
+
+        assert!(matches!(result, Err(TraceStoreError::Storage { .. })));
     }
 }
