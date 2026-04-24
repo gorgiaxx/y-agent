@@ -48,6 +48,7 @@ pub struct ChatRequest {
     pub plan_mode: Option<String>,
     pub mcp_mode: Option<String>,
     pub mcp_servers: Option<Vec<String>>,
+    pub image_generation_options: Option<y_core::provider::ImageGenerationOptions>,
 }
 
 /// Returned when an async chat turn is started.
@@ -245,7 +246,7 @@ async fn chat_turn(
             plan_mode: body.plan_mode,
             mcp_mode: body.mcp_mode,
             mcp_servers: body.mcp_servers,
-            image_generation_options: None,
+            image_generation_options: body.image_generation_options,
         },
     )
     .await
@@ -309,7 +310,7 @@ async fn chat_send(
             plan_mode: body.plan_mode,
             mcp_mode: body.mcp_mode,
             mcp_servers: body.mcp_servers,
-            image_generation_options: None,
+            image_generation_options: body.image_generation_options,
         },
     )
     .await
@@ -740,4 +741,31 @@ pub fn router() -> Router<AppState> {
             "/api/v1/chat/last-turn-meta/{session_id}",
             get(last_turn_meta),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_request_deserializes_shared_frontend_image_options() {
+        let request: ChatRequest = serde_json::from_value(serde_json::json!({
+            "message": "make an image",
+            "request_mode": "image_generation",
+            "image_generation_options": {
+                "watermark": true,
+                "max_images": 2,
+                "size": "1024x1024"
+            }
+        }))
+        .expect("chat request should deserialize");
+
+        assert_eq!(request.request_mode, Some(RequestMode::ImageGeneration));
+        let options = request
+            .image_generation_options
+            .expect("image generation options should be preserved");
+        assert!(options.watermark);
+        assert_eq!(options.max_images, 2);
+        assert_eq!(options.size.as_deref(), Some("1024x1024"));
+    }
 }
