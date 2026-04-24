@@ -690,7 +690,7 @@ export function useChatStreaming(
     checkForStuckSession();
     const timer = setInterval(checkForStuckSession, SAFETY_POLL_MS);
     return () => clearInterval(timer);
-  }, [opStatus, setOpForSession]);
+  }, [opStatus, setOpForSession, refs.activeSessionIdRef, refs.opStatusRef, refs.sessionActivityRef]);
 
   return {
     streamingSessionIds,

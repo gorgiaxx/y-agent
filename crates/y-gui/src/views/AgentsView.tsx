@@ -103,28 +103,34 @@ export function AgentsView() {
     editorSurface: agentEditor.agentEditorSurface,
     setEditorSurface: agentEditor.setAgentEditorSurface,
   });
+  const activeEditedAgentId = agentEditor.activeAgentId;
+  const isAgentEditorOpen = agentEditor.agentEditing;
+  const setAgentEditorSurfaceHandler = agentEditor.setAgentEditorSurfaceHandler;
+  const setAgentStudioEditHandler = agentEditor.setAgentStudioEditHandler;
+  const handleEditorSurfaceChange = editor.handleEditorSurfaceChange;
+  const handleOpenEdit = editor.handleOpenEdit;
 
   // Register the editor's surface change handler so the sidebar toggle
   // goes through TOML validation before switching raw <-> form.
   useEffect(() => {
-    agentEditor.setAgentEditorSurfaceHandler(
-      agentEditor.agentEditing ? (surface) => { void editor.handleEditorSurfaceChange(surface); } : null,
+    setAgentEditorSurfaceHandler(
+      isAgentEditorOpen ? (surface) => { void handleEditorSurfaceChange(surface); } : null,
     );
-    return () => agentEditor.setAgentEditorSurfaceHandler(null);
-  }, [agentEditor.agentEditing, editor.handleEditorSurfaceChange, agentEditor.setAgentEditorSurfaceHandler]);
+    return () => setAgentEditorSurfaceHandler(null);
+  }, [handleEditorSurfaceChange, isAgentEditorOpen, setAgentEditorSurfaceHandler]);
 
   // Register the agent studio edit handler so the sidebar's edit button
   // triggers the full editor flow (loading source, building draft, etc.).
   useEffect(() => {
-    if (agentEditor.activeAgentId) {
-      agentEditor.setAgentStudioEditHandler(() => {
-        void editor.handleOpenEdit(agentEditor.activeAgentId!);
+    if (activeEditedAgentId) {
+      setAgentStudioEditHandler(() => {
+        void handleOpenEdit(activeEditedAgentId);
       });
     } else {
-      agentEditor.setAgentStudioEditHandler(null);
+      setAgentStudioEditHandler(null);
     }
-    return () => agentEditor.setAgentStudioEditHandler(null);
-  }, [agentEditor.activeAgentId, editor.handleOpenEdit, agentEditor.setAgentStudioEditHandler]);
+    return () => setAgentStudioEditHandler(null);
+  }, [activeEditedAgentId, handleOpenEdit, setAgentStudioEditHandler]);
 
   const loadSelectedAgentDetail = useCallback(async (agentId: string) => {
     setDetailLoading(true);

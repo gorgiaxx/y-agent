@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import type { AgentDetail } from './useAgents';
 import type { EditorTab, EditorSurface, AgentDraft } from '../components/agents/types';
 import { buildDraft, serializeAgentDraft, slugifyAgentId } from '../components/agents/utils';
@@ -25,7 +25,6 @@ export function useAgentEditor({
   resetAgent,
   editorOpen,
   setEditorOpen,
-  editorTab: _editorTab,
   setEditorTab,
   editorSurface,
   setEditorSurface,
@@ -51,7 +50,7 @@ export function useAgentEditor({
     setEditorRawOrigin('form');
     setEditorRawError(null);
     setEditorOpen(true);
-  }, []);
+  }, [setEditorOpen, setEditorSurface, setEditorTab]);
 
   const handleOpenEdit = useCallback(async (agentId: string) => {
     const [detail, source] = await Promise.all([
@@ -69,7 +68,7 @@ export function useAgentEditor({
     setEditorRawOrigin(source ? 'source' : 'form');
     setEditorRawError(null);
     setEditorOpen(true);
-  }, [getAgentDetail, getAgentSource]);
+  }, [getAgentDetail, getAgentSource, setEditorOpen, setEditorSurface, setEditorTab]);
 
   const handleApplyTemplate = useCallback(async (agentId: string) => {
     const detail = await getAgentDetail(agentId);
@@ -86,7 +85,7 @@ export function useAgentEditor({
     setEditorRawUsesSourceFile(false);
     setEditorRawOrigin('form');
     setEditorRawError(null);
-  }, [getAgentDetail]);
+  }, [getAgentDetail, setEditorSurface]);
 
   const handleEditorDraftChange = useCallback((updater: (draft: AgentDraft) => AgentDraft) => {
     setEditorRawOrigin('form');
@@ -94,12 +93,9 @@ export function useAgentEditor({
     setEditorDraft((prev) => updater(prev));
   }, []);
 
-  useEffect(() => {
-    if (!editorOpen || editorSurface !== 'form' || editorRawOrigin !== 'form') {
-      return;
-    }
-    setEditorRawToml(serializeAgentDraft(editorDraft));
-  }, [editorDraft, editorOpen, editorRawOrigin, editorSurface]);
+  const effectiveEditorRawToml = editorSurface === 'form' && editorRawOrigin === 'form'
+    ? serializeAgentDraft(editorDraft)
+    : editorRawToml;
 
   const handleEditorSurfaceChange = useCallback(async (surface: EditorSurface) => {
     if (surface === editorSurface) {
@@ -109,6 +105,9 @@ export function useAgentEditor({
     setEditorRawError(null);
 
     if (surface === 'raw') {
+      if (editorRawOrigin === 'form') {
+        setEditorRawToml(serializeAgentDraft(editorDraft));
+      }
       setEditorSurface('raw');
       return;
     }
@@ -122,7 +121,7 @@ export function useAgentEditor({
     setEditorDraft(buildDraft(parsed));
     setEditorRawOrigin('form');
     setEditorSurface('form');
-  }, [editorRawToml, editorSurface, parseAgentToml]);
+  }, [editorDraft, editorRawOrigin, editorRawToml, editorSurface, parseAgentToml, setEditorSurface]);
 
   const handleSaveEditor = useCallback(async (): Promise<boolean> => {
     let nextId = editorMode === 'edit' ? editorDraft.id : (editorDraft.id.trim() || slugifyAgentId(editorDraft.name));
@@ -165,7 +164,7 @@ export function useAgentEditor({
 
     setEditorOpen(false);
     return true;
-  }, [editorDraft, editorMode, editorRawToml, editorSurface, parseAgentToml, saveAgent]);
+  }, [editorDraft, editorMode, editorRawToml, editorSurface, parseAgentToml, saveAgent, setEditorOpen]);
 
   const handleResetEditor = useCallback(async (): Promise<boolean> => {
     if (editorMode !== 'edit') return false;
@@ -175,13 +174,13 @@ export function useAgentEditor({
 
     setEditorOpen(false);
     return true;
-  }, [editorDraft.id, editorMode, resetAgent]);
+  }, [editorDraft.id, editorMode, resetAgent, setEditorOpen]);
 
   return {
     editorOpen,
     editorMode,
     editorDraft,
-    editorRawToml,
+    editorRawToml: effectiveEditorRawToml,
     editorRawPath,
     editorRawUsesSourceFile,
     editorRawOrigin,

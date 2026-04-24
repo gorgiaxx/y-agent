@@ -12,7 +12,7 @@
 // All sub-hooks share mutable state via ChatSharedRefs.
 // ---------------------------------------------------------------------------
 
-import { useRef, useEffect, useMemo, useCallback, type Dispatch, type SetStateAction } from 'react';
+import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, type Dispatch, type SetStateAction } from 'react';
 import type { Message } from '../types';
 import type { ToolResultRecord } from './chatStreamTypes';
 import type { InterleavedSegment } from './useInterleavedSegments';
@@ -198,8 +198,9 @@ export function useChat(
     sessionState.setContextResetPoints,
   );
 
-  // Wire up the error setter now that messages hook owns it.
-  setErrorHolder.current = messages.setError;
+  useLayoutEffect(() => {
+    setErrorHolder.current = messages.setError;
+  }, [messages.setError]);
 
   // -----------------------------------------------------------------------
   // 3. Streaming (bus subscription, tool results, safety timeout)
@@ -216,8 +217,9 @@ export function useChat(
     sessionState.markSessionActivity,
   );
 
-  // Wire up the tool results setter now that the streaming hook owns it.
-  setVisibleToolResultsHolder.current = streaming.setVisibleToolResults;
+  useLayoutEffect(() => {
+    setVisibleToolResultsHolder.current = streaming.setVisibleToolResults;
+  }, [streaming.setVisibleToolResults]);
 
   // -----------------------------------------------------------------------
   // 4. Operations (send, cancel, edit, undo, resend, restore)
