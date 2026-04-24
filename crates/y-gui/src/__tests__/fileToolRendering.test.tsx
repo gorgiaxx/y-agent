@@ -23,7 +23,8 @@ describe('File tool rendering', () => {
       />,
     );
 
-    expect(html).toContain('tool-call-file-tag');
+    expect(html).toContain('tool-call-file-wrapper');
+    expect(html).toContain('tool-call-tag');
     expect(html).toContain('Create');
     expect(html).toContain('example.ts');
     expect(html).not.toContain('tool-call-card');

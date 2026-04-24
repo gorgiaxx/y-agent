@@ -238,6 +238,6 @@ describe('shouldDisplayStreamingAgent', () => {
     expect(shouldDisplayStreamingAgent(undefined)).toBe(true);
     expect(shouldDisplayStreamingAgent('chat-turn')).toBe(true);
     expect(shouldDisplayStreamingAgent('task-decomposer')).toBe(false);
-    expect(shouldDisplayStreamingAgent('plan-writer')).toBe(false);
+    expect(shouldDisplayStreamingAgent('plan-writer')).toBe(true);
   });
 });

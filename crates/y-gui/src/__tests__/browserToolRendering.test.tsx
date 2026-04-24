@@ -83,7 +83,8 @@ describe('Browser tool rendering', () => {
       />,
     );
 
-    expect(html).toContain('tool-call-browser-tag');
+    expect(html).toContain('tool-call-url-wrapper');
+    expect(html).toContain('tool-call-tag');
     expect(html).toContain('Click');
     expect(html).toContain('@e36');
     expect(html).not.toContain('tool-call-card');
@@ -108,9 +109,9 @@ describe('Browser tool rendering', () => {
       />,
     );
 
-    expect(html).toContain('tool-call-url-tag');
+    expect(html).toContain('tool-call-url-wrapper');
+    expect(html).toContain('tool-call-tag');
     expect(html).toContain('百度贴吧');
-    expect(html).not.toContain('tool-call-browser-tag');
   });
 
   it('keeps browser failure rendering on the tag layout for lowercase streamed tool names', () => {
@@ -129,7 +130,8 @@ describe('Browser tool rendering', () => {
       />,
     );
 
-    expect(html).toContain('tool-call-url-tag');
+    expect(html).toContain('tool-call-url-wrapper');
+    expect(html).toContain('tool-call-tag');
     expect(html).toContain('tieba.baidu.com');
     expect(html).not.toContain('tool-call-card');
   });
@@ -147,7 +149,8 @@ describe('Browser tool rendering', () => {
       />,
     );
 
-    expect(html).toContain('tool-call-browser-tag');
+    expect(html).toContain('tool-call-url-wrapper');
+    expect(html).toContain('tool-call-tag');
     expect(html).toContain('Browser');
     expect(html).not.toContain('tool-call-card');
   });
@@ -176,7 +179,8 @@ describe('Browser tool rendering', () => {
       />,
     );
 
-    expect(html).toContain('tool-call-url-tag');
+    expect(html).toContain('tool-call-url-wrapper');
+    expect(html).toContain('tool-call-tag');
     expect(html).toContain('tool-status-error');
     expect(html).toContain('tieba.baidu.com');
   });

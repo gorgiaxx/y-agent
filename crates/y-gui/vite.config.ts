@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import UnoCSS from 'unocss/vite'
 
@@ -8,6 +8,9 @@ export default defineConfig({
     UnoCSS(),
     react(),
   ],
+  test: {
+    setupFiles: './src/__tests__/setup.ts',
+  },
   build: {
     rollupOptions: {
       output: {
