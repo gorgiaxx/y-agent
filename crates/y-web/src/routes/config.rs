@@ -3,6 +3,8 @@
 //! Mirrors all config-related Tauri commands: section CRUD, config reload,
 //! provider testing, model listing, MCP config, and prompt file management.
 
+use std::collections::HashMap;
+
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -48,6 +50,7 @@ pub struct ProviderTestRequest {
     pub api_key: String,
     pub api_key_env: String,
     pub base_url: Option<String>,
+    pub headers: Option<HashMap<String, String>>,
     pub tags: Option<Vec<String>>,
     pub capabilities: Option<Vec<ProviderCapability>>,
     pub probe_mode: Option<String>,
@@ -59,6 +62,7 @@ pub struct ListModelsRequest {
     pub base_url: String,
     pub api_key: String,
     pub api_key_env: String,
+    pub headers: Option<HashMap<String, String>>,
 }
 
 /// Request body for saving a prompt file.
@@ -234,6 +238,7 @@ async fn provider_test(
         api_key: body.api_key,
         api_key_env: body.api_key_env,
         base_url: body.base_url,
+        headers: body.headers.unwrap_or_default(),
         tags: body.tags.unwrap_or_default(),
         capabilities: body.capabilities.unwrap_or_default(),
         probe_mode: body.probe_mode.unwrap_or_else(|| "auto".to_string()),
@@ -265,9 +270,13 @@ async fn provider_list_models(
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| ApiError::Internal(format!("Failed to build HTTP client: {e}")))?;
+    let custom_headers =
+        y_service::SystemService::provider_custom_header_map(&body.headers.unwrap_or_default())
+            .map_err(ApiError::BadRequest)?;
 
     let url = format!("{}/models", body.base_url.trim_end_matches('/'));
-    let mut req = client.get(&url);
+    let mut req =
+        y_service::SystemService::apply_provider_custom_headers(client.get(&url), &custom_headers);
     if !effective_key.is_empty() {
         req = req.header("Authorization", format!("Bearer {effective_key}"));
     }

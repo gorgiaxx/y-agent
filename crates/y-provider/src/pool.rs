@@ -177,11 +177,10 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                 .or_else(|| Some("https://api.deepseek.com/v1".to_string()))
         };
 
-        // Macro to reduce per-variant boilerplate: every provider constructor
-        // takes the same 9 arguments in the same order.
+        // Macro to reduce per-variant boilerplate.
         macro_rules! make_provider {
             ($ty:ty, $base:expr) => {
-                Arc::new(<$ty>::new(
+                Arc::new(<$ty>::with_headers(
                     &cfg.id,
                     &cfg.model,
                     api_key.clone(),
@@ -192,6 +191,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.max_concurrency,
                     cfg.context_window,
                     tool_calling_mode,
+                    &cfg.headers,
                 )) as Arc<dyn LlmProvider>
             };
         }
@@ -712,6 +712,7 @@ mod tests {
                 api_key: None,
                 api_key_env: None,
                 base_url: None,
+                headers: std::collections::HashMap::new(),
                 temperature,
                 top_p: None,
                 tool_calling_mode: None,
@@ -945,6 +946,7 @@ mod tests {
                     api_key: Some("sk-test".into()),
                     api_key_env: None,
                     base_url: None,
+                    headers: std::collections::HashMap::new(),
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -964,6 +966,7 @@ mod tests {
                     api_key: Some("sk-ant-test".into()),
                     api_key_env: None,
                     base_url: None,
+                    headers: std::collections::HashMap::new(),
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -983,6 +986,7 @@ mod tests {
                     api_key: Some("AIza-test".into()),
                     api_key_env: None,
                     base_url: None,
+                    headers: std::collections::HashMap::new(),
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1002,6 +1006,7 @@ mod tests {
                     api_key: Some("ollama-key".into()),
                     api_key_env: None,
                     base_url: None,
+                    headers: std::collections::HashMap::new(),
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1021,6 +1026,7 @@ mod tests {
                     api_key: Some("azure-key".into()),
                     api_key_env: None,
                     base_url: Some("https://res.openai.azure.com/openai/deployments/gpt-4o".into()),
+                    headers: std::collections::HashMap::new(),
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1091,6 +1097,7 @@ mod tests {
                 api_key: None,
                 api_key_env: None,
                 base_url: None,
+                headers: std::collections::HashMap::new(),
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,

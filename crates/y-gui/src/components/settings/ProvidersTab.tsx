@@ -11,6 +11,7 @@ import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdo
 import { TagChipInput } from './TagChipInput';
 import type { ProviderFormData } from './settingsTypes';
 import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
+import { ProviderHeadersEditor } from './ProviderHeadersEditor';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Input, Button, Switch, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
@@ -63,6 +64,7 @@ function ProviderTabPanel({
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
         baseUrl: provider.base_url ?? null,
+        headers: provider.headers,
         tags: provider.tags,
         capabilities: provider.capabilities,
         probeMode: 'auto',
@@ -93,6 +95,7 @@ function ProviderTabPanel({
         baseUrl: provider.base_url,
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
+        headers: provider.headers,
       });
       // OpenAI format: { data: [{ id, display_name?, ... }] }
       const items: ModelItem[] = (result?.data ?? []).map(
@@ -262,6 +265,14 @@ function ProviderTabPanel({
             {testing ? 'Testing...' : 'Test Connection'}
           </Button>
         </SettingsItem>
+      </SettingsGroup>
+      <SettingsGroup title="HTTP Headers" bodyVariant="plain">
+        <div className="settings-item--custom-body">
+          <ProviderHeadersEditor
+            headers={provider.headers}
+            onChange={(headers) => update({ headers })}
+          />
+        </div>
       </SettingsGroup>
       {testResult && (
         <div className={`pf-test-result ${testResult.ok ? 'ok' : 'error'}`}>

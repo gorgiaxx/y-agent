@@ -29,6 +29,9 @@ health_check_interval_secs = 30
 # API Key: set `api_key` directly, or use `api_key_env` to read
 # from an environment variable (fallback).
 #
+# Custom HTTP headers: add a `[providers.headers]` table inside a provider
+# entry when an LLM gateway requires extra header validation.
+#
 # Tool Calling Mode (two-layer system):
 #   Auto-detected from provider_type -- override with `tool_calling_mode`:
 #   - "native"       (default for: openai, anthropic, azure, gemini, deepseek)
@@ -55,6 +58,9 @@ icon = "deepseek"
 # base_url = "https://api.openai.com/v1"
 # temperature = 0.4     # per-provider default (0.0-2.0), optional
 # top_p = 0.95          # per-provider default (0.0-1.0), optional
+# [providers.headers]
+# "X-LLM-Tenant" = "workspace-a"
+# "HTTP-Referer" = "https://y-agent.local"
 
 # --- Custom Provider (OpenAI-compatible) ------------------------------------
 # Use provider_type = "custom" for any OpenAI-compatible endpoint

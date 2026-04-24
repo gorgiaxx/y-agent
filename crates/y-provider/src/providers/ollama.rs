@@ -27,6 +27,7 @@ const OLLAMA_DEFAULT_URL: &str = "http://localhost:11434";
 pub struct OllamaProvider {
     client: Client,
     base_url: String,
+    custom_headers: reqwest::header::HeaderMap,
     metadata: ProviderMetadata,
 }
 
@@ -38,7 +39,7 @@ impl OllamaProvider {
     pub fn new(
         id: &str,
         model: &str,
-        _api_key: String,
+        api_key: String,
         base_url: Option<String>,
         proxy_url: Option<String>,
         tags: Vec<String>,
@@ -47,7 +48,43 @@ impl OllamaProvider {
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
     ) -> Self {
+        let headers = std::collections::HashMap::new();
+        Self::with_headers(
+            id,
+            model,
+            api_key,
+            base_url,
+            proxy_url,
+            tags,
+            capabilities,
+            max_concurrency,
+            context_window,
+            tool_calling_mode,
+            &headers,
+        )
+    }
+
+    /// Create a new Ollama provider with additional HTTP headers.
+    pub fn with_headers<S: std::hash::BuildHasher>(
+        id: &str,
+        model: &str,
+        _api_key: String,
+        base_url: Option<String>,
+        proxy_url: Option<String>,
+        tags: Vec<String>,
+        capabilities: Vec<ProviderCapability>,
+        max_concurrency: usize,
+        context_window: usize,
+        tool_calling_mode: ToolCallingMode,
+        headers: &std::collections::HashMap<String, String, S>,
+    ) -> Self {
         let base_url = base_url.unwrap_or_else(|| OLLAMA_DEFAULT_URL.to_string());
+        let custom_headers = crate::http_headers::custom_header_map(headers).unwrap_or_else(
+            |message| {
+                tracing::warn!(provider_id = %id, error = %message, "Ignoring invalid provider custom headers");
+                reqwest::header::HeaderMap::default()
+            },
+        );
 
         // Ollama is typically local, but proxy is still applied if configured.
         // Operators should set `enabled = false` in proxy config to bypass.
@@ -62,6 +99,7 @@ impl OllamaProvider {
         Self {
             client,
             base_url,
+            custom_headers,
             metadata: ProviderMetadata {
                 id: ProviderId::from_string(id),
                 provider_type: ProviderType::Ollama,
@@ -189,16 +227,16 @@ impl LlmProvider for OllamaProvider {
         let body = self.build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let response = self
-            .client
-            .post(self.api_url("api/chat"))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                message: format!("Ollama connection error (is Ollama running?): {e}"),
-            })?;
+        let request_builder = self.client.post(self.api_url("api/chat"));
+        let response =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkError {
+                    message: format!("Ollama connection error (is Ollama running?): {e}"),
+                })?;
 
         let status = response.status();
 
@@ -294,16 +332,16 @@ impl LlmProvider for OllamaProvider {
         let body = self.build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let response = self
-            .client
-            .post(self.api_url("api/chat"))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                message: format!("Ollama connection error (is Ollama running?): {e}"),
-            })?;
+        let request_builder = self.client.post(self.api_url("api/chat"));
+        let response =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkError {
+                    message: format!("Ollama connection error (is Ollama running?): {e}"),
+                })?;
 
         let status = response.status();
         if !status.is_success() {

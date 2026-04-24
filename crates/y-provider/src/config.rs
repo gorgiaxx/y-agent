@@ -98,6 +98,10 @@ pub struct ProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
 
+    /// Additional HTTP headers sent with every provider request.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
+
     /// Default sampling temperature for this provider (0.0 - 2.0).
     /// Applied to requests that do not specify a temperature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -257,6 +261,11 @@ impl ProviderPoolConfig {
             if !seen_ids.insert(&p.id) {
                 return Err(ProviderPoolError::DuplicateProvider { id: p.id.clone() });
             }
+            crate::http_headers::custom_header_map(&p.headers).map_err(|message| {
+                ProviderPoolError::Config {
+                    message: format!("provider '{}' has invalid custom header: {message}", p.id),
+                }
+            })?;
         }
 
         Ok(())
@@ -505,6 +514,7 @@ mod tests {
                     api_key: None,
                     api_key_env: None,
                     base_url: None,
+                    headers: HashMap::new(),
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -524,6 +534,7 @@ mod tests {
                     api_key: None,
                     api_key_env: None,
                     base_url: None,
+                    headers: HashMap::new(),
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -565,6 +576,7 @@ mod tests {
             api_key: None,
             api_key_env: Some("Y_AGENT_TEST_KEY_XYZ".into()),
             base_url: None,
+            headers: HashMap::new(),
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
@@ -596,6 +608,7 @@ mod tests {
             api_key: Some("sk-direct-key".into()),
             api_key_env: Some("Y_AGENT_TEST_KEY_DIRECT".into()),
             base_url: None,
+            headers: HashMap::new(),
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
@@ -880,6 +893,53 @@ mod tests {
         assert_eq!(global.auth_env.as_deref(), Some("MY_PROXY_CREDS"));
     }
 
+    #[test]
+    fn test_provider_config_deserializes_custom_headers() {
+        let toml_str = r#"
+            [[providers]]
+            id = "gateway"
+            provider_type = "openai-compat"
+            model = "gateway-model"
+
+            [providers.headers]
+            "X-LLM-Tenant" = "workspace-a"
+            "HTTP-Referer" = "https://y-agent.local"
+        "#;
+
+        let config: ProviderPoolConfig = toml::from_str(toml_str).expect("should parse");
+        let headers = &config.providers[0].headers;
+
+        assert_eq!(
+            headers.get("X-LLM-Tenant").map(String::as_str),
+            Some("workspace-a")
+        );
+        assert_eq!(
+            headers.get("HTTP-Referer").map(String::as_str),
+            Some("https://y-agent.local")
+        );
+    }
+
+    #[test]
+    fn test_provider_config_rejects_invalid_custom_header() {
+        let toml_str = r#"
+            [[providers]]
+            id = "gateway"
+            provider_type = "openai-compat"
+            model = "gateway-model"
+
+            [providers.headers]
+            "Bad Header" = "value"
+        "#;
+
+        let config: ProviderPoolConfig = toml::from_str(toml_str).expect("should parse");
+        let err = config
+            .validate()
+            .expect_err("invalid header should fail validation");
+
+        assert!(err.to_string().contains("invalid custom header"));
+        assert!(err.to_string().contains("Bad Header"));
+    }
+
     // -----------------------------------------------------------------------
     // Tool calling mode auto-detection tests
     // -----------------------------------------------------------------------
@@ -899,6 +959,7 @@ mod tests {
             api_key: None,
             api_key_env: None,
             base_url: None,
+            headers: HashMap::new(),
             temperature: None,
             top_p: None,
             tool_calling_mode: None,

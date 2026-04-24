@@ -276,6 +276,7 @@ pub async fn provider_test(
     api_key: String,
     api_key_env: String,
     base_url: Option<String>,
+    headers: Option<std::collections::HashMap<String, String>>,
     tags: Option<Vec<String>>,
     capabilities: Option<Vec<y_core::provider::ProviderCapability>>,
     probe_mode: Option<String>,
@@ -286,6 +287,7 @@ pub async fn provider_test(
         api_key,
         api_key_env,
         base_url,
+        headers: headers.unwrap_or_default(),
         tags: tags.unwrap_or_default(),
         capabilities: capabilities.unwrap_or_default(),
         probe_mode: probe_mode.unwrap_or_else(|| "auto".to_string()),
@@ -301,6 +303,7 @@ pub async fn provider_list_models(
     base_url: String,
     api_key: String,
     api_key_env: String,
+    headers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<serde_json::Value, String> {
     let effective_key = if !api_key.is_empty() {
         api_key
@@ -315,9 +318,12 @@ pub async fn provider_list_models(
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+    let custom_headers =
+        y_service::SystemService::provider_custom_header_map(&headers.unwrap_or_default())?;
 
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let mut req = client.get(&url);
+    let mut req =
+        y_service::SystemService::apply_provider_custom_headers(client.get(&url), &custom_headers);
     if !effective_key.is_empty() {
         req = req.header("Authorization", format!("Bearer {effective_key}"));
     }

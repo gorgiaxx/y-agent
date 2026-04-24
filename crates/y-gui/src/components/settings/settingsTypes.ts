@@ -27,6 +27,7 @@ export interface ProviderFormData {
   api_key: string | null;
   api_key_env: string | null;
   base_url: string | null;
+  headers: Record<string, string>;
   temperature: number | null;
   top_p: number | null;
   tool_calling_mode: string | null;
@@ -189,6 +190,7 @@ export function emptyProvider(): ProviderFormData {
     api_key: null,
     api_key_env: null,
     base_url: null,
+    headers: {},
     temperature: null,
     top_p: null,
     tool_calling_mode: null,
@@ -333,6 +335,9 @@ export function maskSensitive(content: string): string {
   return content.replace(
     /^(\s*(?:api_key|password|secret|token)\s*=\s*)"([^"]+)"/gm,
     (_match, prefix, value) => `${prefix}"${'*'.repeat(Math.min(value.length, 24))}"`,
+  ).replace(
+    /^(\s*"(?:authorization|api-key|x-api-key|x-api-token)"\s*=\s*)"([^"]+)"/gim,
+    (_match, prefix, value) => `${prefix}"${'*'.repeat(Math.min(value.length, 24))}"`,
   );
 }
 
@@ -364,9 +369,23 @@ export function providersToToml(providers: ProviderFormData[]): string {
     if (p.top_p !== null) lines.push(`top_p = ${p.top_p}`);
     if (p.tool_calling_mode) lines.push(`tool_calling_mode = "${escapeTomlString(p.tool_calling_mode)}"`);
     if (p.icon) lines.push(`icon = "${escapeTomlString(p.icon)}"`);
+    const headerEntries = Object.entries(p.headers ?? {}).filter(([key]) => key.trim() !== '');
+    if (headerEntries.length > 0) {
+      lines.push('[providers.headers]');
+      for (const [key, value] of headerEntries) {
+        lines.push(`"${escapeTomlString(key)}" = "${escapeTomlString(value)}"`);
+      }
+    }
     lines.push('');
   }
   return lines.join('\n');
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, val]) => [key, String(val ?? '')]),
+  );
 }
 
 export function jsonToProviders(json: unknown): ProviderFormData[] {
@@ -396,6 +415,7 @@ export function jsonToProviders(json: unknown): ProviderFormData[] {
     api_key: (p.api_key as string) ?? null,
     api_key_env: (p.api_key_env as string) ?? null,
     base_url: (p.base_url as string) ?? null,
+    headers: stringRecord(p.headers),
     temperature: (p.temperature as number) ?? null,
     top_p: (p.top_p as number) ?? null,
     tool_calling_mode: (p.tool_calling_mode as string) ?? null,

@@ -36,6 +36,7 @@ pub struct AzureOpenAiProvider {
     endpoint: String,
     /// Azure API version query parameter.
     api_version: String,
+    custom_headers: reqwest::header::HeaderMap,
     metadata: ProviderMetadata,
 }
 
@@ -56,7 +57,43 @@ impl AzureOpenAiProvider {
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
     ) -> Self {
+        let headers = std::collections::HashMap::new();
+        Self::with_headers(
+            id,
+            model,
+            api_key,
+            base_url,
+            proxy_url,
+            tags,
+            capabilities,
+            max_concurrency,
+            context_window,
+            tool_calling_mode,
+            &headers,
+        )
+    }
+
+    /// Create a new Azure `OpenAI` provider with additional HTTP headers.
+    pub fn with_headers<S: std::hash::BuildHasher>(
+        id: &str,
+        model: &str,
+        api_key: String,
+        base_url: Option<String>,
+        proxy_url: Option<String>,
+        tags: Vec<String>,
+        capabilities: Vec<ProviderCapability>,
+        max_concurrency: usize,
+        context_window: usize,
+        tool_calling_mode: ToolCallingMode,
+        headers: &std::collections::HashMap<String, String, S>,
+    ) -> Self {
         let endpoint = base_url.unwrap_or_default();
+        let custom_headers = crate::http_headers::custom_header_map(headers).unwrap_or_else(
+            |message| {
+                tracing::warn!(provider_id = %id, error = %message, "Ignoring invalid provider custom headers");
+                reqwest::header::HeaderMap::default()
+            },
+        );
 
         let mut builder = Client::builder();
         if let Some(proxy) = proxy_url {
@@ -70,6 +107,7 @@ impl AzureOpenAiProvider {
             api_key,
             endpoint,
             api_version: DEFAULT_API_VERSION.to_string(),
+            custom_headers,
             metadata: ProviderMetadata {
                 id: ProviderId::from_string(id),
                 provider_type: ProviderType::Azure,
@@ -168,10 +206,10 @@ impl AzureOpenAiProvider {
         let body = Self::build_image_generation_request_body(request, model)?;
         let raw_request = serde_json::to_value(&body).ok();
 
-        let mut request_builder = self
-            .client
-            .post(self.image_generation_url())
-            .header("Content-Type", "application/json");
+        let mut request_builder = self.client.post(self.image_generation_url());
+        request_builder =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
             request_builder = request_builder.header("api-key", &self.api_key);
@@ -379,10 +417,10 @@ impl LlmProvider for AzureOpenAiProvider {
         let body = Self::build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let mut request_builder = self
-            .client
-            .post(self.chat_url())
-            .header("Content-Type", "application/json");
+        let mut request_builder = self.client.post(self.chat_url());
+        request_builder =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
             request_builder = request_builder.header("api-key", &self.api_key);
@@ -511,10 +549,10 @@ impl LlmProvider for AzureOpenAiProvider {
         let body = Self::build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let mut request_builder = self
-            .client
-            .post(self.chat_url())
-            .header("Content-Type", "application/json");
+        let mut request_builder = self.client.post(self.chat_url());
+        request_builder =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
             request_builder = request_builder.header("api-key", &self.api_key);

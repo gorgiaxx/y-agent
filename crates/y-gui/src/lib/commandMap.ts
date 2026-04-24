@@ -193,6 +193,7 @@ function providerTestBody(a: Record<string, unknown>) {
     api_key: arg(a, 'apiKey', 'api_key'),
     api_key_env: arg(a, 'apiKeyEnv', 'api_key_env'),
     base_url: arg(a, 'baseUrl', 'base_url'),
+    headers: arg(a, 'headers'),
     tags: arg(a, 'tags'),
     capabilities: arg(a, 'capabilities'),
     probe_mode: arg(a, 'probeMode', 'probe_mode'),
@@ -204,6 +205,7 @@ function providerListModelsBody(a: Record<string, unknown>) {
     base_url: arg(a, 'baseUrl', 'base_url'),
     api_key: arg(a, 'apiKey', 'api_key'),
     api_key_env: arg(a, 'apiKeyEnv', 'api_key_env'),
+    headers: arg(a, 'headers'),
   });
 }
 

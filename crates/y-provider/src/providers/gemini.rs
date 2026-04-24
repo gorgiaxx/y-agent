@@ -28,6 +28,7 @@ pub struct GeminiProvider {
     client: Client,
     api_key: String,
     base_url: String,
+    custom_headers: reqwest::header::HeaderMap,
     metadata: ProviderMetadata,
 }
 
@@ -45,7 +46,43 @@ impl GeminiProvider {
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
     ) -> Self {
+        let headers = std::collections::HashMap::new();
+        Self::with_headers(
+            id,
+            model,
+            api_key,
+            base_url,
+            proxy_url,
+            tags,
+            capabilities,
+            max_concurrency,
+            context_window,
+            tool_calling_mode,
+            &headers,
+        )
+    }
+
+    /// Create a new Gemini provider with additional HTTP headers.
+    pub fn with_headers<S: std::hash::BuildHasher>(
+        id: &str,
+        model: &str,
+        api_key: String,
+        base_url: Option<String>,
+        proxy_url: Option<String>,
+        tags: Vec<String>,
+        capabilities: Vec<ProviderCapability>,
+        max_concurrency: usize,
+        context_window: usize,
+        tool_calling_mode: ToolCallingMode,
+        headers: &std::collections::HashMap<String, String, S>,
+    ) -> Self {
         let base_url = base_url.unwrap_or_else(|| GEMINI_API_URL.to_string());
+        let custom_headers = crate::http_headers::custom_header_map(headers).unwrap_or_else(
+            |message| {
+                tracing::warn!(provider_id = %id, error = %message, "Ignoring invalid provider custom headers");
+                reqwest::header::HeaderMap::default()
+            },
+        );
 
         let mut builder = Client::builder();
         if let Some(proxy) = proxy_url {
@@ -58,6 +95,7 @@ impl GeminiProvider {
             client: builder.build().unwrap_or_else(|_| Client::new()),
             api_key,
             base_url,
+            custom_headers,
             metadata: ProviderMetadata {
                 id: ProviderId::from_string(id),
                 provider_type: ProviderType::Gemini,
@@ -297,10 +335,10 @@ impl LlmProvider for GeminiProvider {
         let body = Self::build_request_body(request);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let mut request_builder = self
-            .client
-            .post(self.generate_url())
-            .header("Content-Type", "application/json");
+        let mut request_builder = self.client.post(self.generate_url());
+        request_builder =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
             request_builder = request_builder.header("x-goog-api-key", &self.api_key);
@@ -377,10 +415,10 @@ impl LlmProvider for GeminiProvider {
         let body = Self::build_request_body(request);
         let raw_request = serde_json::to_value(&body).ok();
 
-        let mut request_builder = self
-            .client
-            .post(self.stream_url())
-            .header("Content-Type", "application/json");
+        let mut request_builder = self.client.post(self.stream_url());
+        request_builder =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
             request_builder = request_builder.header("x-goog-api-key", &self.api_key);

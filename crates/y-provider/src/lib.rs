@@ -24,6 +24,7 @@ pub mod error_classifier;
 pub mod freeze;
 pub mod health;
 pub mod hook_llm_runner;
+pub mod http_headers;
 pub mod lease;
 pub mod metrics;
 pub mod metrics_export;

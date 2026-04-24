@@ -1,5 +1,7 @@
 //! System status service.
 
+use std::collections::HashMap;
+
 use y_core::provider::ProviderCapability;
 use y_core::provider::ProviderPool;
 use y_core::runtime::RuntimeAdapter;
@@ -57,6 +59,8 @@ pub struct ProviderTestRequest {
     pub api_key_env: String,
     /// Optional base URL override.
     pub base_url: Option<String>,
+    /// Additional HTTP headers to send with active probe requests.
+    pub headers: HashMap<String, String>,
     /// Routing tags (legacy hint for capability inference).
     pub tags: Vec<String>,
     /// Explicit provider capabilities.
@@ -81,6 +85,22 @@ enum ProbeSuccessKind {
 pub struct SystemService;
 
 impl SystemService {
+    /// Build a validated header map for provider-facing HTTP requests.
+    pub fn provider_custom_header_map<S: std::hash::BuildHasher>(
+        headers: &HashMap<String, String, S>,
+    ) -> Result<reqwest::header::HeaderMap, String> {
+        y_provider::http_headers::custom_header_map(headers)
+            .map_err(|message| format!("Invalid custom header: {message}"))
+    }
+
+    /// Apply provider-facing custom headers to a request builder.
+    pub fn apply_provider_custom_headers(
+        request_builder: reqwest::RequestBuilder,
+        headers: &reqwest::header::HeaderMap,
+    ) -> reqwest::RequestBuilder {
+        y_provider::http_headers::apply_custom_headers(request_builder, headers)
+    }
+
     /// Gather system status report.
     pub async fn status(container: &ServiceContainer, version: &str) -> StatusReport {
         let provider_count = container
@@ -287,6 +307,7 @@ impl SystemService {
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+        let custom_headers = Self::provider_custom_header_map(&request.headers)?;
 
         let probe_mode = Self::resolve_probe_mode(&request);
 
@@ -312,7 +333,9 @@ impl SystemService {
                     "max_tokens": 1,
                     "messages": [{ "role": "user", "content": "ping" }]
                 });
-                let mut req = client.post(&url).header("Content-Type", "application/json");
+                let mut req = client.post(&url);
+                req = Self::apply_provider_custom_headers(req, &custom_headers)
+                    .header("Content-Type", "application/json");
                 if !effective_key.is_empty() {
                     req = req.header("Authorization", format!("Bearer {effective_key}"));
                 }
@@ -338,7 +361,9 @@ impl SystemService {
                     "prompt": "ping",
                     "response_format": "b64_json"
                 });
-                let mut req = client.post(&url).header("Content-Type", "application/json");
+                let mut req = client.post(&url);
+                req = Self::apply_provider_custom_headers(req, &custom_headers)
+                    .header("Content-Type", "application/json");
                 if !effective_key.is_empty() {
                     req = req.header("Authorization", format!("Bearer {effective_key}"));
                 }
@@ -363,7 +388,9 @@ impl SystemService {
                     "prompt": "ping",
                     "response_format": "b64_json"
                 });
-                let mut req = client.post(&url).header("Content-Type", "application/json");
+                let mut req = client.post(&url);
+                req = Self::apply_provider_custom_headers(req, &custom_headers)
+                    .header("Content-Type", "application/json");
                 if !effective_key.is_empty() {
                     req = req.header("api-key", effective_key.clone());
                 }
@@ -386,8 +413,8 @@ impl SystemService {
                     "max_tokens": 1,
                     "messages": [{ "role": "user", "content": "ping" }]
                 });
-                let mut req = client
-                    .post(&url)
+                let mut req = client.post(&url);
+                req = Self::apply_provider_custom_headers(req, &custom_headers)
                     .header("anthropic-version", "2023-06-01")
                     .header("Content-Type", "application/json");
                 if !effective_key.is_empty() {
@@ -423,8 +450,8 @@ impl SystemService {
                     "contents": [{"parts": [{"text": "ping"}]}],
                     "generationConfig": {"maxOutputTokens": 1}
                 });
-                let response = client
-                    .post(&url)
+                let req = client.post(&url);
+                let response = Self::apply_provider_custom_headers(req, &custom_headers)
                     .header("Content-Type", "application/json")
                     .json(&body)
                     .send()
@@ -546,13 +573,16 @@ mod tests {
 
     use super::*;
 
+    struct SingleResponseServer {
+        base_url: String,
+        request_line_rx: tokio::sync::oneshot::Receiver<String>,
+        header_text_rx: tokio::sync::oneshot::Receiver<String>,
+        body_rx: tokio::sync::oneshot::Receiver<String>,
+    }
+
     async fn spawn_single_response_server(
         response_body: &'static str,
-    ) -> Option<(
-        String,
-        tokio::sync::oneshot::Receiver<String>,
-        tokio::sync::oneshot::Receiver<String>,
-    )> {
+    ) -> Option<SingleResponseServer> {
         let listener = match TcpListener::bind("127.0.0.1:0").await {
             Ok(listener) => listener,
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -563,6 +593,7 @@ mod tests {
         };
         let address = listener.local_addr().expect("listener address");
         let (request_line_tx, request_line_rx) = tokio::sync::oneshot::channel();
+        let (header_text_tx, header_text_rx) = tokio::sync::oneshot::channel();
         let (body_tx, body_rx) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {
@@ -602,6 +633,7 @@ mod tests {
                         String::from_utf8_lossy(&buffer[body_start..body_start + content_length])
                             .to_string();
                     let _ = request_line_tx.send(request_line);
+                    let _ = header_text_tx.send(header_text.to_string());
                     let _ = body_tx.send(body);
                     break;
                 }
@@ -618,13 +650,17 @@ mod tests {
                 .expect("write response");
         });
 
-        Some((format!("http://{address}/v1"), request_line_rx, body_rx))
+        Some(SingleResponseServer {
+            base_url: format!("http://{address}/v1"),
+            request_line_rx,
+            header_text_rx,
+            body_rx,
+        })
     }
 
     #[tokio::test]
     async fn test_provider_auto_probe_uses_chat_completions_for_text_models() {
-        let Some((base_url, request_line_rx, body_rx)) =
-            spawn_single_response_server(r#"{"id":"x","model":"text-model"}"#).await
+        let Some(server) = spawn_single_response_server(r#"{"id":"x","model":"text-model"}"#).await
         else {
             return;
         };
@@ -634,7 +670,8 @@ mod tests {
             model: "text-model".into(),
             api_key: String::new(),
             api_key_env: String::new(),
-            base_url: Some(base_url),
+            base_url: Some(server.base_url),
+            headers: std::collections::HashMap::new(),
             tags: vec![],
             capabilities: vec![ProviderCapability::Text],
             probe_mode: "auto".into(),
@@ -642,18 +679,19 @@ mod tests {
         .await
         .expect("text probe should succeed");
 
-        assert!(request_line_rx
+        assert!(server
+            .request_line_rx
             .await
             .expect("request line")
             .contains("/v1/chat/completions"),);
-        let body = body_rx.await.expect("request body");
+        let body = server.body_rx.await.expect("request body");
         assert!(body.contains("\"messages\""));
         assert!(result.contains("text-model"));
     }
 
     #[tokio::test]
     async fn test_provider_auto_probe_uses_image_generation_for_image_models() {
-        let Some((base_url, request_line_rx, body_rx)) = spawn_single_response_server(
+        let Some(server) = spawn_single_response_server(
             r#"{"data":[{"b64_json":"aGVsbG8="}],"model":"seedream"}"#,
         )
         .await
@@ -666,7 +704,8 @@ mod tests {
             model: "seedream".into(),
             api_key: String::new(),
             api_key_env: String::new(),
-            base_url: Some(base_url),
+            base_url: Some(server.base_url),
+            headers: std::collections::HashMap::new(),
             tags: vec!["image".into()],
             capabilities: vec![ProviderCapability::ImageGeneration],
             probe_mode: "auto".into(),
@@ -674,13 +713,43 @@ mod tests {
         .await
         .expect("image probe should succeed");
 
-        assert!(request_line_rx
+        assert!(server
+            .request_line_rx
             .await
             .expect("request line")
             .contains("/v1/images/generations"),);
-        let body = body_rx.await.expect("request body");
+        let body = server.body_rx.await.expect("request body");
         assert!(body.contains("\"prompt\":\"ping\""));
         assert!(body.contains("\"response_format\":\"b64_json\""));
         assert!(result.contains("Connection successful"));
+    }
+
+    #[tokio::test]
+    async fn test_provider_probe_sends_custom_headers() {
+        let Some(server) = spawn_single_response_server(r#"{"id":"x","model":"text-model"}"#).await
+        else {
+            return;
+        };
+        let headers = std::collections::HashMap::from([(
+            "X-LLM-Tenant".to_string(),
+            "workspace-a".to_string(),
+        )]);
+
+        SystemService::test_provider(ProviderTestRequest {
+            provider_type: "openai-compat".into(),
+            model: "text-model".into(),
+            api_key: String::new(),
+            api_key_env: String::new(),
+            base_url: Some(server.base_url),
+            headers,
+            tags: vec![],
+            capabilities: vec![ProviderCapability::Text],
+            probe_mode: "auto".into(),
+        })
+        .await
+        .expect("text probe should succeed");
+
+        let header_text = server.header_text_rx.await.expect("request headers");
+        assert!(header_text.contains("x-llm-tenant: workspace-a"));
     }
 }

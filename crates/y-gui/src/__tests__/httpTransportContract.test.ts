@@ -242,6 +242,7 @@ describe('HttpTransport contract mapping', () => {
       apiKey: 'direct',
       apiKeyEnv: '',
       baseUrl: 'http://llm.test/v1',
+      headers: { 'X-LLM-Tenant': 'workspace-a' },
       tags: ['chat'],
       capabilities: ['text_chat'],
       probeMode: 'auto',
@@ -250,6 +251,7 @@ describe('HttpTransport contract mapping', () => {
       baseUrl: 'http://llm.test/v1',
       apiKey: 'direct',
       apiKeyEnv: '',
+      headers: { 'X-LLM-Tenant': 'workspace-a' },
     });
 
     expect(message).toBe('provider ok');
@@ -268,6 +270,7 @@ describe('HttpTransport contract mapping', () => {
         api_key: 'direct',
         api_key_env: '',
         base_url: 'http://llm.test/v1',
+        headers: { 'X-LLM-Tenant': 'workspace-a' },
         tags: ['chat'],
         capabilities: ['text_chat'],
         probe_mode: 'auto',
@@ -276,6 +279,7 @@ describe('HttpTransport contract mapping', () => {
         base_url: 'http://llm.test/v1',
         api_key: 'direct',
         api_key_env: '',
+        headers: { 'X-LLM-Tenant': 'workspace-a' },
       },
     ]);
   });
