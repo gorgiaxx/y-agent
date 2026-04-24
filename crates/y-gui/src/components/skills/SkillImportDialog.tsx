@@ -18,6 +18,7 @@ interface SkillImportDialogProps {
 export function SkillImportDialog({ onImport, onClose }: SkillImportDialogProps) {
   const [path, setPath] = useState('');
   const [sanitize, setSanitize] = useState(true);
+  const supportsNativePicker = platform.capabilities.nativeFilePaths;
 
   const handleBrowse = async () => {
     try {
@@ -50,18 +51,20 @@ export function SkillImportDialog({ onImport, onClose }: SkillImportDialogProps)
             <Input
               value={path}
               onChange={(e) => setPath(e.target.value)}
-              placeholder="Select Skill main file..."
-              readOnly
+              placeholder={supportsNativePicker ? 'Select Skill main file...' : '/srv/skills/example.skill.toml'}
+              readOnly={supportsNativePicker}
               variant="mono"
               className="flex-1"
             />
-            <Button variant="outline" onClick={handleBrowse}>
-              <FileText size={14} />
-              Browse
-            </Button>
+            {supportsNativePicker && (
+              <Button variant="outline" onClick={handleBrowse}>
+                <FileText size={14} />
+                Browse
+              </Button>
+            )}
           </div>
           <p className="text-10px text-[var(--text-muted)] mt-0.5">
-            Please select the Skill main file
+            {supportsNativePicker ? 'Please select the Skill main file' : 'Use a path reachable by the y-web server'}
           </p>
         </div>
 
