@@ -156,9 +156,6 @@ impl RecallStore {
 
     /// Recall with an optional query embedding for vector search.
     ///
-    /// # Panics
-    ///
-    /// Panics if `use_mmr` is true and `query_embedding` is successfully unwrapped because we checked it's `is_some`, but then some other code path might panic. Actually, `unwrap()` is used on `query_embedding` when `use_mmr` is enabled.
     pub fn recall_with_embedding(
         &self,
         query: &str,
