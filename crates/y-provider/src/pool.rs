@@ -718,6 +718,7 @@ mod tests {
                 top_p: None,
                 tool_calling_mode: None,
                 icon: None,
+                http_protocol: crate::config::HttpProtocol::Http1,
             }],
             ..test_config()
         }
