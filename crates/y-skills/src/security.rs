@@ -99,8 +99,6 @@ impl SecurityScreener {
 
     /// Screen skill content for security issues.
     ///
-    /// # Panics
-    /// This function will not panic — the unwrap is guarded by a non-empty check.
     pub fn screen(&self, content: &str) -> SecurityVerdict {
         let mut findings = Vec::new();
 
@@ -110,24 +108,18 @@ impl SecurityScreener {
         Self::check_data_exfiltration(content, &mut findings);
         Self::check_excessive_freedom(content, &mut findings);
 
-        let blocking: Vec<_> = findings
+        let Some(worst) = findings
             .iter()
             .filter(|f| f.severity >= self.block_threshold)
-            .collect();
+            .max_by_key(|f| f.severity)
+        else {
+            return SecurityVerdict::Pass;
+        };
 
-        if blocking.is_empty() {
-            SecurityVerdict::Pass
-        } else {
-            // SECURITY: `blocking` is guaranteed non-empty by the `if` guard above.
-            let worst = blocking
-                .iter()
-                .max_by_key(|f| f.severity)
-                .expect("blocking is non-empty");
-            SecurityVerdict::Blocked {
-                reason: worst.description.clone(),
-                finding_type: worst.finding_type.clone(),
-                findings,
-            }
+        SecurityVerdict::Blocked {
+            reason: worst.description.clone(),
+            finding_type: worst.finding_type.clone(),
+            findings,
         }
     }
 
