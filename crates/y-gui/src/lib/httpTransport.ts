@@ -8,10 +8,14 @@ import { COMMAND_MAP } from './commandMap';
 import { SseAdapter } from './sseAdapter';
 import type { ConnectionStatus } from './sseAdapter';
 
-const NOOP_COMMANDS = new Set([
+const LIFECYCLE_NOOP_COMMANDS = new Set([
   'show_window', 'toggle_devtools', 'window_set_decorations',
   'window_minimize', 'window_toggle_maximize', 'window_close',
-  'window_set_theme', 'skill_open_folder', 'skill_import',
+  'window_set_theme', 'heartbeat_pong',
+]);
+
+const UNSUPPORTED_WEB_COMMANDS = new Set([
+  'skill_open_folder',
 ]);
 
 const GUI_CONFIG_KEY = 'y-agent-gui-config';
@@ -28,8 +32,12 @@ export class HttpTransport implements Transport {
   }
 
   async invoke<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T> {
-    if (NOOP_COMMANDS.has(command)) {
+    if (LIFECYCLE_NOOP_COMMANDS.has(command)) {
       return undefined as T;
+    }
+
+    if (UNSUPPORTED_WEB_COMMANDS.has(command)) {
+      throw new Error(`[HttpTransport] Command "${command}" is not supported in the web backend`);
     }
 
     if (command === 'config_get_gui') {
@@ -84,18 +92,21 @@ export class HttpTransport implements Transport {
     }
 
     const contentType = resp.headers.get('content-type') ?? '';
+    let result: unknown;
     if (contentType.includes('application/json')) {
-      return (await resp.json()) as T;
+      result = await resp.json();
+      return (def.response ? def.response(result) : result) as T;
     }
 
     const text = await resp.text();
     if (text === '') return undefined as T;
 
     try {
-      return JSON.parse(text) as T;
+      result = JSON.parse(text);
     } catch {
-      return text as T;
+      result = text;
     }
+    return (def.response ? def.response(result) : result) as T;
   }
 
   async listen<T = unknown>(

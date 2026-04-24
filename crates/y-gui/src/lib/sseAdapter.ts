@@ -11,6 +11,18 @@ type Callback = (event: { payload: unknown }) => void;
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
 type StatusCallback = (status: ConnectionStatus) => void;
 
+function normalizeSsePayload(payload: unknown) {
+  if (
+    payload
+    && typeof payload === 'object'
+    && 'type' in payload
+    && 'data' in payload
+  ) {
+    return (payload as { data: unknown }).data;
+  }
+  return payload;
+}
+
 export class SseAdapter {
   private url: string;
   private token: string | null;
@@ -76,7 +88,7 @@ export class SseAdapter {
     for (const event of this.listeners.keys()) {
       this.source.addEventListener(event, ((ev: MessageEvent) => {
         try {
-          const payload = JSON.parse(ev.data);
+          const payload = normalizeSsePayload(JSON.parse(ev.data));
           const cbs = this.listeners.get(event);
           if (cbs) {
             for (const cb of cbs) {
@@ -97,8 +109,9 @@ export class SseAdapter {
       const callbacks = this.listeners.get(eventName);
       if (!callbacks) return;
 
+      const payload = normalizeSsePayload(data);
       for (const cb of callbacks) {
-        cb({ payload: data });
+        cb({ payload });
       }
     } catch {
       // ignore malformed SSE data
@@ -115,7 +128,7 @@ export class SseAdapter {
       // dispatches events with `event: <name>` lines directly to us.
       this.source?.addEventListener(event, ((ev: MessageEvent) => {
         try {
-          const payload = JSON.parse(ev.data) as T;
+          const payload = normalizeSsePayload(JSON.parse(ev.data)) as T;
           const cbs = this.listeners.get(event);
           if (cbs) {
             for (const cb of cbs) {
