@@ -208,4 +208,121 @@ max_tool_calls = 20
 timeout_secs = 180
 context_sharing = "none"
 max_context_tokens = 32768
+
+[response_format]
+type = "json_schema"
+name = "skill_ingestion_output"
+schema_json = '''
+{
+  "type": "object",
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": ["accepted", "optimized", "rejected", "partial_accept"]
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["llm_reasoning", "api_call", "tool_wrapper", "agent_behavior", "hybrid"]
+    },
+    "rejection_reason": { "type": "string" },
+    "redirect_suggestion": { "type": "string" },
+    "optimization_notes": { "type": "string" },
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "description": { "type": "string" },
+        "classification": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["llm_reasoning", "api_call", "tool_wrapper", "agent_behavior", "hybrid"]
+            },
+            "domain": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "tags": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "atomic": { "type": "boolean" }
+          },
+          "required": ["type", "domain", "tags", "atomic"],
+          "additionalProperties": false
+        },
+        "constraints": {
+          "type": "object",
+          "properties": {
+            "max_input_tokens": { "type": "integer" },
+            "max_output_tokens": { "type": "integer" },
+            "requires_language": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "references": {
+          "type": "object",
+          "properties": {
+            "tools": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "required": ["tools"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["name", "version", "description", "classification", "constraints", "references"],
+      "additionalProperties": false
+    },
+    "sub_documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "title": { "type": "string" },
+          "token_count": { "type": "integer" },
+          "load_condition": { "type": "string" }
+        },
+        "required": ["path", "title", "token_count", "load_condition"],
+        "additionalProperties": false
+      }
+    },
+    "extracted_tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "type": { "type": "string" }
+        },
+        "required": ["name", "description", "type"],
+        "additionalProperties": false
+      }
+    },
+    "companion_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "action": {
+            "type": "string",
+            "enum": ["keep", "transform", "discard"]
+          },
+          "reason": { "type": "string" }
+        },
+        "required": ["path", "action", "reason"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["decision", "classification"],
+  "additionalProperties": false
+}
+'''
 prune_tool_history = false

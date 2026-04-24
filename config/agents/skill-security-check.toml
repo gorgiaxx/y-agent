@@ -107,3 +107,52 @@ max_tool_calls = 0
 timeout_secs = 60
 context_sharing = "none"
 max_context_tokens = 16384
+
+[response_format]
+type = "json_schema"
+name = "skill_security_check_output"
+schema_json = '''
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["secure", "caution", "insecure"]
+    },
+    "issues": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": ["none", "low", "medium", "high", "critical"]
+    },
+    "permissions_needed": {
+      "type": "object",
+      "properties": {
+        "files_read": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "files_write": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "network": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "commands": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["files_read", "files_write", "network", "commands"],
+      "additionalProperties": false
+    },
+    "summary": { "type": "string" }
+  },
+  "required": ["verdict", "issues", "risk_level", "permissions_needed", "summary"],
+  "additionalProperties": false
+}
+'''

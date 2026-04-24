@@ -640,6 +640,7 @@ impl Default for AgentRegistry {
 mod tests {
     use super::*;
     use crate::agent::definition::{AgentMode, ContextStrategy};
+    use y_core::provider::ResponseFormat;
 
     fn user_definition(id: &str, name: &str) -> AgentDefinition {
         AgentDefinition {
@@ -1108,6 +1109,82 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
         assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
         assert!(def.allowed_tools.contains(&"ToolSearch".to_string()));
         assert!(!def.allowed_tools.contains(&"Task".to_string()));
+    }
+
+    /// T-MA-P4-15: Skill ingestion declares a structured JSON schema response format.
+    #[test]
+    fn test_builtin_agent_skill_ingestion_response_format() {
+        let registry = AgentRegistry::new();
+        let def = registry.get("skill-ingestion").unwrap();
+
+        let response_format = def.resolved_response_format().unwrap();
+        let Some(ResponseFormat::JsonSchema { name, schema }) = response_format else {
+            panic!("skill-ingestion should resolve to a JSON Schema response format");
+        };
+
+        assert_eq!(name, "skill_ingestion_output");
+        assert_eq!(schema["type"], serde_json::json!("object"));
+        assert_eq!(
+            schema["properties"]["decision"]["type"],
+            serde_json::json!("string")
+        );
+        assert_eq!(
+            schema["properties"]["decision"]["enum"],
+            serde_json::json!(["accepted", "optimized", "rejected", "partial_accept"])
+        );
+        assert_eq!(
+            schema["properties"]["manifest"]["type"],
+            serde_json::json!("object")
+        );
+        assert_eq!(
+            schema["properties"]["sub_documents"]["type"],
+            serde_json::json!("array")
+        );
+        assert_eq!(
+            schema["required"],
+            serde_json::json!(["decision", "classification"])
+        );
+    }
+
+    /// T-MA-P4-16: Skill security check declares a structured JSON schema response format.
+    #[test]
+    fn test_builtin_agent_skill_security_check_response_format() {
+        let registry = AgentRegistry::new();
+        let def = registry.get("skill-security-check").unwrap();
+
+        let response_format = def.resolved_response_format().unwrap();
+        let Some(ResponseFormat::JsonSchema { name, schema }) = response_format else {
+            panic!("skill-security-check should resolve to a JSON Schema response format");
+        };
+
+        assert_eq!(name, "skill_security_check_output");
+        assert_eq!(schema["type"], serde_json::json!("object"));
+        assert_eq!(
+            schema["properties"]["verdict"]["enum"],
+            serde_json::json!(["secure", "caution", "insecure"])
+        );
+        assert_eq!(
+            schema["properties"]["risk_level"]["enum"],
+            serde_json::json!(["none", "low", "medium", "high", "critical"])
+        );
+        assert_eq!(
+            schema["properties"]["permissions_needed"]["type"],
+            serde_json::json!("object")
+        );
+        assert_eq!(
+            schema["properties"]["issues"]["type"],
+            serde_json::json!("array")
+        );
+        assert_eq!(
+            schema["required"],
+            serde_json::json!([
+                "verdict",
+                "issues",
+                "risk_level",
+                "permissions_needed",
+                "summary"
+            ])
+        );
     }
 
     /// T-MA-P4-14: Registry loads all 17 built-in agents at startup.
