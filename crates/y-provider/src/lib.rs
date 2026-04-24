@@ -36,7 +36,7 @@ pub mod sse;
 
 // Re-export primary types.
 pub use agent_runner::SingleTurnRunner;
-pub use config::{ProviderConfig, ProviderPoolConfig, ProxySpec};
+pub use config::{HttpProtocol, ProviderConfig, ProviderPoolConfig, ProxySpec};
 pub use embedding::{EmbeddingConfig, OpenAiEmbeddingProvider};
 pub use error::ProviderPoolError;
 pub use error_classifier::{classify, classify_provider_error, StandardError};

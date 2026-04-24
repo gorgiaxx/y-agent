@@ -4,7 +4,36 @@ use std::collections::HashMap;
 use std::hash::BuildHasher;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::RequestBuilder;
+use reqwest::{Client, ClientBuilder, RequestBuilder};
+
+use crate::config::HttpProtocol;
+
+/// Build a provider HTTP client with protocol-specific header behavior.
+pub fn provider_http_client_builder(
+    protocol: HttpProtocol,
+    proxy_url: Option<String>,
+) -> ClientBuilder {
+    let mut builder = match protocol {
+        HttpProtocol::Http1 => Client::builder().http1_only().http1_title_case_headers(),
+        HttpProtocol::Http2 => Client::builder().http2_prior_knowledge(),
+    };
+
+    if let Some(proxy_url) = proxy_url {
+        if let Ok(proxy) = reqwest::Proxy::all(&proxy_url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    builder
+}
+
+/// Build a provider HTTP client with protocol-specific header behavior.
+pub fn provider_http_client(
+    protocol: HttpProtocol,
+    proxy_url: Option<String>,
+) -> Result<Client, reqwest::Error> {
+    provider_http_client_builder(protocol, proxy_url).build()
+}
 
 /// Build a validated header map from user-provided provider configuration.
 pub fn custom_header_map<S: BuildHasher>(

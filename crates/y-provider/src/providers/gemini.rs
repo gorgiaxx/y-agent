@@ -12,6 +12,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use crate::config::HttpProtocol;
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
     ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
@@ -59,6 +60,7 @@ impl GeminiProvider {
             context_window,
             tool_calling_mode,
             &headers,
+            HttpProtocol::Http1,
         )
     }
 
@@ -75,6 +77,7 @@ impl GeminiProvider {
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
         headers: &std::collections::HashMap<String, String, S>,
+        http_protocol: HttpProtocol,
     ) -> Self {
         let base_url = base_url.unwrap_or_else(|| GEMINI_API_URL.to_string());
         let custom_headers = crate::http_headers::custom_header_map(headers).unwrap_or_else(
@@ -84,15 +87,9 @@ impl GeminiProvider {
             },
         );
 
-        let mut builder = Client::builder();
-        if let Some(proxy) = proxy_url {
-            if let Ok(p) = reqwest::Proxy::all(&proxy) {
-                builder = builder.proxy(p);
-            }
-        }
-
         Self {
-            client: builder.build().unwrap_or_else(|_| Client::new()),
+            client: crate::http_headers::provider_http_client(http_protocol, proxy_url)
+                .unwrap_or_else(|_| Client::new()),
             api_key,
             base_url,
             custom_headers,

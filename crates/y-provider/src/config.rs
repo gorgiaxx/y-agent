@@ -8,6 +8,17 @@ use crate::error::ProviderPoolError;
 use crate::router::SelectionStrategy;
 use y_core::provider::{ProviderCapability, ToolCallingMode};
 
+/// HTTP protocol preference for provider-facing requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HttpProtocol {
+    /// Force HTTP/1.1 and send title-case HTTP/1.1 header names.
+    #[default]
+    Http1,
+    /// Force HTTP/2. Header names remain lowercase per HTTP/2 requirements.
+    Http2,
+}
+
 /// Configuration for the entire provider pool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +112,10 @@ pub struct ProviderConfig {
     /// Additional HTTP headers sent with every provider request.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub headers: HashMap<String, String>,
+
+    /// HTTP protocol used by this provider's client. Defaults to HTTP/1.1.
+    #[serde(default)]
+    pub http_protocol: HttpProtocol,
 
     /// Default sampling temperature for this provider (0.0 - 2.0).
     /// Applied to requests that do not specify a temperature.
@@ -515,6 +530,7 @@ mod tests {
                     api_key_env: None,
                     base_url: None,
                     headers: HashMap::new(),
+                    http_protocol: HttpProtocol::Http1,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -535,6 +551,7 @@ mod tests {
                     api_key_env: None,
                     base_url: None,
                     headers: HashMap::new(),
+                    http_protocol: HttpProtocol::Http1,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -577,6 +594,7 @@ mod tests {
             api_key_env: Some("Y_AGENT_TEST_KEY_XYZ".into()),
             base_url: None,
             headers: HashMap::new(),
+            http_protocol: HttpProtocol::Http1,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
@@ -609,6 +627,7 @@ mod tests {
             api_key_env: Some("Y_AGENT_TEST_KEY_DIRECT".into()),
             base_url: None,
             headers: HashMap::new(),
+            http_protocol: HttpProtocol::Http1,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
@@ -960,6 +979,7 @@ mod tests {
             api_key_env: None,
             base_url: None,
             headers: HashMap::new(),
+            http_protocol: HttpProtocol::Http1,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,

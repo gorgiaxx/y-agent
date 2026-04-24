@@ -12,6 +12,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use crate::config::HttpProtocol;
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
     ProviderCapability, ProviderError, ProviderMetadata, ProviderType, RequestMode,
@@ -61,6 +62,7 @@ impl OllamaProvider {
             context_window,
             tool_calling_mode,
             &headers,
+            HttpProtocol::Http1,
         )
     }
 
@@ -77,6 +79,7 @@ impl OllamaProvider {
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
         headers: &std::collections::HashMap<String, String, S>,
+        http_protocol: HttpProtocol,
     ) -> Self {
         let base_url = base_url.unwrap_or_else(|| OLLAMA_DEFAULT_URL.to_string());
         let custom_headers = crate::http_headers::custom_header_map(headers).unwrap_or_else(
@@ -88,13 +91,8 @@ impl OllamaProvider {
 
         // Ollama is typically local, but proxy is still applied if configured.
         // Operators should set `enabled = false` in proxy config to bypass.
-        let mut builder = Client::builder();
-        if let Some(proxy) = proxy_url {
-            if let Ok(p) = reqwest::Proxy::all(&proxy) {
-                builder = builder.proxy(p);
-            }
-        }
-        let client = builder.build().unwrap_or_else(|_| Client::new());
+        let client = crate::http_headers::provider_http_client(http_protocol, proxy_url)
+            .unwrap_or_else(|_| Client::new());
 
         Self {
             client,
