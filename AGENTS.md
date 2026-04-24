@@ -16,7 +16,8 @@ Goals: async-first (P95 tool dispatch < 100ms) · model-agnostic · full observa
 **Capabilities**: `y-tools` · `y-skills` · `y-runtime` · `y-scheduler` · `y-browser` · `y-journal`
 **Orchestration**: `y-agent` · `y-bot`
 **Service**: `y-service` (all business logic)
-**Presentation**: `y-cli` (CLI + TUI) · `y-web` (REST API) · `y-gui` (Tauri desktop app)
+**Presentation**: `y-cli` (CLI + TUI) · `y-web` (REST API) · `y-gui/src-tauri` (Tauri shell)
+**Frontend Package (non-Cargo)**: `crates/y-gui` (React + Vite + TypeScript desktop/web UI)
 **Testing**: `y-test-utils`
 
 ### 1.2 Repository Layout
@@ -25,18 +26,21 @@ Goals: async-first (P95 tool dispatch < 100ms) · model-agnostic · full observa
 y-agent/
   docs/
     design/            — detailed design documents
-    standards/         —
-    guides/            —
-    api/               —
-    research/          — just for research
-    schema/            —
-  config/              — TOML config templates (providers, runtime, guardrails, browser, etc.)
-  builtin-skills/      — built-in skill packages
-  migrations/sqlite/   — SQLite migrations
-  scripts/             — build-release.sh, deploy.sh, health-check.sh, native-install.sh
-  data/                — SQLite database (runtime data)
+    standards/         — engineering, testing, DB, DSL, skills, and tool-call standards
+  config/
+    agents/            — agent configuration
+    persona/           — persona configuration
+    prompts/           — prompt configuration
+  crates/              — Rust workspace crates plus the `y-gui` frontend package directory
+    y-gui/
+      src/             — React/Vite frontend source
+      src-tauri/       — Tauri Rust crate (workspace member)
+  data/                — runtime SQLite data
+  images/              — app / repository image assets
+  scripts/             — automation, release, health-check, and test helper scripts
+  skills/              — bundled/local skill content
   tests/               — workspace-level integration tests
-  crates/              — 24 Rust crates (see table above)
+  website/             — website / docs frontend
 ```
 
 ## 2) Engineering Principles
@@ -50,7 +54,7 @@ y-agent/
 - **2.7 TDD** -- Red -> Green -> Refactor. No production code without a preceding test. See `TEST_STRATEGY.md`.
 - **2.8 English** -- All docs, comments, commits in English. `VISION.md` is the sole exception.
 - **2.9 Service-Layer Ownership** -- All business logic lives in `y-service`; `y-cli`, `y-web`, `y-gui` (Tauri) are thin presentation layers -- they handle I/O, rendering, and user interaction only. No domain logic in presentation crates.
-- **2.10 No Inline Lint Suppression** -- Never add `#[allow(clippy::...)]` or `#[allow(rustc_lint)]` to source code. Fix the lint or add the allow to `[workspace.lints]` in `Cargo.toml` with a comment explaining why. The sole exception is `#[allow(dead_code)]` on struct fields/variants kept for API completeness (e.g. deserialized-but-not-read fields).
+- **2.10 No Inline Lint Suppression** -- Never add `#[allow(clippy::...)]`, `#[allow(rustc_lint)]`, `// eslint-disable`, or `// @ts-ignore` to source code by default. Fix the lint, refactor the code, or move the rule adjustment to the owning config with a comment explaining why. The sole Rust exception is `#[allow(dead_code)]` on struct fields/variants kept for API completeness (e.g. deserialized-but-not-read fields). For TypeScript, `// @ts-expect-error` is allowed only when no safer option exists and the reason is documented inline.
 - **2.11 Modular & Concise Code** -- Code should be modular and concise, with logic broken into reusable components or functions. Minimize duplication through abstraction and ensure loose coupling by managing dependencies carefully. Avoid unnecessary interdependencies to maintain flexibility and ease of maintenance.
 
 ## 3) Risk Tiers
@@ -69,6 +73,7 @@ When uncertain -> High.
 
 - **Before coding**: read the design doc in `docs/design/` + `DESIGN_OVERVIEW.md`. Implementation must conform. Impractical design -> update doc first, then code.
 - **TDD cycle**: Red (failing test) -> Green (minimal code) -> Refactor -> Repeat.
+- **Frontend TDD**: for `crates/y-gui`, add or update Vitest coverage before changing behavior whenever the work affects UI state, rendering contracts, or interaction flows.
 - Rust casing: `snake_case` files/fns · `PascalCase` types · `SCREAMING_SNAKE_CASE` consts.
 - Dependencies point inward to `y-core`; every subsystem behind a feature flag.
 
@@ -86,15 +91,11 @@ When uncertain -> High.
 
 ### 4.5 Post-Development Quality Gates
 
-After completing rust code change, run the following checks **in order** and fix all issues before considering the task done:
+After completing code changes, run every applicable gate for the touched surface **in order** and fix all issues before considering the task done.
 
-```bash
-cargo fmt --all
-cargo clippy --fix --allow-dirty --workspace -- -D warnings
-cargo clippy --workspace -- -D warnings
-cargo check --workspace
-cargo doc --workspace --no-deps
-```
+#### Rust changes
+
+After completing Rust code changes, run the following checks **in order**:
 
 - **`cargo fmt --all`** — Format all workspace crates according to `rustfmt.toml` (max_width=100, edition=2021). Run this first to establish a clean formatting baseline.
 - **`cargo clippy --fix --allow-dirty --workspace -- -D warnings`** — Automatically apply Clippy suggestions. The `--allow-dirty` flag is necessary to allow operations on unstaged changes during active development.
@@ -102,9 +103,22 @@ cargo doc --workspace --no-deps
 - **`cargo check --workspace`** — Full workspace compilation must succeed with no errors.
 - **`cargo doc --workspace --no-deps`** — Documentation must build without errors.
 
-No task is complete until all four commands pass cleanly.
+#### Frontend / Tauri GUI changes (`crates/y-gui`)
 
-### 4.6 Test Output Filtering
+After completing frontend changes in `crates/y-gui`, run the following checks **from `crates/y-gui/` and in order**:
+
+- **`npm test`** — Full Vitest suite must pass. Do not rely only on focused test runs at completion time.
+- **`npm run lint`** — ESLint must pass cleanly with zero errors and zero warnings.
+- **`npm run build`** — TypeScript compilation and Vite production build must succeed. Investigate new non-fatal warnings introduced by the change; existing non-blocking bundle-size warnings should still be mentioned if they materially worsen.
+
+#### Mixed-surface changes
+
+- If a change touches both Rust and `crates/y-gui`, run both gate sets.
+- If a change touches shared contracts that affect multiple clients, run every gate relevant to each touched client.
+
+No task is complete until every applicable gate passes cleanly.
+
+### 4.6 Rust Test Output Filtering
 
 When running `cargo test`, always pipe output through `grep` to extract error information. Use the following filter:
 
@@ -113,6 +127,13 @@ cargo test [args] 2>&1 | grep -v '^\s*Compiling\|^\s*Running\|^\s*Downloading\|^
 ```
 
 This strips compilation progress, download noise, and individual test-pass lines, leaving only failures, panics, and diagnostic output.
+
+### 4.7 Frontend Test Discipline
+
+- During TDD in `crates/y-gui`, prefer focused Vitest runs while iterating, for example `npm test -- --run src/__tests__/some_test.ts`.
+- Before finishing, always rerun the full frontend suite with `npm test`.
+- Shared browser-like test environment requirements (for example `EventSource`, `matchMedia`, or similar globals) belong in shared Vitest setup files, not copy-pasted stubs across many tests.
+- When a renderer or UI contract changes intentionally, update the affected tests in the same change. Do not preserve outdated assertions just to keep old snapshots or CSS class names alive.
 
 ## 5) Key References
 
