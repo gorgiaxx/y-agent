@@ -37,6 +37,10 @@ export interface StreamingBubbleProps {
   streamSegments?: InterleavedSegment[] | null;
 }
 
+function toolRecordStatus(record: ToolResultRecord): 'running' | 'success' | 'error' {
+  if (record.state === 'running') return 'running';
+  return record.success ? 'success' : 'error';
+}
 
 export function StreamingBubble({ message, toolResults, streamSegments }: StreamingBubbleProps) {
   const effectiveContent = message.content;
@@ -87,9 +91,7 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
             }
             if (seg.type === 'tool_call') {
               const result = toolResultsMap.get(idx);
-              const status = result
-                ? (result.success ? 'success' : 'error')
-                : 'running';
+              const status = result ? toolRecordStatus(result) : 'running';
               return (
                 <ToolCallCard
                   key={`tc-${idx}`}
@@ -150,7 +152,7 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
                     name: seg.record.name,
                     arguments: seg.record.arguments ?? '',
                   }}
-                  status={seg.record.success ? 'success' : 'error'}
+                  status={toolRecordStatus(seg.record)}
                   result={seg.record.resultPreview}
                   durationMs={seg.record.durationMs}
                   urlMeta={seg.record.urlMeta}

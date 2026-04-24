@@ -74,7 +74,7 @@ function buildToolResultMergeKey(entry: Record<string, unknown>): string {
 }
 
 function toToolResultMetadata(records: ToolResultRecord[]): Array<Record<string, unknown>> {
-  return records.map((tr) => {
+  return records.filter((tr) => tr.state !== 'running').map((tr) => {
     const entry: Record<string, unknown> = {
       name: tr.name,
       arguments: tr.arguments ?? '',

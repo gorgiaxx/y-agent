@@ -94,6 +94,55 @@ describe('toolResultUpdates', () => {
     expect(updated.segments[1]).toEqual({ type: 'tool_result', record: answered });
   });
 
+  it('replaces a running tool record with the completed result for the same call', () => {
+    const running = {
+      name: 'ShellExec',
+      arguments: JSON.stringify({ command: 'cargo test' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const completed = {
+      name: 'ShellExec',
+      arguments: JSON.stringify({ command: 'cargo test' }),
+      success: true,
+      durationMs: 1400,
+      resultPreview: 'tests passed',
+    };
+
+    const updated = upsertToolResultRecord([running], completed);
+
+    expect(updated.replacedIndex).toBe(0);
+    expect(updated.records).toEqual([completed]);
+  });
+
+  it('replaces a running tool segment with the completed result for the same call', () => {
+    const running = {
+      name: 'FileRead',
+      arguments: JSON.stringify({ path: '/tmp/input.txt' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const completed = {
+      name: 'FileRead',
+      arguments: JSON.stringify({ path: '/tmp/input.txt' }),
+      success: true,
+      durationMs: 32,
+      resultPreview: 'file contents',
+    };
+
+    const updated = upsertToolResultSegment(
+      [{ type: 'tool_result', record: running }],
+      completed,
+    );
+
+    expect(updated.replacedIndex).toBe(0);
+    expect(updated.segments).toEqual([{ type: 'tool_result', record: completed }]);
+  });
+
   it('appends non-AskUser results normally', () => {
     const first = {
       name: 'Browser',
