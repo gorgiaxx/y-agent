@@ -163,6 +163,45 @@ describe('HttpTransport contract mapping', () => {
     });
   });
 
+  it('maps background task lifecycle commands to process-scoped endpoints', async () => {
+    const { calls } = installFetchMock({ process_id: 'proc-1' });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('background_task_list', {
+      sessionId: 'session-a',
+    });
+    await transport.invoke('background_task_poll', {
+      sessionId: 'session-a',
+      processId: 'proc-1',
+      yieldTimeMs: 50,
+      maxOutputBytes: 4096,
+    });
+    await transport.invoke('background_task_write', {
+      sessionId: 'session-a',
+      processId: 'proc-1',
+      input: 'rs\n',
+    });
+    await transport.invoke('background_task_kill', {
+      sessionId: 'session-a',
+      processId: 'proc-1',
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://localhost:3000/api/v1/sessions/session-a/background-tasks',
+      'http://localhost:3000/api/v1/sessions/session-a/background-tasks/proc-1/poll',
+      'http://localhost:3000/api/v1/sessions/session-a/background-tasks/proc-1/write',
+      'http://localhost:3000/api/v1/sessions/session-a/background-tasks/proc-1/kill',
+    ]);
+    expect(JSON.parse(String(calls[1].init.body))).toEqual({
+      yield_time_ms: 50,
+      max_output_bytes: 4096,
+    });
+    expect(JSON.parse(String(calls[2].init.body))).toEqual({
+      input: 'rs\n',
+    });
+    expect(JSON.parse(String(calls[3].init.body))).toEqual({});
+  });
+
   it('uses relativePath for skill file URLs and unwraps content responses', async () => {
     const { calls } = installFetchMock({ content: 'skill body' });
     const transport = new HttpTransport('http://localhost:3000');

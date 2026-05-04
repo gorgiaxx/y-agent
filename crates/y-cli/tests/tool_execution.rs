@@ -71,6 +71,7 @@ async fn e2e_tool_register_and_execute() {
         name: ToolName::from_string("echo"),
         arguments: serde_json::json!({"text": "hello world"}),
         session_id: SessionId::new(),
+        working_dir: None,
         command_runner: None,
     };
 
@@ -99,6 +100,7 @@ async fn e2e_tool_with_mock_runtime() {
         working_dir: None,
         env: HashMap::new(),
         stdin: None,
+        owner_session_id: None,
         capabilities: RuntimeCapability::default(),
         image: None,
     };
@@ -124,6 +126,7 @@ async fn e2e_tool_registry_simulation() {
         name: ToolName::from_string("echo"),
         arguments: serde_json::json!({"text": "from registry"}),
         session_id: SessionId::new(),
+        working_dir: None,
         command_runner: None,
     };
     let output = tool.execute(input).await.unwrap();

@@ -12,7 +12,17 @@ describe('NavSidebar dark macOS styling', () => {
     );
 
     expect(css).toMatch(
-      /html\[data-platform="macos"\]\[data-theme="dark"\]\s+\.nav-sidebar\s*\{[^}]*--text-muted:\s*#[0-9a-fA-F]{6};/s,
+      /html\[data-host="tauri"\]\[data-platform="macos"\]\[data-theme="dark"\]\s+\.nav-sidebar\s*\{[^}]*--text-muted:\s*#[0-9a-fA-F]{6};/s,
     );
+  });
+
+  it('does not enable transparent vibrancy styling for the web host', () => {
+    const css = readFileSync(
+      new URL('../components/common/NavSidebar/NavSidebar.css', import.meta.url),
+      'utf8',
+    );
+
+    expect(css).not.toMatch(/html\[data-platform="macos"\]\s+\.nav-sidebar/);
+    expect(css).toContain('html[data-host="tauri"][data-platform="macos"] .nav-sidebar');
   });
 });
