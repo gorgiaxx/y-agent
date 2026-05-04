@@ -53,6 +53,16 @@ function pathWithArg(template: string, placeholder: string, ...keys: string[]) {
   );
 }
 
+function backgroundTaskPath(action?: 'poll' | 'write' | 'kill') {
+  return (args: Record<string, unknown>) => {
+    const sessionId = encodeURIComponent(String(arg(args, 'sessionId', 'session_id') ?? ''));
+    if (!action) return `/api/v1/sessions/${sessionId}/background-tasks`;
+
+    const processId = encodeURIComponent(String(arg(args, 'processId', 'process_id') ?? ''));
+    return `/api/v1/sessions/${sessionId}/background-tasks/${processId}/${action}`;
+  };
+}
+
 function bodyWithout(...exclude: string[]) {
   const set = new Set(exclude);
   return (args: Record<string, unknown>) => {
@@ -405,6 +415,28 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
                            return q;
                          }},
   memory_stats:        { method: 'GET', path: '/api/v1/memory-stats' },
+
+  // -- Background tasks --
+  background_task_list: { method: 'GET', path: backgroundTaskPath() },
+  background_task_poll: { method: 'POST',
+                         path: backgroundTaskPath('poll'),
+                         body: (a) => compactBody({
+                           yield_time_ms: arg(a, 'yieldTimeMs', 'yield_time_ms'),
+                           max_output_bytes: arg(a, 'maxOutputBytes', 'max_output_bytes'),
+                         }) },
+  background_task_write: { method: 'POST',
+                         path: backgroundTaskPath('write'),
+                         body: (a) => compactBody({
+                           input: a.input,
+                           yield_time_ms: arg(a, 'yieldTimeMs', 'yield_time_ms'),
+                           max_output_bytes: arg(a, 'maxOutputBytes', 'max_output_bytes'),
+                         }) },
+  background_task_kill: { method: 'POST',
+                         path: backgroundTaskPath('kill'),
+                         body: (a) => compactBody({
+                           yield_time_ms: arg(a, 'yieldTimeMs', 'yield_time_ms'),
+                           max_output_bytes: arg(a, 'maxOutputBytes', 'max_output_bytes'),
+                         }) },
 
   // -- Rewind --
   rewind_list_points:  { method: 'GET',  path: pathWith('/api/v1/rewind/{sessionId}/points', 'sessionId') },

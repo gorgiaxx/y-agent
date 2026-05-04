@@ -414,6 +414,11 @@ pub fn run() {
             commands::automation::schedule_execution_get,
             commands::automation::schedule_trigger_now,
             commands::automation::workflow_execute,
+            // Background tasks
+            commands::background_tasks::background_task_list,
+            commands::background_tasks::background_task_poll,
+            commands::background_tasks::background_task_write,
+            commands::background_tasks::background_task_kill,
             // Attachments
             commands::attachments::attachment_read_files,
             // Rewind (File History)

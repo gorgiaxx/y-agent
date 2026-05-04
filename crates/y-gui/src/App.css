@@ -6,10 +6,10 @@
   background: var(--surface-primary);
 }
 
-/* macOS vibrancy: the native blur material sits behind the entire webview.
+/* Tauri macOS vibrancy: the native blur material sits behind the entire webview.
    Make the app container transparent so it shows through the sidebar,
    while the main panel stays opaque to cover it everywhere else. */
-html[data-platform="macos"] .app {
+html[data-host="tauri"][data-platform="macos"] .app {
   background: transparent;
 }
 

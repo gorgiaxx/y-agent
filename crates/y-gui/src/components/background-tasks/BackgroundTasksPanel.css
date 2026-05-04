@@ -1,0 +1,313 @@
+.background-tasks-sidebar {
+  display: flex;
+  min-height: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.background-tasks-count,
+.background-tasks-sidebar-summary,
+.background-tasks-empty,
+.background-tasks-error,
+.background-tasks-sidebar-meta,
+.background-tasks-main-meta,
+.background-tasks-main-cwd,
+.background-task-console-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.background-tasks-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.background-tasks-error {
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--error) 35%, var(--border));
+  border-radius: 6px;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  user-select: text;
+}
+
+.background-tasks-empty {
+  text-align: center;
+}
+
+.background-tasks-sidebar-list {
+  display: flex;
+  min-height: 150px;
+  max-height: 34%;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+}
+
+.background-tasks-sidebar-item {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.background-tasks-sidebar-item:hover,
+.background-tasks-sidebar-item.active {
+  border-color: var(--border);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.background-tasks-sidebar-command {
+  width: 100%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-tasks-sidebar-meta,
+.background-tasks-main-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-family: var(--font-mono);
+}
+
+.background-tasks-status {
+  color: var(--text-secondary);
+}
+
+.background-tasks-status--running {
+  color: var(--success);
+}
+
+.background-tasks-status--failed {
+  color: var(--error);
+}
+
+.background-tasks-status--completed {
+  color: var(--text-muted);
+}
+
+.background-tasks-danger-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--error) 40%, var(--border));
+  color: var(--error);
+}
+
+.background-tasks-spin {
+  animation: background-tasks-spin 0.8s linear infinite;
+}
+
+.background-tasks-main-empty {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+}
+
+.background-tasks-main-panel {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.background-tasks-main-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.background-tasks-main-title-wrap {
+  min-width: 0;
+}
+
+.background-tasks-main-title {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.background-tasks-main-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.background-tasks-main-cwd {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.background-task-console {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-primary);
+}
+
+.background-tasks-sidebar-detail {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.background-tasks-sidebar-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.background-tasks-sidebar-detail-header > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-tasks-sidebar-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.background-tasks-sidebar-link:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.background-tasks-sidebar-link--danger:hover:not(:disabled) {
+  color: var(--error);
+}
+
+.background-tasks-sidebar-link:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.background-task-console--sidebar {
+  min-height: 120px;
+  padding: 8px;
+}
+
+.background-task-console-output {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.background-task-console-empty {
+  padding: 10px 0;
+  font-family: var(--font-mono);
+}
+
+.ansi-bold {
+  font-weight: 700;
+}
+
+.ansi-dim {
+  opacity: 0.7;
+}
+
+.ansi-italic {
+  font-style: italic;
+}
+
+.ansi-underline {
+  text-decoration: underline;
+}
+
+.ansi-inverse {
+  filter: invert(1);
+}
+
+.ansi-fg-black { color: #5c6773; }
+.ansi-fg-red { color: #ff6b6b; }
+.ansi-fg-green { color: #5dd39e; }
+.ansi-fg-yellow { color: #ffd166; }
+.ansi-fg-blue { color: #7aa2f7; }
+.ansi-fg-magenta { color: #c792ea; }
+.ansi-fg-cyan { color: #6be4e6; }
+.ansi-fg-white { color: #d8dee9; }
+.ansi-fg-bright-black { color: #7c8794; }
+.ansi-fg-bright-red { color: #ff8f8f; }
+.ansi-fg-bright-green { color: #7ee6b4; }
+.ansi-fg-bright-yellow { color: #ffe08a; }
+.ansi-fg-bright-blue { color: #9bbcff; }
+.ansi-fg-bright-magenta { color: #d8a8ff; }
+.ansi-fg-bright-cyan { color: #8ff4f5; }
+.ansi-fg-bright-white { color: #ffffff; }
+
+.ansi-bg-black { background-color: #1f252d; }
+.ansi-bg-red { background-color: #642d2d; }
+.ansi-bg-green { background-color: #254f3d; }
+.ansi-bg-yellow { background-color: #5f4b1b; }
+.ansi-bg-blue { background-color: #283a66; }
+.ansi-bg-magenta { background-color: #4b315f; }
+.ansi-bg-cyan { background-color: #24595a; }
+.ansi-bg-white { background-color: #d8dee9; }
+.ansi-bg-bright-black { background-color: #333b45; }
+.ansi-bg-bright-red { background-color: #7a3a3a; }
+.ansi-bg-bright-green { background-color: #316650; }
+.ansi-bg-bright-yellow { background-color: #756020; }
+.ansi-bg-bright-blue { background-color: #365080; }
+.ansi-bg-bright-magenta { background-color: #634078; }
+.ansi-bg-bright-cyan { background-color: #307173; }
+.ansi-bg-bright-white { background-color: #ffffff; }
+
+@keyframes background-tasks-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}

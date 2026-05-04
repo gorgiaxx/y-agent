@@ -1,4 +1,4 @@
-import { Bot } from 'lucide-react';
+import { Bot, SquareTerminal } from 'lucide-react';
 import { ProviderIconImg } from '../common/ProviderIconPicker';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import { platform } from '../../lib';
@@ -15,12 +15,28 @@ interface StatusBarProps {
   contextWindow?: number;
   /** Actual context occupancy from last LLM call's prompt tokens. */
   contextTokensUsed?: number;
+  backgroundTasks?: {
+    total: number;
+    running: number;
+    failed: number;
+    onClick: () => void;
+  };
 }
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
+}
+
+function taskCountLabel(count: number): string {
+  return `${count} task${count === 1 ? '' : 's'}`;
+}
+
+function taskStatusLabel(total: number, running: number, failed: number): string {
+  if (running > 0) return `${running} running, ${taskCountLabel(total)}`;
+  if (failed > 0) return `${failed} failed, ${taskCountLabel(total)}`;
+  return taskCountLabel(total);
 }
 
 export function StatusBar({
@@ -31,6 +47,7 @@ export function StatusBar({
   lastTokens,
   contextWindow,
   contextTokensUsed,
+  backgroundTasks,
 }: StatusBarProps) {
   const connStatus = useConnectionStatus();
   const showConnectionStatus = platform.capabilities.sseEvents;
@@ -39,6 +56,9 @@ export function StatusBar({
   const occupancy = contextTokensUsed ?? (lastTokens ? lastTokens.input : 0);
   const pct =
     contextWindow && contextWindow > 0 ? Math.min((occupancy / contextWindow) * 100, 100) : null;
+  const taskLabel = backgroundTasks
+    ? taskStatusLabel(backgroundTasks.total, backgroundTasks.running, backgroundTasks.failed)
+    : null;
 
   return (
     <div className="status-bar">
@@ -76,6 +96,24 @@ export function StatusBar({
         )}
       </div>
       <div className="status-right">
+        {backgroundTasks && taskLabel && (
+          <button
+            type="button"
+            className={`status-item status-action status-background-tasks ${
+              backgroundTasks.running > 0
+                ? 'status-background-tasks--running'
+                : backgroundTasks.failed > 0
+                  ? 'status-background-tasks--failed'
+                  : ''
+            }`}
+            onClick={backgroundTasks.onClick}
+            title="Open background tasks"
+            aria-label={`Open background tasks (${taskLabel})`}
+          >
+            <SquareTerminal size={13} />
+            <span>{taskLabel}</span>
+          </button>
+        )}
         {showConnectionStatus && (
           <span className={`status-item status-connection status-connection--${connStatus}`}>
             <span className="status-connection-dot" />

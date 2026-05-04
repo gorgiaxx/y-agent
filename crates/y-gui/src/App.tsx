@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
-import { transport } from './lib';
+import { platform, transport } from './lib';
 import { GlobalProviders } from './providers/GlobalProviders';
 import { MainLayout } from './layouts/MainLayout';
 import { SetupWizard } from './components/wizard/SetupWizard';
 import { ToastProvider } from './components/ui/Toast';
 import { TooltipProvider } from './components/ui/Tooltip';
 import { useConfigContext, useProvidersContext } from './providers/AppContexts';
+import { resolveHostDataset } from './lib/hostDataset';
 import './App.css';
 
 function AppContent({ onRequestWizard }: { onRequestWizard: () => void }) {
@@ -24,9 +25,13 @@ function AppContent({ onRequestWizard }: { onRequestWizard: () => void }) {
   // (e.g. reserve space for macOS traffic lights, enable the drag region).
   useEffect(() => {
     const useCustom = !!config.use_custom_decorations;
+    const platformDataset = resolveHostDataset(
+      platform.isTauri(),
+      typeof navigator !== 'undefined' ? navigator.platform : undefined,
+    );
     document.documentElement.classList.toggle('custom-decorations', useCustom);
-    document.documentElement.dataset.platform =
-      typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? 'macos' : 'other';
+    document.documentElement.dataset.host = platformDataset.host;
+    document.documentElement.dataset.platform = platformDataset.platform;
     transport.invoke('window_set_decorations', { useCustom }).catch(() => {});
   }, [config.use_custom_decorations]);
 

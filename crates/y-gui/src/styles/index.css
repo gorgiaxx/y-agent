@@ -135,8 +135,8 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* macOS vibrancy: transparent body lets the native blur material show through. */
-html[data-platform="macos"] body {
+/* Tauri macOS vibrancy: transparent body lets the native blur material show through. */
+html[data-host="tauri"][data-platform="macos"] body {
   background: transparent;
 }
 

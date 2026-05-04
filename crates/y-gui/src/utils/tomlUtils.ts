@@ -49,6 +49,10 @@ export function escapeTomlString(value: string): string {
 // ---------------------------------------------------------------------------
 
 /** Check whether a value is "empty" for the purpose of optional omission. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function isEmpty(value: unknown, type: FieldDef['type']): boolean {
   if (value === null || value === undefined) return true;
   if (type === 'string' && value === '') return true;
@@ -155,10 +159,12 @@ function formatValue(key: string, value: unknown, type: FieldDef['type']): strin
  * Walk a dot-separated path into a nested JSON object.
  * e.g. resolve(json, "pruning.progressive") -> json?.pruning?.progressive
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function resolve(obj: any, path: string): any {
+function resolve(obj: unknown, path: string): unknown {
   if (!path) return obj;
-  return path.split('.').reduce((cur, key) => cur?.[key], obj);
+  return path.split('.').reduce<unknown>(
+    (cur, key) => (isRecord(cur) ? cur[key] : undefined),
+    obj,
+  );
 }
 
 /**
@@ -172,32 +178,30 @@ function resolve(obj: any, path: string): any {
  *                      that cannot be expressed declaratively.
  */
 export function deserializeFromJson(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  json: any,
+  json: unknown,
   schema: FieldDef[],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  postProcess?: (result: Record<string, any>, json: any) => void,
+  postProcess?: (result: Record<string, unknown>, json: unknown) => void,
 ): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result: Record<string, any> = {};
+  const result: Record<string, unknown> = {};
 
   for (const field of schema) {
     const section = field.section ?? '';
     const parent = resolve(json, section);
+    const parentRecord = isRecord(parent) ? parent : undefined;
 
     if (field.type === 'table[]') {
-      const arr = parent?.[field.tomlKey] ?? [];
+      const arr = parentRecord?.[field.tomlKey] ?? [];
       if (!Array.isArray(arr)) {
         result[field.formKey] = field.defaultValue;
         continue;
       }
-      if (field.subSchema) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        result[field.formKey] = arr.map((entry: any) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const row: Record<string, any> = {};
-          for (const sub of field.subSchema!) {
-            row[sub.formKey] = entry?.[sub.tomlKey] ?? sub.defaultValue;
+      const subSchema = field.subSchema;
+      if (subSchema) {
+        result[field.formKey] = arr.map((entry: unknown) => {
+          const row: Record<string, unknown> = {};
+          const entryRecord = isRecord(entry) ? entry : undefined;
+          for (const sub of subSchema) {
+            row[sub.formKey] = entryRecord?.[sub.tomlKey] ?? sub.defaultValue;
           }
           return row;
         });
@@ -209,12 +213,12 @@ export function deserializeFromJson(
 
     if (field.type === 'record') {
       // Records are stored as a sub-object keyed by tomlKey inside the section.
-      const rec = parent?.[field.tomlKey];
-      result[field.formKey] = (rec && typeof rec === 'object') ? rec : field.defaultValue;
+      const rec = parentRecord?.[field.tomlKey];
+      result[field.formKey] = isRecord(rec) ? rec : field.defaultValue;
       continue;
     }
 
-    const raw = parent?.[field.tomlKey];
+    const raw = parentRecord?.[field.tomlKey];
 
     if (field.type === 'string[]') {
       result[field.formKey] = Array.isArray(raw) ? raw : field.defaultValue;

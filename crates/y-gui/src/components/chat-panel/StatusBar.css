@@ -25,6 +25,34 @@
   gap: 5px;
 }
 
+.status-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.status-action:hover {
+  color: var(--text-primary);
+}
+
+.status-background-tasks {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-background-tasks--running {
+  color: var(--success);
+}
+
+.status-background-tasks--failed {
+  color: var(--error);
+}
+
 .status-dot {
   width: 5px;
   height: 5px;

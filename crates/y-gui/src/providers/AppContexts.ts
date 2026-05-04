@@ -6,6 +6,7 @@ import type { UseSkillsReturn } from '../hooks/useSkills';
 import type { UseKnowledgeReturn } from '../hooks/useKnowledge';
 import type { UseAgentsReturn } from '../hooks/useAgents';
 import type { UseAutomationReturn } from '../hooks/useAutomation';
+import type { UseBackgroundTasksReturn } from '../hooks/useBackgroundTasks';
 import type { UseProvidersReturn } from '../hooks/useProviders';
 import type { UseConfigReturn } from '../hooks/useConfig';
 import type { ViewType } from '../components/Sidebar';
@@ -20,6 +21,7 @@ export const SkillsContext = createContext<UseSkillsReturn | null>(null);
 export const KnowledgeContext = createContext<UseKnowledgeReturn | null>(null);
 export const AgentsContext = createContext<UseAgentsReturn | null>(null);
 export const AutomationContext = createContext<UseAutomationReturn | null>(null);
+export const BackgroundTasksContext = createContext<UseBackgroundTasksReturn | null>(null);
 export const ProvidersContext = createContext<UseProvidersReturn | null>(null);
 export const ConfigContext = createContext<UseConfigReturn | null>(null);
 
@@ -32,6 +34,10 @@ export interface ViewRoutingState {
   setActiveSettingsTab: (tab: SettingsTab) => void;
   inputExpanded: boolean;
   setInputExpanded: (expanded: boolean) => void;
+  backgroundTasksSidebarOpen: boolean;
+  setBackgroundTasksSidebarOpen: (open: boolean) => void;
+  backgroundTasksSessionId: string | null;
+  setBackgroundTasksSessionId: (id: string | null) => void;
   welcomeWorkspaceId: string | null;
   setWelcomeWorkspaceId: (id: string | null) => void;
   onRunWizard?: () => void;
@@ -80,11 +86,17 @@ export interface AutomationNavState {
   setAutomationCreating: (type: 'workflow' | 'schedule' | null) => void;
 }
 
+export interface BackgroundTasksNavState {
+  selectedBackgroundTaskId: string | null;
+  setSelectedBackgroundTaskId: (id: string | null) => void;
+}
+
 export const ViewRoutingContext = createContext<ViewRoutingState | null>(null);
 export const PanelContext = createContext<PanelState | null>(null);
 export const AgentEditorContext = createContext<AgentEditorState | null>(null);
 export const SkillsNavContext = createContext<SkillsNavState | null>(null);
 export const AutomationNavContext = createContext<AutomationNavState | null>(null);
+export const BackgroundTasksNavContext = createContext<BackgroundTasksNavState | null>(null);
 
 export function useChatContext() {
   const ctx = useContext(ChatContext);
@@ -126,6 +138,11 @@ export function useAutomationContext() {
   if (!ctx) throw new Error('useAutomationContext must be used within AutomationProvider');
   return ctx;
 }
+export function useBackgroundTasksContext() {
+  const ctx = useContext(BackgroundTasksContext);
+  if (!ctx) throw new Error('useBackgroundTasksContext must be used within BackgroundTasksProvider');
+  return ctx;
+}
 export function useProvidersContext() {
   const ctx = useContext(ProvidersContext);
   if (!ctx) throw new Error('useProvidersContext must be used within ProvidersProvider');
@@ -159,5 +176,10 @@ export function useSkillsNavContext() {
 export function useAutomationNavContext() {
   const ctx = useContext(AutomationNavContext);
   if (!ctx) throw new Error('useAutomationNavContext must be used within AutomationNavProvider');
+  return ctx;
+}
+export function useBackgroundTasksNavContext() {
+  const ctx = useContext(BackgroundTasksNavContext);
+  if (!ctx) throw new Error('useBackgroundTasksNavContext must be used within BackgroundTasksNavProvider');
   return ctx;
 }

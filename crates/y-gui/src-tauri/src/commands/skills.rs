@@ -6,18 +6,9 @@
 //! Presentation-only commands (open folder, file tree, read/save) remain here.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
-
-use y_skills::{
-    FilesystemSkillStore, FormatDetector, IngestionFormat, ManifestParser, SkillConfig,
-    SkillRegistryImpl,
-};
-
-use y_core::agent::ContextStrategyHint;
-use y_core::skill::SkillRegistry;
 
 use y_service::SkillService;
 
@@ -33,29 +24,8 @@ pub type SkillInfo = y_service::SkillInfo;
 /// Full skill detail returned to the frontend.
 pub type SkillDetail = y_service::SkillDetail;
 
-/// Permissions the skill needs according to the security screening agent.
-#[derive(Debug, Serialize, serde::Deserialize, Clone, Default)]
-pub struct PermissionsNeeded {
-    #[serde(default)]
-    pub files_read: Vec<String>,
-    #[serde(default)]
-    pub files_write: Vec<String>,
-    #[serde(default)]
-    pub network: Vec<String>,
-    #[serde(default)]
-    pub commands: Vec<String>,
-}
-
 /// Result of a skill import operation.
-#[derive(Debug, Serialize, Clone)]
-pub struct SkillImportResult {
-    pub decision: String,
-    pub classification: String,
-    pub skill_id: Option<String>,
-    pub error: Option<String>,
-    pub security_issues: Vec<String>,
-    pub permissions_needed: Option<PermissionsNeeded>,
-}
+pub type SkillImportResult = y_service::SkillImportOutcome;
 
 /// A file/directory entry within a skill directory.
 #[derive(Debug, Serialize, Clone)]
@@ -208,182 +178,10 @@ pub async fn skill_import(
     sanitize: bool,
 ) -> Result<SkillImportResult, String> {
     let store_path = skills_store_path(&state.config_dir);
-    std::fs::create_dir_all(&store_path)
-        .map_err(|e| format!("Failed to create skills directory: {e}"))?;
-
-    let source_path = Path::new(&path);
-    if !source_path.exists() {
-        return Err(format!("Path not found: {path}"));
-    }
-
-    let format = FormatDetector::from_path(source_path);
-
-    // ---------------------------------------------------------------
-    // Path A: Direct TOML parsing (only when sanitize=false AND .toml)
-    // ---------------------------------------------------------------
-    if !sanitize && format == IngestionFormat::Toml {
-        let config = SkillConfig::default();
-        let content = std::fs::read_to_string(source_path)
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-        let parser = ManifestParser::new(config);
-        let manifest = parser
-            .parse(&content)
-            .map_err(|e| format!("Failed to parse skill: {e}"))?;
-
-        let store = FilesystemSkillStore::new(&store_path)
-            .map_err(|e| format!("Failed to open skill store: {e}"))?;
-        let registry = SkillRegistryImpl::with_store(store)
-            .await
-            .map_err(|e| format!("Failed to create registry: {e}"))?;
-
-        let skill_name = manifest.name.clone();
-        let _version = registry
-            .register(manifest)
-            .await
-            .map_err(|e| format!("Failed to register skill: {e}"))?;
-
-        return Ok(SkillImportResult {
-            decision: "accepted".to_string(),
-            classification: "direct_import".to_string(),
-            skill_id: Some(skill_name),
-            error: None,
-            security_issues: vec![],
-            permissions_needed: None,
-        });
-    }
-
-    // ---------------------------------------------------------------
-    // Path B (optional): Security check — only when sanitize=true
-    // ---------------------------------------------------------------
-    if sanitize {
-        let source_content = std::fs::read_to_string(source_path)
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-
-        let format_str = if source_path.is_dir() {
-            "directory"
-        } else {
-            match source_path.extension().and_then(|e| e.to_str()) {
-                Some("toml") => "toml",
-                Some("md" | "markdown") => "markdown",
-                Some("yaml" | "yml") => "yaml",
-                Some("json") => "json",
-                _ => "plaintext",
-            }
-        };
-
-        let security_input = serde_json::json!({
-            "source_content": source_content,
-            "source_format": format_str,
-        });
-
-        let security_result = state
-            .container
-            .agent_delegator
-            .delegate(
-                "skill-security-check",
-                security_input,
-                ContextStrategyHint::None,
-                None,
-            )
-            .await;
-
-        match security_result {
-            Ok(output) => {
-                #[derive(serde::Deserialize)]
-                struct SecurityOutput {
-                    verdict: String,
-                    #[serde(default)]
-                    issues: Vec<String>,
-                    #[serde(default)]
-                    risk_level: String,
-                    #[serde(default)]
-                    summary: String,
-                    #[serde(default)]
-                    permissions_needed: Option<PermissionsNeeded>,
-                }
-
-                if let Ok(security) = serde_json::from_str::<SecurityOutput>(&output.text) {
-                    match security.verdict.as_str() {
-                        "insecure" => {
-                            return Ok(SkillImportResult {
-                                decision: "rejected".to_string(),
-                                classification: String::new(),
-                                skill_id: None,
-                                error: Some(format!(
-                                    "Security check failed ({}): {}",
-                                    security.risk_level, security.summary
-                                )),
-                                security_issues: security.issues,
-                                permissions_needed: security.permissions_needed,
-                            });
-                        }
-                        "caution" => {
-                            tracing::warn!(
-                                risk_level = %security.risk_level,
-                                summary = %security.summary,
-                                issues = ?security.issues,
-                                "Security check returned caution — proceeding with ingestion"
-                            );
-                            // Fall through to ingestion, but issues are logged.
-                        }
-                        _ => {
-                            // "secure" or any other value — proceed normally.
-                        }
-                    }
-                }
-                // If secure, caution, or unparseable, fall through to ingestion.
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "Security check agent failed -- proceeding with ingestion");
-            }
-        }
-    }
-
-    // ---------------------------------------------------------------
-    // Path C: Agent-assisted ingestion (both sanitize=true after
-    //         security check passes, and sanitize=false for non-TOML)
-    // ---------------------------------------------------------------
-    let store = FilesystemSkillStore::new(&store_path)
-        .map_err(|e| format!("Failed to open skill store: {e}"))?;
-    let registry = Arc::new(tokio::sync::RwLock::new(
-        SkillRegistryImpl::with_store(store)
-            .await
-            .map_err(|e| format!("Failed to create registry: {e}"))?,
-    ));
-
-    let ingestion_service = state.container.skill_ingestion_service(registry);
-
-    // Real-time diagnostics events (LLM calls, tool calls) are delivered
-    // automatically via the diagnostics broadcast bridge -- no manual
-    // channel wiring needed.
-    let import_result = match ingestion_service.import(source_path).await {
-        Ok(result) => {
-            let decision = match result.decision {
-                y_service::ImportDecision::Accepted => "accepted",
-                y_service::ImportDecision::Optimized => "optimized",
-                y_service::ImportDecision::PartialAccept => "partial_accept",
-                y_service::ImportDecision::Rejected => "rejected",
-            };
-            Ok(SkillImportResult {
-                decision: decision.to_string(),
-                classification: result.classification,
-                skill_id: result.skill_id,
-                error: result.rejection_reason,
-                security_issues: result.security_issues,
-                permissions_needed: None,
-            })
-        }
-        Err(e) => Ok(SkillImportResult {
-            decision: "rejected".to_string(),
-            classification: String::new(),
-            skill_id: None,
-            error: Some(e.to_string()),
-            security_issues: vec![],
-            permissions_needed: None,
-        }),
-    };
-
-    import_result
+    state
+        .container
+        .import_skill_from_path(&store_path, Path::new(&path), sanitize)
+        .await
 }
 
 /// Get the file tree of a skill directory.

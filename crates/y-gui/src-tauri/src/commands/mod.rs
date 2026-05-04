@@ -3,6 +3,7 @@
 pub mod agents;
 pub mod attachments;
 pub mod automation;
+pub mod background_tasks;
 pub mod chat;
 pub mod config;
 pub mod diagnostics;

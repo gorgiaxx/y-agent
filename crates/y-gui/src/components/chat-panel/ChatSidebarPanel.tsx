@@ -18,6 +18,7 @@ import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { PanelToolbar, type SortField, type PanelToolbarAction } from '../common/PanelToolbar';
 import { useSessionDragReorder } from '../../hooks/useSessionDragReorder';
+import { usePersistentState } from '../../hooks/usePersistentState';
 import { STORAGE_KEYS } from '../../constants/storageKeys';
 import {
   calculateFloatingMenuPosition,
@@ -81,6 +82,25 @@ function sortWorkspaces(list: WorkspaceInfo[], field: SortField): WorkspaceInfo[
   });
 }
 
+const SORT_FIELDS: SortField[] = ['default', 'name', 'created', 'updated'];
+
+const SORT_FIELD_PERSISTENCE = {
+  deserialize(raw: string): SortField | null {
+    return SORT_FIELDS.includes(raw as SortField) ? (raw as SortField) : null;
+  },
+  serialize(value: SortField): string {
+    return value;
+  },
+};
+
+const SECTION_COLLAPSED_PERSISTENCE = {
+  deserialize(raw: string): Record<string, boolean> | null {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, boolean>)
+      : null;
+  },
+};
 
 // Component
 
@@ -131,45 +151,27 @@ export function ChatSidebarPanel({
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
 
-  // -- Sort state (persisted) --
-  const [wsSortField, setWsSortField] = useState<SortField>(() => {
-    try {
-      const v = localStorage.getItem(STORAGE_KEYS.WORKSPACE_SORT) as SortField;
-      if (v && ['default', 'name', 'created', 'updated'].includes(v)) return v;
-    } catch { /* ignore */ }
-    return 'default';
-  });
-
-  const [sessionSortField, setSessionSortField] = useState<SortField>(() => {
-    try {
-      const v = localStorage.getItem(STORAGE_KEYS.SESSION_SORT) as SortField;
-      if (v && ['default', 'name', 'created', 'updated'].includes(v)) return v;
-    } catch { /* ignore */ }
-    return 'default';
-  });
-
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.WORKSPACE_SORT, wsSortField); }, [wsSortField]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SESSION_SORT, sessionSortField); }, [sessionSortField]);
+  const [wsSortField, setWsSortField] = usePersistentState<SortField>(
+    STORAGE_KEYS.WORKSPACE_SORT,
+    'default',
+    SORT_FIELD_PERSISTENCE,
+  );
+  const [sessionSortField, setSessionSortField] = usePersistentState<SortField>(
+    STORAGE_KEYS.SESSION_SORT,
+    'default',
+    SORT_FIELD_PERSISTENCE,
+  );
 
   // -- Section collapse state (persisted) --
-  const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SECTION_COLLAPSED);
-      if (stored) {
-        const parsed = JSON.parse(stored) as Record<string, boolean>;
-        if (parsed && typeof parsed === 'object') return parsed;
-      }
-    } catch { /* ignore */ }
-    return {};
-  });
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SECTION_COLLAPSED, JSON.stringify(sectionCollapsed));
-  }, [sectionCollapsed]);
+  const [sectionCollapsed, setSectionCollapsed] = usePersistentState<Record<string, boolean>>(
+    STORAGE_KEYS.SECTION_COLLAPSED,
+    {},
+    SECTION_COLLAPSED_PERSISTENCE,
+  );
 
   const toggleSectionCollapsed = useCallback((section: string) => {
     setSectionCollapsed((prev) => ({ ...prev, [section]: !prev[section] }));
-  }, []);
+  }, [setSectionCollapsed]);
 
   // -- Pinned sessions state (persisted) --
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {

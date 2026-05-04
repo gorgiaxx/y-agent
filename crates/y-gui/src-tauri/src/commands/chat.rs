@@ -199,7 +199,7 @@ pub async fn chat_send(
     let result_sid = sid.0.clone();
     let result_run_id = run_id.clone();
 
-    apply_prepared_prompt_context(&state, &sid, &prepared).await;
+    apply_prepared_prompt_context(&state, &sid, &mut prepared).await;
 
     // Emit chat:started so the frontend can map run_id -> session_id
     // before any chat:progress events arrive.
@@ -339,7 +339,7 @@ impl EventSink for TauriEventSink {
 async fn apply_prepared_prompt_context(
     state: &AppState,
     session_id: &SessionId,
-    prepared: &PreparedTurn,
+    prepared: &mut PreparedTurn,
 ) {
     let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &session_id.0);
     let session_custom_prompt = state
@@ -391,6 +391,8 @@ async fn apply_prepared_prompt_context(
         agent_mode = %agent_mode,
         "applied prompt context for prepared turn"
     );
+
+    prepared.working_directory.clone_from(&working_directory);
 
     {
         let mut ctx = state.container.prompt_context.write().await;
@@ -602,7 +604,7 @@ pub async fn chat_resend(
     });
 
     // Delegate domain logic to the service layer.
-    let prepared = ChatService::prepare_resend_turn(
+    let mut prepared = ChatService::prepare_resend_turn(
         &state.container,
         ResendTurnRequest {
             session_id: SessionId(session_id.clone()),
@@ -621,7 +623,8 @@ pub async fn chat_resend(
     let result_sid = session_id.clone();
     let result_run_id = run_id.clone();
 
-    apply_prepared_prompt_context(&state, &prepared.session_id, &prepared).await;
+    let prepared_session_id = prepared.session_id.clone();
+    apply_prepared_prompt_context(&state, &prepared_session_id, &mut prepared).await;
 
     let _ = app.emit(
         "chat:started",

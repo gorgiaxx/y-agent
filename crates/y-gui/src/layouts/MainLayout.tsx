@@ -12,6 +12,7 @@ import { SkillsView } from '../views/SkillsView';
 import { KnowledgeView } from '../views/KnowledgeView';
 import { AgentsView } from '../views/AgentsView';
 import { AutomationView } from '../views/AutomationView';
+import { BackgroundTasksView } from '../views/BackgroundTasksView';
 import { SettingsView } from '../views/SettingsView';
 
 import { useViewRouting, usePanelContext, useAgentEditorContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext, useAgentSessionsContext } from '../providers/AppContexts';
@@ -62,17 +63,19 @@ export function MainLayout() {
   const selectedAgentName = agentEditor.activeAgentId
     ? agentHooks.agents.find((agent) => agent.id === agentEditor.activeAgentId)?.name ?? agentEditor.activeAgentId
     : null;
-  const headerTitle = viewRouting.activeView === 'skills'
-    ? 'Skills'
-    : viewRouting.activeView === 'knowledge'
-      ? 'Knowledge Base'
-      : viewRouting.activeView === 'agents'
-        ? selectedAgentName ?? 'Agents'
-        : viewRouting.activeView === 'automation'
-          ? 'Automation'
-          : sessionHooks.activeSessionId
-            ? sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)?.title || 'Untitled'
-            : 'y-agent';
+  const headerTitle = viewRouting.backgroundTasksSidebarOpen
+    ? 'Tasks'
+    : viewRouting.activeView === 'skills'
+      ? 'Skills'
+      : viewRouting.activeView === 'knowledge'
+        ? 'Knowledge Base'
+        : viewRouting.activeView === 'agents'
+          ? selectedAgentName ?? 'Agents'
+          : viewRouting.activeView === 'automation'
+            ? 'Automation'
+            : sessionHooks.activeSessionId
+                ? sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)?.title || 'Untitled'
+                : 'y-agent';
 
   return (
     <div className="app">
@@ -81,6 +84,7 @@ export function MainLayout() {
           activeView: viewRouting.activeView,
           onSelectView: (v) => {
             viewRouting.setActiveView(v);
+            viewRouting.setBackgroundTasksSidebarOpen(false);
             if (v !== 'chat') {
               viewRouting.setInputExpanded(false);
             }
@@ -93,6 +97,8 @@ export function MainLayout() {
           onAgentEditorTabChange: agentEditor.setAgentEditorTab,
           onAgentEditorSurfaceChange: agentEditor.onAgentEditorSurfaceChange,
           onAgentEditorBack: agentEditor.onAgentEditorBack,
+          backgroundTasksOpen: viewRouting.backgroundTasksSidebarOpen,
+          onCloseBackgroundTasks: () => viewRouting.setBackgroundTasksSidebarOpen(false),
         }}
         chat={{
           sessions: sessionHooks.sessions,
@@ -161,7 +167,10 @@ export function MainLayout() {
       />
 
       <main className="main-panel">
-        {viewRouting.activeView !== 'settings' && !(viewRouting.activeView === 'agents' && agentEditor.agentEditing) && (
+        {(viewRouting.backgroundTasksSidebarOpen || (
+          viewRouting.activeView !== 'settings'
+          && !(viewRouting.activeView === 'agents' && agentEditor.agentEditing)
+        )) && (
         <header className="main-header" data-tauri-drag-region>
           <div className="main-header-start" data-tauri-drag-region>
             <h1 className="app-title">{headerTitle}</h1>
@@ -188,12 +197,18 @@ export function MainLayout() {
         </header>
         )}
 
-        {viewRouting.activeView === 'chat' && <ChatView />}
-        {viewRouting.activeView === 'skills' && <SkillsView />}
-        {viewRouting.activeView === 'knowledge' && <KnowledgeView />}
-        {viewRouting.activeView === 'agents' && <AgentsView />}
-        {viewRouting.activeView === 'automation' && <AutomationView />}
-        {viewRouting.activeView === 'settings' && <SettingsView />}
+        {viewRouting.backgroundTasksSidebarOpen ? (
+          <BackgroundTasksView />
+        ) : (
+          <>
+            {viewRouting.activeView === 'chat' && <ChatView />}
+            {viewRouting.activeView === 'skills' && <SkillsView />}
+            {viewRouting.activeView === 'knowledge' && <KnowledgeView />}
+            {viewRouting.activeView === 'agents' && <AgentsView />}
+            {viewRouting.activeView === 'automation' && <AutomationView />}
+            {viewRouting.activeView === 'settings' && <SettingsView />}
+          </>
+        )}
       </main>
 
       {panelCtx.diagOpen && (

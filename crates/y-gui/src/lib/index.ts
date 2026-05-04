@@ -36,6 +36,8 @@ function createTransport(): Transport {
 
 export const transport: Transport = createTransport();
 export { platform };
+export { logger, createLogger } from './logger';
+export type { Logger, LogLevel, LogSink } from './logger';
 
 export function getConnectionStatus(): ConnectionStatus {
   const t = transport;

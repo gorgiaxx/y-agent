@@ -8,6 +8,7 @@ import { useSkills } from '../hooks/useSkills';
 import { useKnowledge } from '../hooks/useKnowledge';
 import { useAgents } from '../hooks/useAgents';
 import { useAutomation } from '../hooks/useAutomation';
+import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
 import { useProviders } from '../hooks/useProviders';
 import { useThemeProvider, ThemeContext } from '../hooks/useTheme';
 
@@ -24,6 +25,7 @@ import {
   KnowledgeContext,
   AgentsContext,
   AutomationContext,
+  BackgroundTasksContext,
   ProvidersContext,
   ConfigContext,
   ViewRoutingContext,
@@ -31,6 +33,7 @@ import {
   AgentEditorContext,
   SkillsNavContext,
   AutomationNavContext,
+  BackgroundTasksNavContext,
 } from './AppContexts';
 import type {
   ViewRoutingState,
@@ -38,6 +41,7 @@ import type {
   AgentEditorState,
   SkillsNavState,
   AutomationNavState,
+  BackgroundTasksNavState,
 } from './AppContexts';
 
 interface GlobalProvidersProps {
@@ -61,6 +65,8 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
   const [activeView, setActiveView] = useState<ViewType>('chat');
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('general');
   const [inputExpanded, setInputExpanded] = useState(false);
+  const [backgroundTasksSidebarOpen, setBackgroundTasksSidebarOpen] = useState(false);
+  const [backgroundTasksSessionId, setBackgroundTasksSessionId] = useState<string | null>(null);
   const [welcomeWorkspaceId, setWelcomeWorkspaceId] = useState<string | null>(null);
   const [diagOpen, setDiagOpen] = useState(false);
   const [diagExpanded, setDiagExpanded] = useState(false);
@@ -93,8 +99,16 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
   const [automationSelectedType, setAutomationSelectedType] = useState<'workflow' | 'schedule' | null>(null);
   const [automationSelectedId, setAutomationSelectedId] = useState<string | null>(null);
   const [automationCreating, setAutomationCreating] = useState<'workflow' | 'schedule' | null>(null);
+  const [selectedBackgroundTaskId, setSelectedBackgroundTaskId] = useState<string | null>(null);
 
   const automationHooks = useAutomation(activeView === 'automation');
+  const currentBackgroundTasksSessionId = activeView === 'agents'
+    ? agentSessionHooks.activeSessionId
+    : sessionHooks.activeSessionId;
+  const observedBackgroundTasksSessionId = backgroundTasksSidebarOpen
+    ? backgroundTasksSessionId ?? currentBackgroundTasksSessionId
+    : currentBackgroundTasksSessionId;
+  const backgroundTaskHooks = useBackgroundTasks(observedBackgroundTasksSessionId);
   const providerHooks = useProviders(configHooks.loadSection);
 
   // Default welcome workspace to first workspace (alphabetically).
@@ -126,9 +140,19 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     activeView, setActiveView,
     activeSettingsTab, setActiveSettingsTab,
     inputExpanded, setInputExpanded,
+    backgroundTasksSidebarOpen, setBackgroundTasksSidebarOpen,
+    backgroundTasksSessionId, setBackgroundTasksSessionId,
     welcomeWorkspaceId, setWelcomeWorkspaceId,
     onRunWizard,
-  }), [activeView, activeSettingsTab, inputExpanded, welcomeWorkspaceId, onRunWizard]);
+  }), [
+    activeView,
+    activeSettingsTab,
+    inputExpanded,
+    backgroundTasksSidebarOpen,
+    backgroundTasksSessionId,
+    welcomeWorkspaceId,
+    onRunWizard,
+  ]);
 
   const panelState = useMemo<PanelState>(() => ({
     diagOpen, setDiagOpen,
@@ -159,36 +183,45 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     automationCreating, setAutomationCreating,
   }), [automationSelectedType, automationSelectedId, automationCreating]);
 
+  const backgroundTasksNavState = useMemo<BackgroundTasksNavState>(() => ({
+    selectedBackgroundTaskId,
+    setSelectedBackgroundTaskId,
+  }), [selectedBackgroundTaskId]);
+
   return (
     <ThemeContext.Provider value={themeCtx}>
       <ConfigContext.Provider value={configHooks}>
         <SessionsContext.Provider value={sessionHooks}>
           <AgentSessionsContext.Provider value={agentSessionHooks}>
-          <ChatContext.Provider value={chatHooks}>
-            <WorkspacesContext.Provider value={workspaceHooks}>
-              <SkillsContext.Provider value={skillHooks}>
-                <KnowledgeContext.Provider value={knowledgeHooks}>
-                  <AgentsContext.Provider value={agentHooks}>
-                    <AutomationContext.Provider value={automationHooks}>
-                      <ProvidersContext.Provider value={providerHooks}>
-                        <ViewRoutingContext.Provider value={viewRouting}>
-                          <PanelContext.Provider value={panelState}>
-                            <AgentEditorContext.Provider value={agentEditorState}>
-                              <SkillsNavContext.Provider value={skillsNavState}>
-                                <AutomationNavContext.Provider value={automationNavState}>
-                                    {children}
-                                  </AutomationNavContext.Provider>
-                              </SkillsNavContext.Provider>
-                            </AgentEditorContext.Provider>
-                          </PanelContext.Provider>
-                        </ViewRoutingContext.Provider>
-                      </ProvidersContext.Provider>
-                    </AutomationContext.Provider>
-                  </AgentsContext.Provider>
-                </KnowledgeContext.Provider>
-              </SkillsContext.Provider>
-            </WorkspacesContext.Provider>
-          </ChatContext.Provider>
+            <ChatContext.Provider value={chatHooks}>
+              <WorkspacesContext.Provider value={workspaceHooks}>
+                <SkillsContext.Provider value={skillHooks}>
+                  <KnowledgeContext.Provider value={knowledgeHooks}>
+                    <AgentsContext.Provider value={agentHooks}>
+                      <AutomationContext.Provider value={automationHooks}>
+                        <BackgroundTasksContext.Provider value={backgroundTaskHooks}>
+                          <ProvidersContext.Provider value={providerHooks}>
+                            <ViewRoutingContext.Provider value={viewRouting}>
+                              <PanelContext.Provider value={panelState}>
+                                <AgentEditorContext.Provider value={agentEditorState}>
+                                  <SkillsNavContext.Provider value={skillsNavState}>
+                                    <AutomationNavContext.Provider value={automationNavState}>
+                                      <BackgroundTasksNavContext.Provider value={backgroundTasksNavState}>
+                                        {children}
+                                      </BackgroundTasksNavContext.Provider>
+                                    </AutomationNavContext.Provider>
+                                  </SkillsNavContext.Provider>
+                                </AgentEditorContext.Provider>
+                              </PanelContext.Provider>
+                            </ViewRoutingContext.Provider>
+                          </ProvidersContext.Provider>
+                        </BackgroundTasksContext.Provider>
+                      </AutomationContext.Provider>
+                    </AgentsContext.Provider>
+                  </KnowledgeContext.Provider>
+                </SkillsContext.Provider>
+              </WorkspacesContext.Provider>
+            </ChatContext.Provider>
           </AgentSessionsContext.Provider>
         </SessionsContext.Provider>
       </ConfigContext.Provider>

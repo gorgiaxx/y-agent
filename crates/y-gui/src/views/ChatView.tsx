@@ -8,7 +8,7 @@ import { RewindPanel } from '../components/chat-panel/RewindPanel';
 import { useRewind } from '../hooks/useRewind';
 import { useMcpServers } from '../hooks/useMcpServers';
 
-import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useViewRouting, usePanelContext } from '../providers/AppContexts';
+import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useViewRouting, usePanelContext, useBackgroundTasksContext } from '../providers/AppContexts';
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
@@ -26,6 +26,7 @@ export function ChatView() {
   const configHooks = useConfigContext();
   const viewRouting = useViewRouting();
   const panelCtx = usePanelContext();
+  const backgroundTasks = useBackgroundTasksContext();
 
   const rewind = useRewind();
 
@@ -139,6 +140,9 @@ export function ChatView() {
     diagnosticEntries: entries,
     isDiagnosticsActive: isActive,
   });
+  const backgroundTaskTotal = backgroundTasks.tasks.length;
+  const backgroundTaskRunning = backgroundTasks.tasks.filter((task) => task.status === 'running').length;
+  const backgroundTaskFailed = backgroundTasks.tasks.filter((task) => task.status === 'failed').length;
 
   const handleForkMessage = useCallback(async (messageIndex: number) => {
     if (!sessionHooks.activeSessionId) return;
@@ -248,6 +252,16 @@ export function ChatView() {
         lastCost={statusBarMeta.cost}
         contextWindow={statusBarMeta.contextWindow}
         contextTokensUsed={statusBarMeta.contextTokensUsed}
+        backgroundTasks={{
+          total: backgroundTaskTotal,
+          running: backgroundTaskRunning,
+          failed: backgroundTaskFailed,
+          onClick: () => {
+            viewRouting.setBackgroundTasksSessionId(sessionHooks.activeSessionId);
+            viewRouting.setBackgroundTasksSidebarOpen(true);
+            viewRouting.setInputExpanded(false);
+          },
+        }}
       />
 
       {wsDialogOpen && (
