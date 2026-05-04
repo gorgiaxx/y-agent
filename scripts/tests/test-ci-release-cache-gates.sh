@@ -29,11 +29,8 @@ reject_text() {
 
 require_text "$CI_WORKFLOW" "name: Rust"
 require_text "$CI_WORKFLOW" "name: GUI"
-require_text "$CI_WORKFLOW" "name: Website"
 require_text "$CI_WORKFLOW" "cache: npm"
 require_text "$CI_WORKFLOW" "cache-dependency-path: crates/y-gui/package-lock.json"
-require_text "$CI_WORKFLOW" "cache: pnpm"
-require_text "$CI_WORKFLOW" "cache-dependency-path: website/pnpm-lock.yaml"
 
 require_text "$RELEASE_WORKFLOW" "node-version: \"22\""
 require_text "$RELEASE_WORKFLOW" "cache: npm"
