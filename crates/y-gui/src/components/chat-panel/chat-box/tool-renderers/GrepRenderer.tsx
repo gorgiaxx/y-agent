@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Search, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { extractGrepMeta, parseGrepResult, basename } from '../toolCallUtils';
+import { extractGrepMeta, parseGrepResult, formatToolResultPath } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -91,7 +91,7 @@ export function GrepRenderer({
               {grepResult.mode === 'files_with_matches' && grepResult.filenames && (
                 <div className="tool-call-glob-matches">
                   {grepResult.filenames.map((f, i) => (
-                    <span key={i} className="tool-call-glob-match" title={f}>{basename(f)}</span>
+                    <span key={i} className="tool-call-glob-match" title={f}>{formatToolResultPath(f)}</span>
                   ))}
                 </div>
               )}
