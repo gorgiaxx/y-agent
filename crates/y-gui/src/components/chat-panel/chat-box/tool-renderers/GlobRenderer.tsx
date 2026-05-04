@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { FolderSearch, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { extractGlobMeta, parseGlobResult, basename } from '../toolCallUtils';
+import { extractGlobMeta, parseGlobResult, formatToolResultPath } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -27,6 +27,10 @@ export function GlobRenderer({
     return null;
   }
 
+  const globSummary = globResult && globResult.returnedCount < globResult.count
+    ? `${globResult.returnedCount} of ${globResult.count}`
+    : String(globResult?.count ?? 0);
+
   return (
     <div className={`tool-call-file-wrapper ${statusClass}`}>
       <div
@@ -40,7 +44,7 @@ export function GlobRenderer({
         </span>
         <span className="tool-call-monospace-value">{globMeta.pattern}</span>
         {globResult && (
-          <span className="tool-call-glob-count">{globResult.count} files</span>
+          <span className="tool-call-glob-count">{globSummary} files</span>
         )}
         <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
         {durationMs !== undefined && (
@@ -57,7 +61,7 @@ export function GlobRenderer({
           {globResult ? (
             <>
               <div className="tool-call-glob-summary">
-                <span className="tool-call-glob-summary-count">{globResult.count} matches</span>
+                <span className="tool-call-glob-summary-count">{globSummary} matches</span>
                 {globMeta.searchPath && (
                   <span className="tool-call-glob-summary-path">in {globMeta.searchPath}</span>
                 )}
@@ -67,7 +71,7 @@ export function GlobRenderer({
               </div>
               <div className="tool-call-glob-matches">
                 {globResult.matches.map((m, i) => (
-                  <span key={i} className="tool-call-glob-match" title={m}>{basename(m)}</span>
+                  <span key={i} className="tool-call-glob-match" title={m}>{formatToolResultPath(m)}</span>
                 ))}
               </div>
             </>
