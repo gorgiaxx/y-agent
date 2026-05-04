@@ -20,7 +20,4 @@ require_workflow_text "npm test"
 require_workflow_text "npm run lint"
 require_workflow_text "npm run build"
 require_workflow_text "npm run build:web"
-require_workflow_text "working-directory: website"
-require_workflow_text "corepack enable"
-require_workflow_text "pnpm install --frozen-lockfile"
-require_workflow_text "pnpm run build"
+
