@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { MessageCircleQuestion, ChevronLeft, ChevronRight } from 'lucide-react';
+import { OTHER_LABEL, resolveAskUserManualAction } from './askUserDialogFlow';
 import './AskUserDialog.css';
 
 // ---------------------------------------------------------------------------
@@ -22,9 +23,6 @@ interface AskUserDialogProps {
   /** Callback when user dismisses without answering. */
   onDismiss: (interactionId: string) => void;
 }
-
-// Other option sentinel
-const OTHER_LABEL = '__other__';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -64,6 +62,11 @@ export function AskUserDialog({ interactionId, questions, onSubmit, onDismiss }:
   const currentQ = questions[currentStep];
   const isMulti = currentQ?.multi_select ?? false;
   const isLastStep = currentStep === questions.length - 1;
+  const manualAction = resolveAskUserManualAction({
+    isLastStep,
+    isMulti,
+    selections: selections[currentStep] ?? [],
+  });
 
   // Total option count for current question (including "Other").
   const optionCount = currentQ ? currentQ.options.length + 1 : 0;
@@ -180,6 +183,15 @@ export function AskUserDialog({ interactionId, questions, onSubmit, onDismiss }:
     return true;
   });
 
+  const completeCurrentStep = useCallback(() => {
+    if (!isCurrentStepAnswered) return;
+    if (manualAction === 'next') {
+      goNext();
+    } else if (manualAction === 'confirm' && canConfirm) {
+      handleConfirm();
+    }
+  }, [isCurrentStepAnswered, manualAction, canConfirm, goNext, handleConfirm]);
+
   // Keyboard navigation.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -268,6 +280,7 @@ export function AskUserDialog({ interactionId, questions, onSubmit, onDismiss }:
             focusedO={focusedO}
             onToggle={handleOptionClick}
             onOtherText={setOtherText}
+            onOtherTextComplete={completeCurrentStep}
             onFocus={(oIdx) => setFocusedO(oIdx)}
             otherInputRef={(el) => { otherInputRefs.current[currentStep] = el; }}
           />
@@ -298,7 +311,7 @@ export function AskUserDialog({ interactionId, questions, onSubmit, onDismiss }:
           >
             Skip
           </button>
-          {isMulti && !isLastStep && (
+          {manualAction === 'next' && (
             <button
               className="ask-user-btn ask-user-btn--confirm"
               onClick={goNext}
@@ -308,7 +321,7 @@ export function AskUserDialog({ interactionId, questions, onSubmit, onDismiss }:
               <ChevronRight size={14} />
             </button>
           )}
-          {isMulti && isLastStep && (
+          {manualAction === 'confirm' && (
             <button
               className="ask-user-btn ask-user-btn--confirm"
               onClick={handleConfirm}
@@ -335,6 +348,7 @@ interface QuestionCardProps {
   focusedO: number;
   onToggle: (qi: number, label: string) => void;
   onOtherText: (qi: number, text: string) => void;
+  onOtherTextComplete: () => void;
   onFocus: (optionIndex: number) => void;
   otherInputRef: (el: HTMLInputElement | null) => void;
 }
@@ -347,6 +361,7 @@ function QuestionCard({
   focusedO,
   onToggle,
   onOtherText,
+  onOtherTextComplete,
   onFocus,
   otherInputRef,
 }: QuestionCardProps) {
@@ -414,7 +429,9 @@ function QuestionCard({
                     onKeyDown={(e) => {
                       // Prevent Enter from toggling the option.
                       if (e.key === 'Enter') {
+                        e.preventDefault();
                         e.stopPropagation();
+                        onOtherTextComplete();
                       }
                       // Prevent arrow keys from navigating options while typing.
                       if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
