@@ -101,7 +101,7 @@ pub struct ToolInput {
     pub arguments: serde_json::Value,
     /// Session context for the execution.
     pub session_id: SessionId,
-    /// Default working directory for tools that execute local processes.
+    /// Default workspace directory for local filesystem and process tools.
     ///
     /// Tool arguments may still override this value for a single call.
     pub working_dir: Option<String>,

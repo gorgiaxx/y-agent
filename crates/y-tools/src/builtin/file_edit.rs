@@ -17,6 +17,8 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
+use super::path_utils::resolve_workspace_path;
+
 /// Built-in tool for performing exact string replacements in files.
 pub struct FileEditTool {
     def: ToolDefinition,
@@ -122,15 +124,16 @@ impl Tool for FileEditTool {
             });
         }
 
-        let path = Path::new(file_path);
+        let path =
+            resolve_workspace_path("FileEdit", Some(file_path), input.working_dir.as_deref())?;
 
         // --- File creation path (old_string is empty) ---
         if old_string.is_empty() {
-            return self.create_file(path, file_path, new_string).await;
+            return self.create_file(&path, file_path, new_string).await;
         }
 
         // --- Edit path ---
-        self.edit_file(path, file_path, old_string, new_string, replace_all)
+        self.edit_file(&path, file_path, old_string, new_string, replace_all)
             .await
     }
 
@@ -297,6 +300,12 @@ mod tests {
         }
     }
 
+    fn make_input_with_working_dir(args: serde_json::Value, working_dir: &Path) -> ToolInput {
+        let mut input = make_input(args);
+        input.working_dir = Some(working_dir.display().to_string());
+        input
+    }
+
     // -- Successful edits --
 
     #[tokio::test]
@@ -317,6 +326,56 @@ mod tests {
 
         let result = std::fs::read_to_string(&file).unwrap();
         assert_eq!(result, "goodbye world");
+    }
+
+    #[tokio::test]
+    async fn test_file_edit_resolves_relative_path_against_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let file = workspace
+            .path()
+            .join("notes")
+            .join("__file_edit_unique__.txt");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "hello workspace").unwrap();
+
+        let tool = FileEditTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({
+                "file_path": "notes/__file_edit_unique__.txt",
+                "old_string": "hello",
+                "new_string": "goodbye"
+            }),
+            workspace.path(),
+        );
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "goodbye workspace");
+    }
+
+    #[tokio::test]
+    async fn test_file_edit_rejects_path_outside_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("__file_edit_outside__.txt");
+        std::fs::write(&outside_file, "outside").unwrap();
+
+        let tool = FileEditTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({
+                "file_path": outside_file.display().to_string(),
+                "old_string": "outside",
+                "new_string": "changed"
+            }),
+            workspace.path(),
+        );
+        let result = tool.execute(input).await;
+
+        assert!(matches!(
+            result,
+            Err(ToolError::PermissionDenied { name, .. }) if name == "FileEdit"
+        ));
+        assert_eq!(std::fs::read_to_string(&outside_file).unwrap(), "outside");
     }
 
     #[tokio::test]

@@ -1,7 +1,6 @@
 //! `FileRead` built-in tool: read file contents from the filesystem.
 
 use async_trait::async_trait;
-use std::path::Path;
 use tokio::io::AsyncReadExt;
 
 use y_core::runtime::RuntimeCapability;
@@ -9,6 +8,8 @@ use y_core::tool::{
     Tool, ToolCategory, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolType,
 };
 use y_core::types::ToolName;
+
+use super::path_utils::resolve_workspace_path;
 
 /// Default and maximum number of lines returned by one `FileRead` call.
 const MAX_LINES_TO_READ: usize = 2_000;
@@ -122,11 +123,12 @@ impl Tool for FileReadTool {
                     message: "missing 'path' parameter".into(),
                 })?;
 
-        let path = Path::new(path_str);
+        let path =
+            resolve_workspace_path("FileRead", Some(path_str), input.working_dir.as_deref())?;
 
         // Resolve to canonical path for security.
         let canonical = path.canonicalize().map_err(|e| ToolError::Other {
-            message: format!("cannot resolve path '{path_str}': {e}"),
+            message: format!("cannot resolve path '{}': {e}", path.display()),
         })?;
 
         let metadata = tokio::fs::metadata(&canonical)
@@ -581,6 +583,15 @@ mod tests {
         }
     }
 
+    fn make_input_with_working_dir(
+        args: serde_json::Value,
+        working_dir: &std::path::Path,
+    ) -> ToolInput {
+        let mut input = make_input(args);
+        input.working_dir = Some(working_dir.display().to_string());
+        input
+    }
+
     #[tokio::test]
     async fn test_file_read_success() {
         let dir = tempfile::tempdir().unwrap();
@@ -601,6 +612,51 @@ mod tests {
         assert_eq!(output.content["lines"], 2);
         assert_eq!(output.content["total_lines"], 2);
         assert_eq!(output.content["encoding"], "UTF-8");
+    }
+
+    #[tokio::test]
+    async fn test_file_read_resolves_relative_path_against_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let file_path = workspace.path().join("src").join("__file_read_unique__.rs");
+        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        std::fs::write(&file_path, "fn unique_read() {}\n").unwrap();
+
+        let tool = FileReadTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({"path": "src/__file_read_unique__.rs"}),
+            workspace.path(),
+        );
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert_eq!(
+            output.content["path"],
+            file_path.canonicalize().unwrap().display().to_string()
+        );
+        assert!(output.content["content"]
+            .as_str()
+            .unwrap()
+            .contains("unique_read"));
+    }
+
+    #[tokio::test]
+    async fn test_file_read_rejects_path_outside_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("__file_read_outside__.txt");
+        std::fs::write(&outside_file, "outside").unwrap();
+
+        let tool = FileReadTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({"path": outside_file.display().to_string()}),
+            workspace.path(),
+        );
+        let result = tool.execute(input).await;
+
+        assert!(matches!(
+            result,
+            Err(ToolError::PermissionDenied { name, .. }) if name == "FileRead"
+        ));
     }
 
     #[tokio::test]
