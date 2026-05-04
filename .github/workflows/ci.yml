@@ -32,9 +32,48 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-shared"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/y-gui/package-lock.json
 
       - name: Package AppImage script regression test
         run: bash scripts/tests/test-package-linux-appimage-relative-path.sh
+
+      - name: CI frontend gate regression test
+        run: bash scripts/tests/test-ci-frontend-gates.sh
+
+      - name: Install GUI dependencies
+        working-directory: crates/y-gui
+        run: npm ci
+
+      - name: Test GUI
+        working-directory: crates/y-gui
+        run: npm test
+
+      - name: Lint GUI
+        working-directory: crates/y-gui
+        run: npm run lint
+
+      - name: Build GUI
+        working-directory: crates/y-gui
+        run: npm run build
+
+      - name: Build GUI web bundle
+        working-directory: crates/y-gui
+        run: npm run build:web
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install website dependencies
+        working-directory: website
+        run: pnpm install --frozen-lockfile
+
+      - name: Build website
+        working-directory: website
+        run: pnpm run build
 
       - name: Install system dependencies (cached)
         uses: awalsh128/cache-apt-pkgs-action@latest
