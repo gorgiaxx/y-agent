@@ -61,6 +61,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
+          cache-targets: ${{ runner.os != 'Windows' }}
+          cache-bin: "false"
 
       - name: Install system dependencies (Linux, cached)
         if: runner.os == 'Linux'
@@ -78,7 +80,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/y-gui/package-lock.json
 
       - name: Determine version
         id: version
@@ -105,7 +109,7 @@ jobs:
       # -- GUI (Tauri) App -----------------------------------------------------
       - name: Install frontend dependencies
         working-directory: crates/y-gui
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Build Tauri app
         working-directory: crates/y-gui
@@ -138,6 +142,19 @@ jobs:
           rm -f "$BUNDLE_DIR"/appimage/*.AppImage
           cp "$BUNDLE_DIR"/appimage-patched/*.AppImage "$BUNDLE_DIR/appimage/"
 
+      - name: Cache Arch package build inputs
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/release/arch-pacman/pkg
+            .cache/release/arch-cargo/registry
+            .cache/release/arch-cargo/git
+            .cache/release/arch-npm
+          key: arch-pacman-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'crates/y-gui/package-lock.json') }}
+          restore-keys: |
+            arch-pacman-${{ runner.os }}-
+
       - name: Build pacman package (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -146,11 +163,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p dist
+          mkdir -p \
+            dist \
+            .cache/release/arch-pacman/pkg \
+            .cache/release/arch-cargo/registry \
+            .cache/release/arch-cargo/git \
+            .cache/release/arch-npm
+
+          HOST_UID="$(id -u)"
+          HOST_GID="$(id -g)"
 
           docker run --rm \
             -e VERSION="$VERSION" \
+            -e HOST_UID="$HOST_UID" \
+            -e HOST_GID="$HOST_GID" \
             -v "$GITHUB_WORKSPACE:/work" \
+            -v "$GITHUB_WORKSPACE/.cache/release/arch-pacman/pkg:/var/cache/pacman/pkg" \
+            -v "$GITHUB_WORKSPACE/.cache/release/arch-cargo:/cache/cargo" \
+            -v "$GITHUB_WORKSPACE/.cache/release/arch-npm:/cache/npm" \
             -w /work \
             archlinux:base-devel \
             bash -lc '
@@ -169,20 +199,33 @@ jobs:
                 sqlite \
                 pkgconf
 
-              useradd -m builder
-              cp -a /work /home/builder/work
-              chown -R builder:builder /home/builder/work
+              if ! getent group "$HOST_GID" >/dev/null; then
+                groupadd --gid "$HOST_GID" builder
+              fi
 
-              su builder -c "
+              BUILDER_GROUP="$(getent group "$HOST_GID" | cut -d: -f1)"
+              if getent passwd "$HOST_UID" >/dev/null; then
+                BUILDER_USER="$(getent passwd "$HOST_UID" | cut -d: -f1)"
+              else
+                useradd -m --uid "$HOST_UID" --gid "$HOST_GID" builder
+                BUILDER_USER="builder"
+              fi
+
+              mkdir -p /cache/cargo /cache/npm /home/builder/out
+              chown -R "$BUILDER_USER":"$BUILDER_GROUP" /cache/cargo /cache/npm /home/builder/out
+
+              su "$BUILDER_USER" -c "
                 set -euo pipefail
-                cd /home/builder/work/crates/y-gui
-                npm ci || npm install
+                export CARGO_HOME=/cache/cargo
+                export npm_config_cache=/cache/npm
+                cd /work/crates/y-gui
+                npm ci
                 npm run build
-                cd /home/builder/work
-                cargo build --release --manifest-path crates/y-gui/src-tauri/Cargo.toml --bin y-gui
+                cd /work
+                CARGO_TARGET_DIR=/work/target/arch-pacman cargo build --release --manifest-path crates/y-gui/src-tauri/Cargo.toml --bin y-gui
                 ./scripts/package-linux-pacman.sh \
                   --version \"$VERSION\" \
-                  --binary-path /home/builder/work/target/release/y-gui \
+                  --binary-path /work/target/arch-pacman/release/y-gui \
                   --output-dir /home/builder/out
               "
 

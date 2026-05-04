@@ -318,7 +318,7 @@ if [[ "$BUILD_GUI" == true ]]; then
   fi
 
   echo "  Installing npm dependencies..."
-  (cd "$GUI_DIR" && npm install)
+  (cd "$GUI_DIR" && npm ci)
 
   echo "  Building Tauri app..."
   if [[ -n "$BUILD_TARGET" ]]; then

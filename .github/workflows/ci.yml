@@ -21,28 +21,32 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
 
-  build:
-    name: Build & Test
+  workflow-regressions:
+    name: Workflow Regressions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "ci-shared"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: crates/y-gui/package-lock.json
 
       - name: Package AppImage script regression test
         run: bash scripts/tests/test-package-linux-appimage-relative-path.sh
 
       - name: CI frontend gate regression test
         run: bash scripts/tests/test-ci-frontend-gates.sh
+
+      - name: CI and release cache regression test
+        run: bash scripts/tests/test-ci-release-cache-gates.sh
+
+  gui:
+    name: GUI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/y-gui/package-lock.json
 
       - name: Install GUI dependencies
         working-directory: crates/y-gui
@@ -64,6 +68,18 @@ jobs:
         working-directory: crates/y-gui
         run: npm run build:web
 
+  website:
+    name: Website
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+
       - name: Enable Corepack
         run: corepack enable
 
@@ -74,6 +90,20 @@ jobs:
       - name: Build website
         working-directory: website
         run: pnpm run build
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-rust"
 
       - name: Install system dependencies (cached)
         uses: awalsh128/cache-apt-pkgs-action@latest
