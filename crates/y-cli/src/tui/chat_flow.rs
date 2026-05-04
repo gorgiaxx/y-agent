@@ -191,6 +191,9 @@ pub fn submit_message(
         // Parse session UUID for diagnostics.
         let session_uuid =
             uuid::Uuid::parse_str(&session_id_str).unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let working_directory = std::env::current_dir()
+            .ok()
+            .map(|path| path.to_string_lossy().to_string());
 
         // Delegate to the shared orchestrator.
         let turn_input = TurnInput {
@@ -201,6 +204,7 @@ pub fn submit_message(
             turn_number: user_msg_count,
             provider_id: selected_provider_id,
             request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory,
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,

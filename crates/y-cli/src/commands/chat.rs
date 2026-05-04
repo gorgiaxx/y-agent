@@ -69,6 +69,9 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
     // Parse session ID as UUID for diagnostics tracing.
     let session_uuid =
         uuid::Uuid::parse_str(&session.id.0).unwrap_or_else(|_| uuid::Uuid::new_v4());
+    let working_directory = std::env::current_dir()
+        .ok()
+        .map(|path| path.to_string_lossy().to_string());
 
     // Initialize PromptContext with current state.
     let tool_names: Vec<String> = services
@@ -84,7 +87,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
         active_skills: vec![],
         available_tools: tool_names,
         config_flags: HashMap::new(),
-        working_directory: None,
+        working_directory: working_directory.clone(),
         custom_system_prompt: None,
         selected_prompt_sections: None,
         mcp_server_instructions: None,
@@ -153,6 +156,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 turn_number,
                 provider_id: None,
                 request_mode: y_core::provider::RequestMode::TextChat,
+                working_directory: working_directory.clone(),
                 knowledge_collections: vec![],
                 thinking: None,
                 plan_mode: None,
