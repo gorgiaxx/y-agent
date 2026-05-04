@@ -8594,7 +8594,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "y-agent"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8611,7 +8611,7 @@ dependencies = [
 
 [[package]]
 name = "y-bot"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8630,7 +8630,7 @@ dependencies = [
 
 [[package]]
 name = "y-browser"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8651,7 +8651,7 @@ dependencies = [
 
 [[package]]
 name = "y-cli"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "anyhow",
  "arboard",
@@ -8695,7 +8695,7 @@ dependencies = [
 
 [[package]]
 name = "y-context"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8717,7 +8717,7 @@ dependencies = [
 
 [[package]]
 name = "y-core"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8731,7 +8731,7 @@ dependencies = [
 
 [[package]]
 name = "y-diagnostics"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8748,7 +8748,7 @@ dependencies = [
 
 [[package]]
 name = "y-guardrails"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "serde",
@@ -8764,7 +8764,7 @@ dependencies = [
 
 [[package]]
 name = "y-gui"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -8799,7 +8799,7 @@ dependencies = [
 
 [[package]]
 name = "y-hooks"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "criterion",
@@ -8820,7 +8820,7 @@ dependencies = [
 
 [[package]]
 name = "y-journal"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8837,7 +8837,7 @@ dependencies = [
 
 [[package]]
 name = "y-knowledge"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chardetng",
@@ -8857,7 +8857,7 @@ dependencies = [
 
 [[package]]
 name = "y-mcp"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "futures",
@@ -8874,7 +8874,7 @@ dependencies = [
 
 [[package]]
 name = "y-prompt"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "serde",
@@ -8888,7 +8888,7 @@ dependencies = [
 
 [[package]]
 name = "y-provider"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "bytes",
@@ -8908,7 +8908,7 @@ dependencies = [
 
 [[package]]
 name = "y-runtime"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "bollard",
@@ -8926,7 +8926,7 @@ dependencies = [
 
 [[package]]
 name = "y-scheduler"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8942,7 +8942,7 @@ dependencies = [
 
 [[package]]
 name = "y-service"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8983,7 +8983,7 @@ dependencies = [
 
 [[package]]
 name = "y-session"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9002,7 +9002,7 @@ dependencies = [
 
 [[package]]
 name = "y-skills"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9020,7 +9020,7 @@ dependencies = [
 
 [[package]]
 name = "y-storage"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9038,7 +9038,7 @@ dependencies = [
 
 [[package]]
 name = "y-test-utils"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9052,7 +9052,7 @@ dependencies = [
 
 [[package]]
 name = "y-tools"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "chardetng",
@@ -9083,7 +9083,7 @@ dependencies = [
 
 [[package]]
 name = "y-web"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-stream",
  "axum 0.8.9",
