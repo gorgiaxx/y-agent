@@ -13,15 +13,31 @@ use crate::state::AppState;
 
 const API_SCHEMA_VERSION: &str = "1";
 const API_FEATURES: &[&str] = &[
-    "chat",
-    "sse_events",
+    "agents",
+    "app_paths",
     "attachments_read",
     "attachments_upload",
+    "background_tasks",
+    "bot_webhooks",
+    "chat",
+    "config",
+    "diagnostics",
+    "events_session_filter",
+    "knowledge",
+    "memory_stats",
+    "mcp_config",
+    "observability",
+    "prompt_editing",
+    "provider_test",
+    "remote_auth",
+    "rewind",
+    "schedules",
+    "sse_events",
     "skills",
     "skill_import_from_path",
-    "knowledge",
+    "static_spa",
+    "workflows",
     "workspaces",
-    "memory_stats",
 ];
 
 // ---------------------------------------------------------------------------
@@ -150,8 +166,12 @@ fn data_dir() -> Option<PathBuf> {
 
 /// Health route group.
 pub fn router() -> Router<AppState> {
+    Router::new().route("/health", get(health_check))
+}
+
+/// Protected system route group.
+pub fn protected_router() -> Router<AppState> {
     Router::new()
-        .route("/health", get(health_check))
         .route("/api/v1/status", get(system_status))
         .route("/api/v1/providers", get(provider_list))
         .route("/api/v1/app-paths", get(app_paths))
@@ -180,7 +200,11 @@ mod tests {
         assert!(json.contains("\"api_schema_version\":\"1\""));
         assert!(json.contains("\"app_version\":\"0.1.0\""));
         assert!(json.contains("\"attachments_upload\""));
+        assert!(json.contains("\"background_tasks\""));
+        assert!(json.contains("\"diagnostics\""));
         assert!(json.contains("\"memory_stats\""));
+        assert!(json.contains("\"remote_auth\""));
+        assert!(json.contains("\"static_spa\""));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 pub mod agents;
 pub mod attachments;
+pub mod background_tasks;
 pub mod bots;
 pub mod chat;
 pub mod config;
@@ -29,6 +30,7 @@ use crate::state::AppState;
 /// Build the full application router with all route groups.
 pub fn create_router(state: &AppState) -> Router {
     let protected = Router::new()
+        .merge(health::protected_router())
         .merge(sessions::router())
         .merge(chat::router())
         .merge(agents::router())
@@ -44,6 +46,7 @@ pub fn create_router(state: &AppState) -> Router {
         .merge(knowledge::router())
         .merge(observability::router())
         .merge(rewind::router())
+        .merge(background_tasks::router())
         .merge(attachments::router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

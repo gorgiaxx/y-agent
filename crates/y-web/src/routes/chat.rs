@@ -21,8 +21,8 @@ use y_service::chat_types::{
 };
 use y_service::event_sink::EventSink;
 use y_service::{
-    ChatService, PermissionPromptResponse, PrepareTurnError, PrepareTurnRequest, ResendTurnRequest,
-    TurnEvent,
+    ChatService, PermissionPromptResponse, PrepareTurnError, PrepareTurnRequest, PreparedTurn,
+    ResendTurnRequest, TurnEvent, WorkspaceService,
 };
 
 use crate::error::ApiError;
@@ -232,7 +232,7 @@ async fn chat_turn(
         .attachments
         .map(|atts| serde_json::json!({ "attachments": atts }));
 
-    let prepared = ChatService::prepare_turn(
+    let mut prepared = ChatService::prepare_turn(
         &state.container,
         PrepareTurnRequest {
             session_id: body.session_id.map(SessionId),
@@ -254,6 +254,7 @@ async fn chat_turn(
         PrepareTurnError::SessionNotFound(msg) => ApiError::NotFound(msg),
         other => ApiError::Internal(other.to_string()),
     })?;
+    apply_prepared_working_directory(&state, &mut prepared).await;
 
     let session_id = prepared.session_id.clone();
     let input = prepared.as_turn_input();
@@ -325,6 +326,7 @@ async fn chat_send(
             prepared.history.drain(..start_idx);
         }
     }
+    apply_prepared_working_directory(&state, &mut prepared).await;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let result_sid = prepared.session_id.0.clone();
@@ -415,7 +417,7 @@ async fn chat_resend(
 ) -> Result<impl IntoResponse, ApiError> {
     let thinking = parse_thinking(body.thinking_effort);
 
-    let prepared = ChatService::prepare_resend_turn(
+    let mut prepared = ChatService::prepare_resend_turn(
         &state.container,
         ResendTurnRequest {
             session_id: SessionId(body.session_id.clone()),
@@ -429,6 +431,7 @@ async fn chat_resend(
     )
     .await
     .map_err(|e| ApiError::Internal(format!("{e}")))?;
+    apply_prepared_working_directory(&state, &mut prepared).await;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let result_sid = body.session_id.clone();
@@ -463,6 +466,25 @@ async fn chat_resend(
         session_id: result_sid,
         run_id: result_run_id,
     }))
+}
+
+async fn apply_prepared_working_directory(state: &AppState, prepared: &mut PreparedTurn) {
+    let workspace_path =
+        WorkspaceService::new(&state.config_dir).resolve_workspace_path(&prepared.session_id.0);
+    let working_directory = normalize_directory(prepared.working_directory.clone())
+        .or_else(|| normalize_directory(workspace_path));
+
+    prepared.working_directory.clone_from(&working_directory);
+
+    let mut prompt_context = state.container.prompt_context.write().await;
+    prompt_context.working_directory = working_directory;
+}
+
+fn normalize_directory(path: Option<String>) -> Option<String> {
+    path.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
 }
 
 /// `GET /api/v1/chat/checkpoints/:session_id`
