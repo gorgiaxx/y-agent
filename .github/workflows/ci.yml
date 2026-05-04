@@ -68,29 +68,6 @@ jobs:
         working-directory: crates/y-gui
         run: npm run build:web
 
-  website:
-    name: Website
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: website/pnpm-lock.yaml
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Install website dependencies
-        working-directory: website
-        run: pnpm install --frozen-lockfile
-
-      - name: Build website
-        working-directory: website
-        run: pnpm run build
-
   rust:
     name: Rust
     runs-on: ubuntu-latest
