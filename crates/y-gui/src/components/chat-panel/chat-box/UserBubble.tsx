@@ -20,6 +20,7 @@ import {
   GitBranch,
 } from 'lucide-react';
 import type { Message, Attachment } from '../../../types';
+import { logger } from '../../../lib';
 import { Avatar } from './MessageShared';
 import './UserBubble.css';
 
@@ -70,7 +71,7 @@ function UserActionBar({
     if (onEdit) {
       onEdit(content);
     } else {
-      console.warn('[UserBubble] Edit handler not yet connected');
+      logger.warn('[UserBubble] Edit handler not yet connected');
     }
   }, [content, onEdit]);
 
@@ -78,7 +79,7 @@ function UserActionBar({
     if (onUndo) {
       onUndo(messageId);
     } else {
-      console.warn('[UserBubble] Undo handler not yet connected');
+      logger.warn('[UserBubble] Undo handler not yet connected');
     }
   }, [messageId, onUndo]);
 
@@ -86,7 +87,7 @@ function UserActionBar({
     if (onResend) {
       onResend(content);
     } else {
-      console.warn('[UserBubble] Resend handler not yet connected');
+      logger.warn('[UserBubble] Resend handler not yet connected');
     }
   }, [content, onResend]);
 

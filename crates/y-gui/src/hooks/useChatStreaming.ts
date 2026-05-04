@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef, type Dispatch, type SetStateAction, type MutableRefObject } from 'react';
 import { startTransition } from 'react';
-import { transport } from '../lib';
+import { logger, transport } from '../lib';
 import type { Message, GeneratedImage } from '../types';
 import { capSegments, capToolResults } from './streamCapping';
 import {
@@ -114,7 +114,7 @@ export function useChatStreaming(
         if (event.session_id === refs.activeSessionIdRef.current) {
           setVisibleToolResults([]);
         }
-        console.log('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
+        logger.debug('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
       } else if (event.type === 'stream_delta') {
         if (!shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
@@ -178,7 +178,7 @@ export function useChatStreaming(
         }
         const sid = event.session_id;
         markSessionActivity(sid);
-        console.log(
+        logger.debug(
           `[chat] stream_reasoning_delta: session=${sid}, len=${event.content.length}`,
         );
         // Push/extend a reasoning segment in event-ordered segments.
@@ -299,7 +299,7 @@ export function useChatStreaming(
         const sessionStillActive = sessionId
           ? hasPendingRunForSession(chatBusState, sessionId)
           : false;
-        console.log(
+        logger.debug(
           `[chat] complete: run_id=${payload.run_id}, session=${sessionId}, opStatus=${refs.opStatusRef.current}`,
         );
 
@@ -405,7 +405,7 @@ export function useChatStreaming(
                 });
               }
             } catch (e) {
-              console.error('[chat] complete: failed to reload messages:', e);
+              logger.error('[chat] complete: failed to reload messages:', e);
               // Fallback: synthesize the assistant message in cache.
               setCachedMessages(refs.sessionMessagesRef.current, sessionId, (prev) => {
                 const sid = `streaming-${sessionId}`;
@@ -543,7 +543,7 @@ export function useChatStreaming(
                   startTransition(() => setVisibleMessages(merged));
                 }
               } catch (e) {
-                console.error('[chat] cancel: failed to reload messages:', e);
+                logger.error('[chat] cancel: failed to reload messages:', e);
               }
             })();
           } else {
@@ -586,7 +586,7 @@ export function useChatStreaming(
                   startTransition(() => setVisibleMessages(final_));
                 }
               } catch (reloadErr) {
-                console.error(
+                logger.error(
                   '[chat] error handler: failed to reload messages:',
                   reloadErr,
                 );
@@ -701,7 +701,7 @@ export function useChatStreaming(
         return;
       }
 
-      console.warn(
+      logger.warn(
         `[chat] safety timeout: session=${sid} opStatus=${refs.opStatusRef.current} inactive for ${CHAT_STUCK_TIMEOUT_MS}ms, forcing idle`,
       );
       setOpForSession(sid, 'idle');

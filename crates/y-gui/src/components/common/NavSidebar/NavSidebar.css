@@ -30,24 +30,24 @@
   padding: 0;
 }
 
-/* macOS vibrancy: let the native blur material show through the sidebar. */
-html[data-platform="macos"] .nav-sidebar {
+/* Tauri macOS vibrancy: let the native blur material show through the sidebar. */
+html[data-host="tauri"][data-platform="macos"] .nav-sidebar {
   background: transparent;
 }
-html[data-platform="macos"] .nav-sidebar-footer {
+html[data-host="tauri"][data-platform="macos"] .nav-sidebar-footer {
   background: transparent;
 }
 
 /* Dark macOS vibrancy needs a slightly brighter muted tone for legibility. */
-html[data-platform="macos"][data-theme="dark"] .nav-sidebar {
+html[data-host="tauri"][data-platform="macos"][data-theme="dark"] .nav-sidebar {
   --text-muted: #7d7973;
 }
 
 /* Traffic-light safe area on macOS custom decorations. */
-html.custom-decorations[data-platform="macos"] .nav-sidebar {
+html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar {
   padding-top: 28px;
 }
-html.custom-decorations[data-platform="macos"] .nav-sidebar::before {
+html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar::before {
   content: '';
   position: absolute;
   top: 0;
@@ -57,9 +57,9 @@ html.custom-decorations[data-platform="macos"] .nav-sidebar::before {
   -webkit-app-region: drag;
   pointer-events: none;
 }
-html.custom-decorations[data-platform="macos"] .nav-sidebar button,
-html.custom-decorations[data-platform="macos"] .nav-sidebar a,
-html.custom-decorations[data-platform="macos"] .nav-sidebar input {
+html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar button,
+html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar a,
+html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar input {
   -webkit-app-region: no-drag;
 }
 

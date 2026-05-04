@@ -17,6 +17,8 @@ import { AgentStudioSidebarNav } from './agents/AgentStudioSidebarNav';
 import { SkillsSidebarContent } from './skills/SkillsSidebarContent';
 import { KnowledgeSidebarContent } from './knowledge/KnowledgeSidebarContent';
 import { AutomationSidebarContent } from './automation/AutomationSidebarContent';
+import { BackgroundTasksSidebarContent } from './background-tasks/BackgroundTasksSidebarContent';
+import { BackgroundTasksSidebarNav } from './background-tasks/BackgroundTasksPanel';
 import { useSidebarSearch } from '../hooks/useSidebarSearch';
 import type { EditorTab, EditorSurface } from './agents/types';
 import './Sidebar.css';
@@ -59,6 +61,8 @@ export interface NavSidebarPropsGroup {
   onAgentEditorTabChange: (tab: EditorTab) => void;
   onAgentEditorSurfaceChange: (surface: EditorSurface) => void;
   onAgentEditorBack: () => void;
+  backgroundTasksOpen: boolean;
+  onCloseBackgroundTasks: () => void;
 }
 
 /** Agent studio props (shown when an agent is selected but not being edited). */
@@ -86,6 +90,14 @@ export function Sidebar({ chat, nav, agentStudio }: SidebarProps) {
   const toggleRef = useRef<HTMLButtonElement>(null);
 
   const goTo = (view: ViewType) => nav.onSelectView(view);
+
+  if (nav.backgroundTasksOpen) {
+    return (
+      <BackgroundTasksSidebarNav onBack={nav.onCloseBackgroundTasks}>
+        <BackgroundTasksSidebarContent />
+      </BackgroundTasksSidebarNav>
+    );
+  }
 
   // When in settings view, swap the sidebar contents for the settings menu.
   if (nav.activeView === 'settings') {

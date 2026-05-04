@@ -1,4 +1,6 @@
 import React from 'react';
+import type { Components } from 'react-markdown';
+import { logger } from '../../../lib';
 import { platform } from '../../../lib/platform';
 import { CodeBlock } from './MessageShared';
 import { MermaidBlock } from './MermaidBlock';
@@ -9,21 +11,28 @@ function isAbsoluteWebUrl(href: unknown): href is string {
   return typeof href === 'string' && /^https?:\/\//i.test(href);
 }
 
+interface MarkdownAstNode {
+  position?: {
+    start?: { line?: number };
+    end?: { line?: number };
+  };
+  properties?: { className?: unknown };
+  tagName?: string;
+  parent?: { tagName?: string };
+}
+
+function toMarkdownAstNode(node: unknown): MarkdownAstNode {
+  return node !== null && typeof node === 'object'
+    ? (node as MarkdownAstNode)
+    : {};
+}
+
 /** Shared markdown renderer config -- needs theme to pick syntax style. */
-export function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSProperties>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const components: any = {
-    a({
-      href,
-      children,
-      node,
-      ...props
-    }: {
-      href?: string;
-      children?: React.ReactNode;
-      node?: unknown;
-      [key: string]: unknown;
-    }) {
+export function makeMarkdownComponents(
+  codeThemeStyle: Record<string, React.CSSProperties>,
+): Components {
+  const components: Components = {
+    a({ href, children, node, ...props }) {
       void node;
 
       const isWebUrl = isAbsoluteWebUrl(href);
@@ -33,7 +42,7 @@ export function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSP
         event.preventDefault();
         event.stopPropagation();
         platform.openUrl(href).catch((err) =>
-          console.error('[MessageMarkdown] failed to open URL:', href, err),
+          logger.error('[MessageMarkdown] failed to open URL:', href, err),
         );
       };
 
@@ -49,8 +58,8 @@ export function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSP
         </a>
       );
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    code({ className, children, node, ...props }: { className?: string; children?: React.ReactNode; node?: any; [key: string]: unknown }) {
+    code({ className, children, node, ...props }) {
+      const astNode = toMarkdownAstNode(node);
       const match = /language-(\w+)/.exec(className || '');
       const codeText = String(children).replace(/\n$/, '');
 
@@ -59,10 +68,10 @@ export function makeMarkdownComponents(codeThemeStyle: Record<string, React.CSSP
       // <pre> element still exists. Check for it to avoid falling through
       // to the inline-code path.
       const isBlock = match != null
-        || node?.position?.start?.line !== node?.position?.end?.line
-        || (node?.properties?.className != null)
-        || (typeof node?.tagName === 'string'
-            && node?.parent?.tagName === 'pre');
+        || astNode.position?.start?.line !== astNode.position?.end?.line
+        || astNode.properties?.className != null
+        || (typeof astNode.tagName === 'string'
+            && astNode.parent?.tagName === 'pre');
 
       // Fallback: if none of the node heuristics fired, check whether
       // the raw text itself spans multiple lines -- this reliably signals

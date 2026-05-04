@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal } from 'lucide-react';
-import { transport, platform } from '../../../lib';
+import { logger, transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { Tooltip } from '../../ui/Tooltip';
@@ -14,6 +14,7 @@ import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode, ImageGenerationOptions } from '../../../types';
 import { DEFAULT_IMAGE_GENERATION_OPTIONS } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
+import { useCloseOnOutsideClick } from '../../../hooks/useCloseOnOutsideClick';
 import './InputArea.css';
 
 interface ToolbarTooltipButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -224,65 +225,23 @@ export function InputArea(props: InputAreaProps) {
     }
   }, [controlledPlanMode, onPlanModeChange, persistPlanMode, planMode]);
 
-  // Close provider dropdown on outside click.
-  useEffect(() => {
-    if (!providerDropdownOpen) return;
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (providerDropdownRef.current && !providerDropdownRef.current.contains(e.target as Node)) {
-        setProviderDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [providerDropdownOpen]);
-
-  // Close knowledge picker on outside click.
-  useEffect(() => {
-    if (!kbPickerOpen) return;
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (kbPickerRef.current && !kbPickerRef.current.contains(e.target as Node)) {
-        setKbPickerOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [kbPickerOpen]);
-
-  // Close thinking dropdown on outside click.
-  useEffect(() => {
-    if (!thinkingDropdownOpen) return;
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (thinkingDropdownRef.current && !thinkingDropdownRef.current.contains(e.target as Node)) {
-        setThinkingDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [thinkingDropdownOpen]);
-
-  // Close MCP dropdown on outside click.
-  useEffect(() => {
-    if (!mcpDropdownOpen) return;
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (mcpDropdownRef.current && !mcpDropdownRef.current.contains(e.target as Node)) {
-        setMcpDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [mcpDropdownOpen]);
-
-  // Close image gen dropdown on outside click.
-  useEffect(() => {
-    if (!imageGenDropdownOpen) return;
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (imageGenDropdownRef.current && !imageGenDropdownRef.current.contains(e.target as Node)) {
-        setImageGenDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [imageGenDropdownOpen]);
+  useCloseOnOutsideClick(
+    providerDropdownRef,
+    providerDropdownOpen,
+    () => setProviderDropdownOpen(false),
+  );
+  useCloseOnOutsideClick(kbPickerRef, kbPickerOpen, () => setKbPickerOpen(false));
+  useCloseOnOutsideClick(
+    thinkingDropdownRef,
+    thinkingDropdownOpen,
+    () => setThinkingDropdownOpen(false),
+  );
+  useCloseOnOutsideClick(mcpDropdownRef, mcpDropdownOpen, () => setMcpDropdownOpen(false));
+  useCloseOnOutsideClick(
+    imageGenDropdownRef,
+    imageGenDropdownOpen,
+    () => setImageGenDropdownOpen(false),
+  );
 
   // Derive display label for selected provider.
   const selectedProviderLabel = selectedProviderId === 'auto'
@@ -564,7 +523,7 @@ export function InputArea(props: InputAreaProps) {
       contentEditableRef.current?.placeCursorAtEnd();
       updateHasContent();
     } catch (e) {
-      console.error('[InputArea] translation error:', e);
+      logger.error('[InputArea] translation error:', e);
     } finally {
       setTranslating(false);
     }
@@ -823,7 +782,7 @@ export function InputArea(props: InputAreaProps) {
                   setAttachments((prev) => [...prev, ...atts]);
                 }
               } catch (e) {
-                console.error('[InputArea] attachment picker error:', e);
+                logger.error('[InputArea] attachment picker error:', e);
               }
             }}
             tooltip={requestMode === 'image_generation' ? 'Reference image (image-to-image)' : 'Attach images'}

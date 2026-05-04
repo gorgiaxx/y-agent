@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { transport } from '../lib';
 import type { GuiConfig } from '../types';
 
-const defaultConfig: GuiConfig = {
+export const defaultGuiConfig: GuiConfig = {
   theme: 'dark',
   font_size: 14,
   send_on_enter: true,
@@ -14,6 +14,13 @@ const defaultConfig: GuiConfig = {
   translate_target_language: '',
   use_custom_decorations: false,
 };
+
+export function normalizeGuiConfig(config: GuiConfig | null | undefined): GuiConfig {
+  return {
+    ...defaultGuiConfig,
+    ...(config ?? {}),
+  };
+}
 
 export interface UseConfigReturn {
   config: GuiConfig;
@@ -25,14 +32,14 @@ export interface UseConfigReturn {
 }
 
 export function useConfig(): UseConfigReturn {
-  const [config, setConfig] = useState<GuiConfig>(defaultConfig);
+  const [config, setConfig] = useState<GuiConfig>(defaultGuiConfig);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const cfg = await transport.invoke<GuiConfig>('config_get_gui');
-        setConfig(cfg);
+        const cfg = await transport.invoke<GuiConfig | null>('config_get_gui');
+        setConfig(normalizeGuiConfig(cfg));
       } catch (e) {
         console.error('Failed to load GUI config:', e);
       } finally {

@@ -6,7 +6,7 @@
 //   - Checkpoint resolution helpers
 // ---------------------------------------------------------------------------
 
-import { transport } from '../lib';
+import { logger, transport } from '../lib';
 import type { Message, ChatCheckpointInfo } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ export function evictStaleSessions(
   }
 
   if (toEvict.length > 0) {
-    console.log(`[chat] evicted ${toEvict.length} stale session cache(s)`);
+    logger.debug(`[chat] evicted ${toEvict.length} stale session cache(s)`);
   }
 }
 
@@ -172,7 +172,7 @@ export async function findCheckpointForMessage(
       { sessionId, userMessageContent: content, messageId },
     );
   } catch (e) {
-    console.warn('[chat] findCheckpointForMessage: backend lookup failed:', e);
+    logger.warn('[chat] findCheckpointForMessage: backend lookup failed:', e);
     return null;
   }
 }

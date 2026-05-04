@@ -10,6 +10,7 @@ import type { Message, ThinkingEffort, PlanMode, McpMode, Attachment, SkillInfo,
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import type { CompactInfo } from '../../hooks/useChat';
+import { useBackgroundTasksContext, useViewRouting } from '../../providers/AppContexts';
 
 interface AgentStudioProps {
   agentSummary: AgentInfo | AgentDetail | null;
@@ -112,6 +113,12 @@ export function AgentStudio({
   edit,
   features,
 }: AgentStudioProps) {
+  const backgroundTasks = useBackgroundTasksContext();
+  const viewRouting = useViewRouting();
+  const backgroundTaskTotal = backgroundTasks.tasks.length;
+  const backgroundTaskRunning = backgroundTasks.tasks.filter((task) => task.status === 'running').length;
+  const backgroundTaskFailed = backgroundTasks.tasks.filter((task) => task.status === 'failed').length;
+
   return (
     <section className="agents-chat-stage">
       {detailLoading ? (
@@ -188,6 +195,16 @@ export function AgentStudio({
         lastTokens={lastTokens}
         contextWindow={contextWindow}
         contextTokensUsed={contextTokensUsed}
+        backgroundTasks={{
+          total: backgroundTaskTotal,
+          running: backgroundTaskRunning,
+          failed: backgroundTaskFailed,
+          onClick: () => {
+            viewRouting.setBackgroundTasksSessionId(activeSessionId);
+            viewRouting.setBackgroundTasksSidebarOpen(true);
+            viewRouting.setInputExpanded(false);
+          },
+        }}
       />
     </section>
   );

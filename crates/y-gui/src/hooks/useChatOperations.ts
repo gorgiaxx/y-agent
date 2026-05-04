@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
-import { transport } from '../lib';
+import { logger, transport } from '../lib';
 import type {
   Message,
   ChatStarted,
@@ -87,13 +87,13 @@ export function useChatOperations(
         ) ?? null;
     }
     if (!runId) {
-      console.warn('[chat] cancelRun: no active run found');
+      logger.warn('[chat] cancelRun: no active run found');
       return;
     }
     try {
       await transport.invoke('chat_cancel', { runId });
     } catch (e) {
-      console.error('[chat] chat_cancel failed:', e);
+      logger.error('[chat] chat_cancel failed:', e);
     }
   }, [refs.activeSessionIdRef]);
 
@@ -118,13 +118,13 @@ export function useChatOperations(
         imageGenerationOptions,
       } = opts;
       if (refs.opStatusRef.current !== 'idle') {
-        console.warn(
+        logger.warn(
           `[chat] sendMessage blocked: opStatus=${refs.opStatusRef.current}`,
         );
         return null;
       }
       if (sendingRef.current) {
-        console.warn('[chat] sendMessage blocked: already sending (ref guard)');
+        logger.warn('[chat] sendMessage blocked: already sending (ref guard)');
         return null;
       }
       sendingRef.current = true;
@@ -156,7 +156,7 @@ export function useChatOperations(
           refs.contextResetMapRef.current.get(sessionId) ?? [];
         const resetIdx =
           resetPoints.length > 0 ? resetPoints[resetPoints.length - 1] : null;
-        console.log(
+        logger.debug(
           '[chat] sendMessage: planMode =',
           planMode,
           '-> sending:',
@@ -237,7 +237,7 @@ export function useChatOperations(
       requestMode?: RequestMode,
     ): Promise<ChatStarted | null> => {
       if (refs.opStatusRef.current !== 'idle') {
-        console.warn(
+        logger.warn(
           `[chat] editAndResend blocked: opStatus=${refs.opStatusRef.current}`,
         );
         return null;
@@ -245,7 +245,7 @@ export function useChatOperations(
 
       const edit = pendingEdit;
       if (!edit) {
-        console.warn('[chat] editAndResend called without pending edit');
+        logger.warn('[chat] editAndResend called without pending edit');
         return null;
       }
 
@@ -263,7 +263,7 @@ export function useChatOperations(
           );
 
           if (!checkpoint) {
-            console.warn(
+            logger.warn(
               '[chat] No checkpoint found for edit -- using truncate fallback',
             );
             const freshMsgs = await transport.invoke<Message[]>(
@@ -324,7 +324,7 @@ export function useChatOperations(
               return result;
             }
 
-            console.warn(
+            logger.warn(
               '[chat] editAndResend: fallback failed, user message not found',
             );
             setPendingEdit(null);
@@ -375,7 +375,7 @@ export function useChatOperations(
           });
           return result;
         } catch (e) {
-          console.error('[chat] editAndResend failed:', e);
+          logger.error('[chat] editAndResend failed:', e);
           setError(String(e));
           setOp('idle');
           await loadMessages(sessionId);
@@ -407,11 +407,11 @@ export function useChatOperations(
       sessionId: string,
       messageId: string,
     ): Promise<UndoResult | null> => {
-      console.log(
+      logger.debug(
         `[chat] undoToMessage called, opStatus=${refs.opStatusRef.current}, sessionId=${sessionId}, messageId=${messageId}`,
       );
       if (refs.opStatusRef.current !== 'idle') {
-        console.warn(
+        logger.warn(
           `[chat] undoToMessage blocked: opStatus=${refs.opStatusRef.current}`,
         );
         return null;
@@ -423,7 +423,7 @@ export function useChatOperations(
 
       return withSessionLock(sessionId, async () => {
         try {
-          console.log(
+          logger.debug(
             '[chat] undoToMessage: finding checkpoint for message...',
           );
           const checkpoint = await findCheckpointForMessage(
@@ -431,9 +431,9 @@ export function useChatOperations(
             messageId,
             refs.sessionMessagesRef.current,
           );
-          console.log('[chat] undoToMessage: checkpoint result', checkpoint);
+          logger.debug('[chat] undoToMessage: checkpoint result', checkpoint);
           if (!checkpoint) {
-            console.warn(
+            logger.warn(
               '[chat] No checkpoint found for message',
               messageId,
               '-- trying direct truncation fallback',
@@ -467,33 +467,33 @@ export function useChatOperations(
                 files_restored: 0,
               } as UndoResult;
             }
-            console.warn(
+            logger.warn(
               '[chat] undoToMessage: fallback truncation also failed',
             );
             setOp('idle');
             return null;
           }
 
-          console.log(
+          logger.debug(
             `[chat] undoToMessage: calling chat_undo with checkpoint=${checkpoint.checkpoint_id}`,
           );
           const result = await transport.invoke<UndoResult>('chat_undo', {
             sessionId,
             checkpointId: checkpoint.checkpoint_id,
           });
-          console.log('[chat] undoToMessage: chat_undo result', result);
+          logger.debug('[chat] undoToMessage: chat_undo result', result);
 
-          console.log('[chat] undoToMessage: reloading messages...');
+          logger.debug('[chat] undoToMessage: reloading messages...');
           invalidateStaleContextResets(
             sessionId,
             checkpoint.message_count_before,
           );
           await loadMessages(sessionId);
-          console.log('[chat] undoToMessage: loadMessages complete');
+          logger.debug('[chat] undoToMessage: loadMessages complete');
           setOp('idle');
           return result;
         } catch (e) {
-          console.error('[chat] undoToMessage failed:', e);
+          logger.error('[chat] undoToMessage failed:', e);
           setError(String(e));
           setOp('idle');
           await loadMessages(sessionId);
@@ -525,11 +525,11 @@ export function useChatOperations(
       thinkingEffort?: ThinkingEffort | null,
       planMode?: PlanMode,
     ): Promise<ChatStarted | null> => {
-      console.log(
+      logger.debug(
         `[chat] resendLastTurn called, opStatus=${refs.opStatusRef.current}, sessionId=${sessionId}, messageId=${messageId}`,
       );
       if (refs.opStatusRef.current !== 'idle') {
-        console.warn(
+        logger.warn(
           `[chat] resendLastTurn blocked: opStatus=${refs.opStatusRef.current}`,
         );
         return null;
@@ -558,13 +558,13 @@ export function useChatOperations(
             messageId,
             refs.sessionMessagesRef.current,
           );
-          console.log(
+          logger.debug(
             '[chat] resendLastTurn: checkpoint result',
             checkpoint,
           );
 
           if (!checkpoint) {
-            console.warn(
+            logger.warn(
               '[chat] No checkpoint found for resend -- using direct re-send fallback',
             );
             let userIdx = freshMsgs.findIndex((m) => m.id === messageId);
@@ -609,13 +609,13 @@ export function useChatOperations(
                 thinkingEffort: thinkingEffort ?? null,
                 planMode: planMode ?? null,
               });
-              console.log(
+              logger.debug(
                 '[chat] resendLastTurn: fallback chat_send result',
                 result,
               );
               return result;
             }
-            console.warn(
+            logger.warn(
               '[chat] resendLastTurn: fallback also failed, user message not found',
             );
             setOp('idle');
@@ -626,14 +626,14 @@ export function useChatOperations(
           const keepCount = checkpoint.message_count_before + 1;
           const keptMsgs = freshMsgs.slice(0, keepCount);
           const removedMsgs = freshMsgs.slice(keepCount);
-          console.log(
+          logger.debug(
             `[chat] resendLastTurn: checkpoint.message_count_before=${checkpoint.message_count_before}, keepCount=${keepCount}, total=${freshMsgs.length}`,
           );
-          console.log(
+          logger.debug(
             '[chat] resendLastTurn: keeping:',
             keptMsgs.map((m) => `[${m.role}] ${m.content.slice(0, 40)}...`),
           );
-          console.log(
+          logger.debug(
             '[chat] resendLastTurn: removing:',
             removedMsgs.map((m) => `[${m.role}] ${m.content.slice(0, 40)}...`),
           );
@@ -646,7 +646,7 @@ export function useChatOperations(
           syncVisible(sessionId);
 
           // 3. Backend resend.
-          console.log(
+          logger.debug(
             `[chat] resendLastTurn: calling chat_resend with checkpoint=${checkpoint.checkpoint_id}`,
           );
           const result = await transport.invoke<ChatStarted>('chat_resend', {
@@ -659,13 +659,13 @@ export function useChatOperations(
             thinkingEffort: thinkingEffort ?? null,
             planMode: planMode ?? null,
           });
-          console.log(
+          logger.debug(
             '[chat] resendLastTurn: chat_resend result',
             result,
           );
           return result;
         } catch (e) {
-          console.error('[chat] resendLastTurn failed:', e);
+          logger.error('[chat] resendLastTurn failed:', e);
           setError(String(e));
           setOp('idle');
           await loadMessages(sessionId);
@@ -696,7 +696,7 @@ export function useChatOperations(
       checkpointId: string,
     ): Promise<RestoreResult | null> => {
       if (refs.opStatusRef.current !== 'idle') {
-        console.warn(
+        logger.warn(
           `[chat] restoreBranch blocked: opStatus=${refs.opStatusRef.current}`,
         );
         return null;
@@ -719,7 +719,7 @@ export function useChatOperations(
           setOp('idle');
           return result;
         } catch (e) {
-          console.error('[chat] restoreBranch failed:', e);
+          logger.error('[chat] restoreBranch failed:', e);
           setError(String(e));
           setOp('idle');
           return null;

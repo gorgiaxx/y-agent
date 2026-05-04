@@ -362,12 +362,39 @@ export function extractUrlMeta(
 // ShellExec helpers
 // ---------------------------------------------------------------------------
 
+export interface ShellExecSummary {
+  action: string;
+  label: string;
+  command?: string;
+  processId?: string;
+}
+
 /** Extract the command string from ShellExec arguments. */
 export function extractShellCommand(argsRaw: string): string | null {
   const obj = tryParseJson(argsRaw);
   if (!obj) return null;
   if (typeof obj.command === 'string') return obj.command;
   return null;
+}
+
+export function extractShellExecSummary(argsRaw: string): ShellExecSummary {
+  const obj = tryParseJson(argsRaw);
+  const action = typeof obj?.action === 'string' && obj.action
+    ? obj.action
+    : 'run';
+  const command = typeof obj?.command === 'string' && obj.command
+    ? obj.command
+    : undefined;
+  const processId = typeof obj?.process_id === 'string' && obj.process_id
+    ? obj.process_id
+    : undefined;
+
+  return {
+    action,
+    label: titleCaseAction(action) || 'Shell',
+    command,
+    processId,
+  };
 }
 
 // ---------------------------------------------------------------------------

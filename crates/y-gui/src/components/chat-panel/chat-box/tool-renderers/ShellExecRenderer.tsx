@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { SquareTerminal, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { extractShellCommand } from '../toolCallUtils';
+import { extractShellCommand, extractShellExecSummary } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -14,6 +14,9 @@ export function ShellExecRenderer({
   const [showRaw, setShowRaw] = useState(false);
 
   const shellCommand = extractShellCommand(toolCall.arguments);
+  const shellSummary = extractShellExecSummary(toolCall.arguments);
+  const title = shellCommand
+    ?? [shellSummary.label, shellSummary.processId].filter(Boolean).join(' ');
   const activeResult = showRaw ? displayResult : (displayResultFormatted ?? displayResult);
   const hasExpandable = displayArgs || displayResult;
 
@@ -22,10 +25,19 @@ export function ShellExecRenderer({
       <div
         className="tool-call-tag"
         onClick={() => hasExpandable && setExpanded(!expanded)}
-        title={shellCommand ?? ''}
+        title={title}
       >
         <SquareTerminal size={14} className="tool-call-icon-muted" />
-        <span className="tool-call-monospace-value">{shellCommand}</span>
+        {shellCommand ? (
+          <span className="tool-call-monospace-value">{shellCommand}</span>
+        ) : (
+          <>
+            <span className="tool-call-key">{shellSummary.label}</span>
+            {shellSummary.processId && (
+              <span className="tool-call-monospace-value">{shellSummary.processId}</span>
+            )}
+          </>
+        )}
         <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
         {durationMs !== undefined && (
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>

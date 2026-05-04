@@ -7,7 +7,7 @@
 
 import { useState, useCallback, type Dispatch, type SetStateAction } from 'react';
 import { startTransition } from 'react';
-import { transport } from '../lib';
+import { logger, transport } from '../lib';
 import type { Message } from '../types';
 import type { GeneratedImage } from '../types';
 import {
@@ -153,7 +153,7 @@ export function useChatMessages(
         refs.sessionMessagesRef.current,
         sessionId,
       );
-      console.log(
+      logger.debug(
         `[chat] loadMessages: got ${mergedMsgs.length} messages for session=${sessionId}, active=${refs.activeSessionIdRef.current}`,
       );
       if (refs.activeSessionIdRef.current === sessionId) {
@@ -169,13 +169,13 @@ export function useChatMessages(
           setVisibleMessages(merged);
         });
       } else {
-        console.log(
+        logger.debug(
           `[chat] loadMessages: session mismatch, skipping visible update (active=${refs.activeSessionIdRef.current}, requested=${sessionId})`,
         );
         setCachedMessages(refs.sessionMessagesRef.current, sessionId, mergedMsgs);
       }
     } catch (e) {
-      console.error('[chat] loadMessages failed:', e);
+      logger.error('[chat] loadMessages failed:', e);
       setError(String(e));
     } finally {
       if (refs.activeSessionIdRef.current === sessionId) {

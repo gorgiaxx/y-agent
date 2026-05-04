@@ -12,10 +12,10 @@
  *   AssistantMessageShell -- shared layout wrapper for assistant messages
  */
 
-import { useState, useCallback, memo } from 'react';
+import { useState, useCallback, lazy, memo, Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import {
   Copy,
   Check,
@@ -28,6 +28,11 @@ import { escapeThinkTags, extractThinkTags } from './messageUtils';
 import './MessageShared.css';
 import './AssistantBubble.css';
 
+const SyntaxHighlighter = lazy(() =>
+  import('react-syntax-highlighter').then((module) => ({
+    default: module.Prism,
+  })),
+);
 
 /* ---- Avatar ---- */
 
@@ -74,18 +79,20 @@ export const CodeBlock = memo(function CodeBlock({
           {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
       </div>
-      <SyntaxHighlighter
-        style={themeStyle}
-        language={language || 'text'}
-        PreTag="div"
-        customStyle={{
-          margin: 0,
-          borderRadius: 0,
-          fontSize: '13px',
-        }}
-      >
-        {children}
-      </SyntaxHighlighter>
+      <Suspense fallback={<pre className="code-block-fallback">{children}</pre>}>
+        <SyntaxHighlighter
+          style={themeStyle}
+          language={language || 'text'}
+          PreTag="div"
+          customStyle={{
+            margin: 0,
+            borderRadius: 0,
+            fontSize: '13px',
+          }}
+        >
+          {children}
+        </SyntaxHighlighter>
+      </Suspense>
     </div>
   );
 });
@@ -98,7 +105,7 @@ const REMARK_PLUGINS = [remarkGfm];
 
 /** Render a markdown text segment. */
 export const MarkdownSegment = memo(function MarkdownSegment(
-  { text, components }: { text: string; components: Record<string, unknown> },
+  { text, components }: { text: string; components: Components },
 ) {
   if (!text.trim()) return null;
   return (

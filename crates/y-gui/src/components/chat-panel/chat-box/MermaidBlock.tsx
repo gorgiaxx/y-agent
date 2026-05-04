@@ -1,20 +1,29 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import mermaid from 'mermaid';
 import { Copy, Check } from 'lucide-react';
 import { useResolvedTheme } from '../../../hooks/useTheme';
 import './MermaidBlock.css';
+
+type MermaidApi = typeof import('mermaid').default;
 
 /** Monotonically increasing counter to generate unique render IDs. */
 let mermaidIdCounter = 0;
 
 /** Track whether mermaid has been initialized and with which theme. */
 let currentMermaidTheme: string | null = null;
+let mermaidModule: MermaidApi | null = null;
+
+async function loadMermaid(): Promise<MermaidApi> {
+  if (!mermaidModule) {
+    mermaidModule = (await import('mermaid')).default;
+  }
+  return mermaidModule;
+}
 
 /**
  * Initialize (or re-initialize) mermaid with the given theme.
  * Only re-initializes when the theme actually changes.
  */
-function ensureMermaidInit(resolvedTheme: string) {
+function ensureMermaidInit(mermaid: MermaidApi, resolvedTheme: string) {
   const mermaidTheme = resolvedTheme === 'dark' ? 'dark' : 'default';
   if (currentMermaidTheme === mermaidTheme) return;
   mermaid.initialize({
@@ -55,7 +64,8 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
 
     async function renderDiagram() {
       try {
-        ensureMermaidInit(resolvedTheme);
+        const mermaid = await loadMermaid();
+        ensureMermaidInit(mermaid, resolvedTheme);
         const { svg: renderedSvg } = await mermaid.render(
           renderIdRef.current,
           code,

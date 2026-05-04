@@ -10,14 +10,14 @@
 // ---------------------------------------------------------------------------
 
 import { memo, useMemo } from 'react';
+import type { Components } from 'react-markdown';
 import { MarkdownSegment } from './MessageShared';
 import { extractThinkTags } from './messageUtils';
 import { ThinkingCard } from './ThinkingCard';
 
 interface ThinkContentBlockProps {
   content: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  markdownComponents: any;
+  markdownComponents: Components;
   /** Whether thinking is currently streaming. Defaults to false. */
   isStreaming?: boolean;
   /** CSS class for the outer markdown container. */

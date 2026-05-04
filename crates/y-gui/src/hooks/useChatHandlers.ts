@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { transport } from '../lib';
+import { logger, transport } from '../lib';
 import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode, ImageGenerationOptions } from '../types';
 import type { ViewType } from '../components/Sidebar';
 import type { CompactInfo, ChatOpStatus, SendMessageOptions } from './useChat';
@@ -178,7 +178,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
           targetMessageId: messageId,
         });
       } catch (e) {
-        console.warn('[undo] file restoration failed (non-fatal):', e);
+        logger.warn('[undo] file restoration failed (non-fatal):', e);
       }
 
       // Put the undone message content back in the input box.
@@ -253,7 +253,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
         await transport.invoke('workspace_create', { name, path });
         await refreshWorkspaces();
       } catch (e) {
-        console.error('Failed to create workspace:', e);
+        logger.error('Failed to create workspace:', e);
       }
     },
     [refreshWorkspaces],
@@ -278,7 +278,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
               { sessionId: sid },
             )
               .then((result) => {
-                console.info(
+                logger.info(
                   `[compact] done: pruned=${result.messages_pruned}, ` +
                   `compacted=${result.messages_compacted}, tokens_saved=${result.tokens_saved}`,
                 );
@@ -292,7 +292,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
                 // Reload messages so the UI reflects the compacted state.
                 loadMessages(sid);
               })
-              .catch((e) => console.error('[compact] failed:', e))
+              .catch((e) => logger.error('[compact] failed:', e))
               .finally(() => setOp('idle'));
           }
           return true;
@@ -307,14 +307,14 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
           return true;
         case 'status':
           transport.invoke<unknown>('system_status')
-            .then(() => console.log('Status refreshed'))
-            .catch((e) => console.warn('Failed to refresh system status:', e));
+            .then(() => logger.debug('Status refreshed'))
+            .catch((e) => logger.warn('Failed to refresh system status:', e));
           return true;
         case 'help':
           setActiveView('settings');
           return true;
         case 'export':
-          console.log('Export command triggered -- not yet implemented');
+          logger.debug('Export command triggered -- not yet implemented');
           return true;
         case 'model':
           setActiveView('settings');
