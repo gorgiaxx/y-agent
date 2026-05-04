@@ -141,6 +141,18 @@ export default withMermaid(defineConfig({
                   link: '/development/crate-reference',
                 },
                 {
+                  text: 'GUI, TUI, and Bots',
+                  link: '/development/gui-tui-bots',
+                },
+                {
+                  text: 'Web API and Web UI',
+                  link: '/development/web-api-and-web-ui',
+                },
+                {
+                  text: 'Maintenance and Packaging',
+                  link: '/development/maintenance-and-packaging',
+                },
+                {
                   text: 'Agent System',
                   link: '/development/agent-system',
                 },

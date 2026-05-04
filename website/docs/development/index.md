@@ -9,6 +9,9 @@ This section provides a comprehensive technical reference for developers working
 | [Architecture](./architecture) | 6-layer architecture, dependency graph, data stores |
 | [Request Lifecycle](./request-lifecycle) | End-to-end flow of a chat request with sequence diagrams |
 | [Crate Reference](./crate-reference) | All 24 workspace crates -- purpose, key types, and exports |
+| [GUI, TUI, and Bots Development](./gui-tui-bots) | Build and debug the desktop GUI, terminal TUI, and bot adapters |
+| [Web API and Web UI Development](./web-api-and-web-ui) | Develop the REST/SSE API and the separated browser frontend |
+| [Maintenance and Packaging](./maintenance-and-packaging) | Daily cleanup, website preview/deploy, and release package scripts |
 | [Agent System](./agent-system) | Agent framework, delegation protocol, multi-agent patterns |
 | [Tool System](./tool-system) | Tool registry, lazy loading, execution pipeline, JSON Schema validation |
 | [Context Pipeline](./context-pipeline) | Context assembly stages, compaction, pruning strategies |
