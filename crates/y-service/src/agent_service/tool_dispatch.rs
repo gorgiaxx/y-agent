@@ -31,18 +31,16 @@ pub(crate) async fn execute_and_record_tool(
         .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
     {
         let error_content = "[SYSTEM] Cancelled by user.".to_string();
-        if let Some(tx) = progress {
-            let _ = tx.send(TurnEvent::ToolResult {
-                name: tc.name.clone(),
-                success: false,
-                duration_ms: 0,
-                input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                result_preview: error_content.clone(),
-                agent_name: config.agent_name.clone(),
-                url_meta: None,
-                metadata: None,
-            });
-        }
+        emit_tool_result(
+            progress,
+            tc,
+            config,
+            false,
+            0,
+            error_content.clone(),
+            None,
+            None,
+        );
         return (false, error_content);
     }
 
@@ -58,18 +56,16 @@ pub(crate) async fn execute_and_record_tool(
             max_tool_calls = config.max_tool_calls,
             "tool execution blocked by max_tool_calls limit"
         );
-        if let Some(tx) = progress {
-            let _ = tx.send(TurnEvent::ToolResult {
-                name: tc.name.clone(),
-                success: false,
-                duration_ms: 0,
-                input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                result_preview: error_content.clone(),
-                agent_name: config.agent_name.clone(),
-                url_meta: None,
-                metadata: None,
-            });
-        }
+        emit_tool_result(
+            progress,
+            tc,
+            config,
+            false,
+            0,
+            error_content.clone(),
+            None,
+            None,
+        );
         return (false, error_content);
     }
 
@@ -133,28 +129,17 @@ pub(crate) async fn execute_and_record_tool(
                 tc.name, decision.reason
             );
 
-            ctx.tool_calls_executed.push(ToolCallRecord {
-                name: tc.name.clone(),
-                arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                success: false,
-                duration_ms: 0,
-                result_content: error_content.clone(),
-                url_meta: None,
-                metadata: None,
-            });
-
-            if let Some(tx) = progress {
-                let _ = tx.send(TurnEvent::ToolResult {
-                    name: tc.name.clone(),
-                    success: false,
-                    duration_ms: 0,
-                    input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                    result_preview: error_content.clone(),
-                    agent_name: config.agent_name.clone(),
-                    url_meta: None,
-                    metadata: None,
-                });
-            }
+            record_tool_call(ctx, tc, false, 0, error_content.clone(), None, None);
+            emit_tool_result(
+                progress,
+                tc,
+                config,
+                false,
+                0,
+                error_content.clone(),
+                None,
+                None,
+            );
 
             return (false, error_content);
         }
@@ -164,19 +149,8 @@ pub(crate) async fn execute_and_record_tool(
 
             // Extract content preview (command for ShellExec, path for
             // file tools, etc.) for the permission prompt.
-            let content_preview = tc
-                .arguments
-                .get("command")
-                .or_else(|| tc.arguments.get("path"))
-                .or_else(|| tc.arguments.get("url"))
-                .and_then(|v| v.as_str())
-                .map(String::from);
-
-            let action_desc = if let Some(ref preview) = content_preview {
-                format!("{} wants to execute: {}", tc.name, preview)
-            } else {
-                format!("{} wants to execute", tc.name)
-            };
+            let content_preview = permission_prompt_content_preview(&tc.arguments);
+            let action_desc = permission_action_description(&tc.name, content_preview.as_deref());
 
             tracing::info!(
                 tool = %tc.name,
@@ -249,28 +223,17 @@ pub(crate) async fn execute_and_record_tool(
                          Do NOT retry this tool. Use an alternative approach."
                     );
 
-                    ctx.tool_calls_executed.push(ToolCallRecord {
-                        name: tc.name.clone(),
-                        arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                        success: false,
-                        duration_ms: 0,
-                        result_content: error_content.clone(),
-                        url_meta: None,
-                        metadata: None,
-                    });
-
-                    if let Some(tx) = progress {
-                        let _ = tx.send(TurnEvent::ToolResult {
-                            name: tc.name.clone(),
-                            success: false,
-                            duration_ms: 0,
-                            input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                            result_preview: error_content.clone(),
-                            agent_name: config.agent_name.clone(),
-                            url_meta: None,
-                            metadata: None,
-                        });
-                    }
+                    record_tool_call(ctx, tc, false, 0, error_content.clone(), None, None);
+                    emit_tool_result(
+                        progress,
+                        tc,
+                        config,
+                        false,
+                        0,
+                        error_content.clone(),
+                        None,
+                        None,
+                    );
 
                     return (false, error_content);
                 }
@@ -297,7 +260,7 @@ pub(crate) async fn execute_and_record_tool(
     if let Some(tx) = progress {
         let _ = tx.send(TurnEvent::ToolStart {
             name: tc.name.clone(),
-            input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+            input_preview: tool_arguments_preview(tc),
             agent_name: config.agent_name.clone(),
         });
     }
@@ -306,6 +269,7 @@ pub(crate) async fn execute_and_record_tool(
         container,
         tc,
         &ctx.session_id,
+        ctx.working_directory.as_deref(),
         progress,
         ctx.cancel_token.as_ref(),
     )
@@ -338,33 +302,31 @@ pub(crate) async fn execute_and_record_tool(
     // Extract URL metadata from the full (unstripped) result before storing.
     let url_meta = extract_url_meta(&tc.name, &full_result);
 
-    ctx.tool_calls_executed.push(ToolCallRecord {
-        name: tc.name.clone(),
-        arguments: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-        success: tool_success,
-        duration_ms: tool_elapsed_ms,
-        result_content: result_content.clone(),
-        url_meta: url_meta.clone(),
-        metadata: tool_metadata.clone(),
-    });
+    record_tool_call(
+        ctx,
+        tc,
+        tool_success,
+        tool_elapsed_ms,
+        result_content.clone(),
+        url_meta.clone(),
+        tool_metadata.clone(),
+    );
 
     // Emit ToolResult progress event.
     // Use the full (unstripped) result for url_meta extraction and GUI
     // preview, but the stripped version is what the LLM sees.
     // Limit must be large enough to keep structured JSON (e.g. Grep results)
     // intact -- matches the persisted metadata limit in build_tool_results_metadata.
-    if let Some(tx) = progress {
-        let _ = tx.send(TurnEvent::ToolResult {
-            name: tc.name.clone(),
-            success: tool_success,
-            duration_ms: tool_elapsed_ms,
-            input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-            result_preview: result_content.clone(),
-            agent_name: config.agent_name.clone(),
-            url_meta,
-            metadata: tool_metadata,
-        });
-    }
+    emit_tool_result(
+        progress,
+        tc,
+        config,
+        tool_success,
+        tool_elapsed_ms,
+        result_content.clone(),
+        url_meta,
+        tool_metadata,
+    );
 
     // AskUser interception: if the tool is AskUser, block until the
     // presentation layer delivers an answer via `PendingInteractions`.
@@ -380,6 +342,71 @@ pub(crate) async fn execute_and_record_tool(
     }
 
     (tool_success, result_content)
+}
+
+fn tool_arguments_preview(tc: &ToolCallRequest) -> String {
+    serde_json::to_string(&tc.arguments).unwrap_or_default()
+}
+
+fn emit_tool_result(
+    progress: Option<&TurnEventSender>,
+    tc: &ToolCallRequest,
+    config: &AgentExecutionConfig,
+    success: bool,
+    duration_ms: u64,
+    result_preview: String,
+    url_meta: Option<String>,
+    metadata: Option<serde_json::Value>,
+) {
+    if let Some(tx) = progress {
+        let _ = tx.send(TurnEvent::ToolResult {
+            name: tc.name.clone(),
+            success,
+            duration_ms,
+            input_preview: tool_arguments_preview(tc),
+            result_preview,
+            agent_name: config.agent_name.clone(),
+            url_meta,
+            metadata,
+        });
+    }
+}
+
+fn record_tool_call(
+    ctx: &mut ToolExecContext,
+    tc: &ToolCallRequest,
+    success: bool,
+    duration_ms: u64,
+    result_content: String,
+    url_meta: Option<String>,
+    metadata: Option<serde_json::Value>,
+) {
+    ctx.tool_calls_executed.push(ToolCallRecord {
+        name: tc.name.clone(),
+        arguments: tool_arguments_preview(tc),
+        success,
+        duration_ms,
+        result_content,
+        url_meta,
+        metadata,
+    });
+}
+
+fn permission_prompt_content_preview(arguments: &serde_json::Value) -> Option<String> {
+    arguments
+        .get("command")
+        .or_else(|| arguments.get("path"))
+        .or_else(|| arguments.get("url"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+fn permission_action_description(tool_name: &str, content_preview: Option<&str>) -> String {
+    if let Some(preview) = content_preview {
+        format!("{tool_name} wants to execute: {preview}")
+    } else {
+        format!("{tool_name} wants to execute")
+    }
 }
 
 /// Block until the user answers an `AskUser` question, then update the
@@ -429,18 +456,16 @@ async fn intercept_ask_user(
 
     // Emit an updated ToolResult event so the GUI can refresh the tool card
     // with the real answer.
-    if let Some(tx) = progress {
-        let _ = tx.send(TurnEvent::ToolResult {
-            name: tc.name.clone(),
-            success: true,
-            duration_ms: total_ms,
-            input_preview: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-            result_preview: answer_content.clone(),
-            agent_name: config.agent_name.clone(),
-            url_meta: None,
-            metadata: None,
-        });
-    }
+    emit_tool_result(
+        progress,
+        tc,
+        config,
+        true,
+        total_ms,
+        answer_content.clone(),
+        None,
+        None,
+    );
 
     Some(answer_content)
 }
@@ -517,6 +542,7 @@ async fn execute_tool_call(
     container: &ServiceContainer,
     tc: &ToolCallRequest,
     session_id: &SessionId,
+    working_dir: Option<&str>,
     progress: Option<&TurnEventSender>,
     cancel: Option<&CancellationToken>,
 ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
@@ -602,6 +628,7 @@ async fn execute_tool_call(
         name: tool_name,
         arguments: tc.arguments.clone(),
         session_id: session_id.clone(),
+        working_dir: working_dir.map(ToOwned::to_owned),
         command_runner: Some(Arc::clone(&container.runtime_manager) as Arc<dyn CommandRunner>),
     };
 
@@ -780,5 +807,30 @@ mod tests {
         assert_eq!(stripped_json["title"], content["title"]);
         assert_eq!(stripped_json["text"], content["text"]);
         assert!(stripped_json.get("results").is_none());
+    }
+
+    #[test]
+    fn test_permission_prompt_preview_prefers_command_path_then_url() {
+        assert_eq!(
+            permission_prompt_content_preview(&serde_json::json!({
+                "command": "cargo test",
+                "path": "src/lib.rs",
+                "url": "https://example.com"
+            })),
+            Some("cargo test".to_string())
+        );
+        assert_eq!(
+            permission_prompt_content_preview(&serde_json::json!({
+                "path": "src/lib.rs",
+                "url": "https://example.com"
+            })),
+            Some("src/lib.rs".to_string())
+        );
+        assert_eq!(
+            permission_prompt_content_preview(&serde_json::json!({
+                "url": "https://example.com"
+            })),
+            Some("https://example.com".to_string())
+        );
     }
 }
