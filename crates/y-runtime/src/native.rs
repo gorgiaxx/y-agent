@@ -11,20 +11,40 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{Child, ChildStdin};
+use tokio::sync::{Mutex, Notify};
 use tracing::instrument;
 
 use y_core::runtime::{
-    ExecutionRequest, ExecutionResult, ProcessHandle, ProcessStatus, ResourceUsage, RuntimeAdapter,
-    RuntimeBackend, RuntimeError, RuntimeHealth,
+    BackgroundProcessInfo, BackgroundProcessSnapshot, ExecutionRequest, ExecutionResult,
+    ProcessHandle, ProcessStatus, ResourceUsage, RuntimeAdapter, RuntimeBackend, RuntimeError,
+    RuntimeHealth,
 };
+use y_core::types::SessionId;
 
 use crate::audit::{AuditOutcome, AuditTrail};
 use crate::config::RuntimeConfig;
+
+const BACKGROUND_OUTPUT_BUFFER_LIMIT: usize = 1024 * 1024;
+
+type SharedOutputBuffer = Arc<Mutex<Vec<u8>>>;
+
+struct ManagedNativeProcess {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    stdout: SharedOutputBuffer,
+    stderr: SharedOutputBuffer,
+    output_notify: Arc<Notify>,
+    command: String,
+    working_dir: Option<String>,
+    owner_session_id: Option<SessionId>,
+    started_at: Instant,
+    status: ProcessStatus,
+}
 
 /// Native runtime backend using `tokio::process::Command`.
 ///
@@ -35,7 +55,7 @@ pub struct NativeRuntime {
     config: RuntimeConfig,
     audit_trail: Option<Arc<AuditTrail>>,
     /// Spawned long-running processes, keyed by handle ID.
-    spawned: Arc<Mutex<HashMap<String, tokio::process::Child>>>,
+    spawned: Arc<Mutex<HashMap<String, ManagedNativeProcess>>>,
 }
 
 impl NativeRuntime {
@@ -204,6 +224,380 @@ impl NativeRuntime {
                 .await;
         }
     }
+
+    fn command_display(request: &ExecutionRequest) -> String {
+        std::iter::once(request.command.as_str())
+            .chain(request.args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn append_capped(buffer: &mut Vec<u8>, chunk: &[u8]) {
+        if chunk.len() >= BACKGROUND_OUTPUT_BUFFER_LIMIT {
+            buffer.clear();
+            buffer.extend_from_slice(&chunk[chunk.len() - BACKGROUND_OUTPUT_BUFFER_LIMIT..]);
+            return;
+        }
+
+        let overflow = buffer
+            .len()
+            .saturating_add(chunk.len())
+            .saturating_sub(BACKGROUND_OUTPUT_BUFFER_LIMIT);
+        if overflow > 0 {
+            buffer.drain(0..overflow);
+        }
+        buffer.extend_from_slice(chunk);
+    }
+
+    fn drain_limited(buffer: &mut Vec<u8>, max_output_bytes: usize) -> Vec<u8> {
+        let drain_len = buffer.len().min(max_output_bytes);
+        buffer.drain(0..drain_len).collect()
+    }
+
+    fn spawn_output_reader<R>(mut reader: R, buffer: SharedOutputBuffer, notify: Arc<Notify>)
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+    {
+        tokio::spawn(async move {
+            let mut chunk = [0_u8; 8192];
+            loop {
+                match reader.read(&mut chunk).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        {
+                            let mut guard = buffer.lock().await;
+                            Self::append_capped(&mut guard, &chunk[..n]);
+                        }
+                        notify.notify_waiters();
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "background process output reader failed");
+                        break;
+                    }
+                }
+            }
+            notify.notify_waiters();
+        });
+    }
+
+    fn refresh_entry_status(entry: &mut ManagedNativeProcess) -> ProcessStatus {
+        if !matches!(entry.status, ProcessStatus::Running) {
+            return entry.status.clone();
+        }
+
+        match entry.child.try_wait() {
+            Ok(Some(status)) => {
+                let exit_code = status.code().unwrap_or(-1);
+                entry.status = ProcessStatus::Completed { exit_code };
+            }
+            Ok(None) => {}
+            Err(error) => {
+                entry.status = ProcessStatus::Failed {
+                    error: error.to_string(),
+                };
+            }
+        }
+
+        entry.status.clone()
+    }
+
+    async fn output_available(entry: &ManagedNativeProcess) -> bool {
+        !entry.stdout.lock().await.is_empty() || !entry.stderr.lock().await.is_empty()
+    }
+
+    fn ensure_process_owner(
+        entry: &ManagedNativeProcess,
+        process_id: &str,
+        owner_session_id: Option<&SessionId>,
+    ) -> Result<(), RuntimeError> {
+        let Some(owner_session_id) = owner_session_id else {
+            return Ok(());
+        };
+        if entry.owner_session_id.as_ref() == Some(owner_session_id) {
+            return Ok(());
+        }
+        Err(RuntimeError::BackgroundProcessAccessDenied {
+            process_id: process_id.to_string(),
+            session_id: owner_session_id.to_string(),
+        })
+    }
+
+    async fn read_process_inner(
+        &self,
+        owner_session_id: Option<&SessionId>,
+        process_id: &str,
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        let wait_for_output = {
+            let mut spawned = self.spawned.lock().await;
+            let entry = spawned
+                .get_mut(process_id)
+                .ok_or_else(|| RuntimeError::Other {
+                    message: format!("no spawned process with id {process_id}"),
+                })?;
+            Self::ensure_process_owner(entry, process_id, owner_session_id)?;
+            let status = Self::refresh_entry_status(entry);
+            status == ProcessStatus::Running && !Self::output_available(entry).await
+        };
+
+        if wait_for_output && yield_time > Duration::ZERO {
+            let notify = {
+                let spawned = self.spawned.lock().await;
+                spawned
+                    .get(process_id)
+                    .map(|entry| entry.output_notify.clone())
+            };
+            if let Some(notify) = notify {
+                let _ = tokio::time::timeout(yield_time, notify.notified()).await;
+            }
+        }
+        if yield_time > Duration::ZERO {
+            tokio::time::sleep(Duration::from_millis(10).min(yield_time)).await;
+        }
+
+        let (snapshot, remove_process) = {
+            let mut spawned = self.spawned.lock().await;
+            let entry = spawned
+                .get_mut(process_id)
+                .ok_or_else(|| RuntimeError::Other {
+                    message: format!("no spawned process with id {process_id}"),
+                })?;
+            Self::ensure_process_owner(entry, process_id, owner_session_id)?;
+            let status = Self::refresh_entry_status(entry);
+            let stdout = {
+                let mut guard = entry.stdout.lock().await;
+                Self::drain_limited(&mut guard, max_output_bytes)
+            };
+            let stderr = {
+                let mut guard = entry.stderr.lock().await;
+                Self::drain_limited(&mut guard, max_output_bytes)
+            };
+            let snapshot = BackgroundProcessSnapshot {
+                handle: ProcessHandle {
+                    id: process_id.to_string(),
+                    backend: RuntimeBackend::Native,
+                },
+                status: status.clone(),
+                owner_session_id: entry.owner_session_id.clone(),
+                stdout,
+                stderr,
+                duration: entry.started_at.elapsed(),
+            };
+            (snapshot, status != ProcessStatus::Running)
+        };
+
+        if remove_process {
+            self.spawned.lock().await.remove(process_id);
+        }
+
+        Ok(snapshot)
+    }
+
+    /// Drain incremental output for a session-owned managed background process.
+    pub async fn read_process_for_session(
+        &self,
+        owner_session_id: &SessionId,
+        process_id: &str,
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        self.read_process_inner(
+            Some(owner_session_id),
+            process_id,
+            yield_time,
+            max_output_bytes,
+        )
+        .await
+    }
+
+    async fn write_process_inner(
+        &self,
+        owner_session_id: Option<&SessionId>,
+        process_id: &str,
+        input: &[u8],
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        {
+            let mut spawned = self.spawned.lock().await;
+            let entry = spawned
+                .get_mut(process_id)
+                .ok_or_else(|| RuntimeError::Other {
+                    message: format!("no spawned process with id {process_id}"),
+                })?;
+            Self::ensure_process_owner(entry, process_id, owner_session_id)?;
+            if Self::refresh_entry_status(entry) != ProcessStatus::Running {
+                return Err(RuntimeError::Other {
+                    message: format!("process {process_id} is not running"),
+                });
+            }
+            let stdin = entry.stdin.as_mut().ok_or_else(|| RuntimeError::Other {
+                message: format!("stdin is closed for process {process_id}"),
+            })?;
+            stdin
+                .write_all(input)
+                .await
+                .map_err(|error| RuntimeError::Other {
+                    message: format!("failed to write stdin for process {process_id}: {error}"),
+                })?;
+            stdin.flush().await.map_err(|error| RuntimeError::Other {
+                message: format!("failed to flush stdin for process {process_id}: {error}"),
+            })?;
+        }
+
+        self.read_process_inner(owner_session_id, process_id, yield_time, max_output_bytes)
+            .await
+    }
+
+    /// Write stdin to a session-owned managed process.
+    pub async fn write_process_for_session(
+        &self,
+        owner_session_id: &SessionId,
+        process_id: &str,
+        input: &[u8],
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        self.write_process_inner(
+            Some(owner_session_id),
+            process_id,
+            input,
+            yield_time,
+            max_output_bytes,
+        )
+        .await
+    }
+
+    async fn kill_process_inner(
+        &self,
+        owner_session_id: Option<&SessionId>,
+        process_id: &str,
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        let mut entry = {
+            let mut spawned = self.spawned.lock().await;
+            let entry = spawned.get(process_id).ok_or_else(|| RuntimeError::Other {
+                message: format!("no spawned process with id {process_id}"),
+            })?;
+            Self::ensure_process_owner(entry, process_id, owner_session_id)?;
+            spawned
+                .remove(process_id)
+                .ok_or_else(|| RuntimeError::Other {
+                    message: format!("no spawned process with id {process_id}"),
+                })?
+        };
+
+        let status = match entry.child.try_wait() {
+            Ok(Some(status)) => ProcessStatus::Completed {
+                exit_code: status.code().unwrap_or(-1),
+            },
+            Ok(None) => {
+                entry
+                    .child
+                    .kill()
+                    .await
+                    .map_err(|error| RuntimeError::Other {
+                        message: format!("failed to kill process {process_id}: {error}"),
+                    })?;
+                ProcessStatus::Completed { exit_code: -1 }
+            }
+            Err(error) => ProcessStatus::Failed {
+                error: error.to_string(),
+            },
+        };
+
+        if yield_time > Duration::ZERO && !Self::output_available(&entry).await {
+            let _ = tokio::time::timeout(yield_time, entry.output_notify.notified()).await;
+        }
+        if yield_time > Duration::ZERO {
+            tokio::time::sleep(Duration::from_millis(10).min(yield_time)).await;
+        }
+
+        let stdout = {
+            let mut guard = entry.stdout.lock().await;
+            Self::drain_limited(&mut guard, max_output_bytes)
+        };
+        let stderr = {
+            let mut guard = entry.stderr.lock().await;
+            Self::drain_limited(&mut guard, max_output_bytes)
+        };
+
+        Ok(BackgroundProcessSnapshot {
+            handle: ProcessHandle {
+                id: process_id.to_string(),
+                backend: RuntimeBackend::Native,
+            },
+            status,
+            owner_session_id: entry.owner_session_id.clone(),
+            stdout,
+            stderr,
+            duration: entry.started_at.elapsed(),
+        })
+    }
+
+    /// Terminate a session-owned managed process.
+    pub async fn kill_process_for_session(
+        &self,
+        owner_session_id: &SessionId,
+        process_id: &str,
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        self.kill_process_inner(
+            Some(owner_session_id),
+            process_id,
+            yield_time,
+            max_output_bytes,
+        )
+        .await
+    }
+
+    async fn list_processes_inner(
+        &self,
+        owner_session_id: Option<&SessionId>,
+    ) -> Vec<BackgroundProcessInfo> {
+        let mut completed = Vec::new();
+        let mut results = Vec::new();
+        {
+            let mut spawned = self.spawned.lock().await;
+            for (id, entry) in spawned.iter_mut() {
+                if let Some(owner_session_id) = owner_session_id {
+                    if entry.owner_session_id.as_ref() != Some(owner_session_id) {
+                        continue;
+                    }
+                }
+                let status = Self::refresh_entry_status(entry);
+                if status != ProcessStatus::Running {
+                    completed.push(id.clone());
+                }
+                results.push(BackgroundProcessInfo {
+                    handle: ProcessHandle {
+                        id: id.clone(),
+                        backend: RuntimeBackend::Native,
+                    },
+                    command: entry.command.clone(),
+                    working_dir: entry.working_dir.clone(),
+                    owner_session_id: entry.owner_session_id.clone(),
+                    status,
+                    duration: entry.started_at.elapsed(),
+                });
+            }
+            for id in &completed {
+                spawned.remove(id);
+            }
+        }
+        results
+    }
+
+    /// List managed background processes owned by a session.
+    pub async fn list_processes_for_session(
+        &self,
+        owner_session_id: &SessionId,
+    ) -> Vec<BackgroundProcessInfo> {
+        self.list_processes_inner(Some(owner_session_id)).await
+    }
 }
 
 #[async_trait]
@@ -319,9 +713,9 @@ impl RuntimeAdapter for NativeRuntime {
     async fn cleanup(&self) -> Result<(), RuntimeError> {
         // Kill any remaining spawned processes.
         let mut spawned = self.spawned.lock().await;
-        for (id, mut child) in spawned.drain() {
+        for (id, mut entry) in spawned.drain() {
             tracing::debug!(process_id = %id, "cleaning up spawned process");
-            let _ = child.kill().await;
+            let _ = entry.child.kill().await;
         }
         Ok(())
     }
@@ -335,9 +729,9 @@ impl RuntimeAdapter for NativeRuntime {
         let mut cmd = Self::build_command(&request);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
-        cmd.stdin(std::process::Stdio::null());
+        cmd.stdin(std::process::Stdio::piped());
 
-        let child = cmd.spawn().map_err(|e| RuntimeError::Other {
+        let mut child = cmd.spawn().map_err(|e| RuntimeError::Other {
             message: format!("failed to spawn process: {e}"),
         })?;
 
@@ -347,15 +741,47 @@ impl RuntimeAdapter for NativeRuntime {
             backend: RuntimeBackend::Native,
         };
 
-        self.spawned.lock().await.insert(id, child);
+        let stdout = Arc::new(Mutex::new(Vec::new()));
+        let stderr = Arc::new(Mutex::new(Vec::new()));
+        let output_notify = Arc::new(Notify::new());
+
+        if let Some(stdout_reader) = child.stdout.take() {
+            Self::spawn_output_reader(
+                stdout_reader,
+                Arc::clone(&stdout),
+                Arc::clone(&output_notify),
+            );
+        }
+        if let Some(stderr_reader) = child.stderr.take() {
+            Self::spawn_output_reader(
+                stderr_reader,
+                Arc::clone(&stderr),
+                Arc::clone(&output_notify),
+            );
+        }
+        let stdin = child.stdin.take();
+
+        let entry = ManagedNativeProcess {
+            child,
+            stdin,
+            stdout,
+            stderr,
+            output_notify,
+            command: Self::command_display(&request),
+            working_dir: request.working_dir.clone(),
+            owner_session_id: request.owner_session_id.clone(),
+            started_at: Instant::now(),
+            status: ProcessStatus::Running,
+        };
+
+        self.spawned.lock().await.insert(id, entry);
 
         Ok(handle)
     }
 
     async fn kill(&self, handle: &ProcessHandle) -> Result<(), RuntimeError> {
-        let mut spawned = self.spawned.lock().await;
-        if let Some(mut child) = spawned.remove(&handle.id) {
-            child.kill().await.map_err(|e| RuntimeError::Other {
+        if let Some(mut entry) = self.spawned.lock().await.remove(&handle.id) {
+            entry.child.kill().await.map_err(|e| RuntimeError::Other {
                 message: format!("failed to kill process {}: {e}", handle.id),
             })?;
             Ok(())
@@ -368,19 +794,12 @@ impl RuntimeAdapter for NativeRuntime {
 
     async fn status(&self, handle: &ProcessHandle) -> Result<ProcessStatus, RuntimeError> {
         let mut spawned = self.spawned.lock().await;
-        if let Some(child) = spawned.get_mut(&handle.id) {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let exit_code = status.code().unwrap_or(-1);
-                    // Process finished — remove from map.
-                    spawned.remove(&handle.id);
-                    Ok(ProcessStatus::Completed { exit_code })
-                }
-                Ok(None) => Ok(ProcessStatus::Running),
-                Err(e) => Ok(ProcessStatus::Failed {
-                    error: format!("{e}"),
-                }),
+        if let Some(entry) = spawned.get_mut(&handle.id) {
+            let status = Self::refresh_entry_status(entry);
+            if status != ProcessStatus::Running {
+                spawned.remove(&handle.id);
             }
+            Ok(status)
         } else {
             Ok(ProcessStatus::Unknown)
         }
@@ -416,6 +835,7 @@ mod tests {
             working_dir: None,
             env: HashMap::new(),
             stdin: None,
+            owner_session_id: None,
             capabilities: RuntimeCapability::default(),
             image: None,
         }
@@ -428,6 +848,7 @@ mod tests {
             working_dir: None,
             env: HashMap::new(),
             stdin: None,
+            owner_session_id: None,
             capabilities: RuntimeCapability {
                 container: ContainerCapability {
                     resources: ResourceLimits {
@@ -561,6 +982,149 @@ mod tests {
         // Second kill should fail (already removed).
         let result = rt.kill(&handle).await;
         assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_native_spawn_poll_and_kill_managed_process() {
+        let rt = make_runtime();
+        let owner_session_id = SessionId::from_string("session-a");
+        let mut req = default_request("sh", &["-c", "printf ready; sleep 60"]);
+        req.owner_session_id = Some(owner_session_id.clone());
+
+        let handle = rt.spawn(req).await.unwrap();
+        let snapshot = rt
+            .read_process_for_session(
+                &owner_session_id,
+                &handle.id,
+                Duration::from_secs(1),
+                10_000,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.handle.id, handle.id);
+        assert_eq!(snapshot.status, ProcessStatus::Running);
+        assert_eq!(String::from_utf8_lossy(&snapshot.stdout), "ready");
+
+        let killed = rt
+            .kill_process_for_session(
+                &owner_session_id,
+                &handle.id,
+                Duration::from_millis(100),
+                10_000,
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            killed.status,
+            ProcessStatus::Completed { .. } | ProcessStatus::Failed { .. }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_native_background_processes_are_session_scoped() {
+        let rt = make_runtime();
+        let session_a = SessionId::from_string("session-a");
+        let session_b = SessionId::from_string("session-b");
+        let mut req_a = default_request("sh", &["-c", "printf a; sleep 60"]);
+        let mut req_b = default_request("sh", &["-c", "printf b; sleep 60"]);
+        req_a.owner_session_id = Some(session_a.clone());
+        req_b.owner_session_id = Some(session_b.clone());
+
+        let handle_a = rt.spawn(req_a).await.unwrap();
+        let handle_b = rt.spawn(req_b).await.unwrap();
+
+        let session_a_processes = rt.list_processes_for_session(&session_a).await;
+        assert_eq!(
+            session_a_processes
+                .iter()
+                .map(|process| process.handle.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![handle_a.id.as_str()]
+        );
+
+        let denied = rt
+            .read_process_for_session(&session_b, &handle_a.id, Duration::ZERO, 10_000)
+            .await;
+        assert!(matches!(
+            denied,
+            Err(RuntimeError::BackgroundProcessAccessDenied { .. })
+        ));
+
+        rt.kill_process_for_session(&session_a, &handle_a.id, Duration::ZERO, 10_000)
+            .await
+            .unwrap();
+        rt.kill_process_for_session(&session_b, &handle_b.id, Duration::ZERO, 10_000)
+            .await
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_session_list_does_not_prune_other_session_completed_process() {
+        let rt = make_runtime();
+        let session_a = SessionId::from_string("session-a");
+        let session_b = SessionId::from_string("session-b");
+        let mut req_a = default_request("sh", &["-c", "sleep 60"]);
+        let mut req_b = default_request("sh", &["-c", "printf b"]);
+        req_a.owner_session_id = Some(session_a.clone());
+        req_b.owner_session_id = Some(session_b.clone());
+
+        let handle_a = rt.spawn(req_a).await.unwrap();
+        let handle_b = rt.spawn(req_b).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let session_a_processes = rt.list_processes_for_session(&session_a).await;
+        assert_eq!(
+            session_a_processes
+                .iter()
+                .map(|process| process.handle.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![handle_a.id.as_str()]
+        );
+
+        let session_b_snapshot = rt
+            .read_process_for_session(&session_b, &handle_b.id, Duration::from_secs(1), 10_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            session_b_snapshot.status,
+            ProcessStatus::Completed { exit_code: 0 }
+        );
+        assert_eq!(String::from_utf8_lossy(&session_b_snapshot.stdout), "b");
+
+        rt.kill_process_for_session(&session_a, &handle_a.id, Duration::ZERO, 10_000)
+            .await
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_native_completed_process_is_removed_after_final_poll() {
+        let rt = make_runtime();
+        let owner_session_id = SessionId::from_string("session-a");
+        let mut req = default_request("sh", &["-c", "printf done"]);
+        req.owner_session_id = Some(owner_session_id.clone());
+
+        let handle = rt.spawn(req).await.unwrap();
+        let snapshot = rt
+            .read_process_for_session(
+                &owner_session_id,
+                &handle.id,
+                Duration::from_secs(1),
+                10_000,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.status, ProcessStatus::Completed { exit_code: 0 });
+        assert_eq!(String::from_utf8_lossy(&snapshot.stdout), "done");
+
+        let status = rt.status(&handle).await.unwrap();
+        assert_eq!(status, ProcessStatus::Unknown);
     }
 
     // T-R1-03: status reports Running then Completed correctly.

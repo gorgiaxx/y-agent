@@ -255,6 +255,7 @@ mod tests {
             working_dir: None,
             env: HashMap::new(),
             stdin: None,
+            owner_session_id: None,
             capabilities: RuntimeCapability {
                 network: net,
                 ..Default::default()

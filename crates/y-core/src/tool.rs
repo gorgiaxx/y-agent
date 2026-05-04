@@ -101,6 +101,10 @@ pub struct ToolInput {
     pub arguments: serde_json::Value,
     /// Session context for the execution.
     pub session_id: SessionId,
+    /// Default working directory for tools that execute local processes.
+    ///
+    /// Tool arguments may still override this value for a single call.
+    pub working_dir: Option<String>,
     /// Runtime command runner, injected by the executor.
     /// `None` for tools that don't execute shell commands (`FileRead`, etc.).
     /// When `Some`, tools like `ShellExec` delegate execution through this
@@ -115,6 +119,7 @@ impl std::fmt::Debug for ToolInput {
             .field("name", &self.name)
             .field("arguments", &self.arguments)
             .field("session_id", &self.session_id)
+            .field("working_dir", &self.working_dir)
             .field(
                 "command_runner",
                 &self.command_runner.as_ref().map(|_| ".."),

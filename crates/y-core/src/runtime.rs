@@ -13,6 +13,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::types::SessionId;
+
 // ---------------------------------------------------------------------------
 // Capability model
 // ---------------------------------------------------------------------------
@@ -141,6 +143,8 @@ pub struct ExecutionRequest {
     pub env: HashMap<String, String>,
     /// Standard input to pipe to the process.
     pub stdin: Option<Vec<u8>>,
+    /// Session that owns a spawned background process.
+    pub owner_session_id: Option<SessionId>,
     /// Capability requirements (determines isolation level).
     pub capabilities: RuntimeCapability,
     /// Preferred container image (for Docker runtime).
@@ -205,6 +209,40 @@ pub enum ProcessStatus {
     Unknown,
 }
 
+/// Incremental output snapshot for a runtime-managed background process.
+#[derive(Debug, Clone)]
+pub struct BackgroundProcessSnapshot {
+    /// Handle identifying the managed process.
+    pub handle: ProcessHandle,
+    /// Current process status after collecting output.
+    pub status: ProcessStatus,
+    /// Session that owns this process.
+    pub owner_session_id: Option<SessionId>,
+    /// Stdout bytes captured since the previous snapshot.
+    pub stdout: Vec<u8>,
+    /// Stderr bytes captured since the previous snapshot.
+    pub stderr: Vec<u8>,
+    /// Elapsed process lifetime when the snapshot was created.
+    pub duration: Duration,
+}
+
+/// Summary of an active runtime-managed background process.
+#[derive(Debug, Clone)]
+pub struct BackgroundProcessInfo {
+    /// Handle identifying the managed process.
+    pub handle: ProcessHandle,
+    /// Original command string or executable display name.
+    pub command: String,
+    /// Working directory used for the process.
+    pub working_dir: Option<String>,
+    /// Session that owns this process.
+    pub owner_session_id: Option<SessionId>,
+    /// Current process status.
+    pub status: ProcessStatus,
+    /// Elapsed process lifetime when listed.
+    pub duration: Duration,
+}
+
 // ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
@@ -256,6 +294,12 @@ pub enum RuntimeError {
 
     #[error("path traversal attempt on: {path}")]
     PathTraversalAttempt { path: String },
+
+    #[error("background process access denied for session {session_id}: {process_id}")]
+    BackgroundProcessAccessDenied {
+        process_id: String,
+        session_id: String,
+    },
 
     #[error("{message}")]
     Other { message: String },
@@ -325,6 +369,9 @@ pub trait RuntimeAdapter: Send + Sync {
 ///
 /// `RuntimeManager` implements this trait, routing commands through the
 /// configured backend (Native, Docker, or SSH) based on `RuntimeConfig`.
+/// Background process lifecycle methods are scoped to the owner session so
+/// one session cannot list, poll, write to, or terminate another session's
+/// process.
 #[async_trait]
 pub trait CommandRunner: Send + Sync {
     /// Execute a shell command string and return the result.
@@ -337,4 +384,67 @@ pub trait CommandRunner: Send + Sync {
         working_dir: Option<&str>,
         timeout: Duration,
     ) -> Result<ExecutionResult, RuntimeError>;
+
+    /// Spawn a shell command as a runtime-managed background process.
+    async fn spawn_command(
+        &self,
+        _owner_session_id: &SessionId,
+        _command: &str,
+        _working_dir: Option<&str>,
+        _timeout: Duration,
+    ) -> Result<ProcessHandle, RuntimeError> {
+        Err(RuntimeError::Other {
+            message: "background command spawn not supported by this runner".into(),
+        })
+    }
+
+    /// Drain output captured from a background process.
+    async fn read_process(
+        &self,
+        _owner_session_id: &SessionId,
+        _process_id: &str,
+        _yield_time: Duration,
+        _max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        Err(RuntimeError::Other {
+            message: "background process polling not supported by this runner".into(),
+        })
+    }
+
+    /// Write bytes to a background process stdin, then drain new output.
+    async fn write_process(
+        &self,
+        _owner_session_id: &SessionId,
+        _process_id: &str,
+        _input: &[u8],
+        _yield_time: Duration,
+        _max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        Err(RuntimeError::Other {
+            message: "background process stdin not supported by this runner".into(),
+        })
+    }
+
+    /// Terminate a background process and drain final output.
+    async fn kill_process(
+        &self,
+        _owner_session_id: &SessionId,
+        _process_id: &str,
+        _yield_time: Duration,
+        _max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        Err(RuntimeError::Other {
+            message: "background process termination not supported by this runner".into(),
+        })
+    }
+
+    /// List active background processes known to this runner.
+    async fn list_processes(
+        &self,
+        _owner_session_id: &SessionId,
+    ) -> Result<Vec<BackgroundProcessInfo>, RuntimeError> {
+        Err(RuntimeError::Other {
+            message: "background process listing not supported by this runner".into(),
+        })
+    }
 }

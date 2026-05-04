@@ -1072,6 +1072,7 @@ mod tests {
             name: ToolName::from_string(name),
             arguments: args,
             session_id: SessionId::new(),
+            working_dir: None,
             command_runner: None,
         }
     }

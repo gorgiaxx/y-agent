@@ -12,9 +12,11 @@ use tokio::sync::Semaphore;
 use tracing::instrument;
 
 use y_core::runtime::{
-    CommandRunner, ExecutionRequest, ExecutionResult, ProcessCapability, RuntimeAdapter,
+    BackgroundProcessInfo, BackgroundProcessSnapshot, CommandRunner, ExecutionRequest,
+    ExecutionResult, ProcessCapability, ProcessHandle, ProcessStatus, RuntimeAdapter,
     RuntimeBackend, RuntimeCapability, RuntimeError, RuntimeHealth,
 };
+use y_core::types::SessionId;
 
 use crate::audit::AuditTrail;
 use crate::capability::CapabilityChecker;
@@ -203,6 +205,53 @@ impl RuntimeManager {
             resource: messages.join("; "),
         })
     }
+
+    fn shell_request(
+        &self,
+        command: &str,
+        working_dir: Option<&str>,
+        timeout: Duration,
+        background: bool,
+        owner_session_id: Option<SessionId>,
+    ) -> ExecutionRequest {
+        use std::collections::HashMap;
+
+        let image = {
+            let cfg = self.read_config();
+            if cfg.default_backend == RuntimeBackend::Docker {
+                cfg.docker.default_image.clone()
+            } else {
+                None
+            }
+        };
+
+        let (shell, shell_flag) = crate::platform::shell_command();
+
+        ExecutionRequest {
+            command: shell.into(),
+            args: vec![shell_flag.into(), command.into()],
+            working_dir: working_dir.map(String::from),
+            env: HashMap::new(),
+            stdin: None,
+            owner_session_id,
+            capabilities: RuntimeCapability {
+                process: ProcessCapability {
+                    shell: true,
+                    background,
+                    ..Default::default()
+                },
+                container: y_core::runtime::ContainerCapability {
+                    resources: y_core::runtime::ResourceLimits {
+                        timeout: Some(timeout),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            image,
+        }
+    }
 }
 
 #[async_trait]
@@ -278,6 +327,37 @@ impl RuntimeAdapter for RuntimeManager {
         result
     }
 
+    #[instrument(skip(self, request), fields(command = %request.command))]
+    async fn spawn(&self, request: ExecutionRequest) -> Result<ProcessHandle, RuntimeError> {
+        let config = self.read_config().clone();
+        let checker = CapabilityChecker::new(&config);
+        checker
+            .validate(&request)
+            .map_err(|e| -> RuntimeError { e.into() })?;
+
+        self.read_security_policy().enforce(&request)?;
+        self.check_resource_quota().await?;
+
+        let backend = self.select_backend(&request);
+        tracing::info!(?backend, "selected runtime backend for background process");
+
+        let adapter = self.get_adapter(&backend);
+        let health = adapter.health_check().await?;
+        if !health.available {
+            return Err(RuntimeError::RuntimeNotAvailable { backend });
+        }
+
+        adapter.spawn(request).await
+    }
+
+    async fn kill(&self, handle: &ProcessHandle) -> Result<(), RuntimeError> {
+        self.get_adapter(&handle.backend).kill(handle).await
+    }
+
+    async fn status(&self, handle: &ProcessHandle) -> Result<ProcessStatus, RuntimeError> {
+        self.get_adapter(&handle.backend).status(handle).await
+    }
+
     async fn health_check(&self) -> Result<RuntimeHealth, RuntimeError> {
         // Report overall health: available if any backend is available.
         let native_health = self.native.health_check().await?;
@@ -325,47 +405,81 @@ impl CommandRunner for RuntimeManager {
         working_dir: Option<&str>,
         timeout: Duration,
     ) -> Result<ExecutionResult, RuntimeError> {
-        use std::collections::HashMap;
-
-        // When the default backend is Docker, use the configured default image
-        // so that callers don't need to specify it per-request.
-        let image = {
-            let cfg = self.read_config();
-            if cfg.default_backend == RuntimeBackend::Docker {
-                cfg.docker.default_image.clone()
-            } else {
-                None
-            }
-        };
-
-        let (shell, shell_flag) = crate::platform::shell_command();
-
-        let request = ExecutionRequest {
-            command: shell.into(),
-            args: vec![shell_flag.into(), command.into()],
-            working_dir: working_dir.map(String::from),
-            env: HashMap::new(),
-            stdin: None,
-            capabilities: RuntimeCapability {
-                process: ProcessCapability {
-                    shell: true,
-                    ..Default::default()
-                },
-                container: y_core::runtime::ContainerCapability {
-                    resources: y_core::runtime::ResourceLimits {
-                        timeout: Some(timeout),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            image,
-        };
+        let request = self.shell_request(command, working_dir, timeout, false, None);
 
         // Delegate to RuntimeAdapter::execute which already handles
         // capability checks, security policy, concurrency, and backend selection.
         self.execute(request).await
+    }
+
+    async fn spawn_command(
+        &self,
+        owner_session_id: &SessionId,
+        command: &str,
+        working_dir: Option<&str>,
+        timeout: Duration,
+    ) -> Result<ProcessHandle, RuntimeError> {
+        let request = self.shell_request(
+            command,
+            working_dir,
+            timeout,
+            true,
+            Some(owner_session_id.clone()),
+        );
+        self.spawn(request).await
+    }
+
+    async fn read_process(
+        &self,
+        owner_session_id: &SessionId,
+        process_id: &str,
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        self.native
+            .read_process_for_session(owner_session_id, process_id, yield_time, max_output_bytes)
+            .await
+    }
+
+    async fn write_process(
+        &self,
+        owner_session_id: &SessionId,
+        process_id: &str,
+        input: &[u8],
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        self.native
+            .write_process_for_session(
+                owner_session_id,
+                process_id,
+                input,
+                yield_time,
+                max_output_bytes,
+            )
+            .await
+    }
+
+    async fn kill_process(
+        &self,
+        owner_session_id: &SessionId,
+        process_id: &str,
+        yield_time: Duration,
+        max_output_bytes: usize,
+    ) -> Result<BackgroundProcessSnapshot, RuntimeError> {
+        self.native
+            .kill_process_for_session(owner_session_id, process_id, yield_time, max_output_bytes)
+            .await
+    }
+
+    async fn list_processes(
+        &self,
+        owner_session_id: &SessionId,
+    ) -> Result<Vec<BackgroundProcessInfo>, RuntimeError> {
+        Ok(self
+            .native
+            .list_processes_for_session(owner_session_id)
+            .await)
     }
 }
 
@@ -387,6 +501,7 @@ mod tests {
             working_dir: None,
             env: HashMap::new(),
             stdin: None,
+            owner_session_id: None,
             capabilities: caps,
             image: image.map(std::string::ToString::to_string),
         }
