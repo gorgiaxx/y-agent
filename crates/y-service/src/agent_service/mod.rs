@@ -75,6 +75,8 @@ pub struct AgentExecutionConfig {
     pub provider_tags: Vec<String>,
     /// High-level provider request mode.
     pub request_mode: RequestMode,
+    /// Default working directory for runtime-backed process tools.
+    pub working_directory: Option<String>,
     /// Temperature override (None = use provider default).
     pub temperature: Option<f64>,
     /// Max tokens to generate.
@@ -277,6 +279,7 @@ pub(crate) struct ToolExecContext {
     pub(crate) last_input_tokens: u64,
     pub(crate) trace_id: Option<Uuid>,
     pub(crate) session_id: SessionId,
+    pub(crate) working_directory: Option<String>,
     pub(crate) working_history: Vec<Message>,
     pub(crate) accumulated_content: String,
     /// Per-iteration text content, stored separately for frontend interleaving.

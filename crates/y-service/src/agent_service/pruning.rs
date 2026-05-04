@@ -233,6 +233,7 @@ mod tests {
             last_input_tokens: 0,
             trace_id: None,
             session_id: SessionId("test-session".into()),
+            working_directory: None,
             working_history,
             accumulated_content: String::new(),
             iteration_texts: vec![],

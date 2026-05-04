@@ -148,6 +148,7 @@ impl BotService {
             preferred_models: vec![],
             provider_tags: vec![],
             request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: None,
             temperature: Some(0.7),
             max_tokens: None,
             thinking: None, // Phase 1: no thinking config override.

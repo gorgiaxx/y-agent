@@ -91,6 +91,7 @@ impl ChatService {
             preferred_models: input.preferred_models.clone(),
             provider_tags: input.provider_tags.clone(),
             request_mode: input.request_mode,
+            working_directory: input.working_directory.clone(),
             temperature: input.temperature,
             max_tokens: input.max_completion_tokens,
             thinking: input.thinking.clone(),
@@ -105,6 +106,111 @@ impl ChatService {
             prune_tool_history: input.prune_tool_history,
             response_format: None,
             image_generation_options: input.image_generation_options.clone(),
+        }
+    }
+
+    async fn resolve_tool_calling_mode(
+        container: &ServiceContainer,
+        input: &TurnInput<'_>,
+    ) -> ToolCallingMode {
+        let pool = container.provider_pool().await;
+        let metadata_list = pool.list_metadata();
+        if let Some(ref provider_id) = input.provider_id {
+            metadata_list
+                .iter()
+                .find(|metadata| metadata.id.to_string() == *provider_id)
+                .map_or(ToolCallingMode::default(), |metadata| {
+                    metadata.tool_calling_mode
+                })
+        } else {
+            metadata_list
+                .first()
+                .map_or(ToolCallingMode::default(), |metadata| {
+                    metadata.tool_calling_mode
+                })
+        }
+    }
+
+    async fn build_turn_tool_definitions(
+        container: &ServiceContainer,
+        input: &TurnInput<'_>,
+    ) -> Vec<serde_json::Value> {
+        if !input.toolcall_enabled || input.request_mode != RequestMode::TextChat {
+            return vec![];
+        }
+
+        let mut tool_defs = if input.trust_tier.is_none() && input.agent_allowed_tools.is_empty() {
+            Self::build_essential_tool_definitions(container).await
+        } else {
+            crate::agent_service::AgentService::build_filtered_tool_definitions(
+                container,
+                &input.agent_allowed_tools,
+            )
+            .await
+        };
+
+        Self::apply_mcp_mode_filter(
+            &mut tool_defs,
+            input.mcp_mode.as_deref(),
+            &input.mcp_servers,
+        );
+        tool_defs
+    }
+
+    async fn configure_mcp_prompt_flag(container: &ServiceContainer, input: &TurnInput<'_>) {
+        let mcp_mode = input.mcp_mode.as_deref().unwrap_or("auto");
+        let has_mcp =
+            if input.request_mode != RequestMode::ImageGeneration && mcp_mode != "disabled" {
+                container.mcp_manager.connected_count().await > 0
+            } else {
+                false
+            };
+        let mut pctx = container.prompt_context.write().await;
+        if has_mcp {
+            pctx.config_flags.insert("mcp.enabled".into(), true);
+        } else {
+            pctx.config_flags.remove("mcp.enabled");
+        }
+    }
+
+    async fn configure_plan_mode_prompt_flag(container: &ServiceContainer, input: &TurnInput<'_>) {
+        let plan_mode = input.plan_mode.as_deref().unwrap_or("fast");
+        tracing::info!(
+            plan_mode = %plan_mode,
+            raw_plan_mode = ?input.plan_mode,
+            "plan mode received from frontend"
+        );
+        match plan_mode {
+            "plan" => {
+                let mut pctx = container.prompt_context.write().await;
+                if input.request_mode == RequestMode::TextChat {
+                    pctx.config_flags.insert("plan_mode.active".into(), true);
+                } else {
+                    pctx.config_flags.remove("plan_mode.active");
+                }
+                tracing::info!("plan_mode.active flag SET in prompt context");
+            }
+            "auto" => {
+                let needs_plan = input.request_mode == RequestMode::TextChat
+                    && crate::plan_orchestrator::assess_complexity(
+                        container,
+                        input.user_input,
+                        input.provider_id.as_deref(),
+                    )
+                    .await;
+                if needs_plan {
+                    let mut pctx = container.prompt_context.write().await;
+                    pctx.config_flags.insert("plan_mode.active".into(), true);
+                    tracing::info!("plan_mode.active flag SET (auto: complex)");
+                } else {
+                    tracing::info!("plan_mode.active flag NOT set (auto: simple)");
+                }
+            }
+            _ => {
+                let mut pctx = container.prompt_context.write().await;
+                pctx.config_flags.remove("plan_mode.active");
+                tracing::info!("plan_mode.active flag CLEARED (fast mode)");
+            }
         }
     }
 
@@ -409,6 +515,9 @@ impl ChatService {
             provider_id,
             request_mode,
             session_created,
+            working_directory: agent_config
+                .as_ref()
+                .and_then(|config| config.working_directory.clone()),
             knowledge_collections,
             thinking,
             plan_mode,
@@ -562,6 +671,9 @@ impl ChatService {
             provider_id,
             request_mode,
             session_created: false,
+            working_directory: agent_config
+                .as_ref()
+                .and_then(|config| config.working_directory.clone()),
             knowledge_collections,
             thinking,
             plan_mode,
@@ -637,120 +749,22 @@ impl ChatService {
     ) -> Result<TurnResult, TurnError> {
         use crate::agent_service::AgentService;
 
-        // 1. Build tool definitions (all tools for root agent).
-        //
-        // Tool definitions are always built regardless of mode. In Native mode
-        // they are sent via the provider's API; in PromptBased mode the provider
-        // ignores them (they are injected into the prompt instead). The fallback
-        // path in agent_service handles both cases.
-        // Resolve tool_calling_mode from the provider that will serve this
-        // request. When the user selects a specific provider_id, use its mode;
-        // otherwise fall back to the first available provider's mode or the
-        // enum default (Native).
-        let tool_calling_mode = {
-            let pool = container.provider_pool().await;
-            let metadata_list = pool.list_metadata();
-            if let Some(ref pid) = input.provider_id {
-                metadata_list
-                    .iter()
-                    .find(|m| m.id.to_string() == *pid)
-                    .map_or(ToolCallingMode::default(), |m| m.tool_calling_mode)
-            } else {
-                metadata_list
-                    .first()
-                    .map_or(ToolCallingMode::default(), |m| m.tool_calling_mode)
-            }
-        };
-        let mut tool_defs = if input.toolcall_enabled && input.request_mode == RequestMode::TextChat
-        {
-            if input.trust_tier.is_none() && input.agent_allowed_tools.is_empty() {
-                Self::build_essential_tool_definitions(container).await
-            } else {
-                crate::agent_service::AgentService::build_filtered_tool_definitions(
-                    container,
-                    &input.agent_allowed_tools,
-                )
-                .await
-            }
-        } else {
-            vec![]
-        };
-
-        // 1a. Apply MCP mode filtering.
-        if input.request_mode == RequestMode::TextChat {
-            Self::apply_mcp_mode_filter(
-                &mut tool_defs,
-                input.mcp_mode.as_deref(),
-                &input.mcp_servers,
-            );
-        }
+        // 1. Build provider/tool execution settings for the root agent.
+        let tool_calling_mode = Self::resolve_tool_calling_mode(container, input).await;
+        let mut tool_defs = Self::build_turn_tool_definitions(container, input).await;
 
         // 1a'. Set mcp.enabled flag so the MCP hint prompt section is included.
         //
         // MCP tools live in the connection manager (not the tool registry),
         // so we check for connected MCP servers directly.
-        {
-            let mcp_mode = input.mcp_mode.as_deref().unwrap_or("auto");
-            let has_mcp =
-                if input.request_mode != RequestMode::ImageGeneration && mcp_mode != "disabled" {
-                    container.mcp_manager.connected_count().await > 0
-                } else {
-                    false
-                };
-            let mut pctx = container.prompt_context.write().await;
-            if has_mcp {
-                pctx.config_flags.insert("mcp.enabled".into(), true);
-            } else {
-                pctx.config_flags.remove("mcp.enabled");
-            }
-        }
+        Self::configure_mcp_prompt_flag(container, input).await;
 
         // 1b. Inject plan_mode.active config flag based on the user's mode selection.
         //
         // - "fast" (default/None): no plan mode prompts injected.
         // - "plan": always inject plan_mode_active prompt section.
         // - "auto": run a lightweight complexity classification, inject if complex.
-        {
-            let plan_mode = input.plan_mode.as_deref().unwrap_or("fast");
-            tracing::info!(
-                plan_mode = %plan_mode,
-                raw_plan_mode = ?input.plan_mode,
-                "plan mode received from frontend"
-            );
-            match plan_mode {
-                "plan" => {
-                    let mut pctx = container.prompt_context.write().await;
-                    if input.request_mode == RequestMode::TextChat {
-                        pctx.config_flags.insert("plan_mode.active".into(), true);
-                    } else {
-                        pctx.config_flags.remove("plan_mode.active");
-                    }
-                    tracing::info!("plan_mode.active flag SET in prompt context");
-                }
-                "auto" => {
-                    let needs_plan = input.request_mode == RequestMode::TextChat
-                        && crate::plan_orchestrator::assess_complexity(
-                            container,
-                            input.user_input,
-                            input.provider_id.as_deref(),
-                        )
-                        .await;
-                    if needs_plan {
-                        let mut pctx = container.prompt_context.write().await;
-                        pctx.config_flags.insert("plan_mode.active".into(), true);
-                        tracing::info!("plan_mode.active flag SET (auto: complex)");
-                    } else {
-                        tracing::info!("plan_mode.active flag NOT set (auto: simple)");
-                    }
-                }
-                _ => {
-                    // "fast" or unknown: ensure flag is cleared.
-                    let mut pctx = container.prompt_context.write().await;
-                    pctx.config_flags.remove("plan_mode.active");
-                    tracing::info!("plan_mode.active flag CLEARED (fast mode)");
-                }
-            }
-        }
+        Self::configure_plan_mode_prompt_flag(container, input).await;
 
         // 1c. Inject Plan tool schema when plan mode is active.
         if input.request_mode == RequestMode::TextChat {
@@ -1392,6 +1406,7 @@ mod tests {
             turn_number: 2,
             provider_id: None,
             request_mode: RequestMode::TextChat,
+            working_directory: None,
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,
@@ -1427,6 +1442,7 @@ mod tests {
             turn_number: 2,
             provider_id: None,
             request_mode: RequestMode::TextChat,
+            working_directory: Some("/repo/workspace".into()),
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,
@@ -1449,6 +1465,7 @@ mod tests {
         let config =
             ChatService::build_execution_config(&input, vec![], ToolCallingMode::default(), 8);
         assert_eq!(config.temperature, Some(1.0));
+        assert_eq!(config.working_directory.as_deref(), Some("/repo/workspace"));
     }
 
     // -----------------------------------------------------------------------

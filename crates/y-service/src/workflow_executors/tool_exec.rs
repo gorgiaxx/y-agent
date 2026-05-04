@@ -70,6 +70,7 @@ impl TaskExecutor for ToolExecutionExecutor {
             name: name.clone(),
             arguments,
             session_id: SessionId(String::new()),
+            working_dir: None,
             command_runner: None,
         };
 

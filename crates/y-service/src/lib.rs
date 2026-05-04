@@ -17,6 +17,7 @@
 
 pub mod agent_management;
 pub mod agent_service;
+pub mod background_tasks;
 pub mod bot;
 pub mod chat;
 pub mod chat_types;
@@ -54,6 +55,10 @@ pub use agent_service::{
     AgentExecutionConfig, AgentExecutionError, AgentExecutionResult, AgentService,
     ServiceAgentRunner,
 };
+pub use background_tasks::{
+    BackgroundTaskInfo, BackgroundTaskPollRequest, BackgroundTaskService, BackgroundTaskSnapshot,
+    BackgroundTaskWriteRequest,
+};
 pub use bot::{BotConfig, BotPersona, BotService, BotServiceError};
 pub use chat::{
     ChatService, PendingInteractions, PendingPermissions, PermissionPromptResponse,
@@ -79,7 +84,10 @@ pub use skill_evolution::{
     CapturedExperience, ExperienceCaptureSubscriber, SkillInjectionTracker,
     SkillUsageAuditSubscriber, UsageMetrics,
 };
-pub use skill_ingestion::{ImportDecision, ImportError, ImportResult, SkillIngestionService};
+pub use skill_ingestion::{
+    import_skill_from_path, ImportDecision, ImportError, ImportResult, PermissionsNeeded,
+    SkillImportOutcome, SkillIngestionService,
+};
 pub use skill_service::{SkillDetail, SkillInfo, SkillService};
 pub use system::{
     HealthReport, HttpProtocol, ProviderInfo, ProviderTestRequest, StatusReport, SystemService,

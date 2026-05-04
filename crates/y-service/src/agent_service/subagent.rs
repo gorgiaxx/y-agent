@@ -183,6 +183,7 @@ impl AgentRunner for ServiceAgentRunner {
             preferred_models: config.preferred_models.clone(),
             provider_tags: config.provider_tags.clone(),
             request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: workspace,
             temperature: config.temperature,
             max_tokens: config.max_tokens,
             thinking: None,

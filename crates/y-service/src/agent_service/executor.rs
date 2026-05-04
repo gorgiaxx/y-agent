@@ -115,6 +115,12 @@ pub(crate) async fn execute_inner(
         .session_id
         .clone()
         .unwrap_or_else(|| SessionId("agent".into()));
+    let working_directory = if let Some(path) = config.working_directory.clone() {
+        Some(path)
+    } else {
+        let prompt_context = container.prompt_context.read().await;
+        prompt_context.working_directory.clone()
+    };
 
     // Mutable state for the tool-call loop.
     let mut ctx = ToolExecContext {
@@ -128,6 +134,7 @@ pub(crate) async fn execute_inner(
         last_input_tokens: 0,
         trace_id,
         session_id,
+        working_directory,
         working_history,
         accumulated_content: String::new(),
         iteration_texts: Vec::new(),
@@ -452,6 +459,7 @@ mod tests {
             preferred_models: vec![],
             provider_tags: vec![],
             request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: None,
             temperature: None,
             max_tokens: None,
             thinking: None,

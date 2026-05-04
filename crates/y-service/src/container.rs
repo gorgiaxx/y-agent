@@ -41,7 +41,7 @@ use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 use crate::config::ServiceConfig;
 
 use crate::knowledge_service::KnowledgeService;
-use crate::skill_ingestion::SkillIngestionService;
+use crate::skill_ingestion::{import_skill_from_path, SkillImportOutcome, SkillIngestionService};
 
 use y_mcp::McpConnectionManager;
 
@@ -1053,6 +1053,22 @@ impl ServiceContainer {
         registry: Arc<RwLock<SkillRegistryImpl>>,
     ) -> SkillIngestionService {
         SkillIngestionService::new(Arc::clone(&self.agent_delegator), registry)
+    }
+
+    /// Import a skill from a source path using the service-layer workflow.
+    pub async fn import_skill_from_path(
+        &self,
+        store_path: &std::path::Path,
+        source_path: &std::path::Path,
+        sanitize: bool,
+    ) -> Result<SkillImportOutcome, String> {
+        import_skill_from_path(
+            Arc::clone(&self.agent_delegator),
+            store_path,
+            source_path,
+            sanitize,
+        )
+        .await
     }
 
     /// Two-phase initialisation: swap the agent runner from `SingleTurnRunner`

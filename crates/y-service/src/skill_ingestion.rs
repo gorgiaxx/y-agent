@@ -16,7 +16,10 @@ use y_core::skill::{
     SkillState, SkillVersion, SubDocumentRef,
 };
 use y_core::types::SkillId;
-use y_skills::{FilesystemSkillStore, FormatDetector, IngestionFormat, SkillRegistryImpl};
+use y_skills::{
+    FilesystemSkillStore, FormatDetector, IngestionFormat, ManifestParser, SkillConfig,
+    SkillRegistryImpl,
+};
 
 // ---------------------------------------------------------------------------
 // Import result
@@ -49,6 +52,43 @@ pub enum ImportDecision {
     Rejected,
     PartialAccept,
     Optimized,
+}
+
+/// Permissions a skill requests according to the security screening agent.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PermissionsNeeded {
+    #[serde(default)]
+    pub files_read: Vec<String>,
+    #[serde(default)]
+    pub files_write: Vec<String>,
+    #[serde(default)]
+    pub network: Vec<String>,
+    #[serde(default)]
+    pub commands: Vec<String>,
+}
+
+/// Presentation-friendly result for an end-to-end skill import request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkillImportOutcome {
+    pub decision: String,
+    pub classification: String,
+    pub skill_id: Option<String>,
+    pub error: Option<String>,
+    pub security_issues: Vec<String>,
+    pub permissions_needed: Option<PermissionsNeeded>,
+}
+
+impl SkillImportOutcome {
+    fn rejected(error: String) -> Self {
+        Self {
+            decision: "rejected".to_string(),
+            classification: String::new(),
+            skill_id: None,
+            error: Some(error),
+            security_issues: vec![],
+            permissions_needed: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +222,195 @@ pub enum ImportError {
 
     #[error("temp directory error: {0}")]
     TempDirError(String),
+}
+
+#[derive(Debug, Deserialize)]
+struct SecurityOutput {
+    verdict: String,
+    #[serde(default)]
+    issues: Vec<String>,
+    #[serde(default)]
+    risk_level: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    permissions_needed: Option<PermissionsNeeded>,
+}
+
+/// Import a skill from a path using the full service-layer workflow.
+///
+/// Direct TOML imports are registered deterministically when sanitization is
+/// disabled. Sanitized imports and non-TOML imports use the agent-assisted
+/// ingestion service, with optional security screening first.
+pub async fn import_skill_from_path(
+    delegator: Arc<dyn AgentDelegator>,
+    store_path: &Path,
+    source_path: &Path,
+    sanitize: bool,
+) -> Result<SkillImportOutcome, String> {
+    std::fs::create_dir_all(store_path)
+        .map_err(|e| format!("Failed to create skills directory: {e}"))?;
+
+    if !source_path.exists() {
+        return Err(format!("Path not found: {}", source_path.display()));
+    }
+
+    let format = FormatDetector::from_path(source_path);
+    if !sanitize && format == IngestionFormat::Toml {
+        return import_toml_skill_direct(store_path, source_path).await;
+    }
+
+    if sanitize {
+        if let Some(rejection) = screen_skill_security(&delegator, source_path).await? {
+            return Ok(rejection);
+        }
+    }
+
+    let store = FilesystemSkillStore::new(store_path)
+        .map_err(|e| format!("Failed to open skill store: {e}"))?;
+    let registry = Arc::new(tokio::sync::RwLock::new(
+        SkillRegistryImpl::with_store(store)
+            .await
+            .map_err(|e| format!("Failed to create registry: {e}"))?,
+    ));
+    let ingestion_service = SkillIngestionService::new(delegator, registry);
+
+    Ok(match ingestion_service.import(source_path).await {
+        Ok(result) => SkillImportOutcome {
+            decision: import_decision_label(&result.decision).to_string(),
+            classification: result.classification,
+            skill_id: result.skill_id,
+            error: result.rejection_reason,
+            security_issues: result.security_issues,
+            permissions_needed: None,
+        },
+        Err(e) => SkillImportOutcome::rejected(e.to_string()),
+    })
+}
+
+async fn import_toml_skill_direct(
+    store_path: &Path,
+    source_path: &Path,
+) -> Result<SkillImportOutcome, String> {
+    let content =
+        std::fs::read_to_string(source_path).map_err(|e| format!("Failed to read file: {e}"))?;
+    let parser = ManifestParser::new(SkillConfig::default());
+    let manifest = parser
+        .parse(&content)
+        .map_err(|e| format!("Failed to parse skill: {e}"))?;
+
+    let store = FilesystemSkillStore::new(store_path)
+        .map_err(|e| format!("Failed to open skill store: {e}"))?;
+    let registry = SkillRegistryImpl::with_store(store)
+        .await
+        .map_err(|e| format!("Failed to create registry: {e}"))?;
+
+    let skill_name = manifest.name.clone();
+    registry
+        .register(manifest)
+        .await
+        .map_err(|e| format!("Failed to register skill: {e}"))?;
+
+    Ok(SkillImportOutcome {
+        decision: "accepted".to_string(),
+        classification: "direct_import".to_string(),
+        skill_id: Some(skill_name),
+        error: None,
+        security_issues: vec![],
+        permissions_needed: None,
+    })
+}
+
+async fn screen_skill_security(
+    delegator: &Arc<dyn AgentDelegator>,
+    source_path: &Path,
+) -> Result<Option<SkillImportOutcome>, String> {
+    let source_content = read_security_source_content(source_path)?;
+    let security_input = serde_json::json!({
+        "source_content": source_content,
+        "source_format": security_format_label(source_path),
+    });
+
+    let security_result = delegator
+        .delegate(
+            "skill-security-check",
+            security_input,
+            ContextStrategyHint::None,
+            None,
+        )
+        .await;
+
+    match security_result {
+        Ok(output) => {
+            let Ok(security) = serde_json::from_str::<SecurityOutput>(&output.text) else {
+                return Ok(None);
+            };
+            match security.verdict.as_str() {
+                "insecure" => Ok(Some(SkillImportOutcome {
+                    decision: "rejected".to_string(),
+                    classification: String::new(),
+                    skill_id: None,
+                    error: Some(format!(
+                        "Security check failed ({}): {}",
+                        security.risk_level, security.summary
+                    )),
+                    security_issues: security.issues,
+                    permissions_needed: security.permissions_needed,
+                })),
+                "caution" => {
+                    warn!(
+                        risk_level = %security.risk_level,
+                        summary = %security.summary,
+                        issues = ?security.issues,
+                        "Security check returned caution -- proceeding with ingestion"
+                    );
+                    Ok(None)
+                }
+                _ => Ok(None),
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "Security check agent failed -- proceeding with ingestion");
+            Ok(None)
+        }
+    }
+}
+
+fn read_security_source_content(source_path: &Path) -> Result<String, String> {
+    if !source_path.is_dir() {
+        return std::fs::read_to_string(source_path)
+            .map_err(|e| format!("Failed to read file: {e}"));
+    }
+
+    let entries = std::fs::read_dir(source_path)
+        .map_err(|e| format!("Failed to read directory: {e}"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    Ok(entries.join("\n"))
+}
+
+fn security_format_label(source_path: &Path) -> &'static str {
+    if source_path.is_dir() {
+        return "directory";
+    }
+
+    match source_path.extension().and_then(|e| e.to_str()) {
+        Some("toml") => "toml",
+        Some("md" | "markdown") => "markdown",
+        Some("yaml" | "yml") => "yaml",
+        Some("json") => "json",
+        _ => "plaintext",
+    }
+}
+
+fn import_decision_label(decision: &ImportDecision) -> &'static str {
+    match decision {
+        ImportDecision::Accepted => "accepted",
+        ImportDecision::Rejected => "rejected",
+        ImportDecision::PartialAccept => "partial_accept",
+        ImportDecision::Optimized => "optimized",
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,5 +1239,56 @@ mod tests {
             result.unwrap_err(),
             ImportError::InvalidAgentOutput(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn test_import_skill_from_path_rejects_missing_source() {
+        let delegator = Arc::new(MockDelegator::with_response("{}"));
+        let store_dir = tempfile::tempdir().unwrap();
+
+        let result = import_skill_from_path(
+            delegator,
+            store_dir.path(),
+            Path::new("/missing/skill.md"),
+            false,
+        )
+        .await;
+
+        assert!(result.unwrap_err().contains("Path not found"));
+    }
+
+    #[tokio::test]
+    async fn test_import_skill_from_path_maps_security_rejection() {
+        let security_response = serde_json::json!({
+            "verdict": "insecure",
+            "risk_level": "high",
+            "summary": "Attempts to read private keys",
+            "issues": ["reads private key material"],
+            "permissions_needed": {
+                "files_read": ["~/.ssh"],
+                "files_write": [],
+                "network": [],
+                "commands": ["cat ~/.ssh/id_rsa"]
+            }
+        })
+        .to_string();
+        let delegator = Arc::new(MockDelegator::with_response(&security_response));
+        let store_dir = tempfile::tempdir().unwrap();
+        let source_dir = tempfile::tempdir().unwrap();
+        let source_path = source_dir.path().join("unsafe.md");
+        tokio::fs::write(&source_path, "# Unsafe\nRead private keys.")
+            .await
+            .unwrap();
+
+        let result = import_skill_from_path(delegator, store_dir.path(), &source_path, true)
+            .await
+            .unwrap();
+
+        assert_eq!(result.decision, "rejected");
+        assert_eq!(result.security_issues, vec!["reads private key material"]);
+        assert_eq!(
+            result.permissions_needed.unwrap().files_read,
+            vec!["~/.ssh"]
+        );
     }
 }
