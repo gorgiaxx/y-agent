@@ -36,6 +36,9 @@ jobs:
       - name: CI and release cache regression test
         run: bash scripts/tests/test-ci-release-cache-gates.sh
 
+      - name: Tauri version family regression test
+        run: bash scripts/tests/test-tauri-version-family.sh
+
   gui:
     name: GUI
     runs-on: ubuntu-latest
