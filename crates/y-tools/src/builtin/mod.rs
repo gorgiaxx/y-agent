@@ -2,6 +2,8 @@
 //!
 //! These are core tools implemented in Rust, registered at startup.
 
+mod path_utils;
+
 pub mod file_edit;
 pub mod file_read;
 pub mod file_write;
