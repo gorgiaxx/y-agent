@@ -37,6 +37,10 @@ export function basename(filePath: string): string {
   return parts[parts.length - 1] || filePath;
 }
 
+export function formatToolResultPath(filePath: string): string {
+  return filePath;
+}
+
 /** Map file extension to Prism language identifier for syntax highlighting. */
 const EXT_TO_LANG: Record<string, string> = {
   rs: 'rust', py: 'python', js: 'javascript', jsx: 'jsx',
@@ -560,6 +564,8 @@ export interface GlobMeta {
 export interface GlobResult {
   matches: string[];
   count: number;
+  returnedCount: number;
+  resultLimit?: number;
   truncated: boolean;
 }
 
@@ -581,9 +587,12 @@ export function parseGlobResult(raw: string): GlobResult | null {
   const obj = tryParseJson(raw);
   if (!obj) return null;
   if (!Array.isArray(obj.matches)) return null;
+  const matches = (obj.matches as unknown[]).map(m => String(m));
   return {
-    matches: (obj.matches as unknown[]).map(m => String(m)),
-    count: typeof obj.count === 'number' ? obj.count : (obj.matches as unknown[]).length,
+    matches,
+    count: typeof obj.count === 'number' ? obj.count : matches.length,
+    returnedCount: typeof obj.returned_count === 'number' ? obj.returned_count : matches.length,
+    resultLimit: typeof obj.result_limit === 'number' ? obj.result_limit : undefined,
     truncated: obj.truncated === true,
   };
 }
