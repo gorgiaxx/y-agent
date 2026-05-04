@@ -1,311 +1,361 @@
 # Web API
 
-HTTP REST API server for y-agent, built on [axum](https://github.com/tokio-rs/axum).
+The y-agent Web API is an axum-based HTTP, JSON, and SSE presentation layer.
+It uses the same `y-service::ServiceContainer` as the Tauri desktop GUI, so
+business behavior stays in the service layer and the Web API only adapts wire
+contracts.
 
-The Web API is a thin presentation layer with full feature parity with the
-desktop GUI.  All business logic lives in `y-service::ServiceContainer`.
-Real-time push events are delivered via Server-Sent Events (SSE).
+The shared React UI can run in two hosts:
+
+| Host | Backend transport | Notes |
+|------|-------------------|-------|
+| Desktop GUI | Tauri commands and Tauri events | Native dialogs, local paths, window controls |
+| Web UI | REST endpoints and Server-Sent Events | Browser file selection, bearer auth, static SPA serving |
 
 ## Quick Start
 
 ```bash
-# Start the API server (default: http://0.0.0.0:3000)
+# Start the API server on http://0.0.0.0:3000
 y-agent serve
 
-# Custom host/port
+# Bind to localhost on a custom port
 y-agent serve --host 127.0.0.1 --port 8080
+
+# Protect API routes with a bearer token
+y-agent serve --auth-token "$Y_AGENT_WEB_TOKEN"
 ```
 
-## Endpoints
-
-### System
+Build and serve the shared Web UI from the same React package used by the
+desktop app:
 
 ```bash
-# Health check (liveness probe)
+cd crates/y-gui
+npm run build:web
+cd ../..
+y-agent serve --static-dir crates/y-gui/dist-web
+```
+
+## Authentication
+
+`/health` is public for liveness probes. All `/api/v1/*` routes require
+`Authorization: Bearer <token>` when `y-agent serve --auth-token` is set.
+
+```bash
+curl http://localhost:3000/api/v1/status \
+  -H "Authorization: Bearer $Y_AGENT_WEB_TOKEN"
+```
+
+Browser `EventSource` cannot set custom headers, so the SSE endpoint also
+accepts the token as a query parameter:
+
+```bash
+curl -N "http://localhost:3000/api/v1/events?token=$Y_AGENT_WEB_TOKEN"
+```
+
+## GUI Parity
+
+Every shared GUI command must either map to a Web API endpoint or be declared
+as a host-specific capability.
+
+| GUI surface | Web API coverage |
+|-------------|------------------|
+| Chat | Async and sync turns, SSE progress, cancel, undo, resend, checkpoints, branch restore, compaction, HITL answers |
+| Sessions | List, create, delete, messages, truncate, context reset, custom prompt, fork, rename |
+| Agents | List, detail, source, parse/save TOML, reset, reload, tool list, prompt sections, translation |
+| Settings | Raw TOML sections, reload, provider test, provider model listing, MCP JSON, prompt files |
+| Workspaces | CRUD plus session assignment |
+| Skills | List, detail, uninstall, enable/disable, import from server path, file tree, read/write files |
+| Knowledge | Collections, entries, metadata, search, ingest, batch ingest, folder expansion, stats |
+| Automation | Workflows, validation, DAG view, execution, schedules, pause/resume, history, trigger now |
+| Observation | Diagnostics, subagent history, observability snapshots, in-memory stats |
+| Attachments | Server-side image path read and multipart upload; browser UI can also inline base64 attachments |
+| Background tasks | Per-session process list, poll, write, kill |
+| Rewind | Rewind points, full rewind, file-only restore |
+
+Host-specific commands:
+
+| Capability | Desktop | Web |
+|------------|---------|-----|
+| Native window controls | Supported | Lifecycle no-op or hidden by capability |
+| Open skill folder in file manager | Supported | Explicitly unsupported |
+| Local path dialogs | Native filesystem paths | Browser file picker or server-reachable paths |
+| SSE events | Tauri events | `/api/v1/events` |
+
+## System
+
+```bash
+# Public liveness probe and feature negotiation
 curl http://localhost:3000/health
 
-# Full system status
+# Protected status and path endpoints
 curl http://localhost:3000/api/v1/status
-
-# List registered LLM providers
 curl http://localhost:3000/api/v1/providers
-
-# Application paths (config_dir, data_dir)
 curl http://localhost:3000/api/v1/app-paths
+curl http://localhost:3000/api/v1/memory-stats
 ```
 
-### Events (SSE)
+`GET /health` returns:
+
+```json
+{
+  "status": "ok",
+  "version": "0.6.1",
+  "api_schema_version": "1",
+  "app_version": "0.6.1",
+  "features": ["chat", "sse_events", "remote_auth", "static_spa"]
+}
+```
+
+## Events
 
 ```bash
-# Subscribe to all real-time events
+# Subscribe to all events
 curl -N http://localhost:3000/api/v1/events
 
-# Filter events by session
+# Filter by session
 curl -N "http://localhost:3000/api/v1/events?session_id=SESSION_ID"
 ```
 
-Event types: `ChatStarted`, `ChatProgress`, `ChatComplete`, `ChatError`,
-`AskUser`, `PermissionRequest`, `TitleUpdated`, `DiagnosticsEvent`,
-`KbBatchProgress`, `KbEntryIngested`.
+SSE event names mirror the desktop GUI event names:
 
-### Chat
+| Event | Payload |
+|-------|---------|
+| `chat:started` | `{ "run_id": "...", "session_id": "..." }` |
+| `chat:progress` | Turn event JSON from `y-service` |
+| `chat:complete` | Final turn payload |
+| `chat:error` | `{ "run_id": "...", "session_id": "...", "error": "..." }` |
+| `chat:AskUser` | User-interaction request with `interaction_id` |
+| `chat:PermissionRequest` | Tool permission request with `request_id` |
+| `session:title_updated` | Generated title update |
+| `diagnostics:event` | Provider, tool, and agent diagnostics |
+| `kb:batch_progress` | Knowledge batch ingest progress |
+| `kb:entry_ingested` | Knowledge entry ingest completion |
+
+## Chat
 
 ```bash
-# Synchronous single turn (blocks until complete)
+# Synchronous single turn
 curl -X POST http://localhost:3000/api/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "Hello, what can you do?"}'
+  -d '{"message": "Hello"}'
 
-# Continue an existing session
-curl -X POST http://localhost:3000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Tell me more", "session_id": "SESSION_ID"}'
-
-# Async turn (returns immediately, streams progress via SSE)
+# Async turn, progress arrives through SSE
 curl -X POST http://localhost:3000/api/v1/chat/send \
   -H "Content-Type: application/json" \
-  -d '{"message": "Hello", "session_id": "SESSION_ID"}'
+  -d '{
+    "message": "Summarize this project",
+    "session_id": "SESSION_ID",
+    "provider_id": "openai-main",
+    "knowledge_collections": ["docs"],
+    "thinking_effort": "high",
+    "plan_mode": "auto",
+    "mcp_mode": "manual",
+    "mcp_servers": ["filesystem"]
+  }'
 
-# Cancel a running turn
+# Image-generation mode
+curl -X POST http://localhost:3000/api/v1/chat/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Generate a clean product mockup",
+    "request_mode": "image_generation",
+    "image_generation_options": {
+      "max_images": 2,
+      "size": "1024x1024",
+      "watermark": true
+    }
+  }'
+```
+
+Async start response:
+
+```json
+{
+  "session_id": "abc123",
+  "run_id": "run-uuid"
+}
+```
+
+Chat control endpoints:
+
+```bash
 curl -X POST http://localhost:3000/api/v1/chat/cancel \
   -H "Content-Type: application/json" \
   -d '{"run_id": "RUN_ID"}'
 
-# Undo to a checkpoint
 curl -X POST http://localhost:3000/api/v1/chat/undo \
   -H "Content-Type: application/json" \
   -d '{"session_id": "SESSION_ID", "checkpoint_id": "CP_ID"}'
 
-# Resend from a checkpoint (async, SSE-streamed)
 curl -X POST http://localhost:3000/api/v1/chat/resend \
   -H "Content-Type: application/json" \
   -d '{"session_id": "SESSION_ID", "checkpoint_id": "CP_ID"}'
 
-# List checkpoints
 curl http://localhost:3000/api/v1/chat/checkpoints/SESSION_ID
 
-# Find checkpoint matching a user message
 curl -X POST http://localhost:3000/api/v1/chat/find-checkpoint \
   -H "Content-Type: application/json" \
-  -d '{"session_id": "SESSION_ID", "user_message_content": "hello"}'
+  -d '{"session_id": "SESSION_ID", "user_message_content": "hello", "message_id": "MSG_ID"}'
 
-# Messages with active/tombstone branch status
 curl http://localhost:3000/api/v1/chat/messages-with-status/SESSION_ID
 
-# Swap active and tombstone branches
 curl -X POST http://localhost:3000/api/v1/chat/restore-branch \
   -H "Content-Type: application/json" \
-  -d '{"session_id": "SESSION_ID"}'
+  -d '{"session_id": "SESSION_ID", "checkpoint_id": "CP_ID"}'
 
-# Context compaction
 curl -X POST http://localhost:3000/api/v1/chat/compact/SESSION_ID
 
-# Deliver an AskUser answer
-curl -X POST http://localhost:3000/api/v1/chat/answer-question \
-  -H "Content-Type: application/json" \
-  -d '{"session_id": "SESSION_ID", "answer": "yes"}'
-
-# Deliver a permission decision
-curl -X POST http://localhost:3000/api/v1/chat/answer-permission \
-  -H "Content-Type: application/json" \
-  -d '{"session_id": "SESSION_ID", "granted": true}'
-
-# Last turn metadata (provider, model, tokens)
 curl http://localhost:3000/api/v1/chat/last-turn-meta/SESSION_ID
 ```
 
-**Synchronous response:**
-```json
-{
-  "content": "I can help you with...",
-  "model": "gpt-4",
-  "session_id": "abc123",
-  "input_tokens": 150,
-  "output_tokens": 200,
-  "cost_usd": 0.0035,
-  "tool_calls": [],
-  "iterations": 1
-}
-```
-
-### Sessions
+Human-in-the-loop endpoints:
 
 ```bash
-# List sessions (newest first, default: active only)
-curl http://localhost:3000/api/v1/sessions
+# Answer a chat:AskUser event
+curl -X POST http://localhost:3000/api/v1/chat/answer-question \
+  -H "Content-Type: application/json" \
+  -d '{"interaction_id": "INTERACTION_ID", "answers": {"choice": "yes"}}'
 
-# Filter by state or agent
+# Answer a chat:PermissionRequest event
+curl -X POST http://localhost:3000/api/v1/chat/answer-permission \
+  -H "Content-Type: application/json" \
+  -d '{"request_id": "REQUEST_ID", "decision": "approve"}'
+```
+
+`decision` is one of `approve`, `deny`, or `allow_all_for_session`.
+
+## Sessions
+
+```bash
+curl http://localhost:3000/api/v1/sessions
 curl "http://localhost:3000/api/v1/sessions?state=Archived"
 curl "http://localhost:3000/api/v1/sessions?agent_id=AGENT_ID"
 
-# Create a new session
 curl -X POST http://localhost:3000/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{"title": "My Project", "agent_id": "default"}'
 
-# Get session details
 curl http://localhost:3000/api/v1/sessions/SESSION_ID
-
-# Delete a session
 curl -X DELETE http://localhost:3000/api/v1/sessions/SESSION_ID
-
-# List messages
 curl http://localhost:3000/api/v1/sessions/SESSION_ID/messages
-
-# Get last 5 messages
 curl "http://localhost:3000/api/v1/sessions/SESSION_ID/messages?last=5"
 
-# Archive a session
 curl -X POST http://localhost:3000/api/v1/sessions/SESSION_ID/archive
 
-# Branch a session
-curl -X POST http://localhost:3000/api/v1/sessions/SESSION_ID/branch \
-  -H "Content-Type: application/json" \
-  -d '{"label": "experiment-1"}'
-
-# Truncate messages (keep first N)
 curl -X POST http://localhost:3000/api/v1/sessions/SESSION_ID/truncate \
   -H "Content-Type: application/json" \
   -d '{"keep_count": 10}'
 
-# Get/set context reset index
 curl http://localhost:3000/api/v1/sessions/SESSION_ID/context-reset
 curl -X PUT http://localhost:3000/api/v1/sessions/SESSION_ID/context-reset \
   -H "Content-Type: application/json" \
   -d '{"index": 5}'
 
-# Get/set custom system prompt
 curl http://localhost:3000/api/v1/sessions/SESSION_ID/custom-prompt
 curl -X PUT http://localhost:3000/api/v1/sessions/SESSION_ID/custom-prompt \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "You are a helpful coding assistant."}'
+  -d '{"prompt": "You are a concise coding assistant."}'
 
-# Fork at a message index
 curl -X POST http://localhost:3000/api/v1/sessions/SESSION_ID/fork \
   -H "Content-Type: application/json" \
   -d '{"message_index": 4, "title": "Forked conversation"}'
 
-# Rename (set manual title)
 curl -X PUT http://localhost:3000/api/v1/sessions/SESSION_ID/rename \
   -H "Content-Type: application/json" \
   -d '{"title": "New Title"}'
 ```
 
-### Agents
+## Agents
 
 ```bash
-# List registered agents
 curl http://localhost:3000/api/v1/agents
-
-# Get agent details
 curl http://localhost:3000/api/v1/agents/AGENT_ID
-
-# Get raw TOML source
 curl http://localhost:3000/api/v1/agents/AGENT_ID/source
 
-# Save (create/update) an agent
-curl -X PUT http://localhost:3000/api/v1/agents/AGENT_ID \
-  -H "Content-Type: application/json" \
-  -d '{"content": "[agent]\nname = \"my-agent\"\n..."}'
-
-# Reset to built-in defaults
-curl -X POST http://localhost:3000/api/v1/agents/AGENT_ID/reset
-
-# Reload all agents from disk
-curl -X POST http://localhost:3000/api/v1/agents/reload
-
-# Parse and validate TOML without saving
 curl -X POST http://localhost:3000/api/v1/agents/parse-toml \
   -H "Content-Type: application/json" \
-  -d '{"content": "[agent]\nname = \"test\"\n..."}'
+  -d '{"toml_content": "id = \"writer\"\nname = \"Writer\"\n..."}'
 
-# List available tools
+curl -X PUT http://localhost:3000/api/v1/agents/AGENT_ID \
+  -H "Content-Type: application/json" \
+  -d '{"toml_content": "id = \"writer\"\nname = \"Writer\"\n..."}'
+
+curl -X POST http://localhost:3000/api/v1/agents/AGENT_ID/reset
+curl -X POST http://localhost:3000/api/v1/agents/reload
 curl http://localhost:3000/api/v1/agents/tools
-
-# List prompt section identifiers
 curl http://localhost:3000/api/v1/agents/prompt-sections
 
-# Translate text
 curl -X POST http://localhost:3000/api/v1/agents/translate \
   -H "Content-Type: application/json" \
-  -d '{"text": "Hello world", "target_language": "zh"}'
+  -d '{"text": "Hello world"}'
 ```
 
-### Tools
+## Configuration
 
 ```bash
-# List registered tools
-curl http://localhost:3000/api/v1/tools
-```
-
-### Config
-
-```bash
-# Get full config (all sections merged as JSON)
 curl http://localhost:3000/api/v1/config
-
-# Get a single section as raw TOML
 curl http://localhost:3000/api/v1/config/providers
 
-# Save a section (raw TOML)
 curl -X PUT http://localhost:3000/api/v1/config/providers \
   -H "Content-Type: application/json" \
-  -d '{"content": "[[provider]]\nname = \"openai\"\n..."}'
+  -d '{"content": "[[providers]]\nid = \"openai-main\"\n..."}'
 
-# Hot-reload all configuration
 curl -X POST http://localhost:3000/api/v1/config/reload
 
-# MCP server configuration
+curl -X POST http://localhost:3000/api/v1/providers/test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider_type": "openai",
+    "model": "gpt-4o",
+    "api_key": "",
+    "api_key_env": "OPENAI_API_KEY",
+    "probe_mode": "auto"
+  }'
+
+curl -X POST http://localhost:3000/api/v1/providers/list-models \
+  -H "Content-Type: application/json" \
+  -d '{
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "",
+    "api_key_env": "OPENAI_API_KEY"
+  }'
+```
+
+Config sections: `providers`, `storage`, `session`, `runtime`, `hooks`,
+`tools`, `guardrails`, `browser`, and `knowledge`.
+
+MCP and prompt files:
+
+```bash
 curl http://localhost:3000/api/v1/config/mcp
 curl -X PUT http://localhost:3000/api/v1/config/mcp \
   -H "Content-Type: application/json" \
   -d '{"mcpServers": {}}'
 
-# Prompt files
 curl http://localhost:3000/api/v1/config/prompts
 curl http://localhost:3000/api/v1/config/prompts/system.txt
 curl -X PUT http://localhost:3000/api/v1/config/prompts/system.txt \
   -H "Content-Type: application/json" \
   -d '{"content": "You are a helpful assistant."}'
 curl http://localhost:3000/api/v1/config/prompts/system.txt/default
-
-# Test a provider
-curl -X POST http://localhost:3000/api/v1/providers/test \
-  -H "Content-Type: application/json" \
-  -d '{"provider_type": "openai", "model": "gpt-4", "api_key": "", "api_key_env": "OPENAI_API_KEY"}'
-
-# List models from a provider endpoint
-curl -X POST http://localhost:3000/api/v1/providers/list-models \
-  -H "Content-Type: application/json" \
-  -d '{"base_url": "https://api.openai.com/v1", "api_key": "", "api_key_env": "OPENAI_API_KEY"}'
 ```
 
-Config sections: `providers`, `storage`, `session`, `runtime`, `hooks`,
-`tools`, `guardrails`, `browser`, `knowledge`.
-
-### Workspaces
+## Workspaces
 
 ```bash
-# List workspaces
 curl http://localhost:3000/api/v1/workspaces
 
-# Create a workspace
 curl -X POST http://localhost:3000/api/v1/workspaces \
   -H "Content-Type: application/json" \
-  -d '{"name": "My Project", "path": "/home/user/project"}'
+  -d '{"name": "Project", "path": "/srv/project"}'
 
-# Update a workspace
 curl -X PUT http://localhost:3000/api/v1/workspaces/WS_ID \
   -H "Content-Type: application/json" \
-  -d '{"name": "Renamed", "path": "/new/path"}'
+  -d '{"name": "Renamed", "path": "/srv/project"}'
 
-# Delete a workspace
 curl -X DELETE http://localhost:3000/api/v1/workspaces/WS_ID
-
-# Session-to-workspace mapping
 curl http://localhost:3000/api/v1/workspaces/session-map
 
-# Assign/unassign sessions
 curl -X POST http://localhost:3000/api/v1/workspaces/assign \
   -H "Content-Type: application/json" \
   -d '{"workspace_id": "WS_ID", "session_id": "SESSION_ID"}'
@@ -315,226 +365,230 @@ curl -X POST http://localhost:3000/api/v1/workspaces/unassign \
   -d '{"session_id": "SESSION_ID"}'
 ```
 
-### Skills
+## Skills
 
 ```bash
-# List installed skills
 curl http://localhost:3000/api/v1/skills
-
-# Get skill details
 curl http://localhost:3000/api/v1/skills/SKILL_NAME
-
-# Uninstall a skill
 curl -X DELETE http://localhost:3000/api/v1/skills/SKILL_NAME
 
-# Enable/disable a skill
 curl -X PUT http://localhost:3000/api/v1/skills/SKILL_NAME/enabled \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}'
 
-# List files in skill directory
-curl http://localhost:3000/api/v1/skills/SKILL_NAME/files
-
-# Read/write a skill file
-curl http://localhost:3000/api/v1/skills/SKILL_NAME/files/main.py
-curl -X PUT http://localhost:3000/api/v1/skills/SKILL_NAME/files/main.py \
+curl -X POST http://localhost:3000/api/v1/skills/import \
   -H "Content-Type: application/json" \
-  -d '{"content": "print(\"hello\")"}'
+  -d '{"path": "/srv/skills/writer.toml", "sanitize": true}'
+
+curl http://localhost:3000/api/v1/skills/SKILL_NAME/files
+curl http://localhost:3000/api/v1/skills/SKILL_NAME/files/root.md
+
+curl -X PUT http://localhost:3000/api/v1/skills/SKILL_NAME/files/root.md \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Updated skill guidance."}'
 ```
 
-### Knowledge
+`skill_open_folder` is desktop-only because a browser cannot reveal a folder in
+the user's file manager.
+
+## Knowledge
 
 ```bash
-# List collections
 curl http://localhost:3000/api/v1/knowledge/collections
 
-# Create a collection
 curl -X POST http://localhost:3000/api/v1/knowledge/collections \
   -H "Content-Type: application/json" \
-  -d '{"name": "docs"}'
+  -d '{"name": "docs", "description": "Project documentation"}'
 
-# Delete a collection
 curl -X DELETE http://localhost:3000/api/v1/knowledge/collections/docs
 
-# Rename a collection
 curl -X POST http://localhost:3000/api/v1/knowledge/collections/docs/rename \
   -H "Content-Type: application/json" \
   -d '{"new_name": "documentation"}'
 
-# List entries in a collection
 curl http://localhost:3000/api/v1/knowledge/collections/docs/entries
-
-# Get/delete an entry
-curl http://localhost:3000/api/v1/knowledge/entries/ENTRY_ID
+curl "http://localhost:3000/api/v1/knowledge/entries/ENTRY_ID?resolution=l1"
 curl -X DELETE http://localhost:3000/api/v1/knowledge/entries/ENTRY_ID
 
-# Update entry metadata
 curl -X PATCH http://localhost:3000/api/v1/knowledge/entries/ENTRY_ID/metadata \
   -H "Content-Type: application/json" \
-  -d '{"tags": ["important"]}'
+  -d '{"document_type": "spec", "tags": ["important"]}'
 
-# Semantic search
 curl -X POST http://localhost:3000/api/v1/knowledge/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "how to configure providers", "collection": "docs", "limit": 5}'
+  -d '{"query": "provider configuration", "domain": "docs", "limit": 5}'
 
-# Ingest a document
 curl -X POST http://localhost:3000/api/v1/knowledge/ingest \
   -H "Content-Type: application/json" \
-  -d '{"collection": "docs", "source": "/path/to/file.md"}'
+  -d '{
+    "collection": "docs",
+    "source": "/srv/project/README.md",
+    "domain": "project",
+    "use_llm_summary": false,
+    "extract_metadata": true
+  }'
 
-# Batch ingest (progress via SSE)
 curl -X POST http://localhost:3000/api/v1/knowledge/ingest-batch \
   -H "Content-Type: application/json" \
-  -d '{"collection": "docs", "sources": ["/path/a.md", "/path/b.md"]}'
+  -d '{"collection": "docs", "sources": ["/srv/a.md", "/srv/b.md"]}'
 
-# Expand folder into file paths
 curl -X POST http://localhost:3000/api/v1/knowledge/expand-folder \
   -H "Content-Type: application/json" \
-  -d '{"path": "/path/to/folder"}'
+  -d '{"path": "/srv/project/docs"}'
 
-# Knowledge base statistics
 curl http://localhost:3000/api/v1/knowledge/stats
 ```
 
-### Observability
+Path-based knowledge ingest uses paths reachable by the y-web server process.
+The browser UI should use browser file selection for local client files.
+
+## Attachments
 
 ```bash
-# Live system state snapshot
-curl http://localhost:3000/api/v1/observability/snapshot
-
-# Snapshot with history (RFC 3339 timestamps)
-curl "http://localhost:3000/api/v1/observability/history?since=2024-01-01T00:00:00Z&until=2024-12-31T23:59:59Z"
-```
-
-### Rewind
-
-```bash
-# List rewind points for a session
-curl http://localhost:3000/api/v1/rewind/SESSION_ID/points
-
-# Execute full rewind (transcript + files + checkpoints)
-curl -X POST http://localhost:3000/api/v1/rewind/SESSION_ID/execute \
-  -H "Content-Type: application/json" \
-  -d '{"target_message_id": "MSG_ID"}'
-
-# Restore files only (no transcript truncation)
-curl -X POST http://localhost:3000/api/v1/rewind/SESSION_ID/restore-files \
-  -H "Content-Type: application/json" \
-  -d '{"target_message_id": "MSG_ID"}'
-```
-
-### Attachments
-
-```bash
-# Read image files as base64 (png, jpg, jpeg, gif, webp; max 20 MB)
+# Read server-side image files as base64 attachment records
 curl -X POST http://localhost:3000/api/v1/attachments/read \
   -H "Content-Type: application/json" \
-  -d '{"paths": ["/path/to/image.png"]}'
+  -d '{"paths": ["/srv/image.png"]}'
+
+# Upload one or more image files as multipart form data
+curl -X POST http://localhost:3000/api/v1/attachments/upload \
+  -F "file=@/path/to/image.png"
 ```
+
+Supported image extensions: `png`, `jpg`, `jpeg`, `gif`, and `webp`. Each file
+is limited to 20 MB.
+
+## Automation
 
 ### Workflows
 
 ```bash
-# List workflows
 curl http://localhost:3000/api/v1/workflows
 
-# Create a workflow
 curl -X POST http://localhost:3000/api/v1/workflows \
   -H "Content-Type: application/json" \
-  -d '{"name": "my-workflow", "definition": {...}}'
+  -d '{
+    "name": "daily-report",
+    "definition": "fetch -> summarize -> send",
+    "format": "expression_dsl",
+    "description": "Daily report workflow"
+  }'
 
-# Get workflow details
 curl http://localhost:3000/api/v1/workflows/WORKFLOW_ID
 
-# Update a workflow
 curl -X PUT http://localhost:3000/api/v1/workflows/WORKFLOW_ID \
   -H "Content-Type: application/json" \
-  -d '{"definition": {...}}'
+  -d '{"definition": "fetch -> summarize", "format": "expression_dsl"}'
 
-# Delete a workflow
 curl -X DELETE http://localhost:3000/api/v1/workflows/WORKFLOW_ID
 
-# Validate a workflow definition
 curl -X POST http://localhost:3000/api/v1/workflows/validate \
   -H "Content-Type: application/json" \
-  -d '{"definition": {...}}'
+  -d '{"definition": "fetch -> summarize", "format": "expression_dsl"}'
 
-# Get DAG visualization
 curl http://localhost:3000/api/v1/workflows/WORKFLOW_ID/dag
-
-# Execute a workflow
 curl -X POST http://localhost:3000/api/v1/workflows/WORKFLOW_ID/execute
 ```
 
 ### Schedules
 
 ```bash
-# List schedules
 curl http://localhost:3000/api/v1/schedules
 
-# Create a schedule
 curl -X POST http://localhost:3000/api/v1/schedules \
   -H "Content-Type: application/json" \
-  -d '{"name": "daily-report", "cron": "0 9 * * *", "workflow_id": "WORKFLOW_ID"}'
+  -d '{
+    "name": "daily-report",
+    "workflow_id": "WORKFLOW_ID",
+    "trigger": {
+      "type": "cron",
+      "expression": "0 9 * * *",
+      "timezone": "UTC"
+    },
+    "parameter_values": {}
+  }'
 
-# Get schedule details
 curl http://localhost:3000/api/v1/schedules/SCHEDULE_ID
 
-# Update a schedule
 curl -X PUT http://localhost:3000/api/v1/schedules/SCHEDULE_ID \
   -H "Content-Type: application/json" \
-  -d '{"cron": "0 10 * * *"}'
+  -d '{"name": "morning-report"}'
 
-# Delete a schedule
 curl -X DELETE http://localhost:3000/api/v1/schedules/SCHEDULE_ID
-
-# Pause/resume
 curl -X POST http://localhost:3000/api/v1/schedules/SCHEDULE_ID/pause
 curl -X POST http://localhost:3000/api/v1/schedules/SCHEDULE_ID/resume
-
-# Execution history
 curl http://localhost:3000/api/v1/schedules/SCHEDULE_ID/executions
-
-# Get a specific execution
 curl http://localhost:3000/api/v1/schedules/executions/EXECUTION_ID
-
-# Trigger immediately
 curl -X POST http://localhost:3000/api/v1/schedules/SCHEDULE_ID/trigger
 ```
 
-### Diagnostics
+Supported trigger variants use `type`: `cron`, `interval`, `event`, or
+`one_time`.
+
+## Background Tasks
+
+Long-running tool executions can expose process-scoped background task
+handles. The Web API mirrors the GUI controls.
 
 ```bash
-# List recent traces
-curl http://localhost:3000/api/v1/diagnostics/traces
+curl http://localhost:3000/api/v1/sessions/SESSION_ID/background-tasks
 
-# Filter by session
-curl "http://localhost:3000/api/v1/diagnostics/traces?session_id=SESSION_ID&limit=10"
+curl -X POST http://localhost:3000/api/v1/sessions/SESSION_ID/background-tasks/PROCESS_ID/poll \
+  -H "Content-Type: application/json" \
+  -d '{"yield_time_ms": 50, "max_output_bytes": 4096}'
 
-# Get trace detail
-curl http://localhost:3000/api/v1/diagnostics/traces/TRACE_UUID
+curl -X POST http://localhost:3000/api/v1/sessions/SESSION_ID/background-tasks/PROCESS_ID/write \
+  -H "Content-Type: application/json" \
+  -d '{"input": "y\n", "yield_time_ms": 50}'
 
-# Get diagnostics for a session
-curl http://localhost:3000/api/v1/diagnostics/sessions/SESSION_ID
-
-# Sub-agent execution history
-curl http://localhost:3000/api/v1/diagnostics/subagents
+curl -X POST http://localhost:3000/api/v1/sessions/SESSION_ID/background-tasks/PROCESS_ID/kill \
+  -H "Content-Type: application/json" \
+  -d '{"yield_time_ms": 50}'
 ```
 
-### Bot Webhooks
+## Observability And Diagnostics
 
 ```bash
-# Feishu webhook
-curl -X POST http://localhost:3000/api/v1/bots/feishu/webhook
+curl http://localhost:3000/api/v1/observability/snapshot
+curl "http://localhost:3000/api/v1/observability/history?since=2026-05-04T00:00:00Z&until=2026-05-04T23:59:59Z"
 
-# Discord webhook
+curl http://localhost:3000/api/v1/diagnostics/traces
+curl "http://localhost:3000/api/v1/diagnostics/traces?session_id=SESSION_ID&limit=10"
+curl http://localhost:3000/api/v1/diagnostics/traces/TRACE_UUID
+curl "http://localhost:3000/api/v1/diagnostics/sessions/SESSION_ID?limit=50"
+curl http://localhost:3000/api/v1/diagnostics/subagents
+
+curl -X DELETE http://localhost:3000/api/v1/diagnostics/sessions/SESSION_ID
+curl -X DELETE http://localhost:3000/api/v1/diagnostics
+```
+
+## Rewind
+
+```bash
+curl http://localhost:3000/api/v1/rewind/SESSION_ID/points
+
+curl -X POST http://localhost:3000/api/v1/rewind/SESSION_ID/execute \
+  -H "Content-Type: application/json" \
+  -d '{"target_message_id": "MSG_ID"}'
+
+curl -X POST http://localhost:3000/api/v1/rewind/SESSION_ID/restore-files \
+  -H "Content-Type: application/json" \
+  -d '{"target_message_id": "MSG_ID"}'
+```
+
+## Bot Webhooks
+
+Bot adapters are mounted on y-web and share the same service container.
+Configure them in `config/bots.toml`.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/bots/feishu/webhook
 curl -X POST http://localhost:3000/api/v1/bots/discord/webhook
 ```
 
 ## Error Format
 
-All errors return JSON:
+Errors return JSON:
 
 ```json
 {
@@ -543,23 +597,17 @@ All errors return JSON:
 }
 ```
 
-| HTTP Status | Error Code | Description |
-|-------------|-----------|-------------|
-| 400 | `bad_request` | Invalid request body or parameters |
-| 404 | `not_found` | Resource not found |
-| 500 | `internal_error` | Server-side error |
+| HTTP status | Error code |
+|-------------|------------|
+| 400 | `bad_request` |
+| 401 | `unauthorized` |
+| 404 | `not_found` |
+| 500 | `internal_error` |
 
-## Architecture
+## Limits
 
-```
-HTTP Client  ->  axum Router  ->  handlers  ->  y-service  ->  domain crates
-             <-  SSE events   <-
-```
-
-The server is a thin presentation layer with full feature parity with the
-desktop GUI.  All business logic lives in `y-service::ServiceContainer`.
-CORS is enabled via `tower-http` CorsLayer.
-
-::: warning Current Limitations
-Authentication, rate limiting, and request size limits are not yet implemented.
-:::
+- Rate limiting is not implemented yet.
+- Request body size limits are endpoint-specific today; attachment files are
+  limited to 20 MB.
+- Desktop-only features such as native window controls and revealing a folder
+  in the file manager are intentionally not exposed to browsers.

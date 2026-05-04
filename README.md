@@ -11,6 +11,7 @@
 - [Highlights](#highlights)
 - [Quick Start](#quick-start)
 - [GUI Desktop App](#gui-desktop-app)
+- [Web API And Web UI](#web-api-and-web-ui)
 - [Knowledge Base](#knowledge-base)
 - [Bot Adapters](#bot-adapters)
 - [Configuration Reference](#configuration-reference)
@@ -39,6 +40,7 @@
 | **Browser Tool**              | Web browsing via Chrome DevTools Protocol, headless or visible mode                                                       |
 | **Bot Adapters**              | Discord, Feishu (Lark), and Telegram integration via `y-bot`                                                              |
 | **Full Observability**        | Span-based tracing, cost intelligence, trace replay                                                                       |
+| **Shared GUI + Web UI**       | One React frontend hosted by Tauri or by `y-web` through REST and SSE                                                     |
 | **Built-in Tools**            | `ShellExec`, `FileRead`, `FileWrite`, `WebFetch`, `KnowledgeSearch`, `ToolSearch`, `Task` (delegation)                    |
 
 ---
@@ -152,7 +154,7 @@ y-agent chat
 # TUI mode (ratatui terminal UI)
 y-agent tui
 
-# Start the Web API server (axum, port 8080)
+# Start the Web API server (axum, port 3000)
 y-agent serve
 
 # Or launch the GUI desktop app
@@ -169,13 +171,14 @@ y-agent ships with a **Tauri v2 desktop GUI** built with React 19 and TypeScript
 
 The GUI follows a **VSCode-style layout** with a sidebar and main content area:
 
-| Sidebar Panel  | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| **Sessions**   | Chat history, organized by workspaces                |
-| **Automation** | Workflow automation (DAG editor)                     |
-| **Skills**     | Installed skills -- search, import, enable/disable   |
-| **Knowledge**  | Knowledge base collections -- create, import, search |
-| **Agents**     | Registered agents -- built-in, user-defined, dynamic |
+| Sidebar Panel  | Description                                                        |
+| -------------- | ------------------------------------------------------------------ |
+| **Chat**       | Chat sessions, streaming turns, attachments, HITL prompts, rewind  |
+| **Automation** | Workflow and schedule management with DAG visualization            |
+| **Skills**     | Installed skills -- search, import, enable/disable, edit files     |
+| **Knowledge**  | Knowledge base collections -- create, import, search, edit metadata |
+| **Agents**     | Registered agents -- built-in, user-defined, dynamic, Agent Studio |
+| **Observation** | Diagnostics, subagent history, costs, health, observability       |
 
 ### Chat Interface
 
@@ -210,6 +213,7 @@ Open via `/settings` or the gear icon:
 | **Tools**      | Max active tools, MCP server configuration                    |
 | **Guardrails** | Permission model, loop detection, risk scoring                |
 | **Knowledge**  | Embedding model, chunking, retrieval strategy                 |
+| **Hooks**      | Middleware timeouts, event bus capacity, hook handlers        |
 | **Prompts**    | View and edit system prompt templates                         |
 
 ### Status Bar
@@ -219,6 +223,49 @@ The bottom status bar displays:
 - Current session ID and turn count
 - Token usage progress relative to the context window
 - Active provider and model name
+
+---
+
+## Web API And Web UI
+
+`y-web` exposes the same service-layer capabilities used by the desktop GUI
+through HTTP JSON endpoints and Server-Sent Events. The shared React frontend
+can also be built as a browser SPA and served by `y-agent serve`.
+
+```bash
+# REST API only
+y-agent serve
+
+# Remote-safe API with bearer auth
+y-agent serve --host 0.0.0.0 --port 3000 --auth-token "$Y_AGENT_WEB_TOKEN"
+
+# Build and serve the shared Web UI
+cd crates/y-gui
+npm run build:web
+cd ../..
+y-agent serve --static-dir crates/y-gui/dist-web
+```
+
+Main API groups:
+
+| Area | Endpoint prefix |
+| ---- | --------------- |
+| Health and feature negotiation | `/health` |
+| SSE events | `/api/v1/events` |
+| Chat, HITL, checkpoints, rewind | `/api/v1/chat`, `/api/v1/rewind` |
+| Sessions and workspaces | `/api/v1/sessions`, `/api/v1/workspaces` |
+| Agents, skills, knowledge | `/api/v1/agents`, `/api/v1/skills`, `/api/v1/knowledge` |
+| Automation | `/api/v1/workflows`, `/api/v1/schedules` |
+| Settings | `/api/v1/config`, `/api/v1/providers` |
+| Observation | `/api/v1/diagnostics`, `/api/v1/observability`, `/api/v1/memory-stats` |
+| Attachments and background tasks | `/api/v1/attachments`, `/api/v1/sessions/{id}/background-tasks` |
+
+All `/api/v1/*` routes require `Authorization: Bearer <token>` when
+`--auth-token` is configured. The SSE endpoint also accepts `?token=...` for
+browser `EventSource` clients.
+
+See [website/docs/guide/web-api.md](website/docs/guide/web-api.md) for the full
+endpoint contract and curl examples.
 
 ---
 
@@ -427,7 +474,6 @@ DEEPSEEK_API_KEY=sk-...
 GEMINI_API_KEY=AIza...
 
 # Infrastructure
-Y_AGENT_PORT=8080
 Y_QDRANT_URL=http://localhost:6334
 RUST_LOG=info
 ```
@@ -584,7 +630,7 @@ The workspace contains **24 crates** organized by concern:
 | Crate   | Description                                     |
 | ------- | ----------------------------------------------- |
 | `y-cli` | CLI + TUI (clap + ratatui)                      |
-| `y-web` | REST API server (axum) with bot adapter routing |
+| `y-web` | REST API, SSE, static Web UI serving, and bot adapter routing |
 | `y-gui` | Desktop GUI (Tauri v2 + React 19 + TypeScript)  |
 
 ### Testing
@@ -602,6 +648,16 @@ The workspace contains **24 crates** organized by concern:
 ```bash
 cargo build --release
 # Binary: target/release/y-agent
+```
+
+### Shared Web UI
+
+```bash
+cd crates/y-gui
+npm install
+npm run build:web
+cd ../..
+y-agent serve --static-dir crates/y-gui/dist-web
 ```
 
 ### GUI (Tauri v2 Desktop App)
@@ -638,13 +694,23 @@ cargo test -p y-core           # Single crate
 
 ### Quality Gates
 
-After any code change, all four checks must pass:
+After Rust changes, run:
 
 ```bash
+cargo fmt --all
+cargo clippy --fix --allow-dirty --workspace -- -D warnings
 cargo clippy --workspace -- -D warnings
 cargo check --workspace
 cargo doc --workspace --no-deps
-cargo fmt --all
+```
+
+After shared frontend or Web UI changes, run from `crates/y-gui/`:
+
+```bash
+npm test
+npm run lint
+npm run build
+npm run build:web
 ```
 
 ---
@@ -706,23 +772,24 @@ The CI pipeline (`.github/workflows/ci.yml`) runs:
 
 ## Documentation
 
-Detailed documentation is organized under `docs/`:
+Project documentation is split between design/standards docs and the VitePress
+website.
 
-| Directory         | Purpose                                                                                                                   |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `docs/standards/` | Engineering standards, test strategy, database schema, tool call protocol, skill standard, DSL spec, agent autonomy model |
-| `docs/api/`       | API documentation                                                                                                         |
-| `docs/guides/`    | User and developer guides                                                                                                 |
-| `docs/schema/`    | Schema specifications                                                                                                     |
+| Directory | Purpose |
+| --------- | ------- |
+| `website/docs/guide/` | User guides, including GUI, Web API, configuration, knowledge, and bot adapters |
+| `website/docs/development/` | Architecture and contributor-oriented implementation docs |
+| `docs/design/` | Design documents for major subsystems and active implementation plans |
+| `docs/standards/` | Engineering standards, test strategy, database schema, tool protocol, frontend reuse, skills, DSL, autonomy |
+| `docs/schema/` | Schema specifications |
 
 Top-level references:
 
-| Document             | Purpose                                            |
-| -------------------- | -------------------------------------------------- |
-| `DESIGN_OVERVIEW.md` | Authoritative cross-cutting alignment index        |
-| `DESIGN_RULE.md`     | Design document standards and validation checklist |
-| `VISION.md`          | Project vision (Chinese)                           |
-| `CLAUDE.md`          | Engineering protocol and contribution rules        |
+| Document | Purpose |
+| -------- | ------- |
+| `AGENTS.md` | Repository engineering protocol for coding agents |
+| `CLAUDE.md` | Claude-oriented project workflow notes |
+| `VISION.md` | Project vision (Chinese) |
 
 ---
 
