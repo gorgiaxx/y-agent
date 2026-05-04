@@ -27,6 +27,8 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
+use super::path_utils::resolve_workspace_path;
+
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 10_000;
 
@@ -92,7 +94,7 @@ impl GrepTool {
                     },
                     "path": {
                         "type": "string",
-                        "description": "File or directory to search in (rg PATH). Defaults to current working directory."
+                        "description": "File or directory to search in (rg PATH). Defaults to the session workspace if available, otherwise the current working directory. Relative paths are resolved against the session workspace."
                     },
                     "Glob": {
                         "type": "string",
@@ -444,12 +446,15 @@ impl Tool for GrepTool {
             })?
             .to_string();
 
-        let search_path = input
+        let search_path_arg = input
             .arguments
             .get("path")
             .and_then(|v| v.as_str())
-            .unwrap_or(".")
-            .to_string();
+            .filter(|value| !value.is_empty());
+        let search_path =
+            resolve_workspace_path("Grep", search_path_arg, input.working_dir.as_deref())?
+                .to_string_lossy()
+                .to_string();
 
         let mode = input
             .arguments
@@ -666,6 +671,12 @@ mod tests {
         }
     }
 
+    fn make_input_with_working_dir(args: serde_json::Value, working_dir: &Path) -> ToolInput {
+        let mut input = make_input(args);
+        input.working_dir = Some(working_dir.display().to_string());
+        input
+    }
+
     #[tokio::test]
     async fn test_grep_basic_pattern() {
         let tool = GrepTool::new();
@@ -686,6 +697,78 @@ mod tests {
         let output = tool.execute(input).await.unwrap();
         assert!(output.success);
         assert_eq!(output.content["mode"], "content");
+    }
+
+    #[tokio::test]
+    async fn test_grep_defaults_to_injected_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let file_path = workspace.path().join("__grep_working_dir_unique__.txt");
+        std::fs::write(&file_path, "needle_from_injected_workspace").unwrap();
+
+        let tool = GrepTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({"pattern": "needle_from_injected_workspace"}),
+            workspace.path(),
+        );
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert_eq!(output.content["numFiles"], 1);
+        assert_eq!(
+            output.content["filenames"][0],
+            file_path.display().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grep_resolves_relative_path_against_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let file_path = workspace
+            .path()
+            .join("website")
+            .join("__grep_relative_path_unique__.txt");
+        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        std::fs::write(&file_path, "needle_from_relative_path").unwrap();
+
+        let tool = GrepTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({
+                "pattern": "needle_from_relative_path",
+                "path": "website"
+            }),
+            workspace.path(),
+        );
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert_eq!(output.content["numFiles"], 1);
+        assert_eq!(
+            output.content["filenames"][0],
+            file_path.display().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grep_rejects_search_outside_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("__grep_outside_unique__.txt");
+        std::fs::write(&outside_file, "needle_outside_workspace").unwrap();
+
+        let tool = GrepTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({
+                "pattern": "needle_outside_workspace",
+                "path": outside.path().display().to_string()
+            }),
+            workspace.path(),
+        );
+        let result = tool.execute(input).await;
+
+        assert!(matches!(
+            result,
+            Err(ToolError::PermissionDenied { name, .. }) if name == "Grep"
+        ));
     }
 
     #[tokio::test]

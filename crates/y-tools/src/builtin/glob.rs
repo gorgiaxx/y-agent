@@ -21,8 +21,16 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
+use super::path_utils::resolve_workspace_path;
+
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 10_000;
+
+/// Default number of file paths returned in one response.
+const DEFAULT_MAX_RESULTS: usize = 50;
+
+/// Hard ceiling for caller-requested result counts.
+const MAX_RESULT_LIMIT: usize = 1_000;
 
 /// Default timeout for the search (seconds).
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -85,9 +93,18 @@ impl GlobTool {
                     },
                     "path": {
                         "type": "string",
-                        "description": "The directory to search in. Defaults to the current \
-                            working directory if omitted. Must be a valid directory path \
-                            if provided."
+                        "description": "The directory to search in. Defaults to the session \
+                            workspace if available, otherwise the current working directory. \
+                            Relative paths are resolved against the session workspace."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_RESULT_LIMIT,
+                        "default": DEFAULT_MAX_RESULTS,
+                        "description": "Maximum number of matched file paths to return. Defaults \
+                            to 50 to keep tool results compact; count still reports the total \
+                            matches found."
                     }
                 },
                 "required": ["pattern"]
@@ -103,6 +120,14 @@ impl GlobTool {
                     "count": {
                         "type": "integer",
                         "description": "Number of matched files"
+                    },
+                    "returned_count": {
+                        "type": "integer",
+                        "description": "Number of file paths returned after result limits"
+                    },
+                    "result_limit": {
+                        "type": "integer",
+                        "description": "Maximum number of file paths requested for this call"
                     },
                     "search_path": {
                         "type": "string",
@@ -219,12 +244,16 @@ impl GlobTool {
     }
 
     /// Truncate the result to fit within the character budget.
-    fn truncate_matches(matches: Vec<String>) -> (Vec<String>, bool) {
+    fn truncate_matches(matches: Vec<String>, max_matches: usize) -> (Vec<String>, bool) {
         let mut total_chars = 0usize;
         let mut truncated = false;
         let mut result = Vec::new();
 
         for m in matches {
+            if result.len() >= max_matches {
+                truncated = true;
+                break;
+            }
             // +1 for the newline separator in the serialised form.
             let entry_len = m.len() + 1;
             if total_chars + entry_len > MAX_RESULT_SIZE_CHARS {
@@ -236,6 +265,26 @@ impl GlobTool {
         }
 
         (result, truncated)
+    }
+
+    fn parse_max_results(arguments: &serde_json::Value) -> Result<usize, ToolError> {
+        let Some(value) = arguments.get("max_results") else {
+            return Ok(DEFAULT_MAX_RESULTS);
+        };
+        let Some(value) = value.as_u64() else {
+            return Err(ToolError::ValidationError {
+                message: "'max_results' must be a positive integer".into(),
+            });
+        };
+        let max_results = usize::try_from(value).map_err(|_| ToolError::ValidationError {
+            message: format!("'max_results' must be at most {MAX_RESULT_LIMIT}"),
+        })?;
+        if max_results == 0 || max_results > MAX_RESULT_LIMIT {
+            return Err(ToolError::ValidationError {
+                message: format!("'max_results' must be between 1 and {MAX_RESULT_LIMIT}"),
+            });
+        }
+        Ok(max_results)
     }
 }
 
@@ -262,21 +311,32 @@ impl Tool for GlobTool {
             })?;
 
         let search_path = input.arguments.get("path").and_then(|v| v.as_str());
+        let working_dir = input.working_dir.as_deref();
+        let max_results = Self::parse_max_results(&input.arguments)?;
 
         // Resolve the target directory and effective glob pattern.
         let (resolved_path, glob_pattern) = if Path::new(pattern).is_absolute() {
             // Absolute pattern: split into base dir + relative glob.
             if let Some((base, rel)) = Self::parse_absolute_glob(pattern) {
-                (base.to_string_lossy().to_string(), rel)
+                let base = base.to_string_lossy().to_string();
+                (
+                    resolve_workspace_path("Glob", Some(&base), working_dir)?,
+                    rel,
+                )
             } else {
                 // The pattern is a full absolute path with no globs.
-                let p = search_path.unwrap_or(".").to_string();
-                (p, pattern.to_string())
+                (
+                    resolve_workspace_path("Glob", search_path, working_dir)?,
+                    pattern.to_string(),
+                )
             }
         } else {
-            let p = search_path.unwrap_or(".").to_string();
-            (p, pattern.to_string())
+            (
+                resolve_workspace_path("Glob", search_path, working_dir)?,
+                pattern.to_string(),
+            )
         };
+        let resolved_path = resolved_path.to_string_lossy().to_string();
 
         tracing::debug!("Glob tool: pattern={glob_pattern:?}, search_path={resolved_path:?}");
 
@@ -306,13 +366,16 @@ impl Tool for GlobTool {
 
         // Truncate.
         let total_count = all_matches.len();
-        let (matches, truncated) = Self::truncate_matches(all_matches);
+        let (matches, truncated) = Self::truncate_matches(all_matches, max_results);
+        let returned_count = matches.len();
 
         Ok(ToolOutput {
             success: true,
             content: serde_json::json!({
                 "matches": matches,
                 "count": total_count,
+                "returned_count": returned_count,
+                "result_limit": max_results,
                 "search_path": resolved_path,
                 "truncated": truncated,
             }),
@@ -347,6 +410,12 @@ mod tests {
         }
     }
 
+    fn make_input_with_working_dir(args: serde_json::Value, working_dir: &Path) -> ToolInput {
+        let mut input = make_input(args);
+        input.working_dir = Some(working_dir.display().to_string());
+        input
+    }
+
     #[tokio::test]
     async fn test_glob_basic_pattern() {
         // This test runs against the real filesystem -- we use a pattern
@@ -378,6 +447,91 @@ mod tests {
         assert_eq!(output.content["search_path"], tmp_path);
         let count = output.content["count"].as_u64().unwrap();
         assert!(count >= 1, "expected at least 1 match in tempdir");
+    }
+
+    #[tokio::test]
+    async fn test_glob_defaults_to_injected_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let file_path = workspace
+            .path()
+            .join("website")
+            .join("src")
+            .join("__glob_working_dir_unique__.tsx");
+        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        std::fs::write(&file_path, "export const unique = true;").unwrap();
+
+        let tool = GlobTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({"pattern": "website/src/__glob_working_dir_unique__.tsx"}),
+            workspace.path(),
+        );
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert_eq!(
+            output.content["search_path"],
+            workspace.path().display().to_string()
+        );
+        assert_eq!(output.content["count"], 1);
+        assert_eq!(
+            output.content["matches"][0],
+            file_path.display().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_glob_resolves_relative_search_path_against_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let file_path = workspace
+            .path()
+            .join("website")
+            .join("src")
+            .join("__glob_relative_path_unique__.tsx");
+        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        std::fs::write(&file_path, "export const relativePath = true;").unwrap();
+
+        let tool = GlobTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({
+                "pattern": "src/__glob_relative_path_unique__.tsx",
+                "path": "website"
+            }),
+            workspace.path(),
+        );
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert_eq!(
+            output.content["search_path"],
+            workspace.path().join("website").display().to_string()
+        );
+        assert_eq!(output.content["count"], 1);
+        assert_eq!(
+            output.content["matches"][0],
+            file_path.display().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_glob_rejects_search_outside_working_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("__glob_outside_unique__.tsx");
+        std::fs::write(&outside_file, "export const outside = true;").unwrap();
+
+        let tool = GlobTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({
+                "pattern": outside.path().join("*.tsx").display().to_string()
+            }),
+            workspace.path(),
+        );
+        let result = tool.execute(input).await;
+
+        assert!(matches!(
+            result,
+            Err(ToolError::PermissionDenied { name, .. }) if name == "Glob"
+        ));
     }
 
     #[tokio::test]
@@ -443,8 +597,61 @@ mod tests {
     #[test]
     fn test_truncate_matches() {
         let matches: Vec<String> = (0..10).map(|i| format!("/path/to/file_{i}.rs")).collect();
-        let (result, truncated) = GlobTool::truncate_matches(matches);
+        let (result, truncated) = GlobTool::truncate_matches(matches, 50);
         assert!(!truncated);
         assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn test_truncate_matches_limits_match_count() {
+        let matches: Vec<String> = (0..60).map(|i| format!("/path/to/file_{i}.rs")).collect();
+        let (result, truncated) = GlobTool::truncate_matches(matches, 50);
+        assert!(truncated);
+        assert_eq!(result.len(), 50);
+    }
+
+    #[tokio::test]
+    async fn test_glob_default_result_limit() {
+        let workspace = tempfile::tempdir().unwrap();
+        for i in 0..60 {
+            std::fs::write(workspace.path().join(format!("package-{i}.json")), "{}").unwrap();
+        }
+
+        let tool = GlobTool::new();
+        let input =
+            make_input_with_working_dir(serde_json::json!({"pattern": "*.json"}), workspace.path());
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert_eq!(output.content["count"], 60);
+        assert_eq!(output.content["returned_count"], 50);
+        assert_eq!(output.content["result_limit"], 50);
+        assert!(output.content["truncated"].as_bool().unwrap());
+        assert_eq!(output.content["matches"].as_array().unwrap().len(), 50);
+    }
+
+    #[tokio::test]
+    async fn test_glob_uses_explicit_result_limit() {
+        let workspace = tempfile::tempdir().unwrap();
+        for i in 0..10 {
+            std::fs::write(workspace.path().join(format!("match-{i}.rs")), "").unwrap();
+        }
+
+        let tool = GlobTool::new();
+        let input = make_input_with_working_dir(
+            serde_json::json!({
+                "pattern": "*.rs",
+                "max_results": 3
+            }),
+            workspace.path(),
+        );
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert_eq!(output.content["count"], 10);
+        assert_eq!(output.content["returned_count"], 3);
+        assert_eq!(output.content["result_limit"], 3);
+        assert!(output.content["truncated"].as_bool().unwrap());
+        assert_eq!(output.content["matches"].as_array().unwrap().len(), 3);
     }
 }
