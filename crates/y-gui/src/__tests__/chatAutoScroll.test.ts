@@ -5,7 +5,8 @@ import {
   INITIAL_CHAT_SCROLL_STATE,
   isNearBottom,
   reduceChatScrollState,
-  resolveAutoScrollBehavior,
+  resolveFollowOutputBehavior,
+  resolveFollowScrollTop,
   shouldShowScrollToBottomButton,
 } from '../components/chat-panel/chatAutoScroll';
 
@@ -14,7 +15,7 @@ describe('chat auto scroll', () => {
     expect(
       isNearBottom({
         scrollHeight: 1_000,
-        scrollTop: 760,
+        scrollTop: 860,
         clientHeight: 120,
       }),
     ).toBe(true);
@@ -24,65 +25,61 @@ describe('chat auto scroll', () => {
     expect(
       isNearBottom({
         scrollHeight: 1_000,
-        scrollTop: 700,
+        scrollTop: 850,
         clientHeight: 120,
       }),
     ).toBe(false);
   });
 
-  it('uses smooth scrolling when auto-scroll stays enabled and new items are appended', () => {
+  it('uses immediate follow output when the viewport is still pinned to bottom', () => {
     expect(
-      resolveAutoScrollBehavior({
+      resolveFollowOutputBehavior({
         shouldAutoScroll: true,
-        previousItemCount: 3,
-        nextItemCount: 4,
-      }),
-    ).toBe('smooth');
-  });
-
-  it('uses auto scrolling when streaming appends a new display item', () => {
-    expect(
-      resolveAutoScrollBehavior({
-        shouldAutoScroll: true,
-        previousItemCount: 3,
-        nextItemCount: 4,
-        isStreaming: true,
+        isAtBottom: true,
       }),
     ).toBe('auto');
   });
 
-  it('uses auto scrolling when streaming grows the current bottom item', () => {
+  it('stops follow output as soon as the viewport leaves bottom', () => {
     expect(
-      resolveAutoScrollBehavior({
+      resolveFollowOutputBehavior({
         shouldAutoScroll: true,
-        previousItemCount: 4,
-        nextItemCount: 4,
-      }),
-    ).toBe('auto');
-  });
-
-  it('disables scrolling when the user has left the bottom', () => {
-    expect(
-      resolveAutoScrollBehavior({
-        shouldAutoScroll: false,
-        previousItemCount: 4,
-        nextItemCount: 5,
+        isAtBottom: false,
       }),
     ).toBe(false);
   });
 
-  it('uses auto instead of smooth on the first render', () => {
+  it('keeps follow output disabled while the user is reviewing history', () => {
     expect(
-      resolveAutoScrollBehavior({
-        shouldAutoScroll: true,
-        previousItemCount: 0,
-        nextItemCount: 2,
+      resolveFollowOutputBehavior({
+        shouldAutoScroll: false,
+        isAtBottom: true,
       }),
-    ).toBe('auto');
+    ).toBe(false);
+  });
+
+  it('does not force a scrollTop change while the user is reviewing history', () => {
+    expect(
+      resolveFollowScrollTop({
+        shouldAutoScroll: false,
+        scrollHeight: 3_000,
+        clientHeight: 600,
+      }),
+    ).toBeNull();
+  });
+
+  it('pins the native scroller to the bottom only while follow mode is enabled', () => {
+    expect(
+      resolveFollowScrollTop({
+        shouldAutoScroll: true,
+        scrollHeight: 3_000,
+        clientHeight: 600,
+      }),
+    ).toBe(2_400);
   });
 
   it('exports the bottom threshold used by the panel logic', () => {
-    expect(AUTO_SCROLL_BOTTOM_THRESHOLD_PX).toBe(150);
+    expect(AUTO_SCROLL_BOTTOM_THRESHOLD_PX).toBe(24);
   });
 
   it('disables follow mode when the user scrolls away from the bottom', () => {
@@ -111,7 +108,7 @@ describe('chat auto scroll', () => {
         type: 'viewport-scroll',
         metrics: {
           scrollHeight: 1_000,
-          scrollTop: 760,
+          scrollTop: 860,
           clientHeight: 120,
         },
       },
@@ -120,6 +117,18 @@ describe('chat auto scroll', () => {
     expect(next).toEqual({
       isAtBottom: true,
       shouldAutoScroll: true,
+    });
+  });
+
+  it('disables follow mode when Virtuoso reports that the user left bottom', () => {
+    const next = reduceChatScrollState(INITIAL_CHAT_SCROLL_STATE, {
+      type: 'at-bottom-change',
+      isAtBottom: false,
+    });
+
+    expect(next).toEqual({
+      isAtBottom: false,
+      shouldAutoScroll: false,
     });
   });
 
