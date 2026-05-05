@@ -1,5 +1,4 @@
-import { useRef, useEffect, useCallback, useMemo, useState, memo, type UIEvent } from 'react';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { Fragment, useRef, useCallback, useLayoutEffect, useMemo, useState, memo, type UIEvent } from 'react';
 import { Sparkles, AlertTriangle, ChevronDown } from 'lucide-react';
 import type { Message } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
@@ -14,7 +13,7 @@ import { CompactDivider } from './chat-box/CompactDivider';
 import {
   INITIAL_CHAT_SCROLL_STATE,
   reduceChatScrollState,
-  resolveAutoScrollBehavior,
+  resolveFollowScrollTop,
   shouldShowScrollToBottomButton,
   type ChatScrollState,
 } from './chatAutoScroll';
@@ -157,6 +156,17 @@ function buildDisplayItems(
   return items;
 }
 
+function getDisplayItemKey(item: DisplayItem): string {
+  if (item.kind === 'message') return item.msg.id;
+  if (item.kind === 'restore-divider') return `restore-${item.segment.checkpointId}`;
+  if (item.kind === 'context-reset') return `reset-${item.pointIndex}`;
+  if (item.kind === 'compact-divider') return `compact-div-${item.pointIndex}`;
+  if (item.kind === 'compact-summary') return `compact-sum-${item.pointIndex}`;
+  if (item.kind === 'streaming-indicator') return 'streaming-indicator';
+  if (item.kind === 'error') return 'error';
+  return 'unknown';
+}
+
 function ChatPanelInner({
   messages,
   isStreaming,
@@ -173,11 +183,11 @@ function ChatPanelInner({
   contextResetPoints,
   compactPoints,
 }: ChatPanelProps) {
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const listContentRef = useRef<HTMLDivElement>(null);
   const [scrollState, setScrollState] = useState<ChatScrollState>(INITIAL_CHAT_SCROLL_STATE);
   const scrollStateRef = useRef<ChatScrollState>(INITIAL_CHAT_SCROLL_STATE);
-  /** Track display item count so new items can animate while streaming growth stays instant. */
-  const prevDisplayItemCountRef = useRef(0);
+  const firstMessageIdRef = useRef<string | null | undefined>(undefined);
 
   // Pre-compute the flat display item list.
   const displayItems = useMemo(
@@ -195,26 +205,62 @@ function ChatPanelInner({
     ));
   }, []);
 
-  // Keep following new output only while the user stays near the bottom.
-  useEffect(() => {
-    const behavior = resolveAutoScrollBehavior({
-      shouldAutoScroll: scrollStateRef.current.shouldAutoScroll,
-      previousItemCount: prevDisplayItemCountRef.current,
-      nextItemCount: displayItems.length,
-      isStreaming,
-    });
-    prevDisplayItemCountRef.current = displayItems.length;
-
-    if (!behavior) {
+  const scrollNativeListToBottom = useCallback(() => {
+    const scroller = scrollContainerRef.current;
+    if (!scroller) {
       return;
     }
 
-    virtuosoRef.current?.scrollToIndex({
-      index: displayItems.length - 1,
-      behavior,
-      align: 'end',
+    const nextScrollTop = resolveFollowScrollTop({
+      shouldAutoScroll: true,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
     });
-  }, [displayItems, isStreaming]);
+    if (nextScrollTop !== null) {
+      scroller.scrollTop = nextScrollTop;
+    }
+  }, []);
+
+  const syncNativeScrollPosition = useCallback(() => {
+    const scroller = scrollContainerRef.current;
+    if (!scroller) {
+      return;
+    }
+
+    const nextScrollTop = resolveFollowScrollTop({
+      shouldAutoScroll: scrollStateRef.current.shouldAutoScroll,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+    });
+    if (nextScrollTop !== null) {
+      scroller.scrollTop = nextScrollTop;
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const firstMessageId = messages[0]?.id ?? null;
+    if (firstMessageIdRef.current !== firstMessageId) {
+      firstMessageIdRef.current = firstMessageId;
+      scrollStateRef.current = INITIAL_CHAT_SCROLL_STATE;
+      scrollNativeListToBottom();
+      return;
+    }
+
+    syncNativeScrollPosition();
+  }, [displayItems, messages, scrollNativeListToBottom, syncNativeScrollPosition]);
+
+  useLayoutEffect(() => {
+    const content = listContentRef.current;
+    if (!content || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      syncNativeScrollPosition();
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [syncNativeScrollPosition]);
 
   const handleScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     updateScrollState(
@@ -231,12 +277,8 @@ function ChatPanelInner({
 
   const scrollToBottom = useCallback(() => {
     updateScrollState(reduceChatScrollState(scrollStateRef.current, { type: 'jump-to-bottom' }));
-    virtuosoRef.current?.scrollToIndex({
-      index: Math.max(0, displayItems.length - 1),
-      behavior: 'auto',
-      align: 'end',
-    });
-  }, [displayItems.length, updateScrollState]);
+    scrollNativeListToBottom();
+  }, [scrollNativeListToBottom, updateScrollState]);
 
   const showScrollToBottom = shouldShowScrollToBottomButton(scrollState, isStreaming);
 
@@ -354,26 +396,19 @@ function ChatPanelInner({
   return (
     <div className="chat-panel">
       <div className="chat-messages" style={{ position: 'relative' }}>
-        <Virtuoso
-          ref={virtuosoRef}
-          data={displayItems}
-          computeItemKey={(_index, item) => {
-            if (item.kind === 'message') return item.msg.id;
-            if (item.kind === 'restore-divider') return `restore-${item.segment.checkpointId}`;
-            if (item.kind === 'context-reset') return `reset-${item.pointIndex}`;
-            if (item.kind === 'compact-divider') return `compact-div-${item.pointIndex}`;
-            if (item.kind === 'compact-summary') return `compact-sum-${item.pointIndex}`;
-            if (item.kind === 'streaming-indicator') return 'streaming-indicator';
-            if (item.kind === 'error') return 'error';
-            return 'unknown';
-          }}
-          itemContent={renderItem}
+        <div
+          ref={scrollContainerRef}
+          className="chat-message-list"
           onScroll={handleScroll}
-          overscan={1200}
-          increaseViewportBy={{ top: 800, bottom: 800 }}
-          initialTopMostItemIndex={Math.max(0, displayItems.length - 1)}
-          style={{ height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        />
+        >
+          <div ref={listContentRef} className="chat-message-list-content">
+            {displayItems.map((item, index) => (
+              <Fragment key={getDisplayItemKey(item)}>
+                {renderItem(index, item)}
+              </Fragment>
+            ))}
+          </div>
+        </div>
         {showScrollToBottom && (
           <button
             type="button"

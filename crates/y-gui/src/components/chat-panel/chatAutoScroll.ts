@@ -1,4 +1,4 @@
-export const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 150;
+export const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 24;
 
 interface ScrollMetrics {
   scrollHeight: number;
@@ -17,13 +17,21 @@ type ChatScrollEvent =
       metrics: ScrollMetrics;
       threshold?: number;
     }
+  | {
+      type: 'at-bottom-change';
+      isAtBottom: boolean;
+    }
   | { type: 'jump-to-bottom' };
 
-interface AutoScrollBehaviorParams {
+interface FollowOutputBehaviorParams {
   shouldAutoScroll: boolean;
-  previousItemCount: number;
-  nextItemCount: number;
-  isStreaming?: boolean;
+  isAtBottom: boolean;
+}
+
+interface FollowScrollTopParams {
+  shouldAutoScroll: boolean;
+  scrollHeight: number;
+  clientHeight: number;
 }
 
 export const INITIAL_CHAT_SCROLL_STATE: ChatScrollState = {
@@ -47,6 +55,15 @@ export function reduceChatScrollState(
     return INITIAL_CHAT_SCROLL_STATE;
   }
 
+  if (event.type === 'at-bottom-change') {
+    return event.isAtBottom
+      ? INITIAL_CHAT_SCROLL_STATE
+      : {
+          isAtBottom: false,
+          shouldAutoScroll: false,
+        };
+  }
+
   const isAtBottom = isNearBottom(event.metrics, event.threshold);
   return {
     isAtBottom,
@@ -61,23 +78,21 @@ export function shouldShowScrollToBottomButton(
   return isStreaming && !state.isAtBottom;
 }
 
-export function resolveAutoScrollBehavior({
+export function resolveFollowOutputBehavior({
   shouldAutoScroll,
-  previousItemCount,
-  nextItemCount,
-  isStreaming = false,
-}: AutoScrollBehaviorParams): 'auto' | 'smooth' | false {
-  if (!shouldAutoScroll || nextItemCount <= 0) {
-    return false;
+  isAtBottom,
+}: FollowOutputBehaviorParams): 'auto' | false {
+  return shouldAutoScroll && isAtBottom ? 'auto' : false;
+}
+
+export function resolveFollowScrollTop({
+  shouldAutoScroll,
+  scrollHeight,
+  clientHeight,
+}: FollowScrollTopParams): number | null {
+  if (!shouldAutoScroll) {
+    return null;
   }
 
-  if (isStreaming) {
-    return 'auto';
-  }
-
-  if (previousItemCount > 0 && nextItemCount > previousItemCount) {
-    return 'smooth';
-  }
-
-  return 'auto';
+  return Math.max(0, scrollHeight - clientHeight);
 }
