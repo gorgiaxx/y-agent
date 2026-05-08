@@ -21,3 +21,9 @@
 .session-prompt-editor .monaco-editor .overflow-guard {
   border-radius: var(--radius-md) !important;
 }
+
+.session-prompt-composer {
+  max-height: min(62vh, 720px);
+  overflow: auto;
+  padding-right: 2px;
+}
