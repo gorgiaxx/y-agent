@@ -12,6 +12,7 @@ import {
   Shield,
   BookOpen,
   FileText,
+  Library,
   Info,
   ArrowLeft,
 } from 'lucide-react';
@@ -37,6 +38,7 @@ const SETTINGS_ICON_MAP: Record<string, (props: { size: number }) => ReactElemen
   tools:      (p) => <Wrench {...p} />,
   guardrails: (p) => <Shield {...p} />,
   knowledge:  (p) => <BookOpen {...p} />,
+  promptTemplates: (p) => <Library {...p} />,
   prompts:    (p) => <FileText {...p} />,
   about:      (p) => <Info {...p} />,
 };
@@ -53,6 +55,7 @@ const SETTINGS_CATEGORIES: { key: string; label: string }[] = [
   { key: 'tools', label: 'Tools' },
   { key: 'guardrails', label: 'Guardrails' },
   { key: 'knowledge', label: 'Knowledge' },
+  { key: 'promptTemplates', label: 'Prompt Templates' },
   { key: 'prompts', label: 'Builtin Prompts' },
   { key: 'about', label: 'About' },
 ];

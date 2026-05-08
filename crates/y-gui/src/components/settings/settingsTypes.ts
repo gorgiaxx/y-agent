@@ -560,6 +560,7 @@ export const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [
   { key: 'tools', label: 'Tools' },
   { key: 'guardrails', label: 'Guardrails' },
   { key: 'knowledge', label: 'Knowledge' },
+  { key: 'promptTemplates', label: 'Prompt Templates' },
 ];
 
 export const TAB_LABELS: Record<SettingsTab, string> = {
@@ -574,6 +575,7 @@ export const TAB_LABELS: Record<SettingsTab, string> = {
   tools: 'Tools',
   guardrails: 'Guardrails',
   knowledge: 'Knowledge',
+  promptTemplates: 'Prompt Templates',
   prompts: 'Builtin Prompts',
   about: 'About',
 };

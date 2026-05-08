@@ -49,6 +49,7 @@ import { ToolsTab } from './ToolsTab';
 import { GuardrailsTab } from './GuardrailsTab';
 import { KnowledgeTab } from './KnowledgeTab';
 import { PromptsTab } from './PromptsTab';
+import { PromptTemplatesTab } from './PromptTemplatesTab';
 import { AboutTab } from './AboutTab';
 import { Button, Tabs, TabsContent, WindowControls } from '../ui';
 
@@ -65,7 +66,7 @@ interface SettingsPanelProps {
   onRunWizard?: () => void;
 }
 
-export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'prompts' | 'about';
+export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'promptTemplates' | 'prompts' | 'about';
 
 export function SettingsPanel({
   config,
@@ -405,6 +406,10 @@ export function SettingsPanel({
             setDirtyKnowledge={setDirtyKnowledge}
             setRawKnowledgeToml={setRawKnowledgeToml}
           />
+        </TabsContent>
+
+        <TabsContent value="promptTemplates">
+          <PromptTemplatesTab setToast={setToast} />
         </TabsContent>
 
         <TabsContent value="prompts">
