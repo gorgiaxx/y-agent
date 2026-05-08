@@ -269,6 +269,54 @@ describe('HttpTransport contract mapping', () => {
     expect(calls[0].url).toBe('http://localhost:3000/api/v1/sessions/s1/custom-prompt');
   });
 
+  it('maps session prompt configs and user prompt templates to y-web contracts', async () => {
+    const { calls } = installFetchMock({ message: 'saved' });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('session_set_prompt_config', {
+      sessionId: 's1',
+      config: {
+        system_prompt: 'Custom rules',
+        prompt_section_ids: ['core.datetime'],
+        template_id: 'daily-driver',
+      },
+    });
+    await transport.invoke('prompt_template_save', {
+      id: 'daily-driver',
+      template: {
+        id: 'daily-driver',
+        name: 'Daily Driver',
+        system_prompt: 'Custom rules',
+        prompt_section_ids: ['core.datetime'],
+      },
+    });
+    await transport.invoke('prompt_template_delete', { id: 'daily-driver' });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://localhost:3000/api/v1/sessions/s1/prompt-config',
+      'http://localhost:3000/api/v1/config/prompt-templates/daily-driver',
+      'http://localhost:3000/api/v1/config/prompt-templates/daily-driver',
+    ]);
+    expect(calls[0].init.method).toBe('PUT');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      config: {
+        system_prompt: 'Custom rules',
+        prompt_section_ids: ['core.datetime'],
+        template_id: 'daily-driver',
+      },
+    });
+    expect(calls[1].init.method).toBe('PUT');
+    expect(JSON.parse(String(calls[1].init.body))).toEqual({
+      template: {
+        id: 'daily-driver',
+        name: 'Daily Driver',
+        system_prompt: 'Custom rules',
+        prompt_section_ids: ['core.datetime'],
+      },
+    });
+    expect(calls[2].init.method).toBe('DELETE');
+  });
+
   it('maps agent and provider camelCase args to y-web bodies', async () => {
     const { calls } = installFetchMock({ result: 'provider ok' });
     const transport = new HttpTransport('http://localhost:3000');
