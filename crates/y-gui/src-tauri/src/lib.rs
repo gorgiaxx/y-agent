@@ -38,6 +38,239 @@ fn state_dir() -> Option<PathBuf> {
     state_home.map(|s| s.join("y-agent"))
 }
 
+fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // Logging (debug builds only).
+    if cfg!(debug_assertions) {
+        app.handle().plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )?;
+    }
+
+    // Initialize the service container.
+    // Tauri's setup runs on the main thread without a Tokio runtime,
+    // so we create a temporary one for async initialization.
+    let config_path = config_dir();
+    let data_dir = state_dir();
+    let state_path = data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+    // First-run auto-init: seed configs, prompts, skills, agents
+    // if they don't already exist. This makes the GUI work
+    // out-of-the-box without requiring `y-agent init`.
+    if let Some(ref dd) = data_dir {
+        // Determine bundled skills path from Tauri resources.
+        let skills_source = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|p| p.join("skills"))
+            .filter(|p| p.is_dir());
+
+        if let Err(e) =
+            y_service::init::ensure_initialized(&config_path, dd, skills_source.as_deref())
+        {
+            tracing::warn!(error = %e, "Auto-init failed; continuing with defaults");
+        }
+    }
+
+    let container = rt.block_on(async {
+        let config = ServiceConfig::load_from_directory(&config_path, data_dir.as_deref());
+        let container = ServiceContainer::from_config(&config)
+            .await
+            .expect("Failed to initialize ServiceContainer");
+
+        // NOTE: KnowledgeSearchTool and KnowledgeContextProvider are
+        // both registered by ServiceContainer::from_config (with
+        // embedding support if configured).
+
+        container
+    });
+
+    // Create KnowledgeState wrapping the container's shared knowledge
+    // service. This ensures the GUI knowledge panel, context pipeline,
+    // and `KnowledgeSearch` tool all operate on the same KnowledgeService
+    // instance (with embedding provider if configured).
+    let knowledge_state =
+        commands::knowledge::KnowledgeState::from_shared(Arc::clone(&container.knowledge_service));
+
+    // Keep the runtime alive for async Tauri commands.
+    // Leak it so it stays active for the app's entire lifetime.
+    let rt = Box::leak(Box::new(rt));
+    let _guard = rt.enter();
+
+    let container = Arc::new(container);
+
+    // Upgrade sub-agent runner from SingleTurnRunner to
+    // ServiceAgentRunner so delegated agents (skill-ingestion, etc.)
+    // get the full execution loop with multi-turn tool calling.
+    rt.block_on(container.start_background_services());
+
+    // Spawn a background task that bridges the diagnostics broadcast
+    // channel to Tauri events. This enables real-time diagnostics
+    // for ALL agent executions (knowledge import, skill import, etc.)
+    // without per-caller manual wiring.
+    {
+        let mut rx = container.diagnostics_broadcast.subscribe();
+        let app_handle = app.handle().clone();
+        rt.spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let _ = app_handle.emit("diagnostics:event", &event);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            skipped = n,
+                            "diagnostics broadcast bridge lagged -- events dropped"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("diagnostics broadcast channel closed");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    let app_state = AppState::new(Arc::clone(&container), config_path.clone(), state_path);
+
+    // Periodic sweep of stale pending_runs entries.
+    // If an LLM worker panics before cleanup, its CancellationToken
+    // remains in the map. This sweep removes entries older than 10 min.
+    {
+        let pending = Arc::clone(&app_state.pending_runs);
+        rt.spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.tick().await; // skip first immediate tick
+            loop {
+                interval.tick().await;
+                if let Ok(mut map) = pending.lock() {
+                    let before = map.len();
+                    map.retain(|_, token| !token.is_cancelled());
+                    let removed = before - map.len();
+                    if removed > 0 {
+                        tracing::info!(
+                            removed,
+                            remaining = map.len(),
+                            "swept stale pending_runs entries"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    // Apply the persisted window-decoration preference to the main
+    // window before it is shown.
+    // - macOS: switch title bar style between Overlay (custom) and
+    //   Visible (native). Overlay keeps traffic lights on a layered
+    //   chrome; Visible restores the standard macOS title bar.
+    // - Linux/Windows: toggle native decorations so the frontend can
+    //   draw its own chrome when the user opts in.
+    if let Some(main_window) = app.get_webview_window("main") {
+        let use_custom = rt
+            .block_on(app_state.gui_config.read())
+            .use_custom_decorations;
+
+        #[cfg(target_os = "macos")]
+        {
+            use tauri::utils::config::WindowEffectsConfig;
+            use tauri::utils::{WindowEffect, WindowEffectState};
+
+            let style = if use_custom {
+                tauri::TitleBarStyle::Overlay
+            } else {
+                tauri::TitleBarStyle::Visible
+            };
+            if let Err(e) = main_window.set_title_bar_style(style) {
+                tracing::warn!(error = %e, "Failed to apply title bar style");
+            }
+
+            let effects = WindowEffectsConfig {
+                effects: vec![WindowEffect::Sidebar],
+                state: Some(WindowEffectState::FollowsWindowActiveState),
+                radius: None,
+                color: None,
+            };
+            if let Err(e) = main_window.set_effects(Some(effects)) {
+                tracing::warn!(error = %e, "Failed to apply vibrancy effects");
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        if let Err(e) = main_window.set_decorations(!use_custom) {
+            tracing::warn!(error = %e, "Failed to apply window decoration preference");
+        }
+    }
+
+    // Sync the translation target language from persisted GUI config
+    // into the agent registry so the translator agent prompt is correct
+    // on first use after launch.
+    {
+        let gui_cfg = rt.block_on(app_state.gui_config.read());
+        let mut registry = rt.block_on(container.agent_registry.lock());
+        registry.add_template_var(
+            "{{TRANSLATE_TARGET_LANGUAGE}}".to_string(),
+            gui_cfg.translate_target_language.clone(),
+        );
+    }
+
+    // Webview health monitor: detect WKWebView content process
+    // termination on macOS. The frontend sends a heartbeat_pong
+    // every 15s. If no pong arrives for 120s after at least one
+    // was received AND the window is visible+focused, assume
+    // macOS killed the content process and reload the webview.
+    // When the window is minimized or unfocused, macOS throttles
+    // JS timers aggressively, so we skip the check to avoid
+    // false-positive reloads.
+    {
+        let app_handle = app.handle().clone();
+        let heartbeat = Arc::clone(&app_state.last_heartbeat_pong);
+        rt.spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let last_pong = heartbeat.load(Ordering::Relaxed);
+                if last_pong == 0 {
+                    continue;
+                }
+                let Some(window) = app_handle.get_webview_window("main") else {
+                    continue;
+                };
+                let visible = window.is_visible().unwrap_or(false);
+                let focused = window.is_focused().unwrap_or(false);
+                if !visible || !focused {
+                    continue;
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let elapsed = now.saturating_sub(last_pong);
+                if elapsed > 120 {
+                    tracing::warn!(
+                        elapsed_secs = elapsed,
+                        "webview heartbeat timeout -- reloading webview"
+                    );
+                    if let Err(e) = window.eval("window.location.reload()") {
+                        tracing::error!(error = %e, "failed to reload webview via eval");
+                    }
+                    heartbeat.store(0, Ordering::Relaxed);
+                }
+            }
+        });
+    }
+
+    app.manage(app_state);
+    app.manage(knowledge_state);
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Launch the Tauri desktop application.
 ///
@@ -49,242 +282,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            // Logging (debug builds only).
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
-            // Initialize the service container.
-            // Tauri's setup runs on the main thread without a Tokio runtime,
-            // so we create a temporary one for async initialization.
-            let config_path = config_dir();
-            let data_dir = state_dir();
-            let state_path = data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-
-            // First-run auto-init: seed configs, prompts, skills, agents
-            // if they don't already exist. This makes the GUI work
-            // out-of-the-box without requiring `y-agent init`.
-            if let Some(ref dd) = data_dir {
-                // Determine bundled skills path from Tauri resources.
-                let skills_source = app
-                    .path()
-                    .resource_dir()
-                    .ok()
-                    .map(|p| p.join("skills"))
-                    .filter(|p| p.is_dir());
-
-                if let Err(e) =
-                    y_service::init::ensure_initialized(&config_path, dd, skills_source.as_deref())
-                {
-                    tracing::warn!(error = %e, "Auto-init failed; continuing with defaults");
-                }
-            }
-
-            let container = rt.block_on(async {
-                let config = ServiceConfig::load_from_directory(&config_path, data_dir.as_deref());
-                let container = ServiceContainer::from_config(&config)
-                    .await
-                    .expect("Failed to initialize ServiceContainer");
-
-                // NOTE: KnowledgeSearchTool and KnowledgeContextProvider are
-                // both registered by ServiceContainer::from_config (with
-                // embedding support if configured).
-
-                container
-            });
-
-            // Create KnowledgeState wrapping the container's shared knowledge
-            // service. This ensures the GUI knowledge panel, context pipeline,
-            // and `KnowledgeSearch` tool all operate on the same KnowledgeService
-            // instance (with embedding provider if configured).
-            let knowledge_state = commands::knowledge::KnowledgeState::from_shared(Arc::clone(
-                &container.knowledge_service,
-            ));
-
-            // Keep the runtime alive for async Tauri commands.
-            // Leak it so it stays active for the app's entire lifetime.
-            let rt = Box::leak(Box::new(rt));
-            let _guard = rt.enter();
-
-            let container = Arc::new(container);
-
-            // Upgrade sub-agent runner from SingleTurnRunner to
-            // ServiceAgentRunner so delegated agents (skill-ingestion, etc.)
-            // get the full execution loop with multi-turn tool calling.
-            rt.block_on(container.start_background_services());
-
-            // Spawn a background task that bridges the diagnostics broadcast
-            // channel to Tauri events. This enables real-time diagnostics
-            // for ALL agent executions (knowledge import, skill import, etc.)
-            // without per-caller manual wiring.
-            {
-                let mut rx = container.diagnostics_broadcast.subscribe();
-                let app_handle = app.handle().clone();
-                rt.spawn(async move {
-                    loop {
-                        match rx.recv().await {
-                            Ok(event) => {
-                                let _ = app_handle.emit("diagnostics:event", &event);
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                tracing::warn!(
-                                    skipped = n,
-                                    "diagnostics broadcast bridge lagged -- events dropped"
-                                );
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                tracing::debug!("diagnostics broadcast channel closed");
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-
-            let app_state = AppState::new(Arc::clone(&container), config_path.clone(), state_path);
-
-            // Periodic sweep of stale pending_runs entries.
-            // If an LLM worker panics before cleanup, its CancellationToken
-            // remains in the map. This sweep removes entries older than 10 min.
-            {
-                let pending = Arc::clone(&app_state.pending_runs);
-                rt.spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-                    interval.tick().await; // skip first immediate tick
-                    loop {
-                        interval.tick().await;
-                        if let Ok(mut map) = pending.lock() {
-                            let before = map.len();
-                            map.retain(|_, token| !token.is_cancelled());
-                            let removed = before - map.len();
-                            if removed > 0 {
-                                tracing::info!(
-                                    removed,
-                                    remaining = map.len(),
-                                    "swept stale pending_runs entries"
-                                );
-                            }
-                        }
-                    }
-                });
-            }
-
-            // Apply the persisted window-decoration preference to the main
-            // window before it is shown.
-            // - macOS: switch title bar style between Overlay (custom) and
-            //   Visible (native). Overlay keeps traffic lights on a layered
-            //   chrome; Visible restores the standard macOS title bar.
-            // - Linux/Windows: toggle native decorations so the frontend can
-            //   draw its own chrome when the user opts in.
-            if let Some(main_window) = app.get_webview_window("main") {
-                let use_custom = rt
-                    .block_on(app_state.gui_config.read())
-                    .use_custom_decorations;
-
-                #[cfg(target_os = "macos")]
-                {
-                    use tauri::utils::config::WindowEffectsConfig;
-                    use tauri::utils::{WindowEffect, WindowEffectState};
-
-                    let style = if use_custom {
-                        tauri::TitleBarStyle::Overlay
-                    } else {
-                        tauri::TitleBarStyle::Visible
-                    };
-                    if let Err(e) = main_window.set_title_bar_style(style) {
-                        tracing::warn!(error = %e, "Failed to apply title bar style");
-                    }
-
-                    let effects = WindowEffectsConfig {
-                        effects: vec![WindowEffect::Sidebar],
-                        state: Some(WindowEffectState::FollowsWindowActiveState),
-                        radius: None,
-                        color: None,
-                    };
-                    if let Err(e) = main_window.set_effects(Some(effects)) {
-                        tracing::warn!(error = %e, "Failed to apply vibrancy effects");
-                    }
-                }
-
-                #[cfg(not(target_os = "macos"))]
-                if let Err(e) = main_window.set_decorations(!use_custom) {
-                    tracing::warn!(error = %e, "Failed to apply window decoration preference");
-                }
-            }
-
-            // Sync the translation target language from persisted GUI config
-            // into the agent registry so the translator agent prompt is correct
-            // on first use after launch.
-            {
-                let gui_cfg = rt.block_on(app_state.gui_config.read());
-                let mut registry = rt.block_on(container.agent_registry.lock());
-                registry.add_template_var(
-                    "{{TRANSLATE_TARGET_LANGUAGE}}".to_string(),
-                    gui_cfg.translate_target_language.clone(),
-                );
-            }
-
-            // Webview health monitor: detect WKWebView content process
-            // termination on macOS. The frontend sends a heartbeat_pong
-            // every 15s. If no pong arrives for 120s after at least one
-            // was received AND the window is visible+focused, assume
-            // macOS killed the content process and reload the webview.
-            // When the window is minimized or unfocused, macOS throttles
-            // JS timers aggressively, so we skip the check to avoid
-            // false-positive reloads.
-            {
-                let app_handle = app.handle().clone();
-                let heartbeat = Arc::clone(&app_state.last_heartbeat_pong);
-                rt.spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-                    interval.tick().await;
-                    loop {
-                        interval.tick().await;
-                        let last_pong = heartbeat.load(Ordering::Relaxed);
-                        if last_pong == 0 {
-                            continue;
-                        }
-                        let Some(window) = app_handle.get_webview_window("main") else {
-                            continue;
-                        };
-                        let visible = window.is_visible().unwrap_or(false);
-                        let focused = window.is_focused().unwrap_or(false);
-                        if !visible || !focused {
-                            continue;
-                        }
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-                        let elapsed = now.saturating_sub(last_pong);
-                        if elapsed > 120 {
-                            tracing::warn!(
-                                elapsed_secs = elapsed,
-                                "webview heartbeat timeout -- reloading webview"
-                            );
-                            if let Err(e) = window.eval("window.location.reload()") {
-                                tracing::error!(
-                                    error = %e,
-                                    "failed to reload webview via eval"
-                                );
-                            }
-                            heartbeat.store(0, Ordering::Relaxed);
-                        }
-                    }
-                });
-            }
-
-            app.manage(app_state);
-            app.manage(knowledge_state);
-
-            Ok(())
-        })
+        .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
             // Chat
             commands::chat::chat_send,
@@ -309,6 +307,8 @@ pub fn run() {
             commands::session::session_set_context_reset,
             commands::session::session_get_custom_prompt,
             commands::session::session_set_custom_prompt,
+            commands::session::session_get_prompt_config,
+            commands::session::session_set_prompt_config,
             commands::session::session_fork,
             commands::session::session_rename,
             // Diagnostics
@@ -333,6 +333,9 @@ pub fn run() {
             commands::config::prompt_get,
             commands::config::prompt_get_default,
             commands::config::prompt_save,
+            commands::config::prompt_template_list,
+            commands::config::prompt_template_save,
+            commands::config::prompt_template_delete,
             // MCP
             commands::config::mcp_config_get,
             commands::config::mcp_config_save,

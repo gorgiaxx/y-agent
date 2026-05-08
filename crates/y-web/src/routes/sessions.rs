@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use y_core::session::{CreateSessionOptions, SessionFilter, SessionState, SessionType};
 use y_core::types::SessionId;
+use y_service::{
+    decode_session_prompt_config, encode_session_prompt_config, session_prompt_config_has_content,
+    SessionPromptConfig,
+};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -95,6 +99,12 @@ pub struct CustomPromptRequest {
     pub prompt: Option<String>,
 }
 
+/// Request body for `PUT /api/v1/sessions/:id/prompt-config`.
+#[derive(Debug, Deserialize)]
+pub struct PromptConfigRequest {
+    pub config: SessionPromptConfig,
+}
+
 /// Request body for `POST /api/v1/sessions/:id/truncate`.
 #[derive(Debug, Deserialize)]
 pub struct TruncateRequest {
@@ -159,16 +169,19 @@ async fn list_sessions(
         .await
         .map_err(|e| ApiError::Internal(format!("{e}")))?;
 
-    // Check which sessions have custom prompts.
+    // Check which sessions have custom prompt composition.
     let mut custom_prompt_ids = std::collections::HashSet::new();
     for s in &sessions {
-        if let Ok(Some(_)) = state
+        if let Ok(stored) = state
             .container
             .session_manager
             .get_custom_system_prompt(&s.id)
             .await
         {
-            custom_prompt_ids.insert(s.id.0.clone());
+            let config = decode_session_prompt_config(stored);
+            if session_prompt_config_has_content(&config) {
+                custom_prompt_ids.insert(s.id.0.clone());
+            }
         }
     }
 
@@ -231,8 +244,8 @@ async fn get_session(
         .get_custom_system_prompt(&id)
         .await
         .ok()
-        .flatten()
-        .is_some();
+        .map(decode_session_prompt_config)
+        .is_some_and(|config| session_prompt_config_has_content(&config));
 
     Ok(Json(session_to_info(&session, has_custom)))
 }
@@ -406,12 +419,13 @@ async fn get_custom_prompt(
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let sid = SessionId(session_id);
-    let prompt = state
+    let stored = state
         .container
         .session_manager
         .get_custom_system_prompt(&sid)
         .await
         .map_err(|e| ApiError::Internal(format!("{e}")))?;
+    let prompt = decode_session_prompt_config(stored).system_prompt;
 
     Ok(Json(serde_json::json!({ "prompt": prompt })))
 }
@@ -426,12 +440,54 @@ async fn set_custom_prompt(
     state
         .container
         .session_manager
-        .set_custom_system_prompt(&sid, body.prompt)
+        .set_custom_system_prompt(
+            &sid,
+            encode_session_prompt_config(&SessionPromptConfig {
+                system_prompt: body.prompt,
+                prompt_section_ids: Vec::new(),
+                template_id: None,
+            }),
+        )
         .await
         .map_err(|e| ApiError::Internal(format!("{e}")))?;
 
     Ok(Json(MessageResponse {
         message: "custom prompt updated".to_string(),
+    }))
+}
+
+/// `GET /api/v1/sessions/:id/prompt-config`
+async fn get_prompt_config(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(session_id);
+    let stored = state
+        .container
+        .session_manager
+        .get_custom_system_prompt(&sid)
+        .await
+        .map_err(|e| ApiError::Internal(format!("{e}")))?;
+
+    Ok(Json(decode_session_prompt_config(stored)))
+}
+
+/// `PUT /api/v1/sessions/:id/prompt-config`
+async fn set_prompt_config(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(body): Json<PromptConfigRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .set_custom_system_prompt(&sid, encode_session_prompt_config(&body.config))
+        .await
+        .map_err(|e| ApiError::Internal(format!("{e}")))?;
+
+    Ok(Json(MessageResponse {
+        message: "prompt config updated".to_string(),
     }))
 }
 
@@ -521,6 +577,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/v1/sessions/{session_id}/custom-prompt",
             get(get_custom_prompt).put(set_custom_prompt),
+        )
+        .route(
+            "/api/v1/sessions/{session_id}/prompt-config",
+            get(get_prompt_config).put(set_prompt_config),
         )
         .route("/api/v1/sessions/{session_id}/fork", post(fork_session))
         .route("/api/v1/sessions/{session_id}/rename", put(rename_session))

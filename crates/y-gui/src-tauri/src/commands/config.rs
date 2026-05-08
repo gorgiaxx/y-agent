@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 use tauri::State;
+use y_service::UserPromptTemplate;
 
 use crate::state::{save_gui_config, AppState, GuiConfig};
 
@@ -654,4 +655,31 @@ pub async fn prompt_get_default(filename: String) -> Result<String, String> {
     }
 
     Err(format!("No built-in default for: {filename}"))
+}
+
+// ---------------------------------------------------------------------------
+// User prompt template commands (`<config_dir>/prompt_templates.toml`)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn prompt_template_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<UserPromptTemplate>, String> {
+    y_service::load_user_prompt_templates(&state.config_dir)
+        .map_err(|e| format!("Failed to load prompt templates: {e}"))
+}
+
+#[tauri::command]
+pub async fn prompt_template_save(
+    state: State<'_, AppState>,
+    template: UserPromptTemplate,
+) -> Result<(), String> {
+    y_service::save_user_prompt_template(&state.config_dir, template)
+        .map_err(|e| format!("Failed to save prompt template: {e}"))
+}
+
+#[tauri::command]
+pub async fn prompt_template_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    y_service::delete_user_prompt_template(&state.config_dir, &id)
+        .map_err(|e| format!("Failed to delete prompt template: {e}"))
 }

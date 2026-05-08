@@ -12,7 +12,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::Value;
 use y_core::provider::ProviderCapability;
-use y_service::HttpProtocol;
+use y_service::{HttpProtocol, UserPromptTemplate};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -74,6 +74,12 @@ pub struct ListModelsRequest {
 #[derive(Debug, Deserialize)]
 pub struct SavePromptRequest {
     pub content: String,
+}
+
+/// Request body for saving a prompt template.
+#[derive(Debug, Deserialize)]
+pub struct SavePromptTemplateRequest {
+    pub template: UserPromptTemplate,
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +426,38 @@ async fn prompt_get_default(Path(filename): Path<String>) -> Result<impl IntoRes
     )))
 }
 
+/// `GET /api/v1/config/prompt-templates` -- list user prompt templates.
+async fn prompt_template_list(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let templates = y_service::load_user_prompt_templates(&state.config_dir)
+        .map_err(|e| ApiError::Internal(format!("{e}")))?;
+    Ok(Json(templates))
+}
+
+/// `PUT /api/v1/config/prompt-templates/:id` -- save a prompt template.
+async fn prompt_template_save(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SavePromptTemplateRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut template = body.template;
+    template.id = id;
+    y_service::save_user_prompt_template(&state.config_dir, template)
+        .map_err(|e| ApiError::Internal(format!("{e}")))?;
+    Ok(Json(serde_json::json!({"message": "saved"})))
+}
+
+/// `DELETE /api/v1/config/prompt-templates/:id` -- delete a prompt template.
+async fn prompt_template_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    y_service::delete_user_prompt_template(&state.config_dir, &id)
+        .map_err(|e| ApiError::Internal(format!("{e}")))?;
+    Ok(Json(serde_json::json!({"message": "deleted"})))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -434,6 +472,11 @@ pub fn router() -> Router<AppState> {
             get(mcp_config_get).put(mcp_config_save),
         )
         .route("/api/v1/config/prompts", get(prompt_list))
+        .route("/api/v1/config/prompt-templates", get(prompt_template_list))
+        .route(
+            "/api/v1/config/prompt-templates/{id}",
+            axum::routing::put(prompt_template_save).delete(prompt_template_delete),
+        )
         .route(
             "/api/v1/config/prompts/{filename}",
             get(prompt_get).put(prompt_save),

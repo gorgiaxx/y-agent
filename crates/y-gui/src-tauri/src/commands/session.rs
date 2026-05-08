@@ -5,6 +5,10 @@ use tauri::State;
 
 use y_core::session::{CreateSessionOptions, SessionFilter, SessionState, SessionType};
 use y_core::types::SessionId;
+use y_service::{
+    decode_session_prompt_config, encode_session_prompt_config, session_prompt_config_has_content,
+    SessionPromptConfig,
+};
 
 use crate::state::AppState;
 
@@ -75,16 +79,19 @@ pub async fn session_list(
         .await
         .map_err(|e| format!("Failed to list sessions: {e}"))?;
 
-    // Collect session IDs that have custom prompts.
+    // Collect session IDs that have custom prompt composition.
     let mut custom_prompt_ids = std::collections::HashSet::new();
     for s in &sessions {
-        if let Ok(Some(_)) = state
+        if let Ok(stored) = state
             .container
             .session_manager
             .get_custom_system_prompt(&s.id)
             .await
         {
-            custom_prompt_ids.insert(s.id.0.clone());
+            let config = decode_session_prompt_config(stored);
+            if session_prompt_config_has_content(&config) {
+                custom_prompt_ids.insert(s.id.0.clone());
+            }
         }
     }
 
@@ -326,12 +333,13 @@ pub async fn session_get_custom_prompt(
     session_id: String,
 ) -> Result<Option<String>, String> {
     let sid = SessionId(session_id);
-    state
+    let stored = state
         .container
         .session_manager
         .get_custom_system_prompt(&sid)
         .await
-        .map_err(|e| format!("Failed to get custom prompt: {e}"))
+        .map_err(|e| format!("Failed to get custom prompt: {e}"))?;
+    Ok(decode_session_prompt_config(stored).system_prompt)
 }
 
 /// Set or clear the custom system prompt for a session.
@@ -344,12 +352,49 @@ pub async fn session_set_custom_prompt(
     prompt: Option<String>,
 ) -> Result<(), String> {
     let sid = SessionId(session_id);
+    let config = SessionPromptConfig {
+        system_prompt: prompt,
+        prompt_section_ids: Vec::new(),
+        template_id: None,
+    };
     state
         .container
         .session_manager
-        .set_custom_system_prompt(&sid, prompt)
+        .set_custom_system_prompt(&sid, encode_session_prompt_config(&config))
         .await
         .map_err(|e| format!("Failed to set custom prompt: {e}"))
+}
+
+/// Get the full prompt composition config for a session.
+#[tauri::command]
+pub async fn session_get_prompt_config(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionPromptConfig, String> {
+    let sid = SessionId(session_id);
+    let stored = state
+        .container
+        .session_manager
+        .get_custom_system_prompt(&sid)
+        .await
+        .map_err(|e| format!("Failed to get prompt config: {e}"))?;
+    Ok(decode_session_prompt_config(stored))
+}
+
+/// Set or clear the full prompt composition config for a session.
+#[tauri::command]
+pub async fn session_set_prompt_config(
+    state: State<'_, AppState>,
+    session_id: String,
+    config: SessionPromptConfig,
+) -> Result<(), String> {
+    let sid = SessionId(session_id);
+    state
+        .container
+        .session_manager
+        .set_custom_system_prompt(&sid, encode_session_prompt_config(&config))
+        .await
+        .map_err(|e| format!("Failed to set prompt config: {e}"))
 }
 
 // ---------------------------------------------------------------------------
