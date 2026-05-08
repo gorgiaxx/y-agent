@@ -12,6 +12,7 @@ use y_core::types::SessionId;
 use y_service::chat_types::{
     ChatCheckpointInfo, CompactResult, MessageWithStatus, RestoreResult, TurnMeta, UndoResult,
 };
+use y_service::decode_session_prompt_config;
 use y_service::event_sink::EventSink;
 use y_service::{
     ChatService, PermissionPromptResponse, PrepareTurnRequest, PreparedTurn, ResendTurnRequest,
@@ -342,12 +343,14 @@ async fn apply_prepared_prompt_context(
     prepared: &mut PreparedTurn,
 ) {
     let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &session_id.0);
-    let session_custom_prompt = state
-        .container
-        .session_manager
-        .get_custom_system_prompt(session_id)
-        .await
-        .unwrap_or(None);
+    let session_prompt_config = decode_session_prompt_config(
+        state
+            .container
+            .session_manager
+            .get_custom_system_prompt(session_id)
+            .await
+            .unwrap_or(None),
+    );
 
     let (agent_mode, working_directory, available_tools, agent_prompt, prompt_sections, permission) =
         prepared.agent_config.as_ref().map_or_else(
@@ -387,7 +390,9 @@ async fn apply_prepared_prompt_context(
         working_directory = ?working_directory,
         skills = ?prepared.skills,
         knowledge_collections = ?prepared.knowledge_collections,
-        has_custom_prompt = session_custom_prompt.is_some() || agent_prompt.is_some(),
+        has_custom_prompt = session_prompt_config.system_prompt.is_some()
+            || !session_prompt_config.prompt_section_ids.is_empty()
+            || agent_prompt.is_some(),
         agent_mode = %agent_mode,
         "applied prompt context for prepared turn"
     );
@@ -398,10 +403,12 @@ async fn apply_prepared_prompt_context(
         let mut ctx = state.container.prompt_context.write().await;
         ctx.agent_mode = agent_mode;
         ctx.working_directory = working_directory;
-        ctx.custom_system_prompt = session_custom_prompt.or(agent_prompt);
+        ctx.custom_system_prompt = session_prompt_config.system_prompt.or(agent_prompt);
         ctx.active_skills.clone_from(&prepared.skills);
         ctx.available_tools = available_tools;
-        ctx.selected_prompt_sections = prompt_sections;
+        ctx.selected_prompt_sections = (!session_prompt_config.prompt_section_ids.is_empty())
+            .then_some(session_prompt_config.prompt_section_ids)
+            .or(prompt_sections);
     }
 
     if let Some(default_permission) = permission {
