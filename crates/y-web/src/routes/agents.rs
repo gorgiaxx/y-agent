@@ -9,6 +9,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use y_core::agent::ContextStrategyHint;
+use y_core::runtime::RuntimeBackend;
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -99,6 +100,9 @@ pub struct AgentToolInfo {
 pub struct PromptSectionInfo {
     pub id: String,
     pub category: String,
+    pub priority: i32,
+    pub content: String,
+    pub condition: Option<String>,
 }
 
 /// Request body for `PUT /api/v1/agents/:id`.
@@ -310,8 +314,14 @@ async fn list_tools(State(state): State<AppState>) -> Result<impl IntoResponse, 
 }
 
 /// `GET /api/v1/agents/prompt-sections` -- list built-in prompt sections.
-async fn list_prompt_sections() -> Result<impl IntoResponse, ApiError> {
-    let store = y_prompt::builtin_section_store();
+async fn list_prompt_sections(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let prompts_dir = state.config_dir.join("prompts");
+    let store = y_prompt::builtin_section_store_with_overrides(
+        prompts_dir.is_dir().then_some(prompts_dir.as_path()),
+        &RuntimeBackend::Native,
+    );
     let mut sections: Vec<PromptSectionInfo> = store
         .section_ids()
         .into_iter()
@@ -319,6 +329,12 @@ async fn list_prompt_sections() -> Result<impl IntoResponse, ApiError> {
             store.get(id).map(|section| PromptSectionInfo {
                 id: id.to_string(),
                 category: format!("{:?}", section.category).to_lowercase(),
+                priority: section.priority,
+                content: store.load_content(id).unwrap_or_default(),
+                condition: section
+                    .condition
+                    .as_ref()
+                    .map(|condition| format!("{condition:?}")),
             })
         })
         .collect();

@@ -5,6 +5,7 @@ use std::path::Path;
 use serde::Serialize;
 use tauri::State;
 use y_core::agent::ContextStrategyHint;
+use y_core::runtime::RuntimeBackend;
 
 use crate::state::AppState;
 
@@ -88,6 +89,9 @@ pub struct AgentToolInfo {
 pub struct PromptSectionInfo {
     pub id: String,
     pub category: String,
+    pub priority: i32,
+    pub content: String,
+    pub condition: Option<String>,
 }
 
 /// Raw agent source content used by the frontend raw editor.
@@ -371,8 +375,14 @@ pub async fn agent_tool_list(state: State<'_, AppState>) -> Result<Vec<AgentTool
 
 /// List built-in prompt sections that can be selected for an agent preset.
 #[tauri::command]
-pub async fn agent_prompt_section_list() -> Result<Vec<PromptSectionInfo>, String> {
-    let store = y_prompt::builtin_section_store();
+pub async fn agent_prompt_section_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<PromptSectionInfo>, String> {
+    let prompts_dir = state.config_dir.join("prompts");
+    let store = y_prompt::builtin_section_store_with_overrides(
+        prompts_dir.is_dir().then_some(prompts_dir.as_path()),
+        &RuntimeBackend::Native,
+    );
     let mut sections: Vec<PromptSectionInfo> = store
         .section_ids()
         .into_iter()
@@ -380,6 +390,12 @@ pub async fn agent_prompt_section_list() -> Result<Vec<PromptSectionInfo>, Strin
             store.get(id).map(|section| PromptSectionInfo {
                 id: id.to_string(),
                 category: format!("{:?}", section.category).to_lowercase(),
+                priority: section.priority,
+                content: store.load_content(id).unwrap_or_default(),
+                condition: section
+                    .condition
+                    .as_ref()
+                    .map(|condition| format!("{condition:?}")),
             })
         })
         .collect();
