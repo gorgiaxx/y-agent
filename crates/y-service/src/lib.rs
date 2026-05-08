@@ -35,6 +35,7 @@ pub mod message_builder;
 pub mod observability;
 pub mod orchestrator_dispatcher;
 pub mod plan_orchestrator;
+pub mod prompt_templates;
 pub mod rewind;
 pub mod scheduler_service;
 pub mod skill_evolution;
@@ -74,6 +75,11 @@ pub use mcp_service::McpService;
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,
+};
+pub use prompt_templates::{
+    decode_session_prompt_config, delete_user_prompt_template, encode_session_prompt_config,
+    load_user_prompt_templates, save_user_prompt_template, session_prompt_config_has_content,
+    SessionPromptConfig, UserPromptTemplate,
 };
 pub use rewind::{FileHistoryManagers, RewindError, RewindPointInfo, RewindResult, RewindService};
 pub use scheduler_service::{
