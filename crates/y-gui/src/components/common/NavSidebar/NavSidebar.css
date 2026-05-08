@@ -44,23 +44,14 @@ html[data-host="tauri"][data-platform="macos"][data-theme="dark"] .nav-sidebar {
 }
 
 /* Traffic-light safe area on macOS custom decorations. */
-html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar {
-  padding-top: 28px;
+.nav-sidebar-drag-region {
+  display: none;
+  flex-shrink: 0;
 }
-html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar-drag-region {
+  display: block;
   height: 28px;
   -webkit-app-region: drag;
-  pointer-events: none;
-}
-html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar button,
-html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar a,
-html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar input {
-  -webkit-app-region: no-drag;
 }
 
 .nav-sidebar-scroll {

@@ -66,7 +66,7 @@ export function AgentEditorPanel({
 }: AgentEditorPanelProps) {
   return (
     <div className="settings-panel">
-      <div className="settings-action-bar">
+      <div className="settings-action-bar" data-tauri-drag-region>
         <h2 className="settings-action-bar-title">
           {mode === 'create' ? 'Create Agent' : `Edit ${draft.name || draft.id}`}
         </h2>

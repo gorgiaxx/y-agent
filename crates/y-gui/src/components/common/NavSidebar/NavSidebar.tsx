@@ -72,6 +72,7 @@ export function NavSidebar({ children, footer, variant = 'default', bare, classN
   if (className) classes.push(className);
   return (
     <aside className={classes.join(' ')}>
+      <div className="nav-sidebar-drag-region" data-tauri-drag-region />
       {bare ? children : <div className="nav-sidebar-scroll">{children}</div>}
       {footer && <div className="nav-sidebar-footer">{footer}</div>}
     </aside>
