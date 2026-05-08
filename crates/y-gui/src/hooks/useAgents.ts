@@ -68,6 +68,9 @@ export interface AgentToolInfo {
 export interface PromptSectionInfo {
   id: string;
   category: string;
+  priority: number;
+  content: string;
+  condition?: string | null;
 }
 
 export interface AgentSourceInfo {

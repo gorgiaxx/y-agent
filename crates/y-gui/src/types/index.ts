@@ -15,6 +15,20 @@ export interface SessionInfo {
   has_custom_prompt?: boolean;
 }
 
+export interface SessionPromptConfig {
+  system_prompt?: string | null;
+  prompt_section_ids: string[];
+  template_id?: string | null;
+}
+
+export interface UserPromptTemplate {
+  id: string;
+  name: string;
+  description?: string | null;
+  system_prompt: string;
+  prompt_section_ids: string[];
+}
+
 export interface WorkspaceInfo {
   id: string;
   name: string;

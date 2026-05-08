@@ -2,8 +2,9 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { transport } from '../lib';
+import { STORAGE_KEYS } from '../constants/storageKeys';
 
-import type { SessionInfo } from '../types';
+import type { SessionInfo, SessionPromptConfig, UserPromptTemplate } from '../types';
 
 export interface UseSessionsReturn {
   sessions: SessionInfo[];
@@ -90,9 +91,10 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
           title: title ?? null,
           agentId: options?.agentId ?? agentId ?? null,
         });
-        setSessions((prev) => [session, ...prev]);
+        const sessionWithPrompt = await applyDefaultPromptTemplate(session);
+        setSessions((prev) => [sessionWithPrompt, ...prev]);
         setActiveSessionId(session.id);
-        return session;
+        return sessionWithPrompt;
       } catch (e) {
         console.error('Failed to create session:', e);
         return null;
@@ -166,4 +168,33 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
     forkSession,
     renameSession,
   };
+}
+
+async function applyDefaultPromptTemplate(session: SessionInfo): Promise<SessionInfo> {
+  const templateId = localStorage.getItem(STORAGE_KEYS.DEFAULT_PROMPT_TEMPLATE);
+  if (!templateId) {
+    return session;
+  }
+
+  try {
+    const templates = await transport.invoke<UserPromptTemplate[]>('prompt_template_list');
+    const template = templates.find((item) => item.id === templateId);
+    if (!template) {
+      return session;
+    }
+
+    const config: SessionPromptConfig = {
+      system_prompt: template.system_prompt,
+      prompt_section_ids: template.prompt_section_ids,
+      template_id: template.id,
+    };
+    await transport.invoke('session_set_prompt_config', {
+      sessionId: session.id,
+      config,
+    });
+    return { ...session, has_custom_prompt: true };
+  } catch (e) {
+    console.warn('Failed to apply default prompt template:', e);
+    return session;
+  }
 }
