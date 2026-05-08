@@ -1,0 +1,43 @@
+.prompt-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.prompt-composer-editor {
+  height: 260px;
+  min-height: 220px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  position: relative;
+}
+
+.prompt-composer-editor > div {
+  position: absolute !important;
+  inset: 0;
+}
+
+.prompt-composer-editor .react-monaco-editor-container {
+  height: 100% !important;
+}
+
+.prompt-composer-editor .monaco-editor,
+.prompt-composer-editor .monaco-editor .overflow-guard {
+  border-radius: var(--radius-md) !important;
+}
+
+.prompt-composer-preview {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
