@@ -124,11 +124,7 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
             }
             Err(_) => {
                 if let Some(tid) = trace_id {
-                    trace_summary = self
-                        .diagnostics
-                        .on_trace_end(tid, false, None)
-                        .await
-                        .ok();
+                    trace_summary = self.diagnostics.on_trace_end(tid, false, None).await.ok();
                 }
             }
         }
