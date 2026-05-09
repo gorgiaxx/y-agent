@@ -1,7 +1,6 @@
 import { PromptComposer } from '../../prompts/PromptComposer';
 import type { PromptSectionInfo } from '../../../hooks/useAgents';
 import type { AgentDraft } from '../types';
-import { toggleItem } from '../utils';
 
 interface PromptTabProps {
   draft: AgentDraft;
@@ -18,9 +17,9 @@ export function PromptTab({ draft, promptSections, onChange }: PromptTabProps) {
         promptSections={promptSections}
         mode={draft.mode}
         onSystemPromptChange={(value) => onChange((prev) => ({ ...prev, system_prompt: value }))}
-        onSectionToggle={(id) => onChange((prev) => ({
+        onSelectedSectionIdsChange={(ids) => onChange((prev) => ({
           ...prev,
-          prompt_section_ids: toggleItem(prev.prompt_section_ids, id),
+          prompt_section_ids: ids,
         }))}
       />
     </div>

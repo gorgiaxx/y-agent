@@ -26,7 +26,7 @@ export function buildPromptPreview({
 }): string {
   const trimmedPrompt = systemPrompt.trim();
   const selected = new Set(selectedSectionIds);
-  const useDefaultSections = selected.size === 0;
+  const hasExplicitSelection = selected.size > 0;
   const content: string[] = [];
 
   if (trimmedPrompt) {
@@ -38,22 +38,27 @@ export function buildPromptPreview({
   ));
 
   for (const section of sortedSections) {
-    if (!useDefaultSections && !selected.has(section.id)) {
+    if (hasExplicitSelection && !selected.has(section.id)) {
       continue;
     }
-    if (trimmedPrompt && CUSTOM_PROMPT_REPLACED_SECTION_IDS.has(section.id)) {
+    if (!hasExplicitSelection && trimmedPrompt && CUSTOM_PROMPT_REPLACED_SECTION_IDS.has(section.id)) {
       continue;
     }
     if (!isSectionActiveForMode(section.condition, mode)) {
       continue;
     }
-    const sectionContent = section.content.trim();
+    const sectionContent = resolveTemplatePlaceholders(section.content.trim(), section.id);
     if (sectionContent) {
       content.push(sectionContent);
     }
   }
 
   return content.join('\n\n');
+}
+
+function resolveTemplatePlaceholders(content: string, sectionId: string): string {
+  if (!content.includes('{{')) return content;
+  return content.replace(/\{\{(\w+)\}\}/g, (_match, name) => `[${sectionId}: ${name} -- resolved at runtime]`);
 }
 
 function isSectionActiveForMode(condition: string | null | undefined, mode: string): boolean {
