@@ -7,7 +7,6 @@ import { Tooltip } from '../../ui/Tooltip';
 import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
-import { SessionPromptDialog } from '../SessionPromptDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
@@ -135,8 +134,8 @@ interface InputAreaProps {
   knowledgeCollections?: KnowledgeCollectionInfo[];
   /** Whether the active session has a custom system prompt. */
   hasCustomPrompt?: boolean;
-  /** Callback when custom prompt state changes. */
-  onCustomPromptChange?: (hasPrompt: boolean) => void;
+  /** Opens the full-session prompt editor surface. */
+  onEditSessionPrompt?: () => void;
   provider: InputProviderProps;
   mcp: InputMcpProps;
   dialogs: InputDialogProps;
@@ -149,7 +148,7 @@ export function InputArea(props: InputAreaProps) {
     onSend, onStop, onCommand, disabled, sendOnEnter,
     expanded = false, onExpandChange, onClearSession, onAddContextReset,
     isCompacting = false, sessionId, skills = [], knowledgeCollections = [],
-    hasCustomPrompt = false, onCustomPromptChange,
+    hasCustomPrompt = false, onEditSessionPrompt,
     provider, mcp, dialogs, edit, features,
   } = props;
 
@@ -171,7 +170,6 @@ export function InputArea(props: InputAreaProps) {
   } = features;
 
   const [commandMode, setCommandMode] = useState(false);
-  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
@@ -820,7 +818,7 @@ export function InputArea(props: InputAreaProps) {
               {/* Session custom prompt */}
               <ToolbarTooltipButton
                 className={`toolbar-btn ${hasCustomPrompt ? 'toolbar-btn--active' : ''}`}
-                onClick={() => setPromptDialogOpen(true)}
+                onClick={onEditSessionPrompt}
                 tooltip="Session prompt"
                 disabled={disabled || !sessionId}
               >
@@ -995,16 +993,6 @@ export function InputArea(props: InputAreaProps) {
         onCancel={() => setClearConfirmOpen(false)}
       />
 
-      {promptDialogOpen && sessionId && (
-        <SessionPromptDialog
-          sessionId={sessionId}
-          onClose={() => setPromptDialogOpen(false)}
-          onSaved={(hasPrompt) => {
-            setPromptDialogOpen(false);
-            onCustomPromptChange?.(hasPrompt);
-          }}
-        />
-      )}
     </div>
   );
 }

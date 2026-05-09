@@ -7,6 +7,7 @@ import {
   Settings as SettingsIcon,
   Plus,
   Search,
+  ArrowLeft,
 } from 'lucide-react';
 import type { SessionInfo, WorkspaceInfo } from '../types';
 import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
@@ -61,6 +62,8 @@ export interface NavSidebarPropsGroup {
   onAgentEditorTabChange: (tab: EditorTab) => void;
   onAgentEditorSurfaceChange: (surface: EditorSurface) => void;
   onAgentEditorBack: () => void;
+  sessionPromptEditing: boolean;
+  onSessionPromptBack: () => void;
   backgroundTasksOpen: boolean;
   onCloseBackgroundTasks: () => void;
 }
@@ -96,6 +99,20 @@ export function Sidebar({ chat, nav, agentStudio }: SidebarProps) {
       <BackgroundTasksSidebarNav onBack={nav.onCloseBackgroundTasks}>
         <BackgroundTasksSidebarContent />
       </BackgroundTasksSidebarNav>
+    );
+  }
+
+  if (nav.sessionPromptEditing) {
+    return (
+      <NavSidebar>
+        <NavItem
+          icon={<ArrowLeft size={15} />}
+          label="Back"
+          onClick={nav.onSessionPromptBack}
+        />
+        <NavDivider />
+        <div className="sidebar-section-title">Session prompt editor</div>
+      </NavSidebar>
     );
   }
 

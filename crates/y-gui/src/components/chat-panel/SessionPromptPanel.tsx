@@ -1,33 +1,35 @@
 import { useState, useEffect, useCallback } from 'react';
-import { transport } from '../../lib';
+
 import { STORAGE_KEYS } from '../../constants/storageKeys';
+import { transport } from '../../lib';
 import type { SessionPromptConfig, UserPromptTemplate } from '../../types';
 import type { PromptSectionInfo } from '../../hooks/useAgents';
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
   Button,
+  ScrollArea,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
+  SettingsGroup,
+  SettingsItem,
 } from '../ui';
 import { PromptComposer } from '../prompts/PromptComposer';
-import './SessionPromptDialog.css';
 
-interface SessionPromptDialogProps {
+import './SessionPromptPanel.css';
+
+interface SessionPromptPanelProps {
   sessionId: string;
-  onClose: () => void;
+  sessionTitle?: string | null;
   onSaved: (hasPrompt: boolean) => void;
 }
 
-export function SessionPromptDialog({
+export function SessionPromptPanel({
   sessionId,
-  onClose,
+  sessionTitle,
   onSaved,
-}: SessionPromptDialogProps) {
+}: SessionPromptPanelProps) {
   const [promptConfig, setPromptConfig] = useState<SessionPromptConfig>({
     system_prompt: '',
     prompt_section_ids: [],
@@ -37,6 +39,7 @@ export function SessionPromptDialog({
   const [templates, setTemplates] = useState<UserPromptTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const loadPrompt = useCallback(async () => {
     setLoading(true);
@@ -53,10 +56,11 @@ export function SessionPromptDialog({
       });
       setPromptSections(sections);
       setTemplates(templateList);
-    } catch {
+    } catch (e) {
       setPromptConfig({ system_prompt: '', prompt_section_ids: [], template_id: null });
       setPromptSections([]);
       setTemplates([]);
+      setToast({ message: `Failed to load session prompt: ${e}`, type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -65,6 +69,12 @@ export function SessionPromptDialog({
   useEffect(() => {
     loadPrompt();
   }, [loadPrompt]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -78,8 +88,14 @@ export function SessionPromptDialog({
         localStorage.setItem(STORAGE_KEYS.DEFAULT_PROMPT_TEMPLATE, config.template_id);
       }
       onSaved(hasPromptConfig(config));
+      setPromptConfig({
+        system_prompt: config.system_prompt ?? '',
+        prompt_section_ids: config.prompt_section_ids,
+        template_id: config.template_id,
+      });
+      setToast({ message: 'Session prompt saved', type: 'success' });
     } catch (e) {
-      console.error('Failed to save session prompt:', e);
+      setToast({ message: `Save failed: ${e}`, type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -94,8 +110,9 @@ export function SessionPromptDialog({
       });
       setPromptConfig({ system_prompt: '', prompt_section_ids: [], template_id: null });
       onSaved(false);
+      setToast({ message: 'Session prompt cleared', type: 'success' });
     } catch (e) {
-      console.error('Failed to clear session prompt:', e);
+      setToast({ message: `Clear failed: ${e}`, type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -118,86 +135,80 @@ export function SessionPromptDialog({
     localStorage.setItem(STORAGE_KEYS.DEFAULT_PROMPT_TEMPLATE, template.id);
   };
 
-  const toggleSection = (id: string) => {
-    setPromptConfig((prev) => ({
-      ...prev,
-      template_id: null,
-      prompt_section_ids: toggleItem(prev.prompt_section_ids, id),
-    }));
-  };
-
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent size="lg" className="text-left items-stretch">
-        <DialogTitle className="text-left">
-          Session System Prompt
-        </DialogTitle>
-
-        <div className="flex flex-col gap-2 mt-2">
-          <Select
-            value={promptConfig.template_id ?? '__none__'}
-            onValueChange={applyTemplate}
+    <div className="settings-panel session-prompt-panel">
+      <div className="settings-action-bar" data-tauri-drag-region>
+        <h2 className="settings-action-bar-title">
+          {sessionTitle ? `Session Prompt: ${sessionTitle}` : 'Session Prompt'}
+        </h2>
+        <div className="settings-action-bar-actions">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={handleClear}
+            disabled={loading || saving || !hasPromptConfig(promptConfig)}
           >
-            <SelectTrigger>
-              <SelectValue placeholder="Template" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">No Template</SelectItem>
-              {templates.map((template) => (
-                <SelectItem key={template.id} value={template.id}>
-                  {template.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            Clear
+          </Button>
+          <Button type="button" variant="primary" onClick={handleSave} disabled={loading || saving}>
+            {saving ? 'Saving...' : 'Save Changes'}
+          </Button>
+        </div>
+      </div>
+
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="settings-content">
+          <SettingsGroup title="Template">
+            <SettingsItem title="Prompt Template" wide>
+              <Select
+                value={promptConfig.template_id ?? '__none__'}
+                onValueChange={applyTemplate}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Template" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No Template</SelectItem>
+                  {templates.map((template) => (
+                    <SelectItem key={template.id} value={template.id}>
+                      {template.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsItem>
+          </SettingsGroup>
 
           {loading ? (
-            <div className="text-12px text-[var(--text-muted)] py-4 text-center">
-              Loading...
-            </div>
+            <div className="section-loading">Loading...</div>
           ) : (
-            <div className="session-prompt-composer">
-              <PromptComposer
-                systemPrompt={promptConfig.system_prompt ?? ''}
-                selectedSectionIds={promptConfig.prompt_section_ids}
-                promptSections={promptSections}
-                mode="general"
-                onSystemPromptChange={(value) => setPromptConfig((prev) => ({
-                  ...prev,
-                  system_prompt: value,
-                  template_id: null,
-                }))}
-                onSectionToggle={toggleSection}
-              />
-            </div>
+            <PromptComposer
+              systemPrompt={promptConfig.system_prompt ?? ''}
+              selectedSectionIds={promptConfig.prompt_section_ids}
+              promptSections={promptSections}
+              mode="general"
+              onSystemPromptChange={(value) => setPromptConfig((prev) => ({
+                ...prev,
+                system_prompt: value,
+                template_id: null,
+              }))}
+              onSelectedSectionIdsChange={(ids) => setPromptConfig((prev) => ({
+                ...prev,
+                template_id: null,
+                prompt_section_ids: ids,
+              }))}
+            />
           )}
-
-          <div className="flex gap-2 justify-between mt-1">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={handleClear}
-              disabled={loading || saving || !hasPromptConfig(promptConfig)}
-            >
-              Clear
-            </Button>
-            <div className="flex gap-2">
-              <Button type="button" variant="ghost" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                onClick={handleSave}
-                disabled={loading || saving}
-              >
-                {saving ? 'Saving...' : 'Save'}
-              </Button>
-            </div>
-          </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </ScrollArea>
+
+      {toast && (
+        <div className={`settings-toast ${toast.type}`}>
+          {toast.message}
+        </div>
+      )}
+
+    </div>
   );
 }
 
@@ -219,10 +230,4 @@ function hasPromptConfig(config: SessionPromptConfig): boolean {
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
-function toggleItem(items: string[], item: string): string[] {
-  return items.includes(item)
-    ? items.filter((candidate) => candidate !== item)
-    : [...items, item];
 }

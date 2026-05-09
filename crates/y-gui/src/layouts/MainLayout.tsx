@@ -8,6 +8,7 @@ import { Activity, Eye } from 'lucide-react';
 import { WindowControls } from '../components/ui/WindowControls';
 
 import { ChatView } from '../views/ChatView';
+import { SessionPromptPanel } from '../components/chat-panel/SessionPromptPanel';
 import { SkillsView } from '../views/SkillsView';
 import { KnowledgeView } from '../views/KnowledgeView';
 import { AgentsView } from '../views/AgentsView';
@@ -85,6 +86,8 @@ export function MainLayout() {
           onSelectView: (v) => {
             viewRouting.setActiveView(v);
             viewRouting.setBackgroundTasksSidebarOpen(false);
+            viewRouting.setSessionPromptEditing(false);
+            viewRouting.setSessionPromptSessionId(null);
             if (v !== 'chat') {
               viewRouting.setInputExpanded(false);
             }
@@ -97,6 +100,11 @@ export function MainLayout() {
           onAgentEditorTabChange: agentEditor.setAgentEditorTab,
           onAgentEditorSurfaceChange: agentEditor.onAgentEditorSurfaceChange,
           onAgentEditorBack: agentEditor.onAgentEditorBack,
+          sessionPromptEditing: viewRouting.sessionPromptEditing,
+          onSessionPromptBack: () => {
+            viewRouting.setSessionPromptEditing(false);
+            viewRouting.setSessionPromptSessionId(null);
+          },
           backgroundTasksOpen: viewRouting.backgroundTasksSidebarOpen,
           onCloseBackgroundTasks: () => viewRouting.setBackgroundTasksSidebarOpen(false),
         }}
@@ -170,6 +178,7 @@ export function MainLayout() {
         {(viewRouting.backgroundTasksSidebarOpen || (
           viewRouting.activeView !== 'settings'
           && !(viewRouting.activeView === 'agents' && agentEditor.agentEditing)
+          && !viewRouting.sessionPromptEditing
         )) && (
         <header className="main-header" data-tauri-drag-region>
           <div className="main-header-start" data-tauri-drag-region>
@@ -199,6 +208,18 @@ export function MainLayout() {
 
         {viewRouting.backgroundTasksSidebarOpen ? (
           <BackgroundTasksView />
+        ) : viewRouting.sessionPromptEditing && viewRouting.sessionPromptSessionId ? (
+          <SessionPromptPanel
+            sessionId={viewRouting.sessionPromptSessionId}
+            sessionTitle={
+              sessionHooks.sessions.find((s) => s.id === viewRouting.sessionPromptSessionId)?.title
+              ?? agentSessionHooks.sessions.find((s) => s.id === viewRouting.sessionPromptSessionId)?.title
+            }
+            onSaved={() => {
+              sessionHooks.refreshSessions();
+              agentSessionHooks.refreshSessions();
+            }}
+          />
         ) : (
           <>
             {viewRouting.activeView === 'chat' && <ChatView />}

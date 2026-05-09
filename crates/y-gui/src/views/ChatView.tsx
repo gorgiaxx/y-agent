@@ -202,8 +202,11 @@ export function ChatView() {
           sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)
             ?.has_custom_prompt ?? false
         }
-        onCustomPromptChange={() => {
-          sessionHooks.refreshSessions?.();
+        onEditSessionPrompt={() => {
+          if (!sessionHooks.activeSessionId) return;
+          viewRouting.setSessionPromptSessionId(sessionHooks.activeSessionId);
+          viewRouting.setSessionPromptEditing(true);
+          viewRouting.setInputExpanded(false);
         }}
         provider={{
           providers: providerHooks.providers,

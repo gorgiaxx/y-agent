@@ -34,6 +34,10 @@ export interface ViewRoutingState {
   setActiveSettingsTab: (tab: SettingsTab) => void;
   inputExpanded: boolean;
   setInputExpanded: (expanded: boolean) => void;
+  sessionPromptEditing: boolean;
+  setSessionPromptEditing: (editing: boolean) => void;
+  sessionPromptSessionId: string | null;
+  setSessionPromptSessionId: (id: string | null) => void;
   backgroundTasksSidebarOpen: boolean;
   setBackgroundTasksSidebarOpen: (open: boolean) => void;
   backgroundTasksSessionId: string | null;

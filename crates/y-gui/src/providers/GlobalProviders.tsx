@@ -65,6 +65,8 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
   const [activeView, setActiveView] = useState<ViewType>('chat');
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('general');
   const [inputExpanded, setInputExpanded] = useState(false);
+  const [sessionPromptEditing, setSessionPromptEditing] = useState(false);
+  const [sessionPromptSessionId, setSessionPromptSessionId] = useState<string | null>(null);
   const [backgroundTasksSidebarOpen, setBackgroundTasksSidebarOpen] = useState(false);
   const [backgroundTasksSessionId, setBackgroundTasksSessionId] = useState<string | null>(null);
   const [welcomeWorkspaceId, setWelcomeWorkspaceId] = useState<string | null>(null);
@@ -140,6 +142,8 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     activeView, setActiveView,
     activeSettingsTab, setActiveSettingsTab,
     inputExpanded, setInputExpanded,
+    sessionPromptEditing, setSessionPromptEditing,
+    sessionPromptSessionId, setSessionPromptSessionId,
     backgroundTasksSidebarOpen, setBackgroundTasksSidebarOpen,
     backgroundTasksSessionId, setBackgroundTasksSessionId,
     welcomeWorkspaceId, setWelcomeWorkspaceId,
@@ -148,6 +152,8 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     activeView,
     activeSettingsTab,
     inputExpanded,
+    sessionPromptEditing,
+    sessionPromptSessionId,
     backgroundTasksSidebarOpen,
     backgroundTasksSessionId,
     welcomeWorkspaceId,

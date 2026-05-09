@@ -43,10 +43,6 @@ vi.mock('../components/chat-panel/input-area/PermissionDialog', () => ({
   PermissionDialog: () => null,
 }));
 
-vi.mock('../components/chat-panel/SessionPromptDialog', () => ({
-  SessionPromptDialog: () => null,
-}));
-
 vi.mock('../components/common/ConfirmDialog', () => ({
   ConfirmDialog: () => null,
 }));
