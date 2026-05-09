@@ -72,16 +72,13 @@ impl LangfuseExportBridge {
                         first_seen: Instant::now(),
                     });
                 }
-                Ok(Ok(_)) => {}
+                Ok(Ok(_)) | Err(_) => {}
                 Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
                     warn!(skipped = n, "Langfuse bridge lagged, skipped events");
                 }
                 Ok(Err(broadcast::error::RecvError::Closed)) => {
                     info!("Broadcast channel closed, shutting down Langfuse bridge");
                     break;
-                }
-                Err(_) => {
-                    // Timeout — run reaper.
                 }
             }
 

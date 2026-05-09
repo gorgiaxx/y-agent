@@ -85,10 +85,11 @@ impl OtelSpanMapper {
             KeyValue::string("langfuse.trace.id", trace.id.to_string()),
             KeyValue::string("langfuse.trace.name", &trace.name),
             KeyValue::string("langfuse.trace.session_id", trace.session_id.to_string()),
-            KeyValue::int("gen_ai.usage.input_tokens", trace.total_input_tokens as i64),
+            KeyValue::string("langfuse.trace.base_url", &self.config.base_url),
+            KeyValue::int("gen_ai.usage.input_tokens", trace.total_input_tokens.cast_signed()),
             KeyValue::int(
                 "gen_ai.usage.output_tokens",
-                trace.total_output_tokens as i64,
+                trace.total_output_tokens.cast_signed(),
             ),
             KeyValue::double("langfuse.trace.cost_usd", trace.total_cost_usd),
         ];
@@ -177,7 +178,7 @@ impl OtelSpanMapper {
         let status = match obs.status {
             ObservationStatus::Completed => SpanStatus::ok(),
             ObservationStatus::Failed => SpanStatus::error("observation failed"),
-            _ => SpanStatus::unset(),
+            ObservationStatus::Running => SpanStatus::unset(),
         };
 
         Span {
@@ -202,25 +203,27 @@ impl OtelSpanMapper {
         }
         attrs.push(KeyValue::int(
             "gen_ai.usage.input_tokens",
-            obs.input_tokens as i64,
+            obs.input_tokens.cast_signed(),
         ));
         attrs.push(KeyValue::int(
             "gen_ai.usage.output_tokens",
-            obs.output_tokens as i64,
+            obs.output_tokens.cast_signed(),
         ));
         attrs.push(KeyValue::double("gen_ai.cost_usd", obs.cost_usd));
-        if let Some(dur) = obs.metadata.get("duration_ms").and_then(|v| v.as_u64()) {
-            attrs.push(KeyValue::int("gen_ai.duration_ms", dur as i64));
+        if let Some(dur) = obs.metadata.get("duration_ms").and_then(serde_json::Value::as_u64) {
+            attrs.push(KeyValue::int("gen_ai.duration_ms", dur.cast_signed()));
         }
+        attrs.push(KeyValue::string("langfuse.base_url", &self.config.base_url));
     }
 
     fn add_tool_attributes(&self, obs: &Observation, attrs: &mut Vec<KeyValue>) {
         attrs.push(KeyValue::string("tool.name", &obs.name));
-        if let Some(dur) = obs.metadata.get("duration_ms").and_then(|v| v.as_u64()) {
-            attrs.push(KeyValue::int("tool.duration_ms", dur as i64));
+        if let Some(dur) = obs.metadata.get("duration_ms").and_then(serde_json::Value::as_u64) {
+            attrs.push(KeyValue::int("tool.duration_ms", dur.cast_signed()));
         }
         let success = obs.status == ObservationStatus::Completed;
         attrs.push(KeyValue::bool("tool.success", success));
+        attrs.push(KeyValue::string("langfuse.base_url", &self.config.base_url));
     }
 
     fn build_content_events(&self, obs: &Observation, _trace_id_hex: &str) -> Vec<SpanEvent> {
@@ -255,8 +258,7 @@ impl OtelSpanMapper {
             let redacted = self.maybe_redact(&output_str);
             let end_time = obs
                 .completed_at
-                .map(datetime_to_nanos)
-                .unwrap_or_else(|| time.clone());
+                .map_or_else(|| time.clone(), datetime_to_nanos);
             events.push(SpanEvent {
                 name: "gen_ai.choice".to_string(),
                 time_unix_nano: end_time,
@@ -296,7 +298,7 @@ fn rand_bytes() -> [u8; 8] {
 
 fn datetime_to_nanos(dt: DateTime<Utc>) -> String {
     let secs = dt.timestamp() as u128;
-    let nanos = dt.timestamp_subsec_nanos() as u128;
+    let nanos = u128::from(dt.timestamp_subsec_nanos());
     (secs * 1_000_000_000 + nanos).to_string()
 }
 

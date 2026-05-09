@@ -109,11 +109,11 @@ impl LangfuseFeedbackImporter {
                 .unwrap_or("langfuse_score")
                 .to_string();
 
-            let value = if let Some(v) = score_json.get("value").and_then(|v| v.as_f64()) {
+            let value = if let Some(v) = score_json.get("value").and_then(serde_json::Value::as_f64) {
                 ScoreValue::Numeric(v)
-            } else if let Some(v) = score_json.get("value").and_then(|v| v.as_bool()) {
+            } else if let Some(v) = score_json.get("value").and_then(serde_json::Value::as_bool) {
                 ScoreValue::Boolean(v)
-            } else if let Some(v) = score_json.get("value").and_then(|v| v.as_str()) {
+            } else if let Some(v) = score_json.get("value").and_then(serde_json::Value::as_str) {
                 ScoreValue::Categorical(v.to_string())
             } else {
                 continue;

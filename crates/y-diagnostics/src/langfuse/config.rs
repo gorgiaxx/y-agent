@@ -1,8 +1,8 @@
 //! Langfuse OTLP export configuration.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LangfuseConfig {
     pub enabled: bool,
@@ -36,7 +36,7 @@ impl Default for LangfuseConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ContentConfig {
     pub capture_input: bool,
@@ -54,7 +54,7 @@ impl Default for ContentConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RedactionConfig {
     pub enabled: bool,
@@ -75,7 +75,7 @@ impl Default for RedactionConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SamplingConfig {
     pub rate: f64,
@@ -93,7 +93,7 @@ impl Default for SamplingConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RetryConfig {
     pub max_retries: u32,
@@ -111,7 +111,7 @@ impl Default for RetryConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FeedbackConfig {
     pub import_enabled: bool,
@@ -127,7 +127,7 @@ impl Default for FeedbackConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CircuitBreakerConfig {
     pub failure_threshold: u32,
