@@ -56,6 +56,8 @@ import { Button, Tabs, TabsContent, WindowControls } from '../ui';
 import './SettingsPanel.css';
 import './SettingsForm.css';
 
+type PromptTemplateSaveHandler = () => Promise<void>;
+
 interface SettingsPanelProps {
   config: GuiConfig;
   activeTab: SettingsTab;
@@ -136,6 +138,15 @@ export function SettingsPanel({
 
   // Prompts
   const [dirtyPrompts, setDirtyPrompts] = useState<Record<string, string>>({});
+
+  // Prompt templates
+  const [dirtyPromptTemplates, setDirtyPromptTemplates] = useState(false);
+  const [promptTemplateSaveHandler, setPromptTemplateSaveHandler] =
+    useState<PromptTemplateSaveHandler | null>(null);
+
+  const registerPromptTemplateSaveHandler = useCallback((handler: PromptTemplateSaveHandler | null) => {
+    setPromptTemplateSaveHandler(() => handler);
+  }, []);
 
   // Whether the unified Save Changes is currently writing.
   const [saving, setSaving] = useState(false);
@@ -247,6 +258,18 @@ export function SettingsPanel({
       setDirtyPrompts({});
     }
 
+    if (dirtyPromptTemplates) {
+      try {
+        if (!promptTemplateSaveHandler) {
+          throw new Error('Prompt template editor is not ready');
+        }
+        await promptTemplateSaveHandler();
+        setDirtyPromptTemplates(false);
+      } catch (e) {
+        errors.push(`prompt templates: ${e}`);
+      }
+    }
+
     setSaving(false);
 
     if (errors.length > 0) {
@@ -270,7 +293,8 @@ export function SettingsPanel({
     storageForm, hooksForm, toolsForm, guardrailsForm, knowledgeForm,
     rawSessionToml, rawRuntimeToml, rawBrowserToml,
     rawStorageToml, rawHooksToml, rawToolsToml, rawGuardrailsToml, rawKnowledgeToml,
-    dirtyPrompts, saveSection, reloadConfig, localConfig, onSave,
+    dirtyPrompts, dirtyPromptTemplates, promptTemplateSaveHandler,
+    saveSection, reloadConfig, localConfig, onSave,
   ]);
 
   // Auto-dismiss toast.
@@ -409,7 +433,11 @@ export function SettingsPanel({
         </TabsContent>
 
         <TabsContent value="promptTemplates">
-          <PromptTemplatesTab setToast={setToast} />
+          <PromptTemplatesTab
+            setToast={setToast}
+            setDirtyPromptTemplates={setDirtyPromptTemplates}
+            registerSaveHandler={registerPromptTemplateSaveHandler}
+          />
         </TabsContent>
 
         <TabsContent value="prompts">

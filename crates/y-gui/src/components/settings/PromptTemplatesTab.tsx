@@ -1,26 +1,33 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { Plus, Star, Trash2 } from 'lucide-react';
 
 import { transport } from '../../lib';
 import { STORAGE_KEYS } from '../../constants/storageKeys';
 import type { UserPromptTemplate } from '../../types';
 import type { PromptSectionInfo } from '../../hooks/useAgents';
-import { PromptComposer } from '../prompts/PromptComposer';
-import { Button, Input, SettingsGroup, SettingsItem, Textarea } from '../ui';
+import { PromptComposer, PromptPreviewPanel } from '../prompts/PromptComposer';
+import { buildPromptPreview } from '../prompts/promptPreview';
+import { Button, Input, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
 
 interface PromptTemplatesTabProps {
   setToast: (toast: { message: string; type: 'success' | 'error' } | null) => void;
+  setDirtyPromptTemplates: Dispatch<SetStateAction<boolean>>;
+  registerSaveHandler: (handler: (() => Promise<void>) | null) => void;
 }
 
 const EMPTY_TEMPLATE: UserPromptTemplate = {
   id: '',
   name: '',
-  description: '',
+  description: null,
   system_prompt: '',
   prompt_section_ids: [],
 };
 
-export function PromptTemplatesTab({ setToast }: PromptTemplatesTabProps) {
+export function PromptTemplatesTab({
+  setToast,
+  setDirtyPromptTemplates,
+  registerSaveHandler,
+}: PromptTemplatesTabProps) {
   const [templates, setTemplates] = useState<UserPromptTemplate[]>([]);
   const [promptSections, setPromptSections] = useState<PromptSectionInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -39,7 +46,7 @@ export function PromptTemplatesTab({ setToast }: PromptTemplatesTabProps) {
       ]);
       setTemplates(templateList);
       setPromptSections(sections);
-      const nextActive = activeId ?? templateList[0]?.id ?? null;
+      const nextActive = templateList[0]?.id ?? null;
       setActiveId(nextActive);
       setDraft(templateList.find((item) => item.id === nextActive) ?? EMPTY_TEMPLATE);
     } catch (e) {
@@ -47,7 +54,7 @@ export function PromptTemplatesTab({ setToast }: PromptTemplatesTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [activeId, setToast]);
+  }, [setToast]);
 
   useEffect(() => {
     loadTemplates();
@@ -58,6 +65,20 @@ export function PromptTemplatesTab({ setToast }: PromptTemplatesTabProps) {
     () => templates.find((template) => template.id === activeId) ?? null,
     [activeId, templates],
   );
+  const preview = useMemo(
+    () => buildPromptPreview({
+      systemPrompt: draft.system_prompt,
+      selectedSectionIds: draft.prompt_section_ids,
+      promptSections,
+      mode: 'general',
+    }),
+    [draft.prompt_section_ids, draft.system_prompt, promptSections],
+  );
+
+  const updateDraft = useCallback((updater: (draft: UserPromptTemplate) => UserPromptTemplate) => {
+    setDraft((prev) => updater(prev));
+    setDirtyPromptTemplates(true);
+  }, [setDirtyPromptTemplates]);
 
   const selectTemplate = (template: UserPromptTemplate) => {
     setActiveId(template.id);
@@ -71,31 +92,32 @@ export function PromptTemplatesTab({ setToast }: PromptTemplatesTabProps) {
       name: 'New Template',
       id: 'new-template',
     });
+    setDirtyPromptTemplates(true);
   };
 
-  const saveTemplate = async () => {
+  const saveTemplate = useCallback(async () => {
     const normalized = normalizeTemplate(draft);
     if (!normalized.id || !normalized.name) {
-      setToast({ message: 'Template id and name are required', type: 'error' });
-      return;
+      throw new Error('Template id and name are required');
     }
 
-    try {
-      await transport.invoke('prompt_template_save', {
-        id: normalized.id,
-        template: normalized,
-      });
-      setTemplates((prev) => {
-        const existing = prev.filter((item) => item.id !== normalized.id);
-        return [...existing, normalized].sort((left, right) => left.name.localeCompare(right.name));
-      });
-      setActiveId(normalized.id);
-      setDraft(normalized);
-      setToast({ message: 'Prompt template saved', type: 'success' });
-    } catch (e) {
-      setToast({ message: `Save failed: ${e}`, type: 'error' });
-    }
-  };
+    await transport.invoke('prompt_template_save', {
+      id: normalized.id,
+      template: normalized,
+    });
+    setTemplates((prev) => {
+      const existing = prev.filter((item) => item.id !== normalized.id);
+      return [...existing, normalized].sort((left, right) => left.name.localeCompare(right.name));
+    });
+    setActiveId(normalized.id);
+    setDraft(normalized);
+    setDirtyPromptTemplates(false);
+  }, [draft, setDirtyPromptTemplates]);
+
+  useEffect(() => {
+    registerSaveHandler(saveTemplate);
+    return () => registerSaveHandler(null);
+  }, [registerSaveHandler, saveTemplate]);
 
   const deleteTemplate = async () => {
     if (!activeTemplate) return;
@@ -115,9 +137,15 @@ export function PromptTemplatesTab({ setToast }: PromptTemplatesTabProps) {
     }
   };
 
-  const makeDefault = () => {
-    if (!draft.id.trim()) return;
-    const id = draft.id.trim();
+  const makeDefault = (templateId: string) => {
+    const id = templateId.trim();
+    if (!id) return;
+    if (defaultTemplateId === id) {
+      localStorage.removeItem(STORAGE_KEYS.DEFAULT_PROMPT_TEMPLATE);
+      setDefaultTemplateId('');
+      setToast({ message: 'Default prompt template cleared', type: 'success' });
+      return;
+    }
     localStorage.setItem(STORAGE_KEYS.DEFAULT_PROMPT_TEMPLATE, id);
     setDefaultTemplateId(id);
     setToast({ message: 'Default prompt template updated', type: 'success' });
@@ -127,90 +155,121 @@ export function PromptTemplatesTab({ setToast }: PromptTemplatesTabProps) {
     <div className="settings-section settings-section--fill">
       <div className="settings-header">
         <h3 className="section-title section-title--flush">Prompt Templates</h3>
-        <Button variant="outline" size="sm" onClick={createTemplate}>
-          <Plus size={13} />
-          <span>New Template</span>
-        </Button>
       </div>
 
       {loading ? (
         <div className="section-loading">Loading...</div>
       ) : (
-        <div className="sub-list-layout">
-          <div className="sub-list-sidebar">
-            <div className="sub-list-items">
-              {templates.map((template) => (
+        <SubListLayout
+          className="prompt-template-layout"
+          sidebar={
+            <>
+              <div className="sub-list-actions">
                 <button
-                  key={template.id}
-                  className={`sub-list-item ${activeId === template.id ? 'active' : ''}`}
-                  onClick={() => selectTemplate(template)}
+                  type="button"
+                  className="sub-list-item sub-list-item-add"
+                  onClick={createTemplate}
+                  title="Add template"
                 >
-                  <span className="sub-list-item-label">{template.name}</span>
-                  {defaultTemplateId === template.id && (
-                    <span className="sub-list-item-meta">Default</span>
-                  )}
+                  <Plus size={13} />
+                  <span>Add</span>
                 </button>
-              ))}
-              {templates.length === 0 && (
-                <div className="settings-empty">No prompt templates</div>
-              )}
+                <Button
+                  variant="icon"
+                  size="sm"
+                  onClick={deleteTemplate}
+                  disabled={!activeTemplate}
+                  title="Delete template"
+                >
+                  <Trash2 size={14} />
+                </Button>
+              </div>
+
+              <div className="sub-list-items">
+                {templates.map((template) => (
+                  <button
+                    key={template.id}
+                    className={`sub-list-item ${activeId === template.id ? 'active' : ''}`}
+                    onClick={() => selectTemplate(template)}
+                  >
+                    <span className="sub-list-item-label">{template.name}</span>
+                    {defaultTemplateId === template.id && (
+                      <span className="sub-list-item-meta">Default</span>
+                    )}
+                    <span
+                      className={`sub-list-item-default ${defaultTemplateId === template.id ? 'active' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      title={defaultTemplateId === template.id ? 'Clear default' : 'Set default'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        makeDefault(template.id);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          makeDefault(template.id);
+                        }
+                      }}
+                    >
+                      <Star size={11} />
+                    </span>
+                  </button>
+                ))}
+                {templates.length === 0 && (
+                  <div className="settings-empty">No prompt templates</div>
+                )}
+              </div>
+            </>
+          }
+        >
+
+          <div className="prompt-template-detail">
+            <div className="prompt-template-editor-column">
+              <SettingsGroup title="Template">
+                <SettingsItem title="Name">
+                  <Input
+                    value={draft.name}
+                    onChange={(e) => updateDraft((prev) => ({
+                      ...prev,
+                      name: e.target.value,
+                      id: isNew ? slugify(e.target.value) : prev.id,
+                    }))}
+                  />
+                </SettingsItem>
+                <SettingsItem title="ID">
+                  <Input
+                    value={draft.id}
+                    onChange={(e) => updateDraft((prev) => ({
+                      ...prev,
+                      id: slugify(e.target.value),
+                    }))}
+                    disabled={!isNew}
+                  />
+                </SettingsItem>
+              </SettingsGroup>
+
+              <PromptComposer
+                systemPrompt={draft.system_prompt}
+                selectedSectionIds={draft.prompt_section_ids}
+                promptSections={promptSections}
+                mode="general"
+                showPreview={false}
+                onSystemPromptChange={(value) => updateDraft((prev) => ({
+                  ...prev,
+                  system_prompt: value,
+                }))}
+                onSelectedSectionIdsChange={(ids) => updateDraft((prev) => ({
+                  ...prev,
+                  prompt_section_ids: ids,
+                }))}
+              />
             </div>
+
+            <PromptPreviewPanel preview={preview} className="prompt-template-preview-panel" />
           </div>
-
-          <div className="sub-list-detail prompt-template-detail">
-            <SettingsGroup title="Template" bodyVariant="plain">
-              <SettingsItem title="Name">
-                <Input
-                  value={draft.name}
-                  onChange={(e) => setDraft((prev) => ({
-                    ...prev,
-                    name: e.target.value,
-                    id: isNew ? slugify(e.target.value) : prev.id,
-                  }))}
-                />
-              </SettingsItem>
-              <SettingsItem title="ID">
-                <Input
-                  value={draft.id}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, id: slugify(e.target.value) }))}
-                  disabled={!isNew}
-                />
-              </SettingsItem>
-              <SettingsItem title="Description" wide>
-                <Textarea
-                  value={draft.description ?? ''}
-                  rows={2}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
-                />
-              </SettingsItem>
-            </SettingsGroup>
-
-            <PromptComposer
-              systemPrompt={draft.system_prompt}
-              selectedSectionIds={draft.prompt_section_ids}
-              promptSections={promptSections}
-              mode="general"
-              onSystemPromptChange={(value) => setDraft((prev) => ({ ...prev, system_prompt: value }))}
-              onSectionToggle={(id) => setDraft((prev) => ({
-                ...prev,
-                prompt_section_ids: toggleItem(prev.prompt_section_ids, id),
-              }))}
-            />
-
-            <div className="prompt-template-actions">
-              <Button variant="outline" onClick={makeDefault} disabled={!draft.id.trim()}>
-                Set Default
-              </Button>
-              <Button variant="primary" onClick={saveTemplate}>
-                Save Template
-              </Button>
-              <Button variant="danger" onClick={deleteTemplate} disabled={!activeTemplate}>
-                <Trash2 size={13} />
-                <span>Delete</span>
-              </Button>
-            </div>
-          </div>
-        </div>
+        </SubListLayout>
       )}
     </div>
   );
@@ -220,7 +279,7 @@ function normalizeTemplate(template: UserPromptTemplate): UserPromptTemplate {
   return {
     id: slugify(template.id),
     name: template.name.trim(),
-    description: template.description?.trim() || null,
+    description: null,
     system_prompt: template.system_prompt.trim(),
     prompt_section_ids: [...new Set(template.prompt_section_ids)],
   };
@@ -232,10 +291,4 @@ function slugify(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
-}
-
-function toggleItem(items: string[], item: string): string[] {
-  return items.includes(item)
-    ? items.filter((candidate) => candidate !== item)
-    : [...items, item];
 }
