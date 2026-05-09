@@ -3,6 +3,7 @@
 use uuid::Uuid;
 
 use y_core::types::{Message, Role, ToolCallRequest};
+use y_diagnostics::{DiagnosticsEvent, TraceCompletedSummary};
 use y_tools::strip_tool_call_blocks;
 
 use crate::container::ServiceContainer;
@@ -11,6 +12,21 @@ use super::{
     AgentExecutionConfig, AgentExecutionError, AgentExecutionResult, FinalResultParams,
     LlmIterationData, ToolExecContext, TurnEvent, TurnEventSender,
 };
+
+fn emit_trace_completed(container: &ServiceContainer, summary: TraceCompletedSummary) {
+    let _ = container
+        .diagnostics_broadcast
+        .send(DiagnosticsEvent::TraceCompleted {
+            trace_id: summary.trace_id,
+            session_id: Some(summary.session_id),
+            agent_name: summary.agent_name,
+            success: summary.success,
+            total_input_tokens: summary.total_input_tokens,
+            total_output_tokens: summary.total_output_tokens,
+            total_cost_usd: summary.total_cost_usd,
+            duration_ms: summary.duration_ms,
+        });
+}
 
 pub(crate) async fn emit_loop_limit(
     progress: Option<&TurnEventSender>,
@@ -27,10 +43,13 @@ pub(crate) async fn emit_loop_limit(
     }
     if owns_trace {
         if let Some(tid) = ctx.trace_id {
-            let _ = container
+            if let Ok(summary) = container
                 .diagnostics
                 .on_trace_end(tid, false, Some("tool loop limit exceeded"))
-                .await;
+                .await
+            {
+                emit_trace_completed(container, summary);
+            }
         }
     }
 }
@@ -84,10 +103,13 @@ pub(crate) async fn handle_llm_error(
 
     if owns_trace {
         if let Some(tid) = ctx.trace_id {
-            let _ = container
+            if let Ok(summary) = container
                 .diagnostics
                 .on_trace_end(tid, false, Some(&error.to_string()))
-                .await;
+                .await
+            {
+                emit_trace_completed(container, summary);
+            }
         }
     }
     let partial = std::mem::take(&mut ctx.new_messages);
@@ -252,10 +274,13 @@ pub(crate) async fn build_final_result(
 
     if owns_trace {
         if let Some(tid) = ctx.trace_id {
-            let _ = container
+            if let Ok(summary) = container
                 .diagnostics
                 .on_trace_end(tid, true, Some(&content))
-                .await;
+                .await
+            {
+                emit_trace_completed(container, summary);
+            }
         }
     }
 
