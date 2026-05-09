@@ -18,6 +18,7 @@ This section provides a comprehensive technical reference for developers working
 | [Provider Pool](./provider-pool) | LLM provider routing, freeze/thaw failover, priority scheduling |
 | [Middleware & Hooks](./middleware-hooks) | Middleware chains, guardrails, event bus, HITL protocol |
 | [Storage & Sessions](./storage-sessions) | SQLite persistence, session tree, transcripts, file journal |
+| [Langfuse Integration](./langfuse-integration) | Non-invasive LLM diagnostics export to Langfuse via OTLP |
 | [Contributing](./contributing) | TDD workflow, quality gates, commit discipline, code review |
 
 ## Architecture at a Glance

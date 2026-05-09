@@ -111,18 +111,24 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
         // and tool-call observations have already been recorded by the
         // gateways under this same trace_id (via DIAGNOSTICS_CTX).
         let success = result.is_ok();
+        let mut trace_summary = None;
         match &result {
             Ok(output) => {
                 if let Some(tid) = trace_id {
-                    let _ = self
+                    trace_summary = self
                         .diagnostics
                         .on_trace_end(tid, true, Some(&output.text))
-                        .await;
+                        .await
+                        .ok();
                 }
             }
             Err(_) => {
                 if let Some(tid) = trace_id {
-                    let _ = self.diagnostics.on_trace_end(tid, false, None).await;
+                    trace_summary = self
+                        .diagnostics
+                        .on_trace_end(tid, false, None)
+                        .await
+                        .ok();
                 }
             }
         }
@@ -136,6 +142,20 @@ impl y_core::agent::AgentDelegator for DiagnosticsAgentDelegator {
                 session_id,
                 agent_name: agent_name.to_string(),
                 success,
+            });
+        }
+
+        // Emit TraceCompleted for the Langfuse export bridge.
+        if let Some(summary) = trace_summary {
+            let _ = self.broadcast_tx.send(DiagnosticsEvent::TraceCompleted {
+                trace_id: summary.trace_id,
+                session_id: Some(summary.session_id),
+                agent_name: summary.agent_name,
+                success: summary.success,
+                total_input_tokens: summary.total_input_tokens,
+                total_output_tokens: summary.total_output_tokens,
+                total_cost_usd: summary.total_cost_usd,
+                duration_ms: summary.duration_ms,
             });
         }
 

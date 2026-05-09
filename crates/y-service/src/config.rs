@@ -11,6 +11,8 @@ use tracing::warn;
 
 use y_browser::BrowserConfig;
 use y_context::PruningConfig;
+#[cfg(feature = "langfuse")]
+use y_diagnostics::langfuse::LangfuseConfig;
 use y_guardrails::GuardrailConfig;
 use y_hooks::HookConfig;
 use y_knowledge::config::KnowledgeConfig;
@@ -85,6 +87,11 @@ pub struct ServiceConfig {
     /// `BotService` uses persona-aware prompting.
     #[serde(skip)]
     pub persona_dir: Option<PathBuf>,
+
+    /// Langfuse OTLP export configuration.
+    #[cfg(feature = "langfuse")]
+    #[serde(default)]
+    pub langfuse: LangfuseConfig,
 }
 
 /// Config file basenames (without `.toml` extension) mapping to `ServiceConfig` fields.
@@ -98,6 +105,7 @@ const CONFIG_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
+    "langfuse",
 ];
 
 impl ServiceConfig {
@@ -189,6 +197,11 @@ impl ServiceConfig {
                 "knowledge" => match toml::from_str(&content) {
                     Ok(v) => config.knowledge = v,
                     Err(e) => warn!(file = "knowledge.toml", error = %e, "Parse error"),
+                },
+                #[cfg(feature = "langfuse")]
+                "langfuse" => match toml::from_str(&content) {
+                    Ok(v) => config.langfuse = v,
+                    Err(e) => warn!(file = "langfuse.toml", error = %e, "Parse error"),
                 },
                 _ => {}
             }

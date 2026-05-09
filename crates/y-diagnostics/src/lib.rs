@@ -9,6 +9,8 @@
 pub mod context;
 pub mod cost;
 pub mod events;
+#[cfg(feature = "langfuse")]
+pub mod langfuse;
 pub mod replay;
 pub mod search;
 pub mod sqlite_trace_store;
@@ -25,6 +27,7 @@ pub use search::{TraceSearch, TraceSearchQuery};
 pub use sqlite_trace_store::SqliteTraceStore;
 pub use subscriber::{
     DiagnosticsSubscriber, GenerationCompleteParams, GenerationParams, GenerationStartParams,
+    TraceCompletedSummary,
 };
 pub use trace_store::{InMemoryTraceStore, TraceStore, TraceStoreError};
 pub use types::*;

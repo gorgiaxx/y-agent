@@ -36,6 +36,20 @@ pub struct GenerationParams {
     pub duration_ms: u64,
 }
 
+/// Summary returned by [`DiagnosticsSubscriber::on_trace_end`] so callers
+/// can emit a `DiagnosticsEvent::TraceCompleted` without re-reading the store.
+#[derive(Debug, Clone)]
+pub struct TraceCompletedSummary {
+    pub trace_id: Uuid,
+    pub session_id: Uuid,
+    pub agent_name: String,
+    pub success: bool,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cost_usd: f64,
+    pub duration_ms: u64,
+}
+
 /// Parameters for creating a Running generation observation (stream started).
 pub struct GenerationStartParams {
     pub trace_id: Uuid,
@@ -201,12 +215,14 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
     /// Handle trace completion.
     ///
     /// `output` is the final assistant response text (if any).
+    /// Returns a [`TraceCompletedSummary`] so callers can emit
+    /// `DiagnosticsEvent::TraceCompleted` without re-reading the store.
     pub async fn on_trace_end(
         &self,
         trace_id: Uuid,
         success: bool,
         output: Option<&str>,
-    ) -> Result<(), crate::trace_store::TraceStoreError> {
+    ) -> Result<TraceCompletedSummary, crate::trace_store::TraceStoreError> {
         let mut trace = self.store.get_trace(trace_id).await?;
         if success {
             trace.complete();
@@ -247,7 +263,19 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
             }
         }
 
-        self.store.update_trace(trace).await
+        let summary = TraceCompletedSummary {
+            trace_id: trace.id,
+            session_id: trace.session_id,
+            agent_name: trace.name.clone(),
+            success,
+            total_input_tokens: trace.total_input_tokens,
+            total_output_tokens: trace.total_output_tokens,
+            total_cost_usd: trace.total_cost_usd,
+            duration_ms: trace.total_duration_ms.unwrap_or(0),
+        };
+
+        self.store.update_trace(trace).await?;
+        Ok(summary)
     }
 }
 
@@ -302,7 +330,7 @@ mod tests {
             .unwrap();
 
         // Complete trace.
-        subscriber
+        let summary = subscriber
             .on_trace_end(
                 trace_id,
                 true,
@@ -310,6 +338,9 @@ mod tests {
             )
             .await
             .unwrap();
+        assert!(summary.success);
+        assert_eq!(summary.total_input_tokens, 100);
+        assert_eq!(summary.total_output_tokens, 50);
 
         // Verify trace-level fields.
         let trace = store.get_trace(trace_id).await.unwrap();
@@ -363,10 +394,11 @@ mod tests {
             .await
             .unwrap();
 
-        subscriber
+        let summary = subscriber
             .on_trace_end(trace_id, false, None)
             .await
             .unwrap();
+        assert!(!summary.success);
 
         let trace = store.get_trace(trace_id).await.unwrap();
         assert_eq!(trace.status, TraceStatus::Failed);

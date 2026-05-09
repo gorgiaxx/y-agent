@@ -262,6 +262,8 @@ pub enum ScoreSource {
     Human,
     /// Provided via user feedback (thumbs up/down, etc.).
     UserFeedback,
+    /// Imported from an external system (e.g. Langfuse annotations).
+    External,
 }
 
 /// Value of a score — numeric, categorical, or boolean.

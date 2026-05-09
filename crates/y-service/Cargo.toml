@@ -49,6 +49,7 @@ tempfile = "3"
 default = []
 hook_handlers = ["y-hooks/hook_handlers"]
 llm_hooks = ["y-hooks/llm_hooks"]
+langfuse = ["y-diagnostics/langfuse"]
 
 [dev-dependencies]
 y-test-utils = { workspace = true }

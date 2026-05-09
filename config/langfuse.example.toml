@@ -1,0 +1,40 @@
+# Langfuse OTLP Export Configuration
+# Non-invasive export of diagnostics traces to Langfuse for evaluation.
+# All fields shown with their defaults.
+
+enabled = false
+base_url = "https://cloud.langfuse.com"
+public_key = ""
+secret_key = ""
+# project_id = ""  # Optional, auto-detected from keys
+
+[content]
+capture_input = false
+capture_output = false
+max_content_length = 10000
+
+[redaction]
+enabled = true
+patterns = [
+    '(?i)(api[_-]?key|secret|token|password|bearer)\s*[:=]\s*\S+',
+    '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+]
+replacement = "[REDACTED]"
+
+[sampling]
+rate = 1.0          # 1.0 = export all, 0.5 = 50% of traces
+include_tags = []   # If non-empty, only export traces with these tags
+exclude_tags = []   # Never export traces with these tags
+
+[retry]
+max_retries = 3
+initial_backoff_ms = 1000
+max_backoff_ms = 30000
+
+[feedback]
+import_enabled = false
+poll_interval_secs = 300
+
+[circuit_breaker]
+failure_threshold = 5
+recovery_timeout_secs = 60

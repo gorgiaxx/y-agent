@@ -80,4 +80,19 @@ pub enum DiagnosticsEvent {
         agent_name: String,
         success: bool,
     },
+    /// A top-level or sub-agent trace finished and is ready for export.
+    ///
+    /// Emitted after `DiagnosticsSubscriber::on_trace_end` finalizes the
+    /// trace row. Used by the optional Langfuse export bridge to flush
+    /// completed traces without touching business logic.
+    TraceCompleted {
+        trace_id: uuid::Uuid,
+        session_id: Option<uuid::Uuid>,
+        agent_name: String,
+        success: bool,
+        total_input_tokens: u64,
+        total_output_tokens: u64,
+        total_cost_usd: f64,
+        duration_ms: u64,
+    },
 }

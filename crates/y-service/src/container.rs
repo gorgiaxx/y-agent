@@ -190,6 +190,9 @@ pub struct ServiceContainer {
     /// Data directory root (parent of the `SQLite` database file).
     /// Used for constructing file-history backup paths.
     pub data_dir: PathBuf,
+
+    #[cfg(feature = "langfuse")]
+    langfuse_config: y_diagnostics::langfuse::LangfuseConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +374,8 @@ impl ServiceContainer {
                     db_path.parent().unwrap().to_path_buf()
                 }
             },
+            #[cfg(feature = "langfuse")]
+            langfuse_config: config.langfuse.clone(),
         })
     }
 
@@ -1133,6 +1138,30 @@ impl ServiceContainer {
         crate::mcp_service::McpService::init_mcp_connections(self).await;
         crate::mcp_service::McpService::register_mcp_tools(self).await;
         crate::mcp_service::McpService::start_mcp_event_consumer(self).await;
+        #[cfg(feature = "langfuse")]
+        self.init_langfuse_bridge().await;
+    }
+
+    #[cfg(feature = "langfuse")]
+    async fn init_langfuse_bridge(self: &Arc<Self>) {
+        if !self.langfuse_config.enabled {
+            return;
+        }
+        let rx = self.diagnostics_broadcast.subscribe();
+        let store = self.diagnostics.store();
+        let config = self.langfuse_config.clone();
+
+        let bridge =
+            y_diagnostics::langfuse::LangfuseExportBridge::new(rx, store.clone(), config.clone());
+        tokio::spawn(bridge.run());
+        tracing::info!("Langfuse OTLP export bridge started");
+
+        if config.feedback.import_enabled {
+            let importer =
+                y_diagnostics::langfuse::LangfuseFeedbackImporter::new(store, &config);
+            tokio::spawn(importer.run());
+            tracing::info!("Langfuse feedback importer started");
+        }
     }
 
     /// Wire LLM-backed knowledge services (tag generator, metadata

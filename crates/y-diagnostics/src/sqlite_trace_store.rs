@@ -288,6 +288,7 @@ impl ScoreRow {
             Some("llm") => ScoreSource::Llm,
             Some("human") => ScoreSource::Human,
             Some("user_feedback") => ScoreSource::UserFeedback,
+            Some("external") => ScoreSource::External,
             _ => ScoreSource::System,
         };
         Some(Score {
@@ -591,6 +592,7 @@ impl TraceStore for SqliteTraceStore {
             ScoreSource::Llm => "llm",
             ScoreSource::Human => "human",
             ScoreSource::UserFeedback => "user_feedback",
+            ScoreSource::External => "external",
         };
 
         sqlx::query(

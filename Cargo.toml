@@ -67,6 +67,7 @@ ed25519-dalek = { version = "2", features = ["pkcs8"] }
 hex = "0.4"
 chardetng = "0.1"
 encoding_rs = "0.8"
+regex = "1"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
