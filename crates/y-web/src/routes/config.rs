@@ -31,6 +31,7 @@ const ALLOWED_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
+    "langfuse",
 ];
 
 // ---------------------------------------------------------------------------

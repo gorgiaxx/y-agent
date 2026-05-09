@@ -30,6 +30,7 @@ pub async fn config_get(state: State<'_, AppState>) -> Result<Value, String> {
         "guardrails",
         "browser",
         "knowledge",
+        "langfuse",
     ];
 
     for section in &sections {
@@ -65,6 +66,7 @@ pub async fn config_set_section(
         "guardrails",
         "browser",
         "knowledge",
+        "langfuse",
     ];
     if !allowed.contains(&section.as_str()) {
         return Err(format!("Unknown config section: {section}"));
@@ -127,6 +129,7 @@ pub async fn config_get_section(
         "guardrails",
         "browser",
         "knowledge",
+        "langfuse",
     ];
     if !allowed.contains(&section.as_str()) {
         return Err(format!("Unknown config section: {section}"));
@@ -159,6 +162,7 @@ pub async fn config_save_section(
         "guardrails",
         "browser",
         "knowledge",
+        "langfuse",
     ];
     if !allowed.contains(&section.as_str()) {
         return Err(format!("Unknown config section: {section}"));

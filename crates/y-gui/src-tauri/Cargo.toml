@@ -44,7 +44,7 @@ tracing = { workspace = true }
 
 # Internal crates
 y-agent = { workspace = true }
-y-service = { workspace = true }
+y-service = { workspace = true, features = ["langfuse"] }
 y-core = { workspace = true }
 y-provider = { workspace = true }
 y-diagnostics = { workspace = true }

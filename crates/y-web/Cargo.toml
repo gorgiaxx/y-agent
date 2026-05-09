@@ -8,7 +8,7 @@ description = "HTTP REST API server for y-agent — axum-based presentation laye
 [dependencies]
 y-core = { workspace = true }
 y-bot = { workspace = true }
-y-service = { workspace = true }
+y-service = { workspace = true, features = ["langfuse"] }
 y-session = { workspace = true }
 y-diagnostics = { workspace = true }
 y-agent = { workspace = true }
