@@ -42,6 +42,7 @@ pub async fn wire(config: &YAgentConfig) -> Result<AppServices> {
         prompts_dir,
         skills_dir,
         persona_dir,
+        ..Default::default()
     };
 
     AppServices::from_config(&service_config).await

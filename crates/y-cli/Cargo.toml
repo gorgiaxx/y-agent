@@ -59,6 +59,7 @@ default = ["tui"]
 tui = ["ratatui", "crossterm", "tui-textarea", "unicode-width", "arboard", "pulldown-cmark", "syntect", "two-face"]
 hook_handlers = ["y-service/hook_handlers"]
 llm_hooks = ["y-service/llm_hooks"]
+langfuse = ["y-service/langfuse"]
 
 [dev-dependencies]
 y-test-utils = { workspace = true }
