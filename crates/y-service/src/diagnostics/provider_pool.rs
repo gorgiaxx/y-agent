@@ -182,9 +182,23 @@ impl ProviderPool for DiagnosticsProviderPool {
         request: &ChatRequest,
         route: &RouteRequest,
     ) -> Result<ChatResponse, ProviderError> {
-        let start = std::time::Instant::now();
         let fallback = serde_json::to_string(&request.messages).unwrap_or_default();
 
+        // Emit LlmCallStarted event before the call.
+        if let Ok(ctx) = DIAGNOSTICS_CTX.try_with(Clone::clone) {
+            let iteration = ctx.next_iteration();
+            let model = request.model.as_deref().unwrap_or("unknown").to_string();
+            let _ = self.broadcast_tx.send(DiagnosticsEvent::LlmCallStarted {
+                trace_id: ctx.trace_id,
+                observation_id: Uuid::new_v4(),
+                session_id: ctx.session_id,
+                agent_name: ctx.agent_name.clone(),
+                iteration,
+                model,
+            });
+        }
+
+        let start = std::time::Instant::now();
         let result = self.inner.chat_completion(request, route).await;
         let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(0);
 
