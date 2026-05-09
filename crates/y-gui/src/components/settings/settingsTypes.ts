@@ -7,6 +7,7 @@ import { escapeTomlString, deserializeFromJson, mergeIntoRawToml } from '../../u
 import {
   SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA, browserPostProcess,
   STORAGE_SCHEMA, HOOKS_SCHEMA, TOOLS_SCHEMA, GUARDRAILS_SCHEMA, KNOWLEDGE_SCHEMA,
+  LANGFUSE_SCHEMA,
 } from '../../utils/settingsSchemas';
 
 // ---------------------------------------------------------------------------
@@ -154,6 +155,30 @@ export interface KnowledgeFormData {
   retrieval_strategy: string;
   bm25_weight: number;
   vector_weight: number;
+}
+
+export interface LangfuseFormData {
+  enabled: boolean;
+  base_url: string;
+  public_key: string;
+  secret_key: string;
+  project_id: string;
+  content_capture_input: boolean;
+  content_capture_output: boolean;
+  content_max_content_length: number;
+  redaction_enabled: boolean;
+  redaction_patterns: string[];
+  redaction_replacement: string;
+  sampling_rate: number;
+  sampling_include_tags: string[];
+  sampling_exclude_tags: string[];
+  retry_max_retries: number;
+  retry_initial_backoff_ms: number;
+  retry_max_backoff_ms: number;
+  feedback_import_enabled: boolean;
+  feedback_poll_interval_secs: number;
+  circuit_breaker_failure_threshold: number;
+  circuit_breaker_recovery_timeout_secs: number;
 }
 
 export interface McpServerFormData {
@@ -326,6 +351,33 @@ export const DEFAULT_KNOWLEDGE_FORM: KnowledgeFormData = {
   retrieval_strategy: 'hybrid',
   bm25_weight: 1.0,
   vector_weight: 1.0,
+};
+
+export const DEFAULT_LANGFUSE_FORM: LangfuseFormData = {
+  enabled: false,
+  base_url: 'https://cloud.langfuse.com',
+  public_key: '',
+  secret_key: '',
+  project_id: '',
+  content_capture_input: false,
+  content_capture_output: false,
+  content_max_content_length: 10000,
+  redaction_enabled: true,
+  redaction_patterns: [
+    '(?i)(api[_-]?key|secret|token|password|bearer)\\s*[:=]\\s*\\S+',
+    '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b',
+  ],
+  redaction_replacement: '[REDACTED]',
+  sampling_rate: 1.0,
+  sampling_include_tags: [],
+  sampling_exclude_tags: [],
+  retry_max_retries: 3,
+  retry_initial_backoff_ms: 1000,
+  retry_max_backoff_ms: 30000,
+  feedback_import_enabled: false,
+  feedback_poll_interval_secs: 300,
+  circuit_breaker_failure_threshold: 5,
+  circuit_breaker_recovery_timeout_secs: 60,
 };
 
 // ---------------------------------------------------------------------------
@@ -549,6 +601,14 @@ export function knowledgeToToml(form: KnowledgeFormData, rawToml: string | undef
   return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, KNOWLEDGE_SCHEMA);
 }
 
+export function jsonToLangfuse(json: unknown): LangfuseFormData {
+  return deserializeFromJson(json, LANGFUSE_SCHEMA) as unknown as LangfuseFormData;
+}
+
+export function langfuseToToml(form: LangfuseFormData, rawToml: string | undefined): string {
+  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, LANGFUSE_SCHEMA);
+}
+
 export const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [
   { key: 'providers', label: 'Providers' },
   { key: 'session', label: 'Session' },
@@ -560,6 +620,7 @@ export const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [
   { key: 'tools', label: 'Tools' },
   { key: 'guardrails', label: 'Guardrails' },
   { key: 'knowledge', label: 'Knowledge' },
+  { key: 'langfuse', label: 'Langfuse' },
   { key: 'promptTemplates', label: 'Prompt Templates' },
 ];
 
@@ -575,6 +636,7 @@ export const TAB_LABELS: Record<SettingsTab, string> = {
   tools: 'Tools',
   guardrails: 'Guardrails',
   knowledge: 'Knowledge',
+  langfuse: 'Langfuse',
   promptTemplates: 'Prompt Templates',
   prompts: 'Builtin Prompts',
   about: 'About',

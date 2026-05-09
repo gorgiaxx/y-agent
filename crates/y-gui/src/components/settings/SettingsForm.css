@@ -158,3 +158,10 @@
   font-size: 0.75rem;
   padding: 2px 8px;
 }
+
+/* ---- Info / warning notice within a settings group ---- */
+.settings-notice {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}

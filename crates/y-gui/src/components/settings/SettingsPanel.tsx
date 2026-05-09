@@ -9,6 +9,7 @@ import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import {
   SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA,
   STORAGE_SCHEMA, HOOKS_SCHEMA, TOOLS_SCHEMA, GUARDRAILS_SCHEMA, KNOWLEDGE_SCHEMA,
+  LANGFUSE_SCHEMA,
 } from '../../utils/settingsSchemas';
 
 import type {
@@ -22,6 +23,7 @@ import type {
   ToolsFormData,
   GuardrailsFormData,
   KnowledgeFormData,
+  LangfuseFormData,
 } from './settingsTypes';
 import {
   DEFAULT_SESSION_FORM,
@@ -32,6 +34,7 @@ import {
   DEFAULT_TOOLS_FORM,
   DEFAULT_GUARDRAILS_FORM,
   DEFAULT_KNOWLEDGE_FORM,
+  DEFAULT_LANGFUSE_FORM,
   providersToToml,
   mcpServersToJson,
   TAB_LABELS,
@@ -48,6 +51,7 @@ import { HooksTab } from './HooksTab';
 import { ToolsTab } from './ToolsTab';
 import { GuardrailsTab } from './GuardrailsTab';
 import { KnowledgeTab } from './KnowledgeTab';
+import { LangfuseTab } from './LangfuseTab';
 import { PromptsTab } from './PromptsTab';
 import { PromptTemplatesTab } from './PromptTemplatesTab';
 import { AboutTab } from './AboutTab';
@@ -68,7 +72,7 @@ interface SettingsPanelProps {
   onRunWizard?: () => void;
 }
 
-export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'promptTemplates' | 'prompts' | 'about';
+export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'langfuse' | 'promptTemplates' | 'prompts' | 'about';
 
 export function SettingsPanel({
   config,
@@ -135,6 +139,11 @@ export function SettingsPanel({
   const [knowledgeForm, setKnowledgeForm] = useState<KnowledgeFormData>({ ...DEFAULT_KNOWLEDGE_FORM });
   const [dirtyKnowledge, setDirtyKnowledge] = useState(false);
   const [rawKnowledgeToml, setRawKnowledgeToml] = useState<string | undefined>(undefined);
+
+  // Langfuse
+  const [langfuseForm, setLangfuseForm] = useState<LangfuseFormData>({ ...DEFAULT_LANGFUSE_FORM });
+  const [dirtyLangfuse, setDirtyLangfuse] = useState(false);
+  const [rawLangfuseToml, setRawLangfuseToml] = useState<string | undefined>(undefined);
 
   // Prompts
   const [dirtyPrompts, setDirtyPrompts] = useState<Record<string, string>>({});
@@ -248,6 +257,15 @@ export function SettingsPanel({
       } catch (e) { errors.push(`knowledge: ${e}`); }
     }
 
+    if (dirtyLangfuse) {
+      try {
+        const toml = mergeIntoRawToml(rawLangfuseToml, langfuseForm as unknown as Record<string, unknown>, LANGFUSE_SCHEMA);
+        await saveSection('langfuse', toml);
+        setRawLangfuseToml(toml);
+        setDirtyLangfuse(false);
+      } catch (e) { errors.push(`langfuse: ${e}`); }
+    }
+
     // Save dirty prompt files.
     for (const [filename, content] of Object.entries(dirtyPrompts)) {
       try {
@@ -288,11 +306,11 @@ export function SettingsPanel({
     setToast({ message: 'Settings saved', type: 'success' });
   }, [
     dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser, dirtyMcp,
-    dirtyStorage, dirtyHooks, dirtyTools, dirtyGuardrails, dirtyKnowledge,
+    dirtyStorage, dirtyHooks, dirtyTools, dirtyGuardrails, dirtyKnowledge, dirtyLangfuse,
     providersList, providersMeta, sessionForm, runtimeForm, browserForm, mcpServersList,
-    storageForm, hooksForm, toolsForm, guardrailsForm, knowledgeForm,
+    storageForm, hooksForm, toolsForm, guardrailsForm, knowledgeForm, langfuseForm,
     rawSessionToml, rawRuntimeToml, rawBrowserToml,
-    rawStorageToml, rawHooksToml, rawToolsToml, rawGuardrailsToml, rawKnowledgeToml,
+    rawStorageToml, rawHooksToml, rawToolsToml, rawGuardrailsToml, rawKnowledgeToml, rawLangfuseToml,
     dirtyPrompts, dirtyPromptTemplates, promptTemplateSaveHandler,
     saveSection, reloadConfig, localConfig, onSave,
   ]);
@@ -429,6 +447,16 @@ export function SettingsPanel({
             setKnowledgeForm={setKnowledgeForm}
             setDirtyKnowledge={setDirtyKnowledge}
             setRawKnowledgeToml={setRawKnowledgeToml}
+          />
+        </TabsContent>
+
+        <TabsContent value="langfuse" className="settings-section">
+          <LangfuseTab
+            loadSection={loadSection}
+            langfuseForm={langfuseForm}
+            setLangfuseForm={setLangfuseForm}
+            setDirtyLangfuse={setDirtyLangfuse}
+            setRawLangfuseToml={setRawLangfuseToml}
           />
         </TabsContent>
 

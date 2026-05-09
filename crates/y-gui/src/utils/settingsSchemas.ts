@@ -218,3 +218,47 @@ export const KNOWLEDGE_SCHEMA: FieldDef[] = [
   { formKey: 'bm25_weight', tomlKey: 'bm25_weight', type: 'number', defaultValue: 1.0 },
   { formKey: 'vector_weight', tomlKey: 'vector_weight', type: 'number', defaultValue: 1.0 },
 ];
+
+// ---------------------------------------------------------------------------
+// Langfuse schema  (langfuse.toml)
+// ---------------------------------------------------------------------------
+
+export const LANGFUSE_SCHEMA: FieldDef[] = [
+  // Root-level
+  { formKey: 'enabled', tomlKey: 'enabled', type: 'boolean', defaultValue: false },
+  { formKey: 'base_url', tomlKey: 'base_url', type: 'string', defaultValue: 'https://cloud.langfuse.com' },
+  { formKey: 'public_key', tomlKey: 'public_key', type: 'string', defaultValue: '' },
+  { formKey: 'secret_key', tomlKey: 'secret_key', type: 'string', defaultValue: '' },
+  { formKey: 'project_id', tomlKey: 'project_id', type: 'string', defaultValue: '', optional: true },
+
+  // [content]
+  { formKey: 'content_capture_input', tomlKey: 'capture_input', section: 'content', type: 'boolean', defaultValue: false },
+  { formKey: 'content_capture_output', tomlKey: 'capture_output', section: 'content', type: 'boolean', defaultValue: false },
+  { formKey: 'content_max_content_length', tomlKey: 'max_content_length', section: 'content', type: 'number', defaultValue: 10000 },
+
+  // [redaction]
+  { formKey: 'redaction_enabled', tomlKey: 'enabled', section: 'redaction', type: 'boolean', defaultValue: true },
+  { formKey: 'redaction_patterns', tomlKey: 'patterns', section: 'redaction', type: 'string[]', defaultValue: [
+    '(?i)(api[_-]?key|secret|token|password|bearer)\\s*[:=]\\s*\\S+',
+    '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b',
+  ] },
+  { formKey: 'redaction_replacement', tomlKey: 'replacement', section: 'redaction', type: 'string', defaultValue: '[REDACTED]' },
+
+  // [sampling]
+  { formKey: 'sampling_rate', tomlKey: 'rate', section: 'sampling', type: 'number', defaultValue: 1.0 },
+  { formKey: 'sampling_include_tags', tomlKey: 'include_tags', section: 'sampling', type: 'string[]', defaultValue: [] },
+  { formKey: 'sampling_exclude_tags', tomlKey: 'exclude_tags', section: 'sampling', type: 'string[]', defaultValue: [] },
+
+  // [retry]
+  { formKey: 'retry_max_retries', tomlKey: 'max_retries', section: 'retry', type: 'number', defaultValue: 3, optional: true },
+  { formKey: 'retry_initial_backoff_ms', tomlKey: 'initial_backoff_ms', section: 'retry', type: 'number', defaultValue: 1000, optional: true },
+  { formKey: 'retry_max_backoff_ms', tomlKey: 'max_backoff_ms', section: 'retry', type: 'number', defaultValue: 30000, optional: true },
+
+  // [feedback]
+  { formKey: 'feedback_import_enabled', tomlKey: 'import_enabled', section: 'feedback', type: 'boolean', defaultValue: false, optional: true },
+  { formKey: 'feedback_poll_interval_secs', tomlKey: 'poll_interval_secs', section: 'feedback', type: 'number', defaultValue: 300, optional: true },
+
+  // [circuit_breaker]
+  { formKey: 'circuit_breaker_failure_threshold', tomlKey: 'failure_threshold', section: 'circuit_breaker', type: 'number', defaultValue: 5, optional: true },
+  { formKey: 'circuit_breaker_recovery_timeout_secs', tomlKey: 'recovery_timeout_secs', section: 'circuit_breaker', type: 'number', defaultValue: 60, optional: true },
+];
