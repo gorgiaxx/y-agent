@@ -1139,11 +1139,11 @@ impl ServiceContainer {
         crate::mcp_service::McpService::register_mcp_tools(self).await;
         crate::mcp_service::McpService::start_mcp_event_consumer(self).await;
         #[cfg(feature = "langfuse")]
-        self.init_langfuse_bridge().await;
+        self.init_langfuse_bridge();
     }
 
     #[cfg(feature = "langfuse")]
-    async fn init_langfuse_bridge(self: &Arc<Self>) {
+    fn init_langfuse_bridge(self: &Arc<Self>) {
         if !self.langfuse_config.enabled {
             return;
         }
@@ -1154,11 +1154,10 @@ impl ServiceContainer {
         let bridge =
             y_diagnostics::langfuse::LangfuseExportBridge::new(rx, store.clone(), config.clone());
         tokio::spawn(bridge.run());
-        tracing::info!("Langfuse OTLP export bridge started");
+        tracing::info!("Langfuse export bridge started");
 
         if config.feedback.import_enabled {
-            let importer =
-                y_diagnostics::langfuse::LangfuseFeedbackImporter::new(store, &config);
+            let importer = y_diagnostics::langfuse::LangfuseFeedbackImporter::new(store, &config);
             tokio::spawn(importer.run());
             tracing::info!("Langfuse feedback importer started");
         }

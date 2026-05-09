@@ -88,7 +88,7 @@ pub struct ServiceConfig {
     #[serde(skip)]
     pub persona_dir: Option<PathBuf>,
 
-    /// Langfuse OTLP export configuration.
+    /// Langfuse export configuration.
     #[cfg(feature = "langfuse")]
     #[serde(default)]
     pub langfuse: LangfuseConfig,
