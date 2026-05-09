@@ -56,7 +56,6 @@ interface AgentStudioProps {
   onExpandChange: (expanded: boolean) => void;
   onClearSession: () => void;
   onAddContextReset: () => void;
-  onCustomPromptChange: (hasPrompt: boolean) => void;
   // Grouped InputArea prop objects
   provider: InputProviderProps;
   mcp: InputMcpProps;
@@ -106,7 +105,6 @@ export function AgentStudio({
   onExpandChange,
   onClearSession,
   onAddContextReset,
-  onCustomPromptChange,
   provider,
   mcp,
   dialogs,
@@ -177,7 +175,12 @@ export function AgentStudio({
         isCompacting={isCompacting}
         sessionId={activeSessionId}
         hasCustomPrompt={hasCustomPrompt}
-        onCustomPromptChange={onCustomPromptChange}
+        onEditSessionPrompt={() => {
+          if (!activeSessionId) return;
+          viewRouting.setSessionPromptSessionId(activeSessionId);
+          viewRouting.setSessionPromptEditing(true);
+          viewRouting.setInputExpanded(false);
+        }}
         provider={provider}
         mcp={mcp}
         dialogs={dialogs}

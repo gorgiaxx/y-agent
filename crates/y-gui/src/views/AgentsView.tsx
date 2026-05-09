@@ -51,7 +51,6 @@ export function AgentsView() {
     activeSessionId: agentActiveSessionId,
     sessions: agentSessions,
     selectSession: selectAgentSession,
-    refreshSessions: refreshAgentSessions,
   } = sessionHooks;
   const agentRootNames = useMemo(
     () => (agentEditor.activeAgentId ? [agentEditor.activeAgentId] : [DEFAULT_ROOT_AGENT_NAME]),
@@ -397,7 +396,6 @@ export function AgentsView() {
                   onUndoMessage={chatHandlers.handleUndoMessage}
                   onResendMessage={chatHandlers.handleResendMessage}
                   onRestoreBranch={chatHandlers.handleRestoreBranch}
-                  onCustomPromptChange={() => { void refreshAgentSessions(); }}
                   provider={{
                     providers: providerHooks.providers,
                     selectedProviderId,
