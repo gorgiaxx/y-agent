@@ -1,4 +1,4 @@
-//! OTLP/HTTP sender with retry and circuit breaker.
+//! Langfuse ingestion HTTP sender with retry and circuit breaker.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 use super::config::{CircuitBreakerConfig, LangfuseConfig, RetryConfig};
-use super::types::ExportTraceServiceRequest;
+use super::types::IngestionBatchRequest;
 
 #[derive(Debug)]
 enum CircuitState {
@@ -18,10 +18,9 @@ enum CircuitState {
     HalfOpen,
 }
 
-pub struct OtlpHttpSender {
+pub struct LangfuseHttpSender {
     client: Client,
-    otlp_endpoint: String,
-    scores_endpoint: String,
+    ingestion_endpoint: String,
     auth_header: String,
     retry: RetryConfig,
     circuit: Mutex<CircuitState>,
@@ -30,7 +29,7 @@ pub struct OtlpHttpSender {
     recovery_timeout: Duration,
 }
 
-impl OtlpHttpSender {
+impl LangfuseHttpSender {
     pub fn new(config: &LangfuseConfig) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
@@ -38,8 +37,7 @@ impl OtlpHttpSender {
             .unwrap_or_default();
 
         let base = config.base_url.trim_end_matches('/');
-        let otlp_endpoint = format!("{base}/api/public/otel/v1/traces");
-        let scores_endpoint = format!("{base}/api/public/scores");
+        let ingestion_endpoint = format!("{base}/api/public/ingestion");
 
         let credentials = format!("{}:{}", config.public_key, config.secret_key);
         let auth_header = format!(
@@ -54,8 +52,7 @@ impl OtlpHttpSender {
 
         Self {
             client,
-            otlp_endpoint,
-            scores_endpoint,
+            ingestion_endpoint,
             auth_header,
             retry: config.retry.clone(),
             circuit: Mutex::new(CircuitState::Closed),
@@ -65,55 +62,56 @@ impl OtlpHttpSender {
         }
     }
 
-    pub async fn send_traces(&self, request: &ExportTraceServiceRequest) -> Result<(), SendError> {
+    pub async fn send_batch(&self, request: &IngestionBatchRequest) -> Result<(), SendError> {
+        if request.batch.is_empty() {
+            return Ok(());
+        }
+
         if !self.check_circuit().await {
             return Err(SendError::CircuitOpen);
         }
 
-        let body = serde_json::to_vec(request).map_err(|e| SendError::Serialization(e.to_string()))?;
+        let body =
+            serde_json::to_vec(request).map_err(|e| SendError::Serialization(e.to_string()))?;
 
-        let result = self.send_with_retry(&self.otlp_endpoint, &body).await;
+        let result = self.send_with_retry(&body).await;
         self.record_result(result.is_ok()).await;
         result
     }
 
-    pub async fn send_scores(&self, scores: &[ScorePayload]) -> Result<(), SendError> {
-        if !self.check_circuit().await {
-            return Err(SendError::CircuitOpen);
-        }
-
-        for score in scores {
-            let body =
-                serde_json::to_vec(score).map_err(|e| SendError::Serialization(e.to_string()))?;
-            let result = self.send_with_retry(&self.scores_endpoint, &body).await;
-            self.record_result(result.is_ok()).await;
-            result?;
-        }
-        Ok(())
-    }
-
-    async fn send_with_retry(&self, url: &str, body: &[u8]) -> Result<(), SendError> {
+    async fn send_with_retry(&self, body: &[u8]) -> Result<(), SendError> {
         let mut backoff = self.retry.initial_backoff_ms;
 
         for attempt in 0..=self.retry.max_retries {
             let resp = self
                 .client
-                .post(url)
+                .post(&self.ingestion_endpoint)
                 .header("Content-Type", "application/json")
                 .header("Authorization", &self.auth_header)
+                .header("X-Langfuse-Sdk-Name", "rust/y-agent")
+                .header("X-Langfuse-Sdk-Version", env!("CARGO_PKG_VERSION"))
                 .body(body.to_vec())
                 .send()
                 .await;
 
             match resp {
-                Ok(r) if r.status().is_success() => {
-                    debug!(url, attempt, "OTLP send succeeded");
+                Ok(r) if r.status().is_success() || r.status().as_u16() == 207 => {
+                    debug!(
+                        url = &self.ingestion_endpoint,
+                        attempt, "Langfuse ingestion succeeded"
+                    );
                     return Ok(());
                 }
                 Ok(r) if r.status().as_u16() == 429 || r.status().is_server_error() => {
                     let status = r.status().as_u16();
                     if attempt < self.retry.max_retries {
-                        warn!(url, status, attempt, backoff_ms = backoff, "Retrying");
+                        warn!(
+                            url = &self.ingestion_endpoint,
+                            status,
+                            attempt,
+                            backoff_ms = backoff,
+                            "Retrying"
+                        );
                         tokio::time::sleep(Duration::from_millis(backoff)).await;
                         backoff = (backoff * 2).min(self.retry.max_backoff_ms);
                     } else {
@@ -125,7 +123,11 @@ impl OtlpHttpSender {
                 }
                 Err(e) => {
                     if attempt < self.retry.max_retries {
-                        warn!(url, %e, attempt, backoff_ms = backoff, "Retrying after network error");
+                        warn!(
+                            url = &self.ingestion_endpoint,
+                            %e, attempt, backoff_ms = backoff,
+                            "Retrying after network error"
+                        );
                         tokio::time::sleep(Duration::from_millis(backoff)).await;
                         backoff = (backoff * 2).min(self.retry.max_backoff_ms);
                     } else {
@@ -172,20 +174,6 @@ impl OtlpHttpSender {
             }
         }
     }
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ScorePayload {
-    pub id: Option<String>,
-    #[serde(rename = "traceId")]
-    pub trace_id: String,
-    #[serde(rename = "observationId", skip_serializing_if = "Option::is_none")]
-    pub observation_id: Option<String>,
-    pub name: String,
-    pub value: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub comment: Option<String>,
-    pub source: String,
 }
 
 #[derive(Debug, thiserror::Error)]

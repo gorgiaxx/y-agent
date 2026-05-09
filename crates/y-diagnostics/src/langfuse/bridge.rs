@@ -1,4 +1,5 @@
-//! Background task that bridges diagnostics events to Langfuse via OTLP.
+//! Background task that bridges diagnostics events to Langfuse via the
+//! native REST ingestion API (`POST /api/public/ingestion`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,8 +13,8 @@ use crate::events::DiagnosticsEvent;
 use crate::trace_store::TraceStore;
 
 use super::config::LangfuseConfig;
-use super::mapper::OtelSpanMapper;
-use super::sender::{OtlpHttpSender, ScorePayload};
+use super::mapper::LangfuseIngestionMapper;
+use super::sender::LangfuseHttpSender;
 
 struct PendingTrace {
     first_seen: Instant,
@@ -26,8 +27,8 @@ pub struct LangfuseExportBridge {
     rx: broadcast::Receiver<DiagnosticsEvent>,
     store: Arc<dyn TraceStore>,
     config: LangfuseConfig,
-    mapper: OtelSpanMapper,
-    sender: OtlpHttpSender,
+    mapper: LangfuseIngestionMapper,
+    sender: LangfuseHttpSender,
 }
 
 impl LangfuseExportBridge {
@@ -36,8 +37,8 @@ impl LangfuseExportBridge {
         store: Arc<dyn TraceStore>,
         config: LangfuseConfig,
     ) -> Self {
-        let mapper = OtelSpanMapper::new(config.clone());
-        let sender = OtlpHttpSender::new(&config);
+        let mapper = LangfuseIngestionMapper::new(config.clone());
+        let sender = LangfuseHttpSender::new(&config);
         Self {
             rx,
             store,
@@ -138,40 +139,25 @@ impl LangfuseExportBridge {
             return;
         }
 
-        let observations = self.store.get_observations(trace_id).await.unwrap_or_default();
+        let observations = self
+            .store
+            .get_observations(trace_id)
+            .await
+            .unwrap_or_default();
         let scores = self.store.get_scores(trace_id).await.unwrap_or_default();
 
-        let otlp_request = self.mapper.map_trace(&trace, &observations, &scores);
+        let batch_request = self.mapper.map_trace(&trace, &observations, &scores);
 
-        if let Err(e) = self.sender.send_traces(&otlp_request).await {
+        if let Err(e) = self.sender.send_batch(&batch_request).await {
             warn!(%trace_id, %e, "Failed to export trace to Langfuse");
             return;
         }
 
-        debug!(%trace_id, observations = observations.len(), "Exported trace to Langfuse");
-
-        // Push scores via REST API (OTLP doesn't support scores).
-        if !scores.is_empty() {
-            let payloads: Vec<ScorePayload> = scores
-                .iter()
-                .map(|s| ScorePayload {
-                    id: Some(s.id.to_string()),
-                    trace_id: trace_id.to_string(),
-                    observation_id: s.observation_id.map(|id| id.to_string()),
-                    name: s.name.clone(),
-                    value: match &s.value {
-                        crate::types::ScoreValue::Numeric(v) => serde_json::json!(*v),
-                        crate::types::ScoreValue::Boolean(v) => serde_json::json!(*v),
-                        crate::types::ScoreValue::Categorical(v) => serde_json::json!(v),
-                    },
-                    comment: s.comment.clone(),
-                    source: format!("{:?}", s.source),
-                })
-                .collect();
-
-            if let Err(e) = self.sender.send_scores(&payloads).await {
-                warn!(%trace_id, %e, "Failed to export scores to Langfuse");
-            }
-        }
+        debug!(
+            %trace_id,
+            observations = observations.len(),
+            scores = scores.len(),
+            "Exported trace to Langfuse via ingestion API"
+        );
     }
 }

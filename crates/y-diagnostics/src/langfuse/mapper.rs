@@ -1,25 +1,23 @@
-//! Maps y-diagnostics Trace + Observations to OTLP JSON spans.
-
-use std::collections::HashMap;
+//! Maps y-diagnostics domain types to Langfuse native ingestion events.
 
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::types::{Observation, ObservationStatus, ObservationType, Score, Trace, TraceStatus};
+use crate::types::{Observation, ObservationStatus, ObservationType, Score, Trace};
 
 use super::config::LangfuseConfig;
 use super::redaction::RedactionPipeline;
 use super::types::{
-    ExportTraceServiceRequest, InstrumentationScope, KeyValue, Resource, ResourceSpans, ScopeSpans,
-    Span, SpanEvent, SpanKind, SpanStatus,
+    CreateGenerationBody, CreateSpanBody, IngestionBatchRequest, IngestionEvent, ObservationLevel,
+    ScoreBody, ScoreDataType, TraceBody,
 };
 
-pub struct OtelSpanMapper {
+pub struct LangfuseIngestionMapper {
     config: LangfuseConfig,
     redaction: RedactionPipeline,
 }
 
-impl OtelSpanMapper {
+impl LangfuseIngestionMapper {
     pub fn new(config: LangfuseConfig) -> Self {
         let redaction = RedactionPipeline::new(&config.redaction);
         Self { config, redaction }
@@ -30,276 +28,300 @@ impl OtelSpanMapper {
         trace: &Trace,
         observations: &[Observation],
         scores: &[Score],
-    ) -> ExportTraceServiceRequest {
-        let trace_id_hex = format!("{:032x}", trace.id.as_u128());
-        let root_span_id = generate_span_id();
+    ) -> IngestionBatchRequest {
+        let mut batch = Vec::with_capacity(1 + observations.len() + scores.len());
 
-        let mut obs_span_ids: HashMap<Uuid, String> = HashMap::new();
-        let mut spans = Vec::with_capacity(observations.len() + 1);
+        batch.push(Self::build_trace_event(trace));
 
-        // Root span for the trace.
-        let root_span = self.build_root_span(trace, &trace_id_hex, &root_span_id, scores);
-        spans.push(root_span);
+        let obs_id_map: std::collections::HashMap<Uuid, String> = observations
+            .iter()
+            .map(|obs| (obs.id, obs.id.to_string()))
+            .collect();
 
-        // Child spans for each observation.
         for obs in observations {
-            let span_id = generate_span_id();
-            obs_span_ids.insert(obs.id, span_id.clone());
-
-            let parent_id = obs
-                .parent_id
-                .and_then(|pid| obs_span_ids.get(&pid).cloned())
-                .unwrap_or_else(|| root_span_id.clone());
-
-            let span = self.build_observation_span(obs, &trace_id_hex, &span_id, &parent_id);
-            spans.push(span);
+            let parent_obs_id = obs.parent_id.and_then(|pid| obs_id_map.get(&pid).cloned());
+            let event = match obs.obs_type {
+                ObservationType::Generation => {
+                    self.build_generation_event(trace, obs, parent_obs_id)
+                }
+                _ => self.build_span_event(trace, obs, parent_obs_id),
+            };
+            batch.push(event);
         }
 
-        ExportTraceServiceRequest {
-            resource_spans: vec![ResourceSpans {
-                resource: Resource {
-                    attributes: vec![
-                        KeyValue::string("service.name", "y-agent"),
-                        KeyValue::string("service.version", env!("CARGO_PKG_VERSION")),
-                    ],
-                },
-                scope_spans: vec![ScopeSpans {
-                    scope: InstrumentationScope {
-                        name: "y-diagnostics.langfuse".to_string(),
-                        version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                    },
-                    spans,
-                }],
-            }],
+        for score in scores {
+            batch.push(Self::build_score_event(trace.id, score));
+        }
+
+        IngestionBatchRequest { batch }
+    }
+
+    fn build_trace_event(trace: &Trace) -> IngestionEvent {
+        let input = trace
+            .user_input
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()));
+
+        let output = trace.metadata.get("output").cloned();
+
+        let body = TraceBody {
+            id: Some(trace.id.to_string()),
+            timestamp: Some(to_iso8601(trace.started_at)),
+            name: Some(trace.name.clone()),
+            user_id: None,
+            session_id: Some(trace.session_id.to_string()),
+            input,
+            output,
+            metadata: if trace.metadata.is_null() {
+                None
+            } else {
+                Some(trace.metadata.clone())
+            },
+            tags: if trace.tags.is_empty() {
+                None
+            } else {
+                Some(trace.tags.clone())
+            },
+            release: Some(env!("CARGO_PKG_VERSION").to_string()),
+            version: None,
+            environment: None,
+            is_public: None,
+        };
+
+        IngestionEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: "trace-create".to_string(),
+            timestamp: to_iso8601(Utc::now()),
+            body: serde_json::to_value(body).unwrap_or_default(),
         }
     }
 
-    fn build_root_span(
+    fn build_generation_event(
         &self,
         trace: &Trace,
-        trace_id_hex: &str,
-        span_id: &str,
-        scores: &[Score],
-    ) -> Span {
-        let mut attributes = vec![
-            KeyValue::string("langfuse.trace.id", trace.id.to_string()),
-            KeyValue::string("langfuse.trace.name", &trace.name),
-            KeyValue::string("langfuse.trace.session_id", trace.session_id.to_string()),
-            KeyValue::string("langfuse.trace.base_url", &self.config.base_url),
-            KeyValue::int("gen_ai.usage.input_tokens", trace.total_input_tokens.cast_signed()),
-            KeyValue::int(
-                "gen_ai.usage.output_tokens",
-                trace.total_output_tokens.cast_signed(),
-            ),
-            KeyValue::double("langfuse.trace.cost_usd", trace.total_cost_usd),
-        ];
-
-        for tag in &trace.tags {
-            attributes.push(KeyValue::string("langfuse.trace.tag", tag));
-        }
-
-        // Scores as attributes.
-        for score in scores {
-            let key = format!("langfuse.score.{}", score.name);
-            match &score.value {
-                crate::types::ScoreValue::Numeric(v) => {
-                    attributes.push(KeyValue::double(&key, *v));
-                }
-                crate::types::ScoreValue::Boolean(v) => {
-                    attributes.push(KeyValue::bool(&key, *v));
-                }
-                crate::types::ScoreValue::Categorical(v) => {
-                    attributes.push(KeyValue::string(&key, v));
-                }
-            }
-        }
-
-        let status = match trace.status {
-            TraceStatus::Completed => SpanStatus::ok(),
-            TraceStatus::Failed => SpanStatus::error("trace failed"),
-            _ => SpanStatus::unset(),
-        };
-
-        Span {
-            trace_id: trace_id_hex.to_string(),
-            span_id: span_id.to_string(),
-            parent_span_id: None,
-            name: trace.name.clone(),
-            kind: SpanKind::Server,
-            start_time_unix_nano: datetime_to_nanos(trace.started_at),
-            end_time_unix_nano: datetime_to_nanos(
-                trace.completed_at.unwrap_or_else(Utc::now),
-            ),
-            attributes,
-            events: Vec::new(),
-            links: Vec::new(),
-            status,
-        }
-    }
-
-    fn build_observation_span(
-        &self,
         obs: &Observation,
-        trace_id_hex: &str,
-        span_id: &str,
-        parent_span_id: &str,
-    ) -> Span {
-        let mut attributes = vec![
-            KeyValue::string("langfuse.observation.id", obs.id.to_string()),
-            KeyValue::string("langfuse.observation.type", format!("{:?}", obs.obs_type)),
-        ];
+        parent_obs_id: Option<String>,
+    ) -> IngestionEvent {
+        let input = self.prepare_content(&obs.input, true);
+        let output = self.prepare_content(&obs.output, false);
 
-        let (name, kind) = match obs.obs_type {
-            ObservationType::Generation => {
-                self.add_generation_attributes(obs, &mut attributes);
-                (
-                    obs.model
-                        .as_deref()
-                        .unwrap_or("llm-generation")
-                        .to_string(),
-                    SpanKind::Client,
-                )
-            }
-            ObservationType::ToolCall => {
-                self.add_tool_attributes(obs, &mut attributes);
-                (format!("tool:{}", obs.name), SpanKind::Internal)
-            }
-            _ => (obs.name.clone(), SpanKind::Internal),
-        };
+        let mut usage_details = std::collections::HashMap::new();
+        usage_details.insert("input".to_string(), obs.input_tokens);
+        usage_details.insert("output".to_string(), obs.output_tokens);
+        usage_details.insert("total".to_string(), obs.input_tokens + obs.output_tokens);
 
-        let mut events = Vec::new();
-        if self.config.content.capture_input && !obs.input.is_null() {
-            events.extend(self.build_content_events(obs, trace_id_hex));
-        }
-
-        let started = obs.started_at;
-        let ended = obs.completed_at.unwrap_or(started);
-
-        let status = match obs.status {
-            ObservationStatus::Completed => SpanStatus::ok(),
-            ObservationStatus::Failed => SpanStatus::error("observation failed"),
-            ObservationStatus::Running => SpanStatus::unset(),
-        };
-
-        Span {
-            trace_id: trace_id_hex.to_string(),
-            span_id: span_id.to_string(),
-            parent_span_id: Some(parent_span_id.to_string()),
-            name,
-            kind,
-            start_time_unix_nano: datetime_to_nanos(started),
-            end_time_unix_nano: datetime_to_nanos(ended),
-            attributes,
-            events,
-            links: Vec::new(),
-            status,
-        }
-    }
-
-    fn add_generation_attributes(&self, obs: &Observation, attrs: &mut Vec<KeyValue>) {
-        if let Some(model) = &obs.model {
-            attrs.push(KeyValue::string("gen_ai.request.model", model));
-            attrs.push(KeyValue::string("gen_ai.response.model", model));
-        }
-        attrs.push(KeyValue::int(
-            "gen_ai.usage.input_tokens",
-            obs.input_tokens.cast_signed(),
-        ));
-        attrs.push(KeyValue::int(
-            "gen_ai.usage.output_tokens",
-            obs.output_tokens.cast_signed(),
-        ));
-        attrs.push(KeyValue::double("gen_ai.cost_usd", obs.cost_usd));
-        if let Some(dur) = obs.metadata.get("duration_ms").and_then(serde_json::Value::as_u64) {
-            attrs.push(KeyValue::int("gen_ai.duration_ms", dur.cast_signed()));
-        }
-        attrs.push(KeyValue::string("langfuse.base_url", &self.config.base_url));
-    }
-
-    fn add_tool_attributes(&self, obs: &Observation, attrs: &mut Vec<KeyValue>) {
-        attrs.push(KeyValue::string("tool.name", &obs.name));
-        if let Some(dur) = obs.metadata.get("duration_ms").and_then(serde_json::Value::as_u64) {
-            attrs.push(KeyValue::int("tool.duration_ms", dur.cast_signed()));
-        }
-        let success = obs.status == ObservationStatus::Completed;
-        attrs.push(KeyValue::bool("tool.success", success));
-        attrs.push(KeyValue::string("langfuse.base_url", &self.config.base_url));
-    }
-
-    fn build_content_events(&self, obs: &Observation, _trace_id_hex: &str) -> Vec<SpanEvent> {
-        let mut events = Vec::new();
-        let time = datetime_to_nanos(obs.started_at);
-
-        if self.config.content.capture_input && !obs.input.is_null() {
-            if let Some(messages) = obs.input.get("messages").and_then(|m| m.as_array()) {
-                for msg in messages {
-                    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("unknown");
-                    let content = msg
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or_default();
-                    let redacted = self.maybe_redact(content);
-                    let event_name = format!("gen_ai.{role}.message");
-                    events.push(SpanEvent {
-                        name: event_name,
-                        time_unix_nano: time.clone(),
-                        attributes: vec![KeyValue::string("gen_ai.content", redacted)],
-                    });
-                }
-            }
-        }
-
-        if self.config.content.capture_output && !obs.output.is_null() {
-            let output_str = if let Some(content) = obs.output.get("content").and_then(|c| c.as_str()) {
-                content.to_string()
-            } else {
-                obs.output.to_string()
-            };
-            let redacted = self.maybe_redact(&output_str);
-            let end_time = obs
-                .completed_at
-                .map_or_else(|| time.clone(), datetime_to_nanos);
-            events.push(SpanEvent {
-                name: "gen_ai.choice".to_string(),
-                time_unix_nano: end_time,
-                attributes: vec![KeyValue::string("gen_ai.content", redacted)],
-            });
-        }
-
-        events
-    }
-
-    fn maybe_redact(&self, content: &str) -> String {
-        let redacted = if self.config.redaction.enabled {
-            self.redaction.redact(content)
+        let cost_details = if obs.cost_usd > 0.0 {
+            let mut m = std::collections::HashMap::new();
+            m.insert("total".to_string(), obs.cost_usd);
+            Some(m)
         } else {
-            content.to_string()
+            None
         };
-        if redacted.len() > self.config.content.max_content_length {
-            redacted[..self.config.content.max_content_length].to_string()
-        } else {
-            redacted
+
+        let level = match obs.status {
+            ObservationStatus::Failed => Some(ObservationLevel::Error),
+            _ => None,
+        };
+
+        let status_message = obs.error_message.clone();
+
+        let model_parameters = obs.metadata.get("model_parameters").and_then(|v| {
+            serde_json::from_value::<std::collections::HashMap<String, serde_json::Value>>(
+                v.clone(),
+            )
+            .ok()
+        });
+
+        let body = CreateGenerationBody {
+            id: Some(obs.id.to_string()),
+            trace_id: Some(trace.id.to_string()),
+            parent_observation_id: parent_obs_id,
+            name: obs
+                .model
+                .clone()
+                .or_else(|| Some("llm-generation".to_string())),
+            start_time: Some(to_iso8601(obs.started_at)),
+            end_time: obs.completed_at.map(to_iso8601),
+            completion_start_time: None,
+            model: obs.model.clone(),
+            model_parameters,
+            input,
+            output,
+            usage_details: Some(usage_details),
+            cost_details,
+            level,
+            status_message,
+            metadata: Self::observation_metadata(obs),
+            version: None,
+            environment: None,
+        };
+
+        IngestionEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: "generation-create".to_string(),
+            timestamp: to_iso8601(Utc::now()),
+            body: serde_json::to_value(body).unwrap_or_default(),
         }
+    }
+
+    fn build_span_event(
+        &self,
+        trace: &Trace,
+        obs: &Observation,
+        parent_obs_id: Option<String>,
+    ) -> IngestionEvent {
+        let input = self.prepare_content(&obs.input, true);
+        let output = self.prepare_content(&obs.output, false);
+
+        let level = match obs.status {
+            ObservationStatus::Failed => Some(ObservationLevel::Error),
+            _ => None,
+        };
+
+        let body = CreateSpanBody {
+            id: Some(obs.id.to_string()),
+            trace_id: Some(trace.id.to_string()),
+            parent_observation_id: parent_obs_id,
+            name: Some(obs.name.clone()),
+            start_time: Some(to_iso8601(obs.started_at)),
+            end_time: obs.completed_at.map(to_iso8601),
+            input,
+            output,
+            level,
+            status_message: obs.error_message.clone(),
+            metadata: Self::observation_metadata(obs),
+            version: None,
+            environment: None,
+        };
+
+        IngestionEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: "span-create".to_string(),
+            timestamp: to_iso8601(Utc::now()),
+            body: serde_json::to_value(body).unwrap_or_default(),
+        }
+    }
+
+    fn build_score_event(trace_id: Uuid, score: &Score) -> IngestionEvent {
+        let (value, data_type) = match &score.value {
+            crate::types::ScoreValue::Numeric(v) => {
+                (serde_json::json!(*v), Some(ScoreDataType::Numeric))
+            }
+            crate::types::ScoreValue::Boolean(v) => {
+                let num = if *v { 1.0 } else { 0.0 };
+                (serde_json::json!(num), Some(ScoreDataType::Boolean))
+            }
+            crate::types::ScoreValue::Categorical(v) => {
+                (serde_json::json!(v), Some(ScoreDataType::Categorical))
+            }
+        };
+
+        let body = ScoreBody {
+            id: Some(score.id.to_string()),
+            trace_id: Some(trace_id.to_string()),
+            observation_id: score.observation_id.map(|id| id.to_string()),
+            name: score.name.clone(),
+            value,
+            data_type,
+            comment: score.comment.clone(),
+            metadata: None,
+            environment: None,
+            source: Some(format!("{:?}", score.source)),
+        };
+
+        IngestionEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: "score-create".to_string(),
+            timestamp: to_iso8601(Utc::now()),
+            body: serde_json::to_value(body).unwrap_or_default(),
+        }
+    }
+
+    fn observation_metadata(obs: &Observation) -> Option<serde_json::Value> {
+        if obs.metadata.is_null() {
+            return None;
+        }
+        Some(obs.metadata.clone())
+    }
+
+    fn prepare_content(
+        &self,
+        value: &serde_json::Value,
+        is_input: bool,
+    ) -> Option<serde_json::Value> {
+        if value.is_null() {
+            return None;
+        }
+
+        let should_capture = if is_input {
+            self.config.content.capture_input
+        } else {
+            self.config.content.capture_output
+        };
+
+        if !should_capture {
+            return None;
+        }
+
+        if !self.config.redaction.enabled {
+            return Some(truncate_json_value(
+                value,
+                self.config.content.max_content_length,
+            ));
+        }
+
+        Some(truncate_json_value(
+            &redact_json_value(value, &self.redaction),
+            self.config.content.max_content_length,
+        ))
     }
 }
 
-fn generate_span_id() -> String {
-    let bytes: [u8; 8] = rand_bytes();
-    hex::encode(bytes)
+fn redact_json_value(
+    value: &serde_json::Value,
+    redaction: &RedactionPipeline,
+) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => serde_json::Value::String(redaction.redact(s)),
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.iter()
+                .map(|v| redact_json_value(v, redaction))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => {
+            let redacted: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), redact_json_value(v, redaction)))
+                .collect();
+            serde_json::Value::Object(redacted)
+        }
+        other => other.clone(),
+    }
 }
 
-fn rand_bytes() -> [u8; 8] {
-    let id = Uuid::new_v4();
-    let bytes = id.as_bytes();
-    let mut out = [0u8; 8];
-    out.copy_from_slice(&bytes[..8]);
-    out
+fn truncate_json_value(value: &serde_json::Value, max_len: usize) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) if s.len() > max_len => {
+            serde_json::Value::String(s[..max_len].to_string())
+        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.iter()
+                .map(|v| truncate_json_value(v, max_len))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => {
+            let truncated: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), truncate_json_value(v, max_len)))
+                .collect();
+            serde_json::Value::Object(truncated)
+        }
+        other => other.clone(),
+    }
 }
 
-fn datetime_to_nanos(dt: DateTime<Utc>) -> String {
-    let secs = dt.timestamp() as u128;
-    let nanos = u128::from(dt.timestamp_subsec_nanos());
-    (secs * 1_000_000_000 + nanos).to_string()
+fn to_iso8601(dt: DateTime<Utc>) -> String {
+    dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 #[cfg(test)]
@@ -309,24 +331,131 @@ mod tests {
 
     #[test]
     fn test_map_empty_trace() {
-        let config = LangfuseConfig::default();
-        let mapper = OtelSpanMapper::new(config);
+        let mut config = LangfuseConfig::default();
+        config.content.capture_input = true;
+        config.content.capture_output = true;
+        let mapper = LangfuseIngestionMapper::new(config);
         let trace = Trace::new(Uuid::new_v4(), "test");
         let result = mapper.map_trace(&trace, &[], &[]);
-        assert_eq!(result.resource_spans.len(), 1);
-        assert_eq!(result.resource_spans[0].scope_spans[0].spans.len(), 1);
+        assert_eq!(result.batch.len(), 1);
+        assert_eq!(result.batch[0].event_type, "trace-create");
     }
 
     #[test]
-    fn test_map_trace_with_observations() {
-        let config = LangfuseConfig::default();
-        let mapper = OtelSpanMapper::new(config);
+    fn test_map_trace_with_generation() {
+        let mut config = LangfuseConfig::default();
+        config.content.capture_input = true;
+        config.content.capture_output = true;
+        let mapper = LangfuseIngestionMapper::new(config);
         let trace = Trace::new(Uuid::new_v4(), "test");
+
         let mut obs = Observation::new(trace.id, ObservationType::Generation, "gpt-4");
         obs.model = Some("gpt-4".to_string());
         obs.input_tokens = 100;
         obs.output_tokens = 50;
+        obs.input = serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        obs.output = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hi there!"
+                }
+            }]
+        });
+
         let result = mapper.map_trace(&trace, &[obs], &[]);
-        assert_eq!(result.resource_spans[0].scope_spans[0].spans.len(), 2);
+        assert_eq!(result.batch.len(), 2);
+        assert_eq!(result.batch[0].event_type, "trace-create");
+        assert_eq!(result.batch[1].event_type, "generation-create");
+
+        let gen_body = &result.batch[1].body;
+        assert_eq!(gen_body["model"], "gpt-4");
+        assert!(gen_body["input"]["messages"].is_array());
+        assert!(gen_body["output"]["choices"].is_array());
+        assert_eq!(gen_body["usageDetails"]["input"], 100);
+        assert_eq!(gen_body["usageDetails"]["output"], 50);
+        assert_eq!(gen_body["usageDetails"]["total"], 150);
+    }
+
+    #[test]
+    fn test_map_trace_with_tool_call() {
+        let mut config = LangfuseConfig::default();
+        config.content.capture_input = true;
+        config.content.capture_output = true;
+        let mapper = LangfuseIngestionMapper::new(config);
+        let trace = Trace::new(Uuid::new_v4(), "test");
+
+        let gen_obs = Observation::new(trace.id, ObservationType::Generation, "gpt-4");
+        let mut tool_obs = Observation::new(trace.id, ObservationType::ToolCall, "WebSearch");
+        tool_obs.parent_id = Some(gen_obs.id);
+        tool_obs.input = serde_json::json!({"query": "rust language"});
+        tool_obs.output = serde_json::json!({"results": ["https://rust-lang.org"]});
+
+        let result = mapper.map_trace(&trace, &[gen_obs, tool_obs], &[]);
+        assert_eq!(result.batch.len(), 3);
+        assert_eq!(result.batch[2].event_type, "span-create");
+
+        let span_body = &result.batch[2].body;
+        assert_eq!(span_body["name"], "WebSearch");
+        assert_eq!(span_body["input"]["query"], "rust language");
+        assert!(span_body["output"]["results"].is_array());
+        assert_eq!(
+            span_body["parentObservationId"].as_str().unwrap(),
+            result.batch[1].body["id"].as_str().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_map_trace_with_generation_tool_calls_in_output() {
+        let mut config = LangfuseConfig::default();
+        config.content.capture_input = true;
+        config.content.capture_output = true;
+        let mapper = LangfuseIngestionMapper::new(config);
+        let trace = Trace::new(Uuid::new_v4(), "test");
+
+        let mut obs = Observation::new(trace.id, ObservationType::Generation, "gpt-4");
+        obs.model = Some("gpt-4".to_string());
+        obs.output = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"location\": \"NYC\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = mapper.map_trace(&trace, &[obs], &[]);
+        let gen_body = &result.batch[1].body;
+        let tool_calls = &gen_body["output"]["choices"][0]["message"]["tool_calls"];
+        assert!(tool_calls.is_array());
+        assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_content_not_captured_when_disabled() {
+        let config = LangfuseConfig::default();
+        let mapper = LangfuseIngestionMapper::new(config);
+        let trace = Trace::new(Uuid::new_v4(), "test");
+
+        let mut obs = Observation::new(trace.id, ObservationType::Generation, "gpt-4");
+        obs.input = serde_json::json!({"messages": [{"role": "user", "content": "secret"}]});
+        obs.output = serde_json::json!({"content": "response"});
+
+        let result = mapper.map_trace(&trace, &[obs], &[]);
+        let gen_body = &result.batch[1].body;
+        assert!(gen_body.get("input").is_none() || gen_body["input"].is_null());
+        assert!(gen_body.get("output").is_none() || gen_body["output"].is_null());
     }
 }
