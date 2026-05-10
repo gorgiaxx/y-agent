@@ -19,7 +19,7 @@
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "y-agent";
-  version = "0.6.10";
+  version = "0.6.11";
 
   src = ./.;
 
