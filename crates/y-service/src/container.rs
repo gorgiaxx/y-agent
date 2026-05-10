@@ -565,6 +565,7 @@ tools = ["ToolSearch"]
             .await
             .iter()
             .map(|d| d.name.as_str().to_string())
+            .filter(|name| !PROMPT_HIDDEN_PREFIXES.iter().any(|p| name.starts_with(p)))
             .collect();
         pipeline.register(Box::new(InjectTools::dynamic(
             tool_names,
@@ -1258,6 +1259,11 @@ pub(crate) const ESSENTIAL_TOOL_NAMES: &[&str] = &[
 /// and can use `ToolSearch` to load full schemas on demand.
 const DISCOVERABLE_TOOL_NAMES: &[&str] = &["Browser"];
 
+/// Tool name prefixes excluded from the Native mode `## Available Tools`
+/// prompt listing. These tools remain registered and discoverable via
+/// `ToolSearch`; they just don't occupy prompt tokens by default.
+const PROMPT_HIDDEN_PREFIXES: &[&str] = &["Workflow", "Schedule", "KnowledgeSearch"];
+
 /// Pre-activate essential and discoverable tools as always-active in the
 /// activation set. Both groups are never LRU-evicted; the difference is
 /// that only `ESSENTIAL_TOOL_NAMES` have schemas sent in every API call.
@@ -1689,5 +1695,47 @@ mod tests {
         let shell_exec_pos = summary.find("ShellExec").unwrap();
         assert!(browser_pos < file_write_pos);
         assert!(file_write_pos < shell_exec_pos);
+    }
+
+    #[test]
+    fn test_prompt_hidden_prefixes_filter() {
+        let all_names = vec![
+            "FileRead",
+            "FileWrite",
+            "ShellExec",
+            "ToolSearch",
+            "WorkflowCreate",
+            "WorkflowList",
+            "WorkflowGet",
+            "WorkflowUpdate",
+            "WorkflowDelete",
+            "WorkflowValidate",
+            "ScheduleCreate",
+            "ScheduleList",
+            "SchedulePause",
+            "ScheduleResume",
+            "ScheduleDelete",
+            "KnowledgeSearch",
+            "Browser",
+            "Task",
+        ];
+        let filtered: Vec<&&str> = all_names
+            .iter()
+            .filter(|name| {
+                !super::PROMPT_HIDDEN_PREFIXES
+                    .iter()
+                    .any(|p| name.starts_with(p))
+            })
+            .collect();
+
+        let filtered_names: Vec<&str> = filtered.iter().copied().copied().collect();
+        assert!(filtered_names.contains(&"FileRead"));
+        assert!(filtered_names.contains(&"ShellExec"));
+        assert!(filtered_names.contains(&"Browser"));
+        assert!(filtered_names.contains(&"Task"));
+        assert!(!filtered_names.contains(&"WorkflowCreate"));
+        assert!(!filtered_names.contains(&"ScheduleCreate"));
+        assert!(!filtered_names.contains(&"KnowledgeSearch"));
+        assert_eq!(filtered_names.len(), 6);
     }
 }
