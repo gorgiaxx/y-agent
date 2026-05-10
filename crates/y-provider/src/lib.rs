@@ -25,6 +25,8 @@ pub mod freeze;
 pub mod health;
 pub mod hook_llm_runner;
 pub mod http_headers;
+mod inter_stream;
+mod inter_stream_adapter;
 pub mod lease;
 pub mod metrics;
 pub mod metrics_export;
@@ -33,6 +35,7 @@ pub mod providers;
 pub mod router;
 pub mod scheduler;
 pub mod sse;
+mod tool_call_accumulator;
 
 // Re-export primary types.
 pub use agent_runner::SingleTurnRunner;
