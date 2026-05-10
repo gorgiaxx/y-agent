@@ -259,7 +259,7 @@ pub struct ChatResponse {
 }
 
 /// A single chunk in a streaming response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatStreamChunk {
     /// Incremental content delta.
     pub delta_content: Option<String>,
