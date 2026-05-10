@@ -12,11 +12,14 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use std::collections::VecDeque;
+
 use crate::config::HttpProtocol;
+use crate::inter_stream::InterStreamEvent;
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
-    ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
-    ProviderType, RequestMode, ToolCallingMode,
+    ChatRequest, ChatResponse, ChatStreamResponse, FinishReason, GeneratedImage, LlmProvider,
+    ProviderCapability, ProviderError, ProviderMetadata, ProviderType, RequestMode,
+    ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -454,64 +457,65 @@ impl LlmProvider for GeminiProvider {
         }
 
         let byte_stream = response.bytes_stream();
+        let inter_stream = futures::stream::unfold(
+            (
+                crate::sse::SseStreamState::new(Box::pin(byte_stream)),
+                0_usize, // next_image_index
+                VecDeque::<InterStreamEvent>::new(),
+            ),
+            move |mut composite| async move {
+                let (ref mut state, ref mut next_image_index, ref mut pending) = composite;
 
-        let stream = futures::stream::unfold(
-            GeminiSseState {
-                sse: crate::sse::SseStreamState::new(Box::pin(byte_stream)),
-                next_image_index: 0,
-            },
-            move |mut state| {
-                async move {
-                    if state.sse.done {
-                        return None;
-                    }
+                if let Some(event) = pending.pop_front() {
+                    return Some((Ok(event), composite));
+                }
 
-                    loop {
-                        // Try to extract a complete SSE event from the buffer.
-                        if let Some(data) = crate::sse::extract_sse_data(&mut state.sse.buffer) {
-                            let trimmed = data.trim();
-                            if trimmed.is_empty() {
-                                continue;
-                            }
+                if state.done {
+                    return None;
+                }
 
-                            // Parse as Gemini response (each SSE chunk is a full response object).
-                            match serde_json::from_str::<GeminiResponse>(trimmed) {
-                                Ok(resp) => {
-                                    let chunk =
-                                        map_gemini_stream_chunk(&resp, &mut state.next_image_index);
-                                    return Some((Ok(chunk), state));
-                                }
-                                Err(e) => {
-                                    return Some((
-                                        Err(ProviderError::ParseError {
-                                            message: format!(
-                                                "Gemini SSE parse error: {e}, data: {trimmed}"
-                                            ),
-                                        }),
-                                        state,
-                                    ));
-                                }
-                            }
+                loop {
+                    if let Some(data) = crate::sse::extract_sse_data(&mut state.buffer) {
+                        let trimmed = data.trim();
+                        if trimmed.is_empty() {
+                            continue;
                         }
 
-                        // Need more data from network.
-                        match state.sse.read_next().await {
-                            Ok(true) => {} // Data appended to buffer, loop again.
-                            Ok(false) => {
-                                // Stream ended.
-                                return None;
+                        match serde_json::from_str::<GeminiResponse>(trimmed) {
+                            Ok(resp) => {
+                                let mut events =
+                                    map_gemini_to_inter_events(&resp, next_image_index);
+                                if events.is_empty() {
+                                    continue;
+                                }
+                                let first = events.remove(0);
+                                pending.extend(events);
+                                return Some((Ok(first), composite));
                             }
                             Err(e) => {
-                                return Some((Err(e), state));
+                                return Some((
+                                    Err(ProviderError::ParseError {
+                                        message: format!(
+                                            "Gemini SSE parse error: {e}, data: {trimmed}"
+                                        ),
+                                    }),
+                                    composite,
+                                ));
                             }
                         }
+                    }
+
+                    match state.read_next().await {
+                        Ok(true) => {}
+                        Ok(false) => return None,
+                        Err(e) => return Some((Err(e), composite)),
                     }
                 }
             },
         );
 
         Ok(ChatStreamResponse {
-            stream: Box::pin(stream),
+            stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(inter_stream)),
             raw_request,
             provider_id: None,
             model: String::new(),
@@ -526,47 +530,59 @@ impl LlmProvider for GeminiProvider {
 
 // (SSE state and extract_sse_data are now in crate::sse)
 
-struct GeminiSseState {
-    sse: crate::sse::SseStreamState,
-    next_image_index: usize,
-}
+fn map_gemini_to_inter_events(
+    resp: &GeminiResponse,
+    next_image_index: &mut usize,
+) -> Vec<crate::inter_stream::InterStreamEvent> {
+    use crate::inter_stream::{ImageDelta, InterStreamEvent};
 
-/// Map a Gemini streaming response chunk to a `ChatStreamChunk`.
-fn map_gemini_stream_chunk(resp: &GeminiResponse, next_image_index: &mut usize) -> ChatStreamChunk {
     let candidate = resp.candidates.first();
-
-    let mut delta_content = None;
-    let mut delta_tool_calls = Vec::new();
-    let mut delta_images = Vec::new();
+    let mut events = Vec::new();
 
     if let Some(candidate) = candidate {
-        delta_content = join_gemini_text_parts(&candidate.content.parts);
-        delta_tool_calls = collect_gemini_tool_calls(&candidate.content.parts);
-        delta_images = collect_gemini_image_deltas(&candidate.content.parts, next_image_index);
+        if let Some(text) = join_gemini_text_parts(&candidate.content.parts) {
+            if !text.is_empty() {
+                events.push(InterStreamEvent::TextDelta(text));
+            }
+        }
+
+        for tc in collect_gemini_tool_calls(&candidate.content.parts) {
+            events.push(InterStreamEvent::ToolCall(tc));
+        }
+
+        for part in &candidate.content.parts {
+            if let GeminiPart::InlineData { inline_data } = part {
+                let idx = *next_image_index;
+                *next_image_index += 1;
+                events.push(InterStreamEvent::ImageDelta(ImageDelta {
+                    index: idx,
+                    mime_type: inline_data.mime_type.clone(),
+                    partial_data: inline_data.data.clone(),
+                    is_complete: true,
+                }));
+            }
+        }
     }
 
-    let finish_reason = candidate.and_then(|c| {
-        c.finish_reason
-            .as_deref()
-            .map(|reason| map_gemini_finish_reason(Some(reason), false))
-    });
-
-    let usage = resp.usage_metadata.as_ref().map(|u| TokenUsage {
+    if let Some(usage) = resp.usage_metadata.as_ref().map(|u| TokenUsage {
         input_tokens: u.prompt.unwrap_or(0),
         output_tokens: u.candidates.unwrap_or(0),
         cache_read_tokens: u.cached_content,
         cache_write_tokens: None,
         ..Default::default()
-    });
-
-    ChatStreamChunk {
-        delta_content,
-        delta_reasoning_content: None,
-        delta_tool_calls,
-        usage,
-        finish_reason,
-        delta_images,
+    }) {
+        events.push(InterStreamEvent::Usage(usage));
     }
+
+    if let Some(reason) = candidate.and_then(|c| {
+        c.finish_reason
+            .as_deref()
+            .map(|reason| map_gemini_finish_reason(Some(reason), false))
+    }) {
+        events.push(InterStreamEvent::Finished(reason));
+    }
+
+    events
 }
 
 fn join_gemini_text_parts(parts: &[GeminiPart]) -> Option<String> {
@@ -617,30 +633,6 @@ fn collect_gemini_generated_images(
                 };
                 *next_image_index += 1;
                 Some(image)
-            }
-            GeminiPart::Text { .. }
-            | GeminiPart::FunctionCall { .. }
-            | GeminiPart::FunctionResponse { .. } => None,
-        })
-        .collect()
-}
-
-fn collect_gemini_image_deltas(
-    parts: &[GeminiPart],
-    next_image_index: &mut usize,
-) -> Vec<ImageContentDelta> {
-    parts
-        .iter()
-        .filter_map(|part| match part {
-            GeminiPart::InlineData { inline_data } => {
-                let delta = ImageContentDelta {
-                    index: *next_image_index,
-                    mime_type: inline_data.mime_type.clone(),
-                    partial_data: inline_data.data.clone(),
-                    is_complete: true,
-                };
-                *next_image_index += 1;
-                Some(delta)
             }
             GeminiPart::Text { .. }
             | GeminiPart::FunctionCall { .. }
@@ -1039,76 +1031,6 @@ mod tests {
         assert_eq!(parsed.generated_images[0].index, 0);
         assert_eq!(parsed.generated_images[0].mime_type, "image/png");
         assert_eq!(parsed.generated_images[0].data, "iVBORw0KGgo=");
-    }
-
-    #[test]
-    fn test_map_gemini_stream_chunk_emits_complete_image_deltas() {
-        let response = GeminiResponse {
-            candidates: vec![GeminiCandidate {
-                content: GeminiContent {
-                    role: Some("model".into()),
-                    parts: vec![GeminiPart::InlineData {
-                        inline_data: GeminiInlineData {
-                            mime_type: "image/png".into(),
-                            data: "iVBORw0KGgo=".into(),
-                        },
-                    }],
-                },
-                finish_reason: Some("STOP".into()),
-            }],
-            usage_metadata: None,
-        };
-
-        let mut next_image_index = 0;
-        let chunk = map_gemini_stream_chunk(&response, &mut next_image_index);
-        assert_eq!(chunk.delta_images.len(), 1);
-        assert_eq!(chunk.delta_images[0].index, 0);
-        assert_eq!(chunk.delta_images[0].mime_type, "image/png");
-        assert_eq!(chunk.delta_images[0].partial_data, "iVBORw0KGgo=");
-        assert!(chunk.delta_images[0].is_complete);
-    }
-
-    #[test]
-    fn test_map_gemini_stream_chunk_increments_image_indexes_across_chunks() {
-        let first = GeminiResponse {
-            candidates: vec![GeminiCandidate {
-                content: GeminiContent {
-                    role: Some("model".into()),
-                    parts: vec![GeminiPart::InlineData {
-                        inline_data: GeminiInlineData {
-                            mime_type: "image/png".into(),
-                            data: "first-image".into(),
-                        },
-                    }],
-                },
-                finish_reason: None,
-            }],
-            usage_metadata: None,
-        };
-        let second = GeminiResponse {
-            candidates: vec![GeminiCandidate {
-                content: GeminiContent {
-                    role: Some("model".into()),
-                    parts: vec![GeminiPart::InlineData {
-                        inline_data: GeminiInlineData {
-                            mime_type: "image/jpeg".into(),
-                            data: "second-image".into(),
-                        },
-                    }],
-                },
-                finish_reason: Some("STOP".into()),
-            }],
-            usage_metadata: None,
-        };
-
-        let mut next_image_index = 0;
-        let first_chunk = map_gemini_stream_chunk(&first, &mut next_image_index);
-        let second_chunk = map_gemini_stream_chunk(&second, &mut next_image_index);
-
-        assert_eq!(first_chunk.delta_images.len(), 1);
-        assert_eq!(first_chunk.delta_images[0].index, 0);
-        assert_eq!(second_chunk.delta_images.len(), 1);
-        assert_eq!(second_chunk.delta_images[0].index, 1);
     }
 
     #[test]

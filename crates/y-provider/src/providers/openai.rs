@@ -9,7 +9,11 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use std::collections::VecDeque;
+
 use crate::config::HttpProtocol;
+use crate::inter_stream::InterStreamEvent;
+use crate::tool_call_accumulator::ToolCallAccumulatorSet;
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
     ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
@@ -695,38 +699,52 @@ impl LlmProvider for OpenAiProvider {
         let byte_stream = response.bytes_stream();
         let provider_id = self.metadata.id.to_string();
 
-        let stream = futures::stream::unfold(
+        let inter_stream = futures::stream::unfold(
             (
                 crate::sse::SseStreamState::new(Box::pin(byte_stream)),
-                Vec::<ToolCallAccumulator>::new(),
+                ToolCallAccumulatorSet::default(),
+                VecDeque::<InterStreamEvent>::new(),
             ),
             move |mut composite| {
                 let _provider_id = provider_id.clone();
                 async move {
-                    let (ref mut state, ref mut tool_calls_acc) = composite;
+                    let (ref mut state, ref mut tool_acc, ref mut pending) = composite;
+
+                    if let Some(event) = pending.pop_front() {
+                        return Some((Ok(event), composite));
+                    }
+
                     if state.done {
                         return None;
                     }
 
                     loop {
-                        // Try to extract a complete SSE event from the buffer.
                         if let Some(event) = crate::sse::extract_sse_data(&mut state.buffer) {
                             let trimmed = event.trim();
                             if trimmed.is_empty() {
                                 continue;
                             }
 
-                            // Check for [DONE] termination signal.
                             if trimmed == "[DONE]" {
                                 state.done = true;
+                                for tc in tool_acc.drain_completed() {
+                                    pending.push_back(InterStreamEvent::ToolCall(tc));
+                                }
+                                if let Some(event) = pending.pop_front() {
+                                    return Some((Ok(event), composite));
+                                }
                                 return None;
                             }
 
-                            // Parse the JSON chunk.
                             match serde_json::from_str::<OpenAiStreamChunk>(trimmed) {
                                 Ok(chunk) => {
-                                    let mapped = map_stream_chunk(&chunk, tool_calls_acc);
-                                    return Some((Ok(mapped), composite));
+                                    let mut events = map_to_inter_events(&chunk, tool_acc);
+                                    if events.is_empty() {
+                                        continue;
+                                    }
+                                    let first = events.remove(0);
+                                    pending.extend(events);
+                                    return Some((Ok(first), composite));
                                 }
                                 Err(e) => {
                                     return Some((
@@ -741,23 +759,29 @@ impl LlmProvider for OpenAiProvider {
                             }
                         }
 
-                        // Need more data from the network.
                         match state.read_next().await {
-                            Ok(true) => {} // Data appended to buffer, loop again.
+                            Ok(true) => {}
                             Ok(false) => {
-                                // Stream ended without [DONE] -- acceptable.
-                                // Drain any remaining buffer.
-                                if let Some(event) = crate::sse::extract_sse_data(&mut state.buffer)
+                                while let Some(event) =
+                                    crate::sse::extract_sse_data(&mut state.buffer)
                                 {
                                     let trimmed = event.trim();
-                                    if !trimmed.is_empty() && trimmed != "[DONE]" {
-                                        if let Ok(chunk) =
-                                            serde_json::from_str::<OpenAiStreamChunk>(trimmed)
-                                        {
-                                            let mapped = map_stream_chunk(&chunk, tool_calls_acc);
-                                            return Some((Ok(mapped), composite));
+                                    if trimmed.is_empty() || trimmed == "[DONE]" {
+                                        continue;
+                                    }
+                                    if let Ok(chunk) =
+                                        serde_json::from_str::<OpenAiStreamChunk>(trimmed)
+                                    {
+                                        for ev in map_to_inter_events(&chunk, tool_acc) {
+                                            pending.push_back(ev);
                                         }
                                     }
+                                }
+                                for tc in tool_acc.drain_completed() {
+                                    pending.push_back(InterStreamEvent::ToolCall(tc));
+                                }
+                                if let Some(event) = pending.pop_front() {
+                                    return Some((Ok(event), composite));
                                 }
                                 return None;
                             }
@@ -771,7 +795,7 @@ impl LlmProvider for OpenAiProvider {
         );
 
         Ok(ChatStreamResponse {
-            stream: Box::pin(stream),
+            stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(inter_stream)),
             raw_request,
             provider_id: None,
             model: String::new(),
@@ -787,57 +811,37 @@ impl LlmProvider for OpenAiProvider {
 // ---------------------------------------------------------------------------
 // (SseState and extract_sse_event are now in crate::sse)
 
-/// Accumulates incremental tool call arguments across multiple chunks.
-#[derive(Debug, Clone)]
-struct ToolCallAccumulator {
-    _index: usize,
-    id: String,
-    name: String,
-    arguments: String,
-}
-
-/// Map an `OpenAI` streaming chunk to our `ChatStreamChunk`, with incremental
-/// `tool_calls` assembly.
-fn map_stream_chunk(
+fn map_to_inter_events(
     chunk: &OpenAiStreamChunk,
-    tool_calls_acc: &mut Vec<ToolCallAccumulator>,
-) -> ChatStreamChunk {
+    tool_acc: &mut crate::tool_call_accumulator::ToolCallAccumulatorSet,
+) -> Vec<crate::inter_stream::InterStreamEvent> {
+    use crate::inter_stream::InterStreamEvent;
+
     let choice = chunk.choices.first();
+    let mut events = Vec::new();
 
-    let delta_content = choice.and_then(|c| c.delta.content.clone());
-    let delta_reasoning_content = choice.and_then(|c| c.delta.reasoning_content.clone());
+    if let Some(text) = choice.and_then(|c| c.delta.content.clone()) {
+        if !text.is_empty() {
+            events.push(InterStreamEvent::TextDelta(text));
+        }
+    }
 
-    // Handle incremental tool calls.
-    let mut delta_tool_calls = Vec::new();
+    if let Some(reasoning) = choice.and_then(|c| c.delta.reasoning_content.clone()) {
+        if !reasoning.is_empty() {
+            events.push(InterStreamEvent::ReasoningDelta(reasoning));
+        }
+    }
+
     if let Some(choice) = choice {
         if let Some(ref tcs) = choice.delta.tool_calls {
             for tc in tcs {
                 let idx = tc.index.unwrap_or(0) as usize;
-
-                // Find or create accumulator for this index.
-                while tool_calls_acc.len() <= idx {
-                    tool_calls_acc.push(ToolCallAccumulator {
-                        _index: tool_calls_acc.len(),
-                        id: String::new(),
-                        name: String::new(),
-                        arguments: String::new(),
-                    });
-                }
-
-                let acc = &mut tool_calls_acc[idx];
-
-                // Update with new data.
-                if let Some(ref id) = tc.id {
-                    acc.id.clone_from(id);
-                }
-                if let Some(ref func) = tc.function {
-                    if let Some(ref name) = func.name {
-                        acc.name.clone_from(name);
-                    }
-                    if let Some(ref args) = func.arguments {
-                        acc.arguments.push_str(args);
-                    }
-                }
+                tool_acc.process_delta(
+                    idx,
+                    tc.id.as_deref(),
+                    tc.function.as_ref().and_then(|f| f.name.as_deref()),
+                    tc.function.as_ref().and_then(|f| f.arguments.as_deref()),
+                );
             }
         }
     }
@@ -852,36 +856,27 @@ fn map_stream_chunk(
         })
     });
 
-    // On finish, emit accumulated tool calls.
     if finish_reason.is_some() {
-        for acc in tool_calls_acc.drain(..) {
-            if !acc.id.is_empty() {
-                delta_tool_calls.push(ToolCallRequest {
-                    id: acc.id,
-                    name: acc.name,
-                    arguments: serde_json::from_str(&acc.arguments)
-                        .unwrap_or(serde_json::Value::String(acc.arguments)),
-                });
-            }
+        for tc in tool_acc.drain_completed() {
+            events.push(InterStreamEvent::ToolCall(tc));
         }
     }
 
-    let usage = chunk.usage.as_ref().map(|u| TokenUsage {
+    if let Some(usage) = chunk.usage.as_ref().map(|u| TokenUsage {
         input_tokens: u.prompt_tokens,
         output_tokens: u.completion_tokens,
         cache_read_tokens: None,
         cache_write_tokens: None,
         ..Default::default()
-    });
-
-    ChatStreamChunk {
-        delta_content,
-        delta_reasoning_content,
-        delta_tool_calls,
-        usage,
-        finish_reason,
-        delta_images: vec![],
+    }) {
+        events.push(InterStreamEvent::Usage(usage));
     }
+
+    if let Some(reason) = finish_reason {
+        events.push(InterStreamEvent::Finished(reason));
+    }
+
+    events
 }
 
 // ---------------------------------------------------------------------------
@@ -1430,7 +1425,9 @@ mod tests {
     }
 
     #[test]
-    fn test_map_stream_chunk_content() {
+    fn test_map_to_inter_events_content() {
+        use crate::inter_stream::InterStreamEvent;
+
         let chunk = OpenAiStreamChunk {
             id: Some("test".into()),
             model: Some("gpt-4o".into()),
@@ -1445,18 +1442,18 @@ mod tests {
             usage: None,
         };
 
-        let mut acc = Vec::new();
-        let mapped = map_stream_chunk(&chunk, &mut acc);
-        assert_eq!(mapped.delta_content, Some("Hello".into()));
-        assert!(mapped.delta_tool_calls.is_empty());
-        assert!(mapped.finish_reason.is_none());
+        let mut acc = ToolCallAccumulatorSet::default();
+        let events = map_to_inter_events(&chunk, &mut acc);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], InterStreamEvent::TextDelta(t) if t == "Hello"));
     }
 
     #[test]
-    fn test_map_stream_chunk_tool_calls_incremental() {
-        let mut acc = Vec::new();
+    fn test_map_to_inter_events_tool_calls_incremental() {
+        use crate::inter_stream::InterStreamEvent;
 
-        // First chunk: start of tool call.
+        let mut acc = ToolCallAccumulatorSet::default();
+
         let chunk1 = OpenAiStreamChunk {
             id: Some("test".into()),
             model: Some("gpt-4o".into()),
@@ -1477,12 +1474,9 @@ mod tests {
             }],
             usage: None,
         };
-        let m1 = map_stream_chunk(&chunk1, &mut acc);
-        assert!(m1.delta_tool_calls.is_empty()); // Not finished yet.
-        assert_eq!(acc.len(), 1);
-        assert_eq!(acc[0].arguments, "{\"ci");
+        let events1 = map_to_inter_events(&chunk1, &mut acc);
+        assert!(events1.is_empty());
 
-        // Second chunk: continuation of arguments.
         let chunk2 = OpenAiStreamChunk {
             id: Some("test".into()),
             model: Some("gpt-4o".into()),
@@ -1503,11 +1497,9 @@ mod tests {
             }],
             usage: None,
         };
-        let m2 = map_stream_chunk(&chunk2, &mut acc);
-        assert!(m2.delta_tool_calls.is_empty());
-        assert_eq!(acc[0].arguments, "{\"city\":\"Paris\"}");
+        let events2 = map_to_inter_events(&chunk2, &mut acc);
+        assert!(events2.is_empty());
 
-        // Final chunk: finish reason triggers emission.
         let chunk3 = OpenAiStreamChunk {
             id: Some("test".into()),
             model: Some("gpt-4o".into()),
@@ -1524,13 +1516,25 @@ mod tests {
                 completion_tokens: 20,
             }),
         };
-        let m3 = map_stream_chunk(&chunk3, &mut acc);
-        assert_eq!(m3.delta_tool_calls.len(), 1);
-        assert_eq!(m3.delta_tool_calls[0].id, "call_abc");
-        assert_eq!(m3.delta_tool_calls[0].name, "get_weather");
-        assert_eq!(m3.finish_reason, Some(FinishReason::ToolUse));
-        assert!(m3.usage.is_some());
-        assert!(acc.is_empty()); // Drained.
+        let events3 = map_to_inter_events(&chunk3, &mut acc);
+        let tool_events: Vec<_> = events3
+            .iter()
+            .filter(|e| matches!(e, InterStreamEvent::ToolCall(_)))
+            .collect();
+        assert_eq!(tool_events.len(), 1);
+        if let InterStreamEvent::ToolCall(tc) = &tool_events[0] {
+            assert_eq!(tc.id, "call_abc");
+            assert_eq!(tc.name, "get_weather");
+            assert_eq!(tc.arguments, serde_json::json!({"city": "Paris"}));
+        } else {
+            panic!("expected ToolCall event");
+        }
+        assert!(events3
+            .iter()
+            .any(|e| matches!(e, InterStreamEvent::Finished(FinishReason::ToolUse))));
+        assert!(events3
+            .iter()
+            .any(|e| matches!(e, InterStreamEvent::Usage(_))));
     }
 
     #[test]

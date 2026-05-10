@@ -13,7 +13,11 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use std::collections::VecDeque;
+
 use crate::config::HttpProtocol;
+use crate::inter_stream::InterStreamEvent;
+use crate::tool_call_accumulator::ToolCallAccumulatorSet;
 use y_core::provider::{
     ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason,
     ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
@@ -594,19 +598,25 @@ impl LlmProvider for AzureOpenAiProvider {
             });
         }
 
-        // Parse SSE stream — same format as OpenAI.
+        // Parse SSE stream -- same format as OpenAI.
         let byte_stream = response.bytes_stream();
         let provider_id = self.metadata.id.to_string();
 
-        let stream = futures::stream::unfold(
+        let inter_stream = futures::stream::unfold(
             (
                 crate::sse::SseStreamState::new(Box::pin(byte_stream)),
-                Vec::<ToolCallAccumulator>::new(),
+                ToolCallAccumulatorSet::default(),
+                VecDeque::<InterStreamEvent>::new(),
             ),
             move |mut composite| {
                 let _provider_id = provider_id.clone();
                 async move {
-                    let (ref mut state, ref mut tool_calls_acc) = composite;
+                    let (ref mut state, ref mut tool_acc, ref mut pending) = composite;
+
+                    if let Some(event) = pending.pop_front() {
+                        return Some((Ok(event), composite));
+                    }
+
                     if state.done {
                         return None;
                     }
@@ -619,13 +629,24 @@ impl LlmProvider for AzureOpenAiProvider {
                             }
                             if trimmed == "[DONE]" {
                                 state.done = true;
+                                for tc in tool_acc.drain_completed() {
+                                    pending.push_back(InterStreamEvent::ToolCall(tc));
+                                }
+                                if let Some(event) = pending.pop_front() {
+                                    return Some((Ok(event), composite));
+                                }
                                 return None;
                             }
 
                             match serde_json::from_str::<AzureStreamChunk>(trimmed) {
                                 Ok(chunk) => {
-                                    let mapped = map_stream_chunk(&chunk, tool_calls_acc);
-                                    return Some((Ok(mapped), composite));
+                                    let mut events = map_to_inter_events(&chunk, tool_acc);
+                                    if events.is_empty() {
+                                        continue;
+                                    }
+                                    let first = events.remove(0);
+                                    pending.extend(events);
+                                    return Some((Ok(first), composite));
                                 }
                                 Err(e) => {
                                     return Some((
@@ -641,13 +662,32 @@ impl LlmProvider for AzureOpenAiProvider {
                         }
 
                         match state.read_next().await {
-                            Ok(true) => {} // Data appended to buffer, loop again.
+                            Ok(true) => {}
                             Ok(false) => {
+                                while let Some(event) =
+                                    crate::sse::extract_sse_data(&mut state.buffer)
+                                {
+                                    let trimmed = event.trim();
+                                    if trimmed.is_empty() || trimmed == "[DONE]" {
+                                        continue;
+                                    }
+                                    if let Ok(chunk) =
+                                        serde_json::from_str::<AzureStreamChunk>(trimmed)
+                                    {
+                                        for ev in map_to_inter_events(&chunk, tool_acc) {
+                                            pending.push_back(ev);
+                                        }
+                                    }
+                                }
+                                for tc in tool_acc.drain_completed() {
+                                    pending.push_back(InterStreamEvent::ToolCall(tc));
+                                }
+                                if let Some(event) = pending.pop_front() {
+                                    return Some((Ok(event), composite));
+                                }
                                 return None;
                             }
-                            Err(e) => {
-                                return Some((Err(e), composite));
-                            }
+                            Err(e) => return Some((Err(e), composite)),
                         }
                     }
                 }
@@ -655,7 +695,7 @@ impl LlmProvider for AzureOpenAiProvider {
         );
 
         Ok(ChatStreamResponse {
-            stream: Box::pin(stream),
+            stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(inter_stream)),
             raw_request,
             provider_id: None,
             model: String::new(),
@@ -670,48 +710,31 @@ impl LlmProvider for AzureOpenAiProvider {
 
 // (SseState and extract_sse_event are now in crate::sse)
 
-#[derive(Debug, Clone)]
-struct ToolCallAccumulator {
-    _index: usize,
-    id: String,
-    name: String,
-    arguments: String,
-}
-
-/// Map an Azure/OpenAI streaming chunk to `ChatStreamChunk` with incremental
-/// `tool_calls` assembly.
-fn map_stream_chunk(
+fn map_to_inter_events(
     chunk: &AzureStreamChunk,
-    tool_calls_acc: &mut Vec<ToolCallAccumulator>,
-) -> ChatStreamChunk {
-    let choice = chunk.choices.first();
-    let delta_content = choice.and_then(|c| c.delta.content.clone());
+    tool_acc: &mut crate::tool_call_accumulator::ToolCallAccumulatorSet,
+) -> Vec<crate::inter_stream::InterStreamEvent> {
+    use crate::inter_stream::InterStreamEvent;
 
-    let mut delta_tool_calls = Vec::new();
+    let choice = chunk.choices.first();
+    let mut events = Vec::new();
+
+    if let Some(text) = choice.and_then(|c| c.delta.content.clone()) {
+        if !text.is_empty() {
+            events.push(InterStreamEvent::TextDelta(text));
+        }
+    }
+
     if let Some(choice) = choice {
         if let Some(ref tcs) = choice.delta.tool_calls {
             for tc in tcs {
                 let idx = tc.index.unwrap_or(0) as usize;
-                while tool_calls_acc.len() <= idx {
-                    tool_calls_acc.push(ToolCallAccumulator {
-                        _index: tool_calls_acc.len(),
-                        id: String::new(),
-                        name: String::new(),
-                        arguments: String::new(),
-                    });
-                }
-                let acc = &mut tool_calls_acc[idx];
-                if let Some(ref id) = tc.id {
-                    acc.id.clone_from(id);
-                }
-                if let Some(ref func) = tc.function {
-                    if let Some(ref name) = func.name {
-                        acc.name.clone_from(name);
-                    }
-                    if let Some(ref args) = func.arguments {
-                        acc.arguments.push_str(args);
-                    }
-                }
+                tool_acc.process_delta(
+                    idx,
+                    tc.id.as_deref(),
+                    tc.function.as_ref().and_then(|f| f.name.as_deref()),
+                    tc.function.as_ref().and_then(|f| f.arguments.as_deref()),
+                );
             }
         }
     }
@@ -726,36 +749,27 @@ fn map_stream_chunk(
         })
     });
 
-    // On finish, emit accumulated tool calls.
     if finish_reason.is_some() {
-        for acc in tool_calls_acc.drain(..) {
-            if !acc.id.is_empty() {
-                delta_tool_calls.push(ToolCallRequest {
-                    id: acc.id,
-                    name: acc.name,
-                    arguments: serde_json::from_str(&acc.arguments)
-                        .unwrap_or(serde_json::Value::String(acc.arguments)),
-                });
-            }
+        for tc in tool_acc.drain_completed() {
+            events.push(InterStreamEvent::ToolCall(tc));
         }
     }
 
-    let usage = chunk.usage.as_ref().map(|u| TokenUsage {
+    if let Some(usage) = chunk.usage.as_ref().map(|u| TokenUsage {
         input_tokens: u.prompt_tokens,
         output_tokens: u.completion_tokens,
         cache_read_tokens: None,
         cache_write_tokens: None,
         ..Default::default()
-    });
-
-    ChatStreamChunk {
-        delta_content,
-        delta_reasoning_content: None,
-        delta_tool_calls,
-        usage,
-        finish_reason,
-        delta_images: vec![],
+    }) {
+        events.push(InterStreamEvent::Usage(usage));
     }
+
+    if let Some(reason) = finish_reason {
+        events.push(InterStreamEvent::Finished(reason));
+    }
+
+    events
 }
 
 // ---------------------------------------------------------------------------

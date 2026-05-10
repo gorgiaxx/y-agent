@@ -12,11 +12,14 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use std::collections::VecDeque;
+
 use crate::config::HttpProtocol;
+use crate::inter_stream::{ImageDelta, InterStreamEvent};
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, GeneratedImage,
-    ImageContentDelta, LlmProvider, ProviderCapability, ProviderError, ProviderMetadata,
-    ProviderType, RequestMode, ToolCallingMode,
+    ChatRequest, ChatResponse, ChatStreamResponse, FinishReason, GeneratedImage, LlmProvider,
+    ProviderCapability, ProviderError, ProviderMetadata, ProviderType, RequestMode,
+    ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -603,17 +606,26 @@ impl LlmProvider for AnthropicProvider {
 
         let byte_stream = response.bytes_stream();
 
-        let stream = futures::stream::unfold(
-            AnthropicSseState {
-                sse: crate::sse::SseStreamState::new(Box::pin(byte_stream)),
-                current_tool_id: None,
-                current_tool_name: None,
-                current_tool_args: String::new(),
-                current_thinking: String::new(),
-                accumulated_usage: None,
-                image_index: 0,
-            },
-            move |mut state| async move {
+        let inter_stream = futures::stream::unfold(
+            (
+                AnthropicSseState {
+                    sse: crate::sse::SseStreamState::new(Box::pin(byte_stream)),
+                    current_tool_id: None,
+                    current_tool_name: None,
+                    current_tool_args: String::new(),
+                    current_thinking: String::new(),
+                    accumulated_usage: None,
+                    image_index: 0,
+                },
+                VecDeque::<InterStreamEvent>::new(),
+            ),
+            move |mut composite| async move {
+                let (ref mut state, ref mut pending) = composite;
+
+                if let Some(event) = pending.pop_front() {
+                    return Some((Ok(event), composite));
+                }
+
                 if state.sse.done {
                     return None;
                 }
@@ -624,36 +636,21 @@ impl LlmProvider for AnthropicProvider {
                             AnthropicSseEvent::ContentBlockDelta { delta } => match delta {
                                 AnthropicDelta::Text { text } => {
                                     return Some((
-                                        Ok(ChatStreamChunk {
-                                            delta_content: Some(text),
-                                            delta_reasoning_content: None,
-                                            delta_tool_calls: vec![],
-                                            usage: None,
-                                            finish_reason: None,
-                                            delta_images: vec![],
-                                        }),
-                                        state,
+                                        Ok(InterStreamEvent::TextDelta(text)),
+                                        composite,
                                     ));
                                 }
                                 AnthropicDelta::Thinking { thinking } => {
                                     state.current_thinking.push_str(&thinking);
                                     return Some((
-                                        Ok(ChatStreamChunk {
-                                            delta_content: None,
-                                            delta_reasoning_content: Some(thinking),
-                                            delta_tool_calls: vec![],
-                                            usage: None,
-                                            finish_reason: None,
-                                            delta_images: vec![],
-                                        }),
-                                        state,
+                                        Ok(InterStreamEvent::ReasoningDelta(thinking)),
+                                        composite,
                                     ));
                                 }
                                 AnthropicDelta::InputJson { partial_json } => {
                                     state.current_tool_args.push_str(&partial_json);
                                     continue;
                                 }
-                                // Signature deltas are accumulated silently.
                                 AnthropicDelta::Signature { .. } => {
                                     continue;
                                 }
@@ -673,20 +670,13 @@ impl LlmProvider for AnthropicProvider {
                                             let idx = state.image_index;
                                             state.image_index += 1;
                                             return Some((
-                                                Ok(ChatStreamChunk {
-                                                    delta_content: None,
-                                                    delta_reasoning_content: None,
-                                                    delta_tool_calls: vec![],
-                                                    usage: None,
-                                                    finish_reason: None,
-                                                    delta_images: vec![ImageContentDelta {
-                                                        index: idx,
-                                                        mime_type: source.media_type.clone(),
-                                                        partial_data: source.data.clone(),
-                                                        is_complete: true,
-                                                    }],
-                                                }),
-                                                state,
+                                                Ok(InterStreamEvent::ImageDelta(ImageDelta {
+                                                    index: idx,
+                                                    mime_type: source.media_type.clone(),
+                                                    partial_data: source.data.clone(),
+                                                    is_complete: true,
+                                                })),
+                                                composite,
                                             ));
                                         }
                                         _ => {}
@@ -695,7 +685,6 @@ impl LlmProvider for AnthropicProvider {
                                 continue;
                             }
                             AnthropicSseEvent::ContentBlockStop => {
-                                // If we were accumulating a tool call, emit it.
                                 if let (Some(id), Some(name)) =
                                     (state.current_tool_id.take(), state.current_tool_name.take())
                                 {
@@ -703,26 +692,17 @@ impl LlmProvider for AnthropicProvider {
                                     let arguments = serde_json::from_str(&args)
                                         .unwrap_or(serde_json::Value::String(args));
                                     return Some((
-                                        Ok(ChatStreamChunk {
-                                            delta_content: None,
-                                            delta_reasoning_content: None,
-                                            delta_tool_calls: vec![ToolCallRequest {
-                                                id,
-                                                name,
-                                                arguments,
-                                            }],
-                                            usage: None,
-                                            finish_reason: None,
-                                            delta_images: vec![],
-                                        }),
-                                        state,
+                                        Ok(InterStreamEvent::ToolCall(ToolCallRequest {
+                                            id,
+                                            name,
+                                            arguments,
+                                        })),
+                                        composite,
                                     ));
                                 }
                                 continue;
                             }
                             AnthropicSseEvent::MessageStart { usage, .. } => {
-                                // Capture initial usage from message_start (Anthropic
-                                // reports input_tokens only here, not in message_delta).
                                 if let Some(u) = usage {
                                     state.accumulated_usage = Some(TokenUsage {
                                         input_tokens: u.input_tokens.unwrap_or(0),
@@ -742,8 +722,6 @@ impl LlmProvider for AnthropicProvider {
                                         "max_tokens" => FinishReason::Length,
                                         _ => FinishReason::Unknown,
                                     });
-                                // Merge message_delta usage with accumulated
-                                // message_start usage.
                                 let usage_info = if let Some(u) = usage {
                                     let mut merged =
                                         state.accumulated_usage.take().unwrap_or(TokenUsage {
@@ -753,12 +731,9 @@ impl LlmProvider for AnthropicProvider {
                                             cache_write_tokens: None,
                                             ..Default::default()
                                         });
-                                    // output_tokens is typically in message_delta.
                                     if let Some(out) = u.output_tokens {
                                         merged.output_tokens = out;
                                     }
-                                    // input_tokens may be present in message_delta
-                                    // on some proxies.
                                     if let Some(inp) = u.input_tokens {
                                         if inp > 0 {
                                             merged.input_tokens = inp;
@@ -768,17 +743,16 @@ impl LlmProvider for AnthropicProvider {
                                 } else {
                                     state.accumulated_usage.take()
                                 };
-                                return Some((
-                                    Ok(ChatStreamChunk {
-                                        delta_content: None,
-                                        delta_reasoning_content: None,
-                                        delta_tool_calls: vec![],
-                                        usage: usage_info,
-                                        finish_reason,
-                                        delta_images: vec![],
-                                    }),
-                                    state,
-                                ));
+                                if let Some(usage) = usage_info {
+                                    pending.push_back(InterStreamEvent::Usage(usage));
+                                }
+                                if let Some(reason) = finish_reason {
+                                    pending.push_back(InterStreamEvent::Finished(reason));
+                                }
+                                if let Some(event) = pending.pop_front() {
+                                    return Some((Ok(event), composite));
+                                }
+                                continue;
                             }
                             AnthropicSseEvent::MessageStop => {
                                 state.sse.done = true;
@@ -792,16 +766,14 @@ impl LlmProvider for AnthropicProvider {
                         }
                     }
 
-                    // Need more data.
                     match state.sse.read_next().await {
-                        Ok(true) => {} // Data appended to buffer, loop again.
+                        Ok(true) => {}
                         Ok(false) => {
-                            // Stream ended.
                             state.sse.done = true;
                             return None;
                         }
                         Err(e) => {
-                            return Some((Err(e), state));
+                            return Some((Err(e), composite));
                         }
                     }
                 }
@@ -809,7 +781,7 @@ impl LlmProvider for AnthropicProvider {
         );
 
         Ok(ChatStreamResponse {
-            stream: Box::pin(stream),
+            stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(inter_stream)),
             raw_request,
             provider_id: None,
             model: String::new(),

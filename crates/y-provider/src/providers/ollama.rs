@@ -12,11 +12,13 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use std::collections::VecDeque;
+
 use crate::config::HttpProtocol;
+use crate::inter_stream::InterStreamEvent;
 use y_core::provider::{
-    ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, FinishReason, LlmProvider,
-    ProviderCapability, ProviderError, ProviderMetadata, ProviderType, RequestMode,
-    ToolCallingMode,
+    ChatRequest, ChatResponse, ChatStreamResponse, FinishReason, LlmProvider, ProviderCapability,
+    ProviderError, ProviderMetadata, ProviderType, RequestMode, ToolCallingMode,
 };
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
@@ -351,16 +353,23 @@ impl LlmProvider for OllamaProvider {
         }
 
         let byte_stream = response.bytes_stream();
+        let inter_stream = futures::stream::unfold(
+            (
+                crate::sse::SseStreamState::new(Box::pin(byte_stream)),
+                VecDeque::<InterStreamEvent>::new(),
+            ),
+            move |mut composite| async move {
+                let (ref mut state, ref mut pending) = composite;
 
-        let stream = futures::stream::unfold(
-            crate::sse::SseStreamState::new(Box::pin(byte_stream)),
-            move |mut state| async move {
+                if let Some(event) = pending.pop_front() {
+                    return Some((Ok(event), composite));
+                }
+
                 if state.done {
                     return None;
                 }
 
                 loop {
-                    // Ollama streams one JSON object per line.
                     if let Some(line) = crate::sse::extract_json_line(&mut state.buffer) {
                         let trimmed = line.trim();
                         if trimmed.is_empty() {
@@ -371,44 +380,25 @@ impl LlmProvider for OllamaProvider {
                             Ok(chunk) => {
                                 if chunk.done {
                                     state.done = true;
-                                    // Emit final chunk with usage.
-                                    let usage = Some(TokenUsage {
+                                    let usage = TokenUsage {
                                         input_tokens: chunk.prompt_eval_count.unwrap_or(0),
                                         output_tokens: chunk.eval_count.unwrap_or(0),
                                         cache_read_tokens: None,
                                         cache_write_tokens: None,
                                         ..Default::default()
-                                    });
-                                    return Some((
-                                        Ok(ChatStreamChunk {
-                                            delta_content: None,
-                                            delta_reasoning_content: None,
-                                            delta_tool_calls: vec![],
-                                            usage,
-                                            finish_reason: Some(FinishReason::Stop),
-                                            delta_images: vec![],
-                                        }),
-                                        state,
-                                    ));
+                                    };
+                                    pending
+                                        .push_back(InterStreamEvent::Finished(FinishReason::Stop));
+                                    return Some((Ok(InterStreamEvent::Usage(usage)), composite));
                                 }
 
-                                let content = if chunk.message.content.is_empty() {
-                                    None
-                                } else {
-                                    Some(chunk.message.content)
-                                };
-
-                                return Some((
-                                    Ok(ChatStreamChunk {
-                                        delta_content: content,
-                                        delta_reasoning_content: None,
-                                        delta_tool_calls: vec![],
-                                        usage: None,
-                                        finish_reason: None,
-                                        delta_images: vec![],
-                                    }),
-                                    state,
-                                ));
+                                if !chunk.message.content.is_empty() {
+                                    return Some((
+                                        Ok(InterStreamEvent::TextDelta(chunk.message.content)),
+                                        composite,
+                                    ));
+                                }
+                                continue;
                             }
                             Err(e) => {
                                 return Some((
@@ -417,29 +407,23 @@ impl LlmProvider for OllamaProvider {
                                             "Ollama JSON parse error: {e}, line: {trimmed}"
                                         ),
                                     }),
-                                    state,
+                                    composite,
                                 ));
                             }
                         }
                     }
 
-                    // Need more data.
                     match state.read_next().await {
-                        Ok(true) => {} // Data appended to buffer, loop again.
-                        Ok(false) => {
-                            // Stream ended.
-                            return None;
-                        }
-                        Err(e) => {
-                            return Some((Err(e), state));
-                        }
+                        Ok(true) => {}
+                        Ok(false) => return None,
+                        Err(e) => return Some((Err(e), composite)),
                     }
                 }
             },
         );
 
         Ok(ChatStreamResponse {
-            stream: Box::pin(stream),
+            stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(inter_stream)),
             raw_request,
             provider_id: None,
             model: String::new(),
