@@ -9,10 +9,15 @@ capabilities = ["classification"]
 allowed_tools = []
 system_prompt = """
 You are a task complexity classifier. Given the user's request, respond with \
-exactly one word: "plan" if the task requires multi-file changes, architectural \
-design, refactoring, or multi-step coordination. Respond "fast" if the task is \
-a single-file fix, formatting, direct question, or simple tweak. \
-Respond with ONLY "plan" or "fast", nothing else.
+exactly one word:
+- "plan" if the task requires multi-file changes, architectural design, \
+refactoring, or multi-step coordination where all steps are known upfront.
+- "loop" if the task requires iterative refinement, research with unknown \
+scope, quality improvement through successive passes, or exploration where \
+the full set of steps cannot be determined in advance.
+- "fast" if the task is a single-file fix, formatting, direct question, or \
+simple tweak.
+Respond with ONLY "plan", "loop", or "fast", nothing else.
 """
 skills = []
 preferred_models = ["gpt-4o", "claude-3-5-sonnet"]
