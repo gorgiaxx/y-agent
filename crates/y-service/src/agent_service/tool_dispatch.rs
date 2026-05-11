@@ -593,6 +593,19 @@ async fn execute_tool_call(
         .await;
     }
 
+    // Intercept Loop tool -- route through LoopOrchestrator.
+    if tc.name == "Loop" {
+        let session_id_clone = session_id.clone();
+        return Box::pin(crate::loop_orchestrator::LoopOrchestrator::handle(
+            &tc.arguments,
+            container,
+            &session_id_clone,
+            progress,
+            cancel.cloned(),
+        ))
+        .await;
+    }
+
     // Intercept workflow/schedule meta-tools -- route through orchestrator.
     {
         use crate::workflow_orchestrator::WorkflowOrchestrator as WO;
