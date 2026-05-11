@@ -10,6 +10,7 @@ import { GrepRenderer } from './GrepRenderer';
 import { FileToolRenderer } from './FileToolRenderer';
 import { PlanWriterRenderer } from './PlanWriterRenderer';
 import { PlanRenderer } from './PlanRenderer';
+import { LoopRenderer } from './LoopRenderer';
 import { AskUserRenderer } from './AskUserRenderer';
 import { KnowledgeSearchRenderer } from './KnowledgeSearchRenderer';
 
@@ -31,6 +32,7 @@ export const TOOL_RENDERERS: Record<string, ComponentType<ToolRendererProps>> = 
   FileWrite: FileToolRenderer,
   FileRead: FileToolRenderer,
   Plan: PlanRenderer,
+  Loop: LoopRenderer,
   PlanWriter: PlanWriterRenderer,
   AskUser: AskUserRenderer,
   KnowledgeSearch: KnowledgeSearchRenderer,

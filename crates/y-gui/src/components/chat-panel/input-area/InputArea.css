@@ -672,6 +672,16 @@
   background: var(--accent-glow);
 }
 
+.toolbar-btn--plan-loop {
+  color: rgb(180, 140, 255);
+  background: rgba(160, 120, 240, 0.08);
+}
+
+.toolbar-btn--plan-loop:hover:not(:disabled) {
+  color: rgb(200, 160, 255);
+  background: rgba(160, 120, 240, 0.14);
+}
+
 /* ---- Image generation settings dropdown ---- */
 
 .toolbar-imagegen-dropdown {

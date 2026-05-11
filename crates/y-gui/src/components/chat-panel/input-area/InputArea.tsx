@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal } from 'lucide-react';
 import { logger, transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
@@ -207,12 +207,14 @@ export function InputArea(props: InputAreaProps) {
   // Plan mode: defaults to a global preference, but can be controlled by a caller.
   const [uncontrolledPlanMode, setUncontrolledPlanMode] = useState<PlanMode>(() => {
     const stored = localStorage.getItem('y-agent-plan-mode');
-    if (stored === 'fast' || stored === 'auto' || stored === 'plan') return stored;
+    if (stored === 'fast' || stored === 'auto' || stored === 'plan' || stored === 'loop') return stored;
     return 'fast';
   });
   const planMode = controlledPlanMode ?? uncontrolledPlanMode;
   const cyclePlanMode = useCallback(() => {
-    const next: PlanMode = planMode === 'fast' ? 'auto' : planMode === 'auto' ? 'plan' : 'fast';
+    const order: PlanMode[] = ['fast', 'auto', 'plan', 'loop'];
+    const idx = order.indexOf(planMode);
+    const next = order[(idx + 1) % order.length];
     if (controlledPlanMode !== undefined) {
       onPlanModeChange?.(next);
       return;
@@ -750,6 +752,7 @@ export function InputArea(props: InputAreaProps) {
             {planMode === 'fast' && <Zap size={14} />}
             {planMode === 'auto' && <ScanSearch size={14} />}
             {planMode === 'plan' && <ClipboardList size={14} />}
+            {planMode === 'loop' && <RefreshCw size={14} />}
             <span className="toolbar-btn-label">{planMode}</span>
           </ToolbarTooltipButton>
           {/* Attachment picker (also used for image-to-image in generation mode) */}

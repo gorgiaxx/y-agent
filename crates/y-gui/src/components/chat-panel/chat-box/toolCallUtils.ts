@@ -103,6 +103,7 @@ const KNOWN_TOOL_NAMES = [
   'Glob',
   'Grep',
   'KnowledgeSearch',
+  'Loop',
   'Plan',
   'PlanWriter',
   'ShellExec',
@@ -1160,6 +1161,170 @@ export function extractPlanDisplayMeta(
   if (resultObj) {
     return parsePlanDisplayObject({
       kind: 'plan_execution',
+      ...resultObj,
+    });
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Loop helpers
+// ---------------------------------------------------------------------------
+
+export interface LoopRoundDisplay {
+  round: number;
+  status: string;
+  tasksCompleted: string[];
+  tasksRemaining: string[];
+  converged: boolean;
+  durationMs: number;
+}
+
+export interface LoopInitDisplay {
+  kind: 'loop_init';
+  request: string;
+  progressFile: string;
+  maxRounds: number;
+}
+
+export interface LoopRoundStageDisplay {
+  kind: 'loop_round';
+  round: number;
+  maxRounds: number;
+  roundStatus: string;
+  tasksCompleted: string[];
+  tasksRemaining: string[];
+  converged: boolean;
+  rounds: LoopRoundDisplay[];
+}
+
+export interface LoopReviewDisplay {
+  kind: 'loop_review';
+  reviewStatus: string;
+  totalRounds: number;
+}
+
+export interface LoopExecutionDisplay {
+  kind: 'loop_execution';
+  finalStatus: string;
+  totalRounds: number;
+  maxRounds: number;
+  rounds: LoopRoundDisplay[];
+}
+
+export type LoopDisplayMeta =
+  | LoopInitDisplay
+  | LoopRoundStageDisplay
+  | LoopReviewDisplay
+  | LoopExecutionDisplay;
+
+export interface LoopRequestMeta {
+  request: string;
+  context: string;
+  maxRounds: number;
+}
+
+export function extractLoopRequestMeta(argsRaw: string): LoopRequestMeta | null {
+  const obj = tryParseJson(argsRaw);
+  if (!obj) return null;
+  const request = typeof obj.request === 'string' ? obj.request : '';
+  if (!request) return null;
+  return {
+    request,
+    context: typeof obj.context === 'string' ? obj.context : '',
+    maxRounds: typeof obj.max_rounds === 'number' ? obj.max_rounds : 10,
+  };
+}
+
+function parseLoopRound(value: unknown): LoopRoundDisplay | null {
+  const obj = asObject(value);
+  if (!obj) return null;
+  return {
+    round: typeof obj.round === 'number' ? obj.round : 0,
+    status: typeof obj.status === 'string' ? obj.status : 'completed',
+    tasksCompleted: Array.isArray(obj.tasks_completed)
+      ? obj.tasks_completed.map((t) => String(t))
+      : [],
+    tasksRemaining: Array.isArray(obj.tasks_remaining)
+      ? obj.tasks_remaining.map((t) => String(t))
+      : [],
+    converged: obj.converged === true,
+    durationMs: typeof obj.duration_ms === 'number' ? obj.duration_ms : 0,
+  };
+}
+
+function parseLoopDisplayObject(obj: Record<string, unknown>): LoopDisplayMeta | null {
+  const kind = typeof obj.kind === 'string' ? obj.kind : '';
+
+  if (kind === 'loop_init') {
+    return {
+      kind: 'loop_init',
+      request: typeof obj.request === 'string' ? obj.request : '',
+      progressFile: typeof obj.progress_file === 'string' ? obj.progress_file : '',
+      maxRounds: typeof obj.max_rounds === 'number' ? obj.max_rounds : 10,
+    };
+  }
+
+  if (kind === 'loop_round') {
+    const rounds = Array.isArray(obj.rounds)
+      ? obj.rounds.map(parseLoopRound).filter((r): r is LoopRoundDisplay => r != null)
+      : [];
+    return {
+      kind: 'loop_round',
+      round: typeof obj.round === 'number' ? obj.round : 0,
+      maxRounds: typeof obj.max_rounds === 'number' ? obj.max_rounds : 10,
+      roundStatus: typeof obj.round_status === 'string' ? obj.round_status : 'completed',
+      tasksCompleted: Array.isArray(obj.tasks_completed)
+        ? obj.tasks_completed.map((t) => String(t))
+        : [],
+      tasksRemaining: Array.isArray(obj.tasks_remaining)
+        ? obj.tasks_remaining.map((t) => String(t))
+        : [],
+      converged: obj.converged === true,
+      rounds,
+    };
+  }
+
+  if (kind === 'loop_review') {
+    return {
+      kind: 'loop_review',
+      reviewStatus: typeof obj.review_status === 'string' ? obj.review_status : 'running',
+      totalRounds: typeof obj.total_rounds === 'number' ? obj.total_rounds : 0,
+    };
+  }
+
+  if (kind === 'loop_execution') {
+    const rounds = Array.isArray(obj.rounds)
+      ? obj.rounds.map(parseLoopRound).filter((r): r is LoopRoundDisplay => r != null)
+      : [];
+    return {
+      kind: 'loop_execution',
+      finalStatus: typeof obj.final_status === 'string' ? obj.final_status : '',
+      totalRounds: typeof obj.total_rounds === 'number' ? obj.total_rounds : 0,
+      maxRounds: typeof obj.max_rounds === 'number' ? obj.max_rounds : 10,
+      rounds,
+    };
+  }
+
+  return null;
+}
+
+export function extractLoopDisplayMeta(
+  metadata: unknown,
+  resultRaw?: string,
+): LoopDisplayMeta | null {
+  const metaObj = asObject(metadata);
+  const displayObj = asObject(metaObj?.display);
+  if (displayObj) {
+    const display = parseLoopDisplayObject(displayObj);
+    if (display) return display;
+  }
+
+  const resultObj = resultRaw ? tryParseJson(resultRaw) : null;
+  if (resultObj) {
+    return parseLoopDisplayObject({
+      kind: 'loop_execution',
       ...resultObj,
     });
   }
