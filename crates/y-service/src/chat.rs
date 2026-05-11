@@ -190,20 +190,38 @@ impl ChatService {
                 }
                 tracing::info!("plan_mode.active flag SET in prompt context");
             }
+            "loop" => {
+                let mut pctx = container.prompt_context.write().await;
+                if input.request_mode == RequestMode::TextChat {
+                    pctx.config_flags.insert("loop_mode.active".into(), true);
+                } else {
+                    pctx.config_flags.remove("loop_mode.active");
+                }
+                pctx.config_flags.remove("plan_mode.active");
+                tracing::info!("loop_mode.active flag SET in prompt context");
+            }
             "auto" => {
-                let needs_plan = input.request_mode == RequestMode::TextChat
-                    && crate::plan_orchestrator::assess_complexity(
+                if input.request_mode == RequestMode::TextChat {
+                    let classification = crate::plan_orchestrator::assess_complexity(
                         container,
                         input.user_input,
                         input.provider_id.as_deref(),
                     )
                     .await;
-                if needs_plan {
                     let mut pctx = container.prompt_context.write().await;
-                    pctx.config_flags.insert("plan_mode.active".into(), true);
-                    tracing::info!("plan_mode.active flag SET (auto: complex)");
-                } else {
-                    tracing::info!("plan_mode.active flag NOT set (auto: simple)");
+                    match classification.as_str() {
+                        "plan" => {
+                            pctx.config_flags.insert("plan_mode.active".into(), true);
+                            tracing::info!("plan_mode.active flag SET (auto: complex)");
+                        }
+                        "loop" => {
+                            pctx.config_flags.insert("loop_mode.active".into(), true);
+                            tracing::info!("loop_mode.active flag SET (auto: iterative)");
+                        }
+                        _ => {
+                            tracing::info!("no mode flags set (auto: simple)");
+                        }
+                    }
                 }
             }
             _ => {
@@ -766,9 +784,10 @@ impl ChatService {
         // - "auto": run a lightweight complexity classification, inject if complex.
         Self::configure_plan_mode_prompt_flag(container, input).await;
 
-        // 1c. Inject Plan tool schema when plan mode is active.
+        // 1c. Inject Plan/Loop tool schema when respective mode is active.
         if input.request_mode == RequestMode::TextChat {
             Self::apply_plan_mode_tool_adjustments(container, &mut tool_defs).await;
+            Self::apply_loop_mode_tool_adjustments(container, &mut tool_defs).await;
         }
 
         // 2. Construct execution config for the root agent.
@@ -1096,6 +1115,49 @@ impl ChatService {
         tracing::info!(
             final_count = tool_defs.len(),
             "plan mode: injected Plan tool schema"
+        );
+    }
+
+    async fn apply_loop_mode_tool_adjustments(
+        container: &ServiceContainer,
+        tool_defs: &mut Vec<serde_json::Value>,
+    ) {
+        let is_active = {
+            let pctx = container.prompt_context.read().await;
+            pctx.config_flags
+                .get("loop_mode.active")
+                .copied()
+                .unwrap_or(false)
+        };
+        if !is_active {
+            return;
+        }
+
+        let already_present = tool_defs.iter().any(|def| {
+            def.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                == Some("Loop")
+        });
+        if already_present {
+            return;
+        }
+
+        let tn = y_core::types::ToolName::from_string("Loop");
+        if let Some(def) = container.tool_registry.get_definition(&tn).await {
+            tool_defs.push(serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": def.name.as_str(),
+                    "description": def.description,
+                    "parameters": def.parameters,
+                }
+            }));
+        }
+
+        tracing::info!(
+            final_count = tool_defs.len(),
+            "loop mode: injected Loop tool schema"
         );
     }
 

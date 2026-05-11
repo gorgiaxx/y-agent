@@ -1672,7 +1672,7 @@ pub async fn assess_complexity(
     container: &ServiceContainer,
     user_input: &str,
     provider_id: Option<&str>,
-) -> bool {
+) -> String {
     use y_core::types::{Message, Role};
 
     let registry = container.agent_registry.lock().await;
@@ -1749,14 +1749,20 @@ pub async fn assess_complexity(
                 classifier_response = %response,
                 "plan mode complexity assessment"
             );
-            response.contains("plan")
+            if response.contains("loop") {
+                "loop".to_string()
+            } else if response.contains("plan") {
+                "plan".to_string()
+            } else {
+                "fast".to_string()
+            }
         }
         Err(e) => {
             tracing::warn!(
                 error = %e,
                 "complexity assessment failed, defaulting to fast mode"
             );
-            false
+            "fast".to_string()
         }
     }
 }

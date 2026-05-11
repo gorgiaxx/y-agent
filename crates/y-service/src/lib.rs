@@ -30,6 +30,7 @@ pub mod diagnostics;
 pub mod event_sink;
 pub mod init;
 pub mod knowledge_service;
+pub mod loop_orchestrator;
 pub mod mcp_service;
 pub mod message_builder;
 pub mod observability;

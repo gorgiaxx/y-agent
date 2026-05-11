@@ -10,6 +10,7 @@ pub mod file_write;
 pub mod glob;
 pub mod grep;
 pub mod knowledge_search;
+pub mod loop_tool;
 pub mod plan;
 pub mod shell_exec;
 pub mod task;
@@ -141,6 +142,10 @@ pub async fn register_builtin_tools(
         (
             Arc::new(plan::PlanTool::new()),
             plan::PlanTool::tool_definition(),
+        ),
+        (
+            Arc::new(loop_tool::LoopTool::new()),
+            loop_tool::LoopTool::tool_definition(),
         ),
     ];
 

@@ -1,0 +1,17 @@
+## Loop Mode
+
+The user has enabled loop mode. You MUST use the `Loop` tool to work
+iteratively until convergence.
+
+Call Loop with the user's request. The Loop tool will:
+1. Create a progress file as persistent inter-round memory
+2. Spawn fresh agent rounds, each reading the progress file
+3. Each round works on remaining tasks and updates progress
+4. A mandatory self-review verifies completion before stopping
+5. Return results when converged or budget exhausted
+
+Use Loop for tasks that benefit from iterative refinement: complex
+implementation, multi-step research, thorough analysis, or any task
+where quality improves with successive passes.
+
+Do NOT attempt to execute the task directly. Use the Loop tool.

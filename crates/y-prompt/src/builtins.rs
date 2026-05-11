@@ -36,6 +36,7 @@ const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_plannin
 const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
 const PROMPT_ORCHESTRATION: &str = include_str!("../../../config/prompts/core_orchestration.txt");
 const PROMPT_PLAN_MODE_ACTIVE: &str = include_str!("../../../config/prompts/plan_mode_hint.txt");
+const PROMPT_LOOP_MODE_ACTIVE: &str = include_str!("../../../config/prompts/loop_mode_hint.txt");
 const PROMPT_MCP_HINT: &str = include_str!("../../../config/prompts/mcp_hint.txt");
 
 /// Mapping from section ID to (compiled default content, override filename,
@@ -49,6 +50,15 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         50,
         SectionCategoryTag::Behavioral,
         ConditionTag::PlanModeActive,
+    ),
+    (
+        "core.loop_mode_active",
+        PROMPT_LOOP_MODE_ACTIVE,
+        "loop_mode_hint.txt",
+        200,
+        51,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::LoopModeActive,
     ),
     (
         "core.identity",
@@ -185,6 +195,8 @@ enum ConditionTag {
     OrchestrationEnabled,
     /// Include `core.plan_mode_active` only when the agent has entered plan mode.
     PlanModeActive,
+    /// Include `core.loop_mode_active` only when the agent has entered loop mode.
+    LoopModeActive,
     /// Include `core.mcp_hint` only when MCP tools are available.
     McpEnabled,
 }
@@ -200,6 +212,7 @@ impl ConditionTag {
                 SectionCondition::ConfigFlag("orchestration.enabled".into())
             }
             Self::PlanModeActive => SectionCondition::ConfigFlag("plan_mode.active".into()),
+            Self::LoopModeActive => SectionCondition::ConfigFlag("loop_mode.active".into()),
             Self::McpEnabled => SectionCondition::ConfigFlag("mcp.enabled".into()),
         }
     }
@@ -295,6 +308,7 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
     ("core_exploration.txt", PROMPT_EXPLORATION),
     ("core_orchestration.txt", PROMPT_ORCHESTRATION),
     ("plan_mode_hint.txt", PROMPT_PLAN_MODE_ACTIVE),
+    ("loop_mode_hint.txt", PROMPT_LOOP_MODE_ACTIVE),
     ("mcp_hint.txt", PROMPT_MCP_HINT),
 ];
 
@@ -305,6 +319,7 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
 pub fn default_template() -> PromptTemplate {
     let sections = vec![
         section_ref("core.plan_mode_active"),
+        section_ref("core.loop_mode_active"),
         section_ref("core.identity"),
         section_ref("core.datetime"),
         section_ref("core.environment"),
@@ -362,9 +377,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_store_has_12_sections() {
+    fn test_builtin_store_has_13_sections() {
         let store = builtin_section_store();
-        assert_eq!(store.len(), 12);
+        assert_eq!(store.len(), 13);
     }
 
     #[test]
@@ -487,9 +502,9 @@ mod tests {
     fn test_default_template_general_mode() {
         let template = default_template();
         let sections = template.effective_sections("general");
-        // general mode: all 12 sections in template, no overlay excludes any
+        // general mode: all 13 sections in template, no overlay excludes any
         // (conditions are evaluated later by the provider, not by effective_sections)
-        assert_eq!(sections.len(), 12);
+        assert_eq!(sections.len(), 13);
     }
 
     #[test]
