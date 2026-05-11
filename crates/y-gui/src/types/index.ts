@@ -340,8 +340,8 @@ export interface MemoryStats {
 
 export type ThinkingEffort = 'low' | 'medium' | 'high' | 'max';
 
-/** Plan mode: controls whether planning prompts are injected. */
-export type PlanMode = 'fast' | 'auto' | 'plan';
+/** Plan mode: controls whether planning/loop prompts are injected. */
+export type PlanMode = 'fast' | 'auto' | 'plan' | 'loop';
 
 /** MCP mode: controls which MCP server tools are included in requests. */
 export type McpMode = 'auto' | 'manual' | 'disabled';
