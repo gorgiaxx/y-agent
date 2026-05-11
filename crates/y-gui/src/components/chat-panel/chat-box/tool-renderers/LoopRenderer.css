@@ -1,0 +1,147 @@
+.tool-call-loop-wrapper {
+  margin: var(--space-xs) 0;
+}
+
+.tool-call-loop-summary {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.tool-call-loop-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.tool-call-loop-stat {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--toolcall-tag-background-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.tool-call-loop-stat--converged,
+.tool-call-loop-stat--passed {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+}
+
+.tool-call-loop-stat--budget_exhausted,
+.tool-call-loop-stat--failed {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, var(--border));
+}
+
+.tool-call-loop-stat--running {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.tool-call-loop-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: var(--space-sm) 0;
+}
+
+/* Timeline */
+
+.tool-call-loop-timeline {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tool-call-loop-round {
+  font-family: var(--font-sans);
+  border-left: 2px solid var(--border);
+  padding-left: var(--space-sm);
+}
+
+.tool-call-loop-round--completed {
+  border-left-color: var(--success);
+}
+
+.tool-call-loop-round--failed,
+.tool-call-loop-round--cancelled {
+  border-left-color: var(--error);
+}
+
+.tool-call-loop-round-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-call-loop-round-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.tool-call-loop-round--completed .tool-call-loop-round-icon {
+  color: var(--success);
+}
+
+.tool-call-loop-round--failed .tool-call-loop-round-icon,
+.tool-call-loop-round--cancelled .tool-call-loop-round-icon {
+  color: var(--error);
+}
+
+.tool-call-loop-round-icon--spinning {
+  animation: rotate 1s linear infinite;
+}
+
+.tool-call-loop-round-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tool-call-loop-round-progress {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.tool-call-loop-round-duration {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* Task items within a round */
+
+.tool-call-loop-round-tasks {
+  margin-top: 4px;
+  display: grid;
+  gap: 2px;
+  padding-left: 22px;
+}
+
+.tool-call-loop-task {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.tool-call-loop-task svg {
+  flex-shrink: 0;
+  position: relative;
+  top: 2px;
+}
+
+.tool-call-loop-task--done {
+  color: var(--success);
+}
+
+.tool-call-loop-task--done span {
+  color: var(--text-secondary);
+}
+
+.tool-call-loop-task--todo {
+  color: var(--text-muted);
+}
