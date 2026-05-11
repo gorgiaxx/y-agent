@@ -62,6 +62,11 @@
   --info: #60a5fa;
   --info-subtle: rgba(96, 165, 250, 0.12);
 
+  /* Search highlights */
+  --search-match-bg: rgba(200, 181, 96, 0.25);
+  --search-match-active-bg: rgba(200, 181, 96, 0.55);
+  --search-match-border: rgba(200, 181, 96, 0.40);
+
   /* Text on accent-colored backgrounds */
   --accent-contrast: #0f0f0f;
 
@@ -104,6 +109,11 @@
 
   --info: #2563eb;
   --info-subtle: rgba(37, 99, 235, 0.08);
+
+  /* Search highlights */
+  --search-match-bg: rgba(154, 124, 42, 0.18);
+  --search-match-active-bg: rgba(154, 124, 42, 0.40);
+  --search-match-border: rgba(154, 124, 42, 0.45);
 
   --accent-contrast: #ffffff;
   --toolcall-tag-background-hover: #f2f0f0;

@@ -22,6 +22,7 @@ import {
 import type { Message, Attachment } from '../../../types';
 import { logger } from '../../../lib';
 import { Avatar } from './MessageShared';
+import { HighlightedText } from './HighlightedText';
 import './UserBubble.css';
 
 
@@ -188,7 +189,7 @@ export function UserBubble({ message, messageIndex, onEdit, onUndo, onResend, on
               </div>
             ) : null;
           })()}
-          {message.content}
+          <HighlightedText>{message.content}</HighlightedText>
         </div>
 
         <UserActionBar

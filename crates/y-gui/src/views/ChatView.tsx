@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { ChatPanel } from '../components/chat-panel/ChatPanel';
+import { ChatSearchProvider } from '../components/chat-panel/ChatSearchContext';
 import { WelcomePage } from '../components/WelcomePage';
 import { InputArea } from '../components/chat-panel/input-area/InputArea';
 import { StatusBar } from '../components/chat-panel/StatusBar';
@@ -159,21 +160,23 @@ export function ChatView() {
   return (
     <>
       {!viewRouting.inputExpanded && sessionHooks.activeSessionId && (
-        <ChatPanel 
-          messages={chatHooks.messages} 
-          isStreaming={chatHooks.isStreaming} 
-          isLoading={chatHooks.isLoadingMessages} 
-          error={chatHooks.error} 
-          onEditMessage={handleEditMessage} 
-          onUndoMessage={handleUndoMessage} 
-          onResendMessage={handleResendMessage} 
-          onForkMessage={handleForkMessage}
-          onRestoreBranch={handleRestoreBranch} 
-          toolResults={chatHooks.toolResults} 
-          getStreamSegments={chatHooks.getStreamSegments}
-          contextResetPoints={chatHooks.contextResetPoints} 
-          compactPoints={chatHooks.compactPoints}
-        />
+        <ChatSearchProvider>
+          <ChatPanel
+            messages={chatHooks.messages}
+            isStreaming={chatHooks.isStreaming}
+            isLoading={chatHooks.isLoadingMessages}
+            error={chatHooks.error}
+            onEditMessage={handleEditMessage}
+            onUndoMessage={handleUndoMessage}
+            onResendMessage={handleResendMessage}
+            onForkMessage={handleForkMessage}
+            onRestoreBranch={handleRestoreBranch}
+            toolResults={chatHooks.toolResults}
+            getStreamSegments={chatHooks.getStreamSegments}
+            contextResetPoints={chatHooks.contextResetPoints}
+            compactPoints={chatHooks.compactPoints}
+          />
+        </ChatSearchProvider>
       )}
       {!viewRouting.inputExpanded && !sessionHooks.activeSessionId && (
         <WelcomePage

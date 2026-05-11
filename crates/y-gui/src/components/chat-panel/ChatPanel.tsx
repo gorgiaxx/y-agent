@@ -10,6 +10,8 @@ import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import { RestoreDivider } from './chat-box/RestoreDivider';
 import { ContextResetDivider } from './chat-box/ContextResetDivider';
 import { CompactDivider } from './chat-box/CompactDivider';
+import { ChatSearchToolbar } from './ChatSearchToolbar';
+import { useChatSearchContext } from '../../hooks/useChatSearchContext';
 import {
   INITIAL_CHAT_SCROLL_STATE,
   reduceChatScrollState,
@@ -188,6 +190,7 @@ function ChatPanelInner({
   const [scrollState, setScrollState] = useState<ChatScrollState>(INITIAL_CHAT_SCROLL_STATE);
   const scrollStateRef = useRef<ChatScrollState>(INITIAL_CHAT_SCROLL_STATE);
   const firstMessageIdRef = useRef<string | null | undefined>(undefined);
+  const searchCtx = useChatSearchContext();
 
   // Pre-compute the flat display item list.
   const displayItems = useMemo(
@@ -393,12 +396,16 @@ function ChatPanelInner({
     );
   }
 
+  const scrollListClass = searchCtx.isOpen && searchCtx.query
+    ? 'chat-message-list chat-message-list--searching'
+    : 'chat-message-list';
+
   return (
     <div className="chat-panel">
       <div className="chat-messages" style={{ position: 'relative' }}>
         <div
           ref={scrollContainerRef}
-          className="chat-message-list"
+          className={scrollListClass}
           onScroll={handleScroll}
         >
           <div ref={listContentRef} className="chat-message-list-content">
@@ -409,6 +416,7 @@ function ChatPanelInner({
             ))}
           </div>
         </div>
+        <ChatSearchToolbar scrollContainerRef={scrollContainerRef} />
         {showScrollToBottom && (
           <button
             type="button"

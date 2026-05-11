@@ -4,6 +4,7 @@ import { logger } from '../../../lib';
 import { platform } from '../../../lib/platform';
 import { CodeBlock } from './MessageShared';
 import { MermaidBlock } from './MermaidBlock';
+import { HighlightedText } from './HighlightedText';
 
 /* ---- makeMarkdownComponents ---- */
 
@@ -32,6 +33,34 @@ export function makeMarkdownComponents(
   codeThemeStyle: Record<string, React.CSSProperties>,
 ): Components {
   const components: Components = {
+    p({ children, node, ...props }) {
+      void node;
+      return <p {...props}><HighlightedText>{children}</HighlightedText></p>;
+    },
+    li({ children, node, ...props }) {
+      void node;
+      return <li {...props}><HighlightedText>{children}</HighlightedText></li>;
+    },
+    h1({ children, node, ...props }) {
+      void node;
+      return <h1 {...props}><HighlightedText>{children}</HighlightedText></h1>;
+    },
+    h2({ children, node, ...props }) {
+      void node;
+      return <h2 {...props}><HighlightedText>{children}</HighlightedText></h2>;
+    },
+    h3({ children, node, ...props }) {
+      void node;
+      return <h3 {...props}><HighlightedText>{children}</HighlightedText></h3>;
+    },
+    td({ children, node, ...props }) {
+      void node;
+      return <td {...props}><HighlightedText>{children}</HighlightedText></td>;
+    },
+    th({ children, node, ...props }) {
+      void node;
+      return <th {...props}><HighlightedText>{children}</HighlightedText></th>;
+    },
     a({ href, children, node, ...props }) {
       void node;
 
