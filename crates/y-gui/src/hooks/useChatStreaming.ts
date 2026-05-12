@@ -42,7 +42,10 @@ import {
 } from '../lib/generatedImages';
 import { mergeToolResultMetadata } from './toolResultMetadata';
 import { upsertToolResultRecord, upsertToolResultSegment } from './toolResultUpdates';
-import type { InterleavedSegment } from './useInterleavedSegments';
+import {
+  completeStreamingReasoningSegments,
+  type InterleavedSegment,
+} from './useInterleavedSegments';
 import type { ChatSharedRefs } from './chatSharedState';
 import type { ChatOpStatus } from './useChat';
 
@@ -124,20 +127,15 @@ export function useChatStreaming(
         // Append to event-ordered segments (text segment).
         const segs = refs.streamSegsRef.current.get(sid);
         if (segs) {
-          // When content arrives, mark any in-progress reasoning segment as done.
-          const lastSeg = segs[segs.length - 1];
-          if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
-            lastSeg.isStreaming = false;
-            if (lastSeg._startTs) {
-              lastSeg.durationMs = Date.now() - lastSeg._startTs;
-            }
-          }
+          const preparedSegs = completeStreamingReasoningSegments(segs);
+          const lastSeg = preparedSegs[preparedSegs.length - 1];
           // Append text.
           if (lastSeg && lastSeg.type === 'text') {
             lastSeg.text += event.content;
           } else {
-            segs.push({ type: 'text', text: event.content });
+            preparedSegs.push({ type: 'text', text: event.content });
           }
+          refs.streamSegsRef.current.set(sid, preparedSegs);
         }
         setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) => {
           const streamingId = streamingAssistantMessageId(sid);
@@ -280,7 +278,8 @@ export function useChatStreaming(
           setVisibleToolResults(cappedResults);
         }
         const segs = refs.streamSegsRef.current.get(sid) ?? [];
-        const nextSegments = upsertToolResultSegment(segs, record);
+        const preparedSegs = completeStreamingReasoningSegments(segs);
+        const nextSegments = upsertToolResultSegment(preparedSegs, record);
         refs.streamSegsRef.current.set(sid, capSegments(nextSegments.segments));
         setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
           ensureStreamingAssistantMessage(prev, sid),
@@ -639,18 +638,7 @@ export function useChatStreaming(
         }
         // Push or replace a tool_result segment and bump version to force re-render.
         const segs = refs.streamSegsRef.current.get(sid) ?? [];
-        let preparedSegs = segs;
-        const lastSeg = segs[segs.length - 1];
-        if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
-          preparedSegs = [...segs];
-          preparedSegs[preparedSegs.length - 1] = {
-            ...lastSeg,
-            isStreaming: false,
-            durationMs: lastSeg._startTs
-              ? Date.now() - lastSeg._startTs
-              : lastSeg.durationMs,
-          };
-        }
+        const preparedSegs = completeStreamingReasoningSegments(segs);
         const nextSegments = upsertToolResultSegment(preparedSegs, record);
         refs.streamSegsRef.current.set(sid, capSegments(nextSegments.segments));
         setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>

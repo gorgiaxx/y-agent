@@ -16,6 +16,31 @@ export type InterleavedSegment =
        *  Used to compute durationMs when the segment completes. Not rendered. */
       _startTs?: number };
 
+export function completeStreamingReasoningSegments(
+  segments: InterleavedSegment[],
+  now = Date.now(),
+): InterleavedSegment[] {
+  let changed = false;
+  const completed = segments.map((segment) => {
+    if (segment.type !== 'reasoning' || !segment.isStreaming) {
+      return segment;
+    }
+
+    changed = true;
+    const durationMs = segment._startTs != null
+      ? Math.max(0, now - segment._startTs)
+      : segment.durationMs;
+
+    return {
+      ...segment,
+      isStreaming: false,
+      ...(durationMs != null ? { durationMs } : {}),
+    };
+  });
+
+  return changed ? completed : segments;
+}
+
 /**
  * Build interleaved segments for a history/persisted message.
  *
