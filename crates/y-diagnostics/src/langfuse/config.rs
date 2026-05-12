@@ -16,6 +16,7 @@ pub struct LangfuseConfig {
     pub retry: RetryConfig,
     pub feedback: FeedbackConfig,
     pub circuit_breaker: CircuitBreakerConfig,
+    pub flush_interval_secs: u64,
 }
 
 impl Default for LangfuseConfig {
@@ -32,6 +33,7 @@ impl Default for LangfuseConfig {
             retry: RetryConfig::default(),
             feedback: FeedbackConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
+            flush_interval_secs: 5,
         }
     }
 }

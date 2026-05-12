@@ -56,6 +56,51 @@ impl LangfuseIngestionMapper {
         IngestionBatchRequest { batch }
     }
 
+    pub fn map_trace_create(&self, trace: &Trace) -> IngestionEvent {
+        Self::build_trace_event(trace)
+    }
+
+    pub fn map_trace_update(&self, trace: &Trace) -> IngestionEvent {
+        let body = TraceBody {
+            id: Some(trace.id.to_string()),
+            timestamp: Some(to_iso8601(trace.started_at)),
+            name: Some(trace.name.clone()),
+            user_id: None,
+            session_id: Some(trace.session_id.to_string()),
+            input: None,
+            output: trace.metadata.get("output").cloned(),
+            metadata: if trace.metadata.is_null() {
+                None
+            } else {
+                Some(trace.metadata.clone())
+            },
+            tags: if trace.tags.is_empty() {
+                None
+            } else {
+                Some(trace.tags.clone())
+            },
+            release: Some(env!("CARGO_PKG_VERSION").to_string()),
+            version: None,
+            environment: None,
+            is_public: None,
+        };
+
+        IngestionEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: "trace-create".to_string(),
+            timestamp: to_iso8601(Utc::now()),
+            body: serde_json::to_value(body).unwrap_or_default(),
+        }
+    }
+
+    pub fn map_observation(&self, trace: &Trace, obs: &Observation) -> IngestionEvent {
+        let parent_obs_id = obs.parent_id.map(|pid| pid.to_string());
+        match obs.obs_type {
+            ObservationType::Generation => self.build_generation_event(trace, obs, parent_obs_id),
+            _ => self.build_span_event(trace, obs, parent_obs_id),
+        }
+    }
+
     fn build_trace_event(trace: &Trace) -> IngestionEvent {
         let input = trace
             .user_input
