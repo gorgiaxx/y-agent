@@ -410,6 +410,40 @@ mod tests {
     }
 
     #[test]
+    fn test_map_trace_with_subagent_span_child_trace_metadata() {
+        let mut config = LangfuseConfig::default();
+        config.content.capture_input = true;
+        config.content.capture_output = true;
+        let mapper = LangfuseIngestionMapper::new(config);
+        let trace = Trace::new(Uuid::new_v4(), "chat-turn");
+        let child_trace_id = Uuid::new_v4();
+
+        let mut subagent_obs = Observation::new(
+            trace.id,
+            ObservationType::SubAgent,
+            "agent.delegate.plan-writer",
+        );
+        subagent_obs.input = serde_json::json!({"task": "make a plan"});
+        subagent_obs.output = serde_json::json!({"content": "plan complete"});
+        subagent_obs.metadata = serde_json::json!({
+            "agent_name": "plan-writer",
+            "child_trace_id": child_trace_id.to_string(),
+        });
+
+        let result = mapper.map_trace(&trace, &[subagent_obs], &[]);
+        assert_eq!(result.batch.len(), 2);
+        assert_eq!(result.batch[1].event_type, "span-create");
+
+        let span_body = &result.batch[1].body;
+        assert_eq!(span_body["name"], "agent.delegate.plan-writer");
+        assert_eq!(span_body["input"]["task"], "make a plan");
+        assert_eq!(
+            span_body["metadata"]["child_trace_id"],
+            child_trace_id.to_string()
+        );
+    }
+
+    #[test]
     fn test_map_trace_with_generation_tool_calls_in_output() {
         let mut config = LangfuseConfig::default();
         config.content.capture_input = true;

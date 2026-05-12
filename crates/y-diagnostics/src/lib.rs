@@ -27,7 +27,7 @@ pub use search::{TraceSearch, TraceSearchQuery};
 pub use sqlite_trace_store::SqliteTraceStore;
 pub use subscriber::{
     DiagnosticsSubscriber, GenerationCompleteParams, GenerationParams, GenerationStartParams,
-    TraceCompletedSummary,
+    SubagentCompleteParams, SubagentStartParams, TraceCompletedSummary,
 };
 pub use trace_store::{InMemoryTraceStore, TraceStore, TraceStoreError};
 pub use types::*;

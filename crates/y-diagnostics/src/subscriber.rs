@@ -69,6 +69,27 @@ pub struct GenerationCompleteParams {
     pub model: String,
 }
 
+/// Parameters for creating a Running sub-agent delegation observation.
+pub struct SubagentStartParams {
+    pub trace_id: Uuid,
+    pub parent_id: Option<Uuid>,
+    pub session_id: Option<Uuid>,
+    pub agent_name: String,
+    pub input: serde_json::Value,
+    pub child_trace_id: Option<Uuid>,
+    pub child_session_id: Option<Uuid>,
+}
+
+/// Parameters for finalizing a sub-agent delegation observation.
+pub struct SubagentCompleteParams {
+    pub trace_id: Uuid,
+    pub observation_id: Uuid,
+    pub success: bool,
+    pub output: Option<serde_json::Value>,
+    pub error_message: Option<String>,
+    pub duration_ms: u64,
+}
+
 /// Subscriber that listens to y-hooks events and auto-captures diagnostics.
 pub struct DiagnosticsSubscriber<S: ?Sized> {
     store: Arc<S>,
@@ -176,6 +197,86 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
         obs.status = ObservationStatus::Completed;
         obs.completed_at = Some(Utc::now());
         obs.metadata = serde_json::json!({ "duration_ms": params.duration_ms });
+        self.store.update_observation(obs).await
+    }
+
+    /// Create a Running sub-agent delegation observation under an existing trace.
+    ///
+    /// The delegated agent usually owns a separate child trace. This observation
+    /// links that child trace into the parent trace tree so exporters such as
+    /// Langfuse can show the delegation boundary instead of losing the nested
+    /// request context.
+    pub async fn on_subagent_start(
+        &self,
+        params: SubagentStartParams,
+    ) -> Result<Uuid, crate::trace_store::TraceStoreError> {
+        let mut obs = Observation::new(
+            params.trace_id,
+            ObservationType::SubAgent,
+            format!("agent.delegate.{}", params.agent_name),
+        );
+        obs.parent_id = params.parent_id;
+        obs.session_id = params.session_id;
+        obs.input = params.input;
+        obs.status = ObservationStatus::Running;
+
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "agent_name".to_string(),
+            serde_json::Value::String(params.agent_name),
+        );
+        if let Some(trace_id) = params.child_trace_id {
+            metadata.insert(
+                "child_trace_id".to_string(),
+                serde_json::Value::String(trace_id.to_string()),
+            );
+        }
+        if let Some(session_id) = params.child_session_id {
+            metadata.insert(
+                "child_session_id".to_string(),
+                serde_json::Value::String(session_id.to_string()),
+            );
+        }
+        obs.metadata = serde_json::Value::Object(metadata);
+
+        let obs_id = obs.id;
+        self.store.insert_observation(obs).await?;
+        Ok(obs_id)
+    }
+
+    /// Finalize a sub-agent delegation observation.
+    pub async fn on_subagent_complete(
+        &self,
+        params: SubagentCompleteParams,
+    ) -> Result<(), crate::trace_store::TraceStoreError> {
+        let observations = self.store.get_observations(params.trace_id).await?;
+        let existing = observations
+            .into_iter()
+            .find(|o| o.id == params.observation_id)
+            .ok_or(crate::trace_store::TraceStoreError::ObservationNotFound {
+                id: params.observation_id,
+            })?;
+
+        let mut obs = existing;
+        obs.output = params.output.unwrap_or(serde_json::Value::Null);
+        obs.status = if params.success {
+            ObservationStatus::Completed
+        } else {
+            ObservationStatus::Failed
+        };
+        obs.error_message = params.error_message;
+        obs.completed_at = Some(Utc::now());
+
+        if !obs.metadata.is_object() {
+            obs.metadata = serde_json::json!({});
+        }
+        if let Some(map) = obs.metadata.as_object_mut() {
+            map.insert(
+                "duration_ms".to_string(),
+                serde_json::Value::Number(params.duration_ms.into()),
+            );
+        }
+
         self.store.update_observation(obs).await
     }
 
@@ -381,6 +482,60 @@ mod tests {
         );
         assert!(tool_obs.output.get("results").is_some());
         assert_eq!(tool_obs.status, ObservationStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_records_subagent_observation_with_child_trace_link() {
+        let store = Arc::new(InMemoryTraceStore::new());
+        let subscriber = DiagnosticsSubscriber::new(store.clone());
+        let session = Uuid::new_v4();
+        let parent_trace_id = subscriber
+            .on_trace_start(session, "chat-turn", "make a plan")
+            .await
+            .unwrap();
+        let child_trace_id = Uuid::new_v4();
+
+        let obs_id = subscriber
+            .on_subagent_start(SubagentStartParams {
+                trace_id: parent_trace_id,
+                parent_id: None,
+                session_id: Some(session),
+                agent_name: "plan-writer".to_string(),
+                input: serde_json::json!({"task": "make a plan"}),
+                child_trace_id: Some(child_trace_id),
+                child_session_id: Some(Uuid::new_v4()),
+            })
+            .await
+            .unwrap();
+
+        subscriber
+            .on_subagent_complete(SubagentCompleteParams {
+                trace_id: parent_trace_id,
+                observation_id: obs_id,
+                success: true,
+                output: Some(serde_json::json!({"result": "done"})),
+                error_message: None,
+                duration_ms: 42,
+            })
+            .await
+            .unwrap();
+
+        let observations = store.get_observations(parent_trace_id).await.unwrap();
+        let obs = observations
+            .iter()
+            .find(|obs| obs.id == obs_id)
+            .expect("subagent observation should be recorded");
+
+        assert_eq!(obs.obs_type, ObservationType::SubAgent);
+        assert_eq!(obs.name, "agent.delegate.plan-writer");
+        assert_eq!(obs.status, ObservationStatus::Completed);
+        assert_eq!(obs.input["task"], "make a plan");
+        assert_eq!(obs.output["result"], "done");
+        assert_eq!(
+            obs.metadata["child_trace_id"].as_str(),
+            Some(child_trace_id.to_string()).as_deref()
+        );
+        assert_eq!(obs.metadata["duration_ms"].as_u64(), Some(42));
     }
 
     #[tokio::test]
