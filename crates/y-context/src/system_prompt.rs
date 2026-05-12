@@ -259,7 +259,10 @@ impl ContextProvider for BuildSystemPromptProvider {
             .effective_sections(mode)
             .into_iter()
             .filter(|section| {
-                selected_sections.is_none_or(|selected| selected.contains(&section.section_id))
+                selected_sections.is_none_or(|selected| {
+                    selected.contains(&section.section_id)
+                        || is_runtime_functional_section_active(&section.section_id, &prompt_ctx)
+                })
             })
             .collect::<Vec<_>>();
         let total_budget = self.template.effective_budget(mode);
@@ -431,6 +434,22 @@ const CUSTOM_PROMPT_REPLACED_SECTIONS: &[&str] = &[
 /// Check whether a section is replaced when a custom system prompt is active.
 fn is_custom_prompt_replaced(section_id: &str) -> bool {
     CUSTOM_PROMPT_REPLACED_SECTIONS.contains(&section_id)
+}
+
+/// Runtime sections controlled by config flags must remain available even
+/// when a session/agent selected an explicit prompt-section subset.
+fn is_runtime_functional_section_active(section_id: &str, ctx: &PromptContext) -> bool {
+    let required_flag = match section_id {
+        "core.plan_mode_active" => "plan_mode.active",
+        "core.loop_mode_active" => "loop_mode.active",
+        "core.mcp_hint" => "mcp.enabled",
+        "core.orchestration" => "orchestration.enabled",
+        _ => return false,
+    };
+    ctx.config_flags
+        .get(required_flag)
+        .copied()
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -785,6 +804,23 @@ mod tests {
         assert!(content.contains("Tool Usage Protocol"));
         assert!(!content.contains("Guidelines"));
         assert!(!content.contains("Security rules"));
+    }
+
+    #[tokio::test]
+    async fn test_selected_prompt_sections_keep_active_plan_mode_hint() {
+        let mut prompt_ctx = general_ctx();
+        prompt_ctx
+            .config_flags
+            .insert("plan_mode.active".into(), true);
+        prompt_ctx.selected_prompt_sections = Some(vec!["core.identity".into()]);
+
+        let provider = make_provider(prompt_ctx, SystemPromptConfig::default());
+        let mut ctx = AssembledContext::default();
+        provider.provide(&mut ctx).await.unwrap();
+
+        let content = &ctx.items[0].content;
+        assert!(content.contains("## Plan Mode"));
+        assert!(content.contains("request (required)"));
     }
 
     #[tokio::test]

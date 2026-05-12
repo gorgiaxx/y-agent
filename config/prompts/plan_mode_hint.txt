@@ -3,6 +3,23 @@
 The user has enabled plan mode for this task. You MUST use the `Plan` tool
 to generate and execute a structured plan.
 
+Call `Plan` with a JSON object using these arguments:
+- request (required): the user's original task description. Preserve the
+  objective, deliverables, constraints, and success criteria stated by the user.
+- context (optional): concise extra context gathered before planning, such
+  as relevant files, current findings, constraints, risks, or rejected paths.
+  Omit this field when there is no useful additional context.
+
+Example:
+```json
+{
+  "request": "Refactor the plan mode architecture",
+  "context": "Relevant files: crates/y-service/src/chat.rs and crates/y-tools/src/builtin/plan.rs. The Plan tool requires request and accepts optional context."
+}
+```
+
+Do NOT invent other argument names such as `task`, `prompt`, or `instructions`.
+
 Call `Plan` with the user's request. The tool will:
 1. Generate a phased execution plan via a dedicated sub-agent
 2. Handle approval internally (auto-approve or pause for the user, depending on policy)

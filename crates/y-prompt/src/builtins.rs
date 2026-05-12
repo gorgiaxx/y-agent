@@ -406,6 +406,17 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_mode_prompt_documents_plan_tool_arguments() {
+        let store = builtin_section_store();
+        let content = store.load_content("core.plan_mode_active").unwrap();
+
+        assert!(content.contains("request (required)"));
+        assert!(content.contains("context (optional)"));
+        assert!(content.contains("\"request\""));
+        assert!(content.contains("\"context\""));
+    }
+
+    #[test]
     fn test_builtin_store_with_overrides_uses_defaults() {
         // No override directory — should use compiled defaults.
         let store = builtin_section_store_with_overrides(None, &RuntimeBackend::Native);
