@@ -157,6 +157,10 @@ export default withMermaid(defineConfig({
                   link: '/development/agent-system',
                 },
                 {
+                  text: 'Execution Modes',
+                  link: '/development/execution-modes',
+                },
+                {
                   text: 'Tool System',
                   link: '/development/tool-system',
                 },

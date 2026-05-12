@@ -13,6 +13,7 @@ This section provides a comprehensive technical reference for developers working
 | [Web API and Web UI Development](./web-api-and-web-ui) | Develop the REST/SSE API and the separated browser frontend |
 | [Maintenance and Packaging](./maintenance-and-packaging) | Daily cleanup, website preview/deploy, and release package scripts |
 | [Agent System](./agent-system) | Agent framework, delegation protocol, multi-agent patterns |
+| [Execution Modes](./execution-modes) | Plan vs Loop orchestration strategies, sequence diagrams, decision guide |
 | [Tool System](./tool-system) | Tool registry, lazy loading, execution pipeline, JSON Schema validation |
 | [Context Pipeline](./context-pipeline) | Context assembly stages, compaction, pruning strategies |
 | [Provider Pool](./provider-pool) | LLM provider routing, freeze/thaw failover, priority scheduling |
