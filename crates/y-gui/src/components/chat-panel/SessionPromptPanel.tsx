@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 
-import { STORAGE_KEYS } from '../../constants/storageKeys';
 import { transport } from '../../lib';
 import type { SessionPromptConfig, UserPromptTemplate } from '../../types';
 import type { PromptSectionInfo } from '../../hooks/useAgents';
@@ -84,9 +83,6 @@ export function SessionPromptPanel({
         sessionId,
         config,
       });
-      if (config.template_id) {
-        localStorage.setItem(STORAGE_KEYS.DEFAULT_PROMPT_TEMPLATE, config.template_id);
-      }
       onSaved(hasPromptConfig(config));
       setPromptConfig({
         system_prompt: config.system_prompt ?? '',
@@ -132,7 +128,6 @@ export function SessionPromptPanel({
       prompt_section_ids: template.prompt_section_ids,
       template_id: template.id,
     });
-    localStorage.setItem(STORAGE_KEYS.DEFAULT_PROMPT_TEMPLATE, template.id);
   };
 
   return (
