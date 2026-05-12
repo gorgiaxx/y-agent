@@ -197,12 +197,55 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
             };
         }
 
+        // OpenAI-compat-shaped providers honor `include_usage` from the
+        // provider config; default is `false` because several upstream
+        // gateways (older vLLM, some Chinese providers, stricter proxies)
+        // reject the `stream_options` field with HTTP 400.
+        let include_usage = cfg.include_usage.unwrap_or(false);
+        let make_openai = |base: Option<String>| -> Arc<dyn LlmProvider> {
+            Arc::new(
+                crate::providers::openai::OpenAiProvider::with_headers(
+                    &cfg.id,
+                    &cfg.model,
+                    api_key.clone(),
+                    base,
+                    proxy_url.clone(),
+                    cfg.tags.clone(),
+                    capabilities.clone(),
+                    cfg.max_concurrency,
+                    cfg.context_window,
+                    tool_calling_mode,
+                    &cfg.headers,
+                    cfg.http_protocol,
+                )
+                .with_include_usage(include_usage),
+            ) as Arc<dyn LlmProvider>
+        };
+        let make_azure = || -> Arc<dyn LlmProvider> {
+            Arc::new(
+                crate::providers::azure::AzureOpenAiProvider::with_headers(
+                    &cfg.id,
+                    &cfg.model,
+                    api_key.clone(),
+                    cfg.base_url.clone(),
+                    proxy_url.clone(),
+                    cfg.tags.clone(),
+                    capabilities.clone(),
+                    cfg.max_concurrency,
+                    cfg.context_window,
+                    tool_calling_mode,
+                    &cfg.headers,
+                    cfg.http_protocol,
+                )
+                .with_include_usage(include_usage),
+            ) as Arc<dyn LlmProvider>
+        };
+
         let provider: Option<Arc<dyn LlmProvider>> = match cfg.provider_type.as_str() {
             // openai-compat / openai_compatible / custom all use the OpenAI provider.
-            "openai" | "openai-compat" | "openai_compatible" | "custom" => Some(make_provider!(
-                crate::providers::openai::OpenAiProvider,
-                cfg.base_url.clone()
-            )),
+            "openai" | "openai-compat" | "openai_compatible" | "custom" => {
+                Some(make_openai(cfg.base_url.clone()))
+            }
             "anthropic" => Some(make_provider!(
                 crate::providers::anthropic::AnthropicProvider,
                 cfg.base_url.clone()
@@ -215,14 +258,8 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                 crate::providers::ollama::OllamaProvider,
                 cfg.base_url.clone()
             )),
-            "azure" => Some(make_provider!(
-                crate::providers::azure::AzureOpenAiProvider,
-                cfg.base_url.clone()
-            )),
-            "deepseek" => Some(make_provider!(
-                crate::providers::openai::OpenAiProvider,
-                base_url_for_deepseek()
-            )),
+            "azure" => Some(make_azure()),
+            "deepseek" => Some(make_openai(base_url_for_deepseek())),
             other => {
                 tracing::warn!(
                     provider_id = %cfg.id,
@@ -719,6 +756,7 @@ mod tests {
                 tool_calling_mode: None,
                 icon: None,
                 http_protocol: crate::config::HttpProtocol::Http1,
+                include_usage: None,
             }],
             ..test_config()
         }
@@ -950,6 +988,7 @@ mod tests {
                     base_url: None,
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -971,6 +1010,7 @@ mod tests {
                     base_url: None,
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -992,6 +1032,7 @@ mod tests {
                     base_url: None,
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1013,6 +1054,7 @@ mod tests {
                     base_url: None,
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1034,6 +1076,7 @@ mod tests {
                     base_url: Some("https://res.openai.azure.com/openai/deployments/gpt-4o".into()),
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1106,6 +1149,7 @@ mod tests {
                 base_url: None,
                 headers: std::collections::HashMap::new(),
                 http_protocol: crate::config::HttpProtocol::Http1,
+                include_usage: None,
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,

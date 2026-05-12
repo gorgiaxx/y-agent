@@ -43,6 +43,10 @@ pub struct AzureOpenAiProvider {
     api_version: String,
     custom_headers: reqwest::header::HeaderMap,
     metadata: ProviderMetadata,
+    /// Send `stream_options.include_usage = true` on streaming requests.
+    /// Defaults to `false`; opt in via
+    /// [`crate::config::ProviderConfig::include_usage`].
+    include_usage: bool,
 }
 
 impl AzureOpenAiProvider {
@@ -121,7 +125,16 @@ impl AzureOpenAiProvider {
                 cost_per_1k_output: 0.0,
                 tool_calling_mode,
             },
+            include_usage: false,
         }
+    }
+
+    /// Builder-style setter: opt in to `stream_options.include_usage = true`
+    /// on streaming requests.
+    #[must_use]
+    pub fn with_include_usage(mut self, include_usage: bool) -> Self {
+        self.include_usage = include_usage;
+        self
     }
 
     /// Build the chat completions URL with api-version query parameter.
@@ -369,7 +382,7 @@ impl AzureOpenAiProvider {
     }
 
     /// Build the request body (same format as `OpenAI`).
-    fn build_request_body(request: &ChatRequest, stream: bool) -> AzureRequest {
+    fn build_request_body(&self, request: &ChatRequest, stream: bool) -> AzureRequest {
         use y_core::provider::ToolCallingMode;
 
         // PromptBased mode: never send tool definitions to the provider.
@@ -390,7 +403,7 @@ impl AzureOpenAiProvider {
             temperature: request.temperature,
             top_p: request.top_p,
             stream,
-            stream_options: if stream {
+            stream_options: if stream && self.include_usage {
                 Some(StreamOptions {
                     include_usage: true,
                 })
@@ -415,7 +428,7 @@ impl LlmProvider for AzureOpenAiProvider {
             return self.generate_images(request).await;
         }
 
-        let body = Self::build_request_body(request, false);
+        let body = self.build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
 
         let mut request_builder = self.client.post(self.chat_url());
@@ -547,13 +560,14 @@ impl LlmProvider for AzureOpenAiProvider {
             return self.generate_images_stream(request).await;
         }
 
-        let body = Self::build_request_body(request, true);
+        let body = self.build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
 
         let mut request_builder = self.client.post(self.chat_url());
-        request_builder =
-            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
-                .header("Content-Type", "application/json");
+        request_builder = crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json")
+                // Opt in to SSE — see openai.rs for the rationale.
+                .header("Accept", "text/event-stream");
 
         if !self.api_key.is_empty() {
             request_builder = request_builder.header("api-key", &self.api_key);
@@ -649,14 +663,15 @@ impl LlmProvider for AzureOpenAiProvider {
                                     return Some((Ok(first), composite));
                                 }
                                 Err(e) => {
-                                    return Some((
-                                        Err(ProviderError::ParseError {
-                                            message: format!(
-                                                "Azure SSE parse error: {e}, data: {trimmed}"
-                                            ),
-                                        }),
-                                        composite,
-                                    ));
+                                    // Tolerate non-conforming events from
+                                    // OpenAI-compat relays — see openai.rs
+                                    // for the rationale.
+                                    tracing::warn!(
+                                        error = %e,
+                                        data = %trimmed,
+                                        "Skipping unparseable Azure SSE event"
+                                    );
+                                    continue;
                                 }
                             }
                         }
@@ -728,7 +743,7 @@ fn map_to_inter_events(
     if let Some(choice) = choice {
         if let Some(ref tcs) = choice.delta.tool_calls {
             for tc in tcs {
-                let idx = tc.index.unwrap_or(0) as usize;
+                let idx = tc.index.map(|i| i as usize);
                 tool_acc.process_delta(
                     idx,
                     tc.id.as_deref(),

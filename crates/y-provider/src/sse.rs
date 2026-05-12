@@ -122,7 +122,14 @@ impl SseStreamState {
 ///
 /// Used by `OpenAI`, Azure, Gemini, and compatible providers.
 pub fn extract_sse_data(buffer: &mut String) -> Option<String> {
-    let boundary = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"))?;
+    let lf = buffer.find("\n\n");
+    let crlf = buffer.find("\r\n\r\n");
+    let boundary = match (lf, crlf) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }?;
 
     let raw_event: String = buffer.drain(..boundary).collect();
     // Consume the boundary newlines.
@@ -212,6 +219,27 @@ mod tests {
         let mut buf = "data: {\"ok\":true}\r\n\r\n".to_string();
         let event = extract_sse_data(&mut buf).unwrap();
         assert_eq!(event, "{\"ok\":true}");
+    }
+
+    /// Mixed line-ending streams: an LF-terminated event followed by a CRLF-terminated
+    /// one must extract the first event without fusing it into the second.
+    #[test]
+    fn extract_sse_data_lf_then_crlf() {
+        let mut buf = "data: first\n\ndata: second\r\n\r\n".to_string();
+        let e1 = extract_sse_data(&mut buf).unwrap();
+        assert_eq!(e1, "first");
+        let e2 = extract_sse_data(&mut buf).unwrap();
+        assert_eq!(e2, "second");
+    }
+
+    /// And the reverse order — CRLF first, LF second.
+    #[test]
+    fn extract_sse_data_crlf_then_lf() {
+        let mut buf = "data: first\r\n\r\ndata: second\n\n".to_string();
+        let e1 = extract_sse_data(&mut buf).unwrap();
+        assert_eq!(e1, "first");
+        let e2 = extract_sse_data(&mut buf).unwrap();
+        assert_eq!(e2, "second");
     }
 
     #[test]

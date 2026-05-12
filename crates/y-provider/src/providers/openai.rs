@@ -30,6 +30,10 @@ pub struct OpenAiProvider {
     base_url: String,
     custom_headers: reqwest::header::HeaderMap,
     metadata: ProviderMetadata,
+    /// Send `stream_options.include_usage = true` on streaming requests.
+    /// Defaults to `false` because many OpenAI-compatible backends reject
+    /// the `stream_options` field. See [`crate::config::ProviderConfig`].
+    include_usage: bool,
 }
 
 impl OpenAiProvider {
@@ -104,7 +108,17 @@ impl OpenAiProvider {
                 cost_per_1k_output: 0.0,
                 tool_calling_mode,
             },
+            include_usage: false,
         }
+    }
+
+    /// Builder-style setter: opt in to `stream_options.include_usage = true`
+    /// on streaming requests. Pool wiring reads this from
+    /// [`crate::config::ProviderConfig::include_usage`].
+    #[must_use]
+    pub fn with_include_usage(mut self, include_usage: bool) -> Self {
+        self.include_usage = include_usage;
+        self
     }
 
     /// Build the full API URL for a given endpoint.
@@ -453,7 +467,7 @@ impl OpenAiProvider {
             temperature: request.temperature,
             top_p: request.top_p,
             stream,
-            stream_options: if stream {
+            stream_options: if stream && self.include_usage {
                 Some(StreamOptions {
                     include_usage: true,
                 })
@@ -651,9 +665,14 @@ impl LlmProvider for OpenAiProvider {
         let raw_request = serde_json::to_value(&body).ok();
 
         let mut request_builder = self.client.post(self.api_url("chat/completions"));
-        request_builder =
-            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
-                .header("Content-Type", "application/json");
+        request_builder = crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json")
+                // Explicitly opt in to SSE. Some compat relays (Cloudflare-fronted,
+                // nginx with response buffering, sidecar SSE adapters) only switch
+                // to chunked streaming when this header is present — without it
+                // they buffer the response and return one giant blob at the end
+                // or reject with 415.
+                .header("Accept", "text/event-stream");
 
         if !self.api_key.is_empty() {
             request_builder =
@@ -697,105 +716,11 @@ impl LlmProvider for OpenAiProvider {
 
         // Parse SSE stream from the response bytes_stream.
         let byte_stream = response.bytes_stream();
-        let provider_id = self.metadata.id.to_string();
-
-        let inter_stream = futures::stream::unfold(
-            (
-                crate::sse::SseStreamState::new(Box::pin(byte_stream)),
-                ToolCallAccumulatorSet::default(),
-                VecDeque::<InterStreamEvent>::new(),
-            ),
-            move |mut composite| {
-                let _provider_id = provider_id.clone();
-                async move {
-                    let (ref mut state, ref mut tool_acc, ref mut pending) = composite;
-
-                    if let Some(event) = pending.pop_front() {
-                        return Some((Ok(event), composite));
-                    }
-
-                    if state.done {
-                        return None;
-                    }
-
-                    loop {
-                        if let Some(event) = crate::sse::extract_sse_data(&mut state.buffer) {
-                            let trimmed = event.trim();
-                            if trimmed.is_empty() {
-                                continue;
-                            }
-
-                            if trimmed == "[DONE]" {
-                                state.done = true;
-                                for tc in tool_acc.drain_completed() {
-                                    pending.push_back(InterStreamEvent::ToolCall(tc));
-                                }
-                                if let Some(event) = pending.pop_front() {
-                                    return Some((Ok(event), composite));
-                                }
-                                return None;
-                            }
-
-                            match serde_json::from_str::<OpenAiStreamChunk>(trimmed) {
-                                Ok(chunk) => {
-                                    let mut events = map_to_inter_events(&chunk, tool_acc);
-                                    if events.is_empty() {
-                                        continue;
-                                    }
-                                    let first = events.remove(0);
-                                    pending.extend(events);
-                                    return Some((Ok(first), composite));
-                                }
-                                Err(e) => {
-                                    return Some((
-                                        Err(ProviderError::ParseError {
-                                            message: format!(
-                                                "SSE JSON parse error: {e}, data: {trimmed}"
-                                            ),
-                                        }),
-                                        composite,
-                                    ));
-                                }
-                            }
-                        }
-
-                        match state.read_next().await {
-                            Ok(true) => {}
-                            Ok(false) => {
-                                while let Some(event) =
-                                    crate::sse::extract_sse_data(&mut state.buffer)
-                                {
-                                    let trimmed = event.trim();
-                                    if trimmed.is_empty() || trimmed == "[DONE]" {
-                                        continue;
-                                    }
-                                    if let Ok(chunk) =
-                                        serde_json::from_str::<OpenAiStreamChunk>(trimmed)
-                                    {
-                                        for ev in map_to_inter_events(&chunk, tool_acc) {
-                                            pending.push_back(ev);
-                                        }
-                                    }
-                                }
-                                for tc in tool_acc.drain_completed() {
-                                    pending.push_back(InterStreamEvent::ToolCall(tc));
-                                }
-                                if let Some(event) = pending.pop_front() {
-                                    return Some((Ok(event), composite));
-                                }
-                                return None;
-                            }
-                            Err(e) => {
-                                return Some((Err(e), composite));
-                            }
-                        }
-                    }
-                }
-            },
-        );
 
         Ok(ChatStreamResponse {
-            stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(inter_stream)),
+            stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(
+                build_openai_inter_stream(Box::pin(byte_stream)),
+            )),
             raw_request,
             provider_id: None,
             model: String::new(),
@@ -810,6 +735,108 @@ impl LlmProvider for OpenAiProvider {
 
 // ---------------------------------------------------------------------------
 // (SseState and extract_sse_event are now in crate::sse)
+
+/// Build the `OpenAI` inter-stream event stream from a raw HTTP byte stream.
+///
+/// Extracted as a free function so tests can drive the SSE parsing loop
+/// without spinning up a real HTTP server. The closure-based version
+/// previously inlined inside `chat_completion_stream` had identical
+/// semantics.
+fn build_openai_inter_stream(
+    byte_stream: crate::sse::ByteStream,
+) -> impl futures::Stream<Item = Result<crate::inter_stream::InterStreamEvent, ProviderError>> + Send
+{
+    futures::stream::unfold(
+        (
+            crate::sse::SseStreamState::new(byte_stream),
+            ToolCallAccumulatorSet::default(),
+            VecDeque::<InterStreamEvent>::new(),
+        ),
+        |mut composite| async move {
+            let (ref mut state, ref mut tool_acc, ref mut pending) = composite;
+
+            if let Some(event) = pending.pop_front() {
+                return Some((Ok(event), composite));
+            }
+
+            if state.done {
+                return None;
+            }
+
+            loop {
+                if let Some(event) = crate::sse::extract_sse_data(&mut state.buffer) {
+                    let trimmed = event.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+
+                    if trimmed == "[DONE]" {
+                        state.done = true;
+                        for tc in tool_acc.drain_completed() {
+                            pending.push_back(InterStreamEvent::ToolCall(tc));
+                        }
+                        if let Some(event) = pending.pop_front() {
+                            return Some((Ok(event), composite));
+                        }
+                        return None;
+                    }
+
+                    match serde_json::from_str::<OpenAiStreamChunk>(trimmed) {
+                        Ok(chunk) => {
+                            let mut events = map_to_inter_events(&chunk, tool_acc);
+                            if events.is_empty() {
+                                continue;
+                            }
+                            let first = events.remove(0);
+                            pending.extend(events);
+                            return Some((Ok(first), composite));
+                        }
+                        Err(e) => {
+                            // Tolerate non-conforming events from OpenAI-compat
+                            // relays (keepalive frames, proxy comments,
+                            // vendor-specific control messages). Terminating on
+                            // a single malformed event would kill the whole turn
+                            // — the Vercel `@ai-sdk/openai-compatible` reference
+                            // SDK also keeps the stream alive after such
+                            // failures.
+                            tracing::warn!(
+                                error = %e,
+                                data = %trimmed,
+                                "Skipping unparseable OpenAI SSE event"
+                            );
+                            continue;
+                        }
+                    }
+                }
+
+                match state.read_next().await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        while let Some(event) = crate::sse::extract_sse_data(&mut state.buffer) {
+                            let trimmed = event.trim();
+                            if trimmed.is_empty() || trimmed == "[DONE]" {
+                                continue;
+                            }
+                            if let Ok(chunk) = serde_json::from_str::<OpenAiStreamChunk>(trimmed) {
+                                for ev in map_to_inter_events(&chunk, tool_acc) {
+                                    pending.push_back(ev);
+                                }
+                            }
+                        }
+                        for tc in tool_acc.drain_completed() {
+                            pending.push_back(InterStreamEvent::ToolCall(tc));
+                        }
+                        if let Some(event) = pending.pop_front() {
+                            return Some((Ok(event), composite));
+                        }
+                        return None;
+                    }
+                    Err(e) => return Some((Err(e), composite)),
+                }
+            }
+        },
+    )
+}
 
 fn map_to_inter_events(
     chunk: &OpenAiStreamChunk,
@@ -835,7 +862,7 @@ fn map_to_inter_events(
     if let Some(choice) = choice {
         if let Some(ref tcs) = choice.delta.tool_calls {
             for tc in tcs {
-                let idx = tc.index.unwrap_or(0) as usize;
+                let idx = tc.index.map(|i| i as usize);
                 tool_acc.process_delta(
                     idx,
                     tc.id.as_deref(),
@@ -1281,6 +1308,102 @@ mod tests {
         assert!(json["stream_options"]["include_usage"].as_bool().unwrap());
     }
 
+    /// Regression: `stream_options` must NOT be sent unless the provider was
+    /// opted into `include_usage`. Several OpenAI-compatible backends reject
+    /// the field with HTTP 400.
+    #[test]
+    fn streaming_request_omits_stream_options_by_default() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        );
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let body = provider.build_request_body(&request, true);
+        let json = serde_json::to_value(&body).unwrap();
+        assert!(json["stream"].as_bool().unwrap());
+        assert!(
+            json.get("stream_options").is_none(),
+            "stream_options must be absent without include_usage opt-in: {json}"
+        );
+    }
+
+    #[test]
+    fn streaming_request_emits_stream_options_when_opted_in() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_include_usage(true);
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let body = provider.build_request_body(&request, true);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["stream_options"]["include_usage"], true);
+    }
+
     #[test]
     fn test_openai_response_deserialization() {
         let json = serde_json::json!({
@@ -1672,5 +1795,85 @@ mod tests {
         assert_eq!(imgs[0].index, 0);
         assert_eq!(imgs[0].mime_type, "image/png");
         assert_eq!(imgs[0].data, "iVBORw0KGgo=");
+    }
+
+    // -----------------------------------------------------------------------
+    // Resilient SSE parsing (regression: malformed event must not kill stream)
+    // -----------------------------------------------------------------------
+
+    /// Build an inter-stream over a fixed sequence of byte chunks.
+    fn inter_stream_from_chunks(
+        chunks: Vec<&'static str>,
+    ) -> impl futures::Stream<Item = Result<crate::inter_stream::InterStreamEvent, ProviderError>> + Send
+    {
+        use bytes::Bytes;
+        let stream = futures::stream::iter(
+            chunks
+                .into_iter()
+                .map(|s| Ok::<_, reqwest::Error>(Bytes::from_static(s.as_bytes()))),
+        );
+        super::build_openai_inter_stream(Box::pin(stream))
+    }
+
+    /// A garbage event in the middle of an otherwise-valid stream must be
+    /// skipped without producing an error or terminating the stream.
+    #[tokio::test]
+    async fn stream_skips_malformed_sse_event() {
+        use crate::inter_stream::InterStreamEvent;
+        use futures::StreamExt as _;
+
+        let stream = inter_stream_from_chunks(vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+            "data: this is not json\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" there\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ]);
+
+        let events: Vec<_> = stream.collect().await;
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ok(InterStreamEvent::TextDelta(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["hi", " there"]);
+
+        // None of the items should be Err.
+        assert!(
+            events.iter().all(Result::is_ok),
+            "stream produced an error: {events:?}"
+        );
+
+        // Finished must still fire.
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Ok(InterStreamEvent::Finished(FinishReason::Stop)))));
+    }
+
+    /// SSE comment lines / vendor keepalive frames that don't follow the
+    /// OpenAI schema must be tolerated.
+    #[tokio::test]
+    async fn stream_tolerates_keepalive_frames() {
+        use crate::inter_stream::InterStreamEvent;
+        use futures::StreamExt as _;
+
+        let stream = inter_stream_from_chunks(vec![
+            ": ping\n\n",
+            "data: {\"_keepalive\": true}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ]);
+
+        let events: Vec<_> = stream.collect().await;
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ok(InterStreamEvent::TextDelta(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["ok"]);
+        assert!(events.iter().all(Result::is_ok));
     }
 }

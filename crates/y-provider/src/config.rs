@@ -117,6 +117,19 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub http_protocol: HttpProtocol,
 
+    /// For OpenAI-compatible providers: send `stream_options.include_usage = true`
+    /// on streaming requests so the final SSE chunk carries token usage.
+    ///
+    /// Defaults to `false` because several OpenAI-compat backends (older vLLM
+    /// builds, some Chinese providers, stricter relays) reject the
+    /// `stream_options` field with HTTP 400. Set to `true` only when the
+    /// upstream is known to support it (canonical `OpenAI`, Azure `OpenAI`,
+    /// recent vLLM, `OpenRouter`, Together, etc.).
+    ///
+    /// Ignored by non-OpenAI-compatible providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_usage: Option<bool>,
+
     /// Default sampling temperature for this provider (0.0 - 2.0).
     /// Applied to requests that do not specify a temperature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -531,6 +544,7 @@ mod tests {
                     base_url: None,
                     headers: HashMap::new(),
                     http_protocol: HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -552,6 +566,7 @@ mod tests {
                     base_url: None,
                     headers: HashMap::new(),
                     http_protocol: HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -595,6 +610,7 @@ mod tests {
             base_url: None,
             headers: HashMap::new(),
             http_protocol: HttpProtocol::Http1,
+            include_usage: None,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
@@ -628,6 +644,7 @@ mod tests {
             base_url: None,
             headers: HashMap::new(),
             http_protocol: HttpProtocol::Http1,
+            include_usage: None,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
@@ -980,6 +997,7 @@ mod tests {
             base_url: None,
             headers: HashMap::new(),
             http_protocol: HttpProtocol::Http1,
+            include_usage: None,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,

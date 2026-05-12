@@ -63,7 +63,7 @@ pub enum SessionType {
     ///
     /// Similar to `Child` but signals that the session was created by the
     /// orchestration layer for a specific sub-agent execution (e.g.,
-    /// `plan-writer`, `task-decomposer`, or a phase executor). GUI uses
+    /// `plan-writer` or a phase executor). GUI uses
     /// this to render expandable sub-conversation cards.
     SubAgent,
     /// Cross-channel canonical session.
