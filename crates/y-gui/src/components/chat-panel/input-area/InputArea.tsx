@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal, Shield, ShieldCheck, Unlock } from 'lucide-react';
 import { logger, transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
@@ -7,10 +7,11 @@ import { Tooltip } from '../../ui/Tooltip';
 import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
+import { PlanReviewDialog } from './PlanReviewDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode, ImageGenerationOptions } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions } from '../../../types';
 import { DEFAULT_IMAGE_GENERATION_OPTIONS } from '../../../types';
 import type { PendingEdit } from '../../../hooks/useChat';
 import { useCloseOnOutsideClick } from '../../../hooks/useCloseOnOutsideClick';
@@ -92,6 +93,15 @@ export interface InputDialogProps {
   onPermissionDeny?: (requestId: string) => void;
   /** Callback when user allows all future tool calls for this session. */
   onPermissionAllowAllForSession?: (requestId: string) => void;
+  /** Pending plan review data. */
+  planReviewData?: {
+    reviewId: string;
+    plan: Record<string, unknown>;
+  } | null;
+  /** Callback when user approves a plan. */
+  onPlanReviewApprove?: (reviewId: string) => void;
+  /** Callback when user rejects a plan. */
+  onPlanReviewReject?: (reviewId: string, feedback: string) => void;
 }
 
 export interface InputEditProps {
@@ -114,10 +124,16 @@ export interface InputFeatureProps {
   onPlanModeChange?: (mode: PlanMode) => void;
   /** Persist uncontrolled plan mode to localStorage. Defaults to true. */
   persistPlanMode?: boolean;
+  /** Controlled operation-mode value. When omitted, InputArea uses local state. */
+  operationMode?: OperationMode;
+  /** Callback when user changes operation mode. Enables controlled usage. */
+  onOperationModeChange?: (mode: OperationMode) => void;
+  /** Persist uncontrolled operation mode to localStorage. Defaults to true. */
+  persistOperationMode?: boolean;
 }
 
 interface InputAreaProps {
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, operationMode?: OperationMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => void;
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
@@ -161,12 +177,15 @@ export function InputArea(props: InputAreaProps) {
   const {
     askUserData, onAskUserSubmit, onAskUserDismiss,
     permissionData, onPermissionApprove, onPermissionDeny, onPermissionAllowAllForSession,
+    planReviewData, onPlanReviewApprove, onPlanReviewReject,
   } = dialogs;
   const { pendingEdit, onCancelEdit, rewindDraft, onRewindDraftConsumed } = edit;
   const {
     thinkingEffort, onThinkingEffortChange,
     planMode: controlledPlanMode, onPlanModeChange,
     persistPlanMode = true,
+    operationMode: controlledOperationMode, onOperationModeChange,
+    persistOperationMode = true,
   } = features;
 
   const [commandMode, setCommandMode] = useState(false);
@@ -211,6 +230,42 @@ export function InputArea(props: InputAreaProps) {
     return 'fast';
   });
   const planMode = controlledPlanMode ?? uncontrolledPlanMode;
+  const [uncontrolledOperationMode, setUncontrolledOperationMode] = useState<OperationMode>(() => {
+    const stored = localStorage.getItem('y-agent-operation-mode');
+    if (stored === 'default' || stored === 'auto_review' || stored === 'full_access') return stored;
+    return 'default';
+  });
+  const operationMode = controlledOperationMode ?? uncontrolledOperationMode;
+  const operationModeMeta: Record<OperationMode, { label: string; shortLabel: string; className: string }> = {
+    default: {
+      label: 'Default permissions',
+      shortLabel: 'default',
+      className: 'toolbar-btn--operation-default',
+    },
+    auto_review: {
+      label: 'Auto review',
+      shortLabel: 'auto',
+      className: 'toolbar-btn--operation-auto',
+    },
+    full_access: {
+      label: 'Full access',
+      shortLabel: 'full',
+      className: 'toolbar-btn--operation-full',
+    },
+  };
+  const cycleOperationMode = useCallback(() => {
+    const order: OperationMode[] = ['default', 'auto_review', 'full_access'];
+    const idx = order.indexOf(operationMode);
+    const next = order[(idx + 1) % order.length];
+    if (controlledOperationMode !== undefined) {
+      onOperationModeChange?.(next);
+      return;
+    }
+    setUncontrolledOperationMode(next);
+    if (persistOperationMode) {
+      localStorage.setItem('y-agent-operation-mode', next);
+    }
+  }, [controlledOperationMode, onOperationModeChange, operationMode, persistOperationMode]);
   const cyclePlanMode = useCallback(() => {
     const order: PlanMode[] = ['fast', 'auto', 'plan', 'loop'];
     const idx = order.indexOf(planMode);
@@ -367,6 +422,7 @@ export function InputArea(props: InputAreaProps) {
       requestMode === 'image_generation' ? undefined : thinkingEffort,
       attachments.length > 0 ? attachments : undefined,
       planMode,
+      operationMode,
       requestMode === 'image_generation' ? 'disabled' : mcpMode,
       mcpMode === 'manual' ? selectedMcpServers : undefined,
       requestMode,
@@ -377,7 +433,7 @@ export function InputArea(props: InputAreaProps) {
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions]);
+  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     // Check for pasted images first.
@@ -584,6 +640,15 @@ export function InputArea(props: InputAreaProps) {
           />
         )}
 
+        {planReviewData && onPlanReviewApprove && onPlanReviewReject && (
+          <PlanReviewDialog
+            reviewId={planReviewData.reviewId}
+            plan={planReviewData.plan}
+            onApprove={onPlanReviewApprove}
+            onReject={onPlanReviewReject}
+          />
+        )}
+
         {/* Editable div with inline skill mentions */}
         <ContentEditableInput
           ref={contentEditableRef}
@@ -755,6 +820,20 @@ export function InputArea(props: InputAreaProps) {
             {planMode === 'loop' && <RefreshCw size={14} />}
             <span className="toolbar-btn-label">{planMode}</span>
           </ToolbarTooltipButton>
+
+          {/* Operation mode selector */}
+          <ToolbarTooltipButton
+            className={`toolbar-btn ${operationModeMeta[operationMode].className}`}
+            onClick={cycleOperationMode}
+            tooltip={`Operation mode: ${operationModeMeta[operationMode].label}`}
+            disabled={disabled}
+          >
+            {operationMode === 'default' && <Shield size={14} />}
+            {operationMode === 'auto_review' && <ShieldCheck size={14} />}
+            {operationMode === 'full_access' && <Unlock size={14} />}
+            <span className="toolbar-btn-label">{operationModeMeta[operationMode].shortLabel}</span>
+          </ToolbarTooltipButton>
+
           {/* Attachment picker (also used for image-to-image in generation mode) */}
           <ToolbarTooltipButton
             className={`toolbar-btn ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}

@@ -682,6 +682,32 @@
   background: rgba(160, 120, 240, 0.14);
 }
 
+/* ---- Operation mode selector ---- */
+
+.toolbar-btn--operation-default {
+  color: var(--text-muted);
+}
+
+.toolbar-btn--operation-auto {
+  color: rgb(90, 180, 160);
+  background: rgba(70, 180, 150, 0.08);
+}
+
+.toolbar-btn--operation-auto:hover:not(:disabled) {
+  color: rgb(115, 210, 185);
+  background: rgba(70, 180, 150, 0.14);
+}
+
+.toolbar-btn--operation-full {
+  color: var(--warning, rgb(245, 170, 70));
+  background: rgba(245, 170, 70, 0.1);
+}
+
+.toolbar-btn--operation-full:hover:not(:disabled) {
+  color: var(--warning, rgb(255, 190, 95));
+  background: rgba(245, 170, 70, 0.16);
+}
+
 /* ---- Image generation settings dropdown ---- */
 
 .toolbar-imagegen-dropdown {

@@ -20,6 +20,7 @@ import {
   basename,
   extractPlanDisplayMeta,
   extractPlanRequestMeta,
+  type PlanWriterStageDisplay,
   type PlanTaskDisplay,
 } from '../toolCallUtils';
 import { DetailSections } from './shared';
@@ -160,6 +161,85 @@ function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
   );
 }
 
+function formatReviewStatus(status: string): string {
+  if (status === 'approved') return 'Approved';
+  if (status === 'auto_approved') return 'Auto approved';
+  if (status === 'feedback_received') return 'Feedback received';
+  if (status === 'declined' || status === 'rejected') return 'Rejected';
+  if (status === 'review_timeout') return 'Timed out';
+  if (status === 'review_cancelled') return 'Cancelled';
+  return '';
+}
+
+function PlanTextList({ label, items }: { label: string; items: string[] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="tool-call-plan-text-section">
+      <div className="tool-call-plan-section-label">{label}</div>
+      <ul className="tool-call-plan-text-list">
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function PlanReviewPanel({
+  meta,
+}: {
+  meta: PlanWriterStageDisplay;
+}) {
+  const reviewLabel = formatReviewStatus(meta.reviewStatus);
+  const hasSummary = !!meta.overview
+    || !!meta.estimatedEffort
+    || meta.scopeIn.length > 0
+    || meta.scopeOut.length > 0
+    || meta.guardrails.length > 0
+    || !!reviewLabel
+    || !!meta.reviewFeedback;
+
+  return (
+    <div className="tool-call-plan-review">
+      {hasSummary && (
+        <div className="tool-call-plan-review-summary">
+          {(reviewLabel || meta.estimatedEffort || meta.tasks.length > 0) && (
+            <div className="tool-call-plan-review-meta">
+              {reviewLabel && (
+                <span className={`tool-call-plan-review-badge tool-call-plan-review-badge--${meta.reviewStatus}`}>
+                  {reviewLabel}
+                </span>
+              )}
+              {meta.estimatedEffort && (
+                <span className="tool-call-plan-stat">{meta.estimatedEffort}</span>
+              )}
+              {meta.tasks.length > 0 && (
+                <span className="tool-call-plan-stat">
+                  {meta.tasks.length} {meta.tasks.length === 1 ? 'phase' : 'phases'}
+                </span>
+              )}
+            </div>
+          )}
+          {meta.overview && (
+            <p className="tool-call-plan-overview">{meta.overview}</p>
+          )}
+          {meta.reviewFeedback && (
+            <div className="tool-call-plan-review-feedback">
+              <span className="tool-call-plan-section-label">User feedback</span>
+              <span>{meta.reviewFeedback}</span>
+            </div>
+          )}
+          <PlanTextList label="Scope in" items={meta.scopeIn} />
+          <PlanTextList label="Scope out" items={meta.scopeOut} />
+          <PlanTextList label="Guardrails" items={meta.guardrails} />
+        </div>
+      )}
+      <PlanTaskList tasks={meta.tasks} />
+    </div>
+  );
+}
+
 export function PlanRenderer({
   toolCall,
   status,
@@ -208,18 +288,15 @@ export function PlanRenderer({
   let detail: ReactNode = null;
 
   if (meta?.kind === 'plan_stage' && meta.stage === 'plan_writer') {
-    action = 'Plan';
+    action = meta.tasks.length > 0 ? 'Tasks' : 'Plan';
     title = meta.planTitle || title;
     path = meta.planFile;
-    detail = meta.planContent ? (
-      <PlanMarkdownContent content={meta.planContent} />
-    ) : null;
-  } else if (meta?.kind === 'plan_stage' && meta.stage === 'task_decomposer') {
-    action = 'Tasks';
-    title = meta.planTitle || title;
-    path = meta.planFile;
-    icon = <ListTodo size={14} className="tool-call-icon-accent" />;
-    detail = <PlanTaskList tasks={meta.tasks} />;
+    if (meta.tasks.length > 0) {
+      icon = <ListTodo size={14} className="tool-call-icon-accent" />;
+      detail = <PlanReviewPanel meta={meta} />;
+    } else if (meta.planContent) {
+      detail = <PlanMarkdownContent content={meta.planContent} />;
+    }
   } else if (meta?.kind === 'plan_execution') {
     action = 'Execute';
     title = meta.planTitle || title;

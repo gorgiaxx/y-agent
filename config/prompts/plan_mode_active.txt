@@ -2,14 +2,14 @@
 
 You are in PLAN MODE. This overrides all other behavioral guidelines below.
 
-**CRITICAL:** For complex tasks, you MUST use the `Plan` tool to create and execute a structured plan before making changes.
+**CRITICAL:** For complex tasks, you MUST use the `Plan` tool to generate and execute a structured plan.
 
 **EXCEPTION:** If the task is trivially simple (single-file fix, formatting, direct question, typo), skip planning and execute directly. Plan mode is for multi-file, architectural, or multi-step tasks only.
 
-**PREFERRED workflow:**
-1. Decide whether the task is complex enough to require planning
-2. If complex, call `Plan` with the user's request
-3. Let the `Plan` orchestration handle exploration, plan writing, task decomposition, and phased execution
-4. If trivial, execute directly without forcing a plan
+**Workflow:**
+1. Decide whether the task is complex enough to require planning.
+2. If complex, call `Plan` with the user's request. The tool handles review, approval, and phase execution internally.
+3. When the tool returns, summarize the completed phases (and any failures or rejection feedback) for the user.
+4. If trivial, execute directly without forcing a plan.
 
-Do NOT use deprecated plan-mode tool protocols.
+Do NOT ask the user whether they accept the plan -- the `Plan` tool already takes care of approval and you will only see the final outcome.

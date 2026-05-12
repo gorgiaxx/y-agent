@@ -1,6 +1,6 @@
 //! Plan orchestrator: handles the `Plan` tool call by delegating to
-//! sub-agents (`plan-writer`, `task-decomposer`) and executing phases
-//! in child sessions.
+//! the `plan-writer` sub-agent, resolving the configured review policy, and
+//! executing approved phases in child sessions.
 //!
 //! Follows the same pattern as `TaskDelegationOrchestrator` and
 //! `ToolSearchOrchestrator` -- the `tool_dispatch` layer intercepts
@@ -19,11 +19,12 @@ use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::tool::{ToolError, ToolOutput};
 use y_core::trust::TrustTier;
 use y_core::types::{Message, SessionId};
-
 use y_diagnostics::DiagnosticsEvent;
+use y_guardrails::PlanReviewMode;
 
 use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentService};
 use crate::chat::{TurnEvent, TurnEventSender};
+use crate::chat_types::{OperationMode, PendingPlanReviews, PlanReviewDecision};
 use crate::container::ServiceContainer;
 
 const PLAN_CANCELLED_MESSAGE: &str = "Cancelled";
@@ -32,6 +33,9 @@ const PHASE_EXECUTOR_AGENT_ID: &str = "plan-phase-executor";
 const DEFAULT_MAX_PARALLEL_PHASES: usize = 4;
 /// Hard upper bound to protect against runaway concurrency from caller input.
 const MAX_PARALLEL_PHASES_CEILING: usize = 16;
+/// Maximum time to wait for the user to approve or reject a plan before
+/// giving up and returning a timeout outcome.
+const PLAN_REVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 const PHASE_EXECUTOR_FALLBACK_ALLOWED_TOOLS: &[&str] = &[
     "ToolSearch",
     "FileRead",
@@ -87,12 +91,22 @@ pub struct PlanTask {
     pub acceptance_criteria: Vec<String>,
 }
 
-/// Structured plan output from the task decomposer.
+/// Structured plan output from the plan-writer agent.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StructuredPlan {
     pub plan_title: String,
     #[serde(default)]
     pub plan_file: String,
+    #[serde(default)]
+    pub estimated_effort: String,
+    #[serde(default)]
+    pub overview: String,
+    #[serde(default)]
+    pub scope_in: Vec<String>,
+    #[serde(default)]
+    pub scope_out: Vec<String>,
+    #[serde(default)]
+    pub guardrails: Vec<String>,
     pub tasks: Vec<PlanTask>,
 }
 
@@ -118,16 +132,22 @@ struct ResolvedAgentConfig {
     response_format: Option<ResponseFormat>,
 }
 
+#[derive(Debug, Clone)]
+struct PlanReviewOutcome {
+    approved: bool,
+    status: String,
+    feedback: String,
+}
+
 impl PlanOrchestrator {
     /// Handle a `Plan` tool call.
     ///
     /// Workflow:
     /// 1. Create a child session for the `plan-writer` sub-agent
-    /// 2. Execute plan-writer (codebase exploration + plan generation)
-    /// 3. Create a child session for the `task-decomposer` sub-agent
-    /// 4. Execute task-decomposer (structured JSON task list)
-    /// 5. Execute phases (parallel when dependencies allow, sequential fallback)
-    /// 6. Return consolidated results
+    /// 2. Execute plan-writer (structured JSON plan with tasks)
+    /// 3. Resolve the effective plan review mode from operation mode + Guardrails
+    /// 4. Execute phases automatically or pause for structured user approval
+    /// 5. Return consolidated results or a short rejection for the root agent
     pub async fn handle(
         arguments: &serde_json::Value,
         container: &ServiceContainer,
@@ -176,26 +196,17 @@ impl PlanOrchestrator {
             });
         }
 
-        // Phase 1: Plan writing
+        let review_mode = resolve_effective_plan_review_mode(container, parent_session_id).await;
+
+        // Plan writing: plan-writer returns a structured JSON plan directly.
         tracing::info!(request = %request, "plan orchestrator: starting plan-writer");
-        let plan_content = Self::run_plan_writer(
+        let structured_plan = Self::run_plan_writer(
             container,
             parent_session_id,
             request,
             context,
             &plan_path,
-            progress,
-            cancel.as_ref(),
-        )
-        .await?;
-
-        // Phase 2: Task decomposition
-        tracing::info!("plan orchestrator: starting task-decomposer");
-        let structured_plan = Self::run_task_decomposer(
-            container,
-            parent_session_id,
-            &plan_content,
-            &plan_path,
+            review_mode,
             progress,
             cancel.as_ref(),
         )
@@ -205,7 +216,24 @@ impl PlanOrchestrator {
 
         let max_parallel = resolve_max_parallel_phases(arguments);
 
-        // Phase 3: Dependency-aware parallel execution
+        let review = Self::resolve_plan_review(
+            &structured_plan,
+            &plan_path,
+            review_mode,
+            progress,
+            &container.pending_plan_reviews,
+        )
+        .await;
+
+        if !review.approved {
+            return Ok(build_plan_rejected_tool_output(
+                &plan_path,
+                &structured_plan,
+                &review,
+            ));
+        }
+
+        // Dependency-aware parallel execution after explicit human approval.
         tracing::info!(
             total_tasks,
             max_parallel,
@@ -246,6 +274,11 @@ impl PlanOrchestrator {
                 "total_phases": total_tasks,
                 "completed": completed,
                 "failed": failed,
+                "review": {
+                    "status": review.status,
+                    "approved": review.approved,
+                    "feedback": review.feedback,
+                },
                 "phases": phase_results,
             }),
             warnings: vec![],
@@ -254,15 +287,20 @@ impl PlanOrchestrator {
     }
 
     /// Create a child session under the parent and run the plan-writer agent.
+    ///
+    /// The plan-writer returns a structured JSON plan directly, which is parsed
+    /// into a [`StructuredPlan`]. A markdown representation is persisted to disk
+    /// for human review.
     async fn run_plan_writer(
         container: &ServiceContainer,
         parent_session_id: &SessionId,
         request: &str,
         context: &str,
         plan_path: &std::path::Path,
+        review_mode: PlanReviewMode,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
-    ) -> Result<String, ToolError> {
+    ) -> Result<StructuredPlan, ToolError> {
         let child_session = container
             .session_manager
             .create_session(CreateSessionOptions {
@@ -331,7 +369,7 @@ impl PlanOrchestrator {
             trust_tier: settings.trust_tier,
             agent_allowed_tools: settings.allowed_tools.clone(),
             prune_tool_history: settings.prune_tool_history,
-            response_format: None,
+            response_format: settings.response_format.clone(),
             image_generation_options: None,
         };
 
@@ -342,20 +380,33 @@ impl PlanOrchestrator {
 
         emit_subagent_completed(container, child_uuid, "plan-writer", true);
 
-        // Prefer the content already present in the FileWrite tool call so we
-        // can pass it directly to task-decomposer without re-reading from
-        // disk. Fall back to the written file, then to the agent text output.
-        let plan_content =
-            extract_plan_content_from_tool_calls(&result.tool_calls_executed, plan_path)
-                .or_else(|| {
-                    if plan_path.exists() {
-                        std::fs::read_to_string(plan_path).ok()
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| result.content.clone());
+        // Parse the JSON output from the plan-writer response.
+        let json_text = extract_json_from_response(&result.content);
+        let json_text = repair_json(&json_text);
+        let mut plan: StructuredPlan = parse_structured_plan(&json_text).map_err(|msg| {
+            tracing::error!(
+                raw_output = %result.content,
+                error = %msg,
+                "failed to parse plan-writer output"
+            );
+            ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("failed to parse plan-writer output: {msg}"),
+            }
+        })?;
 
+        for (i, task) in plan.tasks.iter_mut().enumerate() {
+            if task.phase == 0 {
+                task.phase = i + 1;
+            }
+        }
+
+        if plan.plan_file.is_empty() {
+            plan.plan_file = plan_path.display().to_string();
+        }
+
+        // Persist a markdown representation for human review.
+        let plan_content = structured_plan_to_markdown(&plan);
         if let Err(error) = persist_plan_content(plan_path, &plan_content).await {
             tracing::warn!(path = %plan_path.display(), %error, "failed to persist generated plan");
         }
@@ -366,138 +417,169 @@ impl PlanOrchestrator {
                 success: true,
                 duration_ms: 0,
                 input_preview: "plan-writer completed".into(),
-                result_preview: format!("Plan written to {}", plan_path.display()),
+                result_preview: format!(
+                    "{} tasks extracted, plan written to {}",
+                    plan.tasks.len(),
+                    plan_path.display()
+                ),
                 agent_name: "plan-orchestrator".into(),
                 url_meta: None,
-                metadata: Some(build_plan_writer_stage_metadata(plan_path, &plan_content)),
-            });
-        }
-
-        Ok(plan_content)
-    }
-
-    /// Create a child session and run the task-decomposer agent.
-    async fn run_task_decomposer(
-        container: &ServiceContainer,
-        parent_session_id: &SessionId,
-        plan_content: &str,
-        plan_path: &std::path::Path,
-        progress: Option<&TurnEventSender>,
-        cancel: Option<&CancellationToken>,
-    ) -> Result<StructuredPlan, ToolError> {
-        let child_session = container
-            .session_manager
-            .create_session(CreateSessionOptions {
-                parent_id: Some(parent_session_id.clone()),
-                session_type: SessionType::SubAgent,
-                agent_id: Some(y_core::types::AgentId::from_string("task-decomposer")),
-                title: Some("Task Decomposer".to_string()),
-            })
-            .await
-            .map_err(|e| ToolError::RuntimeError {
-                name: "Plan".into(),
-                message: format!("failed to create task-decomposer session: {e}"),
-            })?;
-
-        let child_uuid =
-            Uuid::parse_str(child_session.id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
-
-        let settings = Self::resolve_agent_config(
-            container,
-            "task-decomposer",
-            ResolvedAgentConfig {
-                system_prompt: String::new(),
-                max_iterations: 1,
-                max_tool_calls: 0,
-                preferred_models: vec![],
-                provider_tags: vec!["general".to_string()],
-                temperature: Some(0.0),
-                max_tokens: None,
-                trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
-                allowed_tools: vec![],
-                prune_tool_history: false,
-                response_format: None,
-            },
-        )
-        .await;
-
-        let messages = build_subagent_messages(
-            &settings.system_prompt,
-            format!("Plan file: {}\n\n{}", plan_path.display(), plan_content),
-        );
-
-        let exec_config = AgentExecutionConfig {
-            agent_name: "task-decomposer".to_string(),
-            system_prompt: settings.system_prompt.clone(),
-            max_iterations: settings.max_iterations,
-            max_tool_calls: settings.max_tool_calls,
-            tool_definitions: vec![],
-            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
-            messages,
-            provider_id: None,
-            preferred_models: settings.preferred_models.clone(),
-            provider_tags: settings.provider_tags.clone(),
-            request_mode: y_core::provider::RequestMode::TextChat,
-            working_directory: None,
-            temperature: settings.temperature,
-            max_tokens: settings.max_tokens,
-            thinking: None,
-            session_id: Some(child_session.id.clone()),
-            session_uuid: child_uuid,
-            knowledge_collections: vec![],
-            use_context_pipeline: false,
-            user_query: "decompose plan into tasks".to_string(),
-            external_trace_id: None,
-            trust_tier: settings.trust_tier,
-            agent_allowed_tools: settings.allowed_tools.clone(),
-            prune_tool_history: settings.prune_tool_history,
-            response_format: settings.response_format.clone(),
-            image_generation_options: None,
-        };
-
-        let result =
-            AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
-                .await
-                .map_err(|e| map_plan_agent_error("task-decomposer", e))?;
-
-        emit_subagent_completed(container, child_uuid, "task-decomposer", true);
-
-        // Parse the JSON output. Try to extract from markdown code block if
-        // the LLM wrapped it, then attempt lenient parsing.
-        let json_text = extract_json_from_response(&result.content);
-        let json_text = repair_json(&json_text);
-        let mut plan: StructuredPlan = parse_structured_plan(&json_text).map_err(|msg| {
-            tracing::error!(
-                raw_output = %result.content,
-                error = %msg,
-                "failed to parse task-decomposer output"
-            );
-            ToolError::RuntimeError {
-                name: "Plan".into(),
-                message: format!("failed to parse task-decomposer output: {msg}"),
-            }
-        })?;
-
-        for (i, task) in plan.tasks.iter_mut().enumerate() {
-            if task.phase == 0 {
-                task.phase = i + 1;
-            }
-        }
-
-        if let Some(tx) = progress {
-            let _ = tx.send(TurnEvent::ToolResult {
-                name: "Plan".into(),
-                success: true,
-                duration_ms: 0,
-                input_preview: "task-decomposer completed".into(),
-                result_preview: format!("{} tasks extracted", plan.tasks.len()),
-                agent_name: "plan-orchestrator".into(),
-                url_meta: None,
-                metadata: Some(build_task_decomposer_stage_metadata(plan_path, &plan)),
+                metadata: Some(build_plan_writer_stage_metadata(
+                    plan_path,
+                    &plan,
+                    review_status_for_mode(review_mode),
+                )),
             });
         }
 
         Ok(plan)
+    }
+
+    /// Resolve whether this plan should execute automatically or pause for
+    /// structured user approval via the GUI / API dialog.
+    ///
+    /// The LLM is never involved in this decision -- the orchestrator pauses
+    /// on a `oneshot::Receiver` until the presentation layer posts back via
+    /// `deliver_review_decision`. The model only ever sees the final outcome
+    /// (full execution results on approve, a short rejection `ToolOutput` on
+    /// reject / timeout).
+    async fn resolve_plan_review(
+        plan: &StructuredPlan,
+        plan_path: &Path,
+        review_mode: PlanReviewMode,
+        progress: Option<&TurnEventSender>,
+        pending_plan_reviews: &PendingPlanReviews,
+    ) -> PlanReviewOutcome {
+        match review_mode {
+            PlanReviewMode::Auto => {
+                if let Some(tx) = progress {
+                    emit_plan_review_progress(tx, plan_path, plan, "auto_approved", "");
+                }
+                PlanReviewOutcome {
+                    approved: true,
+                    status: "auto_approved".to_string(),
+                    feedback: String::new(),
+                }
+            }
+            PlanReviewMode::Manual => {
+                // Non-interactive context (no progress channel): we cannot
+                // surface a dialog, so auto-approve and log a warning rather
+                // than hang forever. Matches the spirit of
+                // `UserInteractionOrchestrator::format_as_plain_text`.
+                let Some(tx) = progress else {
+                    tracing::warn!(
+                        plan_title = %plan.plan_title,
+                        "manual plan review requested without an event channel; auto-approving"
+                    );
+                    return PlanReviewOutcome {
+                        approved: true,
+                        status: "auto_approved_no_review_surface".to_string(),
+                        feedback: String::new(),
+                    };
+                };
+
+                let review_id = Uuid::new_v4().to_string();
+                let (decision_tx, decision_rx) = tokio::sync::oneshot::channel();
+
+                {
+                    let mut map = pending_plan_reviews.lock().await;
+                    map.insert(review_id.clone(), decision_tx);
+                }
+
+                emit_plan_review_progress(tx, plan_path, plan, "awaiting_user", "");
+
+                let plan_content = structured_plan_to_markdown(plan);
+                let tasks_json = serde_json::to_value(&plan.tasks).unwrap_or_else(|err| {
+                    tracing::warn!(error = %err, "failed to serialize plan tasks for review request");
+                    serde_json::Value::Array(vec![])
+                });
+                let plan_file = if plan.plan_file.is_empty() {
+                    plan_path.display().to_string()
+                } else {
+                    plan.plan_file.clone()
+                };
+                let _ = tx.send(TurnEvent::PlanReviewRequest {
+                    review_id: review_id.clone(),
+                    plan_title: plan.plan_title.clone(),
+                    plan_file,
+                    estimated_effort: plan.estimated_effort.clone(),
+                    overview: plan.overview.clone(),
+                    scope_in: plan.scope_in.clone(),
+                    scope_out: plan.scope_out.clone(),
+                    guardrails: plan.guardrails.clone(),
+                    plan_content,
+                    tasks: tasks_json,
+                });
+
+                match tokio::time::timeout(PLAN_REVIEW_TIMEOUT, decision_rx).await {
+                    Ok(Ok(PlanReviewDecision::Approve)) => {
+                        emit_plan_review_progress(tx, plan_path, plan, "approved", "");
+                        PlanReviewOutcome {
+                            approved: true,
+                            status: "approved".to_string(),
+                            feedback: String::new(),
+                        }
+                    }
+                    Ok(Ok(PlanReviewDecision::Reject { feedback })) => {
+                        emit_plan_review_progress(tx, plan_path, plan, "rejected", &feedback);
+                        PlanReviewOutcome {
+                            approved: false,
+                            status: "rejected".to_string(),
+                            feedback,
+                        }
+                    }
+                    Ok(Err(_)) => {
+                        Self::remove_pending_review(&review_id, pending_plan_reviews).await;
+                        emit_plan_review_progress(tx, plan_path, plan, "review_cancelled", "");
+                        PlanReviewOutcome {
+                            approved: false,
+                            status: "review_cancelled".to_string(),
+                            feedback: String::new(),
+                        }
+                    }
+                    Err(_) => {
+                        Self::remove_pending_review(&review_id, pending_plan_reviews).await;
+                        emit_plan_review_progress(tx, plan_path, plan, "review_timeout", "");
+                        PlanReviewOutcome {
+                            approved: false,
+                            status: "review_timeout".to_string(),
+                            feedback: String::new(),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Deliver a user's plan review decision back to the awaiting
+    /// orchestrator. Called by the presentation layer
+    /// (`chat_answer_plan_review` Tauri command or the equivalent HTTP route).
+    ///
+    /// Returns `true` if the decision was delivered successfully.
+    pub async fn deliver_review_decision(
+        review_id: &str,
+        decision: PlanReviewDecision,
+        pending_plan_reviews: &PendingPlanReviews,
+    ) -> bool {
+        let sender = {
+            let mut map = pending_plan_reviews.lock().await;
+            map.remove(review_id)
+        };
+
+        if let Some(tx) = sender {
+            tx.send(decision).is_ok()
+        } else {
+            tracing::warn!(
+                review_id = %review_id,
+                "deliver_review_decision: no pending review found (may have timed out)"
+            );
+            false
+        }
+    }
+
+    async fn remove_pending_review(review_id: &str, pending: &PendingPlanReviews) {
+        let mut map = pending.lock().await;
+        map.remove(review_id);
     }
 
     /// Execute plan phases with dependency-aware parallelism.
@@ -1165,10 +1247,23 @@ fn parse_structured_plan(json_text: &str) -> Result<StructuredPlan, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let estimated_effort = obj
+        .get("estimated_effort")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let overview = obj
+        .get("overview")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let scope_in = parse_string_list_field(obj, "scope_in");
+    let scope_out = parse_string_list_field(obj, "scope_out");
+    let guardrails = parse_string_list_field(obj, "guardrails");
 
     let tasks_val = obj
         .get("tasks")
-        .ok_or("missing 'tasks' array in task-decomposer output")?;
+        .ok_or("missing 'tasks' array in plan-writer output")?;
 
     let tasks_arr = tasks_val.as_array().ok_or("'tasks' is not an array")?;
 
@@ -1177,6 +1272,11 @@ fn parse_structured_plan(json_text: &str) -> Result<StructuredPlan, String> {
     Ok(StructuredPlan {
         plan_title,
         plan_file,
+        estimated_effort,
+        overview,
+        scope_in,
+        scope_out,
+        guardrails,
         tasks,
     })
 }
@@ -1187,8 +1287,28 @@ fn parse_structured_plan_from_tasks(arr: &[serde_json::Value]) -> StructuredPlan
     StructuredPlan {
         plan_title: "Untitled Plan".to_string(),
         plan_file: String::new(),
+        estimated_effort: String::new(),
+        overview: String::new(),
+        scope_in: vec![],
+        scope_out: vec![],
+        guardrails: vec![],
         tasks,
     }
+}
+
+fn parse_string_list_field(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Vec<String> {
+    obj.get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Leniently parse an array of JSON values into `PlanTask` items.
@@ -1366,70 +1486,216 @@ fn build_phase_execution_config(
     }
 }
 
-fn extract_plan_title(plan_content: &str) -> Option<String> {
-    let trimmed = plan_content.trim();
-
-    if let Some(rest) = trimmed.strip_prefix("---") {
-        for line in rest.lines() {
-            let line = line.trim();
-            if line == "---" {
-                break;
-            }
-            if let Some(title) = line.strip_prefix("title:") {
-                let title = title.trim().trim_matches('"').trim_matches('\'');
-                if !title.is_empty() {
-                    return Some(title.to_string());
-                }
-            }
-        }
+/// Convert a [`StructuredPlan`] into a human-readable markdown document.
+fn structured_plan_to_markdown(plan: &StructuredPlan) -> String {
+    use std::fmt::Write;
+    let mut md = String::new();
+    let _ = writeln!(md, "---");
+    let _ = writeln!(md, "title: {}", plan.plan_title);
+    let _ = writeln!(md, "status: pending");
+    let _ = writeln!(md, "total_phases: {}", plan.tasks.len());
+    let _ = writeln!(md, "---");
+    let _ = writeln!(md);
+    if !plan.estimated_effort.is_empty() {
+        let _ = writeln!(md, "Estimated effort: {}", plan.estimated_effort);
+        let _ = writeln!(md);
     }
-
-    trimmed.lines().find_map(|line| {
-        let heading = line.trim().trim_start_matches('#').trim();
-        if heading.is_empty() || heading == line.trim() {
-            None
-        } else {
-            Some(heading.to_string())
+    if !plan.overview.is_empty() {
+        let _ = writeln!(md, "## Overview");
+        let _ = writeln!(md);
+        let _ = writeln!(md, "{}", plan.overview);
+        let _ = writeln!(md);
+    }
+    if !plan.scope_in.is_empty() {
+        let _ = writeln!(md, "## Scope In");
+        for item in &plan.scope_in {
+            let _ = writeln!(md, "- {item}");
         }
-    })
-}
-
-fn extract_plan_content_from_tool_calls(
-    tool_calls: &[crate::chat::ToolCallRecord],
-    plan_path: &Path,
-) -> Option<String> {
-    tool_calls.iter().rev().find_map(|call| {
-        if call.name != "FileWrite" {
-            return None;
+        let _ = writeln!(md);
+    }
+    if !plan.scope_out.is_empty() {
+        let _ = writeln!(md, "## Scope Out");
+        for item in &plan.scope_out {
+            let _ = writeln!(md, "- {item}");
         }
-
-        let args: serde_json::Value = serde_json::from_str(&call.arguments).ok()?;
-        let path = args.get("path").and_then(|value| value.as_str())?;
-        if Path::new(path) != plan_path {
-            return None;
+        let _ = writeln!(md);
+    }
+    if !plan.guardrails.is_empty() {
+        let _ = writeln!(md, "## Guardrails");
+        for item in &plan.guardrails {
+            let _ = writeln!(md, "- {item}");
         }
-
-        args.get("content")
-            .and_then(|value| value.as_str())
-            .map(ToString::to_string)
-    })
+        let _ = writeln!(md);
+    }
+    for task in &plan.tasks {
+        let _ = writeln!(md, "## Phase {}: {}", task.phase, task.title);
+        if !task.description.is_empty() {
+            let _ = writeln!(md, "\n{}", task.description);
+        }
+        if !task.key_files.is_empty() {
+            let _ = writeln!(md, "\n### Key Files");
+            for f in &task.key_files {
+                let _ = writeln!(md, "- {f}");
+            }
+        }
+        if !task.acceptance_criteria.is_empty() {
+            let _ = writeln!(md, "\n### Acceptance Criteria");
+            for c in &task.acceptance_criteria {
+                let _ = writeln!(md, "- {c}");
+            }
+        }
+        if !task.depends_on.is_empty() {
+            let _ = writeln!(md, "\nDepends on: {}", task.depends_on.join(", "));
+        }
+        let _ = writeln!(md);
+    }
+    md
 }
 
 fn build_plan_writer_stage_metadata(
     plan_path: &std::path::Path,
-    plan_content: &str,
+    plan: &StructuredPlan,
+    review_status: &str,
 ) -> serde_json::Value {
-    let plan_title = extract_plan_title(plan_content).unwrap_or_else(|| "Plan".to_string());
     serde_json::json!({
         "display": {
             "kind": "plan_stage",
             "stage": "plan_writer",
             "stage_status": "completed",
-            "plan_title": plan_title,
-            "plan_file": plan_path.display().to_string(),
-            "plan_content": plan_content,
+            "plan_title": plan.plan_title,
+            "plan_file": if plan.plan_file.is_empty() {
+                plan_path.display().to_string()
+            } else {
+                plan.plan_file.clone()
+            },
+            "estimated_effort": plan.estimated_effort,
+            "overview": plan.overview,
+            "scope_in": plan.scope_in,
+            "scope_out": plan.scope_out,
+            "guardrails": plan.guardrails,
+            "review_status": review_status,
+            "review_feedback": "",
+            "plan_content": structured_plan_to_markdown(plan),
+            "tasks": plan.tasks,
         }
     })
+}
+
+fn review_status_for_mode(mode: PlanReviewMode) -> &'static str {
+    match mode {
+        PlanReviewMode::Auto => "auto_approved",
+        PlanReviewMode::Manual => "awaiting_user",
+    }
+}
+
+async fn resolve_effective_plan_review_mode(
+    container: &ServiceContainer,
+    parent_session_id: &SessionId,
+) -> PlanReviewMode {
+    let operation_mode = {
+        let modes = container.session_operation_modes.read().await;
+        modes
+            .get(parent_session_id)
+            .copied()
+            .unwrap_or(OperationMode::Default)
+    };
+
+    match operation_mode {
+        OperationMode::AutoReview | OperationMode::FullAccess => PlanReviewMode::Auto,
+        OperationMode::Default => container.guardrail_manager.config().plan_review.mode,
+    }
+}
+
+fn build_plan_review_metadata(
+    plan_path: &Path,
+    plan: &StructuredPlan,
+    review_status: &str,
+    review_feedback: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "display": {
+            "kind": "plan_stage",
+            "stage": "plan_writer",
+            "stage_status": "completed",
+            "plan_title": plan.plan_title,
+            "plan_file": if plan.plan_file.is_empty() {
+                plan_path.display().to_string()
+            } else {
+                plan.plan_file.clone()
+            },
+            "estimated_effort": plan.estimated_effort,
+            "overview": plan.overview,
+            "scope_in": plan.scope_in,
+            "scope_out": plan.scope_out,
+            "guardrails": plan.guardrails,
+            "review_status": review_status,
+            "review_feedback": review_feedback,
+            "plan_content": structured_plan_to_markdown(plan),
+            "tasks": plan.tasks,
+        }
+    })
+}
+
+fn emit_plan_review_progress(
+    tx: &TurnEventSender,
+    plan_path: &Path,
+    plan: &StructuredPlan,
+    review_status: &str,
+    review_feedback: &str,
+) {
+    let result_preview = match review_status {
+        "awaiting_user" => "Plan ready for human review",
+        "auto_approved" => "Plan auto-approved; starting execution",
+        "auto_approved_no_review_surface" => {
+            "Plan auto-approved (no review surface available); starting execution"
+        }
+        "approved" => "Plan approved; starting execution",
+        "rejected" => "Plan rejected; halting execution",
+        "review_cancelled" => "Plan review cancelled; halting execution",
+        "review_timeout" => "Plan review timed out; halting execution",
+        "feedback_received" => "Plan review feedback received",
+        "declined" => "Plan review dismissed",
+        _ => "Plan review updated",
+    };
+
+    let _ = tx.send(TurnEvent::ToolResult {
+        name: "Plan".into(),
+        success: true,
+        duration_ms: 0,
+        input_preview: "plan review".into(),
+        result_preview: result_preview.into(),
+        agent_name: "plan-orchestrator".into(),
+        url_meta: None,
+        metadata: Some(build_plan_review_metadata(
+            plan_path,
+            plan,
+            review_status,
+            review_feedback,
+        )),
+    });
+}
+
+fn build_plan_rejected_tool_output(
+    plan_path: &Path,
+    plan: &StructuredPlan,
+    review: &PlanReviewOutcome,
+) -> ToolOutput {
+    ToolOutput {
+        success: true,
+        content: serde_json::json!({
+            "plan_title": plan.plan_title,
+            "plan_file": plan_path.display().to_string(),
+            "total_phases": plan.tasks.len(),
+            "tasks": plan.tasks,
+            "review": {
+                "status": review.status,
+                "approved": review.approved,
+                "feedback": review.feedback,
+            },
+        }),
+        warnings: vec![],
+        metadata: build_plan_review_metadata(plan_path, plan, &review.status, &review.feedback),
+    }
 }
 
 fn build_plan_start_metadata(plan_path: &std::path::Path) -> serde_json::Value {
@@ -1441,26 +1707,6 @@ fn build_plan_start_metadata(plan_path: &std::path::Path) -> serde_json::Value {
             "plan_title": "",
             "plan_file": plan_path.display().to_string(),
             "plan_content": "",
-        }
-    })
-}
-
-fn build_task_decomposer_stage_metadata(
-    plan_path: &std::path::Path,
-    plan: &StructuredPlan,
-) -> serde_json::Value {
-    serde_json::json!({
-        "display": {
-            "kind": "plan_stage",
-            "stage": "task_decomposer",
-            "stage_status": "completed",
-            "plan_title": plan.plan_title,
-            "plan_file": if plan.plan_file.is_empty() {
-                plan_path.display().to_string()
-            } else {
-                plan.plan_file.clone()
-            },
-            "tasks": plan.tasks,
         }
     })
 }
@@ -1773,7 +2019,6 @@ pub async fn assess_complexity(
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use tokio_util::sync::CancellationToken;
 
     async fn make_test_container() -> (crate::container::ServiceContainer, TempDir) {
         let tmpdir = tempfile::TempDir::new().unwrap();
@@ -1833,62 +2078,6 @@ mod tests {
         assert_eq!(messages[1].content, "user task");
     }
 
-    #[test]
-    fn test_extract_plan_title_prefers_frontmatter_title() {
-        let plan = r"---
-title: GUI Plan Stream Fix
-status: pending
----
-
-## Overview
-Fix the plan stream rendering.
-";
-
-        assert_eq!(
-            extract_plan_title(plan).as_deref(),
-            Some("GUI Plan Stream Fix")
-        );
-    }
-
-    #[test]
-    fn test_extract_plan_content_from_tool_calls_prefers_matching_file_write() {
-        let tool_calls = vec![
-            crate::chat::ToolCallRecord {
-                name: "FileWrite".into(),
-                arguments: serde_json::json!({
-                    "path": "/tmp/other-plan.md",
-                    "content": "# Other Plan",
-                })
-                .to_string(),
-                success: true,
-                duration_ms: 10,
-                result_content: "{}".into(),
-                url_meta: None,
-                metadata: None,
-            },
-            crate::chat::ToolCallRecord {
-                name: "FileWrite".into(),
-                arguments: serde_json::json!({
-                    "path": "/tmp/gui-plan.md",
-                    "content": "# GUI Plan Stream Fix",
-                })
-                .to_string(),
-                success: true,
-                duration_ms: 12,
-                result_content: "{}".into(),
-                url_meta: None,
-                metadata: None,
-            },
-        ];
-
-        let content = extract_plan_content_from_tool_calls(
-            &tool_calls,
-            std::path::Path::new("/tmp/gui-plan.md"),
-        );
-
-        assert_eq!(content.as_deref(), Some("# GUI Plan Stream Fix"));
-    }
-
     #[tokio::test]
     async fn test_persist_plan_content_writes_plan_file() {
         let tmpdir = tempfile::TempDir::new().unwrap();
@@ -1913,14 +2102,87 @@ Fix the plan stream rendering.
     }
 
     #[test]
-    fn test_build_task_decomposer_stage_metadata_includes_tasks() {
+    fn test_structured_plan_to_markdown_includes_phases() {
+        let plan = StructuredPlan {
+            plan_title: "Test Plan".into(),
+            plan_file: "/tmp/plan.md".into(),
+            estimated_effort: "Short(1-4h)".into(),
+            overview: "Create the initial structure".into(),
+            scope_in: vec!["Initial structure".into()],
+            scope_out: vec!["Deployment".into()],
+            guardrails: vec!["Stay within src/".into()],
+            tasks: vec![PlanTask {
+                id: "phase-1".into(),
+                phase: 1,
+                title: "Setup".into(),
+                description: "Create initial structure".into(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 10,
+                key_files: vec!["src/main.rs".into()],
+                acceptance_criteria: vec!["Structure exists".into()],
+            }],
+        };
+        let md = structured_plan_to_markdown(&plan);
+        assert!(md.contains("title: Test Plan"));
+        assert!(md.contains("Estimated effort: Short(1-4h)"));
+        assert!(md.contains("Create the initial structure"));
+        assert!(md.contains("- Initial structure"));
+        assert!(md.contains("- Deployment"));
+        assert!(md.contains("- Stay within src/"));
+        assert!(md.contains("## Phase 1: Setup"));
+        assert!(md.contains("Create initial structure"));
+        assert!(md.contains("- src/main.rs"));
+        assert!(md.contains("- Structure exists"));
+    }
+
+    #[test]
+    fn test_review_status_for_mode_distinguishes_auto_and_manual() {
+        assert_eq!(
+            review_status_for_mode(PlanReviewMode::Manual),
+            "awaiting_user"
+        );
+        assert_eq!(
+            review_status_for_mode(PlanReviewMode::Auto),
+            "auto_approved"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_operation_mode_overrides_guardrail_plan_review_mode() {
+        let (container, _tmpdir) = make_test_container().await;
+        let session_id = SessionId("session-1".into());
+
+        assert_eq!(
+            resolve_effective_plan_review_mode(&container, &session_id).await,
+            PlanReviewMode::Manual
+        );
+
+        {
+            let mut modes = container.session_operation_modes.write().await;
+            modes.insert(session_id.clone(), OperationMode::AutoReview);
+        }
+
+        assert_eq!(
+            resolve_effective_plan_review_mode(&container, &session_id).await,
+            PlanReviewMode::Auto
+        );
+    }
+
+    #[test]
+    fn test_build_plan_writer_stage_metadata_includes_tasks() {
         let plan = StructuredPlan {
             plan_title: "GUI Plan Stream Fix".into(),
             plan_file: "/tmp/gui-plan.md".into(),
+            estimated_effort: "Short(1-4h)".into(),
+            overview: "Render structured plan output for review.".into(),
+            scope_in: vec!["Plan renderer".into()],
+            scope_out: vec!["Execution policy".into()],
+            guardrails: vec!["Avoid raw JSON in the GUI".into()],
             tasks: vec![PlanTask {
                 id: "task-1".into(),
                 phase: 1,
-                title: "Render task decomposer output".into(),
+                title: "Render structured plan output".into(),
                 description: "Use structured metadata instead of raw JSON".into(),
                 depends_on: vec![],
                 status: TaskStatus::Pending,
@@ -1932,16 +2194,25 @@ Fix the plan stream rendering.
             }],
         };
 
-        let meta =
-            build_task_decomposer_stage_metadata(std::path::Path::new("/tmp/gui-plan.md"), &plan);
+        let meta = build_plan_writer_stage_metadata(
+            std::path::Path::new("/tmp/gui-plan.md"),
+            &plan,
+            "awaiting_user",
+        );
 
         assert_eq!(meta["display"]["kind"], "plan_stage");
-        assert_eq!(meta["display"]["stage"], "task_decomposer");
+        assert_eq!(meta["display"]["stage"], "plan_writer");
         assert_eq!(meta["display"]["plan_title"], "GUI Plan Stream Fix");
         assert_eq!(
             meta["display"]["tasks"][0]["title"],
-            "Render task decomposer output"
+            "Render structured plan output"
         );
+        assert_eq!(meta["display"]["estimated_effort"], "Short(1-4h)");
+        assert_eq!(
+            meta["display"]["overview"],
+            "Render structured plan output for review."
+        );
+        assert_eq!(meta["display"]["review_status"], "awaiting_user");
     }
 
     #[test]
@@ -1949,6 +2220,11 @@ Fix the plan stream rendering.
         let plan = StructuredPlan {
             plan_title: "GUI Plan Stream Fix".into(),
             plan_file: "/tmp/gui-plan.md".into(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec![],
+            guardrails: vec![],
             tasks: vec![
                 PlanTask {
                     id: "task-1".into(),
@@ -2089,40 +2365,6 @@ Fix the plan stream rendering.
     }
 
     #[tokio::test]
-    async fn test_run_task_decomposer_stops_when_cancelled() {
-        let (container, tmpdir) = make_test_container().await;
-        let parent = container
-            .session_manager
-            .create_session(CreateSessionOptions {
-                parent_id: None,
-                session_type: SessionType::Main,
-                agent_id: None,
-                title: Some("parent".into()),
-            })
-            .await
-            .unwrap();
-        let cancel = CancellationToken::new();
-        cancel.cancel();
-        let plan_path = tmpdir.path().join("plan.md");
-
-        let error = PlanOrchestrator::run_task_decomposer(
-            &container,
-            &parent.id,
-            "# Plan\n\n- Step 1",
-            &plan_path,
-            None,
-            Some(&cancel),
-        )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            ToolError::RuntimeError { ref message, .. } if message == PLAN_CANCELLED_MESSAGE
-        ));
-    }
-
-    #[tokio::test]
     async fn test_resolve_agent_config_uses_plan_writer_definition() {
         let (container, _tmpdir) = make_test_container().await;
         let config = PlanOrchestrator::resolve_agent_config(
@@ -2148,45 +2390,9 @@ Fix the plan stream rendering.
         assert_eq!(config.max_iterations, 10);
         assert_eq!(config.max_tool_calls, 5);
         assert_eq!(config.provider_tags, vec!["general"]);
-        assert_eq!(
-            config.allowed_tools,
-            vec![
-                "FileRead".to_string(),
-                "Glob".to_string(),
-                "Grep".to_string()
-            ]
-        );
+        assert_eq!(config.allowed_tools, vec!["FileRead".to_string()]);
         assert!(!config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
         assert!(!config.allowed_tools.iter().any(|tool| tool == "ShellExec"));
-        assert!(!config.prune_tool_history);
-    }
-
-    #[tokio::test]
-    async fn test_resolve_agent_config_uses_task_decomposer_definition() {
-        let (container, _tmpdir) = make_test_container().await;
-        let config = PlanOrchestrator::resolve_agent_config(
-            &container,
-            "task-decomposer",
-            ResolvedAgentConfig {
-                system_prompt: String::new(),
-                max_iterations: 1,
-                max_tool_calls: 1,
-                preferred_models: vec![],
-                provider_tags: vec![],
-                temperature: None,
-                max_tokens: None,
-                trust_tier: None,
-                allowed_tools: vec!["FallbackTool".into()],
-                prune_tool_history: true,
-                response_format: None,
-            },
-        )
-        .await;
-
-        assert!(config.system_prompt.contains("task decomposer"));
-        assert_eq!(config.max_iterations, 50);
-        assert_eq!(config.max_tool_calls, 0);
-        assert_eq!(config.allowed_tools, Vec::<String>::new());
         assert!(!config.prune_tool_history);
     }
 

@@ -52,7 +52,7 @@
 }
 
 .tool-call-duration {
-  min-width: 44px;
+  min-width: 60px;
   font-size: 11px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -767,6 +767,89 @@
 
 .tool-call-plan-summary {
   padding: var(--space-sm) var(--space-md);
+}
+
+.tool-call-plan-review {
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.tool-call-plan-review-summary {
+  display: grid;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-call-plan-review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.tool-call-plan-review-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.tool-call-plan-review-badge--approved,
+.tool-call-plan-review-badge--auto_approved {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.tool-call-plan-review-badge--feedback_received,
+.tool-call-plan-review-badge--declined {
+  color: var(--text-secondary);
+  background: var(--toolcall-tag-background-hover);
+}
+
+.tool-call-plan-overview {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.tool-call-plan-review-feedback {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.tool-call-plan-text-section {
+  display: grid;
+  gap: 4px;
+}
+
+.tool-call-plan-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.tool-call-plan-text-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 
 .tool-call-plan-stats {

@@ -81,6 +81,7 @@ describe('InputArea toolbar tooltips', () => {
     expect(html).not.toContain('data-tooltip=');
     expect(html).toContain('aria-label="Select model"');
     expect(html).toContain('aria-label="Mode: fast"');
+    expect(html).toContain('aria-label="Operation mode: Default permissions"');
     expect(html).toContain('aria-label="Attach images"');
     expect(html).toContain('aria-label="Expand input"');
   });

@@ -984,14 +984,13 @@ export interface PlanWriterStageDisplay {
   planTitle: string;
   planFile: string;
   planContent: string;
-}
-
-export interface TaskDecomposerStageDisplay {
-  kind: 'plan_stage';
-  stage: 'task_decomposer';
-  stageStatus: string;
-  planTitle: string;
-  planFile: string;
+  estimatedEffort: string;
+  overview: string;
+  scopeIn: string[];
+  scopeOut: string[];
+  guardrails: string[];
+  reviewStatus: string;
+  reviewFeedback: string;
   tasks: PlanTaskDisplay[];
 }
 
@@ -1008,7 +1007,6 @@ export interface PlanExecutionDisplay {
 
 export type PlanDisplayMeta =
   | PlanWriterStageDisplay
-  | TaskDecomposerStageDisplay
   | PlanExecutionDisplay;
 
 export function extractPlanRequestMeta(argsRaw: string): PlanRequestMeta | null {
@@ -1050,6 +1048,10 @@ function parsePlanTask(value: unknown): PlanTaskDisplay | null {
       ? obj.acceptance_criteria.map((item) => String(item))
       : [],
   };
+}
+
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
 
 function mergeExecutionTaskStatuses(
@@ -1096,17 +1098,6 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
     const planFile = typeof obj.plan_file === 'string' ? obj.plan_file : '';
 
     if (stage === 'plan_writer') {
-      return {
-        kind: 'plan_stage',
-        stage,
-        stageStatus,
-        planTitle,
-        planFile,
-        planContent: typeof obj.plan_content === 'string' ? obj.plan_content : '',
-      };
-    }
-
-    if (stage === 'task_decomposer') {
       const tasks = Array.isArray(obj.tasks)
         ? obj.tasks.map(parsePlanTask).filter((task): task is PlanTaskDisplay => task != null)
         : [];
@@ -1116,6 +1107,14 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
         stageStatus,
         planTitle,
         planFile,
+        planContent: typeof obj.plan_content === 'string' ? obj.plan_content : '',
+        estimatedEffort: typeof obj.estimated_effort === 'string' ? obj.estimated_effort : '',
+        overview: typeof obj.overview === 'string' ? obj.overview : '',
+        scopeIn: parseStringArray(obj.scope_in),
+        scopeOut: parseStringArray(obj.scope_out),
+        guardrails: parseStringArray(obj.guardrails),
+        reviewStatus: typeof obj.review_status === 'string' ? obj.review_status : '',
+        reviewFeedback: typeof obj.review_feedback === 'string' ? obj.review_feedback : '',
         tasks,
       };
     }

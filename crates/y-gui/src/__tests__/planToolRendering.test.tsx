@@ -6,7 +6,7 @@ import { PlanTaskItem } from '../components/chat-panel/chat-box/tool-renderers/P
 import { shouldDisplayStreamingAgent } from '../hooks/chatStreamTypes';
 
 describe('Plan tool rendering', () => {
-  it('renders task-decomposer output as structured task content', () => {
+  it('renders plan-writer output with tasks as structured task content', () => {
     const html = renderToStaticMarkup(
       <ToolCallCard
         toolCall={{
@@ -19,14 +19,15 @@ describe('Plan tool rendering', () => {
         metadata={{
           display: {
             kind: 'plan_stage',
-            stage: 'task_decomposer',
+            stage: 'plan_writer',
             plan_title: 'GUI Plan Stream Fix',
             plan_file: '/tmp/gui-plan.md',
+            plan_content: '',
             tasks: [
               {
                 id: 'task-1',
                 phase: 1,
-                title: 'Render task decomposer output',
+                title: 'Render structured plan output',
                 description: 'Use structured metadata instead of raw JSON strings.',
                 depends_on: [],
                 status: 'pending',
@@ -35,7 +36,7 @@ describe('Plan tool rendering', () => {
                   'crates/y-gui/src/components/chat-panel/chat-box/ToolCallCard.tsx',
                 ],
                 acceptance_criteria: [
-                  'Task decomposer results render as a dedicated component',
+                  'Task results render as a dedicated component',
                 ],
               },
             ],
@@ -45,8 +46,71 @@ describe('Plan tool rendering', () => {
     );
 
     expect(html).toContain('Tasks');
-    expect(html).toContain('Render task decomposer output');
+    expect(html).toContain('Render structured plan output');
     expect(html).not.toContain('plan_title');
+  });
+
+  it('renders plan summary fields as a readable review component', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-review-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Improve GUI Plan review flow' }),
+        }}
+        status="success"
+        result="2 tasks extracted"
+        metadata={{
+          display: {
+            kind: 'plan_stage',
+            stage: 'plan_writer',
+            stage_status: 'completed',
+            review_status: 'approved',
+            plan_title: 'GUI Plan Review Flow',
+            plan_file: '/tmp/gui-plan-review.md',
+            estimated_effort: 'Short(1-4h)',
+            overview: 'Render a readable plan and pause for human review before execution.',
+            scope_in: ['Readable plan summary', 'Human review gate'],
+            scope_out: ['Special-case handling for user feedback'],
+            guardrails: ['Do not execute phases before review'],
+            tasks: [
+              {
+                id: 'phase-1',
+                phase: 1,
+                title: 'Render reviewable plan',
+                description: 'Show overview, scope, guardrails, and task cards.',
+                depends_on: [],
+                status: 'pending',
+                estimated_iterations: 12,
+                key_files: [
+                  'crates/y-gui/src/components/chat-panel/chat-box/tool-renderers/PlanRenderer.tsx',
+                ],
+                acceptance_criteria: ['Plan metadata is readable without raw JSON'],
+              },
+              {
+                id: 'phase-2',
+                phase: 2,
+                title: 'Pause before execution',
+                description: 'Wait for explicit user review before phase execution.',
+                depends_on: ['phase-1'],
+                status: 'pending',
+                estimated_iterations: 12,
+                key_files: ['crates/y-service/src/plan_orchestrator.rs'],
+                acceptance_criteria: ['Phase executor does not start before review'],
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('Approved');
+    expect(html).toContain('Short(1-4h)');
+    expect(html).toContain('Render a readable plan');
+    expect(html).toContain('Readable plan summary');
+    expect(html).toContain('Do not execute phases before review');
+    expect(html).toContain('2 phases');
+    expect(html).not.toContain('scope_in');
   });
 
   it('renders plan-writer output as markdown instead of a preformatted block', () => {
@@ -237,7 +301,6 @@ describe('shouldDisplayStreamingAgent', () => {
   it('keeps root-agent deltas and hides sub-agent deltas', () => {
     expect(shouldDisplayStreamingAgent(undefined)).toBe(true);
     expect(shouldDisplayStreamingAgent('chat-turn')).toBe(true);
-    expect(shouldDisplayStreamingAgent('task-decomposer')).toBe(false);
     expect(shouldDisplayStreamingAgent('plan-writer')).toBe(true);
   });
 });

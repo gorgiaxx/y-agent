@@ -1,13 +1,14 @@
 ## Plan Mode
 
 The user has enabled plan mode for this task. You MUST use the `Plan` tool
-to create and execute a structured plan before making any changes.
+to generate and execute a structured plan.
 
-Call Plan with the user's request. The Plan tool will:
-1. Explore the codebase via a dedicated sub-agent
-2. Generate a phased execution plan
-3. Decompose the plan into structured tasks
-4. Execute each phase in sequence via sub-agents
-5. Return consolidated results
+Call `Plan` with the user's request. The tool will:
+1. Generate a phased execution plan via a dedicated sub-agent
+2. Handle approval internally (auto-approve or pause for the user, depending on policy)
+3. Execute approved phases via sub-agents
+4. Return consolidated execution results, or a short rejection if the user declined
 
-Do NOT attempt to execute the task directly. Use the Plan tool.
+Do NOT attempt to execute a complex task directly. Do NOT ask the user whether
+they accept the plan -- the `Plan` tool handles that. Only summarize the tool's
+final result for the user.

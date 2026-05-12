@@ -2,9 +2,10 @@
 //!
 //! This is a **signal tool** -- its `execute()` method validates input and
 //! returns a pending descriptor. The actual orchestration (creating child
-//! sessions, delegating to `plan-writer` and `task-decomposer` sub-agents,
-//! executing phases) is performed by `PlanOrchestrator` in `y-service`,
-//! which intercepts `Plan` tool calls in `tool_dispatch.rs`.
+//! sessions, delegating to the `plan-writer` sub-agent, resolving the review
+//! policy, and then executing approved phases) is performed by
+//! `PlanOrchestrator` in `y-service`, which intercepts `Plan` tool calls in
+//! `tool_dispatch.rs`.
 //!
 //! Follows the same pattern as `Task` / `TaskDelegationOrchestrator`.
 
@@ -19,9 +20,9 @@ use y_core::types::ToolName;
 /// The `Plan` tool for plan-mode orchestration.
 ///
 /// When invoked by the LLM, it triggers a multi-stage planning workflow:
-/// 1. A `plan-writer` sub-agent explores the codebase and writes a plan
-/// 2. A `task-decomposer` sub-agent converts the plan into structured tasks
-/// 3. Each task is executed sequentially by phase-executor sub-agents
+/// 1. A `plan-writer` sub-agent produces a structured JSON plan with tasks
+/// 2. The configured operation mode decides whether review is automatic or manual
+/// 3. Executable tasks are run by phase-executor sub-agents
 ///
 /// The presentation layer (GUI) renders child session transcripts inline.
 pub struct PlanTool {
@@ -40,16 +41,17 @@ impl PlanTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("Plan"),
-            description: "Create and execute a structured plan for complex tasks. \
-                Delegates to sub-agents for codebase exploration, plan writing, \
-                task decomposition, and phased execution. Use this for multi-file \
-                changes, architectural design, refactoring, or multi-step coordination."
+            description: "Create a structured plan for complex tasks, render it for \
+                review, and follow the current operation mode plus Guardrails \
+                plan-review policy. Delegates to sub-agents for plan writing and \
+                phased execution. Use this for multi-file changes, architectural \
+                design, refactoring, or multi-step coordination."
                 .into(),
             help: Some(
                 "Triggers a multi-stage planning workflow:\n\
-                 1. plan-writer sub-agent explores the codebase and writes a phased plan\n\
-                 2. task-decomposer sub-agent converts the plan into structured tasks\n\
-                 3. Each phase is executed sequentially by dedicated sub-agents\n\
+                 1. plan-writer sub-agent produces a structured JSON plan with tasks\n\
+                 2. operation mode and Guardrails decide auto vs manual review\n\
+                 3. executable phases are run by dedicated sub-agents\n\
                  \n\
                  Parameters:\n\
                  - request (required): The user's original task description\n\
@@ -187,6 +189,8 @@ mod tests {
         assert_eq!(def.category, ToolCategory::Agent);
         assert_eq!(def.tool_type, ToolType::BuiltIn);
         assert!(!def.is_dangerous);
+        assert!(def.description.contains("operation mode"));
+        assert!(def.description.contains("Guardrails"));
         let props = def.parameters["properties"].as_object().unwrap();
         assert!(props.contains_key("request"));
         assert!(props.contains_key("context"));
