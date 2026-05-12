@@ -1025,7 +1025,9 @@ export function extractPlanRequestMeta(argsRaw: string): PlanRequestMeta | null 
 function parsePlanTask(value: unknown): PlanTaskDisplay | null {
   const obj = asObject(value);
   if (!obj) return null;
-  const title = typeof obj.title === 'string' ? obj.title : '';
+  const title = typeof obj.title === 'string' ? obj.title
+    : typeof obj.label === 'string' ? obj.label
+      : '';
   if (!title) return null;
   return {
     id: typeof obj.id === 'string' ? obj.id : '',
@@ -1038,7 +1040,9 @@ function parsePlanTask(value: unknown): PlanTaskDisplay | null {
     status: typeof obj.status === 'string' ? obj.status : 'pending',
     estimatedIterations: typeof obj.estimated_iterations === 'number'
       ? obj.estimated_iterations
-      : 0,
+      : typeof obj.iterations === 'number'
+        ? obj.iterations
+        : 0,
     keyFiles: Array.isArray(obj.key_files)
       ? obj.key_files.map((file) => String(file))
       : [],

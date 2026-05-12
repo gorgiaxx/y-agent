@@ -70,6 +70,7 @@ pub struct PlanTask {
     pub id: String,
     #[serde(default)]
     pub phase: usize,
+    #[serde(alias = "label")]
     pub title: String,
     #[serde(default, alias = "objective")]
     pub description: String,
@@ -78,6 +79,7 @@ pub struct PlanTask {
     #[serde(default)]
     pub status: TaskStatus,
     #[serde(default = "default_estimated_iterations")]
+    #[serde(alias = "iterations")]
     pub estimated_iterations: usize,
     #[serde(default)]
     pub key_files: Vec<String>,
