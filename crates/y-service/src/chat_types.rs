@@ -209,6 +209,10 @@ pub enum PermissionPromptResponse {
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum PlanReviewDecision {
     Approve,
+    Revise {
+        #[serde(default)]
+        feedback: String,
+    },
     Reject {
         #[serde(default)]
         feedback: String,

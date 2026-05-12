@@ -1036,6 +1036,9 @@ pub async fn chat_answer_plan_review(
 ) -> Result<bool, String> {
     let plan_decision = match decision.as_str() {
         "approve" => PlanReviewDecision::Approve,
+        "revise" => PlanReviewDecision::Revise {
+            feedback: feedback.unwrap_or_default(),
+        },
         "reject" => PlanReviewDecision::Reject {
             feedback: feedback.unwrap_or_default(),
         },

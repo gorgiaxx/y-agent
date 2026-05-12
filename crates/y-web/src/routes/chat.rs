@@ -769,12 +769,15 @@ async fn answer_plan_review(
 ) -> Result<impl IntoResponse, ApiError> {
     let decision = match body.decision.as_str() {
         "approve" => PlanReviewDecision::Approve,
+        "revise" => PlanReviewDecision::Revise {
+            feedback: body.feedback.unwrap_or_default(),
+        },
         "reject" => PlanReviewDecision::Reject {
             feedback: body.feedback.unwrap_or_default(),
         },
         other => {
             return Err(ApiError::BadRequest(format!(
-                "invalid decision '{other}', expected 'approve' or 'reject'"
+                "invalid decision '{other}', expected 'approve', 'revise', or 'reject'"
             )));
         }
     };
