@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { ChatPanel } from '../components/chat-panel/ChatPanel';
 import { ChatSearchProvider } from '../components/chat-panel/ChatSearchContext';
 import { WelcomePage } from '../components/WelcomePage';
@@ -13,6 +13,7 @@ import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsCont
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
+import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
 import type { ThinkingEffort, PlanMode, McpMode } from '../types';
@@ -35,6 +36,21 @@ export function ChatView() {
   const [rewindDraft, setRewindDraft] = useState<string | null>(null);
 
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
+  const [planMode, setPlanMode] = useState<PlanMode>(() => {
+    try {
+      const stored = localStorage.getItem('y-agent-plan-mode');
+      if (stored === 'fast' || stored === 'auto' || stored === 'plan' || stored === 'loop') {
+        return stored;
+      }
+    } catch { /* ignore */ }
+    return 'fast';
+  });
+  const handlePlanModeChange = useCallback((mode: PlanMode) => {
+    setPlanMode(mode);
+    try {
+      localStorage.setItem('y-agent-plan-mode', mode);
+    } catch { /* ignore */ }
+  }, []);
 
   // MCP mode + manual-mode server selection are per-session, remembered per active session.
   const [mcpModeBySession, setMcpModeBySession] = useState<Record<string, McpMode>>({});
@@ -66,6 +82,7 @@ export function ChatView() {
     handlePermissionDeny,
     handlePermissionAllowAllForSession,
     handlePlanReviewApprove,
+    handlePlanReviewRevise,
     handlePlanReviewReject,
   } = useSessionInteractions(sessionHooks.activeSessionId);
 
@@ -114,7 +131,7 @@ export function ChatView() {
     config: {
       selectedProviderId: providerHooks.selectedProviderId,
       thinkingEffort,
-      planMode: 'fast' as PlanMode,
+      planMode,
     },
     callbacks: {
       addUserMessage,
@@ -160,8 +177,15 @@ export function ChatView() {
     }
   }, [sessionHooks, workspaceHooks]);
 
+  const planReviewContextValue = useMemo(() => ({
+    reviewId: planReviewData?.reviewId ?? null,
+    onApprove: handlePlanReviewApprove,
+    onRevise: handlePlanReviewRevise,
+    onReject: handlePlanReviewReject,
+  }), [planReviewData, handlePlanReviewApprove, handlePlanReviewRevise, handlePlanReviewReject]);
+
   return (
-    <>
+    <PlanReviewProvider value={planReviewContextValue}>
       {!viewRouting.inputExpanded && sessionHooks.activeSessionId && (
         <ChatSearchProvider>
           <ChatPanel
@@ -235,9 +259,6 @@ export function ChatView() {
           onPermissionApprove: handlePermissionApprove,
           onPermissionDeny: handlePermissionDeny,
           onPermissionAllowAllForSession: handlePermissionAllowAllForSession,
-          planReviewData,
-          onPlanReviewApprove: handlePlanReviewApprove,
-          onPlanReviewReject: handlePlanReviewReject,
         }}
         edit={{
           pendingEdit: chatHooks.pendingEdit,
@@ -248,6 +269,9 @@ export function ChatView() {
         features={{
           thinkingEffort,
           onThinkingEffortChange: setThinkingEffort,
+          planMode,
+          onPlanModeChange: handlePlanModeChange,
+          persistPlanMode: false,
         }}
       />
       <StatusBar
@@ -308,6 +332,6 @@ export function ChatView() {
           onClose={rewind.close}
         />
       )}
-    </>
+    </PlanReviewProvider>
   );
 }

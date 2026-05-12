@@ -18,6 +18,7 @@ import { useChat } from '../hooks/useChat';
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
+import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { useAgentEditor } from '../hooks/useAgentEditor';
 import type { AgentDetail } from '../hooks/useAgents';
@@ -191,6 +192,13 @@ export function AgentsView() {
   });
   const interactions = useSessionInteractions(sessionHooks.activeSessionId);
 
+  const planReviewContextValue = useMemo(() => ({
+    reviewId: interactions.planReviewData?.reviewId ?? null,
+    onApprove: interactions.handlePlanReviewApprove,
+    onRevise: interactions.handlePlanReviewRevise,
+    onReject: interactions.handlePlanReviewReject,
+  }), [interactions.planReviewData, interactions.handlePlanReviewApprove, interactions.handlePlanReviewRevise, interactions.handlePlanReviewReject]);
+
   const handleReloadAgents = useCallback(async () => {
     setReloadingAgents(true);
 
@@ -310,6 +318,7 @@ export function AgentsView() {
   const visibleKnowledge = selectedAgentSummary?.features.knowledge ? knowledgeHooks.collections : [];
 
   return (
+    <PlanReviewProvider value={planReviewContextValue}>
     <div className="agents-view">
       {agentEditor.agentEditing ? (
         <AgentEditorPanel
@@ -417,9 +426,6 @@ export function AgentsView() {
                     onPermissionApprove: interactions.handlePermissionApprove,
                     onPermissionDeny: interactions.handlePermissionDeny,
                     onPermissionAllowAllForSession: interactions.handlePermissionAllowAllForSession,
-                    planReviewData: interactions.planReviewData,
-                    onPlanReviewApprove: interactions.handlePlanReviewApprove,
-                    onPlanReviewReject: interactions.handlePlanReviewReject,
                   }}
                   edit={{
                     pendingEdit: agentChatHooks.pendingEdit,
@@ -452,5 +458,6 @@ export function AgentsView() {
         </div>
       )}
     </div>
+    </PlanReviewProvider>
   );
 }

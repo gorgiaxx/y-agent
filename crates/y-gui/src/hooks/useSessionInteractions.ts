@@ -158,6 +158,18 @@ export function useSessionInteractions(activeSessionId: string | null) {
     }).catch(console.error);
   }, []);
 
+  const handlePlanReviewRevise = useCallback((reviewId: string, feedback: string) => {
+    setPlanReviewBySession((prev) => clearSessionInteractionById(
+      prev,
+      (interaction) => interaction.reviewId === reviewId,
+    ));
+    transport.invoke('chat_answer_plan_review', {
+      reviewId,
+      decision: 'revise',
+      feedback,
+    }).catch(console.error);
+  }, []);
+
   const handlePlanReviewReject = useCallback((reviewId: string, feedback: string) => {
     setPlanReviewBySession((prev) => clearSessionInteractionById(
       prev,
@@ -180,6 +192,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
     handlePermissionDeny,
     handlePermissionAllowAllForSession,
     handlePlanReviewApprove,
+    handlePlanReviewRevise,
     handlePlanReviewReject,
   };
 }

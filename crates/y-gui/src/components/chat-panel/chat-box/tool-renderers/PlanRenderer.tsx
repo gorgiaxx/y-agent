@@ -24,6 +24,8 @@ import {
   type PlanTaskDisplay,
 } from '../toolCallUtils';
 import { DetailSections } from './shared';
+import { PlanReviewInline } from './PlanReviewInline';
+import { usePlanReview } from '../../planReviewState';
 import type { ToolRendererProps } from './types';
 
 function formatPlanTaskStatus(status: string): string {
@@ -164,6 +166,7 @@ function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
 function formatReviewStatus(status: string): string {
   if (status === 'approved') return 'Approved';
   if (status === 'auto_approved') return 'Auto approved';
+  if (status === 'awaiting_user') return 'Awaiting review';
   if (status === 'feedback_received') return 'Feedback received';
   if (status === 'declined' || status === 'rejected') return 'Rejected';
   if (status === 'review_timeout') return 'Timed out';
@@ -191,6 +194,7 @@ function PlanReviewPanel({
 }: {
   meta: PlanWriterStageDisplay;
 }) {
+  const planReview = usePlanReview();
   const reviewLabel = formatReviewStatus(meta.reviewStatus);
   const hasSummary = !!meta.overview
     || !!meta.estimatedEffort
@@ -199,6 +203,9 @@ function PlanReviewPanel({
     || meta.guardrails.length > 0
     || !!reviewLabel
     || !!meta.reviewFeedback;
+
+  const isAwaitingReview =
+    meta.reviewStatus === 'awaiting_user' && planReview?.reviewId;
 
   return (
     <div className="tool-call-plan-review">
@@ -236,6 +243,14 @@ function PlanReviewPanel({
         </div>
       )}
       <PlanTaskList tasks={meta.tasks} />
+      {isAwaitingReview && (
+        <PlanReviewInline
+          reviewId={planReview.reviewId!}
+          onApprove={planReview.onApprove}
+          onRevise={planReview.onRevise}
+          onReject={planReview.onReject}
+        />
+      )}
     </div>
   );
 }

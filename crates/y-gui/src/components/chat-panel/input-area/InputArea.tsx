@@ -7,7 +7,6 @@ import { Tooltip } from '../../ui/Tooltip';
 import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
-import { PlanReviewDialog } from './PlanReviewDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
@@ -93,15 +92,6 @@ export interface InputDialogProps {
   onPermissionDeny?: (requestId: string) => void;
   /** Callback when user allows all future tool calls for this session. */
   onPermissionAllowAllForSession?: (requestId: string) => void;
-  /** Pending plan review data. */
-  planReviewData?: {
-    reviewId: string;
-    plan: Record<string, unknown>;
-  } | null;
-  /** Callback when user approves a plan. */
-  onPlanReviewApprove?: (reviewId: string) => void;
-  /** Callback when user rejects a plan. */
-  onPlanReviewReject?: (reviewId: string, feedback: string) => void;
 }
 
 export interface InputEditProps {
@@ -177,7 +167,6 @@ export function InputArea(props: InputAreaProps) {
   const {
     askUserData, onAskUserSubmit, onAskUserDismiss,
     permissionData, onPermissionApprove, onPermissionDeny, onPermissionAllowAllForSession,
-    planReviewData, onPlanReviewApprove, onPlanReviewReject,
   } = dialogs;
   const { pendingEdit, onCancelEdit, rewindDraft, onRewindDraftConsumed } = edit;
   const {
@@ -637,15 +626,6 @@ export function InputArea(props: InputAreaProps) {
             onApprove={onPermissionApprove}
             onDeny={onPermissionDeny}
             onAllowAllForSession={onPermissionAllowAllForSession}
-          />
-        )}
-
-        {planReviewData && onPlanReviewApprove && onPlanReviewReject && (
-          <PlanReviewDialog
-            reviewId={planReviewData.reviewId}
-            plan={planReviewData.plan}
-            onApprove={onPlanReviewApprove}
-            onReject={onPlanReviewReject}
           />
         )}
 
