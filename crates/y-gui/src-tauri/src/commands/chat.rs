@@ -9,6 +9,8 @@ use tokio_util::sync::CancellationToken;
 
 use y_core::provider::{ImageGenerationOptions, RequestMode};
 use y_core::types::SessionId;
+use y_service::chat_types::OperationMode;
+use y_service::chat_types::PlanReviewDecision;
 use y_service::chat_types::{
     ChatCheckpointInfo, CompactResult, MessageWithStatus, RestoreResult, TurnMeta, UndoResult,
 };
@@ -117,6 +119,7 @@ pub async fn chat_send(
     thinking_effort: Option<String>,
     attachments: Option<Vec<serde_json::Value>>,
     plan_mode: Option<String>,
+    operation_mode: Option<OperationMode>,
     mcp_mode: Option<String>,
     mcp_servers: Option<Vec<String>>,
     image_generation_options: Option<ImageGenerationOptions>,
@@ -156,6 +159,7 @@ pub async fn chat_send(
             thinking,
             user_message_metadata,
             plan_mode,
+            operation_mode,
             mcp_mode,
             mcp_servers,
             image_generation_options,
@@ -303,6 +307,24 @@ impl EventSink for TauriEventSink {
                 action_description: action_description.to_owned(),
                 reason: reason.to_owned(),
                 content_preview: content_preview.map(String::from),
+            },
+        );
+    }
+
+    fn emit_plan_review_request(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        review_id: &str,
+        plan: &serde_json::Value,
+    ) {
+        let _ = self.0.emit(
+            "chat:PlanReview",
+            PlanReviewRequestPayload {
+                run_id: run_id.to_owned(),
+                session_id: session_id.to_owned(),
+                review_id: review_id.to_owned(),
+                plan: plan.clone(),
             },
         );
     }
@@ -597,6 +619,7 @@ pub async fn chat_resend(
     knowledge_collections: Option<Vec<String>>,
     thinking_effort: Option<String>,
     plan_mode: Option<String>,
+    operation_mode: Option<OperationMode>,
 ) -> Result<ChatStarted, String> {
     let thinking = thinking_effort.and_then(|e| {
         use y_core::provider::{ThinkingConfig, ThinkingEffort};
@@ -621,6 +644,7 @@ pub async fn chat_resend(
             knowledge_collections,
             thinking,
             plan_mode,
+            operation_mode,
         },
     )
     .await
@@ -978,6 +1002,59 @@ pub async fn chat_answer_permission(
         tracing::warn!(
             request_id = %request_id,
             "chat_answer_permission: failed to deliver decision (request may have timed out)"
+        );
+    }
+
+    Ok(delivered)
+}
+
+// ---------------------------------------------------------------------------
+// Plan review commands
+// ---------------------------------------------------------------------------
+
+/// Payload emitted on `chat:PlanReview` when the plan orchestrator needs
+/// user approval or rejection before executing phases.
+#[derive(Debug, Serialize, Clone)]
+pub struct PlanReviewRequestPayload {
+    pub run_id: String,
+    pub session_id: String,
+    pub review_id: String,
+    pub plan: serde_json::Value,
+}
+
+/// Deliver the user's plan review decision (approve/reject) to the waiting
+/// plan orchestrator.
+///
+/// Called by the frontend after the user interacts with the plan review
+/// dialog. The `review_id` must match the one from the `chat:PlanReview` event.
+#[tauri::command]
+pub async fn chat_answer_plan_review(
+    state: State<'_, AppState>,
+    review_id: String,
+    decision: String,
+    feedback: Option<String>,
+) -> Result<bool, String> {
+    let plan_decision = match decision.as_str() {
+        "approve" => PlanReviewDecision::Approve,
+        "reject" => PlanReviewDecision::Reject {
+            feedback: feedback.unwrap_or_default(),
+        },
+        other => {
+            return Err(format!("invalid plan review decision: {other}"));
+        }
+    };
+
+    let delivered = y_service::plan_orchestrator::PlanOrchestrator::deliver_review_decision(
+        &review_id,
+        plan_decision,
+        &state.container.pending_plan_reviews,
+    )
+    .await;
+
+    if !delivered {
+        tracing::warn!(
+            review_id = %review_id,
+            "chat_answer_plan_review: failed to deliver decision (review may have timed out)"
         );
     }
 

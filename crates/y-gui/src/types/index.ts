@@ -346,6 +346,9 @@ export type PlanMode = 'fast' | 'auto' | 'plan' | 'loop';
 /** MCP mode: controls which MCP server tools are included in requests. */
 export type McpMode = 'auto' | 'manual' | 'disabled';
 
+/** Operation mode: controls per-turn review and permission policy. */
+export type OperationMode = 'default' | 'auto_review' | 'full_access';
+
 /** High-level provider request mode. */
 export type RequestMode = 'text_chat' | 'image_generation';
 

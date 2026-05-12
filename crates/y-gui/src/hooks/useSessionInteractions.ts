@@ -24,12 +24,19 @@ export interface PermissionDialogState {
   contentPreview: string | null;
 }
 
+export interface PlanReviewDialogState {
+  reviewId: string;
+  plan: Record<string, unknown>;
+}
+
 export function useSessionInteractions(activeSessionId: string | null) {
   const [askUserBySession, setAskUserBySession] = useState<Record<string, AskUserDialogState>>({});
   const [permissionBySession, setPermissionBySession] = useState<Record<string, PermissionDialogState>>({});
+  const [planReviewBySession, setPlanReviewBySession] = useState<Record<string, PlanReviewDialogState>>({});
 
   const askUserData = getSessionInteraction(askUserBySession, activeSessionId);
   const permissionData = getSessionInteraction(permissionBySession, activeSessionId);
+  const planReviewData = getSessionInteraction(planReviewBySession, activeSessionId);
 
   useEffect(() => {
     const unlisten = transport.listen<{
@@ -64,6 +71,22 @@ export function useSessionInteractions(activeSessionId: string | null) {
         actionDescription: action_description,
         reason,
         contentPreview: content_preview,
+      }));
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = transport.listen<{
+      run_id: string;
+      session_id: string;
+      review_id: string;
+      plan: Record<string, unknown>;
+    }>('chat:PlanReview', (event) => {
+      const { session_id, review_id, plan } = event.payload;
+      setPlanReviewBySession((prev) => setSessionInteraction(prev, session_id, {
+        reviewId: review_id,
+        plan,
       }));
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -124,13 +147,39 @@ export function useSessionInteractions(activeSessionId: string | null) {
     }).catch(console.error);
   }, []);
 
+  const handlePlanReviewApprove = useCallback((reviewId: string) => {
+    setPlanReviewBySession((prev) => clearSessionInteractionById(
+      prev,
+      (interaction) => interaction.reviewId === reviewId,
+    ));
+    transport.invoke('chat_answer_plan_review', {
+      reviewId,
+      decision: 'approve',
+    }).catch(console.error);
+  }, []);
+
+  const handlePlanReviewReject = useCallback((reviewId: string, feedback: string) => {
+    setPlanReviewBySession((prev) => clearSessionInteractionById(
+      prev,
+      (interaction) => interaction.reviewId === reviewId,
+    ));
+    transport.invoke('chat_answer_plan_review', {
+      reviewId,
+      decision: 'reject',
+      feedback,
+    }).catch(console.error);
+  }, []);
+
   return {
     askUserData,
     permissionData,
+    planReviewData,
     handleAskUserSubmit,
     handleAskUserDismiss,
     handlePermissionApprove,
     handlePermissionDeny,
     handlePermissionAllowAllForSession,
+    handlePlanReviewApprove,
+    handlePlanReviewReject,
   };
 }

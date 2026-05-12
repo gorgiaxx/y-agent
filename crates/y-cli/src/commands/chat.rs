@@ -160,6 +160,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 knowledge_collections: vec![],
                 thinking: None,
                 plan_mode: None,
+                operation_mode: y_service::chat_types::OperationMode::Default,
                 agent_name: "chat-turn".to_string(),
                 toolcall_enabled: true,
                 preferred_models: vec![],

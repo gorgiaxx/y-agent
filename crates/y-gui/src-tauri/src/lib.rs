@@ -297,6 +297,7 @@ pub fn run() {
             commands::chat::context_compact,
             commands::chat::chat_answer_question,
             commands::chat::chat_answer_permission,
+            commands::chat::chat_answer_plan_review,
             // Sessions
             commands::session::session_list,
             commands::session::session_create,

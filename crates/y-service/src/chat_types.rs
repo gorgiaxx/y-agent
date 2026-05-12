@@ -172,6 +172,18 @@ pub enum TurnEvent {
         reason: String,
         content_preview: Option<String>,
     },
+    PlanReviewRequest {
+        review_id: String,
+        plan_title: String,
+        plan_file: String,
+        estimated_effort: String,
+        overview: String,
+        scope_in: Vec<String>,
+        scope_out: Vec<String>,
+        guardrails: Vec<String>,
+        plan_content: String,
+        tasks: serde_json::Value,
+    },
 }
 
 pub type TurnEventSender = mpsc::UnboundedSender<TurnEvent>;
@@ -188,6 +200,37 @@ pub enum PermissionPromptResponse {
     AllowAllForSession,
 }
 
+/// Structured outcome of a plan-review prompt.
+///
+/// Returned by the GUI / API surface back into the orchestrator over a
+/// oneshot channel. The orchestrator -- not the LLM -- consumes this and
+/// decides whether to execute the plan or abort with the user's feedback.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+pub enum PlanReviewDecision {
+    Approve,
+    Reject {
+        #[serde(default)]
+        feedback: String,
+    },
+}
+
+/// Per-turn operation mode selected by the client input area.
+///
+/// The mode is stored per session before the turn runs so tool dispatch and
+/// plan orchestration can resolve policy without presentation-layer logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationMode {
+    /// Use the global Guardrails configuration.
+    #[default]
+    Default,
+    /// Skip manual plan review while keeping normal tool permissions.
+    AutoReview,
+    /// Bypass manual plan review and tool permission prompts for this turn.
+    FullAccess,
+}
+
 // ---------------------------------------------------------------------------
 // Pending interaction / permission channels
 // ---------------------------------------------------------------------------
@@ -201,6 +244,12 @@ pub type PendingInteractions = std::sync::Arc<
 pub type PendingPermissions = std::sync::Arc<
     tokio::sync::Mutex<
         std::collections::HashMap<String, tokio::sync::oneshot::Sender<PermissionPromptResponse>>,
+    >,
+>;
+
+pub type PendingPlanReviews = std::sync::Arc<
+    tokio::sync::Mutex<
+        std::collections::HashMap<String, tokio::sync::oneshot::Sender<PlanReviewDecision>>,
     >,
 >;
 
@@ -270,6 +319,7 @@ pub struct TurnInput<'a> {
     pub knowledge_collections: Vec<String>,
     pub thinking: Option<ThinkingConfig>,
     pub plan_mode: Option<String>,
+    pub operation_mode: OperationMode,
     pub agent_name: String,
     pub toolcall_enabled: bool,
     pub preferred_models: Vec<String>,
@@ -342,6 +392,7 @@ pub struct PrepareTurnRequest {
     pub thinking: Option<ThinkingConfig>,
     pub user_message_metadata: Option<serde_json::Value>,
     pub plan_mode: Option<String>,
+    pub operation_mode: Option<OperationMode>,
     pub mcp_mode: Option<String>,
     pub mcp_servers: Option<Vec<String>>,
     pub image_generation_options: Option<ImageGenerationOptions>,
@@ -361,6 +412,7 @@ pub struct PreparedTurn {
     pub knowledge_collections: Vec<String>,
     pub thinking: Option<ThinkingConfig>,
     pub plan_mode: Option<String>,
+    pub operation_mode: OperationMode,
     pub mcp_mode: Option<String>,
     pub mcp_servers: Vec<String>,
     pub skills: Vec<String>,
@@ -386,6 +438,7 @@ impl PreparedTurn {
             knowledge_collections: self.knowledge_collections.clone(),
             thinking: self.thinking.clone(),
             plan_mode: self.plan_mode.clone(),
+            operation_mode: self.operation_mode,
             agent_name,
             toolcall_enabled: self
                 .agent_config
@@ -460,6 +513,7 @@ pub struct ResendTurnRequest {
     pub knowledge_collections: Option<Vec<String>>,
     pub thinking: Option<ThinkingConfig>,
     pub plan_mode: Option<String>,
+    pub operation_mode: Option<OperationMode>,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -47,6 +47,7 @@ export interface SendMessageOptions {
   thinkingEffort?: import('../types').ThinkingEffort | null;
   attachments?: import('../types').Attachment[];
   planMode?: import('../types').PlanMode;
+  operationMode?: import('../types').OperationMode;
   mcpMode?: import('../types').McpMode | null;
   mcpServers?: string[];
   requestMode?: import('../types').RequestMode;
@@ -92,7 +93,7 @@ export interface UseChatReturn {
   cancelEdit: () => void;
   /** Execute edit and resend: undo to checkpoint then send new content.
    *  This is the transactional compound operation called from handleSend. */
-  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: import('../types').ThinkingEffort | null, planMode?: import('../types').PlanMode, requestMode?: import('../types').RequestMode) => Promise<import('../types').ChatStarted | null>;
+  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: import('../types').ThinkingEffort | null, planMode?: import('../types').PlanMode, operationMode?: import('../types').OperationMode, requestMode?: import('../types').RequestMode) => Promise<import('../types').ChatStarted | null>;
   /** Undo to a specific message: rolls back all state to before that message was sent. */
   undoToMessage: (sessionId: string, messageId: string) => Promise<import('../types').UndoResult | null>;
   /** Resend: keep user message, remove assistant reply, re-run LLM. */

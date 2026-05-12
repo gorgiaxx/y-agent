@@ -16,10 +16,13 @@ use tokio_util::sync::CancellationToken;
 use y_core::provider::RequestMode;
 use y_core::session::ChatMessageStore;
 use y_core::types::SessionId;
+use y_service::chat_types::PlanReviewDecision;
 use y_service::chat_types::{
-    parse_thinking, ChatCheckpointInfo, CompactResult, MessageWithStatus, RestoreResult, UndoResult,
+    parse_thinking, ChatCheckpointInfo, CompactResult, MessageWithStatus, OperationMode,
+    RestoreResult, UndoResult,
 };
 use y_service::event_sink::EventSink;
+use y_service::plan_orchestrator::PlanOrchestrator;
 use y_service::{
     decode_session_prompt_config, ChatService, PermissionPromptResponse, PrepareTurnError,
     PrepareTurnRequest, PreparedTurn, ResendTurnRequest, TurnEvent, WorkspaceService,
@@ -46,6 +49,7 @@ pub struct ChatRequest {
     pub thinking_effort: Option<String>,
     pub attachments: Option<Vec<serde_json::Value>>,
     pub plan_mode: Option<String>,
+    pub operation_mode: Option<OperationMode>,
     pub mcp_mode: Option<String>,
     pub mcp_servers: Option<Vec<String>>,
     pub image_generation_options: Option<y_core::provider::ImageGenerationOptions>,
@@ -102,6 +106,7 @@ pub struct ResendRequest {
     pub knowledge_collections: Option<Vec<String>>,
     pub thinking_effort: Option<String>,
     pub plan_mode: Option<String>,
+    pub operation_mode: Option<OperationMode>,
 }
 
 /// Request body for `POST /api/v1/chat/find-checkpoint`.
@@ -131,6 +136,15 @@ pub struct AnswerQuestionRequest {
 pub struct AnswerPermissionRequest {
     pub request_id: String,
     pub decision: PermissionPromptResponse,
+}
+
+/// Request body for `POST /api/v1/chat/answer-plan-review`.
+#[derive(Debug, Deserialize)]
+pub struct AnswerPlanReviewRequest {
+    pub review_id: String,
+    /// "approve" or "reject".
+    pub decision: String,
+    pub feedback: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +208,21 @@ impl EventSink for SseEventSink {
         });
     }
 
+    fn emit_plan_review_request(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        review_id: &str,
+        plan: &serde_json::Value,
+    ) {
+        let _ = self.0.send(SseEvent::PlanReviewRequest {
+            run_id: run_id.to_owned(),
+            session_id: session_id.to_owned(),
+            review_id: review_id.to_owned(),
+            plan: plan.clone(),
+        });
+    }
+
     fn emit_complete(&self, payload: &serde_json::Value) {
         let _ = self.0.send(SseEvent::ChatComplete(payload.clone()));
     }
@@ -244,6 +273,7 @@ async fn chat_turn(
             thinking,
             user_message_metadata,
             plan_mode: body.plan_mode,
+            operation_mode: body.operation_mode,
             mcp_mode: body.mcp_mode,
             mcp_servers: body.mcp_servers,
             image_generation_options: body.image_generation_options,
@@ -309,6 +339,7 @@ async fn chat_send(
             thinking,
             user_message_metadata,
             plan_mode: body.plan_mode,
+            operation_mode: body.operation_mode,
             mcp_mode: body.mcp_mode,
             mcp_servers: body.mcp_servers,
             image_generation_options: body.image_generation_options,
@@ -427,6 +458,7 @@ async fn chat_resend(
             knowledge_collections: body.knowledge_collections,
             thinking,
             plan_mode: body.plan_mode,
+            operation_mode: body.operation_mode,
         },
     )
     .await
@@ -730,6 +762,33 @@ async fn answer_permission(
     Ok(Json(serde_json::json!({ "delivered": delivered })))
 }
 
+/// `POST /api/v1/chat/answer-plan-review`
+async fn answer_plan_review(
+    State(state): State<AppState>,
+    Json(body): Json<AnswerPlanReviewRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let decision = match body.decision.as_str() {
+        "approve" => PlanReviewDecision::Approve,
+        "reject" => PlanReviewDecision::Reject {
+            feedback: body.feedback.unwrap_or_default(),
+        },
+        other => {
+            return Err(ApiError::BadRequest(format!(
+                "invalid decision '{other}', expected 'approve' or 'reject'"
+            )));
+        }
+    };
+
+    let delivered = PlanOrchestrator::deliver_review_decision(
+        &body.review_id,
+        decision,
+        &state.container.pending_plan_reviews,
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({ "delivered": delivered })))
+}
+
 /// `GET /api/v1/chat/last-turn-meta/:session_id`
 async fn last_turn_meta(
     State(state): State<AppState>,
@@ -796,6 +855,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/chat/compact/{session_id}", post(context_compact))
         .route("/api/v1/chat/answer-question", post(answer_question))
         .route("/api/v1/chat/answer-permission", post(answer_permission))
+        .route("/api/v1/chat/answer-plan-review", post(answer_plan_review))
         .route(
             "/api/v1/chat/last-turn-meta/{session_id}",
             get(last_turn_meta),

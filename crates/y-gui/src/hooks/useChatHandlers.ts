@@ -8,7 +8,7 @@
 
 import { useCallback } from 'react';
 import { logger, transport } from '../lib';
-import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, Attachment, RequestMode, ImageGenerationOptions } from '../types';
+import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions } from '../types';
 import type { ViewType } from '../components/Sidebar';
 import type { CompactInfo, ChatOpStatus, SendMessageOptions } from './useChat';
 
@@ -22,7 +22,7 @@ export interface SessionOps {
 
 export interface ChatOps {
   sendMessage: (opts: SendMessageOptions) => Promise<ChatStarted | null>;
-  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode, requestMode?: RequestMode) => Promise<ChatStarted | null>;
+  editAndResend: (sessionId: string, newContent: string, providerId?: string, thinkingEffort?: ThinkingEffort | null, planMode?: PlanMode, operationMode?: OperationMode, requestMode?: RequestMode) => Promise<ChatStarted | null>;
   editMessage: (messageId: string, content: string) => void;
   cancelEdit: () => void;
   undoToMessage: (sessionId: string, messageId: string) => Promise<unknown>;
@@ -68,7 +68,7 @@ export interface ChatDeps {
 }
 
 export interface UseChatHandlersReturn {
-  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => Promise<void>;
+  handleSend: (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, operationMode?: OperationMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => Promise<void>;
   handleEditMessage: (content: string, messageId: string) => void;
   handleUndoMessage: (messageId: string) => Promise<void>;
   handleCancelEdit: () => void;
@@ -95,7 +95,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
   const { addUserMessage, setActiveView, setDiagOpen, setObsOpen, onRewind, onSetRewindDraft } = callbacks;
 
   const handleSend = useCallback(
-    async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => {
+    async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, operationMode?: OperationMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => {
       let sid = activeSessionId;
       if (!sid) {
         const session = await createSession();
@@ -119,6 +119,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
           providerArg,
           thinkingEffort,
           planMode,
+          operationMode,
           requestMode,
         );
         if (result) {
@@ -141,6 +142,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
         thinkingEffort,
         attachments,
         planMode,
+        operationMode,
         mcpMode,
         mcpServers,
         requestMode,

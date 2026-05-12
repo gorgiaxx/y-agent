@@ -119,6 +119,39 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                         );
                     }
 
+                    // Intercept PlanReviewRequest events.
+                    if let TurnEvent::PlanReviewRequest {
+                        ref review_id,
+                        ref plan_title,
+                        ref plan_file,
+                        ref estimated_effort,
+                        ref overview,
+                        ref scope_in,
+                        ref scope_out,
+                        ref guardrails,
+                        ref plan_content,
+                        ref tasks,
+                    } = event
+                    {
+                        let plan_payload = serde_json::json!({
+                            "plan_title": plan_title,
+                            "plan_file": plan_file,
+                            "estimated_effort": estimated_effort,
+                            "overview": overview,
+                            "scope_in": scope_in,
+                            "scope_out": scope_out,
+                            "guardrails": guardrails,
+                            "plan_content": plan_content,
+                            "tasks": tasks,
+                        });
+                        sink_progress.emit_plan_review_request(
+                            &run_id_progress,
+                            &session_id_progress,
+                            review_id,
+                            &plan_payload,
+                        );
+                    }
+
                     // Forward as generic progress event.
                     sink_progress.emit_progress(&run_id_progress, &event);
                 }

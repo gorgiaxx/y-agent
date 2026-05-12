@@ -58,6 +58,13 @@ pub enum SseEvent {
         reason: String,
         content_preview: Option<String>,
     },
+    /// `chat:PlanReview` -- plan orchestrator needs user approval.
+    PlanReviewRequest {
+        run_id: String,
+        session_id: String,
+        review_id: String,
+        plan: serde_json::Value,
+    },
     /// `session:title_updated` -- auto-generated title is ready.
     TitleUpdated { session_id: String, title: String },
     /// `diagnostics:event` -- provider/tool/agent gateway event.
@@ -82,6 +89,7 @@ impl SseEvent {
             SseEvent::ChatError { .. } => "chat:error",
             SseEvent::AskUser { .. } => "chat:AskUser",
             SseEvent::PermissionRequest { .. } => "chat:PermissionRequest",
+            SseEvent::PlanReviewRequest { .. } => "chat:PlanReview",
             SseEvent::TitleUpdated { .. } => "session:title_updated",
             SseEvent::DiagnosticsEvent(_) => "diagnostics:event",
             SseEvent::KbBatchProgress { .. } => "kb:batch_progress",
@@ -96,6 +104,7 @@ impl SseEvent {
             | SseEvent::ChatError { session_id, .. }
             | SseEvent::AskUser { session_id, .. }
             | SseEvent::PermissionRequest { session_id, .. }
+            | SseEvent::PlanReviewRequest { session_id, .. }
             | SseEvent::TitleUpdated { session_id, .. } => Some(session_id),
             _ => None,
         }

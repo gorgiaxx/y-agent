@@ -14,6 +14,7 @@ import type {
   RestoreResult,
   ThinkingEffort,
   PlanMode,
+  OperationMode,
   RequestMode,
 } from '../types';
 import { chatBusState } from './chatBus';
@@ -37,6 +38,7 @@ export interface UseChatOperationsReturn {
     providerId?: string,
     thinkingEffort?: ThinkingEffort | null,
     planMode?: PlanMode,
+    operationMode?: OperationMode,
     requestMode?: RequestMode,
   ) => Promise<ChatStarted | null>;
   undoToMessage: (
@@ -112,6 +114,7 @@ export function useChatOperations(
         thinkingEffort,
         attachments,
         planMode,
+        operationMode,
         mcpMode,
         mcpServers,
         requestMode,
@@ -177,6 +180,7 @@ export function useChatOperations(
           attachments:
             attachments && attachments.length > 0 ? attachments : null,
           planMode: planMode ?? null,
+          operationMode: operationMode ?? null,
           mcpMode: mcpMode ?? null,
           mcpServers:
             mcpServers && mcpServers.length > 0 ? mcpServers : null,
@@ -234,6 +238,7 @@ export function useChatOperations(
       providerId?: string,
       thinkingEffort?: ThinkingEffort | null,
       planMode?: PlanMode,
+      operationMode?: OperationMode,
       requestMode?: RequestMode,
     ): Promise<ChatStarted | null> => {
       if (refs.opStatusRef.current !== 'idle') {
@@ -320,6 +325,7 @@ export function useChatOperations(
                 requestMode: requestMode ?? 'text_chat',
                 thinkingEffort: thinkingEffort ?? null,
                 planMode: planMode ?? null,
+                operationMode: operationMode ?? null,
               });
               return result;
             }
@@ -372,6 +378,7 @@ export function useChatOperations(
             requestMode: requestMode ?? 'text_chat',
             thinkingEffort: thinkingEffort ?? null,
             planMode: planMode ?? null,
+            operationMode: operationMode ?? null,
           });
           return result;
         } catch (e) {

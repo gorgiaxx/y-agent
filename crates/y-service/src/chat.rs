@@ -26,10 +26,11 @@ use crate::container::ServiceContainer;
 
 // Re-export types from chat_types for backward compatibility.
 pub use crate::chat_types::{
-    PendingInteractions, PendingPermissions, PermissionPromptResponse, PrepareTurnError,
-    PrepareTurnRequest, PreparedTurn, ResendTurnError, ResendTurnRequest, SessionAgentConfig,
-    SessionAgentFeatures, ToolCallRecord, TurnCancellationToken, TurnError, TurnEvent,
-    TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
+    OperationMode, PendingInteractions, PendingPermissions, PendingPlanReviews,
+    PermissionPromptResponse, PlanReviewDecision, PrepareTurnError, PrepareTurnRequest,
+    PreparedTurn, ResendTurnError, ResendTurnRequest, SessionAgentConfig, SessionAgentFeatures,
+    ToolCallRecord, TurnCancellationToken, TurnError, TurnEvent, TurnEventSender, TurnInput,
+    TurnMetaSummary, TurnResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -421,6 +422,11 @@ impl ChatService {
                 .as_ref()
                 .and_then(|config| config.plan_mode.clone())
         });
+        let operation_mode = request.operation_mode.unwrap_or_default();
+        {
+            let mut modes = container.session_operation_modes.write().await;
+            modes.insert(session_id.clone(), operation_mode);
+        }
         let mcp_mode = request.mcp_mode.or_else(|| {
             agent_config
                 .as_ref()
@@ -545,6 +551,7 @@ impl ChatService {
             knowledge_collections,
             thinking,
             plan_mode,
+            operation_mode,
             mcp_mode,
             mcp_servers,
             skills,
@@ -662,6 +669,11 @@ impl ChatService {
                 .as_ref()
                 .and_then(|config| config.plan_mode.clone())
         });
+        let operation_mode = request.operation_mode.unwrap_or_default();
+        {
+            let mut modes = container.session_operation_modes.write().await;
+            modes.insert(request.session_id.clone(), operation_mode);
+        }
         let request_mode = request
             .request_mode
             .or_else(|| Self::request_mode_from_metadata(&last_msg.metadata))
@@ -701,6 +713,7 @@ impl ChatService {
             knowledge_collections,
             thinking,
             plan_mode,
+            operation_mode,
             mcp_mode,
             mcp_servers,
             skills,
@@ -1478,6 +1491,7 @@ mod tests {
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,
+            operation_mode: OperationMode::Default,
             agent_name: "chat-turn".into(),
             toolcall_enabled: true,
             preferred_models: vec![],
@@ -1514,6 +1528,7 @@ mod tests {
             knowledge_collections: vec![],
             thinking: None,
             plan_mode: None,
+            operation_mode: OperationMode::Default,
             agent_name: "chat-turn".into(),
             toolcall_enabled: true,
             preferred_models: vec![],
@@ -1569,6 +1584,7 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            operation_mode: None,
             mcp_mode: None,
             mcp_servers: None,
             image_generation_options: None,
@@ -1607,6 +1623,7 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            operation_mode: None,
             mcp_mode: None,
             mcp_servers: None,
             image_generation_options: None,
@@ -1631,6 +1648,7 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            operation_mode: None,
             mcp_mode: None,
             mcp_servers: None,
             image_generation_options: None,
@@ -1654,6 +1672,7 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            operation_mode: None,
             mcp_mode: None,
             mcp_servers: None,
             image_generation_options: None,
@@ -1684,6 +1703,7 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            operation_mode: None,
             mcp_mode: None,
             mcp_servers: None,
             image_generation_options: None,
@@ -1724,6 +1744,7 @@ mod tests {
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                operation_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
                 image_generation_options: None,
@@ -1763,6 +1784,7 @@ mod tests {
                 knowledge_collections: None,
                 thinking: None,
                 plan_mode: None,
+                operation_mode: None,
             },
         )
         .await
@@ -1790,6 +1812,7 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            operation_mode: None,
             mcp_mode: None,
             mcp_servers: None,
             image_generation_options: None,
@@ -1818,6 +1841,7 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            operation_mode: None,
             mcp_mode: None,
             mcp_servers: None,
             image_generation_options: None,
@@ -1838,6 +1862,7 @@ mod tests {
             thinking: None,
             user_message_metadata: None,
             plan_mode: None,
+            operation_mode: None,
             mcp_mode: None,
             mcp_servers: None,
             image_generation_options: None,
@@ -1904,6 +1929,7 @@ thinking_effort = "high"
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                operation_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
                 image_generation_options: None,
@@ -1971,6 +1997,7 @@ skills = ["workspace-skill"]
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                operation_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
                 image_generation_options: None,
@@ -1992,6 +2019,7 @@ skills = ["workspace-skill"]
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                operation_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
                 image_generation_options: None,
@@ -2051,6 +2079,7 @@ max_iterations = 1
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                operation_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
                 image_generation_options: None,
@@ -2071,6 +2100,7 @@ max_iterations = 1
                 thinking: None,
                 user_message_metadata: None,
                 plan_mode: None,
+                operation_mode: None,
                 mcp_mode: None,
                 mcp_servers: None,
                 image_generation_options: None,

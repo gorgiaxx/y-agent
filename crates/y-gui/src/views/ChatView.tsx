@@ -59,11 +59,14 @@ export function ChatView() {
   const {
     askUserData,
     permissionData,
+    planReviewData,
     handleAskUserSubmit,
     handleAskUserDismiss,
     handlePermissionApprove,
     handlePermissionDeny,
     handlePermissionAllowAllForSession,
+    handlePlanReviewApprove,
+    handlePlanReviewReject,
   } = useSessionInteractions(sessionHooks.activeSessionId);
 
   const diagnosticsScope = resolveDiagnosticsScope(viewRouting.activeView, sessionHooks.activeSessionId);
@@ -232,6 +235,9 @@ export function ChatView() {
           onPermissionApprove: handlePermissionApprove,
           onPermissionDeny: handlePermissionDeny,
           onPermissionAllowAllForSession: handlePermissionAllowAllForSession,
+          planReviewData,
+          onPlanReviewApprove: handlePlanReviewApprove,
+          onPlanReviewReject: handlePlanReviewReject,
         }}
         edit={{
           pendingEdit: chatHooks.pendingEdit,

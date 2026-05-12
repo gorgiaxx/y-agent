@@ -39,6 +39,18 @@ pub trait EventSink: Send + Sync + 'static {
         content_preview: Option<&str>,
     );
 
+    /// Emitted when the plan orchestrator needs the user to approve or
+    /// reject a generated plan. The orchestrator pauses until the GUI
+    /// posts back via `chat_answer_plan_review` (Tauri) or the equivalent
+    /// HTTP route. The LLM is never involved in this exchange.
+    fn emit_plan_review_request(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        review_id: &str,
+        plan: &serde_json::Value,
+    );
+
     /// Emitted when the turn completes successfully.
     fn emit_complete(&self, payload: &serde_json::Value);
 
