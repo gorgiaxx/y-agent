@@ -172,6 +172,7 @@ function chatSendBody(a: Record<string, unknown>) {
     thinking_effort: arg(a, 'thinkingEffort', 'thinking_effort'),
     attachments: arg(a, 'attachments'),
     plan_mode: arg(a, 'planMode', 'plan_mode'),
+    operation_mode: arg(a, 'operationMode', 'operation_mode'),
     mcp_mode: arg(a, 'mcpMode', 'mcp_mode'),
     mcp_servers: arg(a, 'mcpServers', 'mcp_servers'),
     image_generation_options: arg(a, 'imageGenerationOptions', 'image_generation_options'),
@@ -187,6 +188,7 @@ function chatResendBody(a: Record<string, unknown>) {
     knowledge_collections: arg(a, 'knowledgeCollections', 'knowledge_collections'),
     thinking_effort: arg(a, 'thinkingEffort', 'thinking_effort'),
     plan_mode: arg(a, 'planMode', 'plan_mode'),
+    operation_mode: arg(a, 'operationMode', 'operation_mode'),
   };
 }
 
@@ -305,6 +307,8 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
                          body: (a) => ({ interaction_id: arg(a, 'interactionId', 'interaction_id'), answers: arg(a, 'answers') }) },
   chat_answer_permission: { method: 'POST', path: '/api/v1/chat/answer-permission',
                          body: (a) => ({ request_id: arg(a, 'requestId', 'request_id'), decision: arg(a, 'decision') }) },
+  chat_answer_plan_review: { method: 'POST', path: '/api/v1/chat/answer-plan-review',
+                         body: (a) => ({ review_id: arg(a, 'reviewId', 'review_id'), decision: arg(a, 'decision'), feedback: arg(a, 'feedback') }) },
   session_last_turn_meta: { method: 'GET', path: pathWith('/api/v1/chat/last-turn-meta/{sessionId}', 'sessionId') },
   // -- Agents --
   agent_list:          { method: 'GET',  path: '/api/v1/agents' },

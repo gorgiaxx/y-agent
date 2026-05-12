@@ -6,7 +6,7 @@ import { InputArea } from '../chat-panel/input-area/InputArea';
 import type { InputProviderProps, InputMcpProps, InputDialogProps, InputEditProps, InputFeatureProps } from '../chat-panel/input-area/InputArea';
 import type { AgentInfo, AgentDetail } from '../../hooks/useAgents';
 import type { SessionInfo } from '../../types';
-import type { Message, ThinkingEffort, PlanMode, McpMode, Attachment, SkillInfo, KnowledgeCollectionInfo } from '../../types';
+import type { Message, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, SkillInfo, KnowledgeCollectionInfo } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import type { CompactInfo } from '../../hooks/useChat';
@@ -50,7 +50,7 @@ interface AgentStudioProps {
   onRestoreBranch: (checkpointId: string) => void;
   onForkMessage: (messageIndex: number) => void;
   // InputArea callbacks
-  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, mcpMode?: McpMode | null, mcpServers?: string[]) => void;
+  onSend: (message: string, skills?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, operationMode?: OperationMode, mcpMode?: McpMode | null, mcpServers?: string[]) => void;
   onStop: () => void;
   onCommand: (command: string) => boolean;
   onExpandChange: (expanded: boolean) => void;

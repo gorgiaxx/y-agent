@@ -417,6 +417,9 @@ export function AgentsView() {
                     onPermissionApprove: interactions.handlePermissionApprove,
                     onPermissionDeny: interactions.handlePermissionDeny,
                     onPermissionAllowAllForSession: interactions.handlePermissionAllowAllForSession,
+                    planReviewData: interactions.planReviewData,
+                    onPlanReviewApprove: interactions.handlePlanReviewApprove,
+                    onPlanReviewReject: interactions.handlePlanReviewReject,
                   }}
                   edit={{
                     pendingEdit: agentChatHooks.pendingEdit,

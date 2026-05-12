@@ -38,6 +38,7 @@ use y_storage::{
 };
 use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
+use crate::chat_types::OperationMode;
 use crate::config::ServiceConfig;
 
 use crate::knowledge_service::KnowledgeService;
@@ -172,8 +173,15 @@ pub struct ServiceContainer {
     /// Pending permission-approval channels for HITL permission requests.
     pub pending_permissions: crate::chat::PendingPermissions,
 
+    /// Pending plan-review channels for HITL plan approval/rejection.
+    /// Decoupled from the LLM -- the GUI talks directly to the orchestrator.
+    pub pending_plan_reviews: crate::chat::PendingPlanReviews,
+
     /// Session-scoped permission overrides.
     pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
+
+    /// Session-scoped input operation modes.
+    pub session_operation_modes: Arc<RwLock<HashMap<SessionId, OperationMode>>>,
 
     // -- Bot ---------------------------------------------------------------
     /// Path to the bot persona directory (`~/.config/y-agent/persona/`).
@@ -363,7 +371,9 @@ impl ServiceContainer {
             callable_agents_text: ctx.callable_agents_text,
             pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            pending_plan_reviews: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
+            session_operation_modes: Arc::new(RwLock::new(HashMap::new())),
             persona_dir: config.persona_dir.clone(),
             mcp_manager,
             file_history_managers: crate::rewind::create_file_history_managers(),
@@ -992,6 +1002,10 @@ impl ServiceContainer {
             let mut permissions = self.pending_permissions.lock().await;
             permissions.remove(&session_id.0);
         }
+        {
+            let mut reviews = self.pending_plan_reviews.lock().await;
+            reviews.remove(&session_id.0);
+        }
         info!(session = %session_id.0, "cleaned up in-memory state for deleted session");
     }
 
@@ -1521,6 +1535,7 @@ mod tests {
                 base_url: None,
                 headers: std::collections::HashMap::new(),
                 http_protocol: y_provider::config::HttpProtocol::Http1,
+                include_usage: None,
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,
@@ -1552,6 +1567,7 @@ mod tests {
                     base_url: None,
                     headers: std::collections::HashMap::new(),
                     http_protocol: y_provider::config::HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1584,6 +1600,7 @@ mod tests {
                     base_url: Some("http://localhost:8080/v1".into()),
                     headers: std::collections::HashMap::new(),
                     http_protocol: y_provider::config::HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1620,6 +1637,7 @@ mod tests {
                     base_url: None,
                     headers: std::collections::HashMap::new(),
                     http_protocol: y_provider::config::HttpProtocol::Http1,
+                    include_usage: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
