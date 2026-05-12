@@ -172,7 +172,7 @@ The following core tools are always listed in the system prompt with compact sch
 
 | Tool          | Description                            | Required Args                                 |
 | ------------- | -------------------------------------- | --------------------------------------------- |
-| `FileRead`   | Read file contents                     | `{"path": "<filepath>", "line_offset?": 0, "limit?": 2000}` |
+| `FileRead`   | Read file contents                     | `{"path": "<filepath>", "line_offset?": 0, "limit?": 2000, "include_line_numbers?": false}` |
 | `FileWrite`  | Write content to a file (creates dirs) | `{"path": "<filepath>", "content": "<text>"}` |
 | `FileList`   | List directory contents                | `{"path": "<dirpath>"}`                       |
 | `FileSearch` | Search for text pattern in files       | `{"pattern": "<text>", "path": "<dirpath>"}`  |
