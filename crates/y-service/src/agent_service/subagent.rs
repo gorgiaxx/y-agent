@@ -184,6 +184,7 @@ impl AgentRunner for ServiceAgentRunner {
             provider_tags: config.provider_tags.clone(),
             request_mode: y_core::provider::RequestMode::TextChat,
             working_directory: workspace,
+            additional_read_dirs: vec![],
             temperature: config.temperature,
             max_tokens: config.max_tokens,
             thinking: None,

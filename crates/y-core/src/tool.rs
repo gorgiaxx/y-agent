@@ -105,6 +105,12 @@ pub struct ToolInput {
     ///
     /// Tool arguments may still override this value for a single call.
     pub working_dir: Option<String>,
+    /// Additional read-only roots for filesystem inspection tools.
+    ///
+    /// This is intended for application-managed artifacts that live outside
+    /// the session workspace, such as generated plan files. Mutating tools
+    /// must continue to enforce `working_dir` only.
+    pub additional_read_dirs: Vec<String>,
     /// Runtime command runner, injected by the executor.
     /// `None` for tools that don't execute shell commands (`FileRead`, etc.).
     /// When `Some`, tools like `ShellExec` delegate execution through this
@@ -120,6 +126,7 @@ impl std::fmt::Debug for ToolInput {
             .field("arguments", &self.arguments)
             .field("session_id", &self.session_id)
             .field("working_dir", &self.working_dir)
+            .field("additional_read_dirs", &self.additional_read_dirs)
             .field(
                 "command_runner",
                 &self.command_runner.as_ref().map(|_| ".."),

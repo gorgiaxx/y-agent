@@ -273,6 +273,7 @@ pub(crate) async fn execute_and_record_tool(
         tc,
         &ctx.session_id,
         ctx.working_directory.as_deref(),
+        &ctx.additional_read_dirs,
         progress,
         ctx.cancel_token.as_ref(),
     )
@@ -561,6 +562,7 @@ async fn execute_tool_call(
     tc: &ToolCallRequest,
     session_id: &SessionId,
     working_dir: Option<&str>,
+    additional_read_dirs: &[String],
     progress: Option<&TurnEventSender>,
     cancel: Option<&CancellationToken>,
 ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
@@ -660,6 +662,7 @@ async fn execute_tool_call(
         arguments: tc.arguments.clone(),
         session_id: session_id.clone(),
         working_dir: working_dir.map(ToOwned::to_owned),
+        additional_read_dirs: additional_read_dirs.to_vec(),
         command_runner: Some(Arc::clone(&container.runtime_manager) as Arc<dyn CommandRunner>),
     };
 

@@ -77,6 +77,8 @@ pub struct AgentExecutionConfig {
     pub request_mode: RequestMode,
     /// Default working directory for runtime-backed process tools.
     pub working_directory: Option<String>,
+    /// Extra read-only filesystem roots available to read/search tools.
+    pub additional_read_dirs: Vec<String>,
     /// Temperature override (None = use provider default).
     pub temperature: Option<f64>,
     /// Max tokens to generate.
@@ -280,6 +282,7 @@ pub(crate) struct ToolExecContext {
     pub(crate) trace_id: Option<Uuid>,
     pub(crate) session_id: SessionId,
     pub(crate) working_directory: Option<String>,
+    pub(crate) additional_read_dirs: Vec<String>,
     pub(crate) working_history: Vec<Message>,
     pub(crate) accumulated_content: String,
     /// Per-iteration text content, stored separately for frontend interleaving.

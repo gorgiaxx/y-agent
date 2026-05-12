@@ -21,7 +21,7 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
-use super::path_utils::resolve_workspace_path;
+use super::path_utils::resolve_read_path;
 
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 10_000;
@@ -312,6 +312,7 @@ impl Tool for GlobTool {
 
         let search_path = input.arguments.get("path").and_then(|v| v.as_str());
         let working_dir = input.working_dir.as_deref();
+        let additional_read_dirs = &input.additional_read_dirs;
         let max_results = Self::parse_max_results(&input.arguments)?;
 
         // Resolve the target directory and effective glob pattern.
@@ -320,19 +321,19 @@ impl Tool for GlobTool {
             if let Some((base, rel)) = Self::parse_absolute_glob(pattern) {
                 let base = base.to_string_lossy().to_string();
                 (
-                    resolve_workspace_path("Glob", Some(&base), working_dir)?,
+                    resolve_read_path("Glob", Some(&base), working_dir, additional_read_dirs)?,
                     rel,
                 )
             } else {
                 // The pattern is a full absolute path with no globs.
                 (
-                    resolve_workspace_path("Glob", search_path, working_dir)?,
+                    resolve_read_path("Glob", search_path, working_dir, additional_read_dirs)?,
                     pattern.to_string(),
                 )
             }
         } else {
             (
-                resolve_workspace_path("Glob", search_path, working_dir)?,
+                resolve_read_path("Glob", search_path, working_dir, additional_read_dirs)?,
                 pattern.to_string(),
             )
         };
@@ -406,6 +407,7 @@ mod tests {
             arguments: args,
             session_id: SessionId::new(),
             working_dir: None,
+            additional_read_dirs: vec![],
             command_runner: None,
         }
     }

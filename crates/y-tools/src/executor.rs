@@ -199,6 +199,7 @@ mod tests {
             arguments: args,
             session_id: SessionId::new(),
             working_dir: None,
+            additional_read_dirs: vec![],
             command_runner: None,
         }
     }

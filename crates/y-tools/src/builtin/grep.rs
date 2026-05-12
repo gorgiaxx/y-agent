@@ -27,7 +27,7 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
-use super::path_utils::resolve_workspace_path;
+use super::path_utils::resolve_read_path;
 
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 10_000;
@@ -451,10 +451,14 @@ impl Tool for GrepTool {
             .get("path")
             .and_then(|v| v.as_str())
             .filter(|value| !value.is_empty());
-        let search_path =
-            resolve_workspace_path("Grep", search_path_arg, input.working_dir.as_deref())?
-                .to_string_lossy()
-                .to_string();
+        let search_path = resolve_read_path(
+            "Grep",
+            search_path_arg,
+            input.working_dir.as_deref(),
+            &input.additional_read_dirs,
+        )?
+        .to_string_lossy()
+        .to_string();
 
         let mode = input
             .arguments
@@ -667,6 +671,7 @@ mod tests {
             arguments: args,
             session_id: SessionId::new(),
             working_dir: None,
+            additional_read_dirs: vec![],
             command_runner: None,
         }
     }

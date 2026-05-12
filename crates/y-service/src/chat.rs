@@ -93,6 +93,7 @@ impl ChatService {
             provider_tags: input.provider_tags.clone(),
             request_mode: input.request_mode,
             working_directory: input.working_directory.clone(),
+            additional_read_dirs: vec![],
             temperature: input.temperature,
             max_tokens: input.max_completion_tokens,
             thinking: input.thinking.clone(),
@@ -108,6 +109,31 @@ impl ChatService {
             response_format: None,
             image_generation_options: input.image_generation_options.clone(),
         }
+    }
+
+    async fn root_additional_read_dirs(container: &ServiceContainer) -> Vec<String> {
+        let (plan_mode_active, loop_mode_active) = {
+            let pctx = container.prompt_context.read().await;
+            (
+                pctx.config_flags
+                    .get("plan_mode.active")
+                    .copied()
+                    .unwrap_or(false),
+                pctx.config_flags
+                    .get("loop_mode.active")
+                    .copied()
+                    .unwrap_or(false),
+            )
+        };
+
+        let mut dirs = Vec::new();
+        if plan_mode_active {
+            dirs.push(container.data_dir.join("plan").display().to_string());
+        }
+        if loop_mode_active {
+            dirs.push(container.data_dir.join("loop").display().to_string());
+        }
+        dirs
     }
 
     async fn resolve_tool_calling_mode(
@@ -811,8 +837,9 @@ impl ChatService {
 
         // 2. Construct execution config for the root agent.
         let max_tool_iterations = container.guardrail_manager.config().max_tool_iterations;
-        let exec_config =
+        let mut exec_config =
             Self::build_execution_config(input, tool_defs, tool_calling_mode, max_tool_iterations);
+        exec_config.additional_read_dirs = Self::root_additional_read_dirs(container).await;
 
         // 3. Delegate to AgentService.
         let result = match AgentService::execute(container, &exec_config, progress, cancel).await {
@@ -1549,6 +1576,22 @@ mod tests {
             ChatService::build_execution_config(&input, vec![], ToolCallingMode::default(), 8);
         assert_eq!(config.temperature, Some(1.0));
         assert_eq!(config.working_directory.as_deref(), Some("/repo/workspace"));
+    }
+
+    #[tokio::test]
+    async fn test_root_additional_read_dirs_include_plan_dir_when_plan_mode_active() {
+        let (container, _tmp) = make_test_container().await;
+        {
+            let mut pctx = container.prompt_context.write().await;
+            pctx.config_flags.insert("plan_mode.active".into(), true);
+        }
+
+        let dirs = ChatService::root_additional_read_dirs(&container).await;
+
+        assert_eq!(
+            dirs,
+            vec![container.data_dir.join("plan").display().to_string()]
+        );
     }
 
     // -----------------------------------------------------------------------

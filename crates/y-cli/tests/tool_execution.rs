@@ -72,6 +72,7 @@ async fn e2e_tool_register_and_execute() {
         arguments: serde_json::json!({"text": "hello world"}),
         session_id: SessionId::new(),
         working_dir: None,
+        additional_read_dirs: vec![],
         command_runner: None,
     };
 
@@ -127,6 +128,7 @@ async fn e2e_tool_registry_simulation() {
         arguments: serde_json::json!({"text": "from registry"}),
         session_id: SessionId::new(),
         working_dir: None,
+        additional_read_dirs: vec![],
         command_runner: None,
     };
     let output = tool.execute(input).await.unwrap();

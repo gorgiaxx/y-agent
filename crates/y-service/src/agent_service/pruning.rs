@@ -234,6 +234,7 @@ mod tests {
             trace_id: None,
             session_id: SessionId("test-session".into()),
             working_directory: None,
+            additional_read_dirs: vec![],
             working_history,
             accumulated_content: String::new(),
             iteration_texts: vec![],

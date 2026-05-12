@@ -36,6 +36,7 @@ const MAX_PARALLEL_PHASES_CEILING: usize = 16;
 /// Maximum time to wait for the user to approve or reject a plan before
 /// giving up and returning a timeout outcome.
 const PLAN_REVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+const MAX_PLAN_REVISIONS: usize = 5;
 const PHASE_EXECUTOR_FALLBACK_ALLOWED_TOOLS: &[&str] = &[
     "ToolSearch",
     "FileRead",
@@ -198,32 +199,63 @@ impl PlanOrchestrator {
 
         let review_mode = resolve_effective_plan_review_mode(container, parent_session_id).await;
 
-        // Plan writing: plan-writer returns a structured JSON plan directly.
-        tracing::info!(request = %request, "plan orchestrator: starting plan-writer");
-        let structured_plan = Self::run_plan_writer(
-            container,
-            parent_session_id,
-            request,
-            context,
-            &plan_path,
-            review_mode,
-            progress,
-            cancel.as_ref(),
-        )
-        .await?;
-
-        let total_tasks = structured_plan.tasks.len();
-
         let max_parallel = resolve_max_parallel_phases(arguments);
 
-        let review = Self::resolve_plan_review(
-            &structured_plan,
-            &plan_path,
-            review_mode,
-            progress,
-            &container.pending_plan_reviews,
-        )
-        .await;
+        // Plan-write -> review loop. On `Revise`, the user's feedback is fed
+        // back into plan-writer for another iteration. `Approve` exits the
+        // loop into execution; `Reject` / timeout / cancel returns immediately.
+        let mut revision_feedback: Option<String> = None;
+        let mut revision_count: usize = 0;
+        let (structured_plan, review) = loop {
+            tracing::info!(
+                request = %request,
+                revision = revision_count,
+                "plan orchestrator: starting plan-writer"
+            );
+            let structured_plan = Self::run_plan_writer(
+                container,
+                parent_session_id,
+                request,
+                context,
+                &plan_path,
+                review_mode,
+                revision_feedback.as_deref(),
+                progress,
+                cancel.as_ref(),
+            )
+            .await?;
+
+            let review = Self::resolve_plan_review(
+                &structured_plan,
+                &plan_path,
+                review_mode,
+                progress,
+                &container.pending_plan_reviews,
+            )
+            .await;
+
+            if review.status == "revise" {
+                revision_count += 1;
+                if revision_count > MAX_PLAN_REVISIONS {
+                    tracing::warn!(
+                        revision_count,
+                        "plan orchestrator: exceeded MAX_PLAN_REVISIONS, aborting"
+                    );
+                    let exhausted = PlanReviewOutcome {
+                        approved: false,
+                        status: "max_revisions_exceeded".to_string(),
+                        feedback: review.feedback,
+                    };
+                    break (structured_plan, exhausted);
+                }
+                revision_feedback = Some(review.feedback);
+                continue;
+            }
+
+            break (structured_plan, review);
+        };
+
+        let total_tasks = structured_plan.tasks.len();
 
         if !review.approved {
             return Ok(build_plan_rejected_tool_output(
@@ -298,6 +330,7 @@ impl PlanOrchestrator {
         context: &str,
         plan_path: &std::path::Path,
         review_mode: PlanReviewMode,
+        revision_feedback: Option<&str>,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
     ) -> Result<StructuredPlan, ToolError> {
@@ -338,7 +371,7 @@ impl PlanOrchestrator {
         .await;
 
         // Build the user message for the plan-writer as structured JSON.
-        let user_msg = build_plan_writer_input(request, context, plan_path);
+        let user_msg = build_plan_writer_input(request, context, plan_path, revision_feedback);
 
         let messages = build_subagent_messages(&settings.system_prompt, user_msg);
         let tool_defs =
@@ -357,6 +390,7 @@ impl PlanOrchestrator {
             provider_tags: settings.provider_tags.clone(),
             request_mode: y_core::provider::RequestMode::TextChat,
             working_directory: None,
+            additional_read_dirs: vec![plan_path.display().to_string()],
             temperature: settings.temperature,
             max_tokens: settings.max_tokens,
             thinking: None,
@@ -518,6 +552,20 @@ impl PlanOrchestrator {
                             approved: true,
                             status: "approved".to_string(),
                             feedback: String::new(),
+                        }
+                    }
+                    Ok(Ok(PlanReviewDecision::Revise { feedback })) => {
+                        emit_plan_review_progress(
+                            tx,
+                            plan_path,
+                            plan,
+                            "feedback_received",
+                            &feedback,
+                        );
+                        PlanReviewOutcome {
+                            approved: false,
+                            status: "revise".to_string(),
+                            feedback,
                         }
                     }
                     Ok(Ok(PlanReviewDecision::Reject { feedback })) => {
@@ -713,6 +761,7 @@ impl PlanOrchestrator {
                             parent_session_id,
                             task,
                             &plan.plan_title,
+                            plan_path,
                             task.phase,
                             total_tasks,
                             progress,
@@ -820,6 +869,7 @@ impl PlanOrchestrator {
                 parent_session_id,
                 task,
                 &plan.plan_title,
+                plan_path,
                 idx + 1,
                 total_tasks,
                 progress,
@@ -883,6 +933,7 @@ impl PlanOrchestrator {
         parent_session_id: &SessionId,
         task: &PlanTask,
         plan_title: &str,
+        plan_path: &Path,
         phase_num: usize,
         total_phases: usize,
         progress: Option<&TurnEventSender>,
@@ -936,6 +987,7 @@ impl PlanOrchestrator {
             child_uuid,
             task,
             plan_title,
+            plan_path,
             phase_num,
             total_phases,
             tool_defs,
@@ -1447,6 +1499,7 @@ fn build_phase_execution_config(
     session_uuid: Uuid,
     task: &PlanTask,
     plan_title: &str,
+    plan_path: &Path,
     phase_num: usize,
     total_phases: usize,
     tool_definitions: Vec<serde_json::Value>,
@@ -1467,6 +1520,7 @@ fn build_phase_execution_config(
         provider_tags: settings.provider_tags.clone(),
         request_mode: y_core::provider::RequestMode::TextChat,
         working_directory: None,
+        additional_read_dirs: vec![plan_path.display().to_string()],
         temperature: settings.temperature,
         max_tokens: settings.max_tokens,
         thinking: None,
@@ -1779,13 +1833,21 @@ fn resolve_task_status(task: &PlanTask, phase_results: &[serde_json::Value]) -> 
 /// Build the structured JSON user message passed to `plan-writer`.
 ///
 /// Includes `task`, `context`, and `plan_path`.
-fn build_plan_writer_input(request: &str, context: &str, plan_path: &Path) -> String {
-    serde_json::json!({
+fn build_plan_writer_input(
+    request: &str,
+    context: &str,
+    plan_path: &Path,
+    revision_feedback: Option<&str>,
+) -> String {
+    let mut obj = serde_json::json!({
         "task": request,
         "context": context,
         "plan_path": plan_path.display().to_string(),
-    })
-    .to_string()
+    });
+    if let Some(fb) = revision_feedback {
+        obj["revision_feedback"] = serde_json::Value::String(fb.to_string());
+    }
+    obj.to_string()
 }
 
 /// Resolve the max-parallel-phases setting from Plan tool arguments.
@@ -1974,6 +2036,7 @@ pub async fn assess_complexity(
         provider_tags,
         request_mode: y_core::provider::RequestMode::TextChat,
         working_directory: None,
+        additional_read_dirs: vec![],
         temperature: Some(temperature),
         max_tokens: Some(max_tokens),
         thinking: None,
@@ -2306,6 +2369,7 @@ mod tests {
             Uuid::new_v4(),
             &task,
             "Registry-backed phase execution",
+            Path::new("/tmp/gui-plan.md"),
             1,
             3,
             vec![],
@@ -2321,6 +2385,7 @@ mod tests {
         assert_eq!(config.messages.len(), 2);
         assert_eq!(config.messages[0].role, y_core::types::Role::System);
         assert!(config.messages[1].content.contains("phase 1 of 3"));
+        assert_eq!(config.additional_read_dirs, vec!["/tmp/gui-plan.md"]);
     }
 
     #[test]
@@ -2586,6 +2651,18 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_review_decision_revise_serde_round_trip() {
+        let decision = PlanReviewDecision::Revise {
+            feedback: "reduce scope".into(),
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains(r#""decision":"revise""#));
+        assert!(json.contains(r#""feedback":"reduce scope""#));
+        let parsed: PlanReviewDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, decision);
+    }
+
+    #[test]
     fn test_resolve_max_parallel_phases_zero_falls_back_to_default() {
         let args = serde_json::json!({ "max_parallel_phases": 0 });
         assert_eq!(
@@ -2606,20 +2683,30 @@ mod tests {
     #[test]
     fn test_build_plan_writer_input_includes_required_fields() {
         let plan_path = Path::new("/tmp/plan.md");
-        let raw = build_plan_writer_input("refactor auth", "src/auth/", plan_path);
+        let raw = build_plan_writer_input("refactor auth", "src/auth/", plan_path, None);
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["task"], "refactor auth");
         assert_eq!(parsed["context"], "src/auth/");
         assert_eq!(parsed["plan_path"], "/tmp/plan.md");
+        assert!(parsed.get("revision_feedback").is_none());
     }
 
     #[test]
     fn test_build_plan_writer_input_with_empty_context() {
         let plan_path = Path::new("/tmp/plan.md");
-        let raw = build_plan_writer_input("task", "", plan_path);
+        let raw = build_plan_writer_input("task", "", plan_path, None);
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["task"], "task");
         assert_eq!(parsed["context"], "");
+    }
+
+    #[test]
+    fn test_build_plan_writer_input_with_revision_feedback() {
+        let plan_path = Path::new("/tmp/plan.md");
+        let raw = build_plan_writer_input("task", "ctx", plan_path, Some("make it smaller"));
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["task"], "task");
+        assert_eq!(parsed["revision_feedback"], "make it smaller");
     }
 
     #[test]

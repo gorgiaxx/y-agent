@@ -71,6 +71,7 @@ impl TaskExecutor for ToolExecutionExecutor {
             arguments,
             session_id: SessionId(String::new()),
             working_dir: None,
+            additional_read_dirs: vec![],
             command_runner: None,
         };
 

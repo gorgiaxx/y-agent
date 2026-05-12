@@ -9,7 +9,7 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
-use super::path_utils::resolve_workspace_path;
+use super::path_utils::resolve_read_path;
 
 /// Default and maximum number of lines returned by one `FileRead` call.
 const MAX_LINES_TO_READ: usize = 2_000;
@@ -45,14 +45,17 @@ impl FileReadTool {
         ToolDefinition {
             name: ToolName::from_string("FileRead"),
             description: format!(
-                "Read file contents at a given path. Returns numbered text and reads at most \
-                 {MAX_LINES_TO_READ} lines per call by default. When the target location is \
-                 known, pass line_offset (or offset) and limit; for broad lookup, use Glob/Grep \
-                 first and then FileRead the specific range."
+                "Read file contents at a given path. Returns plain text by default and reads at \
+                 most {MAX_LINES_TO_READ} lines per call. Pass include_line_numbers=true when \
+                 stable line references are needed. When the target location is known, pass \
+                 line_offset (or offset) and limit; for broad lookup, use Glob/Grep first and \
+                 then FileRead the specific range."
             ),
             help: Some(format!(
                 "Use FileRead for targeted file inspection.\n\
-                 - Results are returned with 1-based line numbers.\n\
+                 - Results are returned as plain text by default.\n\
+                 - Pass include_line_numbers=true for 1-based line numbers when reviewing or \
+                   editing code.\n\
                  - By default, FileRead returns up to {MAX_LINES_TO_READ} lines from the start.\n\
                  - Use line_offset (0-based) and limit to read specific chunks of larger files.\n\
                  - If you are looking for a symbol, string, or section, use Grep first and then \
@@ -81,6 +84,10 @@ impl FileReadTool {
                         "minimum": 1,
                         "maximum": MAX_LINES_TO_READ,
                         "description": "Optional maximum number of lines to read. Defaults to 2000 and cannot exceed 2000."
+                    },
+                    "include_line_numbers": {
+                        "type": "boolean",
+                        "description": "When true, prefix each returned line with its 1-based line number. Defaults to false to reduce token use."
                     }
                 },
                 "required": ["path"]
@@ -96,7 +103,8 @@ impl FileReadTool {
                     "limit": { "type": "integer" },
                     "encoding": { "type": "string" },
                     "truncated": { "type": "boolean" },
-                    "has_more_lines": { "type": "boolean" }
+                    "has_more_lines": { "type": "boolean" },
+                    "line_numbers": { "type": "boolean" }
                 }
             })),
             category: ToolCategory::FileSystem,
@@ -123,8 +131,12 @@ impl Tool for FileReadTool {
                     message: "missing 'path' parameter".into(),
                 })?;
 
-        let path =
-            resolve_workspace_path("FileRead", Some(path_str), input.working_dir.as_deref())?;
+        let path = resolve_read_path(
+            "FileRead",
+            Some(path_str),
+            input.working_dir.as_deref(),
+            &input.additional_read_dirs,
+        )?;
 
         // Resolve to canonical path for security.
         let canonical = path.canonicalize().map_err(|e| ToolError::Other {
@@ -141,6 +153,8 @@ impl Tool for FileReadTool {
         }
 
         let range = ReadRange::from_arguments(&input.arguments)?;
+        let include_line_numbers =
+            parse_bool_arg(&input.arguments, "include_line_numbers")?.unwrap_or(false);
         if !range.explicit_range && metadata.len() > MAX_FILE_READ_SIZE_BYTES {
             return Err(ToolError::Other {
                 message: format!(
@@ -152,8 +166,12 @@ impl Tool for FileReadTool {
         }
 
         let read = read_file_range_as_utf8_impl(&canonical, &metadata, range).await?;
-        let numbered_content = format_numbered_lines(&read.lines, range.offset);
-        let token_count = estimate_output_tokens(&numbered_content);
+        let formatted_content = if include_line_numbers {
+            format_numbered_lines(&read.lines, range.offset)
+        } else {
+            read.lines.join("\n")
+        };
+        let token_count = estimate_output_tokens(&formatted_content);
         if token_count > MAX_OUTPUT_TOKENS {
             return Err(ToolError::Other {
                 message: format!(
@@ -163,7 +181,7 @@ impl Tool for FileReadTool {
             });
         }
 
-        let (content, char_truncated) = truncate_content(&numbered_content);
+        let (content, char_truncated) = truncate_content(&formatted_content);
         let line_count = read.lines.len();
         let has_more_lines = range.offset.saturating_add(line_count) < read.total_lines;
         let auto_truncated = range.default_limit_applied && has_more_lines;
@@ -180,6 +198,7 @@ impl Tool for FileReadTool {
             "read_bytes": read.read_bytes,
             "has_more_lines": has_more_lines,
             "default_limit_applied": range.default_limit_applied,
+            "line_numbers": include_line_numbers,
         });
         if auto_truncated || char_truncated {
             result["truncated"] = serde_json::json!(true);
@@ -447,6 +466,21 @@ fn parse_usize_arg(arguments: &serde_json::Value, name: &str) -> Result<Option<u
         })
 }
 
+fn parse_bool_arg(arguments: &serde_json::Value, name: &str) -> Result<Option<bool>, ToolError> {
+    let Some(value) = arguments.get(name) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_bool()
+        .map(Some)
+        .ok_or_else(|| ToolError::ValidationError {
+            message: format!("'{name}' must be a boolean"),
+        })
+}
+
 fn line_in_range(line_index: usize, range: ReadRange) -> bool {
     line_index >= range.offset && line_index < range.offset.saturating_add(range.limit)
 }
@@ -579,6 +613,7 @@ mod tests {
             arguments: args,
             session_id: SessionId::new(),
             working_dir: None,
+            additional_read_dirs: vec![],
             command_runner: None,
         }
     }
@@ -589,6 +624,16 @@ mod tests {
     ) -> ToolInput {
         let mut input = make_input(args);
         input.working_dir = Some(working_dir.display().to_string());
+        input
+    }
+
+    fn make_input_with_working_dir_and_additional_read_root(
+        args: serde_json::Value,
+        working_dir: &std::path::Path,
+        additional_read_root: &std::path::Path,
+    ) -> ToolInput {
+        let mut input = make_input_with_working_dir(args, working_dir);
+        input.additional_read_dirs = vec![additional_read_root.display().to_string()];
         input
     }
 
@@ -607,11 +652,32 @@ mod tests {
         let output = tool.execute(input).await.unwrap();
         assert!(output.success);
         let content_text = output.content["content"].as_str().unwrap();
-        assert!(content_text.contains("1\tline 1"));
-        assert!(content_text.contains("2\tline 2"));
+        assert_eq!(content_text, "line 1\nline 2");
         assert_eq!(output.content["lines"], 2);
         assert_eq!(output.content["total_lines"], 2);
+        assert_eq!(output.content["line_numbers"], false);
         assert_eq!(output.content["encoding"], "UTF-8");
+    }
+
+    #[tokio::test]
+    async fn test_file_read_include_line_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("numbered.txt");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "line 1").unwrap();
+        writeln!(f, "line 2").unwrap();
+
+        let tool = FileReadTool::new();
+        let input = make_input(serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "include_line_numbers": true
+        }));
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        let content_text = output.content["content"].as_str().unwrap();
+        assert_eq!(content_text, "1\tline 1\n2\tline 2");
+        assert_eq!(output.content["line_numbers"], true);
     }
 
     #[tokio::test]
@@ -660,6 +726,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_file_read_allows_path_matching_additional_read_root() {
+        let workspace = tempfile::tempdir().unwrap();
+        let plan_dir = tempfile::tempdir().unwrap();
+        let plan_file = plan_dir.path().join("generated-plan.md");
+        std::fs::write(&plan_file, "generated plan").unwrap();
+
+        let tool = FileReadTool::new();
+        let input = make_input_with_working_dir_and_additional_read_root(
+            serde_json::json!({"path": plan_file.display().to_string()}),
+            workspace.path(),
+            &plan_file,
+        );
+        let output = tool.execute(input).await.unwrap();
+
+        assert!(output.success);
+        assert!(output.content["content"]
+            .as_str()
+            .unwrap()
+            .contains("generated plan"));
+    }
+
+    #[tokio::test]
     async fn test_file_read_with_offset_and_limit() {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("test2.txt");
@@ -681,10 +769,8 @@ mod tests {
         assert_eq!(content_obj["lines"].as_u64().unwrap(), 2);
         assert_eq!(content_obj["total_lines"].as_u64().unwrap(), 4);
         let text = content_obj["content"].as_str().unwrap();
-        assert!(text.contains("2\tline 2"));
-        assert!(text.contains("3\tline 3"));
-        assert!(!text.contains("1\tline 1"));
-        assert!(!text.contains("4\tline 4"));
+        assert_eq!(text, "line 2\nline 3");
+        assert_eq!(content_obj["line_numbers"], false);
     }
 
     #[tokio::test]
@@ -713,8 +799,8 @@ mod tests {
         );
         assert_eq!(output.content["truncated"].as_bool(), Some(true));
         let text = output.content["content"].as_str().unwrap();
-        assert!(text.contains("2000\tline 2000"));
-        assert!(!text.contains("2001\tline 2001"));
+        assert!(text.contains("line 2000"));
+        assert!(!text.contains("line 2001"));
     }
 
     #[tokio::test]
@@ -750,7 +836,8 @@ mod tests {
         let input = make_input(serde_json::json!({
             "path": file_path.to_str().unwrap(),
             "line_offset": 2500,
-            "limit": 3
+            "limit": 3,
+            "include_line_numbers": true
         }));
         let output = tool.execute(input).await.unwrap();
 
@@ -784,8 +871,8 @@ mod tests {
         assert!(output.success);
         assert_eq!(output.content["lines"].as_u64().unwrap(), 1);
         let text = output.content["content"].as_str().unwrap();
-        assert!(text.contains("2\tline 2"));
-        assert!(!text.contains("1\tline 1"));
+        assert_eq!(text, "line 2");
+        assert_eq!(output.content["line_numbers"], false);
     }
 
     #[tokio::test]
@@ -834,6 +921,7 @@ mod tests {
         assert!(def.description.contains("Grep"));
         let props = def.parameters["properties"].as_object().unwrap();
         assert!(props.contains_key("offset"));
+        assert!(props.contains_key("include_line_numbers"));
         assert_eq!(props["limit"]["maximum"], MAX_LINES_TO_READ);
     }
 
