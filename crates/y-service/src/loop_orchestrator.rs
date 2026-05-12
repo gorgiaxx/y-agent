@@ -120,7 +120,9 @@ impl LoopOrchestrator {
         let max_rounds = arguments
             .get("max_rounds")
             .and_then(serde_json::Value::as_u64)
-            .map_or(DEFAULT_MAX_ROUNDS, |v| (v as usize).clamp(MIN_MAX_ROUNDS, MAX_ROUNDS_CEILING));
+            .map_or(DEFAULT_MAX_ROUNDS, |v| {
+                (v as usize).clamp(MIN_MAX_ROUNDS, MAX_ROUNDS_CEILING)
+            });
 
         // Create progress directory and file.
         let slug = slug_from_request(request);

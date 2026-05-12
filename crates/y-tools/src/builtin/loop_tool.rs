@@ -107,7 +107,9 @@ impl Tool for LoopTool {
             .arguments
             .get("max_rounds")
             .and_then(serde_json::Value::as_u64)
-            .map_or(DEFAULT_MAX_ROUNDS, |v| (v as usize).clamp(MIN_MAX_ROUNDS, MAX_ROUNDS_CEILING));
+            .map_or(DEFAULT_MAX_ROUNDS, |v| {
+                (v as usize).clamp(MIN_MAX_ROUNDS, MAX_ROUNDS_CEILING)
+            });
 
         Ok(ToolOutput {
             success: true,
