@@ -803,7 +803,8 @@ mod tests {
                 | TurnEvent::LoopLimitHit { .. }
                 | TurnEvent::LlmError { .. }
                 | TurnEvent::UserInteractionRequest { .. }
-                | TurnEvent::PermissionRequest { .. } => {}
+                | TurnEvent::PermissionRequest { .. }
+                | TurnEvent::PlanReviewRequest { .. } => {}
             }
         }
 
