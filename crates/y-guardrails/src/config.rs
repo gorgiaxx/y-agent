@@ -40,6 +40,10 @@ pub struct GuardrailConfig {
     /// HITL configuration.
     #[serde(default)]
     pub hitl: HitlConfig,
+
+    /// Plan review configuration.
+    #[serde(default)]
+    pub plan_review: PlanReviewConfig,
 }
 
 impl Default for GuardrailConfig {
@@ -52,6 +56,7 @@ impl Default for GuardrailConfig {
             loop_guard: LoopGuardConfig::default(),
             risk: RiskConfig::default(),
             hitl: HitlConfig::default(),
+            plan_review: PlanReviewConfig::default(),
         }
     }
 }
@@ -124,6 +129,27 @@ impl Default for HitlConfig {
     }
 }
 
+/// Plan execution review mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum PlanReviewMode {
+    /// Generate the plan and execute it without waiting for user review.
+    Auto,
+    /// Pause execution and present the plan to the user for structured
+    /// approval via the GUI; resume only after Approve/Reject is received.
+    #[default]
+    Manual,
+}
+
+/// Configuration for plan review behavior.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PlanReviewConfig {
+    /// Whether plan execution is automatic or manually reviewed.
+    #[serde(default)]
+    pub mode: PlanReviewMode,
+}
+
 // Serde default helpers
 fn default_global_permission() -> PermissionAction {
     PermissionAction::Allow
@@ -159,4 +185,30 @@ const fn default_risk_threshold() -> f32 {
 
 const fn default_hitl_timeout_ms() -> u64 {
     120_000
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_guardrails_use_manual_plan_review() {
+        let config = GuardrailConfig::default();
+        assert_eq!(config.plan_review.mode, PlanReviewMode::Manual);
+    }
+
+    #[test]
+    fn guardrails_deserialize_plan_review_mode() {
+        let config: GuardrailConfig = toml::from_str(
+            r#"
+default_permission = "notify"
+
+[plan_review]
+mode = "auto"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.plan_review.mode, PlanReviewMode::Auto);
+    }
 }

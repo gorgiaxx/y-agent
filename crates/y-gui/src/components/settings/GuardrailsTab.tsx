@@ -117,6 +117,20 @@ export function GuardrailsTab({
               </SelectContent>
             </Select>
           </SettingsItem>
+          <SettingsItem title="Plan Review Mode" description="Controls whether generated plans execute immediately or wait for chat review.">
+            <Select
+              value={guardrailsForm.plan_review_mode}
+              onValueChange={(val) => { setGuardrailsForm({ ...guardrailsForm, plan_review_mode: val as GuardrailsFormData['plan_review_mode'] }); setDirtyGuardrails(true); }}
+            >
+              <SelectTrigger className="w-[160px]">
+                <SelectValue placeholder="Select plan review mode" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto</SelectItem>
+                <SelectItem value="manual">Manual review</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingsItem>
           <SettingsItem title="Max Tool Iterations" description="Max consecutive LLM calls in a tool-call loop.">
             <Input
               numeric

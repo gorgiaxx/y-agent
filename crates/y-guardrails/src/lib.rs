@@ -31,7 +31,7 @@ pub mod rule_store;
 pub mod taint;
 
 // Re-export primary types.
-pub use config::GuardrailConfig;
+pub use config::{GuardrailConfig, PlanReviewConfig, PlanReviewMode};
 pub use error::{GuardrailError, LoopPattern};
 pub use hitl::{HitlHandler, HitlProtocol, HitlRequest, HitlResponse};
 pub use loop_guard::{ActionRecord, LoopDetection, LoopGuard};

@@ -13,6 +13,15 @@ dangerous_auto_ask = true
 # iteration. If this limit is reached, the turn is terminated.
 max_tool_iterations = 50
 
+# --- Plan Review -------------------------------------------------------------
+
+# Plan execution review mode: "auto" | "manual"
+#
+# auto   = execute generated plans immediately
+# manual = return the generated plan to the chat and wait for normal user feedback
+[plan_review]
+mode = "manual"
+
 # --- Per-tool Permission Overrides -------------------------------------------
 # Uncomment and customize as needed.
 

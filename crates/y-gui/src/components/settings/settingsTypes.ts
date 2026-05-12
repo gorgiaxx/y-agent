@@ -130,6 +130,7 @@ export interface ToolsFormData {
 
 export interface GuardrailsFormData {
   default_permission: string;
+  plan_review_mode: 'auto' | 'manual';
   dangerous_auto_ask: boolean;
   max_tool_iterations: number;
   loop_guard_max_iterations: number;
@@ -326,6 +327,7 @@ export const DEFAULT_TOOLS_FORM: ToolsFormData = {
 
 export const DEFAULT_GUARDRAILS_FORM: GuardrailsFormData = {
   default_permission: 'notify',
+  plan_review_mode: 'manual',
   dangerous_auto_ask: true,
   max_tool_iterations: 50,
   loop_guard_max_iterations: 50,

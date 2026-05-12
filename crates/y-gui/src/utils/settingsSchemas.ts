@@ -180,6 +180,9 @@ export const GUARDRAILS_SCHEMA: FieldDef[] = [
   { formKey: 'dangerous_auto_ask', tomlKey: 'dangerous_auto_ask', type: 'boolean', defaultValue: true },
   { formKey: 'max_tool_iterations', tomlKey: 'max_tool_iterations', type: 'number', defaultValue: 50 },
 
+  // [plan_review]
+  { formKey: 'plan_review_mode', tomlKey: 'mode', section: 'plan_review', type: 'string', defaultValue: 'manual', optional: true },
+
   // [loop_guard]
   { formKey: 'loop_guard_max_iterations', tomlKey: 'max_iterations', section: 'loop_guard', type: 'number', defaultValue: 50, optional: true },
   { formKey: 'loop_guard_similarity_threshold', tomlKey: 'similarity_threshold', section: 'loop_guard', type: 'number', defaultValue: 0.95, optional: true },
