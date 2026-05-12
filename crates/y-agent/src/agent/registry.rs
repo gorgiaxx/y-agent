@@ -622,10 +622,6 @@ impl AgentRegistry {
                 "plan-phase-executor",
                 include_str!("../../../../config/agents/plan-phase-executor.toml"),
             ),
-            (
-                "task-decomposer",
-                include_str!("../../../../config/agents/task-decomposer.toml"),
-            ),
         ]
     }
 }
@@ -1208,7 +1204,6 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             "translator",
             "plan-writer",
             "plan-phase-executor",
-            "task-decomposer",
         ];
 
         for id in expected_ids {
@@ -1220,7 +1215,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             assert!(!def.system_prompt.is_empty());
         }
 
-        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 17);
+        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 16);
     }
 
     /// Override a built-in agent with `register_or_override`.

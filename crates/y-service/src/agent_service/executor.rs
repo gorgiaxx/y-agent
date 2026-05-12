@@ -4,6 +4,7 @@
 //! `init_context_and_trace()` (context pipeline + diagnostics setup).
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -20,6 +21,15 @@ use super::{
     llm, pruning, result, tool_handling, AgentExecutionConfig, AgentExecutionError,
     AgentExecutionResult, AgentService, FinalResultParams, ToolExecContext, TurnEventSender,
 };
+
+pub(crate) struct ParentSubagentObservation {
+    parent_trace_id: Uuid,
+    observation_id: Uuid,
+    child_trace_id: Uuid,
+    child_session_id: Uuid,
+    agent_name: String,
+    started_at: Instant,
+}
 
 /// Context assembly + diagnostics trace initialisation.
 ///
@@ -92,6 +102,112 @@ pub(crate) async fn init_context_and_trace(
     let owns_trace = config.external_trace_id.is_none();
 
     (assembled, trace_id, owns_trace)
+}
+
+pub(crate) async fn start_parent_subagent_observation(
+    container: &ServiceContainer,
+    config: &AgentExecutionConfig,
+    child_trace_id: Option<Uuid>,
+) -> Option<ParentSubagentObservation> {
+    if config.external_trace_id.is_some() {
+        return None;
+    }
+
+    let child_trace_id = child_trace_id?;
+    let parent_ctx = y_diagnostics::DIAGNOSTICS_CTX.try_with(Clone::clone).ok()?;
+    if parent_ctx.trace_id == child_trace_id {
+        return None;
+    }
+
+    let parent_id = *parent_ctx.last_gen_id.lock().await;
+    let input = execution_input_snapshot(config);
+    let observation_id = container
+        .diagnostics
+        .on_subagent_start(y_diagnostics::SubagentStartParams {
+            trace_id: parent_ctx.trace_id,
+            parent_id,
+            session_id: parent_ctx.session_id,
+            agent_name: config.agent_name.clone(),
+            input,
+            child_trace_id: Some(child_trace_id),
+            child_session_id: Some(config.session_uuid),
+        })
+        .await
+        .ok()?;
+
+    Some(ParentSubagentObservation {
+        parent_trace_id: parent_ctx.trace_id,
+        observation_id,
+        child_trace_id,
+        child_session_id: config.session_uuid,
+        agent_name: config.agent_name.clone(),
+        started_at: Instant::now(),
+    })
+}
+
+pub(crate) async fn finish_parent_subagent_observation(
+    container: &ServiceContainer,
+    observation: Option<ParentSubagentObservation>,
+    execution_result: &Result<AgentExecutionResult, AgentExecutionError>,
+) {
+    let Some(observation) = observation else {
+        return;
+    };
+
+    let success = execution_result.is_ok();
+    let duration_ms = u64::try_from(observation.started_at.elapsed().as_millis()).unwrap_or(0);
+    let (output, error_message) = match execution_result {
+        Ok(result) => (
+            Some(serde_json::json!({
+                "content": result.content.clone(),
+                "model": result.model.clone(),
+                "provider_id": result.provider_id.clone(),
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "cost_usd": result.cost_usd,
+                "iterations": result.iterations,
+            })),
+            None,
+        ),
+        Err(error) => (None, Some(error.to_string())),
+    };
+
+    let _ = container
+        .diagnostics
+        .on_subagent_complete(y_diagnostics::SubagentCompleteParams {
+            trace_id: observation.parent_trace_id,
+            observation_id: observation.observation_id,
+            success,
+            output,
+            error_message,
+            duration_ms,
+        })
+        .await;
+
+    let _ =
+        container
+            .diagnostics_broadcast
+            .send(y_diagnostics::DiagnosticsEvent::SubagentCompleted {
+                trace_id: observation.child_trace_id,
+                session_id: Some(observation.child_session_id),
+                agent_name: observation.agent_name,
+                success,
+            });
+}
+
+fn execution_input_snapshot(config: &AgentExecutionConfig) -> serde_json::Value {
+    if !config.user_query.trim().is_empty() {
+        return serde_json::Value::String(config.user_query.clone());
+    }
+
+    config
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::User)
+        .map_or(serde_json::Value::Null, |m| {
+            serde_json::Value::String(m.content.clone())
+        })
 }
 
 /// Inner execution loop, optionally running inside a `DIAGNOSTICS_CTX` scope.

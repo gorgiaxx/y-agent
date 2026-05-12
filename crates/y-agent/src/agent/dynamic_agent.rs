@@ -210,7 +210,6 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
         "translator",
         "plan-writer",
         "plan-phase-executor",
-        "task-decomposer",
     ];
     if reserved.contains(&def.definition.name.as_str()) {
         return Err(ValidationError::ReservedName {

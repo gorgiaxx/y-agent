@@ -12,6 +12,7 @@ use y_core::types::{SessionId, ToolCallRequest, ToolName};
 use crate::container::ServiceContainer;
 
 use super::{AgentExecutionConfig, ToolCallRecord, ToolExecContext, TurnEvent, TurnEventSender};
+use crate::chat_types::OperationMode;
 
 /// Execute a single tool call, record it, and emit progress events.
 ///
@@ -90,6 +91,7 @@ pub(crate) async fn execute_and_record_tool(
 
     let permission_model = y_guardrails::PermissionModel::new(guardrail_config);
     let session_mode = session_permission_mode(container, &ctx.session_id).await;
+    let operation_mode = session_operation_mode(container, &ctx.session_id).await;
 
     // Built-in agents auto-allow their declared tools without consulting
     // global permission policy. This prevents background subagents from
@@ -111,6 +113,7 @@ pub(crate) async fn execute_and_record_tool(
         resolve_permission_decision_for_session(
             permission_model.evaluate(&tc.name, is_dangerous),
             session_mode,
+            operation_mode,
         )
     };
 
@@ -474,8 +477,15 @@ async fn intercept_ask_user(
 pub(crate) fn resolve_permission_decision_for_session(
     decision: y_guardrails::PermissionDecision,
     session_mode: Option<PermissionMode>,
+    operation_mode: Option<OperationMode>,
 ) -> y_guardrails::PermissionDecision {
     match session_mode {
+        _ if operation_mode == Some(OperationMode::FullAccess) => {
+            y_guardrails::PermissionDecision {
+                action: y_guardrails::PermissionAction::Allow,
+                reason: "session operation mode (full_access)".to_string(),
+            }
+        }
         Some(PermissionMode::BypassPermissions)
             if decision.action != y_guardrails::PermissionAction::Deny =>
         {
@@ -496,6 +506,14 @@ pub(crate) async fn session_permission_mode(
     session_id: &SessionId,
 ) -> Option<PermissionMode> {
     let modes = container.session_permission_modes.read().await;
+    modes.get(session_id).copied()
+}
+
+pub(crate) async fn session_operation_mode(
+    container: &ServiceContainer,
+    session_id: &SessionId,
+) -> Option<OperationMode> {
+    let modes = container.session_operation_modes.read().await;
     modes.get(session_id).copied()
 }
 

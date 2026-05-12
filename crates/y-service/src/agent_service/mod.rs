@@ -354,6 +354,9 @@ impl AgentService {
         let (assembled, trace_id, owns_trace) =
             executor::init_context_and_trace(container, config).await;
 
+        let parent_subagent_observation =
+            executor::start_parent_subagent_observation(container, config, trace_id).await;
+
         // Set up DIAGNOSTICS_CTX so gateways can record observations
         // automatically. If no trace_id, we still run without a context.
         let diag_ctx = trace_id.map(|tid| {
@@ -366,7 +369,7 @@ impl AgentService {
 
         // Delegate to the inner execute logic, optionally scoped with
         // the diagnostics context task-local.
-        if let Some(ctx) = diag_ctx {
+        let result = if let Some(ctx) = diag_ctx {
             y_diagnostics::DIAGNOSTICS_CTX
                 .scope(
                     ctx,
@@ -380,7 +383,16 @@ impl AgentService {
                 container, config, progress, cancel, assembled, trace_id, owns_trace,
             )
             .await
-        }
+        };
+
+        executor::finish_parent_subagent_observation(
+            container,
+            parent_subagent_observation,
+            &result,
+        )
+        .await;
+
+        result
     }
 
     /// Build LLM messages by prepending system prompt from assembled context.
@@ -707,6 +719,7 @@ mod tests {
         let resolved = tool_dispatch::resolve_permission_decision_for_session(
             decision,
             Some(PermissionMode::BypassPermissions),
+            None,
         );
 
         assert_eq!(resolved.action, PermissionAction::Allow);
@@ -723,10 +736,28 @@ mod tests {
         let resolved = tool_dispatch::resolve_permission_decision_for_session(
             decision.clone(),
             Some(PermissionMode::BypassPermissions),
+            None,
         );
 
         assert_eq!(resolved.action, PermissionAction::Deny);
         assert_eq!(resolved.reason, decision.reason);
+    }
+
+    #[test]
+    fn test_full_access_operation_mode_overrides_deny() {
+        let decision = PermissionDecision {
+            action: PermissionAction::Deny,
+            reason: "per-tool override for `ShellExec`".to_string(),
+        };
+
+        let resolved = tool_dispatch::resolve_permission_decision_for_session(
+            decision,
+            None,
+            Some(crate::chat_types::OperationMode::FullAccess),
+        );
+
+        assert_eq!(resolved.action, PermissionAction::Allow);
+        assert!(resolved.reason.contains("full_access"));
     }
 
     // -----------------------------------------------------------------------
