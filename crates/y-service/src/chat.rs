@@ -188,6 +188,7 @@ impl ChatService {
                 } else {
                     pctx.config_flags.remove("plan_mode.active");
                 }
+                pctx.config_flags.remove("loop_mode.active");
                 tracing::info!("plan_mode.active flag SET in prompt context");
             }
             "loop" => {
@@ -212,13 +213,17 @@ impl ChatService {
                     match classification.as_str() {
                         "plan" => {
                             pctx.config_flags.insert("plan_mode.active".into(), true);
+                            pctx.config_flags.remove("loop_mode.active");
                             tracing::info!("plan_mode.active flag SET (auto: complex)");
                         }
                         "loop" => {
                             pctx.config_flags.insert("loop_mode.active".into(), true);
+                            pctx.config_flags.remove("plan_mode.active");
                             tracing::info!("loop_mode.active flag SET (auto: iterative)");
                         }
                         _ => {
+                            pctx.config_flags.remove("plan_mode.active");
+                            pctx.config_flags.remove("loop_mode.active");
                             tracing::info!("no mode flags set (auto: simple)");
                         }
                     }
@@ -227,7 +232,8 @@ impl ChatService {
             _ => {
                 let mut pctx = container.prompt_context.write().await;
                 pctx.config_flags.remove("plan_mode.active");
-                tracing::info!("plan_mode.active flag CLEARED (fast mode)");
+                pctx.config_flags.remove("loop_mode.active");
+                tracing::info!("plan/loop mode flags CLEARED (fast mode)");
             }
         }
     }
