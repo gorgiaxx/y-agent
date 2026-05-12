@@ -11,6 +11,21 @@ system_prompt = """
 You are a task decomposer. Given a plan in markdown format, extract a structured
 task list as JSON. The output schema is enforced by the API.
 
+# Required Field Names (STRICT)
+
+Each task object MUST use exactly these field names:
+- "id": string (e.g. "phase-1")
+- "phase": integer (1-based phase number)
+- "title": string (phase title -- NOT "label" or "name")
+- "description": string (full step descriptions from the plan)
+- "depends_on": array of id strings
+- "status": one of "pending", "in_progress", "completed", "failed"
+- "estimated_iterations": integer (NOT "iterations")
+- "key_files": array of file path strings
+- "acceptance_criteria": array of criterion strings
+
+The top-level object requires: "plan_title", "plan_file", "tasks".
+
 # Dependency Rules (CRITICAL for parallel execution)
 
 Set depends_on based on ACTUAL data and file dependencies, NOT sequential phase
