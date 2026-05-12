@@ -192,7 +192,15 @@ pub struct ServiceContainer {
     pub data_dir: PathBuf,
 
     #[cfg(feature = "langfuse")]
-    langfuse_config: y_diagnostics::langfuse::LangfuseConfig,
+    langfuse_state: tokio::sync::Mutex<LangfuseState>,
+}
+
+#[cfg(feature = "langfuse")]
+struct LangfuseState {
+    config: y_diagnostics::langfuse::LangfuseConfig,
+    bridge_handle: Option<tokio::task::JoinHandle<()>>,
+    importer_handle: Option<tokio::task::JoinHandle<()>>,
+    shutdown: tokio_util::sync::CancellationToken,
 }
 
 // ---------------------------------------------------------------------------
@@ -375,7 +383,12 @@ impl ServiceContainer {
                 }
             },
             #[cfg(feature = "langfuse")]
-            langfuse_config: config.langfuse.clone(),
+            langfuse_state: tokio::sync::Mutex::new(LangfuseState {
+                config: config.langfuse.clone(),
+                bridge_handle: None,
+                importer_handle: None,
+                shutdown: tokio_util::sync::CancellationToken::new(),
+            }),
         })
     }
 
@@ -1140,27 +1153,66 @@ impl ServiceContainer {
         crate::mcp_service::McpService::register_mcp_tools(self).await;
         crate::mcp_service::McpService::start_mcp_event_consumer(self).await;
         #[cfg(feature = "langfuse")]
-        self.init_langfuse_bridge();
+        self.init_langfuse_bridge().await;
     }
 
     #[cfg(feature = "langfuse")]
-    fn init_langfuse_bridge(self: &Arc<Self>) {
-        if !self.langfuse_config.enabled {
+    async fn init_langfuse_bridge(self: &Arc<Self>) {
+        let mut state = self.langfuse_state.lock().await;
+        if !state.config.enabled {
             return;
         }
-        let rx = self.diagnostics_broadcast.subscribe();
-        let store = self.diagnostics.store();
-        let config = self.langfuse_config.clone();
+        Self::spawn_langfuse_tasks(&mut state, self);
+    }
 
-        let bridge =
-            y_diagnostics::langfuse::LangfuseExportBridge::new(rx, store.clone(), config.clone());
-        tokio::spawn(bridge.run());
+    #[cfg(feature = "langfuse")]
+    fn spawn_langfuse_tasks(state: &mut LangfuseState, container: &Arc<Self>) {
+        let rx = container.diagnostics_broadcast.subscribe();
+        let store = container.diagnostics.store();
+
+        let bridge = y_diagnostics::langfuse::LangfuseExportBridge::new(
+            rx,
+            store.clone(),
+            state.config.clone(),
+            state.shutdown.clone(),
+        );
+        state.bridge_handle = Some(tokio::spawn(bridge.run()));
         tracing::info!("Langfuse export bridge started");
 
-        if config.feedback.import_enabled {
-            let importer = y_diagnostics::langfuse::LangfuseFeedbackImporter::new(store, &config);
-            tokio::spawn(importer.run());
+        if state.config.feedback.import_enabled {
+            let importer = y_diagnostics::langfuse::LangfuseFeedbackImporter::new(
+                store,
+                &state.config,
+                state.shutdown.clone(),
+            );
+            state.importer_handle = Some(tokio::spawn(importer.run()));
             tracing::info!("Langfuse feedback importer started");
+        }
+    }
+
+    #[cfg(feature = "langfuse")]
+    pub async fn reload_langfuse(
+        self: &Arc<Self>,
+        new_config: y_diagnostics::langfuse::LangfuseConfig,
+    ) {
+        let mut state = self.langfuse_state.lock().await;
+
+        state.shutdown.cancel();
+        if let Some(h) = state.bridge_handle.take() {
+            h.abort();
+        }
+        if let Some(h) = state.importer_handle.take() {
+            h.abort();
+        }
+
+        state.config = new_config;
+        state.shutdown = tokio_util::sync::CancellationToken::new();
+
+        if state.config.enabled {
+            Self::spawn_langfuse_tasks(&mut state, self);
+            tracing::info!("Langfuse bridge reloaded");
+        } else {
+            tracing::info!("Langfuse bridge disabled after reload");
         }
     }
 

@@ -7,6 +7,7 @@ use std::time::Duration;
 use base64::Engine;
 use chrono::Utc;
 use reqwest::Client;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -22,10 +23,15 @@ pub struct LangfuseFeedbackImporter {
     auth_header: String,
     poll_interval: Duration,
     seen_ids: HashSet<String>,
+    shutdown: CancellationToken,
 }
 
 impl LangfuseFeedbackImporter {
-    pub fn new(store: Arc<dyn TraceStore>, config: &LangfuseConfig) -> Self {
+    pub fn new(
+        store: Arc<dyn TraceStore>,
+        config: &LangfuseConfig,
+        shutdown: CancellationToken,
+    ) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -47,13 +53,20 @@ impl LangfuseFeedbackImporter {
             auth_header,
             poll_interval: Duration::from_secs(config.feedback.poll_interval_secs),
             seen_ids: HashSet::new(),
+            shutdown,
         }
     }
 
     pub async fn run(mut self) {
         info!("Langfuse feedback importer started");
         loop {
-            tokio::time::sleep(self.poll_interval).await;
+            tokio::select! {
+                () = self.shutdown.cancelled() => {
+                    info!("Langfuse feedback importer shutting down (reload)");
+                    break;
+                }
+                () = tokio::time::sleep(self.poll_interval) => {}
+            }
             if let Err(e) = self.poll_scores().await {
                 warn!(%e, "Failed to poll Langfuse scores");
             }

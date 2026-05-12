@@ -297,6 +297,21 @@ impl SystemService {
         Ok(())
     }
 
+    /// Hot-reload the Langfuse export bridge from a TOML config string.
+    ///
+    /// Gracefully stops existing bridge/importer tasks, updates the config,
+    /// and spawns new tasks if `enabled = true`.
+    #[cfg(feature = "langfuse")]
+    pub async fn reload_langfuse_from_toml(
+        container: &std::sync::Arc<ServiceContainer>,
+        toml_content: &str,
+    ) -> Result<(), String> {
+        let config: y_diagnostics::langfuse::LangfuseConfig = toml::from_str(toml_content)
+            .map_err(|e| format!("Failed to parse langfuse config: {e}"))?;
+        container.reload_langfuse(config).await;
+        Ok(())
+    }
+
     /// Test an LLM provider by sending a minimal probe request.
     ///
     /// Providers using OpenAI-compatible REST are actively tested via a

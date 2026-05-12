@@ -249,7 +249,13 @@ pub async fn config_reload(state: State<'_, AppState>) -> Result<String, String>
         results.push("hooks".to_string());
     }
 
-    // 9. Prompts -- always reload from disk (no TOML config, just .txt files).
+    // 9. Langfuse.
+    if let Some(content) = read_toml("langfuse")? {
+        y_service::SystemService::reload_langfuse_from_toml(&state.container, &content).await?;
+        results.push("langfuse".to_string());
+    }
+
+    // 10. Prompts -- always reload from disk (no TOML config, just .txt files).
     y_service::SystemService::reload_prompts(&state.container).await;
     results.push("prompts".to_string());
 

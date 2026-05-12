@@ -7,7 +7,7 @@ description = "Diagnostics: trace store, cost intelligence, trace replay (SQLite
 
 [features]
 default = []
-langfuse = ["dep:reqwest", "dep:base64", "dep:regex"]
+langfuse = ["dep:reqwest", "dep:base64", "dep:regex", "dep:tokio-util"]
 
 [dependencies]
 y-core = { workspace = true }
@@ -26,6 +26,7 @@ tracing = { workspace = true }
 reqwest = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

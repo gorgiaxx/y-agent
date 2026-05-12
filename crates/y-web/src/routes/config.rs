@@ -221,6 +221,13 @@ async fn config_reload(State(state): State<AppState>) -> Result<impl IntoRespons
         results.push("hooks".to_string());
     }
 
+    if let Some(content) = read_toml(&state.config_dir, "langfuse").await? {
+        y_service::SystemService::reload_langfuse_from_toml(&state.container, &content)
+            .await
+            .map_err(ApiError::Internal)?;
+        results.push("langfuse".to_string());
+    }
+
     y_service::SystemService::reload_prompts(&state.container).await;
     results.push("prompts".to_string());
 

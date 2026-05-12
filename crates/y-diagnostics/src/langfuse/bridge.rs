@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -29,6 +30,7 @@ pub struct LangfuseExportBridge {
     config: LangfuseConfig,
     mapper: LangfuseIngestionMapper,
     sender: LangfuseHttpSender,
+    shutdown: CancellationToken,
 }
 
 impl LangfuseExportBridge {
@@ -36,6 +38,7 @@ impl LangfuseExportBridge {
         rx: broadcast::Receiver<DiagnosticsEvent>,
         store: Arc<dyn TraceStore>,
         config: LangfuseConfig,
+        shutdown: CancellationToken,
     ) -> Self {
         let mapper = LangfuseIngestionMapper::new(config.clone());
         let sender = LangfuseHttpSender::new(&config);
@@ -45,6 +48,7 @@ impl LangfuseExportBridge {
             config,
             mapper,
             sender,
+            shutdown,
         }
     }
 
@@ -54,7 +58,13 @@ impl LangfuseExportBridge {
         let mut last_reap = Instant::now();
 
         loop {
-            let event = tokio::time::timeout(REAPER_INTERVAL, self.rx.recv()).await;
+            let event = tokio::select! {
+                () = self.shutdown.cancelled() => {
+                    info!("Langfuse export bridge shutting down (reload)");
+                    break;
+                }
+                event = tokio::time::timeout(REAPER_INTERVAL, self.rx.recv()) => event,
+            };
 
             match event {
                 Ok(Ok(DiagnosticsEvent::TraceCompleted {
