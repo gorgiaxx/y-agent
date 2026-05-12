@@ -54,29 +54,16 @@ export function PromptComposer({
   onSystemPromptChange,
   onSelectedSectionIdsChange,
 }: PromptComposerProps) {
-  const allSectionIds = useMemo(
-    () => promptSections.map((section) => section.id),
-    [promptSections],
-  );
-  const effectiveSelectedSectionIds = useMemo(
-    () => (selectedSectionIds.length > 0 ? selectedSectionIds : allSectionIds),
-    [allSectionIds, selectedSectionIds],
-  );
-  const selected = useMemo(() => new Set(effectiveSelectedSectionIds), [effectiveSelectedSectionIds]);
+  const selected = useMemo(() => new Set(selectedSectionIds), [selectedSectionIds]);
   const preview = useMemo(
     () => buildPromptPreview({ systemPrompt, selectedSectionIds, promptSections, mode }),
     [mode, promptSections, selectedSectionIds, systemPrompt],
   );
 
   const handleSectionToggle = (id: string) => {
-    if (selectedSectionIds.length === 0) {
-      onSelectedSectionIdsChange(allSectionIds.filter((sectionId) => sectionId !== id));
-      return;
-    }
-
     const next = selected.has(id)
-      ? effectiveSelectedSectionIds.filter((sectionId) => sectionId !== id)
-      : [...effectiveSelectedSectionIds, id];
+      ? selectedSectionIds.filter((sectionId) => sectionId !== id)
+      : [...selectedSectionIds, id];
 
     onSelectedSectionIdsChange(next);
   };

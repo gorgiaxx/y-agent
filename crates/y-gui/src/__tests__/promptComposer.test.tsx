@@ -70,7 +70,7 @@ describe('PromptComposer', () => {
     expect(preview).toContain('[core.datetime: datetime -- resolved at runtime]');
   });
 
-  it('treats empty selectedSectionIds as all sections selected in the UI', () => {
+  it('shows no sections selected when selectedSectionIds is empty', () => {
     const html = renderToStaticMarkup(
       <PromptComposer
         systemPrompt=""
@@ -82,7 +82,7 @@ describe('PromptComposer', () => {
       />,
     );
 
-    expect(html).toContain('agent-editor-checkbox-card--active');
+    expect(html).not.toContain('agent-editor-checkbox-card--active');
   });
 
   it('renders a final prompt preview alongside the shared prompt inputs', () => {
