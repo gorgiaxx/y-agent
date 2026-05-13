@@ -49,7 +49,7 @@ export function escapeTomlString(value: string): string {
 // ---------------------------------------------------------------------------
 
 /** Check whether a value is "empty" for the purpose of optional omission. */
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 

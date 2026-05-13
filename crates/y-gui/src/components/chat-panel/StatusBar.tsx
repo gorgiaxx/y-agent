@@ -5,8 +5,6 @@ import { platform } from '../../lib';
 import './StatusBar.css';
 
 interface StatusBarProps {
-  providerCount: number;
-  sessionCount: number | null;
   version: string;
   activeModel?: string;
   activeProviderIcon?: string | null;
@@ -120,9 +118,6 @@ export function StatusBar({
             {connStatus === 'connected' ? 'Online' : connStatus === 'connecting' ? 'Connecting...' : 'Offline'}
           </span>
         )}
-        {/* <span className="status-item">
-          {providerCount} provider{providerCount !== 1 ? 's' : ''}
-        </span> */}
         <span className="status-item status-version">v{version}</span>
       </div>
     </div>

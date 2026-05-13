@@ -21,7 +21,7 @@ export function setSessionInteraction<T>(
   };
 }
 
-export function clearSessionInteractionById<T>(
+export function clearSessionInteractionByPredicate<T>(
   state: SessionInteractionMap<T>,
   predicate: (value: T) => boolean,
 ): SessionInteractionMap<T> {

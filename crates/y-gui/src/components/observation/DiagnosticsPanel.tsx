@@ -79,6 +79,19 @@ function filterByTimeRange(entries: DiagnosticsEntry[], range: TimeRange): Diagn
   return entries.filter(e => new Date(e.timestamp).getTime() >= cutoff);
 }
 
+function tryBeautify(raw: string): string | null {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return null;
+  }
+}
+
+const HIGHLIGHTER_CUSTOM_STYLE: React.CSSProperties = {
+  margin: 0, padding: '8px', fontSize: '11px',
+  lineHeight: '1.5', overflow: 'auto', maxHeight: '320px',
+};
+
 const KEYBOARD_RESIZE_STEP = 16;
 const KEYBOARD_RESIZE_LARGE_STEP = 40;
 
@@ -168,13 +181,6 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
   const resolvedTheme = useResolvedTheme();
   const highlighterStyle = resolvedTheme === 'light' ? oneLightNoBackground : oneDarkNoBackground;
 
-  const tryBeautify = (raw: string): string | null => {
-    try {
-      return JSON.stringify(JSON.parse(raw), null, 2);
-    } catch {
-      return null;
-    }
-  };
 
   const promptJsonOk = event.prompt_preview ? tryBeautify(event.prompt_preview) !== null : false;
   const responseJsonOk = event.response_text ? tryBeautify(event.response_text) !== null : false;
@@ -278,14 +284,7 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
                     PreTag="div"
                     wrapLongLines={promptWrapped}
                     codeTagProps={{ style: { whiteSpace: promptWrapped ? 'pre-wrap' : 'pre' } }}
-                    customStyle={{
-                      margin: 0,
-                      padding: '8px',
-                      fontSize: '11px',
-                      lineHeight: '1.5',
-                      overflow: 'auto',
-                      maxHeight: '320px',
-                    }}
+                    customStyle={HIGHLIGHTER_CUSTOM_STYLE}
                   >
                     {displayPrompt ?? ''}
                   </SyntaxHighlighter>
@@ -320,14 +319,7 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
                     PreTag="div"
                     wrapLongLines={responseWrapped}
                     codeTagProps={{ style: { whiteSpace: responseWrapped ? 'pre-wrap' : 'pre' } }}
-                    customStyle={{
-                      margin: 0,
-                      padding: '8px',
-                      fontSize: '11px',
-                      lineHeight: '1.5',
-                      overflow: 'auto',
-                      maxHeight: '320px',
-                    }}
+                    customStyle={HIGHLIGHTER_CUSTOM_STYLE}
                   >
                     {displayResponse ?? ''}
                   </SyntaxHighlighter>
@@ -375,13 +367,6 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
   const highlighterStyle = resolvedTheme === 'light' ? oneLightNoBackground : oneDarkNoBackground;
 
   // Attempt to format as pretty JSON; return null if not valid JSON.
-  const tryBeautify = (raw: string): string | null => {
-    try {
-      return JSON.stringify(JSON.parse(raw), null, 2);
-    } catch {
-      return null;
-    }
-  };
 
   const inputJsonOk = event.input_preview ? tryBeautify(event.input_preview) !== null : false;
   const resultJsonOk = event.result_preview ? tryBeautify(event.result_preview) !== null : false;
@@ -460,14 +445,7 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
                     PreTag="div"
                     wrapLongLines={inputWrapped}
                     codeTagProps={{ style: { whiteSpace: inputWrapped ? 'pre-wrap' : 'pre' } }}
-                    customStyle={{
-                      margin: 0,
-                      padding: '8px',
-                      fontSize: '11px',
-                      lineHeight: '1.5',
-                      overflow: 'auto',
-                      maxHeight: '320px',
-                    }}
+                    customStyle={HIGHLIGHTER_CUSTOM_STYLE}
                   >
                     {displayInput ?? ''}
                   </SyntaxHighlighter>
@@ -502,14 +480,7 @@ function ToolEntry({ event, timestamp }: { event: ToolResultEvent; timestamp: st
                     PreTag="div"
                     wrapLongLines={resultWrapped}
                     codeTagProps={{ style: { whiteSpace: resultWrapped ? 'pre-wrap' : 'pre' } }}
-                    customStyle={{
-                      margin: 0,
-                      padding: '8px',
-                      fontSize: '11px',
-                      lineHeight: '1.5',
-                      overflow: 'auto',
-                      maxHeight: '320px',
-                    }}
+                    customStyle={HIGHLIGHTER_CUSTOM_STYLE}
                   >
                     {displayResult ?? ''}
                   </SyntaxHighlighter>
@@ -555,13 +526,6 @@ function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: 
   const resolvedTheme = useResolvedTheme();
   const highlighterStyle = resolvedTheme === 'light' ? oneLightNoBackground : oneDarkNoBackground;
 
-  const tryBeautify = (raw: string): string | null => {
-    try {
-      return JSON.stringify(JSON.parse(raw), null, 2);
-    } catch {
-      return null;
-    }
-  };
 
   const promptJsonOk = event.prompt_preview ? tryBeautify(event.prompt_preview) !== null : false;
   const displayPrompt = (() => {
@@ -667,14 +631,7 @@ function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: 
                     PreTag="div"
                     wrapLongLines={promptWrapped}
                     codeTagProps={{ style: { whiteSpace: promptWrapped ? 'pre-wrap' : 'pre' } }}
-                    customStyle={{
-                      margin: 0,
-                      padding: '8px',
-                      fontSize: '11px',
-                      lineHeight: '1.5',
-                      overflow: 'auto',
-                      maxHeight: '320px',
-                    }}
+                    customStyle={HIGHLIGHTER_CUSTOM_STYLE}
                   >
                     {displayPrompt ?? ''}
                   </SyntaxHighlighter>
@@ -708,14 +665,7 @@ function LlmErrorEntry({ event, timestamp }: { event: LlmErrorEvent; timestamp: 
                   PreTag="div"
                   wrapLongLines={errorWrapped}
                   codeTagProps={{ style: { whiteSpace: errorWrapped ? 'pre-wrap' : 'pre' } }}
-                  customStyle={{
-                    margin: 0,
-                    padding: '8px',
-                    fontSize: '11px',
-                    lineHeight: '1.5',
-                    overflow: 'auto',
-                    maxHeight: '320px',
-                  }}
+                  customStyle={HIGHLIGHTER_CUSTOM_STYLE}
                 >
                   {displayError}
                 </SyntaxHighlighter>

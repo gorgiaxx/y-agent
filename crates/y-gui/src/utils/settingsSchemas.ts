@@ -4,11 +4,7 @@
 // Used with serializeToml / deserializeFromJson from tomlUtils.ts.
 // ---------------------------------------------------------------------------
 
-import type { FieldDef } from './tomlUtils';
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
+import { isRecord, type FieldDef } from './tomlUtils';
 
 // ---------------------------------------------------------------------------
 // Session schema  (session.toml)
@@ -121,21 +117,13 @@ export function browserPostProcess(
   result: Record<string, unknown>,
   json: unknown,
 ): void {
-  if (!isJsonObject(json)) return;
+  if (!isRecord(json)) return;
 
   if (!json.launch_mode && json.auto_launch) {
     result.launch_mode = json.headless === false
       ? 'auto_launch_visible'
       : 'auto_launch_headless';
   }
-}
-
-/** Post-processor for runtime JSON deserialization.
- *  Handles conditional SSH fields based on auth_method. */
-export function runtimePostProcess(result: Record<string, unknown>): void {
-  // Nothing extra needed: the schema already handles all fields.
-  // Kept as a placeholder for future auth-method-dependent logic.
-  void result;
 }
 
 // ---------------------------------------------------------------------------

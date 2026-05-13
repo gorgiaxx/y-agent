@@ -12,7 +12,7 @@ import { useBackgroundTasks } from '../hooks/useBackgroundTasks';
 import { useProviders } from '../hooks/useProviders';
 import { useThemeProvider, ThemeContext } from '../hooks/useTheme';
 
-import type { ViewType } from '../components/Sidebar';
+import type { ViewType } from '../types';
 import type { SettingsTab } from '../components/settings/SettingsPanel';
 import type { EditorTab, EditorSurface } from '../components/agents/types';
 

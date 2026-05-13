@@ -15,6 +15,7 @@ import { AgentsView } from '../views/AgentsView';
 import { AutomationView } from '../views/AutomationView';
 import { BackgroundTasksView } from '../views/BackgroundTasksView';
 import { SettingsView } from '../views/SettingsView';
+import type { SettingsTab } from '../components/settings/SettingsPanel';
 
 import { useViewRouting, usePanelContext, useAgentEditorContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext, useAgentSessionsContext } from '../providers/AppContexts';
 import { useDiagnostics } from '../hooks/useDiagnostics';
@@ -93,7 +94,7 @@ export function MainLayout() {
             }
           },
           activeSettingsTab: viewRouting.activeSettingsTab,
-          onSelectSettingsTab: (t: string) => viewRouting.setActiveSettingsTab(t as never),
+          onSelectSettingsTab: (t: string) => viewRouting.setActiveSettingsTab(t as SettingsTab),
           agentEditing: agentEditor.agentEditing,
           agentEditorTab: agentEditor.agentEditorTab,
           agentEditorSurface: agentEditor.agentEditorSurface,

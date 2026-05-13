@@ -11,8 +11,6 @@ describe('StatusBar background task entry', () => {
   it('renders a plain task status button for opening the tasks view', () => {
     const html = renderToStaticMarkup(
       <StatusBar
-        providerCount={0}
-        sessionCount={null}
         version="debug"
         backgroundTasks={{
           total: 2,
@@ -34,8 +32,6 @@ describe('StatusBar background task entry', () => {
   it('keeps the task entry visible when there are no tasks', () => {
     const html = renderToStaticMarkup(
       <StatusBar
-        providerCount={0}
-        sessionCount={null}
         version="debug"
         backgroundTasks={{
           total: 0,

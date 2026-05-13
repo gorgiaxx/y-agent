@@ -27,11 +27,10 @@ export function mergeGeneratedImages(
   base: GeneratedImage[],
   incoming: GeneratedImage[],
 ): GeneratedImage[] {
-  let merged = [...base];
-  for (const image of incoming) {
-    merged = upsertGeneratedImage(merged, image);
-  }
-  return merged;
+  const byIndex = new Map<number, GeneratedImage>();
+  for (const image of base) byIndex.set(image.index, image);
+  for (const image of incoming) byIndex.set(image.index, image);
+  return normalizeGeneratedImages([...byIndex.values()]);
 }
 
 export function applyGeneratedImageDelta(

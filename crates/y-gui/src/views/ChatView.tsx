@@ -275,8 +275,6 @@ export function ChatView() {
         }}
       />
       <StatusBar
-        providerCount={providerHooks.systemStatus?.provider_count ?? 0}
-        sessionCount={providerHooks.systemStatus?.session_count ?? null}
         version={providerHooks.systemStatus?.version ?? 'debug'}
         activeModel={statusBarMeta.provider}
         activeProviderIcon={

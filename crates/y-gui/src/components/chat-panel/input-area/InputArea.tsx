@@ -11,7 +11,7 @@ import { ContentEditableInput, type ContentEditableInputHandle } from './Content
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions } from '../../../types';
-import { DEFAULT_IMAGE_GENERATION_OPTIONS } from '../../../types';
+import { DEFAULT_IMAGE_GENERATION_OPTIONS } from '../../../constants/imageGeneration';
 import type { PendingEdit } from '../../../hooks/useChat';
 import { useCloseOnOutsideClick } from '../../../hooks/useCloseOnOutsideClick';
 import './InputArea.css';

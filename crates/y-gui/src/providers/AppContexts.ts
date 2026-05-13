@@ -9,7 +9,7 @@ import type { UseAutomationReturn } from '../hooks/useAutomation';
 import type { UseBackgroundTasksReturn } from '../hooks/useBackgroundTasks';
 import type { UseProvidersReturn } from '../hooks/useProviders';
 import type { UseConfigReturn } from '../hooks/useConfig';
-import type { ViewType } from '../components/Sidebar';
+import type { ViewType } from '../types';
 import type { SettingsTab } from '../components/settings/SettingsPanel';
 import type { EditorTab, EditorSurface } from '../components/agents/types';
 
@@ -102,88 +102,28 @@ export const SkillsNavContext = createContext<SkillsNavState | null>(null);
 export const AutomationNavContext = createContext<AutomationNavState | null>(null);
 export const BackgroundTasksNavContext = createContext<BackgroundTasksNavState | null>(null);
 
-export function useChatContext() {
-  const ctx = useContext(ChatContext);
-  if (!ctx) throw new Error('useChatContext must be used within ChatProvider');
-  return ctx;
+function createSafeHook<T>(ctx: React.Context<T | null>, name: string): () => T {
+  return () => {
+    const value = useContext(ctx);
+    if (!value) throw new Error(`${name} must be used within its Provider`);
+    return value;
+  };
 }
-export function useSessionsContext() {
-  const ctx = useContext(SessionsContext);
-  if (!ctx) throw new Error('useSessionsContext must be used within SessionsProvider');
-  return ctx;
-}
-export function useAgentSessionsContext() {
-  const ctx = useContext(AgentSessionsContext);
-  if (!ctx) throw new Error('useAgentSessionsContext must be used within AgentSessionsProvider');
-  return ctx;
-}
-export function useWorkspacesContext() {
-  const ctx = useContext(WorkspacesContext);
-  if (!ctx) throw new Error('useWorkspacesContext must be used within WorkspacesProvider');
-  return ctx;
-}
-export function useSkillsContext() {
-  const ctx = useContext(SkillsContext);
-  if (!ctx) throw new Error('useSkillsContext must be used within SkillsProvider');
-  return ctx;
-}
-export function useKnowledgeContext() {
-  const ctx = useContext(KnowledgeContext);
-  if (!ctx) throw new Error('useKnowledgeContext must be used within KnowledgeProvider');
-  return ctx;
-}
-export function useAgentsContext() {
-  const ctx = useContext(AgentsContext);
-  if (!ctx) throw new Error('useAgentsContext must be used within AgentsProvider');
-  return ctx;
-}
-export function useAutomationContext() {
-  const ctx = useContext(AutomationContext);
-  if (!ctx) throw new Error('useAutomationContext must be used within AutomationProvider');
-  return ctx;
-}
-export function useBackgroundTasksContext() {
-  const ctx = useContext(BackgroundTasksContext);
-  if (!ctx) throw new Error('useBackgroundTasksContext must be used within BackgroundTasksProvider');
-  return ctx;
-}
-export function useProvidersContext() {
-  const ctx = useContext(ProvidersContext);
-  if (!ctx) throw new Error('useProvidersContext must be used within ProvidersProvider');
-  return ctx;
-}
-export function useConfigContext() {
-  const ctx = useContext(ConfigContext);
-  if (!ctx) throw new Error('useConfigContext must be used within ConfigProvider');
-  return ctx;
-}
-export function useViewRouting() {
-  const ctx = useContext(ViewRoutingContext);
-  if (!ctx) throw new Error('useViewRouting must be used within ViewRoutingProvider');
-  return ctx;
-}
-export function usePanelContext() {
-  const ctx = useContext(PanelContext);
-  if (!ctx) throw new Error('usePanelContext must be used within PanelProvider');
-  return ctx;
-}
-export function useAgentEditorContext() {
-  const ctx = useContext(AgentEditorContext);
-  if (!ctx) throw new Error('useAgentEditorContext must be used within AgentEditorProvider');
-  return ctx;
-}
-export function useSkillsNavContext() {
-  const ctx = useContext(SkillsNavContext);
-  if (!ctx) throw new Error('useSkillsNavContext must be used within SkillsNavProvider');
-  return ctx;
-}
-export function useAutomationNavContext() {
-  const ctx = useContext(AutomationNavContext);
-  if (!ctx) throw new Error('useAutomationNavContext must be used within AutomationNavProvider');
-  return ctx;
-}
-export function useBackgroundTasksNavContext() {
-  const ctx = useContext(BackgroundTasksNavContext);
-  if (!ctx) throw new Error('useBackgroundTasksNavContext must be used within BackgroundTasksNavProvider');
-  return ctx;
-}
+
+export const useChatContext = createSafeHook(ChatContext, 'useChatContext');
+export const useSessionsContext = createSafeHook(SessionsContext, 'useSessionsContext');
+export const useAgentSessionsContext = createSafeHook(AgentSessionsContext, 'useAgentSessionsContext');
+export const useWorkspacesContext = createSafeHook(WorkspacesContext, 'useWorkspacesContext');
+export const useSkillsContext = createSafeHook(SkillsContext, 'useSkillsContext');
+export const useKnowledgeContext = createSafeHook(KnowledgeContext, 'useKnowledgeContext');
+export const useAgentsContext = createSafeHook(AgentsContext, 'useAgentsContext');
+export const useAutomationContext = createSafeHook(AutomationContext, 'useAutomationContext');
+export const useBackgroundTasksContext = createSafeHook(BackgroundTasksContext, 'useBackgroundTasksContext');
+export const useProvidersContext = createSafeHook(ProvidersContext, 'useProvidersContext');
+export const useConfigContext = createSafeHook(ConfigContext, 'useConfigContext');
+export const useViewRouting = createSafeHook(ViewRoutingContext, 'useViewRouting');
+export const usePanelContext = createSafeHook(PanelContext, 'usePanelContext');
+export const useAgentEditorContext = createSafeHook(AgentEditorContext, 'useAgentEditorContext');
+export const useSkillsNavContext = createSafeHook(SkillsNavContext, 'useSkillsNavContext');
+export const useAutomationNavContext = createSafeHook(AutomationNavContext, 'useAutomationNavContext');
+export const useBackgroundTasksNavContext = createSafeHook(BackgroundTasksNavContext, 'useBackgroundTasksNavContext');

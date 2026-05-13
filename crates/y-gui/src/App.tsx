@@ -93,11 +93,13 @@ export default function App() {
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', () => sendPong());
+    const onFocus = () => sendPong();
+    window.addEventListener('focus', onFocus);
 
     return () => {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
     };
   }, []);
 

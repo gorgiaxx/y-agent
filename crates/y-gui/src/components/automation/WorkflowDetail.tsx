@@ -6,7 +6,7 @@ import { WorkflowEditor } from './WorkflowEditor';
 import type { WorkflowInfo, DagVisualization, ValidationResult, ExecutionRecord } from './types';
 import { Button, Badge } from '../ui';
 import { parseTags } from '../../utils/parseTags';
-import '../automation/AutomationPanel.css';
+import './AutomationPanel.css';
 
 export function WorkflowDetail({
   id,

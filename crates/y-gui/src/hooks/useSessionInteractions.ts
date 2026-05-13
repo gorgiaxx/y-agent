@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { transport } from '../lib';
 
 import {
-  clearSessionInteractionById,
+  clearSessionInteractionByPredicate,
   getSessionInteraction,
   setSessionInteraction,
 } from '../utils/sessionInteractionState';
@@ -93,7 +93,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handleAskUserSubmit = useCallback((interactionId: string, answers: Record<string, string>) => {
-    setAskUserBySession((prev) => clearSessionInteractionById(
+    setAskUserBySession((prev) => clearSessionInteractionByPredicate(
       prev,
       (interaction) => interaction.interactionId === interactionId,
     ));
@@ -104,7 +104,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handleAskUserDismiss = useCallback((interactionId: string) => {
-    setAskUserBySession((prev) => clearSessionInteractionById(
+    setAskUserBySession((prev) => clearSessionInteractionByPredicate(
       prev,
       (interaction) => interaction.interactionId === interactionId,
     ));
@@ -115,7 +115,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePermissionApprove = useCallback((requestId: string) => {
-    setPermissionBySession((prev) => clearSessionInteractionById(
+    setPermissionBySession((prev) => clearSessionInteractionByPredicate(
       prev,
       (interaction) => interaction.requestId === requestId,
     ));
@@ -126,7 +126,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePermissionDeny = useCallback((requestId: string) => {
-    setPermissionBySession((prev) => clearSessionInteractionById(
+    setPermissionBySession((prev) => clearSessionInteractionByPredicate(
       prev,
       (interaction) => interaction.requestId === requestId,
     ));
@@ -137,7 +137,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePermissionAllowAllForSession = useCallback((requestId: string) => {
-    setPermissionBySession((prev) => clearSessionInteractionById(
+    setPermissionBySession((prev) => clearSessionInteractionByPredicate(
       prev,
       (interaction) => interaction.requestId === requestId,
     ));
@@ -148,7 +148,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePlanReviewApprove = useCallback((reviewId: string) => {
-    setPlanReviewBySession((prev) => clearSessionInteractionById(
+    setPlanReviewBySession((prev) => clearSessionInteractionByPredicate(
       prev,
       (interaction) => interaction.reviewId === reviewId,
     ));
@@ -159,7 +159,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePlanReviewRevise = useCallback((reviewId: string, feedback: string) => {
-    setPlanReviewBySession((prev) => clearSessionInteractionById(
+    setPlanReviewBySession((prev) => clearSessionInteractionByPredicate(
       prev,
       (interaction) => interaction.reviewId === reviewId,
     ));
@@ -171,7 +171,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePlanReviewReject = useCallback((reviewId: string, feedback: string) => {
-    setPlanReviewBySession((prev) => clearSessionInteractionById(
+    setPlanReviewBySession((prev) => clearSessionInteractionByPredicate(
       prev,
       (interaction) => interaction.reviewId === reviewId,
     ));

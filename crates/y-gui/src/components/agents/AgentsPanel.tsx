@@ -56,6 +56,7 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
 
   useEffect(() => {
     if (!agentId) {
+      // Reset derived state when the selected agent is deselected.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setDetail(null);
       setEditing(false);
@@ -64,15 +65,15 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
     loadDetail(agentId);
   }, [agentId, loadDetail]);
 
-  const handleEdit = () => {
+  const handleEdit = useCallback(() => {
     if (!detail) return;
     setTomlContent(detailToToml(detail));
     setEditing(true);
-  };
+  }, [detail]);
 
-  const handleCancelEdit = () => {
+  const handleCancelEdit = useCallback(() => {
     setEditing(false);
-  };
+  }, []);
 
   const handleSave = async () => {
     if (!agentId) return;

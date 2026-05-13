@@ -6,7 +6,8 @@ interface AgentGlyphProps {
 }
 
 function isCJK(char: string): boolean {
-  const cp = char.codePointAt(0)!;
+  const cp = char.codePointAt(0);
+  if (cp === undefined) return false;
   return (
     (cp >= 0x4e00 && cp <= 0x9fff)
     || (cp >= 0x3400 && cp <= 0x4dbf)
@@ -16,7 +17,8 @@ function isCJK(char: string): boolean {
 }
 
 function isEmoji(char: string): boolean {
-  const cp = char.codePointAt(0)!;
+  const cp = char.codePointAt(0);
+  if (cp === undefined) return false;
   return (
     (cp >= 0x1f600 && cp <= 0x1f64f)
     || (cp >= 0x1f300 && cp <= 0x1f5ff)
@@ -41,7 +43,7 @@ function deriveAbbreviation(name: string): string {
     if (isEmoji(chars[i])) {
       let result = chars[i];
       for (let j = i + 1; j < chars.length; j++) {
-        const cp = chars[j].codePointAt(0)!;
+        const cp = chars[j].codePointAt(0) ?? 0;
         if (cp === 0x200d || (cp >= 0xfe00 && cp <= 0xfe0f)) {
           result += chars[j];
         } else {

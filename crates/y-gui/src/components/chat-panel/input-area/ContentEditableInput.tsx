@@ -10,14 +10,10 @@ const SKILL_ATTR = 'data-skill-name';
 // DOM utilities for the contenteditable div
 // ---------------------------------------------------------------------------
 
-/**
- * Extract plain text and skill names from the contenteditable div.
- * Skill mentions are embedded as <span data-skill-name="..."> elements.
- * Recursively traverses all child nodes since browsers may wrap content
- * in <div> elements.
- */
-function extractContentFromDom(el: HTMLDivElement): { text: string; skills: string[] } {
-  const skills: string[] = [];
+function walkDom(
+  root: HTMLDivElement,
+  onSkill?: (name: string) => void,
+): string {
   let text = '';
 
   function walk(node: Node) {
@@ -27,14 +23,13 @@ function extractContentFromDom(el: HTMLDivElement): { text: string; skills: stri
       const element = node as HTMLElement;
       const skillName = element.getAttribute(SKILL_ATTR);
       if (skillName) {
-        if (!skills.includes(skillName)) {
-          skills.push(skillName);
-        }
-        return; // Don't descend into skill mention spans.
-      } else if (element.tagName === 'BR') {
+        onSkill?.(skillName);
+        return;
+      }
+      if (element.tagName === 'BR') {
         text += '\n';
       } else {
-        if (element.tagName === 'DIV' && element !== el) {
+        if (element.tagName === 'DIV' && element !== root) {
           if (text.length > 0 && !text.endsWith('\n')) {
             text += '\n';
           }
@@ -46,43 +41,22 @@ function extractContentFromDom(el: HTMLDivElement): { text: string; skills: stri
     }
   }
 
-  for (const child of Array.from(el.childNodes)) {
-    walk(child);
-  }
-
-  return { text, skills };
-}
-
-/** Get the plain text content (without skill tags) for command detection. */
-function getPlainTextFromDom(el: HTMLDivElement): string {
-  let text = '';
-
-  function walk(node: Node) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent || '';
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const element = node as HTMLElement;
-      if (element.getAttribute(SKILL_ATTR)) {
-        // Skip mention tokens -- they're not part of the text.
-      } else if (element.tagName === 'BR') {
-        text += '\n';
-      } else {
-        if (element.tagName === 'DIV' && element !== el) {
-          if (text.length > 0 && !text.endsWith('\n')) {
-            text += '\n';
-          }
-        }
-        for (const child of Array.from(element.childNodes)) {
-          walk(child);
-        }
-      }
-    }
-  }
-
-  for (const child of Array.from(el.childNodes)) {
+  for (const child of Array.from(root.childNodes)) {
     walk(child);
   }
   return text;
+}
+
+function extractContentFromDom(el: HTMLDivElement): { text: string; skills: string[] } {
+  const skills: string[] = [];
+  const text = walkDom(el, (name) => {
+    if (!skills.includes(name)) skills.push(name);
+  });
+  return { text, skills };
+}
+
+function getPlainTextFromDom(el: HTMLDivElement): string {
+  return walkDom(el);
 }
 
 /** Create a skill mention DOM element. */

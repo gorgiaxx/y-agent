@@ -73,8 +73,9 @@ export function applyRunTerminal(
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { [runId]: _removed, ...remainingRunToSession } = state.runToSession;
+  const remainingRunToSession = Object.fromEntries(
+    Object.entries(state.runToSession).filter(([key]) => key !== runId),
+  );
 
   return {
     runToSession: remainingRunToSession,

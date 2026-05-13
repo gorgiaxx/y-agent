@@ -363,7 +363,6 @@ export function AgentsView() {
                   agentSummary={selectedAgentSummary}
                   agentId={agentEditor.activeAgentId}
                   detailLoading={detailLoading}
-                  sessions={sessionHooks.sessions}
                   activeSessionId={sessionHooks.activeSessionId}
                   streamingSessionIds={agentChatHooks.streamingSessionIds}
                   messages={agentChatHooks.messages}
@@ -374,7 +373,6 @@ export function AgentsView() {
                   getStreamSegments={agentChatHooks.getStreamSegments}
                   contextResetPoints={agentChatHooks.contextResetPoints}
                   compactPoints={agentChatHooks.compactPoints}
-                  providerCount={providerHooks.systemStatus?.provider_count ?? 0}
                   version={providerHooks.systemStatus?.version ?? 'debug'}
                   activeModel={statusBarMeta.provider}
                   activeProviderIcon={

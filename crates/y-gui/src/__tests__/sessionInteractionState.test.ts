@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  clearSessionInteractionById,
+  clearSessionInteractionByPredicate,
   getSessionInteraction,
   setSessionInteraction,
 } from '../utils/sessionInteractionState';
@@ -44,7 +44,7 @@ describe('sessionInteractionState', () => {
       },
     );
 
-    const next = clearSessionInteractionById(
+    const next = clearSessionInteractionByPredicate(
       state,
       (interaction) => interaction.interactionId === 'ask-a',
     );

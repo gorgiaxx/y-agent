@@ -1,5 +1,5 @@
 import * as ToastPrimitive from '@radix-ui/react-toast'
-import { useState, useCallback, useRef, type ReactNode } from 'react'
+import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react'
 import { ToastContext, type ToastType } from '../../hooks/useToast'
 
 interface ToastData {
@@ -19,14 +19,23 @@ const typeStyles: Record<ToastType, string> = {
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastData[]>([])
   const nextIdRef = useRef(0)
+  const timersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
+
+  useEffect(() => {
+    const timers = timersRef.current
+    return () => {
+      for (const t of timers) clearTimeout(t)
+    }
+  }, [])
 
   const addToast = useCallback((message: string, type: ToastType = 'success') => {
     const id = ++nextIdRef.current
     setToasts((prev) => [...prev, { id, message, type }])
-    // Auto-dismiss
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      timersRef.current.delete(timer)
       setToasts((prev) => prev.filter((t) => t.id !== id))
     }, 3000)
+    timersRef.current.add(timer)
   }, [])
 
   return (

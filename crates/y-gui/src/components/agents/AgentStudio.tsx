@@ -5,7 +5,6 @@ import { ChatPanel } from '../chat-panel/ChatPanel';
 import { InputArea } from '../chat-panel/input-area/InputArea';
 import type { InputProviderProps, InputMcpProps, InputDialogProps, InputEditProps, InputFeatureProps } from '../chat-panel/input-area/InputArea';
 import type { AgentInfo, AgentDetail } from '../../hooks/useAgents';
-import type { SessionInfo } from '../../types';
 import type { Message, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, SkillInfo, KnowledgeCollectionInfo } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
@@ -16,7 +15,6 @@ interface AgentStudioProps {
   agentSummary: AgentInfo | AgentDetail | null;
   agentId: string;
   detailLoading: boolean;
-  sessions: SessionInfo[];
   activeSessionId: string | null;
   streamingSessionIds: Set<string>;
   messages: Message[];
@@ -27,7 +25,6 @@ interface AgentStudioProps {
   getStreamSegments: () => InterleavedSegment[] | null;
   contextResetPoints: number[];
   compactPoints: CompactInfo[];
-  providerCount: number;
   version: string;
   activeModel: string | undefined;
   activeProviderIcon: string | null;
@@ -68,7 +65,6 @@ export function AgentStudio({
   agentSummary,
   agentId,
   detailLoading,
-  sessions,
   activeSessionId,
   messages,
   isStreaming,
@@ -78,7 +74,6 @@ export function AgentStudio({
   getStreamSegments,
   contextResetPoints,
   compactPoints,
-  providerCount,
   version,
   activeModel,
   activeProviderIcon,
@@ -189,8 +184,6 @@ export function AgentStudio({
       />
 
       <StatusBar
-        providerCount={providerCount}
-        sessionCount={sessions.length}
         version={version}
         activeModel={activeModel}
         activeProviderIcon={activeProviderIcon}

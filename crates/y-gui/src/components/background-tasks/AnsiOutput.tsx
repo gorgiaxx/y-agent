@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { tokenizeAnsi } from './ansiOutputParser';
 import './BackgroundTasksPanel.css';
 
@@ -7,7 +8,7 @@ interface AnsiOutputProps {
 }
 
 export function AnsiOutput({ content, className }: AnsiOutputProps) {
-  const tokens = tokenizeAnsi(content);
+  const tokens = useMemo(() => tokenizeAnsi(content), [content]);
   return (
     <pre className={className ?? 'background-task-console-output'}>
       {tokens.map((token, index) => (
