@@ -19,7 +19,7 @@ use crate::orchestrator::io_mapping::{self, InputMapping, OutputMapping};
 use crate::orchestrator::task_executor::{TaskExecuteError, TaskExecutor};
 
 /// Workflow execution state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowState {
     Defined,
@@ -30,7 +30,7 @@ pub enum WorkflowState {
 }
 
 /// Stream mode for workflow execution.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamMode {
     /// Final result only.

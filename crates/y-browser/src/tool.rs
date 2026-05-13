@@ -26,7 +26,7 @@ use crate::snapshot::{truncate_output, SnapshotFormat};
 const MAX_OUTPUT_CHARS: usize = 10_000;
 
 /// Supported browser actions (parsed from tool input).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BrowserAction {
     Navigate,
@@ -730,7 +730,7 @@ impl Tool for BrowserTool {
         self.session.ensure_connected().await?;
 
         // Dispatch the action, with one automatic retry on connection errors.
-        let result = match self.dispatch_action(action.clone(), &input).await {
+        let result = match self.dispatch_action(action, &input).await {
             Ok(v) => v,
             Err(ref e) if BrowserSession::is_connection_error(e) => {
                 warn!("browser action failed with connection error, attempting reconnect");

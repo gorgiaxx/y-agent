@@ -752,8 +752,8 @@ async fn answer_permission(
 ) -> Result<impl IntoResponse, ApiError> {
     let delivered = {
         let mut map = state.container.pending_permissions.lock().await;
-        if let Some(sender) = map.remove(&body.request_id) {
-            sender.send(body.decision).is_ok()
+        if let Some(pending) = map.remove(&body.request_id) {
+            pending.send(body.decision).is_ok()
         } else {
             false
         }

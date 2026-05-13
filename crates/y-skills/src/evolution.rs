@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Types of patterns extracted from experience records.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PatternType {
     /// An edge case not covered by current instructions.
@@ -129,7 +129,7 @@ impl SkillMetrics {
 // ---------------------------------------------------------------------------
 
 /// Status of an evolution proposal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProposalStatus {
     PendingApproval,
@@ -139,7 +139,7 @@ pub enum ProposalStatus {
 }
 
 /// Type of change proposed by the refiner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeType {
     /// Adding handling for a discovered edge case.
@@ -193,7 +193,7 @@ pub struct EvolutionProposal {
 // ---------------------------------------------------------------------------
 
 /// Approval policy for a skill.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {
     /// All changes require human approval.

@@ -9,7 +9,7 @@ pub type SectionId = String;
 pub type TemplateId = String;
 
 /// Semantic category for grouping and budget allocation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SectionCategory {
     /// Who the agent is (name, role, persona).

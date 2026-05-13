@@ -251,19 +251,9 @@ async fn read_file(
     AxumPath((name, relative_path)): AxumPath<(String, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
     let skill_dir = skill_dir_path(&skills_store_path(&state.config_dir), &name)?;
-    let target = skill_dir.join(&relative_path);
-
-    let canonical_dir = skill_dir
-        .canonicalize()
-        .map_err(|e| ApiError::NotFound(format!("Skill dir not found: {e}")))?;
-    let canonical_target = target
-        .canonicalize()
-        .map_err(|e| ApiError::NotFound(format!("File not found: {e}")))?;
-    if !canonical_target.starts_with(&canonical_dir) {
-        return Err(ApiError::BadRequest(
-            "Access denied: path traversal detected".into(),
-        ));
-    }
+    let canonical_target =
+        y_service::resolve_skill_read_path(&skill_dir, Path::new(&relative_path))
+            .map_err(ApiError::BadRequest)?;
 
     let content = tokio::fs::read_to_string(&canonical_target)
         .await
@@ -279,23 +269,8 @@ async fn save_file(
     Json(body): Json<SaveFileRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let skill_dir = skill_dir_path(&skills_store_path(&state.config_dir), &name)?;
-    let target = skill_dir.join(&relative_path);
-
-    let canonical_dir = skill_dir
-        .canonicalize()
-        .map_err(|e| ApiError::NotFound(format!("Skill dir not found: {e}")))?;
-
-    let parent = target
-        .parent()
-        .ok_or(ApiError::BadRequest("Invalid path".into()))?;
-    let canonical_parent = parent
-        .canonicalize()
-        .map_err(|e| ApiError::NotFound(format!("Parent dir not found: {e}")))?;
-    if !canonical_parent.starts_with(&canonical_dir) {
-        return Err(ApiError::BadRequest(
-            "Access denied: path traversal detected".into(),
-        ));
-    }
+    let target = y_service::resolve_skill_write_path(&skill_dir, Path::new(&relative_path))
+        .map_err(ApiError::BadRequest)?;
 
     tokio::fs::write(&target, &body.content)
         .await

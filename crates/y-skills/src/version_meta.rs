@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Source type for how a version was created.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VersionSourceType {
     /// Created by the transformation pipeline.

@@ -92,7 +92,7 @@ pub struct StalenessReport {
 }
 
 /// Recommended maintenance action.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaintenanceAction {
     /// No action needed — entry is fresh.
     None,

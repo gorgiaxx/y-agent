@@ -10,7 +10,7 @@ use crate::classifier::SkillClassificationType;
 use crate::security::SecurityVerdict;
 
 /// Where to redirect non-skill content.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RedirectTarget {
     /// Should be registered as a tool instead.

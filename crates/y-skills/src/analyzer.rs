@@ -49,7 +49,7 @@ pub struct EmbeddedScript {
 }
 
 /// Kinds of security-related patterns detected during analysis.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityFlag {
     /// Content contains patterns suggesting external API calls.

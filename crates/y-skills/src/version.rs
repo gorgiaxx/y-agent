@@ -20,7 +20,7 @@ pub struct ReflogEntry {
 }
 
 /// Actions recorded in the reflog.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReflogAction {
     /// Initial registration.

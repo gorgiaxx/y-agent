@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Type of scope for grouping journal entries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeType {
     Task,
@@ -36,7 +36,7 @@ pub enum StorageStrategy {
 }
 
 /// Scope status.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeStatus {
     Open,
     Closed,

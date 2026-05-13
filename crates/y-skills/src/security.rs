@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Type of security finding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityFindingType {
     /// Attempt to override system instructions.
@@ -118,7 +118,7 @@ impl SecurityScreener {
 
         SecurityVerdict::Blocked {
             reason: worst.description.clone(),
-            finding_type: worst.finding_type.clone(),
+            finding_type: worst.finding_type,
             findings,
         }
     }

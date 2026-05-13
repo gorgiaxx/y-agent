@@ -127,8 +127,8 @@ pub struct ListMessagesQuery {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn is_user_visible_session(session_type: &SessionType, state: &SessionState) -> bool {
-    session_type.is_user_facing() && *state == SessionState::Active
+fn is_user_visible_session(session_type: SessionType, state: SessionState) -> bool {
+    session_type.is_user_facing() && state == SessionState::Active
 }
 
 fn session_to_info(s: &y_core::session::SessionNode, has_custom_prompt: bool) -> SessionInfo {
@@ -187,7 +187,7 @@ async fn list_sessions(
 
     let mut infos: Vec<SessionInfo> = sessions
         .into_iter()
-        .filter(|s| is_user_visible_session(&s.session_type, &s.state))
+        .filter(|s| is_user_visible_session(s.session_type, s.state))
         .map(|s| {
             let has_custom = custom_prompt_ids.contains(&s.id.0);
             session_to_info(&s, has_custom)

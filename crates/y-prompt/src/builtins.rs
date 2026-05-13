@@ -222,7 +222,7 @@ impl ConditionTag {
 ///
 /// - `Native` -> dedicated-file-tool guidance (`FileRead`, `FileEdit`, ...)
 /// - `Docker` / `Ssh` -> ShellExec-based guidance for remote targets
-pub fn tool_protocol_for(backend: &RuntimeBackend) -> &'static str {
+pub fn tool_protocol_for(backend: RuntimeBackend) -> &'static str {
     match backend {
         RuntimeBackend::Native => PROMPT_TOOL_PROTOCOL,
         RuntimeBackend::Docker | RuntimeBackend::Ssh => PROMPT_TOOL_PROTOCOL_REMOTE,
@@ -496,15 +496,15 @@ mod tests {
     #[test]
     fn test_tool_protocol_for_helper() {
         assert_eq!(
-            tool_protocol_for(&RuntimeBackend::Native),
+            tool_protocol_for(RuntimeBackend::Native),
             PROMPT_TOOL_PROTOCOL
         );
         assert_eq!(
-            tool_protocol_for(&RuntimeBackend::Docker),
+            tool_protocol_for(RuntimeBackend::Docker),
             PROMPT_TOOL_PROTOCOL_REMOTE
         );
         assert_eq!(
-            tool_protocol_for(&RuntimeBackend::Ssh),
+            tool_protocol_for(RuntimeBackend::Ssh),
             PROMPT_TOOL_PROTOCOL_REMOTE
         );
     }

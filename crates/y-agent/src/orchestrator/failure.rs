@@ -37,7 +37,7 @@ pub enum FailureStrategy {
 // ---------------------------------------------------------------------------
 
 /// How to increase delay between retry attempts.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackoffStrategy {
     /// Fixed delay between attempts.

@@ -28,7 +28,7 @@ pub struct FileDiff {
 }
 
 /// Type of file change.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeType {
     /// File was added in version B.
     Added,
@@ -65,7 +65,7 @@ pub struct DiffLine {
 }
 
 /// Whether a diff line is context, added, or removed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffLineKind {
     /// Unchanged context line.
     Context,

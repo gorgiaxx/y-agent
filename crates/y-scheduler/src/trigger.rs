@@ -20,7 +20,7 @@ pub struct FiredTrigger {
 }
 
 /// Discriminant for trigger types (used in context injection).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TriggerType {
     Cron,

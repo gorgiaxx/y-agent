@@ -20,7 +20,7 @@ pub struct SchedulerConfig {
 }
 
 /// Policy for handling missed schedules (e.g., during downtime).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MissedPolicy {
     /// Execute once immediately to catch up.
@@ -33,7 +33,7 @@ pub enum MissedPolicy {
 }
 
 /// Policy for concurrent execution of the same schedule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ConcurrencyPolicy {
     /// Allow parallel executions.

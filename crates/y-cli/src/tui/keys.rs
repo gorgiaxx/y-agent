@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::tui::state::{AppState, InteractionMode, PanelFocus};
 
 /// Result of dispatching a key event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyAction {
     /// Quit the TUI application.
     Quit,

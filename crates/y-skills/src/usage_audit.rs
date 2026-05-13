@@ -18,7 +18,7 @@ pub struct InjectedSkill {
 }
 
 /// Judgment on whether a skill was used.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UsageJudgment {
     /// Skill was relevant and used.
     Used,

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// How Chrome is launched and connected.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LaunchMode {
     /// Connect to a remote Chrome instance via CDP URL (default).
