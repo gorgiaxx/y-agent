@@ -2507,7 +2507,7 @@ mod tests {
         assert!(config.system_prompt.contains("You are a plan writer"));
         assert_eq!(config.max_iterations, 1);
         assert_eq!(config.max_tool_calls, 0);
-        assert_eq!(config.provider_tags, vec!["general"]);
+        assert_eq!(config.provider_tags, vec!["general", "coding"]);
         assert!(config.allowed_tools.is_empty());
         assert!(!config.prune_tool_history);
     }

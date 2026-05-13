@@ -180,8 +180,8 @@ mod tests {
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None, None).await;
         // 3 core + file_edit + Task + ToolSearch + Glob + Grep + AskUser + Browser + WebFetch
-        // + 11 workflow/schedule + 1 plan = 23
-        assert_eq!(registry.len().await, 23);
+        // + 11 workflow/schedule + 1 plan + 1 loop = 24
+        assert_eq!(registry.len().await, 24);
     }
 
     #[tokio::test]
@@ -199,8 +199,8 @@ mod tests {
             None,
         )
         .await;
-        // 23 + KnowledgeSearch = 24
-        assert_eq!(registry.len().await, 24);
+        // 24 + KnowledgeSearch = 25
+        assert_eq!(registry.len().await, 25);
     }
 
     #[tokio::test]

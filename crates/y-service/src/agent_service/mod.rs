@@ -608,7 +608,7 @@ mod tests {
             base,
             &[],
             ToolCallingMode::PromptBased,
-            &y_core::runtime::RuntimeBackend::Native,
+            y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
         assert_eq!(result, base);
@@ -622,7 +622,7 @@ mod tests {
             base,
             &defs,
             ToolCallingMode::PromptBased,
-            &y_core::runtime::RuntimeBackend::Native,
+            y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
 
@@ -640,7 +640,7 @@ mod tests {
             base,
             &defs,
             ToolCallingMode::Native,
-            &y_core::runtime::RuntimeBackend::Native,
+            y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
 
@@ -659,7 +659,7 @@ mod tests {
             base,
             &defs,
             ToolCallingMode::PromptBased,
-            &y_core::runtime::RuntimeBackend::Native,
+            y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
 
@@ -674,7 +674,7 @@ mod tests {
             base,
             &[],
             ToolCallingMode::Native,
-            &y_core::runtime::RuntimeBackend::Native,
+            y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
 
@@ -690,7 +690,7 @@ mod tests {
             base,
             &[],
             ToolCallingMode::Native,
-            &y_core::runtime::RuntimeBackend::Native,
+            y_core::runtime::RuntimeBackend::Native,
             &vars,
         );
 
@@ -706,7 +706,7 @@ mod tests {
             base,
             &[],
             ToolCallingMode::Native,
-            &y_core::runtime::RuntimeBackend::Native,
+            y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
         assert_eq!(result, base);

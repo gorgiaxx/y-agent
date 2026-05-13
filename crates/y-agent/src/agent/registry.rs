@@ -737,7 +737,7 @@ mod tests {
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 19); // 17 built-in + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 18); // 16 built-in + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -895,7 +895,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 17);
+        assert_eq!(builtins.len(), 16);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
         assert_eq!(user_defs.len(), 1);
@@ -992,7 +992,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 17);
+        assert_eq!(builtins.len(), 16);
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
