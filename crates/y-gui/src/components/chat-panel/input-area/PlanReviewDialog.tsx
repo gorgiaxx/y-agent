@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ClipboardList, X } from 'lucide-react';
 import { PlanTaskItem } from '../chat-box/tool-renderers/PlanRenderer';
-import type { PlanTaskDisplay } from '../chat-box/toolCallUtils';
+import type { PlanTaskDisplay } from '../chat-box/planToolDisplay';
 import './PlanReviewDialog.css';
 
 interface PlanReviewDialogProps {

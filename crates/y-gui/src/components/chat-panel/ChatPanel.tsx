@@ -75,6 +75,9 @@ function buildDisplayItems(
   error: string | null,
 ): DisplayItem[] {
   const items: DisplayItem[] = [];
+  const errorAlreadyRenderedInMessage = error
+    ? messages.some((message) => message.metadata?.stream_error === error)
+    : false;
 
   const segmentMap = new Map<number, TombstonedSegment>();
   if (tombstonedSegments) {
@@ -151,7 +154,7 @@ function buildDisplayItems(
     items.push({ kind: 'streaming-indicator' });
   }
 
-  if (error) {
+  if (error && !errorAlreadyRenderedInMessage) {
     items.push({ kind: 'error', error });
   }
 

@@ -874,6 +874,26 @@
   border-color: color-mix(in srgb, var(--error) 40%, var(--border));
 }
 
+.tool-call-plan-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: var(--space-sm);
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--error) 38%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--error-subtle);
+  color: var(--error);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.tool-call-plan-error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .tool-call-plan-task-list {
   display: grid;
   gap: var(--space-sm);

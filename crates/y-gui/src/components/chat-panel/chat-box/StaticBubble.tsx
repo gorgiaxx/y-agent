@@ -11,6 +11,7 @@
  */
 
 import { useMemo, memo } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import {
@@ -41,6 +42,9 @@ export const StaticBubble = memo(function StaticBubble({ message }: StaticBubble
     () => extractGeneratedImages(message.metadata),
     [message.metadata],
   );
+  const streamError = typeof message.metadata?.stream_error === 'string'
+    ? message.metadata.stream_error
+    : '';
 
   // Parse tool results from persisted metadata.
   const metaToolResults = useMemo((): ToolResultRecord[] => {
@@ -223,6 +227,16 @@ export const StaticBubble = memo(function StaticBubble({ message }: StaticBubble
       )}
 
       <GeneratedImageGallery images={generatedImages} />
+
+      {streamError && (
+        <div className="assistant-error-notice">
+          <AlertTriangle size={14} />
+          <div>
+            <div className="assistant-error-notice-title">Provider error</div>
+            <div className="assistant-error-notice-body">{streamError}</div>
+          </div>
+        </div>
+      )}
     </AssistantMessageShell>
   );
 });

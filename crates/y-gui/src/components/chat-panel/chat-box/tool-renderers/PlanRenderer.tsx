@@ -18,11 +18,13 @@ import { MarkdownSegment } from '../MessageShared';
 import { makeMarkdownComponents } from '../messageUtils';
 import {
   basename,
+} from '../toolCallUtils';
+import {
   extractPlanDisplayMeta,
   extractPlanRequestMeta,
   type PlanWriterStageDisplay,
   type PlanTaskDisplay,
-} from '../toolCallUtils';
+} from '../planToolDisplay';
 import { DetailSections } from './shared';
 import { PlanReviewInline } from './PlanReviewInline';
 import { usePlanReview } from '../../planReviewState';
@@ -275,18 +277,35 @@ export function PlanRenderer({
   );
 
   const defaultExpanded = meta?.kind === 'plan_stage' || meta?.kind === 'plan_execution';
-  const [expanded, setExpanded] = useState(defaultExpanded);
   const [showRaw, setShowRaw] = useState(false);
+  const autoExpandKey = meta
+    ? `${meta.kind}:${meta.planFile}`
+    : null;
+  const [expansionState, setExpansionState] = useState(() => ({
+    key: autoExpandKey,
+    expanded: defaultExpanded,
+  }));
+  const expanded = expansionState.key === autoExpandKey
+    ? expansionState.expanded
+    : defaultExpanded;
+  const toggleExpanded = () => {
+    setExpansionState({
+      key: autoExpandKey,
+      expanded: !expanded,
+    });
+  };
 
-  const effectiveStatus = meta?.kind === 'plan_stage' && meta.stageStatus === 'running'
-    ? 'running'
-    : meta?.kind === 'plan_execution'
-      && (
-        meta.tasks.some((task) => task.status === 'in_progress')
-        || (meta.completed + meta.failed) < (meta.totalPhases || meta.tasks.length)
-      )
+  const effectiveStatus = status === 'error'
+    ? 'error'
+    : meta?.kind === 'plan_stage' && meta.stageStatus === 'running'
       ? 'running'
-      : status;
+      : meta?.kind === 'plan_execution'
+        && (
+          meta.tasks.some((task) => task.status === 'in_progress')
+          || (meta.completed + meta.failed) < (meta.totalPhases || meta.tasks.length)
+        )
+        ? 'running'
+        : status;
   const effectiveStatusIcon = {
     running: <Loader2 size={13} className="tool-call-spinner" />,
     success: <CheckCircle2 size={13} />,
@@ -342,14 +361,28 @@ export function PlanRenderer({
       onToggleRaw={() => setShowRaw(!showRaw)}
     />
   );
+  const errorNotice = status === 'error' && result ? (
+    <div className="tool-call-plan-error">
+      <AlertCircle size={14} />
+      <span>{result}</span>
+    </div>
+  ) : null;
+  const detailContent = detail != null ? (
+    <>
+      {errorNotice}
+      {detail}
+    </>
+  ) : (
+    errorNotice ?? fallbackDetail
+  );
 
-  const canExpand = detail != null || !!displayArgs || !!displayResult;
+  const canExpand = detail != null || errorNotice != null || !!displayArgs || !!displayResult;
 
   return (
     <div className={`tool-call-plan-wrapper ${effectiveStatusClass}`}>
       <div
         className="tool-call-tag"
-        onClick={() => canExpand && setExpanded(!expanded)}
+        onClick={() => canExpand && toggleExpanded()}
         title={path || title || 'Plan'}
       >
         <span className="tool-call-action-group">
@@ -375,7 +408,7 @@ export function PlanRenderer({
       </div>
       {expanded && (
         <div className="tool-call-detail">
-          {detail ?? fallbackDetail}
+          {detailContent}
         </div>
       )}
     </div>

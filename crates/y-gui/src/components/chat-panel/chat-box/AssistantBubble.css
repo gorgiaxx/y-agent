@@ -15,6 +15,40 @@
   margin-top: var(--space-sm);
 }
 
+/* ---- Terminal provider errors ---- */
+
+.assistant-error-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: var(--space-sm);
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--error) 36%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--error-subtle);
+  color: var(--error);
+}
+
+.assistant-error-notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.assistant-error-notice-title {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.assistant-error-notice-body {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 /* ---- Tool call pending indicator (lazy output) ---- */
 
 .tool-call-pending {

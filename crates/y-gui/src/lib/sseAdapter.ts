@@ -28,6 +28,7 @@ export class SseAdapter {
   private token: string | null;
   private source: EventSource | null = null;
   private listeners = new Map<string, Set<Callback>>();
+  private eventHandlers = new Map<string, EventListener>();
   private reconnectMs = 1000;
   private maxReconnectMs = 30000;
   private disposed = false;
@@ -61,11 +62,14 @@ export class SseAdapter {
 
     const url = this.token ? `${this.url}?token=${encodeURIComponent(this.token)}` : this.url;
     this.source = new EventSource(url);
+    this.eventHandlers.clear();
+    for (const event of this.listeners.keys()) {
+      this.registerEventListener(event);
+    }
 
     this.source.onopen = () => {
       this.reconnectMs = 1000;
       this.setStatus('connected');
-      this.reregisterListeners();
     };
 
     this.source.onmessage = (ev) => {
@@ -83,21 +87,23 @@ export class SseAdapter {
     };
   }
 
-  private reregisterListeners() {
-    if (!this.source) return;
-    for (const event of this.listeners.keys()) {
-      this.source.addEventListener(event, ((ev: MessageEvent) => {
-        try {
-          const payload = normalizeSsePayload(JSON.parse(ev.data));
-          const cbs = this.listeners.get(event);
-          if (cbs) {
-            for (const cb of cbs) {
-              cb({ payload } as { payload: unknown });
-            }
+  private registerEventListener(event: string) {
+    if (!this.source || this.eventHandlers.has(event)) return;
+
+    const handler = ((ev: MessageEvent) => {
+      try {
+        const payload = normalizeSsePayload(JSON.parse(ev.data));
+        const cbs = this.listeners.get(event);
+        if (cbs) {
+          for (const cb of cbs) {
+            cb({ payload } as { payload: unknown });
           }
-        } catch { /* ignore */ }
-      }) as EventListener);
-    }
+        }
+      } catch { /* ignore */ }
+    }) as EventListener;
+
+    this.source.addEventListener(event, handler);
+    this.eventHandlers.set(event, handler);
   }
 
   private handleRaw(ev: MessageEvent) {
@@ -123,20 +129,7 @@ export class SseAdapter {
     if (!set) {
       set = new Set();
       this.listeners.set(event, set);
-
-      // Register a named event listener on the EventSource so the browser
-      // dispatches events with `event: <name>` lines directly to us.
-      this.source?.addEventListener(event, ((ev: MessageEvent) => {
-        try {
-          const payload = normalizeSsePayload(JSON.parse(ev.data)) as T;
-          const cbs = this.listeners.get(event);
-          if (cbs) {
-            for (const cb of cbs) {
-              cb({ payload } as { payload: unknown });
-            }
-          }
-        } catch { /* ignore */ }
-      }) as EventListener);
+      this.registerEventListener(event);
     }
     const cb = callback as Callback;
     set.add(cb);
@@ -145,6 +138,11 @@ export class SseAdapter {
       set!.delete(cb);
       if (set!.size === 0) {
         this.listeners.delete(event);
+        const handler = this.eventHandlers.get(event);
+        if (handler) {
+          this.source?.removeEventListener(event, handler);
+          this.eventHandlers.delete(event);
+        }
       }
     };
   }
@@ -153,6 +151,7 @@ export class SseAdapter {
     this.disposed = true;
     this.source?.close();
     this.source = null;
+    this.eventHandlers.clear();
     this.listeners.clear();
   }
 }

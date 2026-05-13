@@ -31,6 +31,7 @@ import {
   streamingAssistantMessageId,
 } from './chatStreamingMessages';
 import {
+  shouldDisplayStreamingContentAgent,
   shouldDisplayStreamingAgent,
   type ToolResultRecord,
 } from './chatStreamTypes';
@@ -119,7 +120,7 @@ export function useChatStreaming(
         }
         logger.debug('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
       } else if (event.type === 'stream_delta') {
-        if (!shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -171,7 +172,7 @@ export function useChatStreaming(
         });
         syncVisible(sid);
       } else if (event.type === 'stream_reasoning_delta') {
-        if (!shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -231,7 +232,7 @@ export function useChatStreaming(
         });
         syncVisible(sid);
       } else if (event.type === 'stream_image_delta') {
-        if (!shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -244,7 +245,7 @@ export function useChatStreaming(
           }),
         );
       } else if (event.type === 'stream_image_complete') {
-        if (!shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -556,6 +557,7 @@ export function useChatStreaming(
                 sessionId,
                 errorMessageId,
                 snapToolResultsErr,
+                payload.error,
               );
             });
             syncVisible(sessionId);

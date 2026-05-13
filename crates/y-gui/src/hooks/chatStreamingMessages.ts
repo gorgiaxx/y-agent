@@ -15,6 +15,10 @@ export function isLocalTerminalAssistantMessage(message: Pick<Message, 'id'>): b
 }
 
 function hasMeaningfulStreamMetadata(metadata: Record<string, unknown>): boolean {
+  if (typeof metadata.stream_error === 'string' && metadata.stream_error.length > 0) {
+    return true;
+  }
+
   const toolResults = metadata.tool_results;
   if (Array.isArray(toolResults) && toolResults.length > 0) {
     return true;
@@ -111,6 +115,7 @@ export function finalizeStreamingAssistantMessage(
   sessionId: string,
   terminalMessageId: string,
   toolResults?: ToolResultRecord[],
+  terminalError?: string,
 ): Message[] {
   const streamingId = streamingAssistantMessageId(sessionId);
 
@@ -121,6 +126,9 @@ export function finalizeStreamingAssistantMessage(
       }
 
       const metadata = { ...(message.metadata ?? {}) };
+      if (terminalError) {
+        metadata.stream_error = terminalError;
+      }
       const mergedToolResults = mergeToolResultMetadata(
         metadata.tool_results,
         toolResults,

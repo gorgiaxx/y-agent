@@ -16,6 +16,8 @@ export interface ToolResultRecord {
 }
 
 const PLAN_AGENT_PREFIX = 'plan-';
+const PLAN_ORCHESTRATOR_AGENT_NAME = 'plan-orchestrator';
+const PLAN_WRITER_AGENT_NAME = 'plan-writer';
 
 export function shouldDisplayStreamingAgent(
   agentName?: string,
@@ -36,4 +38,19 @@ export function shouldDisplayStreamingAgent(
   }
 
   return false;
+}
+
+export function shouldDisplayStreamingContentAgent(
+  agentName?: string,
+  rootAgentNames: Iterable<string> = [DEFAULT_ROOT_AGENT_NAME],
+): boolean {
+  if (agentName === PLAN_WRITER_AGENT_NAME) {
+    return false;
+  }
+
+  if (agentName === PLAN_ORCHESTRATOR_AGENT_NAME) {
+    return true;
+  }
+
+  return shouldDisplayStreamingAgent(agentName, rootAgentNames);
 }
