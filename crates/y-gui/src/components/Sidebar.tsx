@@ -9,7 +9,7 @@ import {
   Search,
   ArrowLeft,
 } from 'lucide-react';
-import type { SessionInfo, WorkspaceInfo } from '../types';
+import type { SessionInfo, WorkspaceInfo, ViewType } from '../types';
 import { ChatSidebarPanel } from './chat-panel/ChatSidebarPanel';
 import { NavSidebar, NavItem, NavDivider } from './common/NavSidebar';
 import { SettingsSidebarNav } from './settings/SettingsSidebarNav';
@@ -24,7 +24,7 @@ import { useSidebarSearch } from '../hooks/useSidebarSearch';
 import type { EditorTab, EditorSurface } from './agents/types';
 import './Sidebar.css';
 
-export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents' | 'settings';
+export type { ViewType } from '../types';
 
 // ---------------------------------------------------------------------------
 // Grouped prop interfaces

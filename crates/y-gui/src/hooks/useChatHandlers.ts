@@ -9,7 +9,7 @@
 import { useCallback } from 'react';
 import { logger, transport } from '../lib';
 import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions } from '../types';
-import type { ViewType } from '../components/Sidebar';
+import type { ViewType } from '../types';
 import type { CompactInfo, ChatOpStatus, SendMessageOptions } from './useChat';
 
 export interface SessionOps {

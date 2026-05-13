@@ -1,6 +1,12 @@
 // TypeScript types for the y-agent GUI frontend.
 
 // ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
+export type ViewType = 'chat' | 'automation' | 'skills' | 'knowledge' | 'agents' | 'settings';
+
+// ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
 
@@ -77,11 +83,8 @@ export interface ChatStarted {
   run_id: string;
 }
 
-/** Payload from the `chat:started` Tauri event (emitted before progress events). */
-export interface ChatStartedPayload {
-  run_id: string;
-  session_id: string;
-}
+/** Payload from the `chat:started` Tauri event (identical to ChatStarted). */
+export type ChatStartedPayload = ChatStarted;
 
 export interface ChatCompletePayload {
   run_id: string;
@@ -314,6 +317,22 @@ export interface SystemStatus {
   session_count: number | null;
 }
 
+/** Top-level config returned by `config_get`. Each section key maps to its raw JSON. */
+export interface AppConfigResponse {
+  session?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
+  browser?: Record<string, unknown>;
+  storage?: Record<string, unknown>;
+  hooks?: Record<string, unknown>;
+  tools?: Record<string, unknown>;
+  guardrails?: Record<string, unknown>;
+  knowledge?: Record<string, unknown>;
+  langfuse?: Record<string, unknown>;
+  providers?: unknown;
+  mcp?: unknown;
+  [key: string]: unknown;
+}
+
 /** Summary of a configured LLM provider (from `provider_list` command). */
 export interface ProviderInfo {
   id: string;
@@ -359,11 +378,6 @@ export interface ImageGenerationOptions {
   size: string | null;
 }
 
-export const DEFAULT_IMAGE_GENERATION_OPTIONS: ImageGenerationOptions = {
-  watermark: false,
-  max_images: 1,
-  size: null,
-};
 
 /** Last-turn metadata cached per session by the backend (from `session_last_turn_meta`). */
 export interface TurnMeta {
@@ -395,7 +409,7 @@ export interface ChatCheckpointInfo {
 /** Message with active/tombstone status (from `chat_get_messages_with_status`). */
 export interface MessageWithStatus {
   id: string;
-  role: string;
+  role: 'user' | 'assistant' | 'system';
   content: string;
   status: 'active' | 'tombstone';
   checkpoint_id?: string;

@@ -1,4 +1,4 @@
-import type { ViewType } from '../components/Sidebar';
+import type { ViewType } from '../types';
 
 export interface DiagnosticsScope {
   isGlobal: boolean;
