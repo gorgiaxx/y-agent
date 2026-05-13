@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { X } from 'lucide-react';
 import { transport } from '../../lib';
+import type { AppConfigResponse } from '../../types';
 import { TagChipInput } from './TagChipInput';
 import type { RuntimeFormData } from './settingsTypes';
 import { jsonToRuntime } from './settingsTypes';
@@ -37,8 +38,7 @@ export function RuntimeTab({
   const loadRuntimeForm = useCallback(async () => {
     setLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await transport.invoke<any>('config_get');
+            const allConfig = await transport.invoke<AppConfigResponse>('config_get');
       const runtimeJson = allConfig?.runtime ?? {};
       setRuntimeForm(jsonToRuntime(runtimeJson));
       // Cache raw TOML for comment preservation.

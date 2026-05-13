@@ -2,7 +2,7 @@
 // GeneralTab -- Paths, Appearance, Behavior settings
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Copy, Wand2 } from 'lucide-react';
 import { transport } from '../../lib';
 import type { GuiConfig } from '../../types';
@@ -30,6 +30,7 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
   const [configPath, setConfigPath] = useState('');
   const [dataPath, setDataPath] = useState('');
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     transport.invoke<{ config_dir: string; data_dir: string }>('app_paths')
@@ -38,13 +39,15 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
         setDataPath(paths.data_dir);
       })
       .catch(() => { /* ignore */ });
+    return () => clearTimeout(copyTimerRef.current);
   }, []);
 
   const handleCopyPath = useCallback(async (value: string, field: string) => {
     try {
       await navigator.clipboard.writeText(value);
       setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 1500);
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedField(null), 1500);
       setToast({ message: 'Copied to clipboard', type: 'success' });
     } catch { /* ignore */ }
   }, [setToast]);

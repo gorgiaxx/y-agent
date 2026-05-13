@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { transport } from '../../lib';
+import type { AppConfigResponse } from '../../types';
 import { TagChipInput } from './TagChipInput';
 import type { BrowserFormData } from './settingsTypes';
 import { jsonToBrowser } from './settingsTypes';
@@ -36,8 +37,7 @@ export function BrowserTab({
   const loadBrowserForm = useCallback(async () => {
     setLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await transport.invoke<any>('config_get');
+            const allConfig = await transport.invoke<AppConfigResponse>('config_get');
       const browserJson = allConfig?.browser ?? {};
       setBrowserForm(jsonToBrowser(browserJson));
       // Cache raw TOML for comment preservation.

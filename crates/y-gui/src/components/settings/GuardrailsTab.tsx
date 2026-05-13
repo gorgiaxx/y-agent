@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { transport } from '../../lib';
+import type { AppConfigResponse } from '../../types';
 import type { GuardrailsFormData } from './settingsTypes';
 import { jsonToGuardrails } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
@@ -35,8 +36,7 @@ export function GuardrailsTab({
   const loadForm = useCallback(async () => {
     setLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await transport.invoke<any>('config_get');
+            const allConfig = await transport.invoke<AppConfigResponse>('config_get');
       const json = allConfig?.guardrails ?? {};
       setGuardrailsForm(jsonToGuardrails(json));
       try {

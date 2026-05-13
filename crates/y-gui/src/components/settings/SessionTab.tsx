@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { transport } from '../../lib';
+import type { AppConfigResponse } from '../../types';
 import type { SessionFormData } from './settingsTypes';
 import { jsonToSession } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
@@ -35,8 +36,7 @@ export function SessionTab({
   const loadSessionForm = useCallback(async () => {
     setLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await transport.invoke<any>('config_get');
+            const allConfig = await transport.invoke<AppConfigResponse>('config_get');
       const sessionJson = allConfig?.session ?? {};
       setSessionForm(jsonToSession(sessionJson));
       // Cache raw TOML for comment preservation.

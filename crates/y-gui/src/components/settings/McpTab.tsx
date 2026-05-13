@@ -254,8 +254,7 @@ export function McpTab({
   const loadMcpServers = useCallback(async () => {
     setLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const json = await transport.invoke<any>('mcp_config_get');
+      const json = await transport.invoke<Record<string, unknown>>('mcp_config_get');
       setMcpServersList(jsonToMcpServers(json));
     } catch {
       // Use empty list if file not found.

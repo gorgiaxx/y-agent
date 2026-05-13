@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search } from 'lucide-react';
 import { transport } from '../../lib';
+import type { AppConfigResponse } from '../../types';
 import './ProvidersTab.css';
 import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicker';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
@@ -91,18 +92,15 @@ function ProviderTabPanel({
     setModelError(null);
     setModelList([]);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await transport.invoke<any>('provider_list_models', {
+      const result = await transport.invoke<{ data?: Array<{ id?: string; display_name?: string }> }>('provider_list_models', {
         baseUrl: provider.base_url,
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
         headers: provider.headers,
         httpProtocol: provider.http_protocol,
       });
-      // OpenAI format: { data: [{ id, display_name?, ... }] }
       const items: ModelItem[] = (result?.data ?? []).map(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (m: any) => ({ id: m.id ?? '', display_name: m.display_name ?? m.id ?? '' }),
+        (m) => ({ id: m.id ?? '', display_name: m.display_name ?? m.id ?? '' }),
       );
       // Sort alphabetically by id.
       items.sort((a, b) => a.id.localeCompare(b.id));
@@ -401,8 +399,7 @@ export function ProvidersTab({
   const loadProviders = useCallback(async () => {
     setProvidersLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await transport.invoke<any>('config_get');
+      const allConfig = await transport.invoke<AppConfigResponse>('config_get');
       setProvidersList(jsonToProviders(allConfig));
 
       // Also read raw TOML to cache pool-level meta fields (lines before the

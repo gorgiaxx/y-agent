@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { transport } from '../../lib';
+import type { AppConfigResponse } from '../../types';
 import type { LangfuseFormData } from './settingsTypes';
 import { jsonToLangfuse } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
@@ -38,8 +39,7 @@ export function LangfuseTab({
   const loadForm = useCallback(async () => {
     setLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await transport.invoke<any>('config_get');
+            const allConfig = await transport.invoke<AppConfigResponse>('config_get');
       const json = allConfig?.langfuse ?? {};
       setLangfuseForm(jsonToLangfuse(json));
       try {

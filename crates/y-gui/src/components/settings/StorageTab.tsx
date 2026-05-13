@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { transport } from '../../lib';
+import type { AppConfigResponse } from '../../types';
 import type { StorageFormData } from './settingsTypes';
 import { jsonToStorage } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
@@ -34,8 +35,7 @@ export function StorageTab({
   const loadForm = useCallback(async () => {
     setLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allConfig = await transport.invoke<any>('config_get');
+            const allConfig = await transport.invoke<AppConfigResponse>('config_get');
       const json = allConfig?.storage ?? {};
       setStorageForm(jsonToStorage(json));
       try {
