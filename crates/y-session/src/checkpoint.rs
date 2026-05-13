@@ -128,6 +128,15 @@ impl ChatCheckpointManager {
         // Load the target checkpoint.
         let target = self.checkpoint_store.load(checkpoint_id).await?;
 
+        if target.session_id != *session_id {
+            return Err(SessionError::Other {
+                message: format!(
+                    "checkpoint {} belongs to session {}, not {}",
+                    target.checkpoint_id, target.session_id, session_id
+                ),
+            });
+        }
+
         if target.invalidated {
             return Err(SessionError::Other {
                 message: format!("checkpoint {} is already invalidated", target.checkpoint_id),
@@ -143,10 +152,17 @@ impl ChatCheckpointManager {
             .collect();
 
         // Truncate display transcript to the pre-turn state.
-        let _ = self
+        if let Err(e) = self
             .display_transcript_store
             .truncate(session_id, target.message_count_before as usize)
-            .await;
+            .await
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %e,
+                "failed to truncate display transcript during rollback"
+            );
+        }
 
         // Truncate context transcript to the pre-turn state.
         let messages_removed = self
@@ -425,6 +441,32 @@ mod tests {
     async fn test_rollback_no_checkpoints() {
         let (mgr, sid) = setup().await;
         let result = mgr.rollback_last(&sid).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rollback_to_rejects_checkpoint_from_other_session() {
+        let (mgr, sid) = setup().await;
+        let other_session = mgr
+            .session_store
+            .create(y_core::session::CreateSessionOptions {
+                parent_id: None,
+                session_type: y_core::session::SessionType::Main,
+                agent_id: None,
+                title: Some("other".into()),
+            })
+            .await
+            .unwrap();
+
+        let checkpoint = mgr
+            .create_checkpoint(&sid, 1, 0, "scope-1".into())
+            .await
+            .unwrap();
+
+        let result = mgr
+            .rollback_to(&other_session.id, &checkpoint.checkpoint_id)
+            .await;
+
         assert!(result.is_err());
     }
 }

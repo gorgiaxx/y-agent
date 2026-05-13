@@ -52,7 +52,7 @@ impl SessionStore for SqliteSessionStore {
             (id.clone(), 0, "[]".to_string())
         };
 
-        let session_type_str = session_type_to_str(&options.session_type);
+        let session_type_str = session_type_to_str(options.session_type);
         let transcript_path = format!("transcripts/{}.jsonl", id.as_str());
 
         sqlx::query(
@@ -108,12 +108,12 @@ impl SessionStore for SqliteSessionStore {
         );
         let mut binds: Vec<String> = Vec::new();
 
-        if let Some(ref state) = filter.state {
+        if let Some(state) = filter.state {
             binds.push(state_to_str(state).to_string());
             write!(&mut sql, " AND state = ?{}", binds.len()).unwrap();
         }
 
-        if let Some(ref session_type) = filter.session_type {
+        if let Some(session_type) = filter.session_type {
             binds.push(session_type_to_str(session_type).to_string());
             write!(&mut sql, " AND session_type = ?{}", binds.len()).unwrap();
         }
@@ -149,7 +149,7 @@ impl SessionStore for SqliteSessionStore {
 
     #[instrument(skip(self), fields(session_id = %id, new_state = ?state))]
     async fn set_state(&self, id: &SessionId, state: SessionState) -> Result<(), SessionError> {
-        let state_str = state_to_str(&state);
+        let state_str = state_to_str(state);
 
         let result = sqlx::query(
             r"UPDATE session_metadata
@@ -494,7 +494,7 @@ impl SessionRow {
 // Conversion helpers
 // ---------------------------------------------------------------------------
 
-fn session_type_to_str(t: &SessionType) -> &'static str {
+fn session_type_to_str(t: SessionType) -> &'static str {
     match t {
         SessionType::Main => "main",
         SessionType::Child => "child",
@@ -519,7 +519,7 @@ fn str_to_session_type(s: &str) -> Result<SessionType, SessionError> {
     }
 }
 
-fn state_to_str(s: &SessionState) -> &'static str {
+fn state_to_str(s: SessionState) -> &'static str {
     match s {
         SessionState::Active => "active",
         SessionState::Paused => "paused",

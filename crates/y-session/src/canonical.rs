@@ -131,7 +131,9 @@ impl CanonicalSessionManager {
                 transcript: Vec::new(),
             });
 
-        if state.channels.len() >= self.config.max_channels {
+        if !state.channels.contains_key(&channel)
+            && state.channels.len() >= self.config.max_channels
+        {
             return Err(CanonicalError::TooManyChannels {
                 canonical_id: canonical_id.clone(),
                 max: self.config.max_channels,
@@ -149,7 +151,15 @@ impl CanonicalSessionManager {
         channel: Channel,
         message: Message,
     ) -> Result<u64, CanonicalError> {
-        // Get the next sequence number.
+        let mut map = self.channel_map.write().await;
+        let state = map
+            .get_mut(canonical_id)
+            .ok_or_else(|| CanonicalError::NotFound {
+                canonical_id: canonical_id.clone(),
+            })?;
+
+        // Get the next sequence number after the canonical session exists so
+        // failed appends do not leave gaps.
         let sequence = {
             let mut counters = self.sequence_counters.write().await;
             let counter = counters.entry(canonical_id.clone()).or_insert(0);
@@ -162,13 +172,6 @@ impl CanonicalSessionManager {
             channel,
             sequence,
         };
-
-        let mut map = self.channel_map.write().await;
-        let state = map
-            .get_mut(canonical_id)
-            .ok_or_else(|| CanonicalError::NotFound {
-                canonical_id: canonical_id.clone(),
-            })?;
 
         state.transcript.push(canonical_msg);
 
@@ -489,6 +492,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_register_existing_channel_can_replace_at_max_channels() {
+        let config = CanonicalConfig {
+            max_channels: 1,
+            auto_merge: true,
+        };
+        let mgr = CanonicalSessionManager::new(
+            Arc::new(MockSessionStore),
+            Arc::new(MockTranscriptStore),
+            config,
+        );
+        let canonical_id = SessionId::new();
+        let replacement_id = SessionId::new();
+
+        mgr.register_channel(&canonical_id, Channel::Cli, SessionId::new())
+            .await
+            .unwrap();
+        mgr.register_channel(&canonical_id, Channel::Cli, replacement_id.clone())
+            .await
+            .unwrap();
+
+        let found = mgr
+            .channel_session(&canonical_id, &Channel::Cli)
+            .await
+            .unwrap();
+        assert_eq!(found, replacement_id);
+    }
+
+    #[tokio::test]
     async fn test_append_and_read_transcript() {
         let mgr = make_manager();
         let canonical_id = SessionId::new();
@@ -536,6 +567,35 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(CanonicalError::NotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_failed_append_does_not_consume_sequence_number() {
+        let mgr = make_manager();
+        let canonical_id = SessionId::new();
+
+        let result = mgr
+            .append_message(
+                &canonical_id,
+                Channel::Cli,
+                make_message("missing", Role::User),
+            )
+            .await;
+        assert!(matches!(result, Err(CanonicalError::NotFound { .. })));
+
+        mgr.register_channel(&canonical_id, Channel::Cli, SessionId::new())
+            .await
+            .unwrap();
+        let sequence = mgr
+            .append_message(
+                &canonical_id,
+                Channel::Cli,
+                make_message("first", Role::User),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(sequence, 1);
     }
 
     #[tokio::test]

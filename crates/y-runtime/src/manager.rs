@@ -180,11 +180,11 @@ impl RuntimeManager {
         }
 
         // Fall back to configured default.
-        self.read_config().default_backend.clone()
+        self.read_config().default_backend
     }
 
     /// Get the backend adapter for the given backend type.
-    fn get_adapter(&self, backend: &RuntimeBackend) -> &dyn RuntimeAdapter {
+    fn get_adapter(&self, backend: RuntimeBackend) -> &dyn RuntimeAdapter {
         match backend {
             RuntimeBackend::Docker => &self.docker,
             RuntimeBackend::Ssh => &self.ssh,
@@ -299,7 +299,7 @@ impl RuntimeAdapter for RuntimeManager {
         tracing::info!(?backend, "selected runtime backend");
 
         // Step 6: Check backend health.
-        let adapter = self.get_adapter(&backend);
+        let adapter = self.get_adapter(backend);
         let health = adapter.health_check().await?;
 
         let result = if health.available {
@@ -341,7 +341,7 @@ impl RuntimeAdapter for RuntimeManager {
         let backend = self.select_backend(&request);
         tracing::info!(?backend, "selected runtime backend for background process");
 
-        let adapter = self.get_adapter(&backend);
+        let adapter = self.get_adapter(backend);
         let health = adapter.health_check().await?;
         if !health.available {
             return Err(RuntimeError::RuntimeNotAvailable { backend });
@@ -351,11 +351,11 @@ impl RuntimeAdapter for RuntimeManager {
     }
 
     async fn kill(&self, handle: &ProcessHandle) -> Result<(), RuntimeError> {
-        self.get_adapter(&handle.backend).kill(handle).await
+        self.get_adapter(handle.backend).kill(handle).await
     }
 
     async fn status(&self, handle: &ProcessHandle) -> Result<ProcessStatus, RuntimeError> {
-        self.get_adapter(&handle.backend).status(handle).await
+        self.get_adapter(handle.backend).status(handle).await
     }
 
     async fn health_check(&self) -> Result<RuntimeHealth, RuntimeError> {
@@ -375,14 +375,14 @@ impl RuntimeAdapter for RuntimeManager {
         }
 
         Ok(RuntimeHealth {
-            backend: self.read_config().default_backend.clone(),
+            backend: self.read_config().default_backend,
             available: false,
             message: Some("No runtime backends available".into()),
         })
     }
 
     fn backend(&self) -> RuntimeBackend {
-        self.read_config().default_backend.clone()
+        self.read_config().default_backend
     }
 
     async fn cleanup(&self) -> Result<(), RuntimeError> {

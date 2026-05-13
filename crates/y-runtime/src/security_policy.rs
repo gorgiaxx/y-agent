@@ -17,7 +17,7 @@ use crate::config::RuntimeConfig;
 // ---------------------------------------------------------------------------
 
 /// Predefined security profiles with different levels of restriction.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityProfile {
     /// Strict: no network, no filesystem, no capabilities.

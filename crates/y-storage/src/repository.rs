@@ -37,11 +37,23 @@ impl<T> PaginatedResult<T> {
 }
 
 /// Helper to get total row count for a table.
+///
+/// SAFETY: `table` is interpolated directly into SQL. Only pass hardcoded
+/// table names -- never user input.
+///
+/// # Panics
+///
+/// Panics if `table` contains characters other than ASCII alphanumeric or underscore.
 pub async fn count_rows(
     pool: &SqlitePool,
     table: &str,
     where_clause: Option<&str>,
 ) -> Result<u64, sqlx::Error> {
+    assert!(
+        table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        "table name must be alphanumeric/underscore"
+    );
+
     let sql = if let Some(clause) = where_clause {
         format!("SELECT COUNT(*) as cnt FROM {table} WHERE {clause}")
     } else {

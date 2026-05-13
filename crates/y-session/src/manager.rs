@@ -521,7 +521,7 @@ impl SessionManager {
             .await?;
 
         // 6. Copy display messages [0..=message_index].
-        let display_end = (message_index + 1).min(display_messages.len());
+        let display_end = message_index.saturating_add(1).min(display_messages.len());
         for msg in &display_messages[..display_end] {
             self.display_transcript_store
                 .append(&fork_node.id, msg)
@@ -532,7 +532,7 @@ impl SessionManager {
         }
 
         // 7. Copy context messages [0..=message_index].
-        let context_end = (message_index + 1).min(context_messages.len());
+        let context_end = message_index.saturating_add(1).min(context_messages.len());
         for msg in &context_messages[..context_end] {
             self.transcript_store
                 .append(&fork_node.id, msg)
@@ -933,6 +933,34 @@ mod tests {
 
         let fork_msgs = mgr.read_transcript(&fork.id).await.unwrap();
         assert_eq!(fork_msgs.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_fork_session_max_index_copies_all_messages() {
+        let mgr = setup().await;
+        let session = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: None,
+            })
+            .await
+            .unwrap();
+
+        for i in 0..2 {
+            mgr.append_message(&session.id, &test_msg(&format!("msg-{i}")))
+                .await
+                .unwrap();
+        }
+
+        let fork = mgr
+            .fork_session(&session.id, usize::MAX, None)
+            .await
+            .unwrap();
+
+        let fork_msgs = mgr.read_transcript(&fork.id).await.unwrap();
+        assert_eq!(fork_msgs.len(), 2);
     }
 
     #[tokio::test]

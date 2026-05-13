@@ -19,7 +19,7 @@ impl SqliteChatMessageStore {
 #[async_trait::async_trait]
 impl ChatMessageStore for SqliteChatMessageStore {
     async fn insert(&self, record: &ChatMessageRecord) -> Result<(), SessionError> {
-        let status_str = status_to_str(&record.status);
+        let status_str = status_to_str(record.status);
         sqlx::query(
             "INSERT INTO chat_messages (id, session_id, role, content, status, checkpoint_id, \
              model, input_tokens, output_tokens, cost_usd, context_window, \
@@ -190,7 +190,7 @@ impl ChatMessageStore for SqliteChatMessageStore {
         message_id: &str,
         status: ChatMessageStatus,
     ) -> Result<(), SessionError> {
-        let status_str = status_to_str(&status);
+        let status_str = status_to_str(status);
         sqlx::query(
             "UPDATE chat_messages SET status = ? \
              WHERE session_id = ? AND id = ?",
@@ -215,7 +215,7 @@ impl ChatMessageStore for SqliteChatMessageStore {
         if message_ids.is_empty() {
             return Ok(0);
         }
-        let status_str = status_to_str(&status);
+        let status_str = status_to_str(status);
         // Build placeholder list for IN clause.
         let placeholders: Vec<&str> = message_ids.iter().map(|_| "?").collect();
         let sql = format!(
@@ -277,7 +277,7 @@ struct ChatMessageRow {
 }
 
 /// Convert a `ChatMessageStatus` to its SQL string representation.
-fn status_to_str(status: &ChatMessageStatus) -> &'static str {
+fn status_to_str(status: ChatMessageStatus) -> &'static str {
     match status {
         ChatMessageStatus::Active => "active",
         ChatMessageStatus::Tombstone => "tombstone",

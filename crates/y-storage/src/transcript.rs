@@ -108,9 +108,11 @@ impl TranscriptStore for JsonlTranscriptStore {
         session_id: &SessionId,
         count: usize,
     ) -> Result<Vec<Message>, SessionError> {
-        let all = self.read_all(session_id).await?;
-        let start = all.len().saturating_sub(count);
-        Ok(all[start..].to_vec())
+        let path = self.transcript_path(session_id);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        read_last_messages_from_file(&path, count).await
     }
 
     #[instrument(skip(self), fields(session_id = %session_id))]
@@ -222,6 +224,50 @@ pub(crate) async fn read_messages_from_file(path: &Path) -> Result<Vec<Message>,
     }
 
     Ok(messages)
+}
+
+/// Read only the last `count` messages from a JSONL file.
+///
+/// Collects all non-empty lines first, then deserializes only the tail.
+async fn read_last_messages_from_file(
+    path: &Path,
+    count: usize,
+) -> Result<Vec<Message>, SessionError> {
+    use std::collections::VecDeque;
+
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| SessionError::TranscriptError {
+            message: format!("open transcript {}: {e}", path.display()),
+        })?;
+
+    let reader = tokio::io::BufReader::new(file);
+    let mut lines = reader.lines();
+    let mut ring: VecDeque<String> = VecDeque::with_capacity(count + 1);
+
+    while let Some(line) = lines
+        .next_line()
+        .await
+        .map_err(|e| SessionError::TranscriptError {
+            message: format!("read line: {e}"),
+        })?
+    {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if ring.len() == count {
+            ring.pop_front();
+        }
+        ring.push_back(line);
+    }
+
+    ring.into_iter()
+        .map(|line| {
+            serde_json::from_str(line.trim()).map_err(|e| SessionError::TranscriptError {
+                message: format!("parse message: {e}"),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ use y_core::runtime::RuntimeBackend;
 // ---------------------------------------------------------------------------
 
 /// SSH authentication method.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SshAuthMethod {
     /// Password-based authentication.
