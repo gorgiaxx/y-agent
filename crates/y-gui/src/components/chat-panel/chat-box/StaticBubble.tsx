@@ -19,8 +19,6 @@ import {
   extractFinalAnswer,
 } from '../../../hooks/useInterleavedSegments';
 import { extractXmlFinalAnswer } from '../../../hooks/useStreamContent';
-import { ToolCallCard } from './ToolCallCard';
-import { ThinkingCard } from './ThinkingCard';
 import {
   AssistantMessageShell,
 } from './MessageShared';
@@ -28,6 +26,7 @@ import { GeneratedImageGallery } from './GeneratedImageGallery';
 import { extractThinkTags } from './messageUtils';
 import { useAssistantBubble } from './useAssistantBubble';
 import { ThinkContentBlock } from './ThinkContentBlock';
+import { XmlSegmentList, NativeSegmentList } from './SegmentList';
 import { extractGeneratedImages } from '../../../lib/generatedImages';
 
 
@@ -137,84 +136,16 @@ export const StaticBubble = memo(function StaticBubble({ message }: StaticBubble
       {streamResult ? (
         /* Path 1: XML-parsed segments */
         <div className="message-content">
-          {streamResult.segments.map((seg, idx) => {
-            if (seg.type === 'text') {
-              return (
-                <ThinkContentBlock
-                  key={`text-${idx}`}
-                  content={seg.text}
-                  markdownComponents={markdownComponents}
-                  className="markdown-body"
-                />
-              );
-            }
-            if (seg.type === 'tool_call') {
-              const result = toolResultsMap.get(idx);
-              const status = result
-                ? (result.success ? 'success' : 'error')
-                : 'success';
-              return (
-                <ToolCallCard
-                  key={`tc-${idx}`}
-                  toolCall={{
-                    id: `tc-${idx}`,
-                    name: seg.toolCall.name,
-                    arguments: seg.toolCall.arguments,
-                  }}
-                  status={status}
-                  result={result?.resultPreview}
-                  durationMs={result?.durationMs}
-                  urlMeta={result?.urlMeta}
-                  metadata={result?.metadata}
-                />
-              );
-            }
-            return null;
-          })}
+          <XmlSegmentList
+            segments={streamResult.segments}
+            toolResultsMap={toolResultsMap}
+            markdownComponents={markdownComponents}
+          />
         </div>
       ) : historySegments ? (
         /* Path 2: Native mode history -- interleaved via final_response split */
         <div className="message-content">
-          {historySegments.map((seg, idx) => {
-            if (seg.type === 'reasoning') {
-              return (
-                <ThinkingCard
-                  key={`reason-${idx}`}
-                  content={seg.content}
-                  isStreaming={false}
-                  durationMs={seg.durationMs}
-                />
-              );
-            }
-            if (seg.type === 'text') {
-              return (
-                <ThinkContentBlock
-                  key={`text-${idx}`}
-                  content={seg.text}
-                  markdownComponents={markdownComponents}
-                  className="markdown-body"
-                />
-              );
-            }
-            if (seg.type === 'tool_result') {
-              return (
-                <ToolCallCard
-                  key={`history-tc-${idx}`}
-                  toolCall={{
-                    id: `history-${idx}`,
-                    name: seg.record.name,
-                    arguments: seg.record.arguments ?? '',
-                  }}
-                  status={seg.record.success ? 'success' : 'error'}
-                  result={seg.record.resultPreview}
-                  durationMs={seg.record.durationMs}
-                  urlMeta={seg.record.urlMeta}
-                  metadata={seg.record.metadata}
-                />
-              );
-            }
-            return null;
-          })}
+          <NativeSegmentList segments={historySegments} markdownComponents={markdownComponents} />
         </div>
       ) : (
         /* Path 3: Plain text, no tool calls */
