@@ -4,22 +4,17 @@
 //   import { transport, platform } from '../lib';
 //   const sessions = await transport.invoke<Session[]>('session_list');
 
-import type { Transport } from './transport';
-import { platform } from './platform';
+import type { Transport, ConnectionStatus } from './transport';
+import { platform, getApiUrl, isTauriEnvironment } from './platform';
 import { TauriTransport } from './tauriTransport';
 import { HttpTransport } from './httpTransport';
-import type { ConnectionStatus } from './sseAdapter';
 
 function detectBackend(): 'tauri' | 'http' {
   const env = import.meta.env.VITE_BACKEND as string | undefined;
   if (env === 'http') return 'http';
   if (env === 'tauri') return 'tauri';
-  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) return 'tauri';
+  if (isTauriEnvironment()) return 'tauri';
   return 'http';
-}
-
-function getApiUrl(): string {
-  return (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, '') ?? 'http://localhost:3000';
 }
 
 function getApiToken(): string | null {
@@ -40,18 +35,14 @@ export { logger, createLogger } from './logger';
 export type { Logger, LogLevel, LogSink } from './logger';
 
 export function getConnectionStatus(): ConnectionStatus {
-  const t = transport;
-  if (t instanceof HttpTransport) return t.connectionStatus;
-  return 'connected';
+  return transport.connectionStatus ?? 'connected';
 }
 
 export function onConnectionStatusChange(cb: (status: ConnectionStatus) => void): () => void {
-  const t = transport;
-  if (t instanceof HttpTransport) return t.onConnectionStatusChange(cb);
-  return () => {};
+  return transport.onConnectionStatusChange?.(cb) ?? (() => {});
 }
 
 export type { Transport } from './transport';
 export type { UnlistenFn } from './transport';
 export type { Platform, OpenDialogOptions, FileFilter } from './platform';
-export type { ConnectionStatus } from './sseAdapter';
+export type { ConnectionStatus } from './transport';

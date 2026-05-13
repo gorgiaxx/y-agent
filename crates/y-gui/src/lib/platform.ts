@@ -167,8 +167,7 @@ class WebPlatform implements Platform {
     window.open(url, '_blank', 'noopener');
   }
 
-  async revealInFileManager(_path: string): Promise<void> {
-    void _path;
+  async revealInFileManager(): Promise<void> {
     throw new Error('Reveal in file manager is not supported in the browser');
   }
 
@@ -188,7 +187,7 @@ class WebPlatform implements Platform {
 }
 
 export function createPlatform(apiUrl: string): Platform {
-  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+  if (isTauriEnvironment()) {
     return new TauriPlatform();
   }
   return new WebPlatform(apiUrl);
@@ -226,11 +225,15 @@ export async function fileToAttachment(file: File): Promise<Attachment> {
   };
 }
 
-function getDefaultApiUrl(): string {
+export function getApiUrl(): string {
   return (
     (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, '')
     ?? 'http://localhost:3000'
   );
 }
 
-export const platform: Platform = createPlatform(getDefaultApiUrl());
+export function isTauriEnvironment(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+export const platform: Platform = createPlatform(getApiUrl());

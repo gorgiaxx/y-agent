@@ -3,10 +3,9 @@
 // Routes `invoke()` calls to y-web REST endpoints via fetch, and `listen()`
 // calls to the SSE adapter. Used when VITE_BACKEND=http.
 
-import type { Transport, UnlistenFn } from './transport';
+import type { Transport, UnlistenFn, ConnectionStatus } from './transport';
 import { COMMAND_MAP } from './commandMap';
 import { SseAdapter } from './sseAdapter';
-import type { ConnectionStatus } from './sseAdapter';
 
 const LIFECYCLE_NOOP_COMMANDS = new Set([
   'show_window', 'toggle_devtools', 'window_set_decorations',

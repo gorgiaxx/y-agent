@@ -4,11 +4,11 @@
 // dispatches events to registered listeners, matching the Tauri `listen()`
 // callback shape `{ payload: T }`.
 
-import type { UnlistenFn } from './transport';
+import type { UnlistenFn, ConnectionStatus } from './transport';
 
 type Callback = (event: { payload: unknown }) => void;
 
-export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
+export type { ConnectionStatus };
 type StatusCallback = (status: ConnectionStatus) => void;
 
 function normalizeSsePayload(payload: unknown) {
@@ -32,6 +32,7 @@ export class SseAdapter {
   private reconnectMs = 1000;
   private maxReconnectMs = 30000;
   private disposed = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _status: ConnectionStatus = 'connecting';
   private statusListeners = new Set<StatusCallback>();
 
@@ -81,7 +82,7 @@ export class SseAdapter {
       this.source = null;
       this.setStatus('disconnected');
       if (!this.disposed) {
-        setTimeout(() => this.connect(), this.reconnectMs);
+        this.reconnectTimer = setTimeout(() => this.connect(), this.reconnectMs);
         this.reconnectMs = Math.min(this.reconnectMs * 2, this.maxReconnectMs);
       }
     };
@@ -99,7 +100,9 @@ export class SseAdapter {
             cb({ payload } as { payload: unknown });
           }
         }
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.warn('[sse] Failed to parse event data:', e);
+      }
     }) as EventListener;
 
     this.source.addEventListener(event, handler);
@@ -149,6 +152,10 @@ export class SseAdapter {
 
   dispose() {
     this.disposed = true;
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.source?.close();
     this.source = null;
     this.eventHandlers.clear();
