@@ -305,11 +305,14 @@ impl OpenAiProvider {
         use futures::stream;
 
         let response = self.generate_images(request).await?;
-        let raw_request = response.raw_request.clone();
-        let content = response.content.clone();
-        let generated_images = response.generated_images.clone();
-        let finish_reason = response.finish_reason.clone();
-        let usage = response.usage.clone();
+        let ChatResponse {
+            raw_request,
+            content,
+            generated_images,
+            finish_reason,
+            usage,
+            ..
+        } = response;
 
         let mut chunks = Vec::new();
         if let Some(delta_content) = content.filter(|value| !value.is_empty()) {

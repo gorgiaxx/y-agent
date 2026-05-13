@@ -33,7 +33,7 @@ pub fn render_prometheus(snapshots: &[(&str, MetricsSnapshot)]) -> String {
         "Total LLM requests made.",
     );
     for (id, snap) in snapshots {
-        let val = f64::from(u32::try_from(snap.total_requests).unwrap_or(u32::MAX));
+        let val = snap.total_requests as f64;
         write_metric_value(&mut buf, "requests_total", id, val);
     }
 
@@ -45,7 +45,7 @@ pub fn render_prometheus(snapshots: &[(&str, MetricsSnapshot)]) -> String {
         "Total failed LLM requests.",
     );
     for (id, snap) in snapshots {
-        let val = f64::from(u32::try_from(snap.total_errors).unwrap_or(u32::MAX));
+        let val = snap.total_errors as f64;
         write_metric_value(&mut buf, "errors_total", id, val);
     }
 
@@ -68,7 +68,7 @@ pub fn render_prometheus(snapshots: &[(&str, MetricsSnapshot)]) -> String {
         "Total input tokens consumed.",
     );
     for (id, snap) in snapshots {
-        let val = f64::from(u32::try_from(snap.total_input_tokens).unwrap_or(u32::MAX));
+        let val = snap.total_input_tokens as f64;
         write_metric_value(&mut buf, "input_tokens_total", id, val);
     }
 
@@ -80,7 +80,7 @@ pub fn render_prometheus(snapshots: &[(&str, MetricsSnapshot)]) -> String {
         "Total output tokens generated.",
     );
     for (id, snap) in snapshots {
-        let val = f64::from(u32::try_from(snap.total_output_tokens).unwrap_or(u32::MAX));
+        let val = snap.total_output_tokens as f64;
         write_metric_value(&mut buf, "output_tokens_total", id, val);
     }
 

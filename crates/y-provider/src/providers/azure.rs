@@ -323,10 +323,13 @@ impl AzureOpenAiProvider {
         use futures::stream;
 
         let response = self.generate_images(request).await?;
-        let raw_request = response.raw_request.clone();
-        let finish_reason = response.finish_reason.clone();
-        let usage = response.usage.clone();
-        let generated_images = response.generated_images.clone();
+        let ChatResponse {
+            raw_request,
+            finish_reason,
+            usage,
+            generated_images,
+            ..
+        } = response;
 
         let mut chunks = Vec::new();
         for image in generated_images {

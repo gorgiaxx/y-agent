@@ -148,7 +148,10 @@ impl FreezeManager {
     /// Calculate adaptive freeze duration with exponential backoff.
     fn adaptive_duration(&self, consecutive: u32) -> Duration {
         let multiplier = 2u64.saturating_pow(consecutive.saturating_sub(1));
-        let secs = (self.base_duration_secs * multiplier).min(self.max_duration_secs);
+        let secs = self
+            .base_duration_secs
+            .saturating_mul(multiplier)
+            .min(self.max_duration_secs);
         Duration::from_secs(secs)
     }
 
@@ -232,6 +235,15 @@ mod tests {
         // Eventually capped at max
         let d10 = fm.adaptive_duration(10);
         assert_eq!(d10, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_freeze_duration_adaptive_saturates_before_max_cap() {
+        let fm = FreezeManager::new(u64::MAX, u64::MAX);
+
+        let duration = fm.adaptive_duration(2);
+
+        assert_eq!(duration, Duration::from_secs(u64::MAX));
     }
 
     #[test]

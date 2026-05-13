@@ -51,21 +51,22 @@ impl PriorityScheduler {
     pub fn should_admit(&self, priority: RoutePriority) -> bool {
         let active_total = self.active_total();
         let reserved = self.reserved_capacity();
+        let total_capacity = self.total_capacity_u64();
 
         match priority {
             RoutePriority::Critical => {
                 // Critical requests can always be admitted up to total capacity.
-                active_total < self.total_capacity as u64
+                active_total < total_capacity
             }
             RoutePriority::Normal => {
                 // Normal requests cannot use reserved capacity.
-                active_total + reserved < self.total_capacity as u64
+                active_total.saturating_add(reserved) < total_capacity
             }
             RoutePriority::Idle => {
                 // Idle requests only admitted when there's plenty of room
                 // (below 50% usage and not eating into reserved).
-                let half_cap = self.total_capacity as u64 / 2;
-                active_total < half_cap && active_total + reserved < self.total_capacity as u64
+                let half_cap = total_capacity / 2;
+                active_total < half_cap && active_total.saturating_add(reserved) < total_capacity
             }
         }
     }
@@ -89,27 +90,47 @@ impl PriorityScheduler {
     pub fn record_complete(&self, priority: RoutePriority) {
         match priority {
             RoutePriority::Critical => {
-                self.active_critical.fetch_sub(1, Ordering::Relaxed);
+                Self::saturating_decrement(&self.active_critical);
             }
             RoutePriority::Normal => {
-                self.active_normal.fetch_sub(1, Ordering::Relaxed);
+                Self::saturating_decrement(&self.active_normal);
             }
             RoutePriority::Idle => {
-                self.active_idle.fetch_sub(1, Ordering::Relaxed);
+                Self::saturating_decrement(&self.active_idle);
             }
         }
     }
 
     /// Get the total number of active requests across all priorities.
     pub fn active_total(&self) -> u64 {
-        self.active_critical.load(Ordering::Relaxed)
-            + self.active_normal.load(Ordering::Relaxed)
-            + self.active_idle.load(Ordering::Relaxed)
+        self.active_critical
+            .load(Ordering::Relaxed)
+            .saturating_add(self.active_normal.load(Ordering::Relaxed))
+            .saturating_add(self.active_idle.load(Ordering::Relaxed))
     }
 
     /// Get the number of slots reserved for Critical requests.
     fn reserved_capacity(&self) -> u64 {
-        (self.total_capacity as u64 * u64::from(self.critical_reserve_pct)) / 100
+        (self.total_capacity_u64() * u64::from(self.critical_reserve_pct)) / 100
+    }
+
+    fn total_capacity_u64(&self) -> u64 {
+        u64::try_from(self.total_capacity).unwrap_or(u64::MAX)
+    }
+
+    fn saturating_decrement(counter: &AtomicU64) {
+        let mut current = counter.load(Ordering::Relaxed);
+        while current != 0 {
+            match counter.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(actual) => current = actual,
+            }
+        }
     }
 
     /// Get a snapshot of the scheduler state.
@@ -236,5 +257,15 @@ mod tests {
 
         scheduler.record_complete(RoutePriority::Normal);
         assert_eq!(scheduler.active_total(), 2);
+    }
+
+    #[test]
+    fn test_record_complete_does_not_underflow_empty_priority_bucket() {
+        let scheduler = PriorityScheduler::new(10, 20);
+
+        scheduler.record_complete(RoutePriority::Normal);
+
+        assert_eq!(scheduler.active_total(), 0);
+        assert!(scheduler.should_admit(RoutePriority::Normal));
     }
 }

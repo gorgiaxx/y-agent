@@ -169,7 +169,7 @@ fn classify_auth_error(body: &str) -> StandardError {
 
 fn classify_forbidden_error(body: &str) -> StandardError {
     let lower = body.to_lowercase();
-    if lower.contains("quota") || lower.contains("exceeded") {
+    if lower.contains("quota") || (lower.contains("exceeded") && lower.contains("limit")) {
         StandardError::QuotaExhausted
     } else if lower.contains("balance")
         || lower.contains("insufficient")
@@ -201,7 +201,7 @@ fn classify_from_body(body: &str) -> StandardError {
     let lower = body.to_lowercase();
     if lower.contains("rate limit") || lower.contains("rate_limit") {
         StandardError::RateLimited { retry_after: None }
-    } else if lower.contains("quota") || lower.contains("exceeded") {
+    } else if lower.contains("quota") || (lower.contains("exceeded") && lower.contains("limit")) {
         StandardError::QuotaExhausted
     } else if lower.contains("invalid api key") || lower.contains("invalid_api_key") {
         StandardError::KeyInvalid

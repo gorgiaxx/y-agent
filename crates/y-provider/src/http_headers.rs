@@ -19,8 +19,15 @@ pub fn provider_http_client_builder(
     };
 
     if let Some(proxy_url) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(&proxy_url) {
-            builder = builder.proxy(proxy);
+        match reqwest::Proxy::all(&proxy_url) {
+            Ok(proxy) => builder = builder.proxy(proxy),
+            Err(e) => {
+                tracing::warn!(
+                    proxy_url = %proxy_url,
+                    error = %e,
+                    "failed to create proxy, proceeding without proxy"
+                );
+            }
         }
     }
 

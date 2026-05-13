@@ -8,19 +8,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Convert a non-negative f64 to u64 without direct f64->u64 cast.
-///
-/// For realistic LLM cost values (always well below `u32::MAX` micro-dollars),
-/// converts through u32 to avoid `cast_possible_truncation` and `cast_sign_loss`.
 fn safe_f64_to_u64(value: f64) -> u64 {
-    if value <= 0.0 {
+    if value.is_nan() || value <= 0.0 {
         return 0;
     }
-    // For realistic API cost accumulation, values are well within u32 range.
-    // Cap at `u32::MAX` (~$4295 in micro-dollars) as a safety bound.
-    let clamped = value.min(f64::from(u32::MAX));
-    // After clamping to [0, u32::MAX], the truncation is safe.
-    // Reconstruct via floor() to get exact integer part.
-    u64::from(clamped.floor() as u32)
+    if value.is_infinite() || value >= u64::MAX as f64 {
+        return u64::MAX;
+    }
+
+    value.floor() as u64
 }
 
 /// A metrics event fired to an external consumer (e.g. persistence layer).
@@ -244,16 +240,12 @@ impl MetricsSnapshot {
         if self.total_requests == 0 {
             return 0.0;
         }
-        let errors = u32::try_from(self.total_errors).unwrap_or(u32::MAX);
-        let requests = u32::try_from(self.total_requests).unwrap_or(u32::MAX);
-        f64::from(errors) / f64::from(requests)
+        self.total_errors as f64 / self.total_requests as f64
     }
 
     /// Estimated total cost in US dollars.
     pub fn estimated_cost_usd(&self) -> f64 {
-        let dollars = u32::try_from(self.estimated_cost_micros / 1_000_000).unwrap_or(u32::MAX);
-        let micros = u32::try_from(self.estimated_cost_micros % 1_000_000).unwrap_or(0);
-        f64::from(dollars) + f64::from(micros) / 1_000_000.0
+        self.estimated_cost_micros as f64 / 1_000_000.0
     }
 }
 
@@ -403,5 +395,41 @@ mod tests {
         assert_eq!(snap.total_output_tokens, 500);
         // Cost: 1000/1000 * 0.01 + 500/1000 * 0.03 = 0.01 + 0.015 = 0.025 = 25000 micros
         assert_eq!(snap.estimated_cost_micros, 25_000);
+    }
+
+    #[test]
+    fn test_cost_tracking_preserves_values_above_u32_max_micros() {
+        let metrics = ProviderMetrics::new();
+
+        metrics.record_success_with_cost(1_000_000, 0, 10_000.0, 0.0);
+
+        assert_eq!(metrics.snapshot().estimated_cost_micros, 10_000_000_000_000);
+    }
+
+    #[test]
+    fn test_metrics_error_rate_uses_full_u64_range() {
+        let snap = MetricsSnapshot {
+            total_requests: 10_000_000_000,
+            total_errors: 5_000_000_000,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            estimated_cost_micros: 0,
+        };
+
+        assert!((snap.error_rate() - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_estimated_cost_usd_uses_full_u64_range() {
+        let expected_dollars = u64::from(u32::MAX) + 10;
+        let snap = MetricsSnapshot {
+            total_requests: 0,
+            total_errors: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            estimated_cost_micros: expected_dollars * 1_000_000,
+        };
+
+        assert!((snap.estimated_cost_usd() - expected_dollars as f64).abs() < 0.0001);
     }
 }

@@ -132,9 +132,12 @@ pub fn extract_sse_data(buffer: &mut String) -> Option<String> {
     }?;
 
     let raw_event: String = buffer.drain(..boundary).collect();
-    // Consume the boundary newlines.
-    while buffer.starts_with('\n') || buffer.starts_with('\r') {
-        buffer.remove(0);
+    let skip = buffer
+        .bytes()
+        .take_while(|&b| b == b'\n' || b == b'\r')
+        .count();
+    if skip > 0 {
+        buffer.drain(..skip);
     }
 
     let mut data_parts = Vec::new();

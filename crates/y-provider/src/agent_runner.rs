@@ -122,7 +122,8 @@ impl AgentRunner for SingleTurnRunner {
             });
         }
 
-        let tokens_used = response.usage.input_tokens + response.usage.output_tokens;
+        let tokens_used =
+            u64::from(response.usage.input_tokens) + u64::from(response.usage.output_tokens);
 
         Ok(AgentRunOutput {
             text,
