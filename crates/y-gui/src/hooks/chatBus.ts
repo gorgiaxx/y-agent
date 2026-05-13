@@ -42,7 +42,8 @@ export type ChatBusEvent =
   | { type: 'stream_image_delta'; run_id: string; session_id: string; index: number; mime_type: string; partial_data: string; agent_name?: string }
   | { type: 'stream_image_complete'; run_id: string; session_id: string; index: number; mime_type: string; data: string; agent_name?: string }
   | { type: 'tool_start'; session_id: string; name: string; input_preview: string; agent_name?: string }
-  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown> };
+  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown> }
+  | { type: 'heartbeat'; run_id: string; session_id: string };
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -179,6 +180,15 @@ async function initialiseChatBus() {
           result_preview: event.result_preview,
           url_meta: event.url_meta ?? undefined,
           metadata: event.metadata ?? undefined,
+        });
+      }
+    } else if (event.type === 'heartbeat') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'heartbeat',
+          run_id,
+          session_id,
         });
       }
     }

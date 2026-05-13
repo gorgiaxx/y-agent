@@ -648,6 +648,8 @@ export function useChatStreaming(
         );
         setStreamSegsVersion((v) => v + 1);
         syncVisible(sid);
+      } else if (event.type === 'heartbeat') {
+        markSessionActivity(event.session_id);
       }
     };
 

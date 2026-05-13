@@ -219,6 +219,11 @@ export interface LlmErrorEvent {
   agent_name?: string;
 }
 
+export interface HeartbeatEvent {
+  type: 'heartbeat';
+  agent_name?: string;
+}
+
 export type TurnEvent =
   | LlmResponseEvent
   | ToolStartEvent
@@ -229,7 +234,8 @@ export type TurnEvent =
   | StreamReasoningDeltaEvent
   | StreamImageDeltaEvent
   | StreamImageCompleteEvent
-  | LlmErrorEvent;
+  | LlmErrorEvent
+  | HeartbeatEvent;
 
 export interface ProgressPayload {
   run_id: string;
