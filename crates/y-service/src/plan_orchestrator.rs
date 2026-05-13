@@ -229,6 +229,7 @@ impl PlanOrchestrator {
                 &structured_plan,
                 &plan_path,
                 review_mode,
+                parent_session_id,
                 progress,
                 &container.pending_plan_reviews,
             )
@@ -481,6 +482,7 @@ impl PlanOrchestrator {
         plan: &StructuredPlan,
         plan_path: &Path,
         review_mode: PlanReviewMode,
+        session_id: &SessionId,
         progress: Option<&TurnEventSender>,
         pending_plan_reviews: &PendingPlanReviews,
     ) -> PlanReviewOutcome {
@@ -517,7 +519,10 @@ impl PlanOrchestrator {
 
                 {
                     let mut map = pending_plan_reviews.lock().await;
-                    map.insert(review_id.clone(), decision_tx);
+                    map.insert(
+                        review_id.clone(),
+                        crate::chat_types::PendingPlanReview::new(session_id.clone(), decision_tx),
+                    );
                 }
 
                 emit_plan_review_progress(tx, plan_path, plan, "awaiting_user", "");
@@ -614,8 +619,8 @@ impl PlanOrchestrator {
             map.remove(review_id)
         };
 
-        if let Some(tx) = sender {
-            tx.send(decision).is_ok()
+        if let Some(pending) = sender {
+            pending.send(decision).is_ok()
         } else {
             tracing::warn!(
                 review_id = %review_id,

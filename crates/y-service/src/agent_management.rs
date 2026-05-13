@@ -100,18 +100,18 @@ impl AgentManagementService {
         id: &str,
         toml_content: &str,
     ) -> Result<(), String> {
-        let mut registry = container.agent_registry.lock().await;
-
-        let expanded_toml = registry.expand_templates(toml_content);
-        let mut def = y_agent::agent::definition::AgentDefinition::from_toml(&expanded_toml)
-            .map_err(|e| format!("Invalid agent TOML: {e}"))?;
-
-        def.id = id.to_string();
-
-        let dir = registry
-            .agents_dir()
-            .ok_or_else(|| "no agents directory configured".to_string())?
-            .to_path_buf();
+        let (mut def, dir) = {
+            let registry = container.agent_registry.lock().await;
+            let expanded_toml = registry.expand_templates(toml_content);
+            let mut def = y_agent::agent::definition::AgentDefinition::from_toml(&expanded_toml)
+                .map_err(|e| format!("Invalid agent TOML: {e}"))?;
+            def.id = id.to_string();
+            let dir = registry
+                .agents_dir()
+                .ok_or_else(|| "no agents directory configured".to_string())?
+                .to_path_buf();
+            (def, dir)
+        };
 
         tokio::fs::create_dir_all(&dir)
             .await
@@ -123,6 +123,7 @@ impl AgentManagementService {
             .map_err(|e| format!("failed to write agent file: {e}"))?;
 
         def.trust_tier = y_agent::TrustTier::UserDefined;
+        let mut registry = container.agent_registry.lock().await;
         let _ = registry.register_or_override(def);
 
         Self::refresh_callable_agents_text(&registry, &container.callable_agents_text).await;
@@ -134,13 +135,17 @@ impl AgentManagementService {
     /// Removes the user override file from disk and restores the built-in
     /// definition in the registry.
     pub async fn reset_agent(container: &ServiceContainer, id: &str) -> Result<(), String> {
-        let mut registry = container.agent_registry.lock().await;
-        registry
-            .reset_builtin(id)
-            .map_err(|e| format!("failed to reset agent: {e}"))?;
+        let file_path = {
+            let mut registry = container.agent_registry.lock().await;
+            registry
+                .reset_builtin(id)
+                .map_err(|e| format!("failed to reset agent: {e}"))?;
+            registry
+                .agents_dir()
+                .map(|dir| dir.join(format!("{id}.toml")))
+        };
 
-        if let Some(dir) = registry.agents_dir() {
-            let file_path = dir.join(format!("{id}.toml"));
+        if let Some(file_path) = file_path {
             if file_path.exists() {
                 tokio::fs::remove_file(&file_path)
                     .await
@@ -148,6 +153,7 @@ impl AgentManagementService {
             }
         }
 
+        let registry = container.agent_registry.lock().await;
         Self::refresh_callable_agents_text(&registry, &container.callable_agents_text).await;
         Ok(())
     }
@@ -160,15 +166,18 @@ impl AgentManagementService {
         container: &ServiceContainer,
         id: &str,
     ) -> Result<(String, String, bool), String> {
-        let registry = container.agent_registry.lock().await;
-        let def = registry
-            .get(id)
-            .ok_or_else(|| format!("agent not found: {id}"))?;
-
-        let file_path = registry
-            .agents_dir()
-            .map(|d| d.join(format!("{}.toml", def.id)))
-            .unwrap_or_default();
+        let (def, file_path) = {
+            let registry = container.agent_registry.lock().await;
+            let def = registry
+                .get(id)
+                .ok_or_else(|| format!("agent not found: {id}"))?
+                .clone();
+            let file_path = registry
+                .agents_dir()
+                .map(|d| d.join(format!("{}.toml", def.id)))
+                .unwrap_or_default();
+            (def, file_path)
+        };
 
         if file_path.exists() {
             let content = tokio::fs::read_to_string(&file_path)
@@ -178,7 +187,7 @@ impl AgentManagementService {
         }
 
         let content =
-            toml::to_string_pretty(def).map_err(|e| format!("failed to serialize agent: {e}"))?;
+            toml::to_string_pretty(&def).map_err(|e| format!("failed to serialize agent: {e}"))?;
         Ok((file_path.display().to_string(), content, false))
     }
 }

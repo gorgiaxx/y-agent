@@ -191,4 +191,35 @@ mod tests {
         let skills = svc.list().await.unwrap();
         assert!(skills.is_empty());
     }
+
+    #[test]
+    fn test_skill_file_write_target_allows_new_file_under_skill_dir() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("writer");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(skill_dir.join("details")).unwrap();
+
+        let target =
+            crate::skill_files::resolve_skill_write_path(&skill_dir, Path::new("details/guide.md"))
+                .unwrap();
+
+        assert_eq!(target, skill_dir.join("details/guide.md"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_skill_file_write_target_rejects_symlink_escape() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("writer");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let outside = dir.path().join("outside.md");
+        std::fs::write(&outside, "outside").unwrap();
+        std::os::unix::fs::symlink(&outside, skill_dir.join("link.md")).unwrap();
+
+        let error = crate::skill_files::resolve_skill_write_path(&skill_dir, Path::new("link.md"))
+            .unwrap_err();
+
+        assert!(error.contains("symlink"));
+    }
 }

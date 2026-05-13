@@ -13,6 +13,7 @@ use crate::container::ServiceContainer;
 
 use super::{AgentExecutionConfig, ToolCallRecord, ToolExecContext, TurnEvent, TurnEventSender};
 use crate::chat_types::OperationMode;
+use crate::user_interaction_orchestrator::INTERACTION_TIMEOUT;
 
 /// Execute a single tool call, record it, and emit progress events.
 ///
@@ -167,7 +168,10 @@ pub(crate) async fn execute_and_record_tool(
                 tokio::sync::oneshot::channel::<crate::chat::PermissionPromptResponse>();
             {
                 let mut map = ctx.pending_permissions.lock().await;
-                map.insert(request_id.clone(), resp_tx);
+                map.insert(
+                    request_id.clone(),
+                    crate::chat_types::PendingPermission::new(ctx.session_id.clone(), resp_tx),
+                );
             }
 
             // Emit the permission request event to the presentation layer.
@@ -416,8 +420,9 @@ fn permission_action_description(tool_name: &str, content_preview: Option<&str>)
 /// Block until the user answers an `AskUser` question, then update the
 /// `ToolCallRecord` and emit an updated `ToolResult` event with the real answer.
 ///
-/// Returns `Some(answer_content)` if the user answered, `None` if the
-/// questions field is missing or the channel was dropped.
+/// Returns `Some(answer_content)` if the user answered or the interaction
+/// timed out, `None` if the questions field is missing or no progress channel
+/// exists to surface the prompt.
 async fn intercept_ask_user(
     tc: &ToolCallRequest,
     progress: Option<&TurnEventSender>,
@@ -426,24 +431,49 @@ async fn intercept_ask_user(
     tool_start: std::time::Instant,
 ) -> Option<String> {
     let questions = tc.arguments.get("questions")?;
+    let tx = progress?;
 
     let interaction_id = uuid::Uuid::new_v4().to_string();
     let (answer_tx, answer_rx) = tokio::sync::oneshot::channel::<serde_json::Value>();
     {
         let mut map = ctx.pending_interactions.lock().await;
-        map.insert(interaction_id.clone(), answer_tx);
+        map.insert(
+            interaction_id.clone(),
+            crate::chat_types::PendingInteraction::new(ctx.session_id.clone(), answer_tx),
+        );
     }
 
-    if let Some(tx) = progress {
-        let _ = tx.send(TurnEvent::UserInteractionRequest {
-            interaction_id: interaction_id.clone(),
-            questions: questions.clone(),
-        });
-    }
+    let _ = tx.send(TurnEvent::UserInteractionRequest {
+        interaction_id: interaction_id.clone(),
+        questions: questions.clone(),
+    });
 
     // Block this iteration until the user answers.
-    let answer = answer_rx.await.ok()?;
-    let answer_content = serde_json::to_string(&answer).unwrap_or_else(|_| answer.to_string());
+    let answer = if let Some(ref tok) = ctx.cancel_token {
+        tokio::select! {
+            answer = tokio::time::timeout(INTERACTION_TIMEOUT, answer_rx) => answer.ok().and_then(Result::ok),
+            () = tok.cancelled() => None,
+        }
+    } else {
+        tokio::time::timeout(INTERACTION_TIMEOUT, answer_rx)
+            .await
+            .ok()
+            .and_then(Result::ok)
+    };
+
+    let answer_content = if let Some(answer) = answer {
+        serde_json::to_string(&answer).unwrap_or_else(|_| answer.to_string())
+    } else {
+        ctx.pending_interactions
+            .lock()
+            .await
+            .remove(&interaction_id);
+        serde_json::json!({
+            "status": "timeout",
+            "message": "User interaction timed out. Continue without these answers."
+        })
+        .to_string()
+    };
     let answer_content = y_prompt::budget::truncate_tool_result(
         &answer_content,
         y_prompt::budget::MAX_TOOL_RESULT_CHARS,
@@ -801,6 +831,7 @@ fn strip_url_tool_result(tool_name: &str, content: &serde_json::Value) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_strip_url_tool_result_removes_navigation_and_favicon() {
@@ -866,5 +897,98 @@ mod tests {
             })),
             Some("https://example.com".to_string())
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_intercept_ask_user_times_out_and_cleans_pending_entry() {
+        let tc = ToolCallRequest {
+            id: "call-1".to_string(),
+            name: "AskUser".to_string(),
+            arguments: serde_json::json!({
+                "questions": [
+                    {
+                        "question": "Choose a direction?",
+                        "options": ["Fast", "Careful"]
+                    }
+                ]
+            }),
+        };
+        let pending_interactions =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let pending_permissions =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let session_id = SessionId("session-timeout".to_string());
+        let mut ctx = ToolExecContext {
+            iteration: 0,
+            last_gen_id: None,
+            tool_calls_executed: vec![ToolCallRecord {
+                name: "AskUser".to_string(),
+                arguments: "{}".to_string(),
+                success: true,
+                duration_ms: 0,
+                result_content: String::new(),
+                url_meta: None,
+                metadata: None,
+            }],
+            new_messages: Vec::new(),
+            cumulative_input_tokens: 0,
+            cumulative_output_tokens: 0,
+            cumulative_cost: 0.0,
+            last_input_tokens: 0,
+            trace_id: None,
+            session_id: session_id.clone(),
+            working_directory: None,
+            additional_read_dirs: Vec::new(),
+            working_history: Vec::new(),
+            accumulated_content: String::new(),
+            iteration_texts: Vec::new(),
+            iteration_reasonings: Vec::new(),
+            iteration_reasoning_durations_ms: Vec::new(),
+            iteration_tool_counts: Vec::new(),
+            dynamic_tool_defs: Vec::new(),
+            pending_interactions: pending_interactions.clone(),
+            pending_permissions,
+            cancel_token: None,
+        };
+        let config = AgentExecutionConfig {
+            agent_name: "test-agent".to_string(),
+            system_prompt: String::new(),
+            max_iterations: 1,
+            max_tool_calls: 1,
+            tool_definitions: Vec::new(),
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            messages: Vec::new(),
+            provider_id: None,
+            preferred_models: Vec::new(),
+            provider_tags: Vec::new(),
+            request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: None,
+            additional_read_dirs: Vec::new(),
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            session_id: Some(session_id),
+            session_uuid: Uuid::new_v4(),
+            knowledge_collections: Vec::new(),
+            use_context_pipeline: false,
+            user_query: String::new(),
+            external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: Vec::new(),
+            prune_tool_history: false,
+            response_format: None,
+            image_generation_options: None,
+        };
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let answer = tokio::time::timeout(
+            std::time::Duration::from_secs(181),
+            intercept_ask_user(&tc, Some(&tx), &mut ctx, &config, std::time::Instant::now()),
+        )
+        .await
+        .expect("AskUser should resolve through its internal timeout");
+
+        assert!(answer.unwrap().contains("timed out"));
+        assert!(pending_interactions.lock().await.is_empty());
     }
 }

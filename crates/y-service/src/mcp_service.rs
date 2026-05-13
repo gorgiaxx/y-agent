@@ -168,11 +168,13 @@ impl McpService {
 
         // Remove old tools for this server from the registry.
         let all_defs = container.tool_registry.get_all_definitions().await;
-        for def in &all_defs {
-            if def.name.as_str().starts_with(&prefix) {
-                container.tool_registry.unregister_tool(&def.name).await;
-                let mut set = container.tool_activation_set.write().await;
-                set.deactivate(&def.name);
+        {
+            let mut set = container.tool_activation_set.write().await;
+            for def in &all_defs {
+                if def.name.as_str().starts_with(&prefix) {
+                    container.tool_registry.unregister_tool(&def.name).await;
+                    set.deactivate(&def.name);
+                }
             }
         }
 
@@ -244,12 +246,14 @@ impl McpService {
         let prefix = format!("mcp_{server_name}_");
         let all_defs = container.tool_registry.get_all_definitions().await;
         let mut removed = 0usize;
-        for def in &all_defs {
-            if def.name.as_str().starts_with(&prefix) {
-                container.tool_registry.unregister_tool(&def.name).await;
-                let mut set = container.tool_activation_set.write().await;
-                set.deactivate(&def.name);
-                removed += 1;
+        {
+            let mut set = container.tool_activation_set.write().await;
+            for def in &all_defs {
+                if def.name.as_str().starts_with(&prefix) {
+                    container.tool_registry.unregister_tool(&def.name).await;
+                    set.deactivate(&def.name);
+                    removed += 1;
+                }
             }
         }
         if removed > 0 {

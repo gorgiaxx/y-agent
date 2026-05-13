@@ -70,7 +70,7 @@ pub struct UsageMetrics {
 }
 
 /// Individual skill usage counts.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct SkillUsageCounts {
     pub injection_count: u32,
     pub usage_count: u32,

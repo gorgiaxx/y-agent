@@ -239,23 +239,80 @@ pub enum OperationMode {
 // Pending interaction / permission channels
 // ---------------------------------------------------------------------------
 
-pub type PendingInteractions = std::sync::Arc<
-    tokio::sync::Mutex<
-        std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>,
-    >,
->;
+pub struct PendingInteraction {
+    session_id: SessionId,
+    sender: tokio::sync::oneshot::Sender<serde_json::Value>,
+}
 
-pub type PendingPermissions = std::sync::Arc<
-    tokio::sync::Mutex<
-        std::collections::HashMap<String, tokio::sync::oneshot::Sender<PermissionPromptResponse>>,
-    >,
->;
+impl PendingInteraction {
+    pub fn new(
+        session_id: SessionId,
+        sender: tokio::sync::oneshot::Sender<serde_json::Value>,
+    ) -> Self {
+        Self { session_id, sender }
+    }
 
-pub type PendingPlanReviews = std::sync::Arc<
-    tokio::sync::Mutex<
-        std::collections::HashMap<String, tokio::sync::oneshot::Sender<PlanReviewDecision>>,
-    >,
->;
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn send(self, answer: serde_json::Value) -> Result<(), serde_json::Value> {
+        self.sender.send(answer)
+    }
+}
+
+pub struct PendingPermission {
+    session_id: SessionId,
+    sender: tokio::sync::oneshot::Sender<PermissionPromptResponse>,
+}
+
+impl PendingPermission {
+    pub fn new(
+        session_id: SessionId,
+        sender: tokio::sync::oneshot::Sender<PermissionPromptResponse>,
+    ) -> Self {
+        Self { session_id, sender }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn send(self, response: PermissionPromptResponse) -> Result<(), PermissionPromptResponse> {
+        self.sender.send(response)
+    }
+}
+
+pub struct PendingPlanReview {
+    session_id: SessionId,
+    sender: tokio::sync::oneshot::Sender<PlanReviewDecision>,
+}
+
+impl PendingPlanReview {
+    pub fn new(
+        session_id: SessionId,
+        sender: tokio::sync::oneshot::Sender<PlanReviewDecision>,
+    ) -> Self {
+        Self { session_id, sender }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn send(self, decision: PlanReviewDecision) -> Result<(), PlanReviewDecision> {
+        self.sender.send(decision)
+    }
+}
+
+pub type PendingInteractions =
+    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, PendingInteraction>>>;
+
+pub type PendingPermissions =
+    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, PendingPermission>>>;
+
+pub type PendingPlanReviews =
+    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, PendingPlanReview>>>;
 
 // ---------------------------------------------------------------------------
 // Turn result / error
@@ -346,7 +403,7 @@ pub type TurnCancellationToken = tokio_util::sync::CancellationToken;
 // Session agent config
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SessionAgentFeatures {
     pub toolcall: bool,
     pub skills: bool,

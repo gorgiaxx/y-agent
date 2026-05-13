@@ -45,7 +45,7 @@ pub struct ImportResult {
 }
 
 /// Import decision outcome.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportDecision {
     Accepted,
@@ -277,7 +277,7 @@ pub async fn import_skill_from_path(
 
     Ok(match ingestion_service.import(source_path).await {
         Ok(result) => SkillImportOutcome {
-            decision: import_decision_label(&result.decision).to_string(),
+            decision: import_decision_label(result.decision).to_string(),
             classification: result.classification,
             skill_id: result.skill_id,
             error: result.rejection_reason,
@@ -404,7 +404,7 @@ fn security_format_label(source_path: &Path) -> &'static str {
     }
 }
 
-fn import_decision_label(decision: &ImportDecision) -> &'static str {
+fn import_decision_label(decision: ImportDecision) -> &'static str {
     match decision {
         ImportDecision::Accepted => "accepted",
         ImportDecision::Rejected => "rejected",

@@ -35,7 +35,7 @@ pub(crate) fn build_subagent_system_prompt(
     base_prompt: &str,
     filtered_defs: &[y_core::tool::ToolDefinition],
     tool_calling_mode: ToolCallingMode,
-    runtime_backend: &RuntimeBackend,
+    runtime_backend: RuntimeBackend,
     template_vars: &RuntimeTemplateVars,
 ) -> String {
     let base = if RuntimeTemplateVars::content_has_templates(base_prompt) {
@@ -135,7 +135,7 @@ impl AgentRunner for ServiceAgentRunner {
             &config.system_prompt,
             &filtered_defs,
             tool_calling_mode,
-            &runtime_backend,
+            runtime_backend,
             &template_vars,
         );
 
@@ -216,8 +216,7 @@ impl AgentRunner for ServiceAgentRunner {
             });
         }
 
-        let tokens_used = u32::try_from(result.input_tokens).unwrap_or(0)
-            + u32::try_from(result.output_tokens).unwrap_or(0);
+        let tokens_used = result.input_tokens + result.output_tokens;
 
         Ok(AgentRunOutput {
             text: result.content,

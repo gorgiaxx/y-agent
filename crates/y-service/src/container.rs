@@ -452,7 +452,7 @@ impl ServiceContainer {
 
     /// Create hook system with optional LLM runner injection.
     fn init_hooks(config: &ServiceConfig, _provider_pool: &Arc<ProviderPoolImpl>) -> HookSystem {
-        #[allow(unused_mut)]
+        #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
         let mut hook_system = HookSystem::new(&config.hooks);
         #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
         {
@@ -464,7 +464,14 @@ impl ServiceContainer {
             hook_system.set_llm_runner(llm_runner);
             info!("Prompt hook LLM runner injected");
         }
-        hook_system
+        #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
+        {
+            hook_system
+        }
+        #[cfg(not(all(feature = "hook_handlers", feature = "llm_hooks")))]
+        {
+            HookSystem::new(&config.hooks)
+        }
     }
 
     /// Initialise tool registry, taxonomy, and activation set.
@@ -571,7 +578,7 @@ tools = ["ToolSearch"]
                 Arc::clone(&prompt_context),
                 SystemPromptConfig::default(),
                 venv_info,
-                config.runtime.default_backend.clone(),
+                config.runtime.default_backend,
             );
             sys_prompt_provider.set_prompts_dir(config.prompts_dir.clone());
             callable_agents_text = sys_prompt_provider.callable_agents_handle();
@@ -996,15 +1003,15 @@ impl ServiceContainer {
             .await;
         {
             let mut interactions = self.pending_interactions.lock().await;
-            interactions.remove(&session_id.0);
+            interactions.retain(|_, pending| pending.session_id() != session_id);
         }
         {
             let mut permissions = self.pending_permissions.lock().await;
-            permissions.remove(&session_id.0);
+            permissions.retain(|_, pending| pending.session_id() != session_id);
         }
         {
             let mut reviews = self.pending_plan_reviews.lock().await;
-            reviews.remove(&session_id.0);
+            reviews.retain(|_, pending| pending.session_id() != session_id);
         }
         info!(session = %session_id.0, "cleaned up in-memory state for deleted session");
     }
@@ -1704,6 +1711,65 @@ mod tests {
 
         sc.scheduler_manager.stop().await;
         assert!(!sc.scheduler_manager.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_session_state_removes_only_matching_pending_requests() {
+        let mut config = ServiceConfig::default();
+        config.storage = y_storage::StorageConfig::in_memory();
+        let sc = ServiceContainer::from_config(&config).await.unwrap();
+
+        let target_session = SessionId("session-a".to_string());
+        let other_session = SessionId("session-b".to_string());
+
+        let (interaction_tx, _interaction_rx) = tokio::sync::oneshot::channel();
+        let (other_interaction_tx, _other_interaction_rx) = tokio::sync::oneshot::channel();
+        sc.pending_interactions.lock().await.insert(
+            "interaction-a".to_string(),
+            crate::chat_types::PendingInteraction::new(target_session.clone(), interaction_tx),
+        );
+        sc.pending_interactions.lock().await.insert(
+            "interaction-b".to_string(),
+            crate::chat_types::PendingInteraction::new(other_session.clone(), other_interaction_tx),
+        );
+
+        let (permission_tx, _permission_rx) = tokio::sync::oneshot::channel();
+        let (other_permission_tx, _other_permission_rx) = tokio::sync::oneshot::channel();
+        sc.pending_permissions.lock().await.insert(
+            "permission-a".to_string(),
+            crate::chat_types::PendingPermission::new(target_session.clone(), permission_tx),
+        );
+        sc.pending_permissions.lock().await.insert(
+            "permission-b".to_string(),
+            crate::chat_types::PendingPermission::new(other_session.clone(), other_permission_tx),
+        );
+
+        let (review_tx, _review_rx) = tokio::sync::oneshot::channel();
+        let (other_review_tx, _other_review_rx) = tokio::sync::oneshot::channel();
+        sc.pending_plan_reviews.lock().await.insert(
+            "review-a".to_string(),
+            crate::chat_types::PendingPlanReview::new(target_session.clone(), review_tx),
+        );
+        sc.pending_plan_reviews.lock().await.insert(
+            "review-b".to_string(),
+            crate::chat_types::PendingPlanReview::new(other_session, other_review_tx),
+        );
+
+        sc.cleanup_session_state(&target_session).await;
+
+        let interactions = sc.pending_interactions.lock().await;
+        assert!(!interactions.contains_key("interaction-a"));
+        assert!(interactions.contains_key("interaction-b"));
+        drop(interactions);
+
+        let permissions = sc.pending_permissions.lock().await;
+        assert!(!permissions.contains_key("permission-a"));
+        assert!(permissions.contains_key("permission-b"));
+        drop(permissions);
+
+        let reviews = sc.pending_plan_reviews.lock().await;
+        assert!(!reviews.contains_key("review-a"));
+        assert!(reviews.contains_key("review-b"));
     }
 
     // -- build_agent_tools_summary tests --

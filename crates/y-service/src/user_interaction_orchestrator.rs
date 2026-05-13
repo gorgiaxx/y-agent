@@ -23,12 +23,13 @@
 use std::time::Duration;
 
 use y_core::tool::{ToolError, ToolOutput};
+use y_core::types::SessionId;
 use y_tools::builtin::user_interaction::AskUserTool;
 
 use crate::chat::{PendingInteractions, TurnEvent, TurnEventSender};
 
 /// Timeout for awaiting user answers (3 minutes).
-const INTERACTION_TIMEOUT: Duration = Duration::from_secs(180);
+pub(crate) const INTERACTION_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Orchestrator that handles `AskUser` tool calls.
 ///
@@ -53,6 +54,7 @@ impl UserInteractionOrchestrator {
         arguments: &serde_json::Value,
         pending_interactions: &PendingInteractions,
         progress: Option<&TurnEventSender>,
+        session_id: &SessionId,
     ) -> Result<ToolOutput, ToolError> {
         // 1. Extract and validate questions.
         let questions =
@@ -78,7 +80,10 @@ impl UserInteractionOrchestrator {
         // Register the answer sender.
         {
             let mut map = pending_interactions.lock().await;
-            map.insert(interaction_id.clone(), answer_tx);
+            map.insert(
+                interaction_id.clone(),
+                crate::chat_types::PendingInteraction::new(session_id.clone(), answer_tx),
+            );
         }
 
         // 4. Emit the event to the presentation layer.
@@ -323,7 +328,10 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut map = pending.lock().await;
-            map.insert("test-id".into(), tx);
+            map.insert(
+                "test-id".into(),
+                crate::chat_types::PendingInteraction::new(SessionId("test-session".into()), tx),
+            );
         }
 
         let answer = serde_json::json!({"answers": {"Q": "A"}});
@@ -358,9 +366,14 @@ mod tests {
             }]
         });
 
-        let result = UserInteractionOrchestrator::handle(&args, &pending, None)
-            .await
-            .unwrap();
+        let result = UserInteractionOrchestrator::handle(
+            &args,
+            &pending,
+            None,
+            &SessionId("test-session".into()),
+        )
+        .await
+        .unwrap();
         assert!(result.success);
         assert_eq!(result.content["status"], "pending_bot");
     }
@@ -381,7 +394,13 @@ mod tests {
 
         let pending_clone = pending.clone();
         let handle = tokio::spawn(async move {
-            UserInteractionOrchestrator::handle(&args, &pending_clone, Some(&tx)).await
+            UserInteractionOrchestrator::handle(
+                &args,
+                &pending_clone,
+                Some(&tx),
+                &SessionId("test-session".into()),
+            )
+            .await
         });
 
         // Wait for the event.

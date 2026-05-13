@@ -60,7 +60,7 @@ pub struct BackgroundTaskWriteRequest {
     pub max_output_bytes: Option<usize>,
 }
 
-fn backend_name(backend: &RuntimeBackend) -> &'static str {
+fn backend_name(backend: RuntimeBackend) -> &'static str {
     match backend {
         RuntimeBackend::Docker => "docker",
         RuntimeBackend::Native => "native",
@@ -108,7 +108,7 @@ impl From<BackgroundProcessInfo> for BackgroundTaskInfo {
         let (status, exit_code, error) = status_parts(&info.status);
         Self {
             process_id: info.handle.id,
-            backend: backend_name(&info.handle.backend).to_string(),
+            backend: backend_name(info.handle.backend).to_string(),
             command: info.command,
             working_dir: info.working_dir,
             status: status.to_string(),
@@ -124,7 +124,7 @@ impl From<BackgroundProcessSnapshot> for BackgroundTaskSnapshot {
         let (status, exit_code, error) = status_parts(&snapshot.status);
         Self {
             process_id: snapshot.handle.id,
-            backend: backend_name(&snapshot.handle.backend).to_string(),
+            backend: backend_name(snapshot.handle.backend).to_string(),
             status: status.to_string(),
             exit_code,
             error,

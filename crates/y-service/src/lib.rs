@@ -40,6 +40,7 @@ pub mod prompt_templates;
 pub mod rewind;
 pub mod scheduler_service;
 pub mod skill_evolution;
+pub mod skill_files;
 pub mod skill_ingestion;
 pub mod skill_service;
 pub mod system;
@@ -91,6 +92,7 @@ pub use skill_evolution::{
     CapturedExperience, ExperienceCaptureSubscriber, SkillInjectionTracker,
     SkillUsageAuditSubscriber, UsageMetrics,
 };
+pub use skill_files::{resolve_skill_read_path, resolve_skill_write_path};
 pub use skill_ingestion::{
     import_skill_from_path, ImportDecision, ImportError, ImportResult, PermissionsNeeded,
     SkillImportOutcome, SkillIngestionService,

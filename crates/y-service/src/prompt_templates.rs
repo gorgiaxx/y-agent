@@ -190,13 +190,13 @@ fn normalized_session_prompt_config(config: &SessionPromptConfig) -> SessionProm
 }
 
 fn unique_non_empty(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() || out.iter().any(|existing| existing == trimmed) {
-            continue;
+        let trimmed = value.trim().to_string();
+        if !trimmed.is_empty() && seen.insert(trimmed.clone()) {
+            out.push(trimmed);
         }
-        out.push(trimmed.to_string());
     }
     out
 }

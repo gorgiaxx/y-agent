@@ -120,7 +120,7 @@ fn build_streaming_raw_response(
     reasoning_content: Option<&str>,
     tool_calls: &[y_core::types::ToolCallRequest],
     generated_images: &[GeneratedImage],
-    finish_reason: &y_core::provider::FinishReason,
+    finish_reason: y_core::provider::FinishReason,
     input_tokens: u64,
     output_tokens: u64,
 ) -> serde_json::Value {
@@ -400,7 +400,7 @@ async fn call_llm_streaming(
         (!reasoning_content.is_empty()).then_some(reasoning_content.as_str()),
         &tool_calls,
         &generated_images,
-        &finish_reason,
+        finish_reason,
         u64::from(usage.input_tokens),
         u64::from(usage.output_tokens),
     );
@@ -580,7 +580,7 @@ mod tests {
                 }),
             }],
             &[],
-            &FinishReason::ToolUse,
+            FinishReason::ToolUse,
             123,
             45,
         );

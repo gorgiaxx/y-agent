@@ -263,9 +263,7 @@ pub(crate) async fn execute_inner(
         pending_permissions: container.pending_permissions.clone(),
         cancel_token: cancel.clone(),
     };
-    #[allow(unused_assignments)]
-    let mut final_model = String::new();
-    #[allow(unused_assignments)]
+    let mut final_model: Option<String> = None;
     let mut final_provider_id: Option<String> = None;
 
     let max_iterations = config.max_iterations;
@@ -299,7 +297,7 @@ pub(crate) async fn execute_inner(
                     input_tokens: ctx.cumulative_input_tokens,
                     output_tokens: ctx.cumulative_output_tokens,
                     cost_usd: ctx.cumulative_cost,
-                    model: final_model.clone(),
+                    model: final_model.clone().unwrap_or_default(),
                     generated_images: Vec::new(),
                 });
             }
@@ -400,7 +398,7 @@ pub(crate) async fn execute_inner(
                 ctx.cumulative_output_tokens += iter_data.resp_output_tokens;
                 ctx.cumulative_cost += iter_data.cost;
                 ctx.last_input_tokens = iter_data.resp_input_tokens;
-                final_model.clone_from(&response.model);
+                final_model = Some(response.model.clone());
                 final_provider_id = response
                     .provider_id
                     .as_ref()
@@ -507,7 +505,7 @@ pub(crate) async fn execute_inner(
                     &iter_data,
                     ctx,
                     FinalResultParams {
-                        final_model,
+                        final_model: final_model.unwrap_or_default(),
                         final_provider_id,
                         owns_trace,
                         context_window: iter_ctx_window,
