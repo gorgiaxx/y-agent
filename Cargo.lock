@@ -673,6 +673,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -974,9 +983,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.6.4"
+version = "4.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3e962dae2b1e5007fe9e3db363ddc43a8bf25546d279f7a8a4401204690e80c"
+checksum = "e0a7a9bfdb35811f9e59832f0f05975114d2251b415fb534108e6f34060fd772"
 dependencies = [
  "clap",
 ]
@@ -4109,9 +4118,9 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "open"
-version = "5.3.4"
+version = "5.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f3bab717c29a857abf75fcef718d441ec7cb2725f937343c734740a985d37fd"
+checksum = "2fbaa89d2ddc8473c78a3adf69eea8cffa28c483b8e02a971ef31527cd0fc92c"
 dependencies = [
  "dunce",
  "is-wsl",
@@ -4702,9 +4711,9 @@ checksum = "007d8adb5ddab6f8e3f491ac63566a7d5002cc7ed73901f72057943fa71ae1ae"
 
 [[package]]
 name = "qdrant-client"
-version = "1.17.0"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5d0a9b168ecf8f30a3eb7e8f4766e3050701242ffbe99838b58e6c4251e7211"
+checksum = "82cef4e669bcf9c07471463adab5ee080dd9bc9381f3652ea4981f6030b2c309"
 dependencies = [
  "anyhow",
  "derive_builder",
@@ -5574,11 +5583,12 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.19.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f05839ce67618e14a09b286535c0d9c94e85ef25469b0e13cb4f844e5593eb19"
+checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
 dependencies = [
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "hex",
  "indexmap 1.9.3",
@@ -5593,9 +5603,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.19.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf2ebbe86054f9b45bc3881e865683ccfaccce97b9b4cb53f3039d67f355a334"
+checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -8570,7 +8580,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "y-agent"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8587,7 +8597,7 @@ dependencies = [
 
 [[package]]
 name = "y-bot"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8606,7 +8616,7 @@ dependencies = [
 
 [[package]]
 name = "y-browser"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8627,7 +8637,7 @@ dependencies = [
 
 [[package]]
 name = "y-cli"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -8671,7 +8681,7 @@ dependencies = [
 
 [[package]]
 name = "y-context"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8693,7 +8703,7 @@ dependencies = [
 
 [[package]]
 name = "y-core"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8707,7 +8717,7 @@ dependencies = [
 
 [[package]]
 name = "y-diagnostics"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -8728,7 +8738,7 @@ dependencies = [
 
 [[package]]
 name = "y-guardrails"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -8744,7 +8754,7 @@ dependencies = [
 
 [[package]]
 name = "y-gui"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -8779,7 +8789,7 @@ dependencies = [
 
 [[package]]
 name = "y-hooks"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "criterion",
@@ -8800,7 +8810,7 @@ dependencies = [
 
 [[package]]
 name = "y-journal"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8817,7 +8827,7 @@ dependencies = [
 
 [[package]]
 name = "y-knowledge"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chardetng",
@@ -8837,7 +8847,7 @@ dependencies = [
 
 [[package]]
 name = "y-mcp"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -8854,7 +8864,7 @@ dependencies = [
 
 [[package]]
 name = "y-prompt"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -8868,7 +8878,7 @@ dependencies = [
 
 [[package]]
 name = "y-provider"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -8888,7 +8898,7 @@ dependencies = [
 
 [[package]]
 name = "y-runtime"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "bollard",
@@ -8906,7 +8916,7 @@ dependencies = [
 
 [[package]]
 name = "y-scheduler"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8922,7 +8932,7 @@ dependencies = [
 
 [[package]]
 name = "y-service"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8963,7 +8973,7 @@ dependencies = [
 
 [[package]]
 name = "y-session"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8982,7 +8992,7 @@ dependencies = [
 
 [[package]]
 name = "y-skills"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9000,7 +9010,7 @@ dependencies = [
 
 [[package]]
 name = "y-storage"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9018,7 +9028,7 @@ dependencies = [
 
 [[package]]
 name = "y-test-utils"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9032,7 +9042,7 @@ dependencies = [
 
 [[package]]
 name = "y-tools"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chardetng",
@@ -9063,7 +9073,7 @@ dependencies = [
 
 [[package]]
 name = "y-web"
-version = "0.6.11"
+version = "0.7.0"
 dependencies = [
  "async-stream",
  "axum 0.8.9",
@@ -9209,9 +9219,9 @@ dependencies = [
 
 [[package]]
 name = "zerofrom"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69faa1f2a1ea75661980b013019ed6687ed0e83d069bc1114e2cc74c6c04c4df"
+checksum = "0ec05a11813ea801ff6d75110ad09cd0824ddba17dfe17128ea0d5f68e6c5272"
 dependencies = [
  "zerofrom-derive",
 ]
