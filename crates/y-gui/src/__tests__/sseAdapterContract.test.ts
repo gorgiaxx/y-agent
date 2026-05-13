@@ -78,4 +78,23 @@ describe('SseAdapter contract mapping', () => {
     expect(payloads).toEqual([{ session_id: 's1', title: 'Project Notes' }]);
     adapter.dispose();
   });
+
+  it('does not dispatch named SSE events twice after the connection opens', () => {
+    vi.stubGlobal('EventSource', MockEventSource);
+    const adapter = new SseAdapter('http://localhost:3000');
+    const payloads: unknown[] = [];
+
+    adapter.listen('chat:started', (event) => {
+      payloads.push(event.payload);
+    });
+
+    MockEventSource.instances[0].onopen?.(new Event('open'));
+    MockEventSource.instances[0].emitNamed('chat:started', {
+      type: 'ChatStarted',
+      data: { run_id: 'r1', session_id: 's1' },
+    });
+
+    expect(payloads).toEqual([{ run_id: 'r1', session_id: 's1' }]);
+    adapter.dispose();
+  });
 });

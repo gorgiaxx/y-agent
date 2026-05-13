@@ -150,6 +150,37 @@ describe('ensureStreamingAssistantMessage', () => {
     ]);
   });
 
+  it('preserves provider errors as visible terminal assistant messages', () => {
+    const messages: Message[] = [
+      {
+        id: 'streaming-session-1',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+        _streaming: true,
+      } as Message,
+    ];
+
+    const updated = finalizeStreamingAssistantMessage(
+      messages,
+      'session-1',
+      'error-run-1',
+      undefined,
+      'LLM error: server error from DeepSeek-V4: HTTP 400 Bad Request: read timeout',
+    );
+
+    expect(updated).toHaveLength(1);
+    expect(updated[0]).toMatchObject({
+      id: 'error-run-1',
+      role: 'assistant',
+      metadata: {
+        stream_error: 'LLM error: server error from DeepSeek-V4: HTTP 400 Bad Request: read timeout',
+      },
+    });
+    expect(updated[0]).not.toHaveProperty('_streaming');
+  });
+
   it('treats only active streaming placeholders as live stream targets', () => {
     expect(isLiveStreamingAssistantMessage({ id: 'streaming-session-1' })).toBe(true);
     expect(isLiveStreamingAssistantMessage({ id: 'cancelled-run-1' })).toBe(false);

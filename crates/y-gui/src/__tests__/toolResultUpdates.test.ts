@@ -329,4 +329,235 @@ describe('toolResultUpdates', () => {
     expect(updatedSegments.segments).toHaveLength(1);
     expect(updatedSegments.segments[0]).toEqual({ type: 'tool_result', record: execution });
   });
+
+  it('collapses the generic running Plan placeholder into the structured terminal result', () => {
+    const running = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const planProgress = {
+      name: 'Plan',
+      arguments: 'plan-writer completed',
+      success: true,
+      durationMs: 18,
+      resultPreview: 'Plan written to /tmp/gui-plan.md',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'completed',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          tasks: [],
+        },
+      },
+    };
+    const terminalExecution = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: true,
+      durationMs: 93,
+      resultPreview: 'Plan executed',
+      metadata: {
+        display: {
+          kind: 'plan_execution',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          total_phases: 1,
+          completed: 1,
+          failed: 0,
+          tasks: [],
+          phases: [{ task_id: 'task-1', status: 'completed' }],
+        },
+      },
+    };
+
+    const updatedRecords = upsertToolResultRecord(
+      [running, planProgress],
+      terminalExecution,
+    );
+
+    expect(updatedRecords.replacedIndex).toBe(0);
+    expect(updatedRecords.records).toEqual([terminalExecution]);
+
+    const updatedSegments = upsertToolResultSegment(
+      [
+        { type: 'tool_result', record: running },
+        { type: 'tool_result', record: planProgress },
+      ],
+      terminalExecution,
+    );
+
+    expect(updatedSegments.replacedIndex).toBe(0);
+    expect(updatedSegments.segments).toEqual([
+      { type: 'tool_result', record: terminalExecution },
+    ]);
+  });
+
+  it('replaces structured plan progress with a terminal provider error', () => {
+    const running = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const planProgress = {
+      name: 'Plan',
+      arguments: 'plan-writer completed',
+      success: true,
+      durationMs: 18,
+      resultPreview: 'Plan written to /tmp/gui-plan.md',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'completed',
+          plan_title: 'GUI Plan Stream Fix',
+          plan_file: '/tmp/gui-plan.md',
+          tasks: [],
+        },
+      },
+    };
+    const terminalError = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+      success: false,
+      durationMs: 93,
+      resultPreview: 'LLM error: server error from DeepSeek-V4: HTTP 400 Bad Request: read timeout',
+    };
+
+    const updatedRecords = upsertToolResultRecord([running, planProgress], terminalError);
+
+    expect(updatedRecords.replacedIndex).toBe(0);
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0]).toMatchObject({
+      ...terminalError,
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage_status: 'failed',
+          plan_file: '/tmp/gui-plan.md',
+        },
+      },
+    });
+
+    const updatedSegments = upsertToolResultSegment(
+      [
+        { type: 'tool_result', record: running },
+        { type: 'tool_result', record: planProgress },
+      ],
+      terminalError,
+    );
+
+    expect(updatedSegments.replacedIndex).toBe(0);
+    expect(updatedSegments.segments).toHaveLength(1);
+    expect(updatedSegments.segments[0]).toMatchObject({
+      type: 'tool_result',
+      record: {
+        success: false,
+        metadata: {
+          display: {
+            kind: 'plan_stage',
+            stage_status: 'failed',
+            plan_file: '/tmp/gui-plan.md',
+          },
+        },
+      },
+    });
+  });
+
+  it('does not mark unrelated structured Plan progress as failed for an uncorrelated terminal error', () => {
+    const unrelatedProgress = {
+      name: 'Plan',
+      arguments: 'plan-writer completed',
+      success: true,
+      durationMs: 18,
+      resultPreview: 'Plan written to /tmp/old-plan.md',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'completed',
+          plan_title: 'Old Plan',
+          plan_file: '/tmp/old-plan.md',
+          tasks: [],
+        },
+      },
+    };
+    const terminalError = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'New failing plan' }),
+      success: false,
+      durationMs: 93,
+      resultPreview: 'LLM error: provider timeout',
+    };
+
+    const updatedRecords = upsertToolResultRecord([unrelatedProgress], terminalError);
+
+    expect(updatedRecords.replacedIndex).toBeNull();
+    expect(updatedRecords.records).toEqual([unrelatedProgress, terminalError]);
+  });
+
+  it('does not mark older structured Plan progress as failed when a newer running Plan errors', () => {
+    const olderProgress = {
+      name: 'Plan',
+      arguments: 'plan-writer completed',
+      success: true,
+      durationMs: 18,
+      resultPreview: 'Plan written to /tmp/old-plan.md',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'completed',
+          plan_title: 'Old Plan',
+          plan_file: '/tmp/old-plan.md',
+          tasks: [],
+        },
+      },
+    };
+    const newerRunning = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'New failing plan' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const terminalError = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'New failing plan' }),
+      success: false,
+      durationMs: 93,
+      resultPreview: 'LLM error: provider timeout',
+    };
+
+    const updatedRecords = upsertToolResultRecord(
+      [olderProgress, newerRunning],
+      terminalError,
+    );
+
+    expect(updatedRecords.replacedIndex).toBe(1);
+    expect(updatedRecords.records).toEqual([olderProgress, terminalError]);
+
+    const updatedSegments = upsertToolResultSegment(
+      [
+        { type: 'tool_result', record: olderProgress },
+        { type: 'tool_result', record: newerRunning },
+      ],
+      terminalError,
+    );
+
+    expect(updatedSegments.replacedIndex).toBe(1);
+    expect(updatedSegments.segments).toEqual([
+      { type: 'tool_result', record: olderProgress },
+      { type: 'tool_result', record: terminalError },
+    ]);
+  });
 });

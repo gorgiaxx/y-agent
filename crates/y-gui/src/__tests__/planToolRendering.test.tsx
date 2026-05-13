@@ -2,10 +2,34 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { ToolCallCard } from '../components/chat-panel/chat-box/ToolCallCard';
+import { StaticBubble } from '../components/chat-panel/chat-box/StaticBubble';
 import { PlanTaskItem } from '../components/chat-panel/chat-box/tool-renderers/PlanRenderer';
-import { shouldDisplayStreamingAgent } from '../hooks/chatStreamTypes';
+import {
+  shouldDisplayStreamingAgent,
+  shouldDisplayStreamingContentAgent,
+} from '../hooks/chatStreamTypes';
 
 describe('Plan tool rendering', () => {
+  it('renders a terminal provider error notice inside the assistant bubble', () => {
+    const html = renderToStaticMarkup(
+      <StaticBubble
+        message={{
+          id: 'error-run-1',
+          role: 'assistant',
+          content: '',
+          timestamp: '2026-04-24T00:00:01.000Z',
+          tool_calls: [],
+          metadata: {
+            stream_error: 'LLM error: server error from DeepSeek-V4: HTTP 400 Bad Request: read timeout',
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('Provider error');
+    expect(html).toContain('LLM error: server error from DeepSeek-V4');
+  });
+
   it('renders plan-writer output with tasks as structured task content', () => {
     const html = renderToStaticMarkup(
       <ToolCallCard
@@ -167,6 +191,37 @@ describe('Plan tool rendering', () => {
     expect(html).toContain('Fix GUI Plan stream rendering');
   });
 
+  it('renders a structured plan provider error without falling back to raw JSON', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-error-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+        }}
+        status="error"
+        result="LLM error: server error from DeepSeek-V4: HTTP 400 Bad Request: read timeout"
+        metadata={{
+          display: {
+            kind: 'plan_stage',
+            stage: 'plan_writer',
+            stage_status: 'failed',
+            plan_title: 'GUI Plan Stream Fix',
+            plan_file: '/tmp/gui-plan.md',
+            plan_content: '# Implementation Plan',
+            tasks: [],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('Failed');
+    expect(html).toContain('GUI Plan Stream Fix');
+    expect(html).toContain('LLM error: server error from DeepSeek-V4');
+    expect(html).toContain('<h1>Implementation Plan</h1>');
+    expect(html).not.toContain('plan_title');
+  });
+
   it('renders per-phase task statuses for plan execution', () => {
     const html = renderToStaticMarkup(
       <ToolCallCard
@@ -302,5 +357,11 @@ describe('shouldDisplayStreamingAgent', () => {
     expect(shouldDisplayStreamingAgent(undefined)).toBe(true);
     expect(shouldDisplayStreamingAgent('chat-turn')).toBe(true);
     expect(shouldDisplayStreamingAgent('plan-writer')).toBe(true);
+  });
+
+  it('hides plan-writer content deltas while keeping plan orchestrator cards visible', () => {
+    expect(shouldDisplayStreamingContentAgent('chat-turn')).toBe(true);
+    expect(shouldDisplayStreamingContentAgent('plan-orchestrator')).toBe(true);
+    expect(shouldDisplayStreamingContentAgent('plan-writer')).toBe(false);
   });
 });
