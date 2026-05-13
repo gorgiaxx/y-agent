@@ -59,14 +59,19 @@ impl RuntimeTemplateVars {
     /// First replaces all registered `{{KEY}}` vars, then resolves any
     /// remaining `{{ENV:VAR_NAME}}` patterns via `std::env::var()`.
     pub fn expand(&self, content: &str) -> String {
+        if !Self::content_has_templates(content) {
+            return content.to_string();
+        }
+
         let mut result = content.to_string();
 
         for (key, val) in &self.vars {
-            result = result.replace(key, val);
+            if result.contains(key) {
+                result = result.replace(key, val);
+            }
         }
 
-        result = Self::expand_env_vars(&result);
-        result
+        Self::expand_env_vars(&result)
     }
 
     /// Check whether the content contains any `{{` template markers.
@@ -79,18 +84,25 @@ impl RuntimeTemplateVars {
         const PREFIX: &str = "{{ENV:";
         const SUFFIX: &str = "}}";
 
-        let mut result = content.to_string();
-        while let Some(start) = result.find(PREFIX) {
+        let mut result = String::with_capacity(content.len());
+        let mut remaining = content;
+
+        while let Some(start) = remaining.find(PREFIX) {
+            result.push_str(&remaining[..start]);
             let after_prefix = start + PREFIX.len();
-            let Some(end) = result[after_prefix..].find(SUFFIX) else {
-                break;
+            let Some(end) = remaining[after_prefix..].find(SUFFIX) else {
+                result.push_str(&remaining[start..]);
+                return result;
             };
-            let var_name = &result[after_prefix..after_prefix + end];
+            let var_name = &remaining[after_prefix..after_prefix + end];
             let value = std::env::var(var_name).unwrap_or_default();
-            let pattern = format!("{PREFIX}{var_name}{SUFFIX}");
-            result = result.replacen(&pattern, &value, 1);
+            result.push_str(&value);
+
+            let after_suffix = after_prefix + end + SUFFIX.len();
+            remaining = &remaining[after_suffix..];
         }
 
+        result.push_str(remaining);
         result
     }
 }
@@ -107,8 +119,8 @@ mod tests {
 
         assert!(!result.contains("{{DATETIME}}"));
         assert!(result.contains("UTC"));
-        assert_eq!(result.contains(&std::env::consts::OS.to_string()), true);
-        assert_eq!(result.contains(&std::env::consts::ARCH.to_string()), true);
+        assert!(result.contains(std::env::consts::OS));
+        assert!(result.contains(std::env::consts::ARCH));
         assert!(result.contains("/home/user/project"));
     }
 
@@ -199,5 +211,18 @@ mod tests {
         assert_eq!(result, "aaa-bbb");
         std::env::remove_var("Y_TPL_A");
         std::env::remove_var("Y_TPL_B");
+    }
+
+    #[test]
+    fn test_env_var_value_is_not_recursively_expanded() {
+        std::env::set_var("Y_TPL_OUTER", "{{ENV:Y_TPL_INNER}}");
+        std::env::set_var("Y_TPL_INNER", "expanded");
+
+        let vars = RuntimeTemplateVars::from_runtime(None);
+        let result = vars.expand("{{ENV:Y_TPL_OUTER}}");
+
+        assert_eq!(result, "{{ENV:Y_TPL_INNER}}");
+        std::env::remove_var("Y_TPL_OUTER");
+        std::env::remove_var("Y_TPL_INNER");
     }
 }

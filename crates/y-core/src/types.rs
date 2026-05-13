@@ -97,7 +97,7 @@ pub fn now() -> Timestamp {
 // ---------------------------------------------------------------------------
 
 /// Role in a conversation message.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     System,
@@ -112,7 +112,7 @@ pub fn generate_message_id() -> String {
 }
 
 /// A single message in a conversation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     /// Unique message identifier for checkpoint addressing.
     #[serde(default = "generate_message_id")]
@@ -131,7 +131,7 @@ pub struct Message {
 }
 
 /// A tool call requested by the LLM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallRequest {
     pub id: String,
     pub name: String,
@@ -146,7 +146,7 @@ pub struct ToolCallRequest {
 ///
 /// Providers report token counts through different mechanisms. This enum
 /// tracks the origin so downstream consumers can assess accuracy.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenUsageSource {
     /// Usage reported by the provider's API response (authoritative).
@@ -172,6 +172,22 @@ pub struct TokenUsage {
 
 impl TokenUsage {
     pub fn total(&self) -> u32 {
-        self.input_tokens + self.output_tokens
+        self.input_tokens.saturating_add(self.output_tokens)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_usage_total_saturates_on_overflow() {
+        let usage = TokenUsage {
+            input_tokens: u32::MAX,
+            output_tokens: 1,
+            ..TokenUsage::default()
+        };
+
+        assert_eq!(usage.total(), u32::MAX);
     }
 }

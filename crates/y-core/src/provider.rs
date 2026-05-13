@@ -277,7 +277,7 @@ pub struct ChatStreamChunk {
 }
 
 /// Reason the model stopped generating.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     Stop,
@@ -327,7 +327,7 @@ pub struct ProviderMetadata {
 }
 
 /// Supported provider backend types.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderType {
     OpenAi,
@@ -432,7 +432,7 @@ pub struct RouteRequest {
 }
 
 /// Request priority for provider selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum RoutePriority {
     /// Reserve 20% of concurrency budget for critical requests.
     Critical,

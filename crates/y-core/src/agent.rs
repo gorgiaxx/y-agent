@@ -47,7 +47,7 @@ pub struct DelegationOutput {
     /// The text output produced by the delegated agent.
     pub text: String,
     /// Approximate tokens consumed during the delegation.
-    pub tokens_used: u32,
+    pub tokens_used: u64,
     /// Input tokens consumed (for diagnostics breakdown).
     pub input_tokens: u64,
     /// Output tokens generated (for diagnostics breakdown).
@@ -198,7 +198,7 @@ pub struct AgentRunOutput {
     /// Text output produced by the agent.
     pub text: String,
     /// Tokens consumed during execution (input + output combined).
-    pub tokens_used: u32,
+    pub tokens_used: u64,
     /// Input tokens consumed (for diagnostics breakdown).
     pub input_tokens: u64,
     /// Output tokens generated (for diagnostics breakdown).

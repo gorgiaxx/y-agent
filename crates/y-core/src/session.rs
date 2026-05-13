@@ -48,7 +48,7 @@ pub struct SessionNode {
 }
 
 /// Session type within the tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionType {
     /// Top-level user session.
@@ -85,7 +85,7 @@ impl SessionType {
 }
 
 /// Session lifecycle state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionState {
     Active,
@@ -367,7 +367,7 @@ pub trait ChatCheckpointStore: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Status of a chat message in the history tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatMessageStatus {
     Active,

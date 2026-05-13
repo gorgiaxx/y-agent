@@ -1,9 +1,10 @@
 //! Shared error types and classification traits.
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Severity classification for errors that cross crate boundaries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorSeverity {
     /// Transient failure, safe to retry.
     Transient,

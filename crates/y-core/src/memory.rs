@@ -41,7 +41,7 @@ pub struct Memory {
 }
 
 /// Memory category.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryType {
     /// Personal user preferences and patterns.
@@ -108,7 +108,7 @@ pub struct ExperienceRecord {
 ///
 /// `AgentObservation` requires corroboration from user evidence
 /// (hard rule in Pattern Extraction, not a soft weight).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceType {
     /// Explicitly stated by the user.

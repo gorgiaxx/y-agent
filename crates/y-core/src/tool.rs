@@ -46,7 +46,7 @@ pub struct ToolDefinition {
 }
 
 /// Tool category for organization.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCategory {
     FileSystem,
@@ -63,7 +63,7 @@ pub enum ToolCategory {
 }
 
 /// The origin/type of a tool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolType {
     /// Compiled into the binary.
