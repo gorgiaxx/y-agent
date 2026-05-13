@@ -462,18 +462,39 @@ async function initialiseBus() {
 
     if (!diagEntry) return;
 
-    // Always route to Global view. Session-bound events are already
-    // covered by chat:progress, so we avoid inserting duplicates.
+    // Route to Global view unconditionally.
+    // Additionally, route sub-agent events to active parent sessions so
+    // the session-scoped diagnostics panel shows them in real time (main
+    // agent events already arrive via chat:progress -- only sub-agent
+    // events need this extra routing).
     broadcastUpdate((prev) => {
-      let existing = [...(prev.sessionEntries[NIL_UUID] ?? []), diagEntry!];
-      if (existing.length > MAX_DIAG_ENTRIES_PER_SESSION) {
-        existing = existing.slice(existing.length - DIAG_TRIM_TARGET);
+      let globalEntries = [...(prev.sessionEntries[NIL_UUID] ?? []), diagEntry!];
+      if (globalEntries.length > MAX_DIAG_ENTRIES_PER_SESSION) {
+        globalEntries = globalEntries.slice(globalEntries.length - DIAG_TRIM_TARGET);
       }
-      return {
-        ...prev,
-        counter: prev.counter + 1,
-        sessionEntries: { ...prev.sessionEntries, [NIL_UUID]: existing },
+
+      const updated: Record<string, DiagnosticsEntry[]> = {
+        ...prev.sessionEntries,
+        [NIL_UUID]: globalEntries,
       };
+
+      // Determine if this event belongs to a sub-agent (session_id
+      // differs from all active parent sessions).
+      const evSessionId: string | null = (ev as { session_id?: string | null }).session_id ?? null;
+      const parentSids = new Set(Object.values(prev.runToSession));
+      const isSubagentEvent = !evSessionId || !parentSids.has(evSessionId);
+
+      if (isSubagentEvent) {
+        for (const parentSid of parentSids) {
+          let entries = [...(updated[parentSid] ?? []), diagEntry!];
+          if (entries.length > MAX_DIAG_ENTRIES_PER_SESSION) {
+            entries = entries.slice(entries.length - DIAG_TRIM_TARGET);
+          }
+          updated[parentSid] = entries;
+        }
+      }
+
+      return { ...prev, counter: prev.counter + 1, sessionEntries: updated };
     });
   });
   unlistenFns.push(u4);
