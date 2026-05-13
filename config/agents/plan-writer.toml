@@ -7,7 +7,7 @@ auto_update = true
 user_callable = false
 prune_tool_history = false
 capabilities = ["planning", "analysis", "task_decomposition", "json_extraction"]
-allowed_tools = ["FileRead"]
+allowed_tools = []
 system_prompt = """
 You are a plan writer. Given a request and context, produce a structured
 execution plan as JSON. You handle any domain -- software, research, writing,
@@ -23,17 +23,10 @@ to do, not to do it for them.
 If you lack information, write it into the plan as a research step for
 the executor -- do not look it up yourself.
 
-# Tool Usage Policy: Near-Zero
+# No Tool Access
 
-Do NOT use tools. Produce the plan from the provided context alone.
-
-The ONLY exception: a single FileRead call when the context references a
-specific file by exact path AND you cannot produce any reasonable plan
-without seeing its contents. This should happen at most once per plan.
-If you are unsure whether you need it, you do not need it.
-
-Never scan directories. Never do exploratory
-reads. If you catch yourself wanting to "check" or "confirm" something,
+You have no tool access. Produce the plan entirely from the provided
+context. If you catch yourself wanting to "check" or "confirm" something,
 that is a research step for the executor sub-agent -- add it to the plan.
 
 # Context-First Principle
@@ -57,7 +50,7 @@ for you to use tools.
 # Boundaries
 
 - Deliver a plan only. Do not execute the work or produce the deliverable.
-- The caller provides `plan_path` for reference; do not write files yourself.
+- Do not write files yourself. The caller persists the plan externally.
 - Final response: the JSON plan only, no extra commentary or markdown wrapping.
 
 # Guardrails
@@ -72,7 +65,6 @@ Return a JSON object with these fields:
 
 {
   "plan_title": "<descriptive plan title>",
-  "plan_file": "<the plan_path value from input>",
   "estimated_effort": "Quick(<1h) | Short(1-4h) | Medium(1-2d) | Large(3d+)",
   "overview": "<brief description of what the plan accomplishes>",
   "scope_in": ["<what is included>"],
@@ -123,10 +115,10 @@ If you cannot determine actual data dependencies, prefer independence
 skills = []
 preferred_models = []
 fallback_models = []
-provider_tags = ["general"]
+provider_tags = ["general", "coding"]
 temperature = 0.3
-max_iterations = 10
-max_tool_calls = 5
+max_iterations = 1
+max_tool_calls = 0
 timeout_secs = 120
 context_sharing = "summary"
 max_context_tokens = 128000
@@ -134,4 +126,4 @@ max_context_tokens = 128000
 [response_format]
 type = "json_schema"
 name = "structured_plan"
-schema_json = '{"type":"object","properties":{"plan_title":{"type":"string"},"plan_file":{"type":"string"},"estimated_effort":{"type":"string"},"overview":{"type":"string"},"scope_in":{"type":"array","items":{"type":"string"}},"scope_out":{"type":"array","items":{"type":"string"}},"guardrails":{"type":"array","items":{"type":"string"}},"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"phase":{"type":"integer"},"title":{"type":"string"},"description":{"type":"string"},"depends_on":{"type":"array","items":{"type":"string"}},"status":{"type":"string","enum":["pending","in_progress","completed","failed"]},"estimated_iterations":{"type":"integer"},"key_files":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}}},"required":["id","phase","title","description","depends_on","status","estimated_iterations","key_files","acceptance_criteria"],"additionalProperties":false}}},"required":["plan_title","plan_file","tasks"],"additionalProperties":false}'
+schema_json = '{"type":"object","properties":{"plan_title":{"type":"string"},"estimated_effort":{"type":"string"},"overview":{"type":"string"},"scope_in":{"type":"array","items":{"type":"string"}},"scope_out":{"type":"array","items":{"type":"string"}},"guardrails":{"type":"array","items":{"type":"string"}},"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"phase":{"type":"integer"},"title":{"type":"string"},"description":{"type":"string"},"depends_on":{"type":"array","items":{"type":"string"}},"status":{"type":"string","enum":["pending","in_progress","completed","failed"]},"estimated_iterations":{"type":"integer"},"key_files":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}}},"required":["id","phase","title","description","depends_on","status","estimated_iterations","key_files","acceptance_criteria"],"additionalProperties":false}}},"required":["plan_title","tasks"],"additionalProperties":false}'
