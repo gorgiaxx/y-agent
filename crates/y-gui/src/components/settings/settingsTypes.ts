@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SettingsTab } from './SettingsPanel';
-import { escapeTomlString, deserializeFromJson, mergeIntoRawToml } from '../../utils/tomlUtils';
+import { escapeTomlString, deserializeFromJson } from '../../utils/tomlUtils';
 import {
   SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA, browserPostProcess,
   STORAGE_SCHEMA, HOOKS_SCHEMA, TOOLS_SCHEMA, GUARDRAILS_SCHEMA, KNOWLEDGE_SCHEMA,
@@ -386,17 +386,6 @@ export const DEFAULT_LANGFUSE_FORM: LangfuseFormData = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Mask sensitive values in TOML content. */
-export function maskSensitive(content: string): string {
-  return content.replace(
-    /^(\s*(?:api_key|password|secret|token)\s*=\s*)"([^"]+)"/gm,
-    (_match, prefix, value) => `${prefix}"${'*'.repeat(Math.min(value.length, 24))}"`,
-  ).replace(
-    /^(\s*"(?:authorization|api-key|x-api-key|x-api-token)"\s*=\s*)"([^"]+)"/gim,
-    (_match, prefix, value) => `${prefix}"${'*'.repeat(Math.min(value.length, 24))}"`,
-  );
-}
-
 /** Convert ProviderFormData[] to TOML string. */
 export function providersToToml(providers: ProviderFormData[]): string {
   const lines: string[] = [];
@@ -551,80 +540,35 @@ export function mcpServersToJson(servers: McpServerFormData[]): Record<string, u
   return { mcpServers };
 }
 
-export function sessionToToml(form: SessionFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, SESSION_SCHEMA);
-}
-
-export function runtimeToToml(form: RuntimeFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, RUNTIME_SCHEMA);
-}
-
-export function browserToToml(form: BrowserFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, BROWSER_SCHEMA);
-}
 
 export function jsonToStorage(json: unknown): StorageFormData {
   return deserializeFromJson(json, STORAGE_SCHEMA) as unknown as StorageFormData;
 }
 
-export function storageToToml(form: StorageFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, STORAGE_SCHEMA);
-}
 
 export function jsonToHooks(json: unknown): HooksFormData {
   return deserializeFromJson(json, HOOKS_SCHEMA) as unknown as HooksFormData;
 }
 
-export function hooksToToml(form: HooksFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, HOOKS_SCHEMA);
-}
 
 export function jsonToTools(json: unknown): ToolsFormData {
   return deserializeFromJson(json, TOOLS_SCHEMA) as unknown as ToolsFormData;
 }
 
-export function toolsToToml(form: ToolsFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, TOOLS_SCHEMA);
-}
 
 export function jsonToGuardrails(json: unknown): GuardrailsFormData {
   return deserializeFromJson(json, GUARDRAILS_SCHEMA) as unknown as GuardrailsFormData;
 }
 
-export function guardrailsToToml(form: GuardrailsFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, GUARDRAILS_SCHEMA);
-}
 
 export function jsonToKnowledge(json: unknown): KnowledgeFormData {
   return deserializeFromJson(json, KNOWLEDGE_SCHEMA) as unknown as KnowledgeFormData;
 }
 
-export function knowledgeToToml(form: KnowledgeFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, KNOWLEDGE_SCHEMA);
-}
 
 export function jsonToLangfuse(json: unknown): LangfuseFormData {
   return deserializeFromJson(json, LANGFUSE_SCHEMA) as unknown as LangfuseFormData;
 }
-
-export function langfuseToToml(form: LangfuseFormData, rawToml: string | undefined): string {
-  return mergeIntoRawToml(rawToml, form as unknown as Record<string, unknown>, LANGFUSE_SCHEMA);
-}
-
-export const CONFIG_SECTIONS: { key: SettingsTab; label: string }[] = [
-  { key: 'providers', label: 'Providers' },
-  { key: 'session', label: 'Session' },
-  { key: 'runtime', label: 'Runtime' },
-  { key: 'browser', label: 'Browser' },
-  { key: 'mcp', label: 'MCP Servers' },
-  { key: 'storage', label: 'Storage' },
-  { key: 'hooks', label: 'Hooks' },
-  { key: 'tools', label: 'Tools' },
-  { key: 'guardrails', label: 'Guardrails' },
-  { key: 'knowledge', label: 'Knowledge' },
-  { key: 'langfuse', label: 'Langfuse' },
-  { key: 'promptTemplates', label: 'Prompt Templates' },
-];
 
 export const TAB_LABELS: Record<SettingsTab, string> = {
   general: 'General',
