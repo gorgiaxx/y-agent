@@ -85,7 +85,8 @@ export function PlanTaskItem({
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const statusLabel = formatPlanTaskStatus(task.status);
-  const hasDetail = !!task.description || task.keyFiles.length > 0 || task.acceptanceCriteria.length > 0;
+  const hasDetail = !!task.description || task.keyFiles.length > 0
+    || task.acceptanceCriteria.length > 0 || task.dependsOn.length > 0;
 
   const headerContent = (
     <>
@@ -142,6 +143,10 @@ export function PlanTaskItem({
               <span>{task.acceptanceCriteria.join(' | ')}</span>
             </div>
           )}
+          <div className="tool-call-plan-task-meta">
+            <span className="tool-call-plan-task-meta-label">Deps</span>
+            <span>{task.dependsOn.length > 0 ? task.dependsOn.join(', ') : 'Independent'}</span>
+          </div>
         </div>
       )}
     </div>
@@ -153,8 +158,15 @@ function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
     return <div className="tool-call-plan-empty">No tasks were extracted.</div>;
   }
 
+  const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length;
+
   return (
     <div className="tool-call-plan-task-list">
+      {inProgressCount > 1 && (
+        <div className="tool-call-plan-parallel-note">
+          {inProgressCount} tasks running in parallel
+        </div>
+      )}
       {tasks.map((task) => (
         <PlanTaskItem
           key={task.id || `${task.phase}-${task.title}`}

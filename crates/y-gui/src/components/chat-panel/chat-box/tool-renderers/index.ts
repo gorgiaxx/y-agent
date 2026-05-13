@@ -8,7 +8,6 @@ import { ToolSearchRenderer } from './ToolSearchRenderer';
 import { GlobRenderer } from './GlobRenderer';
 import { GrepRenderer } from './GrepRenderer';
 import { FileToolRenderer } from './FileToolRenderer';
-import { PlanWriterRenderer } from './PlanWriterRenderer';
 import { PlanRenderer } from './PlanRenderer';
 import { LoopRenderer } from './LoopRenderer';
 import { AskUserRenderer } from './AskUserRenderer';
@@ -33,7 +32,6 @@ export const TOOL_RENDERERS: Record<string, ComponentType<ToolRendererProps>> = 
   FileRead: FileToolRenderer,
   Plan: PlanRenderer,
   Loop: LoopRenderer,
-  PlanWriter: PlanWriterRenderer,
   AskUser: AskUserRenderer,
   KnowledgeSearch: KnowledgeSearchRenderer,
 };

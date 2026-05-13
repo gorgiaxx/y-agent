@@ -350,6 +350,112 @@ describe('Plan tool rendering', () => {
     expect(html).toContain('<br/>');
     expect(html).toContain('tool-call-plan-task-detail');
   });
+
+  it('shows dependency info in expanded task detail', () => {
+    const html = renderToStaticMarkup(
+      <PlanTaskItem
+        task={{
+          id: 'phase-3',
+          phase: 3,
+          title: 'Integrate auth with billing',
+          description: 'Wire up billing API to use auth tokens.',
+          dependsOn: ['phase-1', 'phase-2'],
+          status: 'pending',
+          estimatedIterations: 8,
+          keyFiles: [],
+          acceptanceCriteria: [],
+        }}
+        defaultExpanded
+      />,
+    );
+
+    expect(html).toContain('Deps');
+    expect(html).toContain('phase-1, phase-2');
+  });
+
+  it('shows Independent label for tasks with no dependencies', () => {
+    const html = renderToStaticMarkup(
+      <PlanTaskItem
+        task={{
+          id: 'phase-1',
+          phase: 1,
+          title: 'Set up database schema',
+          description: 'Create initial tables.',
+          dependsOn: [],
+          status: 'pending',
+          estimatedIterations: 5,
+          keyFiles: [],
+          acceptanceCriteria: [],
+        }}
+        defaultExpanded
+      />,
+    );
+
+    expect(html).toContain('Independent');
+  });
+
+  it('shows parallel execution note when multiple tasks are in_progress', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-parallel-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Parallel execution test' }),
+        }}
+        status="success"
+        result="Execution in progress"
+        metadata={{
+          display: {
+            kind: 'plan_execution',
+            plan_title: 'Parallel Test',
+            plan_file: '/tmp/parallel.md',
+            total_phases: 3,
+            completed: 0,
+            failed: 0,
+            tasks: [
+              {
+                id: 'phase-1',
+                phase: 1,
+                title: 'Task A',
+                description: '',
+                depends_on: [],
+                status: 'in_progress',
+                estimated_iterations: 5,
+                key_files: [],
+                acceptance_criteria: [],
+              },
+              {
+                id: 'phase-2',
+                phase: 2,
+                title: 'Task B',
+                description: '',
+                depends_on: [],
+                status: 'in_progress',
+                estimated_iterations: 5,
+                key_files: [],
+                acceptance_criteria: [],
+              },
+              {
+                id: 'phase-3',
+                phase: 3,
+                title: 'Task C',
+                description: '',
+                depends_on: ['phase-1', 'phase-2'],
+                status: 'pending',
+                estimated_iterations: 5,
+                key_files: [],
+                acceptance_criteria: [],
+              },
+            ],
+            phases: [],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('2 tasks running in parallel');
+    expect(html).toContain('tool-call-plan-parallel-note');
+  });
 });
 
 describe('shouldDisplayStreamingAgent', () => {

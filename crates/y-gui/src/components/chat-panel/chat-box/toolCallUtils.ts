@@ -105,7 +105,6 @@ const KNOWN_TOOL_NAMES = [
   'KnowledgeSearch',
   'Loop',
   'Plan',
-  'PlanWriter',
   'ShellExec',
   'ToolSearch',
   'WebFetch',
@@ -924,40 +923,6 @@ export function parseAskUserResult(raw: string): AskUserResult | null {
     answers: answers as Record<string, string>,
     status: typeof obj.status === 'string' ? obj.status : 'unknown',
   };
-}
-
-// ---------------------------------------------------------------------------
-// PlanWriter helpers
-// ---------------------------------------------------------------------------
-
-export interface PlanWriterMeta {
-  title: string;
-  content: string;
-}
-
-export interface PlanWriterResult {
-  path: string;
-  title: string;
-}
-
-/** Extract PlanWriter metadata from tool call arguments. */
-export function extractPlanWriterMeta(argsRaw: string): PlanWriterMeta | null {
-  const obj = tryParseJson(argsRaw);
-  if (!obj) return null;
-  const title = typeof obj.title === 'string' ? obj.title : '';
-  const content = typeof obj.content === 'string' ? obj.content : '';
-  if (!title) return null;
-  return { title, content };
-}
-
-/** Parse PlanWriter result to extract the written file path. */
-export function parsePlanWriterResult(raw: string): PlanWriterResult | null {
-  const obj = tryParseJson(raw);
-  if (!obj) return null;
-  const path = typeof obj.path === 'string' ? obj.path : '';
-  const title = typeof obj.title === 'string' ? obj.title : '';
-  if (!path) return null;
-  return { path, title };
 }
 
 export {

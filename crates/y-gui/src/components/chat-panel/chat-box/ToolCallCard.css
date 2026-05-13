@@ -1058,6 +1058,14 @@
   color: var(--text-muted);
 }
 
+.tool-call-plan-parallel-note {
+  padding: var(--space-xs) var(--space-md);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
 @media (max-width: 640px) {
   .tool-call-plan-task-toggle,
   .tool-call-plan-task-static {
