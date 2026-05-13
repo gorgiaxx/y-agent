@@ -120,6 +120,10 @@ export interface InputFeatureProps {
   onOperationModeChange?: (mode: OperationMode) => void;
   /** Persist uncontrolled operation mode to localStorage. Defaults to true. */
   persistOperationMode?: boolean;
+  /** Controlled request-mode value. When omitted, InputArea uses local state. */
+  requestMode?: RequestMode;
+  /** Callback when user changes request mode. Enables controlled usage. */
+  onRequestModeChange?: (mode: RequestMode) => void;
 }
 
 interface InputAreaProps {
@@ -175,6 +179,7 @@ export function InputArea(props: InputAreaProps) {
     persistPlanMode = true,
     operationMode: controlledOperationMode, onOperationModeChange,
     persistOperationMode = true,
+    requestMode: controlledRequestMode, onRequestModeChange,
   } = features;
 
   const [commandMode, setCommandMode] = useState(false);
@@ -194,7 +199,15 @@ export function InputArea(props: InputAreaProps) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [translating, setTranslating] = useState(false);
   const [inputHasText, setInputHasText] = useState(false);
-  const [requestMode, setRequestMode] = useState<RequestMode>('text_chat');
+  const [uncontrolledRequestMode, setUncontrolledRequestMode] = useState<RequestMode>('text_chat');
+  const requestMode = controlledRequestMode ?? uncontrolledRequestMode;
+  const setRequestMode = useCallback((mode: RequestMode) => {
+    if (controlledRequestMode !== undefined) {
+      onRequestModeChange?.(mode);
+    } else {
+      setUncontrolledRequestMode(mode);
+    }
+  }, [controlledRequestMode, onRequestModeChange]);
   const [imageGenOptions, setImageGenOptions] = useState<ImageGenerationOptions>(() => {
     try {
       const stored = localStorage.getItem('y-agent-image-gen-options');
@@ -309,7 +322,7 @@ export function InputArea(props: InputAreaProps) {
     if (!providerSupportsText) {
       setRequestMode('image_generation');
     }
-  }, [providerSupportsImageGeneration, providerSupportsText, selectedProviderId]);
+  }, [providerSupportsImageGeneration, providerSupportsText, selectedProviderId, setRequestMode]);
 
   const updateHasContent = useCallback(() => {
     const hasContent = contentEditableRef.current?.hasContent() ?? false;
@@ -714,8 +727,8 @@ export function InputArea(props: InputAreaProps) {
               className={`toolbar-btn ${requestMode === 'image_generation' ? 'toolbar-btn--active' : ''}`}
               onClick={() => {
                 if (!canToggleRequestMode) return;
-                setRequestMode((prev) =>
-                  prev === 'image_generation' ? 'text_chat' : 'image_generation',
+                setRequestMode(
+                  requestMode === 'image_generation' ? 'text_chat' : 'image_generation',
                 );
               }}
               tooltip={

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { GeneratedImage } from '../../../types';
 import { generatedImageDataUrl } from '../../../lib/generatedImages';
 
@@ -69,7 +70,7 @@ export function GeneratedImageGallery({ images }: GeneratedImageGalleryProps) {
         })}
       </div>
 
-      {previewImage && previewIdx !== null && (
+      {previewImage && previewIdx !== null && createPortal(
         <div
           className="generated-image-lightbox"
           onClick={handleClosePreview}
@@ -80,7 +81,8 @@ export function GeneratedImageGallery({ images }: GeneratedImageGalleryProps) {
             alt={`Generated image ${previewImage.index + 1}`}
             className="generated-image-lightbox-image"
           />
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

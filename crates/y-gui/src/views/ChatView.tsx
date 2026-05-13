@@ -16,7 +16,7 @@ import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
-import type { ThinkingEffort, PlanMode, McpMode } from '../types';
+import type { ThinkingEffort, PlanMode, McpMode, RequestMode } from '../types';
 
 export function ChatView() {
   const chatHooks = useChatContext();
@@ -58,6 +58,13 @@ export function ChatView() {
   const mcpSessionKey = sessionHooks.activeSessionId ?? '__no_session__';
   const mcpMode: McpMode = mcpModeBySession[mcpSessionKey] ?? 'disabled';
   const selectedMcpServers = mcpServersBySession[mcpSessionKey] ?? [];
+
+  // Request mode (text_chat vs image_generation) is per-session.
+  const [requestModeBySession, setRequestModeBySession] = useState<Record<string, RequestMode>>({});
+  const sessionRequestMode: RequestMode = requestModeBySession[mcpSessionKey] ?? 'text_chat';
+  const handleRequestModeChange = useCallback((mode: RequestMode) => {
+    setRequestModeBySession((prev) => ({ ...prev, [mcpSessionKey]: mode }));
+  }, [mcpSessionKey]);
   const { servers: mcpServers } = useMcpServers();
   const mcpServerList = mcpServers.map((s) => ({ name: s.name, disabled: s.disabled }));
   const handleMcpModeChange = useCallback((mode: McpMode) => {
@@ -272,6 +279,8 @@ export function ChatView() {
           planMode,
           onPlanModeChange: handlePlanModeChange,
           persistPlanMode: false,
+          requestMode: sessionRequestMode,
+          onRequestModeChange: handleRequestModeChange,
         }}
       />
       <StatusBar
