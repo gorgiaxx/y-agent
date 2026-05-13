@@ -41,10 +41,7 @@ pub const SIMILARITY_THRESHOLD: f64 = 0.8;
 /// to consider them as repeated calls.
 pub const MAX_ADJACENT_DISTANCE: usize = 3;
 
-/// Simple token estimation (4 chars per token).
-pub fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
+pub use crate::token_utils::estimate_tokens;
 
 /// Check if content matches any built-in or extra error patterns.
 pub fn matches_error_patterns(content: &str, extra_patterns: &[String]) -> bool {

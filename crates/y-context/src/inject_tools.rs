@@ -31,11 +31,7 @@ use y_prompt::PromptContext;
 use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
 };
-
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
+use crate::token_utils::estimate_tokens;
 
 /// `InjectTools` -- injects tool discovery info into the context.
 ///

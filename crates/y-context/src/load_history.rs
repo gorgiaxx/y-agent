@@ -11,14 +11,10 @@ use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
 };
 use crate::repair::{repair_history, HistoryMessage, RepairReport};
+use crate::token_utils::estimate_tokens;
 
 /// Default maximum tokens for history context.
 const DEFAULT_HISTORY_BUDGET: u32 = 80_000;
-
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
 
 /// `LoadHistory` — loads and repairs session history for the context pipeline.
 ///

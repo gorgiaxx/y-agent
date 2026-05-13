@@ -77,7 +77,7 @@ impl ContextProvider for InjectContextStatus {
         }
 
         if usage_pct > 90.0 {
-            status.push_str(" ⚠ context nearly full, consider compaction");
+            status.push_str(" WARNING: context nearly full, consider compaction");
         }
 
         // Estimate the status message itself at ~20 tokens.
@@ -147,7 +147,24 @@ mod tests {
         stage.provide(&mut ctx).await.unwrap();
 
         let status_item = ctx.items.last().unwrap();
-        assert!(status_item.content.contains("⚠ context nearly full"));
+        assert!(status_item.content.contains("WARNING: context nearly full"));
+    }
+
+    #[tokio::test]
+    async fn test_context_status_warning_uses_ascii_text() {
+        let mut ctx = AssembledContext::default();
+        ctx.add(ContextItem {
+            category: ContextCategory::History,
+            content: "lots of history".into(),
+            token_estimate: 950,
+            priority: 600,
+        });
+
+        let stage = InjectContextStatus::new(1000);
+        stage.provide(&mut ctx).await.unwrap();
+
+        let status_item = ctx.items.last().unwrap();
+        assert!(status_item.content.contains("WARNING: context nearly full"));
     }
 
     #[tokio::test]

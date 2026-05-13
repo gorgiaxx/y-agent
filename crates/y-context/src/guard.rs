@@ -30,12 +30,15 @@ pub struct TokenBudget {
 impl TokenBudget {
     /// Total budget across all categories (excluding response reserve).
     pub fn total_available(&self) -> u32 {
-        self.system_prompt + self.tools_schema + self.history + self.bootstrap
+        self.system_prompt
+            .saturating_add(self.tools_schema)
+            .saturating_add(self.history)
+            .saturating_add(self.bootstrap)
     }
 
     /// Total budget including response reserve.
     pub fn total_with_reserve(&self) -> u32 {
-        self.total_available() + self.response_reserve
+        self.total_available().saturating_add(self.response_reserve)
     }
 }
 
@@ -92,11 +95,7 @@ impl ContextWindowGuard {
     pub fn evaluate(&self, ctx: &AssembledContext) -> GuardVerdict {
         let total = self.budget.total_available();
         let used = ctx.total_tokens();
-        let utilization = if total == 0 {
-            100
-        } else {
-            u32::try_from(u64::from(used) * 100 / u64::from(total)).unwrap_or(100)
-        };
+        let utilization = utilization_pct(used, total);
 
         if utilization >= self.critical_threshold {
             GuardVerdict::Critical {
@@ -104,7 +103,8 @@ impl ContextWindowGuard {
             }
         } else if utilization >= self.compaction_threshold {
             GuardVerdict::Overflow {
-                tokens_over: used.saturating_sub(total * self.compaction_threshold / 100),
+                tokens_over: used
+                    .saturating_sub(threshold_tokens(total, self.compaction_threshold)),
             }
         } else if utilization >= self.warning_threshold {
             GuardVerdict::Warning {
@@ -119,21 +119,17 @@ impl ContextWindowGuard {
     pub fn status_message(&self, ctx: &AssembledContext) -> String {
         let total = self.budget.total_available();
         let used = ctx.total_tokens();
-        let utilization = if total == 0 {
-            100
-        } else {
-            u32::try_from(u64::from(used) * 100 / u64::from(total)).unwrap_or(100)
-        };
+        let utilization = utilization_pct(used, total);
 
         let base = format!(
             "[Context Status: working_tokens={used}, threshold={total}, utilization={utilization}%]"
         );
 
-        if utilization > 95 {
+        if utilization >= 95 {
             format!("{base}\nCRITICAL: context overflow imminent. System compaction will be triggered if compress_experience is not called.")
-        } else if utilization > 85 {
+        } else if utilization >= 85 {
             format!("{base}\nWARNING: working context approaching threshold. Use compress_experience now to avoid forced compaction.")
-        } else if utilization > 70 {
+        } else if utilization >= 70 {
             format!("{base}\nConsider using compress_experience to archive evidence before context grows further.")
         } else {
             base
@@ -166,6 +162,18 @@ impl Default for ContextWindowGuard {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn utilization_pct(used: u32, total: u32) -> u32 {
+    if total == 0 {
+        return 100;
+    }
+
+    u32::try_from(u64::from(used) * 100 / u64::from(total)).unwrap_or(100)
+}
+
+fn threshold_tokens(total: u32, threshold_pct: u32) -> u32 {
+    u32::try_from(u64::from(total) * u64::from(threshold_pct) / 100).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]
@@ -257,5 +265,40 @@ mod tests {
             guard.category_over_budget(&ctx, ContextCategory::SystemPrompt),
             None
         );
+    }
+
+    #[test]
+    fn test_token_budget_total_available_saturates_on_overflow() {
+        let budget = TokenBudget {
+            system_prompt: u32::MAX,
+            tools_schema: 1,
+            history: 0,
+            bootstrap: 0,
+            response_reserve: 1,
+        };
+
+        assert_eq!(budget.total_available(), u32::MAX);
+        assert_eq!(budget.total_with_reserve(), u32::MAX);
+    }
+
+    #[test]
+    fn test_guard_overflow_threshold_calculation_does_not_overflow() {
+        let guard = ContextWindowGuard {
+            budget: TokenBudget {
+                system_prompt: u32::MAX,
+                tools_schema: 0,
+                history: 0,
+                bootstrap: 0,
+                response_reserve: 0,
+            },
+            critical_threshold: 99,
+            ..ContextWindowGuard::new()
+        };
+        let ctx = make_ctx(3_900_000_000);
+
+        assert!(matches!(
+            guard.evaluate(&ctx),
+            GuardVerdict::Overflow { tokens_over } if tokens_over > 0
+        ));
     }
 }

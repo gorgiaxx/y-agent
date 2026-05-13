@@ -33,6 +33,7 @@ use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
 };
 use crate::system_prompt::VenvPromptInfo;
+use crate::token_utils::estimate_tokens;
 
 /// Maximum tokens per individual skill description (design principle 2.4).
 const MAX_TOKENS_PER_SKILL: u32 = 2_000;
@@ -40,11 +41,6 @@ const MAX_TOKENS_PER_SKILL: u32 = 2_000;
 /// Files and directories that are part of the standard skill layout.
 /// Anything beyond these in the skill directory is considered a companion file.
 const STANDARD_SKILL_FILES: &[&str] = &["skill.toml", "root.md", "lineage.toml", "details"];
-
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
 
 // ---------------------------------------------------------------------------
 // Template variable support

@@ -13,11 +13,7 @@ use y_core::types::SessionId;
 use super::detector::PruningDetector;
 use super::report::{PruningReport, PruningStrategyType};
 use super::strategy::{PruningCandidate, PruningStrategy};
-
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
+use crate::token_utils::estimate_tokens;
 
 /// Retry pruning: removes failed tool call branches without LLM cost.
 pub struct RetryPruning {

@@ -11,14 +11,10 @@ use crate::memory::recall_middleware::{RecallMiddleware, RecalledItem};
 use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
 };
+use crate::token_utils::estimate_tokens;
 
 /// Default maximum tokens for memory context.
 const DEFAULT_MEMORY_BUDGET: u32 = 4_000;
-
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
 
 /// `InjectMemory` — injects recalled memories into the context pipeline.
 ///

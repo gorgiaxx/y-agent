@@ -11,14 +11,10 @@ use async_trait::async_trait;
 use crate::pipeline::{
     AssembledContext, ContextCategory, ContextItem, ContextPipelineError, ContextProvider,
 };
+use crate::token_utils::estimate_tokens;
 
 /// Default maximum tokens for bootstrap context.
 const DEFAULT_BOOTSTRAP_BUDGET: u32 = 8_000;
-
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
 
 /// A bootstrap file entry to inject.
 #[derive(Debug, Clone)]

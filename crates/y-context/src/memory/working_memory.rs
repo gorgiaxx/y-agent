@@ -98,10 +98,7 @@ impl WorkingMemory {
     }
 }
 
-fn estimate_tokens(text: &str) -> u32 {
-    let chars = u32::try_from(text.len()).unwrap_or(u32::MAX);
-    chars.div_ceil(4)
-}
+use crate::token_utils::estimate_tokens;
 
 #[cfg(test)]
 mod tests {

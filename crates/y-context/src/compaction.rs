@@ -292,15 +292,13 @@ impl CompactionEngine {
     /// Strategy: `SelectiveRetain` — score messages, keep important ones verbatim.
     async fn selective_retain(&self, llm: &dyn CompactionLlm, messages: &[String]) -> String {
         // Score messages by simple heuristics (length, keywords).
-        let scored: Vec<(usize, f64)> = messages
+        let mut sorted: Vec<(usize, f64)> = messages
             .iter()
             .enumerate()
             .map(|(i, m)| (i, score_importance(m)))
             .collect();
 
-        // Keep top 30% verbatim, summarize the rest.
-        let threshold_index = (scored.len() as f64 * 0.3).ceil() as usize;
-        let mut sorted = scored.clone();
+        let threshold_index = (sorted.len() as f64 * 0.3).ceil() as usize;
         sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let retain_indices: std::collections::HashSet<usize> = sorted
@@ -436,10 +434,7 @@ impl Default for CompactionEngine {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Simple token estimation (4 chars per token).
-pub fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
+pub use crate::token_utils::estimate_tokens;
 
 /// Build a summarization prompt.
 fn build_summarize_prompt(messages: &[String]) -> String {

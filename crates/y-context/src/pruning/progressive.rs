@@ -16,11 +16,7 @@ use y_core::types::SessionId;
 
 use super::report::{PruningReport, PruningStrategyType};
 use super::strategy::{PruningCandidate, PruningReason, PruningStrategy};
-
-/// Simple token estimation (4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
-}
+use crate::token_utils::estimate_tokens;
 
 /// Progressive pruning: replaces completed multi-step sequences with
 /// LLM-generated summaries via the `pruning-summarizer` subagent.

@@ -32,6 +32,7 @@ pub mod pruning;
 pub mod recall;
 pub mod repair;
 pub mod system_prompt;
+pub mod token_utils;
 pub mod working_memory;
 
 // Re-export primary types.

@@ -124,32 +124,39 @@ impl WorkingMemory {
     /// or per-category limit.
     pub fn write_slot(&mut self, slot: WorkingMemorySlot) -> Result<(), WorkingMemoryError> {
         // Calculate what total would be after this write.
-        let current_total = self.total_tokens();
+        let current_total = self.total_tokens_u64();
         // If updating an existing slot, subtract its old tokens.
-        let old_tokens = self.slots.get(&slot.label).map_or(0, |s| s.token_estimate);
-        let new_total = current_total - old_tokens + slot.token_estimate;
+        let old_tokens = self
+            .slots
+            .get(&slot.label)
+            .map_or(0, |s| u64::from(s.token_estimate));
+        let new_total = current_total
+            .saturating_sub(old_tokens)
+            .saturating_add(u64::from(slot.token_estimate));
 
-        if new_total > self.budget.max_total_tokens {
+        if new_total > u64::from(self.budget.max_total_tokens) {
             return Err(WorkingMemoryError::BudgetExceeded {
-                used: new_total,
+                used: u32::try_from(new_total).unwrap_or(u32::MAX),
                 limit: self.budget.max_total_tokens,
             });
         }
 
         // Check per-category limit.
         if let Some(&cat_limit) = self.budget.category_limits.get(&slot.category) {
-            let current_cat = self.tokens_for_category(slot.category);
+            let current_cat = self.tokens_for_category_u64(slot.category);
             let old_cat = self
                 .slots
                 .get(&slot.label)
                 .filter(|s| s.category == slot.category)
-                .map_or(0, |s| s.token_estimate);
-            let new_cat = current_cat - old_cat + slot.token_estimate;
+                .map_or(0, |s| u64::from(s.token_estimate));
+            let new_cat = current_cat
+                .saturating_sub(old_cat)
+                .saturating_add(u64::from(slot.token_estimate));
 
-            if new_cat > cat_limit {
+            if new_cat > u64::from(cat_limit) {
                 return Err(WorkingMemoryError::CategoryBudgetExceeded {
                     category: slot.category,
-                    used: new_cat,
+                    used: u32::try_from(new_cat).unwrap_or(u32::MAX),
                     limit: cat_limit,
                 });
             }
@@ -174,16 +181,27 @@ impl WorkingMemory {
 
     /// Total estimated tokens across all slots.
     pub fn total_tokens(&self) -> u32 {
-        self.slots.values().map(|s| s.token_estimate).sum()
+        u32::try_from(self.total_tokens_u64()).unwrap_or(u32::MAX)
     }
 
     /// Tokens used by a specific cognitive category.
     pub fn tokens_for_category(&self, category: CognitiveCategory) -> u32 {
+        u32::try_from(self.tokens_for_category_u64(category)).unwrap_or(u32::MAX)
+    }
+
+    fn total_tokens_u64(&self) -> u64 {
+        self.slots.values().fold(0_u64, |acc, slot| {
+            acc.saturating_add(u64::from(slot.token_estimate))
+        })
+    }
+
+    fn tokens_for_category_u64(&self, category: CognitiveCategory) -> u64 {
         self.slots
             .values()
             .filter(|s| s.category == category)
-            .map(|s| s.token_estimate)
-            .sum()
+            .fold(0_u64, |acc, slot| {
+                acc.saturating_add(u64::from(slot.token_estimate))
+            })
     }
 
     /// Number of slots.
@@ -371,5 +389,26 @@ mod tests {
         // Now we have room for more.
         wm.write_slot(analysis_slot("extra", 100)).unwrap();
         assert_eq!(wm.total_tokens(), 150);
+    }
+
+    #[test]
+    fn test_wm_write_slot_rejects_arithmetic_overflow() {
+        let budget = TokenBudget {
+            max_total_tokens: u32::MAX,
+            category_limits: HashMap::new(),
+        };
+        let mut wm = WorkingMemory::with_budget(budget);
+
+        wm.write_slot(perception_slot("huge", u32::MAX)).unwrap();
+        let result = wm.write_slot(analysis_slot("overflow", 1));
+
+        assert!(matches!(
+            result,
+            Err(WorkingMemoryError::BudgetExceeded {
+                used: u32::MAX,
+                limit: u32::MAX,
+            })
+        ));
+        assert_eq!(wm.slot_count(), 1);
     }
 }
