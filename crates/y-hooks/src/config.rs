@@ -117,7 +117,7 @@ impl HandlerConfig {
 
 /// Controls what data is serialized to hook handlers.
 /// Per design §Security: "Hook handlers receive summaries by default, not raw content."
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookContextVerbosity {
     /// Keys and types only; no content.

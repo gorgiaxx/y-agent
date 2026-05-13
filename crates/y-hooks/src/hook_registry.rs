@@ -34,7 +34,7 @@ impl HookRegistryMetrics {
 }
 
 /// Point-in-time snapshot of hook registry metrics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookRegistryMetricsSnapshot {
     pub dispatches: u64,
     pub handler_invocations: u64,

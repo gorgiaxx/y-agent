@@ -43,7 +43,7 @@ pub struct HookHandlerResult {
     pub block_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookDecision {
     Allow,
     Block,
@@ -149,7 +149,7 @@ pub struct HookHandlerMetrics {
 }
 
 /// A snapshot of metrics for inspection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookHandlerMetricsSnapshot {
     pub invocations: u64,
     pub duration_us: u64,
@@ -302,7 +302,7 @@ impl HookHandlerExecutor {
             handlers,
             http_client: reqwest::Client::new(),
             allowed_hook_dirs: config.allowed_hook_dirs.clone(),
-            verbosity: config.verbosity.clone(),
+            verbosity: config.verbosity,
             metrics: HookHandlerMetrics::default(),
             #[cfg(feature = "llm_hooks")]
             llm_runner: None,
@@ -350,8 +350,10 @@ impl HookHandlerExecutor {
         let match_subject = extract_match_subject(input);
 
         let mut cmd_http_decisions: Vec<CommandHttpDecision> = Vec::new();
-        #[allow(unused_mut)]
+        #[cfg(feature = "llm_hooks")]
         let mut prompt_agent_decisions: Vec<PromptAgentDecision> = Vec::new();
+        #[cfg(not(feature = "llm_hooks"))]
+        let prompt_agent_decisions: Vec<PromptAgentDecision> = Vec::new();
         let mut handler_count: usize = 0;
 
         let start = std::time::Instant::now();
@@ -359,7 +361,7 @@ impl HookHandlerExecutor {
         for group in groups {
             // Check matcher.
             if let Some(ref regex) = group.matcher {
-                if !regex.is_match(&match_subject) {
+                if !regex.is_match(match_subject) {
                     continue;
                 }
             }
@@ -516,8 +518,8 @@ impl HookHandlerExecutor {
     }
 
     /// Check if any handlers are configured for a hook point.
-    pub fn has_handlers(&self, hook_point: &HookPoint) -> bool {
-        self.handlers.contains_key(hook_point)
+    pub fn has_handlers(&self, hook_point: HookPoint) -> bool {
+        self.handlers.contains_key(&hook_point)
     }
 }
 
@@ -574,12 +576,12 @@ fn parse_hook_point(s: &str) -> Result<HookPoint, HookError> {
 
 /// Extract a match subject from the hook input for regex matching.
 /// For tool hooks, matches against `tool_name`. For others, uses `hook_event`.
-fn extract_match_subject(input: &HookInput) -> String {
-    if let Some(tool_name) = input.extra.get("tool_name").and_then(|v| v.as_str()) {
-        tool_name.to_string()
-    } else {
-        input.hook_event.clone()
-    }
+fn extract_match_subject(input: &HookInput) -> &str {
+    input
+        .extra
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&input.hook_event)
 }
 
 // ---------------------------------------------------------------------------
@@ -741,9 +743,8 @@ impl CommandExecutor {
                 if stdout.trim().is_empty() {
                     Ok(CommandHttpDecision::default())
                 } else {
-                    serde_json::from_str(stdout.trim())
-                        .unwrap_or_else(|_| CommandHttpDecision::default())
-                        .pipe(Ok)
+                    Ok(serde_json::from_str(stdout.trim())
+                        .unwrap_or_else(|_| CommandHttpDecision::default()))
                 }
             }
             1 => {
@@ -786,18 +787,6 @@ impl CommandExecutor {
         }
     }
 }
-
-/// Pipe trait for inline chaining.
-trait Pipe: Sized {
-    fn pipe<F, R>(self, f: F) -> R
-    where
-        F: FnOnce(Self) -> R,
-    {
-        f(self)
-    }
-}
-
-impl<T> Pipe for T {}
 
 // ---------------------------------------------------------------------------
 // HTTP hook execution

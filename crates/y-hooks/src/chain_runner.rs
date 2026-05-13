@@ -67,12 +67,9 @@ impl ChainRunner {
                     tracing::info!(middleware = mw.name(), "middleware short-circuited chain");
                     break;
                 }
-                Err(MiddlewareError::Timeout { ref name, .. }) => {
-                    tracing::warn!(middleware = %name, "middleware timed out");
-                    return Err(MiddlewareError::Timeout {
-                        name: name.clone(),
-                        timeout_ms: u64::try_from(self.timeout.as_millis()).unwrap_or(u64::MAX),
-                    });
+                Err(e @ MiddlewareError::Timeout { .. }) => {
+                    tracing::warn!(middleware = mw.name(), "middleware timed out");
+                    return Err(e);
                 }
                 Err(e) => {
                     tracing::error!(

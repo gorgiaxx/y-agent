@@ -42,7 +42,7 @@ impl EventBusMetrics {
 }
 
 /// Point-in-time snapshot of event bus metrics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventBusMetricsSnapshot {
     pub published: u64,
     pub delivered: u64,
@@ -93,7 +93,7 @@ impl EventBus {
     pub fn new(capacity: usize) -> Self {
         Self {
             subscribers: RwLock::new(Vec::new()),
-            capacity,
+            capacity: capacity.max(1),
             next_subscriber_id: AtomicUsize::new(0),
             metrics: EventBusMetrics::default(),
         }
@@ -385,6 +385,17 @@ mod tests {
         assert_eq!(metrics.published, 2);
         assert_eq!(metrics.delivered, 2);
         assert_eq!(metrics.dropped, 0);
+    }
+
+    #[tokio::test]
+    async fn test_event_bus_zero_capacity_is_clamped() {
+        let bus = EventBus::new(0);
+        let mut sub = bus.subscribe(EventFilter::all()).await;
+
+        bus.publish(tool_event("capacity")).await.unwrap();
+
+        assert_eq!(bus.capacity(), 1);
+        assert!(sub.recv().await.is_some());
     }
 
     #[tokio::test]

@@ -37,11 +37,26 @@ impl MiddlewareChain {
     ///
     /// The middleware will be positioned based on its priority.
     pub fn register(&mut self, middleware: Arc<dyn Middleware>) -> Result<(), HookError> {
-        let name = middleware.name().to_string();
+        let middleware_chain_type = middleware.chain_type();
 
-        // Check for duplicates.
-        if self.entries.iter().any(|e| e.middleware.name() == name) {
-            return Err(HookError::MiddlewareAlreadyRegistered { name });
+        if middleware_chain_type != self.chain_type {
+            return Err(HookError::RegistrationError {
+                message: format!(
+                    "middleware '{}' belongs to {middleware_chain_type:?}, cannot register in {:?} chain",
+                    middleware.name(),
+                    self.chain_type
+                ),
+            });
+        }
+
+        if self
+            .entries
+            .iter()
+            .any(|e| e.middleware.name() == middleware.name())
+        {
+            return Err(HookError::MiddlewareAlreadyRegistered {
+                name: middleware.name().to_string(),
+            });
         }
 
         let insertion_order = self.next_insertion_order;
@@ -373,6 +388,43 @@ mod tests {
 
         let result = chain.register(Arc::new(TestMiddleware::new("dup", 200)));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_chain_rejects_wrong_chain_type() {
+        struct ToolMiddleware {
+            inner: TestMiddleware,
+        }
+
+        #[async_trait]
+        impl Middleware for ToolMiddleware {
+            async fn execute(
+                &self,
+                ctx: &mut MiddlewareContext,
+            ) -> Result<MiddlewareResult, y_core::hook::MiddlewareError> {
+                self.inner.execute(ctx).await
+            }
+
+            fn chain_type(&self) -> ChainType {
+                ChainType::Tool
+            }
+
+            fn priority(&self) -> u32 {
+                self.inner.priority()
+            }
+
+            fn name(&self) -> &str {
+                self.inner.name()
+            }
+        }
+
+        let mut chain = MiddlewareChain::new(ChainType::Context);
+        let result = chain.register(Arc::new(ToolMiddleware {
+            inner: TestMiddleware::new("wrong-chain", 100),
+        }));
+
+        assert!(result.is_err());
+        assert!(chain.is_empty());
     }
 
     #[test]
