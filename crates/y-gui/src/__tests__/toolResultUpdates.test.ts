@@ -560,4 +560,201 @@ describe('toolResultUpdates', () => {
       { type: 'tool_result', record: terminalError },
     ]);
   });
+
+  it('replaces a running Plan placeholder with a terminal error even when arguments differ', () => {
+    const running = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Build auth system' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const terminalError = {
+      name: 'Plan',
+      arguments: 'different-args',
+      success: false,
+      durationMs: 42,
+      resultPreview: 'LLM error: network error',
+    };
+
+    const updatedRecords = upsertToolResultRecord([running], terminalError);
+
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0]).toEqual(terminalError);
+
+    const updatedSegments = upsertToolResultSegment(
+      [{ type: 'tool_result', record: running }],
+      terminalError,
+    );
+
+    expect(updatedSegments.segments).toHaveLength(1);
+    expect(updatedSegments.segments[0]).toEqual({ type: 'tool_result', record: terminalError });
+  });
+
+  it('does not replace a running Plan placeholder with a structured progress update that has different args', () => {
+    const running = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Build auth system' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const progress = {
+      name: 'Plan',
+      arguments: 'plan-writer completed',
+      success: true,
+      durationMs: 25,
+      resultPreview: 'Plan written',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'completed',
+          plan_title: 'Auth System',
+          plan_file: '/tmp/auth-plan.md',
+          tasks: [],
+        },
+      },
+    };
+
+    const updatedRecords = upsertToolResultRecord([running], progress);
+
+    expect(updatedRecords.records).toHaveLength(2);
+    expect(updatedRecords.records[0]).toEqual(running);
+    expect(updatedRecords.records[1]).toEqual(progress);
+  });
+
+  it('replaces a running Plan placeholder directly with a terminal error when no intermediate events exist', () => {
+    const running = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Build auth system' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const terminalError = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Build auth system' }),
+      success: false,
+      durationMs: 200,
+      resultPreview: 'runtime error executing Plan: failed to create plan-writer session',
+    };
+
+    const updatedRecords = upsertToolResultRecord([running], terminalError);
+
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0]).toEqual(terminalError);
+    expect(updatedRecords.replacedIndex).toBe(0);
+  });
+
+  it('replaces running Plan placeholder and plan_start with a terminal error when args differ', () => {
+    const running = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Build auth system' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const planStart = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Build auth system', context: '' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: 'Starting plan generation',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'running',
+          plan_title: '',
+          plan_file: '/tmp/auth-plan.md',
+          plan_content: '',
+        },
+      },
+    };
+    const terminalError = {
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Build auth system' }),
+      success: false,
+      durationMs: 5000,
+      resultPreview: 'LLM error: network error: connection refused',
+    };
+
+    const records = upsertToolResultRecord([running], planStart).records;
+    expect(records).toHaveLength(2);
+
+    const updatedRecords = upsertToolResultRecord(records, terminalError);
+
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0].success).toBe(false);
+    expect(updatedRecords.records[0].resultPreview).toContain('network error');
+
+    const segments = upsertToolResultSegment(
+      [
+        { type: 'tool_result', record: running },
+        { type: 'tool_result', record: planStart },
+      ],
+      terminalError,
+    );
+
+    expect(segments.segments).toHaveLength(1);
+    expect(segments.segments[0]).toMatchObject({
+      type: 'tool_result',
+      record: { success: false },
+    });
+  });
+
+  it('replaces plan_start (stage_status running) with error when running placeholder was already consumed', () => {
+    const planStartArgs = JSON.stringify({ request: 'Build auth system', context: '' });
+    const planStart = {
+      name: 'Plan',
+      arguments: planStartArgs,
+      success: true,
+      durationMs: 0,
+      resultPreview: 'Starting plan generation',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'running',
+          plan_title: '',
+          plan_file: '/tmp/auth-plan.md',
+          plan_content: '',
+        },
+      },
+    };
+    const terminalError = {
+      name: 'Plan',
+      arguments: planStartArgs,
+      success: false,
+      durationMs: 5000,
+      resultPreview: 'runtime error executing Plan: plan-writer execution failed: LLM error: network error',
+    };
+
+    const updatedRecords = upsertToolResultRecord([planStart], terminalError);
+
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0].success).toBe(false);
+    expect(updatedRecords.records[0].metadata).toMatchObject({
+      display: {
+        kind: 'plan_stage',
+        stage_status: 'failed',
+      },
+    });
+
+    const updatedSegments = upsertToolResultSegment(
+      [{ type: 'tool_result', record: planStart }],
+      terminalError,
+    );
+
+    expect(updatedSegments.segments).toHaveLength(1);
+    expect(updatedSegments.segments[0]).toMatchObject({
+      type: 'tool_result',
+      record: { success: false },
+    });
+  });
 });

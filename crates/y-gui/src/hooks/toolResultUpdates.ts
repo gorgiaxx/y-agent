@@ -80,13 +80,22 @@ function shouldReplacePlanTerminalError(
   const current = records[currentIndex];
   const matchingRunningIndex = findRunningToolIndex(records, next);
 
-  return current.name === 'Plan'
-    && next.name === 'Plan'
-    && next.success === false
-    && matchingRunningIndex >= 0
-    && currentIndex > matchingRunningIndex
-    && extractPlanDisplay(current) != null
-    && extractPlanDisplay(next) == null;
+  if (current.name !== 'Plan' || next.name !== 'Plan' || next.success !== false) return false;
+  if (extractPlanDisplay(current) == null || extractPlanDisplay(next) != null) return false;
+
+  if (matchingRunningIndex >= 0 && currentIndex > matchingRunningIndex) return true;
+
+  const currentDisplay = extractPlanDisplay(current);
+  if (
+    matchingRunningIndex < 0
+    && currentDisplay != null
+    && typeof currentDisplay.stage_status === 'string'
+    && currentDisplay.stage_status === 'running'
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function withPreservedFailedPlanMetadata(
@@ -129,9 +138,9 @@ function shouldReplaceRunningTool(
   current: ToolResultRecord,
   next: ToolResultRecord,
 ): boolean {
-  return current.state === 'running'
-    && current.name === next.name
-    && (current.arguments ?? '') === (next.arguments ?? '');
+  if (current.state !== 'running' || current.name !== next.name) return false;
+  if (current.name === 'Plan' && !extractPlanDisplay(next)) return true;
+  return (current.arguments ?? '') === (next.arguments ?? '');
 }
 
 function findRunningToolIndex(
