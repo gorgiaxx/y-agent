@@ -20,6 +20,7 @@ import type {
   ChatErrorPayload,
   UserMessageEvent,
   ChatStartedPayload,
+  TurnEvent,
 } from '../types';
 
 export interface DiagnosticsSummary {
@@ -126,45 +127,59 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 const MAX_DIAG_ENTRIES_PER_SESSION = 1000;
 const DIAG_TRIM_TARGET = 800;
 
-/**
- * Map a raw backend diagnostics record to a typed DiagnosticsEntry.
- * Shared by loadSubagentHistory, reloadSessionHistory, and the session
- * history loader inside the hook.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapRawToEntry(item: any, idPrefix: string, idx: number): DiagnosticsEntry {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let event: any;
-  const timestamp = (item.timestamp as string) || new Date().toISOString();
+interface RawDiagnosticsRecord {
+  type: string;
+  timestamp?: string;
+  content?: string;
+  iteration?: number;
+  model?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  duration_ms?: number;
+  cost_usd?: number;
+  tool_calls_requested?: string[];
+  prompt_preview?: string;
+  response_text?: string;
+  context_window?: number;
+  agent_name?: string;
+  name?: string;
+  success?: boolean;
+  input_preview?: string;
+  result_preview?: string;
+}
+
+function mapRawToEntry(item: RawDiagnosticsRecord, idPrefix: string, idx: number): DiagnosticsEntry {
+  let event: TurnEvent;
+  const timestamp = item.timestamp || new Date().toISOString();
   switch (item.type) {
     case 'user_message':
-      event = { type: 'user_message' as const, content: item.content as string };
+      event = { type: 'user_message' as const, content: item.content ?? '' };
       break;
     case 'llm_response':
       event = {
         type: 'llm_response' as const,
-        iteration: item.iteration as number,
-        model: item.model as string,
-        input_tokens: item.input_tokens as number,
-        output_tokens: item.output_tokens as number,
-        duration_ms: item.duration_ms as number,
-        cost_usd: item.cost_usd as number,
-        tool_calls_requested: (item.tool_calls_requested ?? []) as string[],
-        prompt_preview: item.prompt_preview as string,
-        response_text: item.response_text as string,
-        context_window: item.context_window as number,
-        agent_name: item.agent_name as string | undefined,
+        iteration: item.iteration ?? 0,
+        model: item.model ?? '',
+        input_tokens: item.input_tokens ?? 0,
+        output_tokens: item.output_tokens ?? 0,
+        duration_ms: item.duration_ms ?? 0,
+        cost_usd: item.cost_usd ?? 0,
+        tool_calls_requested: item.tool_calls_requested ?? [],
+        prompt_preview: item.prompt_preview ?? '',
+        response_text: item.response_text ?? '',
+        context_window: item.context_window ?? 0,
+        agent_name: item.agent_name,
       };
       break;
     case 'tool_result':
       event = {
         type: 'tool_result' as const,
-        name: item.name as string,
-        success: item.success as boolean,
-        duration_ms: item.duration_ms as number,
-        input_preview: (item.input_preview as string) ?? undefined,
-        result_preview: item.result_preview as string,
-        agent_name: item.agent_name as string | undefined,
+        name: item.name ?? '',
+        success: item.success ?? false,
+        duration_ms: item.duration_ms ?? 0,
+        input_preview: item.input_preview,
+        result_preview: item.result_preview ?? '',
+        agent_name: item.agent_name,
       };
       break;
     default:
@@ -178,8 +193,7 @@ function mapRawToEntry(item: any, idPrefix: string, idx: number): DiagnosticsEnt
  *  whenever a `diagnostics:subagent_completed` event arrives.              */
 async function loadSubagentHistory() {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await transport.invoke<any[]>('diagnostics_get_subagent_history', { limit: 50 });
+    const raw = await transport.invoke<RawDiagnosticsRecord[]>('diagnostics_get_subagent_history', { limit: 50 });
     if (!raw || raw.length === 0) return;
 
     const histEntries = raw.map((item, idx) => mapRawToEntry(item, 'subagent', idx));
@@ -202,8 +216,7 @@ async function loadSubagentHistory() {
  *  in the session-level view. */
 async function reloadSessionHistory(sessionId: string) {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await transport.invoke<any[]>('diagnostics_get_by_session', { sessionId, limit: 500 });
+    const raw = await transport.invoke<RawDiagnosticsRecord[]>('diagnostics_get_by_session', { sessionId, limit: 500 });
     if (!raw || raw.length === 0) return;
 
     const histEntries = raw.map((item, idx) => mapRawToEntry(item, `hist-${sessionId}`, idx));
