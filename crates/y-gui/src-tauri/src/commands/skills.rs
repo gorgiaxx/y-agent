@@ -209,18 +209,8 @@ pub async fn skill_read_file(
     relative_path: String,
 ) -> Result<String, String> {
     let skill_dir = skills_store_path(&state.config_dir).join(&name);
-    let target = skill_dir.join(&relative_path);
-
-    // Path traversal guard.
-    let canonical_dir = skill_dir
-        .canonicalize()
-        .map_err(|e| format!("Skill dir not found: {e}"))?;
-    let canonical_target = target
-        .canonicalize()
-        .map_err(|e| format!("File not found: {e}"))?;
-    if !canonical_target.starts_with(&canonical_dir) {
-        return Err("Access denied: path traversal detected".to_string());
-    }
+    let canonical_target =
+        y_service::resolve_skill_read_path(&skill_dir, Path::new(&relative_path))?;
 
     std::fs::read_to_string(&canonical_target).map_err(|e| format!("Failed to read file: {e}"))
 }
@@ -234,21 +224,7 @@ pub async fn skill_save_file(
     content: String,
 ) -> Result<(), String> {
     let skill_dir = skills_store_path(&state.config_dir).join(&name);
-    let target = skill_dir.join(&relative_path);
-
-    // Path traversal guard.
-    let canonical_dir = skill_dir
-        .canonicalize()
-        .map_err(|e| format!("Skill dir not found: {e}"))?;
-
-    // For save, the file may not exist yet — check parent instead.
-    let parent = target.parent().ok_or("Invalid path")?;
-    let canonical_parent = parent
-        .canonicalize()
-        .map_err(|e| format!("Parent dir not found: {e}"))?;
-    if !canonical_parent.starts_with(&canonical_dir) {
-        return Err("Access denied: path traversal detected".to_string());
-    }
+    let target = y_service::resolve_skill_write_path(&skill_dir, Path::new(&relative_path))?;
 
     std::fs::write(&target, content).map_err(|e| format!("Failed to write file: {e}"))
 }

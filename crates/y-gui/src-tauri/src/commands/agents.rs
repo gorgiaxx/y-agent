@@ -1,5 +1,6 @@
 //! Agent management command handlers — list, get detail, save, reset, reload, translate.
 
+#[cfg(test)]
 use std::path::Path;
 
 use serde::Serialize;
@@ -107,6 +108,7 @@ pub struct AgentSource {
 // ---------------------------------------------------------------------------
 
 /// Resolve the user agents directory (`<config_dir>/agents/`).
+#[cfg(test)]
 fn agents_dir(config_dir: &Path) -> std::path::PathBuf {
     config_dir.join("agents")
 }
@@ -156,6 +158,7 @@ fn detail_from_definition(
     }
 }
 
+#[cfg(test)]
 fn load_agent_source(
     config_dir: &Path,
     def: &y_agent::agent::definition::AgentDefinition,
@@ -246,11 +249,12 @@ pub async fn agent_source_get(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<AgentSource, String> {
-    let registry = state.container.agent_registry.lock().await;
-    let def = registry
-        .get(&id)
-        .ok_or_else(|| format!("Agent not found: {id}"))?;
-    load_agent_source(&state.config_dir, def)
+    let (path, content, is_user_file) = state.container.get_agent_source(&id).await?;
+    Ok(AgentSource {
+        path,
+        content,
+        is_user_file,
+    })
 }
 
 /// Parse raw agent TOML and return the normalized detail shape used by the GUI.
@@ -270,29 +274,7 @@ pub async fn agent_save(
     id: String,
     toml_content: String,
 ) -> Result<(), String> {
-    let mut registry = state.container.agent_registry.lock().await;
-
-    // Parse the TOML to validate it's a proper AgentDefinition.
-    let expanded_toml = registry.expand_templates(&toml_content);
-    let mut def = y_agent::agent::definition::AgentDefinition::from_toml(&expanded_toml)
-        .map_err(|e| format!("Invalid agent TOML: {e}"))?;
-
-    // Ensure the ID matches.
-    def.id.clone_from(&id);
-
-    // Write to disk.
-    let dir = agents_dir(&state.config_dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create agents directory: {e}"))?;
-
-    let file_path = dir.join(format!("{id}.toml"));
-    std::fs::write(&file_path, &toml_content)
-        .map_err(|e| format!("Failed to write agent file: {e}"))?;
-
-    // Update in-memory registry (forces UserDefined tier).
-    def.trust_tier = y_agent::TrustTier::UserDefined;
-    let _ = registry.register_or_override(def);
-
-    Ok(())
+    state.container.save_agent(&id, &toml_content).await
 }
 
 /// Reset an overridden built-in agent to its original definition.
@@ -300,21 +282,7 @@ pub async fn agent_save(
 /// Deletes the user override file and restores the original in-memory definition.
 #[tauri::command]
 pub async fn agent_reset(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let mut registry = state.container.agent_registry.lock().await;
-
-    // Reset in-memory.
-    registry
-        .reset_builtin(&id)
-        .map_err(|e| format!("Failed to reset agent: {e}"))?;
-
-    // Remove the override file if it exists.
-    let file_path = agents_dir(&state.config_dir).join(format!("{id}.toml"));
-    if file_path.exists() {
-        std::fs::remove_file(&file_path)
-            .map_err(|e| format!("Failed to remove override file: {e}"))?;
-    }
-
-    Ok(())
+    state.container.reset_agent(&id).await
 }
 
 /// Reload all user-defined agents from the agents directory.
@@ -322,18 +290,12 @@ pub async fn agent_reset(state: State<'_, AppState>, id: String) -> Result<(), S
 /// Re-scans `<config_dir>/agents/` and updates the in-memory registry.
 #[tauri::command]
 pub async fn agent_reload(state: State<'_, AppState>) -> Result<(), String> {
-    let dir = agents_dir(&state.config_dir);
-    if !dir.exists() {
-        return Ok(());
+    let (_loaded, errored) = state.container.reload_agents().await;
+    if errored == 0 {
+        Ok(())
+    } else {
+        Err(format!("Errors loading agents: {errored}"))
     }
-
-    let mut registry = state.container.agent_registry.lock().await;
-    registry.load_user_agents(&dir).map_err(|errs| {
-        let msgs: Vec<String> = errs.iter().map(|(f, e)| format!("{f}: {e}")).collect();
-        format!("Errors loading agents: {}", msgs.join("; "))
-    })?;
-
-    Ok(())
 }
 
 /// Translate text using the built-in translator agent.

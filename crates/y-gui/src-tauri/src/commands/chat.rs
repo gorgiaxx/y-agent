@@ -991,8 +991,8 @@ pub async fn chat_answer_permission(
 ) -> Result<bool, String> {
     let delivered = {
         let mut map = state.container.pending_permissions.lock().await;
-        if let Some(sender) = map.remove(&request_id) {
-            sender.send(decision).is_ok()
+        if let Some(pending) = map.remove(&request_id) {
+            pending.send(decision).is_ok()
         } else {
             false
         }

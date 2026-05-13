@@ -29,8 +29,8 @@ pub struct SessionInfo {
     pub has_custom_prompt: bool,
 }
 
-fn is_user_visible_session(session_type: &SessionType, state: &SessionState) -> bool {
-    session_type.is_user_facing() && *state == SessionState::Active
+fn is_user_visible_session(session_type: SessionType, state: SessionState) -> bool {
+    session_type.is_user_facing() && state == SessionState::Active
 }
 
 /// A message in the session transcript.
@@ -97,7 +97,7 @@ pub async fn session_list(
 
     let mut infos: Vec<SessionInfo> = sessions
         .into_iter()
-        .filter(|session| is_user_visible_session(&session.session_type, &session.state))
+        .filter(|session| is_user_visible_session(session.session_type, session.state))
         .map(|s| {
             let has_custom = custom_prompt_ids.contains(&s.id.0);
             SessionInfo {
@@ -127,25 +127,25 @@ mod tests {
     #[test]
     fn test_user_visible_session_requires_active_state() {
         assert!(is_user_visible_session(
-            &SessionType::Main,
-            &SessionState::Active
+            SessionType::Main,
+            SessionState::Active
         ));
         assert!(is_user_visible_session(
-            &SessionType::Branch,
-            &SessionState::Active
+            SessionType::Branch,
+            SessionState::Active
         ));
 
         assert!(!is_user_visible_session(
-            &SessionType::Main,
-            &SessionState::Archived
+            SessionType::Main,
+            SessionState::Archived
         ));
         assert!(!is_user_visible_session(
-            &SessionType::Main,
-            &SessionState::Tombstone
+            SessionType::Main,
+            SessionState::Tombstone
         ));
         assert!(!is_user_visible_session(
-            &SessionType::SubAgent,
-            &SessionState::Active
+            SessionType::SubAgent,
+            SessionState::Active
         ));
     }
 }
