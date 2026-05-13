@@ -223,41 +223,41 @@ impl ToolTaxonomy {
             keywords.iter().any(|kw| lower.contains(kw.as_str()))
         };
 
+        let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
 
+        let mut push_unique = |tool: &ToolName| {
+            if seen.insert(tool.clone()) {
+                results.push(tool.clone());
+            }
+        };
+
         for cat in self.categories.values() {
-            // Check direct tools.
             for tool in &cat.tools {
-                if text_matches(tool) && !results.contains(tool) {
-                    results.push(tool.clone());
+                if text_matches(tool) {
+                    push_unique(tool);
                 }
             }
 
-            // Check category-level match -> return all tools in category.
             let cat_match = text_matches(&cat.label) || text_matches(&cat.description);
 
             if cat_match {
                 for tool in &cat.tools {
-                    if !results.contains(tool) {
-                        results.push(tool.clone());
-                    }
+                    push_unique(tool);
                 }
                 for sub in cat.subcategories.values() {
                     for tool in &sub.tools {
-                        if !results.contains(tool) {
-                            results.push(tool.clone());
-                        }
+                        push_unique(tool);
                     }
                 }
             }
 
-            // Check subcategory-level match.
             for sub in cat.subcategories.values() {
                 let sub_match = text_matches(&sub.label) || text_matches(&sub.description);
 
                 for tool in &sub.tools {
-                    if (sub_match || text_matches(tool)) && !results.contains(tool) {
-                        results.push(tool.clone());
+                    if sub_match || text_matches(tool) {
+                        push_unique(tool);
                     }
                 }
             }

@@ -115,6 +115,7 @@ impl WebFetchTool {
 }
 
 /// Internal action discriminant.
+#[derive(Clone, Copy)]
 enum WebFetchAction {
     Fetch,
     Search,

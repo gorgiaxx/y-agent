@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 /// Rate limit configuration for a single tool.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RateLimitConfig {
     /// Maximum number of requests allowed in the window.
     pub max_requests: u32,
@@ -102,7 +102,7 @@ impl TokenBucket {
 }
 
 /// Result of a rate limit check.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RateLimitResult {
     /// Request is allowed.
     Allowed,
@@ -168,7 +168,7 @@ impl RateLimiter {
     ///
     pub async fn check(&self, tool_name: &str) -> RateLimitResult {
         let mut inner = self.inner.lock().await;
-        let default_config = inner.default_config.clone();
+        let default_config = inner.default_config;
         let bucket = match inner.buckets.entry(tool_name.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {

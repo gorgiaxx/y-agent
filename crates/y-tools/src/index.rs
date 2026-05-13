@@ -30,7 +30,7 @@ impl ToolIndex {
         ToolIndexEntry {
             name: def.name.clone(),
             description: def.description.clone(),
-            category: def.category.clone(),
+            category: def.category,
         }
     }
 

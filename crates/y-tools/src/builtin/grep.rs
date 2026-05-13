@@ -27,7 +27,7 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
-use super::path_utils::resolve_read_path;
+use super::path_utils::{resolve_read_path, DropGuard};
 
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 10_000;
@@ -37,18 +37,6 @@ const DEFAULT_HEAD_LIMIT: u64 = 250;
 
 /// Default timeout for the search (seconds).
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
-
-/// Sets the inner `AtomicBool` to `true` when dropped, signalling
-/// the blocking search thread to stop early.
-struct DropGuard(Option<Arc<AtomicBool>>);
-
-impl Drop for DropGuard {
-    fn drop(&mut self) {
-        if let Some(flag) = self.0.take() {
-            flag.store(true, Ordering::Relaxed);
-        }
-    }
-}
 
 /// Built-in Grep tool for file content searching.
 ///

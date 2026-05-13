@@ -9,7 +9,7 @@
 use serde_json::Value;
 
 /// Result format options for formatting tool output.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultFormat {
     /// Raw text output (pass-through).
     Raw,

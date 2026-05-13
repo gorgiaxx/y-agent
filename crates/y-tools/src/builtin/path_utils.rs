@@ -1,6 +1,20 @@
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use y_core::tool::ToolError;
+
+/// Sets the inner `AtomicBool` to `true` when dropped, signalling
+/// a blocking worker thread to stop early.
+pub(super) struct DropGuard(pub Option<Arc<AtomicBool>>);
+
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        if let Some(flag) = self.0.take() {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+}
 
 pub(super) fn resolve_workspace_path(
     tool_name: &str,
