@@ -357,14 +357,14 @@ impl PlanOrchestrator {
             "plan-writer",
             ResolvedAgentConfig {
                 system_prompt: String::new(),
-                max_iterations: 10,
-                max_tool_calls: 5,
+                max_iterations: 1,
+                max_tool_calls: 0,
                 preferred_models: vec![],
                 provider_tags: vec!["general".to_string()],
                 temperature: Some(0.3),
                 max_tokens: None,
                 trust_tier: Some(y_core::trust::TrustTier::BuiltIn),
-                allowed_tools: vec!["FileRead".into(), "Glob".into(), "Grep".into()],
+                allowed_tools: vec![],
                 prune_tool_history: false,
                 response_format: None,
             },
@@ -372,7 +372,7 @@ impl PlanOrchestrator {
         .await;
 
         // Build the user message for the plan-writer as structured JSON.
-        let user_msg = build_plan_writer_input(request, context, plan_path, revision_feedback);
+        let user_msg = build_plan_writer_input(request, context, revision_feedback);
 
         let messages = build_subagent_messages(&settings.system_prompt, user_msg);
         let tool_defs =
@@ -391,7 +391,7 @@ impl PlanOrchestrator {
             provider_tags: settings.provider_tags.clone(),
             request_mode: y_core::provider::RequestMode::TextChat,
             working_directory: None,
-            additional_read_dirs: vec![plan_path.display().to_string()],
+            additional_read_dirs: vec![],
             temperature: settings.temperature,
             max_tokens: settings.max_tokens,
             thinking: None,
@@ -680,6 +680,26 @@ impl PlanOrchestrator {
         let mut failed: HashSet<String> = HashSet::new();
         let mut phase_results: Vec<serde_json::Value> = Vec::with_capacity(total_tasks);
 
+        let heartbeat_cancel = CancellationToken::new();
+        let heartbeat_handle = progress.map(|tx| {
+            let tx = tx.clone();
+            let token = heartbeat_cancel.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
+                interval.tick().await;
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            let _ = tx.send(TurnEvent::Heartbeat {
+                                agent_name: "plan-orchestrator".into(),
+                            });
+                        }
+                        () = token.cancelled() => break,
+                    }
+                }
+            })
+        });
+
         loop {
             if is_cancelled(cancel) {
                 return Err(cancelled_tool_error());
@@ -832,6 +852,11 @@ impl PlanOrchestrator {
             }
         }
 
+        heartbeat_cancel.cancel();
+        if let Some(handle) = heartbeat_handle {
+            let _ = handle.await;
+        }
+
         Ok(phase_results)
     }
 
@@ -846,6 +871,26 @@ impl PlanOrchestrator {
     ) -> Result<Vec<serde_json::Value>, ToolError> {
         let total_tasks = plan.tasks.len();
         let mut phase_results = Vec::with_capacity(total_tasks);
+
+        let heartbeat_cancel = CancellationToken::new();
+        let heartbeat_handle = progress.map(|tx| {
+            let tx = tx.clone();
+            let token = heartbeat_cancel.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
+                interval.tick().await;
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            let _ = tx.send(TurnEvent::Heartbeat {
+                                agent_name: "plan-orchestrator".into(),
+                            });
+                        }
+                        () = token.cancelled() => break,
+                    }
+                }
+            })
+        });
 
         for (idx, task) in plan.tasks.iter().enumerate() {
             if is_cancelled(cancel) {
@@ -927,6 +972,11 @@ impl PlanOrchestrator {
                     }
                 }
             }
+        }
+
+        heartbeat_cancel.cancel();
+        if let Some(handle) = heartbeat_handle {
+            let _ = handle.await;
         }
 
         Ok(phase_results)
@@ -1841,13 +1891,11 @@ fn resolve_task_status(task: &PlanTask, phase_results: &[serde_json::Value]) -> 
 fn build_plan_writer_input(
     request: &str,
     context: &str,
-    plan_path: &Path,
     revision_feedback: Option<&str>,
 ) -> String {
     let mut obj = serde_json::json!({
         "task": request,
         "context": context,
-        "plan_path": plan_path.display().to_string(),
     });
     if let Some(fb) = revision_feedback {
         obj["revision_feedback"] = serde_json::Value::String(fb.to_string());
@@ -2457,12 +2505,10 @@ mod tests {
         .await;
 
         assert!(config.system_prompt.contains("You are a plan writer"));
-        assert_eq!(config.max_iterations, 10);
-        assert_eq!(config.max_tool_calls, 5);
+        assert_eq!(config.max_iterations, 1);
+        assert_eq!(config.max_tool_calls, 0);
         assert_eq!(config.provider_tags, vec!["general"]);
-        assert_eq!(config.allowed_tools, vec!["FileRead".to_string()]);
-        assert!(!config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
-        assert!(!config.allowed_tools.iter().any(|tool| tool == "ShellExec"));
+        assert!(config.allowed_tools.is_empty());
         assert!(!config.prune_tool_history);
     }
 
@@ -2687,19 +2733,17 @@ mod tests {
 
     #[test]
     fn test_build_plan_writer_input_includes_required_fields() {
-        let plan_path = Path::new("/tmp/plan.md");
-        let raw = build_plan_writer_input("refactor auth", "src/auth/", plan_path, None);
+        let raw = build_plan_writer_input("refactor auth", "src/auth/", None);
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["task"], "refactor auth");
         assert_eq!(parsed["context"], "src/auth/");
-        assert_eq!(parsed["plan_path"], "/tmp/plan.md");
+        assert!(parsed.get("plan_path").is_none());
         assert!(parsed.get("revision_feedback").is_none());
     }
 
     #[test]
     fn test_build_plan_writer_input_with_empty_context() {
-        let plan_path = Path::new("/tmp/plan.md");
-        let raw = build_plan_writer_input("task", "", plan_path, None);
+        let raw = build_plan_writer_input("task", "", None);
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["task"], "task");
         assert_eq!(parsed["context"], "");
@@ -2707,8 +2751,7 @@ mod tests {
 
     #[test]
     fn test_build_plan_writer_input_with_revision_feedback() {
-        let plan_path = Path::new("/tmp/plan.md");
-        let raw = build_plan_writer_input("task", "ctx", plan_path, Some("make it smaller"));
+        let raw = build_plan_writer_input("task", "ctx", Some("make it smaller"));
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["task"], "task");
         assert_eq!(parsed["revision_feedback"], "make it smaller");

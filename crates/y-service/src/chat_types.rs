@@ -184,6 +184,9 @@ pub enum TurnEvent {
         plan_content: String,
         tasks: serde_json::Value,
     },
+    Heartbeat {
+        agent_name: String,
+    },
 }
 
 pub type TurnEventSender = mpsc::UnboundedSender<TurnEvent>;

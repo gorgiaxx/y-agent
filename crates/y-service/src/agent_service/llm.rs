@@ -804,7 +804,8 @@ mod tests {
                 | TurnEvent::LlmError { .. }
                 | TurnEvent::UserInteractionRequest { .. }
                 | TurnEvent::PermissionRequest { .. }
-                | TurnEvent::PlanReviewRequest { .. } => {}
+                | TurnEvent::PlanReviewRequest { .. }
+                | TurnEvent::Heartbeat { .. } => {}
             }
         }
 
