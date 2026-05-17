@@ -201,11 +201,28 @@ export function mergeBackendMessagesPreservingLocalStreamState(
       continue;
     }
 
-    if (
-      isLiveStreamingAssistantMessage(message)
-      || isLocalTerminalAssistantMessage(message)
-    ) {
+    if (isLiveStreamingAssistantMessage(message)) {
       merged.push(message);
+      continue;
+    }
+
+    if (isLocalTerminalAssistantMessage(message)) {
+      merged.push(message);
+      let lastUsedIdx = -1;
+      for (let i = 0; i < backendMessages.length; i++) {
+        if (usedBackendIds.has(backendMessages[i].id)) {
+          lastUsedIdx = i;
+        }
+      }
+      for (let i = lastUsedIdx + 1; i < backendMessages.length; i++) {
+        const backendMessage = backendMessages[i];
+        if (usedBackendIds.has(backendMessage.id)) continue;
+        if (backendMessage.role === 'user') break;
+        if (backendMessage.role === 'assistant') {
+          usedBackendIds.add(backendMessage.id);
+          break;
+        }
+      }
     }
   }
 
