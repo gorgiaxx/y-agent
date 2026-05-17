@@ -134,12 +134,35 @@ function withPreservedFailedPlanMetadata(
   };
 }
 
+const LOOP_DISPLAY_KINDS = new Set([
+  'loop_init', 'loop_round', 'loop_review', 'loop_execution',
+]);
+
+function extractLoopDisplay(record: ToolResultRecord): Record<string, unknown> | null {
+  if (record.name !== 'Loop') return null;
+
+  const meta = asObject(record.metadata);
+  const display = asObject(meta?.display);
+  if (!display) return null;
+
+  const kind = typeof display.kind === 'string' ? display.kind : '';
+  return LOOP_DISPLAY_KINDS.has(kind) ? display : null;
+}
+
+function shouldReplaceLoopProgress(
+  current: ToolResultRecord,
+  next: ToolResultRecord,
+): boolean {
+  return extractLoopDisplay(current) != null && extractLoopDisplay(next) != null;
+}
+
 function shouldReplaceRunningTool(
   current: ToolResultRecord,
   next: ToolResultRecord,
 ): boolean {
   if (current.state !== 'running' || current.name !== next.name) return false;
   if (current.name === 'Plan' && !extractPlanDisplay(next)) return true;
+  if (current.name === 'Loop' && extractLoopDisplay(next)) return true;
   return (current.arguments ?? '') === (next.arguments ?? '');
 }
 
@@ -173,6 +196,18 @@ function findPlanProgressIndex(
 ): number {
   for (let i = records.length - 1; i >= 0; i--) {
     if (shouldReplacePlanProgress(records[i], next)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function findLoopProgressIndex(
+  records: ToolResultRecord[],
+  next: ToolResultRecord,
+): number {
+  for (let i = records.length - 1; i >= 0; i--) {
+    if (shouldReplaceLoopProgress(records[i], next)) {
       return i;
     }
   }
@@ -227,6 +262,15 @@ export function upsertToolResultRecord(
     return replaceRecordAndDropRunningPlanPlaceholder(
       records,
       replacePlanIdx,
+      next,
+    );
+  }
+
+  const replaceLoopIdx = findLoopProgressIndex(records, next);
+  if (replaceLoopIdx >= 0) {
+    return replaceRecordAndDropRunningPlanPlaceholder(
+      records,
+      replaceLoopIdx,
       next,
     );
   }
@@ -306,6 +350,13 @@ export function upsertToolResultSegment(
   for (let i = toolSegments.length - 1; i >= 0; i--) {
     const { segment, index } = toolSegments[i];
     if (shouldReplacePlanProgress(segment.record, next)) {
+      return replaceSegmentAndDropRunningPlanPlaceholder(index, next);
+    }
+  }
+
+  for (let i = toolSegments.length - 1; i >= 0; i--) {
+    const { segment, index } = toolSegments[i];
+    if (shouldReplaceLoopProgress(segment.record, next)) {
       return replaceSegmentAndDropRunningPlanPlaceholder(index, next);
     }
   }

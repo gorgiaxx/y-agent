@@ -708,6 +708,192 @@ describe('toolResultUpdates', () => {
     });
   });
 
+  it('replaces a running Loop placeholder with loop_init progress (different arguments)', () => {
+    const running = {
+      name: 'Loop',
+      arguments: JSON.stringify({ request: 'Fix all lint warnings', max_rounds: 15 }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const loopInit = {
+      name: 'Loop',
+      arguments: '',
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      metadata: {
+        display: {
+          kind: 'loop_init',
+          request: 'Fix all lint warnings',
+          progress_file: '/tmp/loop/PROGRESS.md',
+          max_rounds: 15,
+        },
+      },
+    };
+
+    const updatedRecords = upsertToolResultRecord([running], loopInit);
+
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0]).toEqual(loopInit);
+
+    const updatedSegments = upsertToolResultSegment(
+      [{ type: 'tool_result', record: running }],
+      loopInit,
+    );
+
+    expect(updatedSegments.segments).toHaveLength(1);
+    expect(updatedSegments.segments[0]).toEqual({ type: 'tool_result', record: loopInit });
+  });
+
+  it('replaces loop_init with loop_round progress', () => {
+    const loopInit = {
+      name: 'Loop',
+      arguments: '',
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      metadata: {
+        display: {
+          kind: 'loop_init',
+          request: 'Fix all lint warnings',
+          progress_file: '/tmp/loop/PROGRESS.md',
+          max_rounds: 15,
+        },
+      },
+    };
+    const loopRound = {
+      name: 'Loop',
+      arguments: '',
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      metadata: {
+        display: {
+          kind: 'loop_round',
+          round: 1,
+          max_rounds: 15,
+          round_status: 'running',
+          tasks_completed: [],
+          tasks_remaining: ['Fix clippy warnings'],
+          converged: false,
+          rounds: [],
+        },
+      },
+    };
+
+    const updatedRecords = upsertToolResultRecord([loopInit], loopRound);
+
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0]).toEqual(loopRound);
+  });
+
+  it('replaces loop_round with loop_execution summary', () => {
+    const loopRound = {
+      name: 'Loop',
+      arguments: '',
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      metadata: {
+        display: {
+          kind: 'loop_round',
+          round: 2,
+          max_rounds: 15,
+          round_status: 'completed',
+          tasks_completed: ['Fix clippy warnings'],
+          tasks_remaining: [],
+          converged: true,
+          rounds: [],
+        },
+      },
+    };
+    const loopExecution = {
+      name: 'Loop',
+      arguments: '',
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      metadata: {
+        display: {
+          kind: 'loop_execution',
+          total_rounds: 2,
+          max_rounds: 15,
+          final_status: 'converged',
+          rounds: [],
+        },
+      },
+    };
+
+    const updatedRecords = upsertToolResultRecord([loopRound], loopExecution);
+
+    expect(updatedRecords.records).toHaveLength(1);
+    expect(updatedRecords.records[0]).toEqual(loopExecution);
+  });
+
+  it('collapses running Loop placeholder and loop_init into loop_execution', () => {
+    const running = {
+      name: 'Loop',
+      arguments: JSON.stringify({ request: 'Fix all lint warnings', max_rounds: 15 }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const loopInit = {
+      name: 'Loop',
+      arguments: '',
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      metadata: {
+        display: {
+          kind: 'loop_init',
+          request: 'Fix all lint warnings',
+          progress_file: '/tmp/loop/PROGRESS.md',
+          max_rounds: 15,
+        },
+      },
+    };
+    const loopExecution = {
+      name: 'Loop',
+      arguments: '',
+      success: true,
+      durationMs: 5000,
+      resultPreview: 'Converged after 3 rounds',
+      metadata: {
+        display: {
+          kind: 'loop_execution',
+          total_rounds: 3,
+          max_rounds: 15,
+          final_status: 'converged',
+          rounds: [],
+        },
+      },
+    };
+
+    const afterInit = upsertToolResultRecord([running], loopInit);
+    expect(afterInit.records).toHaveLength(1);
+
+    const afterExec = upsertToolResultRecord(afterInit.records, loopExecution);
+    expect(afterExec.records).toHaveLength(1);
+    expect(afterExec.records[0]).toEqual(loopExecution);
+
+    const segAfterInit = upsertToolResultSegment(
+      [{ type: 'tool_result', record: running }],
+      loopInit,
+    );
+    expect(segAfterInit.segments).toHaveLength(1);
+
+    const segAfterExec = upsertToolResultSegment(
+      segAfterInit.segments,
+      loopExecution,
+    );
+    expect(segAfterExec.segments).toHaveLength(1);
+    expect(segAfterExec.segments[0]).toEqual({ type: 'tool_result', record: loopExecution });
+  });
+
   it('replaces plan_start (stage_status running) with error when running placeholder was already consumed', () => {
     const planStartArgs = JSON.stringify({ request: 'Build auth system', context: '' });
     const planStart = {
