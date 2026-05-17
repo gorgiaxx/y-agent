@@ -170,9 +170,11 @@ export function SettingsPanel({
 
     if (dirtyProviders) {
       try {
-        const body = providersToToml(providersList);
-        const toml = providersMeta ? `${providersMeta}${body}` : body;
+        const toml = rawProvidersToml !== undefined
+          ? rawProvidersToml
+          : (providersMeta ? `${providersMeta}${providersToToml(providersList)}` : providersToToml(providersList));
         await saveSection('providers', toml);
+        setRawProvidersToml(undefined);
         setDirtyProviders(false);
       } catch (e) { errors.push(`providers: ${e}`); }
     }
@@ -309,7 +311,7 @@ export function SettingsPanel({
     dirtyStorage, dirtyHooks, dirtyTools, dirtyGuardrails, dirtyKnowledge, dirtyLangfuse,
     providersList, providersMeta, sessionForm, runtimeForm, browserForm, mcpServersList,
     storageForm, hooksForm, toolsForm, guardrailsForm, knowledgeForm, langfuseForm,
-    rawSessionToml, rawRuntimeToml, rawBrowserToml,
+    rawSessionToml, rawRuntimeToml, rawBrowserToml, rawProvidersToml,
     rawStorageToml, rawHooksToml, rawToolsToml, rawGuardrailsToml, rawKnowledgeToml, rawLangfuseToml,
     dirtyPrompts, dirtyPromptTemplates, promptTemplateSaveHandler,
     saveSection, reloadConfig, localConfig, onSave,
