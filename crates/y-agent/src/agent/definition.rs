@@ -215,6 +215,9 @@ pub struct AgentDefinition {
     /// Used as `required_tags` in `RouteRequest` for provider selection.
     #[serde(default)]
     pub provider_tags: Vec<String>,
+    /// Ordered fallback provider tag sets used when the primary tags have no provider.
+    #[serde(default)]
+    pub fallback_provider_tags: Vec<Vec<String>>,
     /// Temperature setting for LLM calls.
     #[serde(default)]
     pub temperature: Option<f64>,
@@ -492,6 +495,7 @@ system_prompt = ""
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
+            fallback_provider_tags: vec![],
             temperature: None,
             top_p: None,
             plan_mode: None,
@@ -536,6 +540,7 @@ system_prompt = "Hello"
         assert_eq!(def.knowledge_enabled, None);
         assert_eq!(def.provider_id, None);
         assert!(def.preferred_models.is_empty());
+        assert!(def.fallback_provider_tags.is_empty());
         assert_eq!(def.temperature, None);
         assert_eq!(def.plan_mode, None);
         assert_eq!(def.thinking_effort, None);
@@ -635,6 +640,28 @@ max_completion_tokens = 2048
         assert_eq!(
             def.permission_mode,
             Some(y_core::permission_types::PermissionMode::AcceptEdits)
+        );
+    }
+
+    #[test]
+    fn test_definition_parse_provider_tag_fallbacks() {
+        let toml = r#"
+id = "translator"
+name = "Translator"
+description = "Translate input text"
+mode = "explore"
+trust_tier = "built_in"
+system_prompt = "Translate"
+provider_tags = ["translation"]
+fallback_provider_tags = [["general"]]
+"#;
+
+        let def = AgentDefinition::from_toml(toml).unwrap();
+
+        assert_eq!(def.provider_tags, vec!["translation".to_string()]);
+        assert_eq!(
+            def.fallback_provider_tags,
+            vec![vec!["general".to_string()]]
         );
     }
 }

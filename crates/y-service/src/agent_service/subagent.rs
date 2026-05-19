@@ -182,6 +182,7 @@ impl AgentRunner for ServiceAgentRunner {
             provider_id: None,
             preferred_models: config.preferred_models.clone(),
             provider_tags: config.provider_tags.clone(),
+            fallback_provider_tags: config.fallback_provider_tags.clone(),
             request_mode: y_core::provider::RequestMode::TextChat,
             working_directory: workspace,
             additional_read_dirs: vec![],

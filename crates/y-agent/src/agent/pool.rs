@@ -457,6 +457,7 @@ impl AgentDelegator for AgentPool {
             preferred_models: definition.preferred_models.clone(),
             fallback_models: definition.fallback_models.clone(),
             provider_tags: definition.provider_tags.clone(),
+            fallback_provider_tags: definition.fallback_provider_tags.clone(),
             temperature: definition.temperature,
             max_tokens: definition
                 .max_completion_tokens
@@ -524,6 +525,7 @@ mod tests {
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
+            fallback_provider_tags: vec![],
             temperature: None,
             top_p: None,
             plan_mode: None,

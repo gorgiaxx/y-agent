@@ -155,6 +155,8 @@ pub struct AgentRunConfig {
     /// Provider routing tags (e.g. `["general"]`, `["title"]`).
     /// Used as `required_tags` in `RouteRequest` for provider selection.
     pub provider_tags: Vec<String>,
+    /// Ordered fallback provider tag sets used when the primary tags have no provider.
+    pub fallback_provider_tags: Vec<Vec<String>>,
     /// Sampling temperature override (from agent definition).
     pub temperature: Option<f64>,
     /// Maximum tokens to generate.
@@ -345,6 +347,7 @@ mod tests {
             preferred_models: vec!["gpt-4o-mini".to_string()],
             fallback_models: vec!["gpt-4o".to_string()],
             provider_tags: vec!["title".to_string()],
+            fallback_provider_tags: vec![],
             temperature: Some(0.3),
             max_tokens: Some(30),
             timeout_secs: 30,

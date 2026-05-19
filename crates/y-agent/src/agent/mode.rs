@@ -179,6 +179,7 @@ mod tests {
             preferred_models: vec![],
             fallback_models: vec![],
             provider_tags: vec![],
+            fallback_provider_tags: vec![],
             temperature: None,
             top_p: None,
             plan_mode: None,

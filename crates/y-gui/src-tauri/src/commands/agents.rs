@@ -395,6 +395,7 @@ mod tests {
             preferred_models: vec!["gpt-5".to_string()],
             fallback_models: vec!["gpt-4.1".to_string()],
             provider_tags: vec!["code".to_string()],
+            fallback_provider_tags: vec![],
             temperature: Some(0.2),
             top_p: Some(0.9),
             plan_mode: Some("plan".to_string()),

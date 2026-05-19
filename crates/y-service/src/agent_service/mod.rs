@@ -73,6 +73,8 @@ pub struct AgentExecutionConfig {
     pub preferred_models: Vec<String>,
     /// Provider routing tags.
     pub provider_tags: Vec<String>,
+    /// Ordered fallback provider tag sets used when the primary tags have no provider.
+    pub fallback_provider_tags: Vec<Vec<String>>,
     /// High-level provider request mode.
     pub request_mode: RequestMode,
     /// Default working directory for runtime-backed process tools.

@@ -147,6 +147,7 @@ impl BotService {
             provider_id: None,
             preferred_models: vec![],
             provider_tags: vec![],
+            fallback_provider_tags: vec![],
             request_mode: y_core::provider::RequestMode::TextChat,
             working_directory: None,
             additional_read_dirs: vec![],

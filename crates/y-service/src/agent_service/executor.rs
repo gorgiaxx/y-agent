@@ -352,7 +352,7 @@ pub(crate) async fn execute_inner(
         }
 
         let request = llm::build_chat_request(config, &ctx);
-        let route = llm::build_route_request(config);
+        let routes = llm::build_route_requests(config);
         let fallback = serde_json::to_string(&request.messages).unwrap_or_default();
 
         let llm_start = std::time::Instant::now();
@@ -370,7 +370,7 @@ pub(crate) async fn execute_inner(
         let llm_result = llm::call_llm(
             &diag_pool,
             &request,
-            &route,
+            &routes,
             progress.as_ref(),
             cancel.as_ref(),
             &config.agent_name,
@@ -573,6 +573,7 @@ mod tests {
             provider_id: None,
             preferred_models: vec![],
             provider_tags: vec![],
+            fallback_provider_tags: vec![],
             request_mode: y_core::provider::RequestMode::TextChat,
             working_directory: None,
             additional_read_dirs: vec![],

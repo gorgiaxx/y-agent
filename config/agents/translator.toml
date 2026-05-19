@@ -11,6 +11,7 @@ skills = []
 preferred_models = ["gpt-4o-mini", "claude-3-haiku"]
 fallback_models = ["gpt-4o"]
 provider_tags = ["translation"]
+fallback_provider_tags = [["general"]]
 temperature = 0.3
 max_iterations = 3
 max_tool_calls = 0

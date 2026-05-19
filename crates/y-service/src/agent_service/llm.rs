@@ -6,7 +6,8 @@ use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use y_core::provider::{
-    ChatRequest, GeneratedImage, ImageContentDelta, ProviderPool, RequestMode, RouteRequest,
+    ChatRequest, GeneratedImage, ImageContentDelta, ProviderError, ProviderPool, RequestMode,
+    RouteRequest,
 };
 use y_core::types::ProviderId;
 
@@ -63,12 +64,32 @@ pub(crate) fn build_chat_request(
 }
 
 pub(crate) fn build_route_request(config: &AgentExecutionConfig) -> RouteRequest {
+    build_route_request_with_tags(config, config.provider_tags.clone())
+}
+
+fn build_route_request_with_tags(
+    config: &AgentExecutionConfig,
+    required_tags: Vec<String>,
+) -> RouteRequest {
     RouteRequest {
         preferred_provider_id: config.provider_id.as_ref().map(ProviderId::from_string),
         preferred_model: config.preferred_models.first().cloned(),
-        required_tags: config.provider_tags.clone(),
+        required_tags,
         ..RouteRequest::default()
     }
+}
+
+pub(crate) fn build_route_requests(config: &AgentExecutionConfig) -> Vec<RouteRequest> {
+    let mut routes = Vec::with_capacity(config.fallback_provider_tags.len() + 1);
+    routes.push(build_route_request(config));
+    routes.extend(
+        config
+            .fallback_provider_tags
+            .iter()
+            .cloned()
+            .map(|tags| build_route_request_with_tags(config, tags)),
+    );
+    routes
 }
 
 pub(crate) fn build_iteration_data(
@@ -231,28 +252,59 @@ impl ImageAccumulator {
 pub(crate) async fn call_llm(
     pool: &dyn ProviderPool,
     request: &ChatRequest,
-    route: &RouteRequest,
+    routes: &[RouteRequest],
     progress: Option<&TurnEventSender>,
     cancel: Option<&CancellationToken>,
     agent_name: &str,
 ) -> Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError> {
-    if progress.is_some() {
-        call_llm_streaming(pool, request, route, progress, cancel, agent_name).await
-    } else {
-        let llm_future = pool.chat_completion(request, route);
-        let response = if let Some(tok) = cancel {
-            tokio::select! {
-                res = llm_future => res?,
-                () = tok.cancelled() => {
-                    return Err(y_core::provider::ProviderError::Cancelled);
-                }
-            }
+    let [primary_route, fallback_routes @ ..] = routes else {
+        return Err(y_core::provider::ProviderError::NoProviderAvailable { tags: vec![] });
+    };
+
+    let mut last_no_provider_error = None;
+    let route_iter = std::iter::once(primary_route).chain(fallback_routes.iter());
+    for route in route_iter {
+        let result = if progress.is_some() {
+            call_llm_streaming(pool, request, route, progress, cancel, agent_name).await
         } else {
-            llm_future.await?
+            call_llm_non_streaming(pool, request, route, cancel).await
         };
-        // Non-streaming: no reasoning duration tracking.
-        Ok((response, None))
+
+        match result {
+            Ok(response) => return Ok(response),
+            Err(error @ ProviderError::NoProviderAvailable { .. }) => {
+                last_no_provider_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
     }
+
+    Err(
+        last_no_provider_error.unwrap_or_else(|| ProviderError::NoProviderAvailable {
+            tags: primary_route.required_tags.clone(),
+        }),
+    )
+}
+
+async fn call_llm_non_streaming(
+    pool: &dyn ProviderPool,
+    request: &ChatRequest,
+    route: &RouteRequest,
+    cancel: Option<&CancellationToken>,
+) -> Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError> {
+    let llm_future = pool.chat_completion(request, route);
+    let response = if let Some(tok) = cancel {
+        tokio::select! {
+            res = llm_future => res?,
+            () = tok.cancelled() => {
+                return Err(y_core::provider::ProviderError::Cancelled);
+            }
+        }
+    } else {
+        llm_future.await?
+    };
+    // Non-streaming: no reasoning duration tracking.
+    Ok((response, None))
 }
 
 /// Call the LLM via streaming and emit `TurnEvent::StreamDelta` events.
@@ -450,7 +502,8 @@ mod tests {
     use y_core::provider::FinishReason;
     use y_core::types::ToolCallRequest;
 
-    use super::{build_streaming_raw_response, call_llm, TurnEvent};
+    use super::{build_route_requests, build_streaming_raw_response, call_llm, TurnEvent};
+    use crate::agent_service::AgentExecutionConfig;
 
     struct MockStreamingPool {
         provider_id: ProviderId,
@@ -540,6 +593,70 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingPool {
+        routes: std::sync::Mutex<Vec<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl ProviderPool for RecordingPool {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+            route: &RouteRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            let required_tags = route.required_tags.clone();
+            self.routes
+                .lock()
+                .expect("routes mutex poisoned")
+                .push(required_tags.clone());
+
+            if required_tags == ["translation"] {
+                return Err(ProviderError::NoProviderAvailable {
+                    tags: required_tags,
+                });
+            }
+
+            Ok(ChatResponse {
+                id: "response-1".into(),
+                model: "fallback-model".into(),
+                content: Some("translated text".into()),
+                reasoning_content: None,
+                tool_calls: vec![],
+                usage: TokenUsage {
+                    input_tokens: 6,
+                    output_tokens: 3,
+                    ..Default::default()
+                },
+                finish_reason: FinishReason::Stop,
+                raw_request: None,
+                raw_response: None,
+                provider_id: None,
+                generated_images: vec![],
+            })
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            panic!("chat_completion_stream should not be called in non-streaming tests")
+        }
+
+        fn report_error(&self, _provider_id: &ProviderId, _error: &ProviderError) {}
+
+        async fn provider_statuses(&self) -> Vec<ProviderStatus> {
+            vec![]
+        }
+
+        async fn freeze(&self, _provider_id: &ProviderId, _reason: String) {}
+
+        async fn thaw(&self, _provider_id: &ProviderId) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
     fn test_request() -> ChatRequest {
         ChatRequest {
             messages: vec![Message {
@@ -564,6 +681,59 @@ mod tests {
             response_format: None,
             image_generation_options: None,
         }
+    }
+
+    fn test_execution_config() -> AgentExecutionConfig {
+        AgentExecutionConfig {
+            agent_name: "translator".into(),
+            system_prompt: "Translate".into(),
+            max_iterations: 1,
+            max_tool_calls: 0,
+            tool_definitions: vec![],
+            tool_calling_mode: ToolCallingMode::Native,
+            messages: test_request().messages,
+            provider_id: None,
+            preferred_models: vec![],
+            provider_tags: vec!["translation".into()],
+            fallback_provider_tags: vec![vec!["general".into()]],
+            request_mode: RequestMode::TextChat,
+            working_directory: None,
+            additional_read_dirs: vec![],
+            temperature: Some(0.3),
+            max_tokens: None,
+            thinking: None,
+            session_id: None,
+            session_uuid: uuid::Uuid::nil(),
+            knowledge_collections: vec![],
+            use_context_pipeline: false,
+            user_query: "hello".into(),
+            external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+            response_format: None,
+            image_generation_options: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_falls_back_to_general_tags_when_translation_provider_missing() {
+        let pool = RecordingPool::default();
+        let request = test_request();
+        let routes = build_route_requests(&test_execution_config());
+
+        let (response, reasoning_duration_ms) =
+            call_llm(&pool, &request, &routes, None, None, "translator")
+                .await
+                .expect("fallback route should succeed");
+
+        assert_eq!(response.content.as_deref(), Some("translated text"));
+        assert_eq!(reasoning_duration_ms, None);
+        let routes = pool.routes.lock().expect("routes mutex poisoned");
+        assert_eq!(
+            routes.as_slice(),
+            &[vec!["translation".to_string()], vec!["general".to_string()]]
+        );
     }
 
     #[test]
@@ -607,7 +777,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel::<TurnEvent>();
 
         let (response, reasoning_duration_ms) =
-            call_llm(&pool, &request, &route, Some(&tx), None, "chat-turn")
+            call_llm(&pool, &request, &[route], Some(&tx), None, "chat-turn")
                 .await
                 .expect("streaming call should succeed");
 
@@ -750,7 +920,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
 
         let (response, _reasoning_duration_ms) =
-            call_llm(&pool, &request, &route, Some(&tx), None, "chat-turn")
+            call_llm(&pool, &request, &[route], Some(&tx), None, "chat-turn")
                 .await
                 .expect("streaming image call should succeed");
 
