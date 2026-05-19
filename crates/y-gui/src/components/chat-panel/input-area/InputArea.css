@@ -376,6 +376,138 @@
   flex-shrink: 0;
 }
 
+/* Prompt picker dropdown */
+.toolbar-prompt-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  min-width: 260px;
+  max-height: 320px;
+  overflow: hidden;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 200;
+  padding: 0;
+  animation: toolbarDropdownIn 0.1s ease-out;
+}
+
+.toolbar-prompt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-prompt-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.toolbar-prompt-manage,
+.toolbar-prompt-custom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.toolbar-prompt-manage {
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.toolbar-prompt-manage:hover,
+.toolbar-prompt-custom:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-prompt-items {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.toolbar-prompt-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.toolbar-prompt-item:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-prompt-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toolbar-prompt-item-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.toolbar-prompt-item-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toolbar-prompt-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.toolbar-prompt-item-meta,
+.toolbar-prompt-empty {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.toolbar-prompt-empty {
+  padding: 8px;
+}
+
+.toolbar-prompt-custom {
+  width: 100%;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
 /* Thinking effort dropdown */
 .toolbar-thinking-dropdown {
   position: absolute;

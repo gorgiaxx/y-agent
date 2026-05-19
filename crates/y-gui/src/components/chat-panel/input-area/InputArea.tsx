@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal, Shield, ShieldCheck, Unlock } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal, Shield, ShieldCheck, Unlock, Settings } from 'lucide-react';
 import { logger, transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
@@ -10,7 +10,7 @@ import { PermissionDialog } from './PermissionDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions, SessionPromptConfig, UserPromptTemplate } from '../../../types';
 import { DEFAULT_IMAGE_GENERATION_OPTIONS } from '../../../constants/imageGeneration';
 import type { PendingEdit } from '../../../hooks/useChat';
 import { useCloseOnOutsideClick } from '../../../hooks/useCloseOnOutsideClick';
@@ -146,6 +146,10 @@ interface InputAreaProps {
   hasCustomPrompt?: boolean;
   /** Opens the full-session prompt editor surface. */
   onEditSessionPrompt?: () => void;
+  /** Opens prompt template management. */
+  onManagePrompts?: () => void;
+  /** Called after a prompt template is applied to the active session. */
+  onSessionPromptApplied?: () => void;
   provider: InputProviderProps;
   mcp: InputMcpProps;
   dialogs: InputDialogProps;
@@ -158,7 +162,7 @@ export function InputArea(props: InputAreaProps) {
     onSend, onStop, onCommand, disabled, sendOnEnter,
     expanded = false, onExpandChange, onClearSession, onAddContextReset,
     isCompacting = false, sessionId, skills = [], knowledgeCollections = [],
-    hasCustomPrompt = false, onEditSessionPrompt,
+    hasCustomPrompt = false, onManagePrompts, onSessionPromptApplied,
     provider, mcp, dialogs, edit, features,
   } = props;
 
@@ -187,11 +191,16 @@ export function InputArea(props: InputAreaProps) {
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [promptPickerOpen, setPromptPickerOpen] = useState(false);
+  const [promptTemplates, setPromptTemplates] = useState<UserPromptTemplate[]>([]);
+  const [promptTemplatesLoading, setPromptTemplatesLoading] = useState(false);
+  const [promptTemplateApplying, setPromptTemplateApplying] = useState<string | null>(null);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const [mcpDropdownOpen, setMcpDropdownOpen] = useState(false);
   const contentEditableRef = useRef<ContentEditableInputHandle>(null);
   const providerDropdownRef = useRef<HTMLDivElement>(null);
   const kbPickerRef = useRef<HTMLDivElement>(null);
+  const promptPickerRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
   const mcpDropdownRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
@@ -288,6 +297,7 @@ export function InputArea(props: InputAreaProps) {
     () => setProviderDropdownOpen(false),
   );
   useCloseOnOutsideClick(kbPickerRef, kbPickerOpen, () => setKbPickerOpen(false));
+  useCloseOnOutsideClick(promptPickerRef, promptPickerOpen, () => setPromptPickerOpen(false));
   useCloseOnOutsideClick(
     thinkingDropdownRef,
     thinkingDropdownOpen,
@@ -393,6 +403,48 @@ export function InputArea(props: InputAreaProps) {
   const clearKbSelections = useCallback(() => {
     setSelectedKbCollections([]);
   }, []);
+
+  const loadPromptTemplates = useCallback(async () => {
+    setPromptTemplatesLoading(true);
+    try {
+      const templates = await transport.invoke<UserPromptTemplate[]>('prompt_template_list');
+      setPromptTemplates(templates);
+    } catch (e) {
+      logger.error('[InputArea] prompt template list error:', e);
+      setPromptTemplates([]);
+    } finally {
+      setPromptTemplatesLoading(false);
+    }
+  }, []);
+
+  const handlePromptPickerToggle = useCallback(() => {
+    setPromptPickerOpen((open) => {
+      const next = !open;
+      if (next) {
+        void loadPromptTemplates();
+      }
+      return next;
+    });
+  }, [loadPromptTemplates]);
+
+  const applyPromptTemplate = useCallback(async (template: UserPromptTemplate) => {
+    if (!sessionId) return;
+    setPromptTemplateApplying(template.id);
+    try {
+      const config: SessionPromptConfig = {
+        system_prompt: template.system_prompt,
+        prompt_section_ids: template.prompt_section_ids,
+        template_id: template.id,
+      };
+      await transport.invoke('session_set_prompt_config', { sessionId, config });
+      onSessionPromptApplied?.();
+      setPromptPickerOpen(false);
+    } catch (e) {
+      logger.error('[InputArea] prompt template apply error:', e);
+    } finally {
+      setPromptTemplateApplying(null);
+    }
+  }, [onSessionPromptApplied, sessionId]);
 
   const handleSend = useCallback(() => {
     if (disabled) return;
@@ -678,7 +730,7 @@ export function InputArea(props: InputAreaProps) {
         {/* Toolbar row with action buttons -- inside the input border */}
         <div
           className={`input-toolbar${
-            providerDropdownOpen || kbPickerOpen || thinkingDropdownOpen || mcpDropdownOpen || imageGenDropdownOpen
+            providerDropdownOpen || kbPickerOpen || promptPickerOpen || thinkingDropdownOpen || mcpDropdownOpen || imageGenDropdownOpen
               ? ' input-toolbar--dropdown-open'
               : ''
           }`}
@@ -891,14 +943,63 @@ export function InputArea(props: InputAreaProps) {
           {requestMode !== 'image_generation' && (
             <>
               {/* Session custom prompt */}
-              <ToolbarTooltipButton
-                className={`toolbar-btn ${hasCustomPrompt ? 'toolbar-btn--active' : ''}`}
-                onClick={onEditSessionPrompt}
-                tooltip="Session prompt"
-                disabled={disabled || !sessionId}
-              >
-                <ScrollText size={14} />
-              </ToolbarTooltipButton>
+              <div className="toolbar-btn-group" ref={promptPickerRef}>
+                <ToolbarTooltipButton
+                  className={`toolbar-btn ${hasCustomPrompt ? 'toolbar-btn--active' : ''}`}
+                  onClick={handlePromptPickerToggle}
+                  tooltip="Session prompt"
+                  disabled={disabled || !sessionId}
+                >
+                  <ScrollText size={14} />
+                </ToolbarTooltipButton>
+                {promptPickerOpen && (
+                  <div className="toolbar-prompt-dropdown">
+                    <div className="toolbar-prompt-header">
+                      <span className="toolbar-prompt-title">Prompts</span>
+                      <button
+                        className="toolbar-prompt-manage"
+                        onClick={() => {
+                          setPromptPickerOpen(false);
+                          onManagePrompts?.();
+                        }}
+                      >
+                        <Settings size={12} />
+                        <span>{'New & Manage'}</span>
+                      </button>
+                    </div>
+                    <div className="toolbar-prompt-items">
+                      {promptTemplatesLoading ? (
+                        <div className="toolbar-prompt-empty">Loading...</div>
+                      ) : promptTemplates.length === 0 ? (
+                        <div className="toolbar-prompt-empty">No prompt templates</div>
+                      ) : (
+                        promptTemplates.map((template) => (
+                          <button
+                            key={template.id}
+                            className="toolbar-prompt-item"
+                            onClick={() => void applyPromptTemplate(template)}
+                            disabled={promptTemplateApplying !== null}
+                            title={template.description ?? template.name}
+                          >
+                            <span className="toolbar-prompt-item-icon">
+                              <ScrollText size={13} />
+                            </span>
+                            <span className="toolbar-prompt-item-body">
+                              <span className="toolbar-prompt-item-name">{template.name}</span>
+                              <span className="toolbar-prompt-item-meta">
+                                {template.prompt_section_ids.length} sections
+                              </span>
+                            </span>
+                            {promptTemplateApplying === template.id && (
+                              <Loader2 size={12} className="compacting-spinner" />
+                            )}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Thinking effort selector */}
               <div className="toolbar-btn-group" ref={thinkingDropdownRef}>

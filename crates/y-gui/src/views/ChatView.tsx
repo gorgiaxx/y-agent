@@ -245,6 +245,14 @@ export function ChatView() {
           viewRouting.setSessionPromptEditing(true);
           viewRouting.setInputExpanded(false);
         }}
+        onManagePrompts={() => {
+          viewRouting.setActiveView('settings');
+          viewRouting.setActiveSettingsTab('promptTemplates');
+          viewRouting.setInputExpanded(false);
+        }}
+        onSessionPromptApplied={() => {
+          sessionHooks.refreshSessions();
+        }}
         provider={{
           providers: providerHooks.providers,
           selectedProviderId: providerHooks.selectedProviderId,
