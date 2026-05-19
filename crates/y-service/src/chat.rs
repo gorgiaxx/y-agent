@@ -91,6 +91,7 @@ impl ChatService {
             provider_id: input.provider_id.clone(),
             preferred_models: input.preferred_models.clone(),
             provider_tags: input.provider_tags.clone(),
+            fallback_provider_tags: vec![],
             request_mode: input.request_mode,
             working_directory: input.working_directory.clone(),
             additional_read_dirs: vec![],
@@ -848,15 +849,13 @@ impl ChatService {
                 message,
                 partial_messages,
             }) => {
-                // Persist intermediate messages (assistant + tool results from
-                // earlier successful iterations) so the conversation history
-                // survives the error and the user can continue / retry.
-                for msg in &partial_messages {
-                    let _ = container
-                        .session_manager
-                        .append_message(&input.session_id, msg)
-                        .await;
-                }
+                Self::persist_llm_error_partial_state(
+                    container,
+                    input,
+                    &message,
+                    &partial_messages,
+                )
+                .await;
                 if !partial_messages.is_empty() {
                     tracing::info!(
                         count = partial_messages.len(),
@@ -1112,6 +1111,122 @@ impl ChatService {
                 entry
             })
             .collect()
+    }
+
+    async fn persist_llm_error_partial_state(
+        container: &ServiceContainer,
+        input: &TurnInput<'_>,
+        error_message: &str,
+        partial_messages: &[Message],
+    ) {
+        let ctx_store = container.session_manager.transcript_store();
+        for msg in partial_messages {
+            let _ = ctx_store.append(&input.session_id, msg).await;
+        }
+
+        let tool_calls = Self::extract_tool_call_records(partial_messages);
+        let accumulated_content = Self::accumulate_assistant_content(partial_messages);
+
+        if accumulated_content.trim().is_empty() && tool_calls.is_empty() {
+            return;
+        }
+
+        let metadata = serde_json::json!({
+            "stream_error": error_message,
+            "tool_results": Self::build_tool_results_metadata(&tool_calls),
+            "iteration_texts": Self::assistant_iteration_texts(partial_messages),
+            "iteration_reasonings": Self::assistant_iteration_reasonings(partial_messages),
+            "iteration_reasoning_durations_ms": Vec::<Option<u64>>::new(),
+            "iteration_tool_counts": Self::assistant_iteration_tool_counts(partial_messages),
+        });
+
+        let assistant_msg = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: accumulated_content,
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata,
+        };
+
+        let _ = container
+            .session_manager
+            .display_transcript_store()
+            .append(&input.session_id, &assistant_msg)
+            .await;
+    }
+
+    fn accumulate_assistant_content(messages: &[Message]) -> String {
+        messages
+            .iter()
+            .filter(|msg| msg.role == Role::Assistant)
+            .map(|msg| msg.content.as_str())
+            .collect()
+    }
+
+    fn assistant_iteration_texts(messages: &[Message]) -> Vec<String> {
+        messages
+            .iter()
+            .filter(|msg| msg.role == Role::Assistant)
+            .map(|msg| msg.content.clone())
+            .collect()
+    }
+
+    fn assistant_iteration_reasonings(messages: &[Message]) -> Vec<Option<String>> {
+        messages
+            .iter()
+            .filter(|msg| msg.role == Role::Assistant)
+            .map(|msg| {
+                msg.metadata
+                    .get("reasoning_content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(String::from)
+            })
+            .collect()
+    }
+
+    fn assistant_iteration_tool_counts(messages: &[Message]) -> Vec<usize> {
+        messages
+            .iter()
+            .filter(|msg| msg.role == Role::Assistant)
+            .map(|msg| msg.tool_calls.len())
+            .collect()
+    }
+
+    fn extract_tool_call_records(messages: &[Message]) -> Vec<ToolCallRecord> {
+        let mut records = Vec::new();
+        for assistant in messages
+            .iter()
+            .filter(|msg| msg.role == Role::Assistant && !msg.tool_calls.is_empty())
+        {
+            for tool_call in &assistant.tool_calls {
+                let tool_result = messages.iter().find(|msg| {
+                    msg.role == Role::Tool
+                        && msg.tool_call_id.as_deref() == Some(tool_call.id.as_str())
+                });
+
+                records.push(ToolCallRecord {
+                    name: tool_call.name.clone(),
+                    arguments: serde_json::to_string(&tool_call.arguments).unwrap_or_default(),
+                    success: tool_result
+                        .is_some_and(|msg| tool_result_success_from_content(&msg.content)),
+                    duration_ms: 0,
+                    result_content: tool_result.map_or_else(
+                        || {
+                            serde_json::json!({
+                                "error": "Tool result was not recorded before the LLM call failed."
+                            })
+                            .to_string()
+                        },
+                        |msg| msg.content.clone(),
+                    ),
+                    url_meta: None,
+                    metadata: None,
+                });
+            }
+        }
+        records
     }
 
     /// Adjust tool definitions for plan mode.
@@ -1372,6 +1487,12 @@ impl ChatService {
     }
 }
 
+fn tool_result_success_from_content(content: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(content).map_or(true, |value| {
+        value.get("error").is_none_or(serde_json::Value::is_null)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1501,6 +1622,50 @@ mod tests {
         assert!(TurnError::ToolLoopLimitExceeded { max_iterations: 10 }
             .to_string()
             .contains("10"));
+    }
+
+    #[test]
+    fn test_extract_tool_call_records_preserves_json_error_object() {
+        let tool_call = y_core::types::ToolCallRequest {
+            id: "call_123".to_string(),
+            name: "FileRead".to_string(),
+            arguments: serde_json::json!({ "path": "/missing.rs" }),
+        };
+        let messages = vec![
+            Message {
+                message_id: y_core::types::generate_message_id(),
+                role: Role::Assistant,
+                content: "I will inspect that file.\n".to_string(),
+                tool_call_id: None,
+                tool_calls: vec![tool_call],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            },
+            Message {
+                message_id: y_core::types::generate_message_id(),
+                role: Role::Tool,
+                content: serde_json::json!({
+                    "error": "file not found: /missing.rs",
+                    "retryable": false,
+                })
+                .to_string(),
+                tool_call_id: Some("call_123".to_string()),
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            },
+        ];
+
+        let records = ChatService::extract_tool_call_records(&messages);
+
+        assert_eq!(records.len(), 1);
+        assert!(!records[0].success);
+        let content: serde_json::Value = serde_json::from_str(&records[0].result_content).unwrap();
+        assert!(content.is_object());
+        assert_eq!(
+            content.get("error").and_then(serde_json::Value::as_str),
+            Some("file not found: /missing.rs")
+        );
     }
 
     #[test]

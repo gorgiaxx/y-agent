@@ -539,6 +539,66 @@ describe('ensureStreamingAssistantMessage', () => {
     expect(merged[1].metadata?.stream_error).toBe('LLM error: timeout');
   });
 
+  it('prefers the backend-renderable assistant when an LLM error persisted tool metadata', () => {
+    const backendMessages: Message[] = [
+      {
+        id: 'backend-user-1',
+        role: 'user',
+        content: 'Read a missing file',
+        timestamp: '2026-04-24T00:00:00.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-assistant-1',
+        role: 'assistant',
+        content: 'I will inspect that file.\n',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+        metadata: {
+          stream_error: 'LLM error: provider rejected tool result',
+          iteration_texts: ['I will inspect that file.\n'],
+          iteration_tool_counts: [1],
+          tool_results: [
+            {
+              name: 'FileRead',
+              arguments: '{"path":"/missing.rs"}',
+              success: false,
+              duration_ms: 0,
+              result_preview: '{"error":"file not found"}',
+            },
+          ],
+        },
+      },
+    ];
+    const cachedMessages: Message[] = [
+      backendMessages[0],
+      {
+        id: 'error-run-1',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+        metadata: {
+          stream_error: 'LLM error: provider rejected tool result',
+        },
+      },
+    ];
+
+    const merged = mergeBackendMessagesPreservingLocalStreamState(
+      backendMessages,
+      cachedMessages,
+    );
+
+    expect(merged.map((message) => message.id)).toEqual([
+      'backend-user-1',
+      'backend-assistant-1',
+    ]);
+    expect(merged[1].metadata?.tool_results).toEqual(
+      backendMessages[1].metadata?.tool_results,
+    );
+    expect(merged[1].content).toBe('I will inspect that file.\n');
+  });
+
   it('keeps a cancelled snapshot before the continued turn after backend reload', () => {
     const backendMessages: Message[] = [
       {

@@ -47,6 +47,28 @@ function parseUrlMeta(urlMeta: string): unknown {
   }
 }
 
+function hasToolResultMetadata(message: Message): boolean {
+  const toolResults = message.metadata?.tool_results;
+  return Array.isArray(toolResults) && toolResults.length > 0;
+}
+
+function hasHistoryRenderingMetadata(message: Message): boolean {
+  const iterationTexts = message.metadata?.iteration_texts;
+  const generatedImages = message.metadata?.generated_images;
+  return hasToolResultMetadata(message)
+    || (Array.isArray(iterationTexts) && iterationTexts.length > 0)
+    || (Array.isArray(generatedImages) && generatedImages.length > 0)
+    || typeof message.metadata?.reasoning_content === 'string';
+}
+
+function shouldReplaceLocalTerminalWithBackend(local: Message, backend: Message): boolean {
+  if (local.role !== 'assistant' || backend.role !== 'assistant') {
+    return false;
+  }
+
+  return hasHistoryRenderingMetadata(backend) && !hasToolResultMetadata(local);
+}
+
 function appendInterruptedRunningToolResults(
   records: Array<Record<string, unknown>> | undefined,
   toolResults: ToolResultRecord[] | undefined,
@@ -207,7 +229,15 @@ export function mergeBackendMessagesPreservingLocalStreamState(
     }
 
     if (isLocalTerminalAssistantMessage(message)) {
-      merged.push(message);
+      const backendTerminal = backendMessages.find((backendMessage) =>
+        !usedBackendIds.has(backendMessage.id)
+        && shouldReplaceLocalTerminalWithBackend(message, backendMessage),
+      );
+      if (backendTerminal) {
+        pushBackendMessage(backendTerminal);
+      } else {
+        merged.push(message);
+      }
       let lastUsedIdx = -1;
       for (let i = 0; i < backendMessages.length; i++) {
         if (usedBackendIds.has(backendMessages[i].id)) {
