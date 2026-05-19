@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Copy, Wand2 } from 'lucide-react';
 import { transport } from '../../lib';
 import type { GuiConfig } from '../../types';
+import { visibleIdeOptions, type IdeInfo } from './ideOptions';
 import {
   Button,
   Input,
@@ -24,13 +25,6 @@ interface GeneralTabProps {
   setLocalConfig: (config: GuiConfig) => void;
   setToast: (toast: { message: string; type: 'success' | 'error' } | null) => void;
   onRunWizard?: () => void;
-}
-
-interface IdeInfo {
-  id: string;
-  name: string;
-  command: string;
-  available: boolean;
 }
 
 export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard }: GeneralTabProps) {
@@ -184,10 +178,9 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ideOptions.map((option) => (
-                <SelectItem key={option.id} value={option.id} disabled={option.id !== 'auto' && !option.available}>
+              {visibleIdeOptions(ideOptions).map((option) => (
+                <SelectItem key={option.id} value={option.id}>
                   {option.name}
-                  {option.id !== 'auto' && !option.available ? ' (not found)' : ''}
                 </SelectItem>
               ))}
             </SelectContent>

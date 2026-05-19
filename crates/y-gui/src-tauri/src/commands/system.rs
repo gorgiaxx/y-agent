@@ -87,7 +87,7 @@ struct IdeCandidate {
     id: &'static str,
     name: &'static str,
     cli: &'static str,
-    mac_app: &'static str,
+    mac_app: Option<&'static str>,
 }
 
 /// Return the config and data directory paths for display.
@@ -106,7 +106,10 @@ pub async fn app_paths(state: State<'_, AppState>) -> Result<AppPaths, String> {
 /// List IDEs that can be used to open local file paths from tool-call labels.
 #[tauri::command]
 pub async fn ide_list(_state: State<'_, AppState>) -> Result<Vec<IdeInfo>, String> {
-    let ide_options: Vec<IdeInfo> = ide_candidates().iter().map(candidate_to_ide_info).collect();
+    let ide_options: Vec<IdeInfo> = ide_candidates_for_platform()
+        .iter()
+        .map(candidate_to_ide_info)
+        .collect();
     let has_available_ide = ide_options.iter().any(|ide| ide.available);
 
     let mut options = vec![IdeInfo {
@@ -123,7 +126,7 @@ pub async fn ide_list(_state: State<'_, AppState>) -> Result<Vec<IdeInfo>, Strin
 #[tauri::command]
 pub async fn open_path_in_ide(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let selected_ide = state.gui_config.read().await.default_file_ide.clone();
-    let candidates = ide_candidates();
+    let candidates = ide_candidates_for_platform();
     let candidate = if selected_ide == "auto" {
         candidates
             .iter()
@@ -162,55 +165,199 @@ fn data_dir() -> Option<PathBuf> {
     state_home.map(|s| s.join("y-agent"))
 }
 
-fn ide_candidates() -> Vec<IdeCandidate> {
+fn ide_candidates_for_platform() -> Vec<IdeCandidate> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_ide_candidates()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return windows_ide_candidates();
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        linux_ide_candidates()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_ide_candidates() -> Vec<IdeCandidate> {
     vec![
         IdeCandidate {
             id: "cursor",
             name: "Cursor",
             cli: "cursor",
-            mac_app: "Cursor",
+            mac_app: Some("Cursor"),
         },
         IdeCandidate {
             id: "vscode",
-            name: "Visual Studio Code",
+            name: "VS Code",
             cli: "code",
-            mac_app: "Visual Studio Code",
+            mac_app: Some("Visual Studio Code"),
         },
         IdeCandidate {
-            id: "windsurf",
-            name: "Windsurf",
-            cli: "windsurf",
-            mac_app: "Windsurf",
+            id: "xcode",
+            name: "Xcode",
+            cli: "xed",
+            mac_app: Some("Xcode"),
+        },
+        IdeCandidate {
+            id: "antigravity",
+            name: "Antigravity",
+            cli: "antigravity",
+            mac_app: Some("Antigravity"),
         },
         IdeCandidate {
             id: "zed",
             name: "Zed",
             cli: "zed",
-            mac_app: "Zed",
+            mac_app: Some("Zed"),
+        },
+        IdeCandidate {
+            id: "windsurf",
+            name: "Windsurf",
+            cli: "windsurf",
+            mac_app: Some("Windsurf"),
         },
         IdeCandidate {
             id: "intellij",
             name: "IntelliJ IDEA",
             cli: "idea",
-            mac_app: "IntelliJ IDEA",
+            mac_app: Some("IntelliJ IDEA"),
         },
         IdeCandidate {
             id: "webstorm",
             name: "WebStorm",
             cli: "webstorm",
-            mac_app: "WebStorm",
+            mac_app: Some("WebStorm"),
         },
         IdeCandidate {
             id: "rustrover",
             name: "RustRover",
             cli: "rustrover",
-            mac_app: "RustRover",
+            mac_app: Some("RustRover"),
         },
         IdeCandidate {
             id: "sublime",
             name: "Sublime Text",
             cli: "subl",
-            mac_app: "Sublime Text",
+            mac_app: Some("Sublime Text"),
+        },
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn windows_ide_candidates() -> Vec<IdeCandidate> {
+    vec![
+        IdeCandidate {
+            id: "cursor",
+            name: "Cursor",
+            cli: "cursor",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "vscode",
+            name: "VS Code",
+            cli: "code",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "antigravity",
+            name: "Antigravity",
+            cli: "antigravity",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "windsurf",
+            name: "Windsurf",
+            cli: "windsurf",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "intellij",
+            name: "IntelliJ IDEA",
+            cli: "idea64",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "webstorm",
+            name: "WebStorm",
+            cli: "webstorm64",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "rustrover",
+            name: "RustRover",
+            cli: "rustrover64",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "sublime",
+            name: "Sublime Text",
+            cli: "subl",
+            mac_app: None,
+        },
+    ]
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn linux_ide_candidates() -> Vec<IdeCandidate> {
+    vec![
+        IdeCandidate {
+            id: "cursor",
+            name: "Cursor",
+            cli: "cursor",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "vscode",
+            name: "VS Code",
+            cli: "code",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "antigravity",
+            name: "Antigravity",
+            cli: "antigravity",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "zed",
+            name: "Zed",
+            cli: "zed",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "windsurf",
+            name: "Windsurf",
+            cli: "windsurf",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "intellij",
+            name: "IntelliJ IDEA",
+            cli: "idea",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "webstorm",
+            name: "WebStorm",
+            cli: "webstorm",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "rustrover",
+            name: "RustRover",
+            cli: "rustrover",
+            mac_app: None,
+        },
+        IdeCandidate {
+            id: "sublime",
+            name: "Sublime Text",
+            cli: "subl",
+            mac_app: None,
         },
     ]
 }
@@ -229,15 +376,17 @@ fn candidate_command_label(candidate: &IdeCandidate) -> String {
         return candidate.cli.to_string();
     }
 
-    if mac_app_exists(candidate.mac_app) {
-        return format!("open -a {}", candidate.mac_app);
+    if let Some(app_name) = candidate.mac_app {
+        if mac_app_exists(app_name) {
+            return format!("open -a {app_name}");
+        }
     }
 
     candidate.cli.to_string()
 }
 
 fn candidate_available(candidate: &IdeCandidate) -> bool {
-    command_exists(candidate.cli) || mac_app_exists(candidate.mac_app)
+    command_exists(candidate.cli) || candidate.mac_app.is_some_and(mac_app_exists)
 }
 
 fn open_path_with_candidate(candidate: &IdeCandidate, path: &Path) -> Result<(), String> {
@@ -247,10 +396,12 @@ fn open_path_with_candidate(candidate: &IdeCandidate, path: &Path) -> Result<(),
         return spawn_ide_command(command, candidate.name);
     }
 
-    if mac_app_exists(candidate.mac_app) {
-        let mut command = Command::new("open");
-        command.arg("-a").arg(candidate.mac_app).arg(path);
-        return spawn_ide_command(command, candidate.name);
+    if let Some(app_name) = candidate.mac_app {
+        if mac_app_exists(app_name) {
+            let mut command = Command::new("open");
+            command.arg("-a").arg(app_name).arg(path);
+            return spawn_ide_command(command, candidate.name);
+        }
     }
 
     Err(format!("{} was not found on this machine.", candidate.name))
