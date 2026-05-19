@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { vi } from 'vitest';
+
+vi.mock('../lib', () => ({
+  platform: {
+    capabilities: {
+      openInIde: true,
+    },
+    openPathInIde: vi.fn(),
+  },
+}));
 
 import { ToolCallCard } from '../components/chat-panel/chat-box/ToolCallCard';
 
@@ -28,5 +38,31 @@ describe('File tool rendering', () => {
     expect(html).toContain('Create');
     expect(html).toContain('example.ts');
     expect(html).not.toContain('tool-call-card');
+  });
+
+  it('renders an IDE open action before the expand control for writable file calls', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'file-edit-1',
+          name: 'FileEdit',
+          arguments: JSON.stringify({
+            file_path: '/tmp/example.ts',
+            old_string: 'const value = 1;',
+            new_string: 'const value = 2;',
+          }),
+        }}
+        status="success"
+        result={JSON.stringify({
+          ok: true,
+          file_path: '/tmp/example.ts',
+          action: 'edited',
+        })}
+      />,
+    );
+
+    expect(html).toContain('tool-call-file-open');
+    expect(html).toContain('aria-label="Open example.ts in IDE"');
+    expect(html.indexOf('tool-call-file-open')).toBeLessThan(html.indexOf('tool-call-chevron'));
   });
 });

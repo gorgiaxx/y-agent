@@ -18,4 +18,12 @@ describe('normalizeGuiConfig', () => {
       setup_completed: true,
     });
   });
+
+  it('defaults file opening to automatic IDE detection', () => {
+    expect(defaultGuiConfig.default_file_ide).toBe('auto');
+    expect(normalizeGuiConfig({
+      ...defaultGuiConfig,
+      default_file_ide: 'cursor',
+    }).default_file_ide).toBe('cursor');
+  });
 });

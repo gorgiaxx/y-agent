@@ -39,4 +39,23 @@ describe('Session prompt editor surface', () => {
     expect(sidebar).toContain('Session prompt editor');
     expect(sidebar).toContain('label="Back"');
   });
+
+  it('opens a prompt picker list from the input toolbar before entering management', () => {
+    const inputArea = readFileSync(
+      new URL('../components/chat-panel/input-area/InputArea.tsx', import.meta.url),
+      'utf8',
+    );
+    const chatView = readFileSync(
+      new URL('../views/ChatView.tsx', import.meta.url),
+      'utf8',
+    );
+
+    expect(inputArea).toContain('promptPickerOpen');
+    expect(inputArea).toContain('toolbar-prompt-dropdown');
+    expect(inputArea).toContain('prompt_template_list');
+    expect(inputArea).toContain('session_set_prompt_config');
+    expect(inputArea).toContain('New & Manage');
+    expect(inputArea).toContain('onManagePrompts');
+    expect(chatView).toContain('onManagePrompts');
+  });
 });
