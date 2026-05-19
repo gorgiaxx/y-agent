@@ -266,6 +266,7 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   system_status:       { method: 'GET',  path: '/api/v1/status', response: systemStatusResponse },
   provider_list:       { method: 'GET',  path: '/api/v1/providers' },
   app_paths:           { method: 'GET',  path: '/api/v1/app-paths' },
+  ide_list:            { method: 'GET',  path: '/__noop__' },
 
   // -- Sessions --
   session_list:        { method: 'GET',  path: '/api/v1/sessions',

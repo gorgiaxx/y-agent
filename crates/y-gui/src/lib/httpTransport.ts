@@ -15,6 +15,7 @@ const LIFECYCLE_NOOP_COMMANDS = new Set([
 
 const UNSUPPORTED_WEB_COMMANDS = new Set([
   'skill_open_folder',
+  'open_path_in_ide',
 ]);
 
 const GUI_CONFIG_KEY = 'y-agent-gui-config';
@@ -48,6 +49,17 @@ export class HttpTransport implements Transport {
       const config = args?.config ?? args;
       localStorage.setItem(GUI_CONFIG_KEY, JSON.stringify(config));
       return undefined as T;
+    }
+
+    if (command === 'ide_list') {
+      return [
+        {
+          id: 'auto',
+          name: 'Auto Detect',
+          command: 'Desktop only',
+          available: false,
+        },
+      ] as T;
     }
 
     const def = COMMAND_MAP[command];

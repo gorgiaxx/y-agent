@@ -446,6 +446,7 @@ export interface GuiConfig {
   setup_completed: boolean;
   translate_target_language: string;
   use_custom_decorations: boolean;
+  default_file_ide: string;
 }
 
 // ---------------------------------------------------------------------------

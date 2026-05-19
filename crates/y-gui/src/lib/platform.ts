@@ -22,6 +22,7 @@ export interface PlatformCapabilities {
   nativeFilePaths: boolean;
   browserFileUpload: boolean;
   revealFileManager: boolean;
+  openInIde: boolean;
   skillImportFromPath: boolean;
   knowledgeIngestFromPath: boolean;
   remoteAuth: boolean;
@@ -36,6 +37,7 @@ export interface Platform {
   openImageAttachments(options?: OpenDialogOptions): Promise<Attachment[] | null>;
   openUrl(url: string): Promise<void>;
   revealInFileManager(path: string): Promise<void>;
+  openPathInIde(path: string): Promise<void>;
   getAppVersion(): Promise<string>;
   isTauri(): boolean;
 }
@@ -46,6 +48,7 @@ class TauriPlatform implements Platform {
     nativeFilePaths: true,
     browserFileUpload: false,
     revealFileManager: true,
+    openInIde: true,
     skillImportFromPath: true,
     knowledgeIngestFromPath: true,
     remoteAuth: false,
@@ -85,6 +88,11 @@ class TauriPlatform implements Platform {
     await revealItemInDir(path);
   }
 
+  async openPathInIde(path: string): Promise<void> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_path_in_ide', { path });
+  }
+
   async getAppVersion(): Promise<string> {
     const { getVersion } = await import('@tauri-apps/api/app');
     return getVersion();
@@ -101,6 +109,7 @@ class WebPlatform implements Platform {
     nativeFilePaths: false,
     browserFileUpload: true,
     revealFileManager: false,
+    openInIde: false,
     skillImportFromPath: true,
     knowledgeIngestFromPath: true,
     remoteAuth: true,
@@ -169,6 +178,10 @@ class WebPlatform implements Platform {
 
   async revealInFileManager(): Promise<void> {
     throw new Error('Reveal in file manager is not supported in the browser');
+  }
+
+  async openPathInIde(): Promise<void> {
+    throw new Error('Opening files in a local IDE is not supported in the browser');
   }
 
   async getAppVersion(): Promise<string> {

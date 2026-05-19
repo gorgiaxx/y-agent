@@ -1,6 +1,7 @@
 //! System status and health command handlers.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -68,6 +69,27 @@ pub struct AppPaths {
     pub data_dir: String,
 }
 
+/// IDE option returned to Settings > General.
+#[derive(Debug, Serialize, Clone)]
+pub struct IdeInfo {
+    /// Stable IDE identifier persisted in GUI config.
+    pub id: String,
+    /// User-facing IDE name.
+    pub name: String,
+    /// Preferred command or application name.
+    pub command: String,
+    /// Whether this IDE was detected on the current machine.
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IdeCandidate {
+    id: &'static str,
+    name: &'static str,
+    cli: &'static str,
+    mac_app: &'static str,
+}
+
 /// Return the config and data directory paths for display.
 #[tauri::command]
 pub async fn app_paths(state: State<'_, AppState>) -> Result<AppPaths, String> {
@@ -79,6 +101,51 @@ pub async fn app_paths(state: State<'_, AppState>) -> Result<AppPaths, String> {
         config_dir: config,
         data_dir: data,
     })
+}
+
+/// List IDEs that can be used to open local file paths from tool-call labels.
+#[tauri::command]
+pub async fn ide_list(_state: State<'_, AppState>) -> Result<Vec<IdeInfo>, String> {
+    let ide_options: Vec<IdeInfo> = ide_candidates().iter().map(candidate_to_ide_info).collect();
+    let has_available_ide = ide_options.iter().any(|ide| ide.available);
+
+    let mut options = vec![IdeInfo {
+        id: "auto".to_string(),
+        name: "Auto Detect".to_string(),
+        command: "First available IDE".to_string(),
+        available: has_available_ide,
+    }];
+    options.extend(ide_options);
+    Ok(options)
+}
+
+/// Open a file path in the configured local IDE.
+#[tauri::command]
+pub async fn open_path_in_ide(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let selected_ide = state.gui_config.read().await.default_file_ide.clone();
+    let candidates = ide_candidates();
+    let candidate = if selected_ide == "auto" {
+        candidates
+            .iter()
+            .find(|candidate| candidate_available(candidate))
+    } else {
+        candidates
+            .iter()
+            .find(|candidate| candidate.id == selected_ide)
+    };
+
+    let Some(candidate) = candidate else {
+        return Err("No local IDE detected. Configure Default File IDE in Settings.".to_string());
+    };
+
+    if !candidate_available(candidate) {
+        return Err(format!(
+            "{} was not found on this machine. Choose another Default File IDE in Settings.",
+            candidate.name
+        ));
+    }
+
+    open_path_with_candidate(candidate, Path::new(&path))
 }
 
 /// Get the XDG state base directory for y-agent (`~/.local/state/y-agent/`).
@@ -93,6 +160,160 @@ fn data_dir() -> Option<PathBuf> {
                 .map(|h| PathBuf::from(h).join(".local").join("state"))
         });
     state_home.map(|s| s.join("y-agent"))
+}
+
+fn ide_candidates() -> Vec<IdeCandidate> {
+    vec![
+        IdeCandidate {
+            id: "cursor",
+            name: "Cursor",
+            cli: "cursor",
+            mac_app: "Cursor",
+        },
+        IdeCandidate {
+            id: "vscode",
+            name: "Visual Studio Code",
+            cli: "code",
+            mac_app: "Visual Studio Code",
+        },
+        IdeCandidate {
+            id: "windsurf",
+            name: "Windsurf",
+            cli: "windsurf",
+            mac_app: "Windsurf",
+        },
+        IdeCandidate {
+            id: "zed",
+            name: "Zed",
+            cli: "zed",
+            mac_app: "Zed",
+        },
+        IdeCandidate {
+            id: "intellij",
+            name: "IntelliJ IDEA",
+            cli: "idea",
+            mac_app: "IntelliJ IDEA",
+        },
+        IdeCandidate {
+            id: "webstorm",
+            name: "WebStorm",
+            cli: "webstorm",
+            mac_app: "WebStorm",
+        },
+        IdeCandidate {
+            id: "rustrover",
+            name: "RustRover",
+            cli: "rustrover",
+            mac_app: "RustRover",
+        },
+        IdeCandidate {
+            id: "sublime",
+            name: "Sublime Text",
+            cli: "subl",
+            mac_app: "Sublime Text",
+        },
+    ]
+}
+
+fn candidate_to_ide_info(candidate: &IdeCandidate) -> IdeInfo {
+    IdeInfo {
+        id: candidate.id.to_string(),
+        name: candidate.name.to_string(),
+        command: candidate_command_label(candidate),
+        available: candidate_available(candidate),
+    }
+}
+
+fn candidate_command_label(candidate: &IdeCandidate) -> String {
+    if command_exists(candidate.cli) {
+        return candidate.cli.to_string();
+    }
+
+    if mac_app_exists(candidate.mac_app) {
+        return format!("open -a {}", candidate.mac_app);
+    }
+
+    candidate.cli.to_string()
+}
+
+fn candidate_available(candidate: &IdeCandidate) -> bool {
+    command_exists(candidate.cli) || mac_app_exists(candidate.mac_app)
+}
+
+fn open_path_with_candidate(candidate: &IdeCandidate, path: &Path) -> Result<(), String> {
+    if command_exists(candidate.cli) {
+        let mut command = Command::new(candidate.cli);
+        command.arg(path);
+        return spawn_ide_command(command, candidate.name);
+    }
+
+    if mac_app_exists(candidate.mac_app) {
+        let mut command = Command::new("open");
+        command.arg("-a").arg(candidate.mac_app).arg(path);
+        return spawn_ide_command(command, candidate.name);
+    }
+
+    Err(format!("{} was not found on this machine.", candidate.name))
+}
+
+fn spawn_ide_command(mut command: Command, ide_name: &str) -> Result<(), String> {
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open file in {ide_name}: {e}"))
+}
+
+fn command_exists(command: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+
+    std::env::split_paths(&paths).any(|dir| command_path_exists(&dir, command))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn command_path_exists(dir: &Path, command: &str) -> bool {
+    dir.join(command).is_file()
+}
+
+#[cfg(target_os = "windows")]
+fn command_path_exists(dir: &Path, command: &str) -> bool {
+    let base = dir.join(command);
+    if base.is_file() {
+        return true;
+    }
+
+    let extensions = std::env::var_os("PATHEXT")
+        .map(|value| {
+            value
+                .to_string_lossy()
+                .split(';')
+                .map(|extension| extension.trim_start_matches('.').to_ascii_lowercase())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec!["exe".to_string(), "cmd".to_string(), "bat".to_string()]);
+
+    extensions
+        .iter()
+        .any(|extension| dir.join(format!("{command}.{extension}")).is_file())
+}
+
+#[cfg(target_os = "macos")]
+fn mac_app_exists(app_name: &str) -> bool {
+    let app_bundle = format!("{app_name}.app");
+    [
+        PathBuf::from("/Applications"),
+        std::env::var_os("HOME")
+            .map_or_else(|| PathBuf::from(""), PathBuf::from)
+            .join("Applications"),
+    ]
+    .iter()
+    .any(|dir| dir.join(&app_bundle).is_dir())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mac_app_exists(_app_name: &str) -> bool {
+    false
 }
 
 /// Quick health check.

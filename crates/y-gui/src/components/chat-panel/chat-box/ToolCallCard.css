@@ -199,6 +199,28 @@
   transform: rotate(90deg);
 }
 
+.tool-call-file-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.tool-call-file-open:hover {
+  color: var(--text-primary);
+  border-color: var(--border-active, rgba(255, 255, 255, 0.15));
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
+}
+
 .tool-call-detail {
   margin-top: var(--space-xs);
   padding: var(--space-sm) var(--space-md);

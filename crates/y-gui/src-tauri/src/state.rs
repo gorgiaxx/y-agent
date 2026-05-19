@@ -39,6 +39,8 @@ pub struct GuiConfig {
     /// frontend draws a custom titlebar. Default: `true` on macOS, `false` elsewhere
     /// because Linux desktops (KDE/GNOME) often mishandle client-side decorations.
     pub use_custom_decorations: bool,
+    /// Default IDE used when opening file tool-call outputs from the GUI.
+    pub default_file_ide: String,
 }
 
 impl Default for GuiConfig {
@@ -52,6 +54,7 @@ impl Default for GuiConfig {
             setup_completed: false,
             translate_target_language: "English".to_string(),
             use_custom_decorations: default_use_custom_decorations(),
+            default_file_ide: "auto".to_string(),
         }
     }
 }

@@ -353,6 +353,8 @@ pub fn run() {
             commands::system::window_close,
             commands::system::window_set_theme,
             commands::system::app_paths,
+            commands::system::ide_list,
+            commands::system::open_path_in_ide,
             commands::system::memory_stats,
             // Workspaces
             commands::workspace::workspace_list,

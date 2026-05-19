@@ -26,9 +26,19 @@ interface GeneralTabProps {
   onRunWizard?: () => void;
 }
 
+interface IdeInfo {
+  id: string;
+  name: string;
+  command: string;
+  available: boolean;
+}
+
 export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard }: GeneralTabProps) {
   const [configPath, setConfigPath] = useState('');
   const [dataPath, setDataPath] = useState('');
+  const [ideOptions, setIdeOptions] = useState<IdeInfo[]>([
+    { id: 'auto', name: 'Auto Detect', command: 'First available IDE', available: false },
+  ]);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -37,6 +47,13 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
       .then((paths) => {
         setConfigPath(paths.config_dir);
         setDataPath(paths.data_dir);
+      })
+      .catch(() => { /* ignore */ });
+    transport.invoke<IdeInfo[]>('ide_list')
+      .then((options) => {
+        if (options.length > 0) {
+          setIdeOptions(options);
+        }
       })
       .catch(() => { /* ignore */ });
     return () => clearTimeout(copyTimerRef.current);
@@ -154,6 +171,27 @@ export function GeneralTab({ localConfig, setLocalConfig, setToast, onRunWizard 
               setLocalConfig({ ...localConfig, send_on_enter: checked })
             }
           />
+        </SettingsItem>
+        <SettingsItem
+          title="Default File IDE"
+          description="Used by file tool-call open buttons for created and updated files."
+        >
+          <Select
+            value={localConfig.default_file_ide || 'auto'}
+            onValueChange={(v) => setLocalConfig({ ...localConfig, default_file_ide: v })}
+          >
+            <SelectTrigger className="w-[220px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ideOptions.map((option) => (
+                <SelectItem key={option.id} value={option.id} disabled={option.id !== 'auto' && !option.available}>
+                  {option.name}
+                  {option.id !== 'auto' && !option.available ? ' (not found)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </SettingsItem>
       </SettingsGroup>
       <SettingsGroup title="Translation">

@@ -13,6 +13,7 @@ export const defaultGuiConfig: GuiConfig = {
   setup_completed: false,
   translate_target_language: '',
   use_custom_decorations: false,
+  default_file_ide: 'auto',
 };
 
 export function normalizeGuiConfig(config: GuiConfig | null | undefined): GuiConfig {
