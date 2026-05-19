@@ -22,10 +22,10 @@ use crate::types::{Message, ProviderId, Timestamp, TokenUsage};
 ///
 /// Two-layer design (see `docs/standards/TOOL_CALL_PROTOCOL.md`):
 ///
-/// - **Layer 1 (API type)**: First-party providers (`OpenAI`, Anthropic, Azure,
-///   Gemini, `DeepSeek`) default to [`Native`](Self::Native) -- tool definitions
-///   are sent via the provider's HTTP API and tool calls are extracted from
-///   structured response fields.
+/// - **Layer 1 (API type)**: First-party providers (`OpenAI Response API`,
+///   Anthropic, Azure, Gemini, `DeepSeek`) default to [`Native`](Self::Native)
+///   -- tool definitions are sent via the provider's HTTP API and tool calls
+///   are extracted from structured response fields.
 ///
 /// - **Layer 2 (XML tags)**: Compatibility providers (`openai-compat`, `custom`,
 ///   `ollama`) default to [`PromptBased`](Self::PromptBased) -- tool definitions
@@ -45,13 +45,14 @@ pub enum ToolCallingMode {
     ///
     /// Default for compatibility providers (`openai-compat`, `custom`, `ollama`).
     PromptBased,
-    /// Tool calling via provider-native API fields (`OpenAI` `tools`, Anthropic `tools`).
+    /// Tool calling via provider-native API fields (`OpenAI Response API` `tools`,
+    /// Anthropic `tools`).
     ///
     /// Tool definitions are sent in the HTTP request body and tool calls are
     /// extracted from provider-specific response fields.
     ///
-    /// Default for first-party providers (`openai`, `anthropic`, `azure`,
-    /// `gemini`, `deepseek`).
+    /// Default for first-party providers (`openai` for `OpenAI` Response API,
+    /// `anthropic`, `azure`, `gemini`, `deepseek`).
     #[default]
     Native,
 }
@@ -64,7 +65,7 @@ pub enum ToolCallingMode {
 ///
 /// Maps to provider-specific parameters:
 /// - Anthropic: `output_config.effort` (`"low"` | `"medium"` | `"high"` | `"max"`)
-/// - `OpenAI`: `reasoning.effort` (`"low"` | `"medium"` | `"high"`)
+/// - `OpenAI Response API`: `reasoning.effort` (`"low"` | `"medium"` | `"high"`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingEffort {
@@ -91,7 +92,7 @@ pub struct ThinkingConfig {
 ///
 /// Maps to provider-specific parameters:
 /// - Anthropic: merged into `output_config.format`
-/// - `OpenAI`: `response_format`
+/// - `OpenAI Response API`: `response_format`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseFormat {

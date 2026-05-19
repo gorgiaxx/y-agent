@@ -13,7 +13,7 @@
 
 y-agent uses a **two-layer tool calling system**:
 
-- **Layer 1 (Native)**: First-party providers (OpenAI, Anthropic, Azure, Gemini, DeepSeek)
+- **Layer 1 (Native)**: First-party providers (OpenAI Response API, Anthropic, Azure, Gemini, DeepSeek)
   send tool definitions via their native API fields and extract structured tool calls
   from response objects. This is the **default** for these providers.
 
@@ -36,7 +36,7 @@ in Native mode, ensuring tool calls are never missed.
 | **Two-layer system**     | Native API tool calling for providers that support it; XML prompt-based fallback for the rest. Auto-detected from `provider_type`.                                                        |
 | **Two-tier visibility**  | Core tools (Tier 1) are always available with schemas in the prompt. Extended tools (Tier 2) are loaded on demand via `ToolSearch`.                                                      |
 | **Explicit format**      | XML tags are unambiguous, easy to parse, and well-understood by all major LLMs.                                                                                                           |
-| **Native-first default** | `Native` is the default for first-party providers (openai, anthropic, azure, gemini, deepseek). `PromptBased` is the default for compatibility providers (openai-compat, custom, ollama). |
+| **Native-first default** | `Native` is the default for first-party providers (openai for OpenAI Response API, anthropic, azure, gemini, deepseek). `PromptBased` is the default for compatibility providers (openai-compat, custom, ollama). |
 | **Fail gracefully**      | Malformed tool call tags are treated as regular text. Even in Native mode, a fallback XML parser catches tool calls emitted as text.                                                      |
 
 ---

@@ -1,7 +1,8 @@
-//! OpenAI-compatible provider backend.
+//! `OpenAI` Response API and OpenAI-compatible provider backend.
 //!
-//! Supports `OpenAI` API and any compatible endpoints (e.g., Azure `OpenAI`,
-//! vLLM, `LiteLLM`) via configurable base URL.
+//! Supports the official `OpenAI` provider type (`provider_type = "openai"`)
+//! and compatible endpoints (`provider_type = "openai-compat"` or `custom`)
+//! via configurable base URL.
 
 use async_trait::async_trait;
 
@@ -22,7 +23,7 @@ use y_core::provider::{
 use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
 
-/// OpenAI-compatible LLM provider.
+/// `OpenAI` Response API / OpenAI-compatible LLM provider.
 #[derive(Debug)]
 pub struct OpenAiProvider {
     client: Client,
@@ -37,7 +38,7 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    /// Create a new `OpenAI` provider.
+    /// Create a new `OpenAI` Response API provider.
     pub fn new(
         id: &str,
         model: &str,
@@ -67,7 +68,7 @@ impl OpenAiProvider {
         )
     }
 
-    /// Create a new `OpenAI` provider with additional HTTP headers.
+    /// Create a new `OpenAI` Response API provider with additional HTTP headers.
     pub fn with_headers<S: std::hash::BuildHasher>(
         id: &str,
         model: &str,

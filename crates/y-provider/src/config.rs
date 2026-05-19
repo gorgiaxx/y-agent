@@ -117,16 +117,18 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub http_protocol: HttpProtocol,
 
-    /// For OpenAI-compatible providers: send `stream_options.include_usage = true`
+    /// For `OpenAI` Response API and OpenAI-compatible providers: send
+    /// `stream_options.include_usage = true`
     /// on streaming requests so the final SSE chunk carries token usage.
     ///
     /// Defaults to `false` because several OpenAI-compat backends (older vLLM
     /// builds, some Chinese providers, stricter relays) reject the
     /// `stream_options` field with HTTP 400. Set to `true` only when the
-    /// upstream is known to support it (canonical `OpenAI`, Azure `OpenAI`,
+    /// upstream is known to support it (`OpenAI` Response API, Azure `OpenAI`,
     /// recent vLLM, `OpenRouter`, Together, etc.).
     ///
-    /// Ignored by non-OpenAI-compatible providers.
+    /// Ignored by providers that do not use the `OpenAI` chat-compatible wire
+    /// shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_usage: Option<bool>,
 
@@ -143,7 +145,8 @@ pub struct ProviderConfig {
     /// Tool calling mode override for this provider.
     ///
     /// `None` means auto-detect based on `provider_type`:
-    /// - `Native` for `openai`, `anthropic`, `azure`, `gemini`, `deepseek`
+    /// - `Native` for `openai` (`OpenAI` Response API), `anthropic`, `azure`,
+    ///   `gemini`, `deepseek`
     /// - `PromptBased` for `openai-compat`, `custom`, `ollama`, and others
     ///
     /// See [`ProviderConfig::resolve_tool_calling_mode`].
@@ -434,9 +437,9 @@ impl ProviderConfig {
     /// Priority: explicit `tool_calling_mode` override > auto-detect from
     /// `provider_type`.
     ///
-    /// First-party providers (`openai`, `anthropic`, `azure`, `gemini`,
-    /// `deepseek`) default to [`ToolCallingMode::Native`] because their APIs
-    /// support structured tool call fields.
+    /// First-party providers (`openai` for `OpenAI` Response API, `anthropic`,
+    /// `azure`, `gemini`, `deepseek`) default to [`ToolCallingMode::Native`]
+    /// because their APIs support structured tool call fields.
     ///
     /// Compatibility/local providers (`openai-compat`, `custom`, `ollama`)
     /// default to [`ToolCallingMode::PromptBased`] because many relay APIs

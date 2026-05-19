@@ -48,6 +48,7 @@ import {
   DEFAULT_GUARDRAILS_FORM,
   DEFAULT_KNOWLEDGE_FORM,
 } from '../settings/settingsTypes';
+import { OPENAI_RESPONSE_API_LABEL } from '../settings/providerTypeOptions';
 import './SetupWizard.css';
 
 // ---------------------------------------------------------------------------
@@ -68,7 +69,7 @@ const STEP_LABELS = [
 const API_TYPES = [
   { id: 'openai-compat', label: 'OpenAI Compatible', iconId: 'OpenAI' },
   { id: 'anthropic', label: 'Anthropic', iconId: 'Anthropic' },
-  { id: 'openai', label: 'OpenAI Response API', iconId: 'OpenAI' },
+  { id: 'openai', label: OPENAI_RESPONSE_API_LABEL, iconId: 'OpenAI' },
   { id: 'gemini', label: 'Google Gemini', iconId: 'Gemini' },
   { id: 'deepseek', label: 'DeepSeek', iconId: 'DeepSeek' },
   { id: 'ollama', label: 'Ollama (Local)', iconId: 'Ollama' },

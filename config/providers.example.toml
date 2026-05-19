@@ -23,8 +23,9 @@ health_check_interval_secs = 30
 # Provider Definitions
 #
 # Each [[providers]] entry defines one LLM provider backend.
-# For OpenAI-compatible APIs (DeepSeek, Groq, Together AI, etc.),
-# set provider_type = "openai" and override base_url.
+# Use provider_type = "openai" only for the official OpenAI Response API.
+# For OpenAI-compatible APIs (vLLM, LiteLLM, Groq, Together AI, etc.),
+# use provider_type = "openai-compat" and set base_url.
 #
 # API Key: set `api_key` directly, or use `api_key_env` to read
 # from an environment variable (fallback).
@@ -65,10 +66,23 @@ icon = "deepseek"
 # "X-LLM-Tenant" = "workspace-a"
 # "HTTP-Referer" = "https://y-agent.local"
 
+# --- OpenAI Response API ----------------------------------------------------
+
+# [[providers]]
+# id = "openai-main"
+# provider_type = "openai"
+# model = "gpt-4o"
+# tags = ["reasoning", "general"]
+# max_concurrency = 3
+# context_window = 128000
+# cost_per_1k_input = 0.005
+# cost_per_1k_output = 0.015
+# api_key_env = "OPENAI_API_KEY"
+
 # --- Custom Provider (OpenAI-compatible) ------------------------------------
 # Use provider_type = "custom" for any OpenAI-compatible endpoint
 # (e.g., vLLM, LLaMA.cpp server, LiteLLM, local inference servers).
-# Requires base_url. Uses the same API format as openai/openai_compatible.
+# Requires base_url. Uses the same API format as openai-compat.
 
 # [[providers]]
 # id = "custom-vllm"
@@ -86,7 +100,7 @@ icon = "deepseek"
 
 # [[providers]]
 # id = "deepseek-main"
-# provider_type = "openai"
+# provider_type = "deepseek"
 # model = "deepseek-chat"
 # tags = ["reasoning", "code", "general"]
 # max_concurrency = 3
@@ -98,7 +112,7 @@ icon = "deepseek"
 
 # [[providers]]
 # id = "deepseek-reasoner"
-# provider_type = "openai"
+# provider_type = "deepseek"
 # model = "deepseek-reasoner"
 # tags = ["reasoning", "deep-thinking"]
 # max_concurrency = 2
@@ -209,7 +223,7 @@ icon = "deepseek"
 
 [[providers]]
 id = "qwen3.5"
-provider_type = "openai"
+provider_type = "openai-compat"
 model = "Qwen/Qwen3.5-397B-A17B"
 tags = ["general", "vision", "tool_use", "reasoning"]
 max_concurrency = 1
@@ -220,7 +234,7 @@ icon = "qwen"
 
 [[providers]]
 id = "fast"
-provider_type = "openai"
+provider_type = "openai-compat"
 model = "LongCat-Flash-Lite"
 tags = ["title", "general"]
 max_concurrency = 3

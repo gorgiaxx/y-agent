@@ -16,6 +16,7 @@ import { ProviderHeadersEditor } from './ProviderHeadersEditor';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Input, Button, Switch, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
+import { PROVIDER_TYPE_OPTIONS } from './providerTypeOptions';
 
 // ---------------------------------------------------------------------------
 // ProviderTabPanel -- flat form for a single provider (shown in tab view)
@@ -148,13 +149,11 @@ function ProviderTabPanel({
               <SelectValue placeholder="Select type" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="openai">OpenAI (native API)</SelectItem>
-              <SelectItem value="openai-compat">OpenAI-compatible (vLLM, LiteLLM...)</SelectItem>
-              <SelectItem value="anthropic">Anthropic</SelectItem>
-              <SelectItem value="gemini">Gemini</SelectItem>
-              <SelectItem value="deepseek">DeepSeek</SelectItem>
-              <SelectItem value="ollama">Ollama</SelectItem>
-              <SelectItem value="azure">Azure OpenAI</SelectItem>
+              {PROVIDER_TYPE_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </SettingsItem>

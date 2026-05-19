@@ -63,7 +63,7 @@ pub struct ProviderPreset {
     pub key: &'static str,
     /// Provider ID for config file.
     pub id: &'static str,
-    /// Provider type (openai / anthropic).
+    /// Provider type (openai, openai-compat, anthropic, etc.).
     pub provider_type: &'static str,
     /// Default model name.
     pub model: &'static str,
@@ -86,7 +86,7 @@ pub struct ProviderPreset {
 /// All built-in provider presets.
 pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
     ProviderPreset {
-        display_name: "OpenAI (GPT-4o)",
+        display_name: "OpenAI Response API (GPT-4o)",
         key: "openai",
         id: "openai-main",
         provider_type: "openai",
@@ -117,7 +117,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "DeepSeek (Chat)",
         key: "deepseek",
         id: "deepseek-main",
-        provider_type: "openai",
+        provider_type: "deepseek",
         model: "deepseek-chat",
         tags: &["reasoning", "code", "general"],
         max_concurrency: 3,
@@ -131,7 +131,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "DeepSeek (Reasoner)",
         key: "deepseek-reasoner",
         id: "deepseek-reasoner",
-        provider_type: "openai",
+        provider_type: "deepseek",
         model: "deepseek-reasoner",
         tags: &["reasoning", "deep-thinking"],
         max_concurrency: 2,
@@ -145,7 +145,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Groq (Llama 3.1 70B)",
         key: "groq",
         id: "groq-main",
-        provider_type: "openai",
+        provider_type: "openai-compat",
         model: "llama-3.1-70b-versatile",
         tags: &["fast", "general"],
         max_concurrency: 3,
@@ -159,7 +159,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Together AI (Llama 3.1 70B)",
         key: "together",
         id: "together-main",
-        provider_type: "openai",
+        provider_type: "openai-compat",
         model: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
         tags: &["general", "code"],
         max_concurrency: 3,
@@ -173,14 +173,14 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Ollama (Local \u{2014} no API key needed)",
         key: "ollama",
         id: "ollama-local",
-        provider_type: "openai",
+        provider_type: "ollama",
         model: "llama3.1",
         tags: &["local", "general"],
         max_concurrency: 1,
         context_window: 131_072,
         cost_per_1k_input: 0.0,
         cost_per_1k_output: 0.0,
-        base_url: Some("http://localhost:11434/v1"),
+        base_url: Some("http://localhost:11434"),
         requires_api_key: false,
     },
 ];
@@ -228,7 +228,7 @@ pub fn custom_provider_to_toml(model: &str, base_url: &str, api_key: &str) -> St
     let mut lines = vec![
         "[[providers]]".to_string(),
         "id = \"custom-main\"".to_string(),
-        "provider_type = \"openai\"".to_string(),
+        "provider_type = \"openai-compat\"".to_string(),
         format!("model = {model:?}"),
         "tags = [\"general\"]".to_string(),
         "max_concurrency = 3".to_string(),
@@ -1111,8 +1111,22 @@ mod tests {
     #[test]
     fn test_find_preset_openai() {
         let preset = find_preset("openai").expect("openai should exist");
+        assert_eq!(preset.display_name, "OpenAI Response API (GPT-4o)");
         assert_eq!(preset.provider_type, "openai");
         assert_eq!(preset.model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_only_openai_response_api_preset_uses_openai_provider_type() {
+        for preset in PROVIDER_PRESETS {
+            if preset.provider_type == "openai" {
+                assert_eq!(
+                    preset.key, "openai",
+                    "{} should not use the OpenAI Response API provider type",
+                    preset.display_name
+                );
+            }
+        }
     }
 
     // T-INIT-003: all presets have valid fields.
@@ -1173,6 +1187,7 @@ mod tests {
     fn test_custom_provider_to_toml() {
         let toml_str =
             custom_provider_to_toml("my-model", "https://api.example.com/v1", "sk-my-key");
+        assert!(toml_str.contains("provider_type = \"openai-compat\""));
         assert!(toml_str.contains("model = \"my-model\""));
         assert!(toml_str.contains("base_url = \"https://api.example.com/v1\""));
         assert!(toml_str.contains("api_key = \"sk-my-key\""));
@@ -1317,7 +1332,7 @@ mod tests {
         assert_eq!(sel.toml_blocks.len(), 1);
         assert!(sel.toml_blocks[0].contains("openai-main"));
         assert!(sel.toml_blocks[0].contains("api_key = \"sk-test-key\""));
-        assert_eq!(sel.descriptions, vec!["OpenAI (GPT-4o)"]);
+        assert_eq!(sel.descriptions, vec!["OpenAI Response API (GPT-4o)"]);
     }
 
     // T-INIT-015: interactive provider selection via MockPrompter.
@@ -1426,7 +1441,8 @@ mod tests {
 
         let toml_str = preset_to_toml(preset, "");
         assert!(!toml_str.contains("api_key"));
-        assert!(toml_str.contains("http://localhost:11434/v1"));
+        assert!(toml_str.contains("provider_type = \"ollama\""));
+        assert!(toml_str.contains("http://localhost:11434"));
     }
 
     // T-INIT-019: build_init_storage_config produces correct paths and settings.

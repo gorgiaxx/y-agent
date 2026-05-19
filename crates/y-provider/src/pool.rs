@@ -197,10 +197,11 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
             };
         }
 
-        // OpenAI-compat-shaped providers honor `include_usage` from the
-        // provider config; default is `false` because several upstream
-        // gateways (older vLLM, some Chinese providers, stricter proxies)
-        // reject the `stream_options` field with HTTP 400.
+        // OpenAI Response API and OpenAI-compat-shaped providers honor
+        // `include_usage` from the provider config; default is `false`
+        // because several upstream gateways (older vLLM, some Chinese
+        // providers, stricter proxies) reject the `stream_options` field
+        // with HTTP 400.
         let include_usage = cfg.include_usage.unwrap_or(false);
         let make_openai = |base: Option<String>| -> Arc<dyn LlmProvider> {
             Arc::new(
@@ -242,7 +243,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
         };
 
         let provider: Option<Arc<dyn LlmProvider>> = match cfg.provider_type.as_str() {
-            // openai-compat / openai_compatible / custom all use the OpenAI provider.
+            // OpenAI Response API and compatible aliases share this transport.
             "openai" | "openai-compat" | "openai_compatible" | "custom" => {
                 Some(make_openai(cfg.base_url.clone()))
             }

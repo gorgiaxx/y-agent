@@ -8,7 +8,7 @@
 //! - [`HealthChecker`] — health probe for frozen provider recovery
 //! - [`ProviderMetrics`] — lock-free per-provider request/token counters
 //! - [`PriorityScheduler`] — three-tier priority scheduling (Critical/Normal/Idle)
-//! - [`OpenAiProvider`] — OpenAI-compatible LLM backend
+//! - [`OpenAiProvider`] — `OpenAI` Response API and compatible LLM backend
 //! - [`AnthropicProvider`] — Anthropic Messages API backend
 //! - [`GeminiProvider`] — Google Gemini API backend
 //! - [`OllamaProvider`] — Ollama local LLM backend
