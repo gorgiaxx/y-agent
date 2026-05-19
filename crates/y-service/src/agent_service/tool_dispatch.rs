@@ -32,7 +32,7 @@ pub(crate) async fn execute_and_record_tool(
         .as_ref()
         .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
     {
-        let error_content = "[SYSTEM] Cancelled by user.".to_string();
+        let error_content = system_tool_error_content("Cancelled by user.", false);
         emit_tool_result(
             progress,
             tc,
@@ -47,10 +47,13 @@ pub(crate) async fn execute_and_record_tool(
     }
 
     if ctx.tool_calls_executed.len() >= config.max_tool_calls {
-        let error_content = format!(
-            "[SYSTEM] Tool call limit ({}) reached. Do NOT request more tools. \
+        let error_content = system_tool_error_content(
+            format!(
+                "Tool call limit ({}) reached. Do NOT request more tools. \
              Finish with the information already available.",
-            config.max_tool_calls
+                config.max_tool_calls
+            ),
+            false,
         );
         tracing::warn!(
             agent = %config.agent_name,
@@ -126,11 +129,14 @@ pub(crate) async fn execute_and_record_tool(
                 reason = %decision.reason,
                 "tool execution denied by permission policy"
             );
-            let error_content = format!(
-                "[SYSTEM] Tool '{}' is blocked by security policy ({}). \
+            let error_content = system_tool_error_content(
+                format!(
+                    "Tool '{}' is blocked by security policy ({}). \
                  Do NOT ask the user for permission or retry this tool. \
                  Use an alternative approach or skip this action.",
-                tc.name, decision.reason
+                    tc.name, decision.reason
+                ),
+                false,
             );
 
             record_tool_call(ctx, tc, false, 0, error_content.clone(), None, None);
@@ -219,15 +225,15 @@ pub(crate) async fn execute_and_record_tool(
                     // Fall through to execute the tool.
                 }
                 Some(crate::chat::PermissionPromptResponse::Deny) | None => {
-                    let denied_msg = "[SYSTEM] User denied permission for this tool call.";
                     tracing::info!(
                         tool = %tc.name,
                         request_id = %request_id,
                         "user denied tool execution"
                     );
-                    let error_content = format!(
-                        "{denied_msg} \
-                         Do NOT retry this tool. Use an alternative approach."
+                    let error_content = system_tool_error_content(
+                        "User denied permission for this tool call. \
+                         Do NOT retry this tool. Use an alternative approach.",
+                        false,
                     );
 
                     record_tool_call(ctx, tc, false, 0, error_content.clone(), None, None);
@@ -284,11 +290,13 @@ pub(crate) async fn execute_and_record_tool(
     .await
     {
         Ok(output) => {
-            let full = serde_json::to_string(&output.content).unwrap_or_default();
+            let success = output.success;
+            let content = normalize_tool_output_content(output.success, output.content);
+            let full = serde_json::to_string(&content).unwrap_or_default();
             // For Browser/WebFetch: strip GUI-only fields (favicon_url,
             // action, search_engine, navigation) before sending to the
             // LLM. Only keep text + url/title for context.
-            let stripped = strip_url_tool_result(&tc.name, &output.content);
+            let stripped = strip_url_tool_result(&tc.name, &content);
             // Global safety net: ensure no tool result exceeds 10K chars in
             // the LLM path. Per-tool truncation handles most cases, but this
             // catches MCP tools, meta-tools, or any tool that slips through.
@@ -297,10 +305,12 @@ pub(crate) async fn execute_and_record_tool(
                 y_prompt::budget::MAX_TOOL_RESULT_CHARS,
             );
             let metadata = (!output.metadata.is_null()).then_some(output.metadata);
-            (true, full, stripped, metadata)
+            (success, full, stripped, metadata)
         }
         Err(e) => {
-            let msg = format!("{e}");
+            let content = tool_error_content(&e);
+            let msg = serde_json::to_string(&content)
+                .unwrap_or_else(|_| serde_json::json!({ "error": e.to_string() }).to_string());
             (false, msg.clone(), msg, None)
         }
     };
@@ -354,6 +364,29 @@ pub(crate) async fn execute_and_record_tool(
 
 fn tool_arguments_preview(tc: &ToolCallRequest) -> String {
     serde_json::to_string(&tc.arguments).unwrap_or_default()
+}
+
+fn normalize_tool_output_content(success: bool, content: serde_json::Value) -> serde_json::Value {
+    match content {
+        serde_json::Value::Object(_) => content,
+        value if success => serde_json::json!({ "result": value }),
+        value => serde_json::json!({ "error": value }),
+    }
+}
+
+fn system_tool_error_content(message: impl AsRef<str>, retryable: bool) -> String {
+    serde_json::json!({
+        "error": message.as_ref(),
+        "retryable": retryable,
+    })
+    .to_string()
+}
+
+fn tool_error_content(error: &y_core::tool::ToolError) -> serde_json::Value {
+    serde_json::json!({
+        "error": error.to_string(),
+        "retryable": error.is_retryable(),
+    })
 }
 
 fn emit_tool_result(
@@ -961,6 +994,7 @@ mod tests {
             provider_id: None,
             preferred_models: Vec::new(),
             provider_tags: Vec::new(),
+            fallback_provider_tags: Vec::new(),
             request_mode: y_core::provider::RequestMode::TextChat,
             working_directory: None,
             additional_read_dirs: Vec::new(),
@@ -990,5 +1024,51 @@ mod tests {
 
         assert!(answer.unwrap().contains("timed out"));
         assert!(pending_interactions.lock().await.is_empty());
+    }
+
+    #[test]
+    fn test_tool_error_content_is_json_object_for_llm_retry() {
+        let error = y_core::tool::ToolError::NotFound {
+            name: "NotARealTool".to_string(),
+        };
+
+        let content = tool_error_content(&error);
+
+        assert!(content.is_object());
+        assert_eq!(
+            content.get("error").and_then(serde_json::Value::as_str),
+            Some("tool not found: NotARealTool")
+        );
+        assert_eq!(
+            content
+                .get("retryable")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_normalize_failed_tool_string_wraps_error_object() {
+        let content = normalize_tool_output_content(
+            false,
+            serde_json::Value::String("permission denied".to_string()),
+        );
+
+        assert_eq!(content, serde_json::json!({ "error": "permission denied" }));
+    }
+
+    #[test]
+    fn test_system_tool_error_content_is_json_object() {
+        let content = system_tool_error_content("Tool call limit reached.", false);
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            parsed.get("error").and_then(serde_json::Value::as_str),
+            Some("Tool call limit reached.")
+        );
+        assert_eq!(
+            parsed.get("retryable").and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
     }
 }

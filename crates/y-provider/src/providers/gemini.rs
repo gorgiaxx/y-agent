@@ -164,8 +164,7 @@ impl GeminiProvider {
                 // If this is a tool result, wrap it as a function response.
                 if m.role == y_core::types::Role::Tool {
                     if let Some(ref tool_call_id) = m.tool_call_id {
-                        let response_value: serde_json::Value = serde_json::from_str(&m.content)
-                            .unwrap_or_else(|_| serde_json::json!({"result": m.content}));
+                        let response_value = parse_tool_result_response(&m.content);
                         return GeminiContent {
                             role: Some(role.to_string()),
                             parts: vec![GeminiPart::FunctionResponse {
@@ -639,6 +638,14 @@ fn collect_gemini_generated_images(
             | GeminiPart::FunctionResponse { .. } => None,
         })
         .collect()
+}
+
+fn parse_tool_result_response(content: &str) -> serde_json::Value {
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(value @ serde_json::Value::Object(_)) => value,
+        Ok(value) => serde_json::json!({ "result": value }),
+        Err(_) => serde_json::json!({ "result": content }),
+    }
 }
 
 fn function_call_to_tool_call(name: &str, arguments: serde_json::Value) -> ToolCallRequest {
@@ -1129,5 +1136,46 @@ mod tests {
         assert_eq!(contents.len(), 2);
         assert_eq!(contents[0].role.as_deref(), Some("user"));
         assert_eq!(contents[1].role.as_deref(), Some("model"));
+    }
+
+    #[test]
+    fn test_gemini_tool_result_string_is_wrapped_as_response_object() {
+        use y_core::types::{Message, Role};
+
+        let request = ChatRequest {
+            messages: vec![Message {
+                message_id: String::new(),
+                role: Role::Tool,
+                content: "\"tool failed\"".into(),
+                tool_call_id: Some("call_123".into()),
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: ToolCallingMode::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let contents = GeminiProvider::build_contents(&request);
+        match &contents[0].parts[0] {
+            GeminiPart::FunctionResponse { function_response } => {
+                assert_eq!(function_response.name, "call_123");
+                assert_eq!(
+                    function_response.response,
+                    serde_json::json!({ "result": "tool failed" })
+                );
+            }
+            _ => panic!("expected function response"),
+        }
     }
 }
