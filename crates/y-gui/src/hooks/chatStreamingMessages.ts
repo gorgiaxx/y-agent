@@ -183,81 +183,109 @@ export function mergeBackendMessagesPreservingLocalStreamState(
   backendMessages: Message[],
   cachedMessages: Message[],
 ): Message[] {
-  const backendById = new Map(
-    backendMessages.map((message) => [message.id, message]),
-  );
-  const usedBackendIds = new Set<string>();
-  const merged: Message[] = [];
+  const backendIndexById = new Map<string, number>();
+  for (let i = 0; i < backendMessages.length; i++) {
+    backendIndexById.set(backendMessages[i].id, i);
+  }
 
-  const pushBackendMessage = (message: Message) => {
-    if (usedBackendIds.has(message.id)) {
-      return;
+  const consumed = new Set<number>();
+  const matchedIdx: number[] = [];
+  let lastSeenIdx = -1;
+
+  const findBackendUserByContent = (content: string): number => {
+    for (let i = 0; i < backendMessages.length; i++) {
+      if (consumed.has(i)) continue;
+      const bm = backendMessages[i];
+      if (bm.role === 'user' && bm.content === content) {
+        consumed.add(i);
+        return i;
+      }
     }
-    usedBackendIds.add(message.id);
-    merged.push(message);
+    return -1;
   };
 
-  const takeMatchingBackendUser = (content: string): Message | null => {
-    const match = backendMessages.find((message) =>
-      message.role === 'user'
-      && message.content === content
-      && !usedBackendIds.has(message.id),
-    );
-    if (!match) {
-      return null;
+  const findAdjacentAssistant = (): number => {
+    for (let i = lastSeenIdx + 1; i < backendMessages.length; i++) {
+      if (consumed.has(i)) continue;
+      if (backendMessages[i].role === 'user') break;
+      if (backendMessages[i].role === 'assistant') return i;
     }
-    usedBackendIds.add(match.id);
-    return match;
+    return -1;
   };
 
   for (const message of cachedMessages) {
-    const backendMessage = backendById.get(message.id);
-    if (backendMessage) {
-      pushBackendMessage(backendMessage);
+    const directIdx = backendIndexById.get(message.id);
+    if (directIdx !== undefined && !consumed.has(directIdx)) {
+      matchedIdx.push(directIdx);
+      consumed.add(directIdx);
+      lastSeenIdx = Math.max(lastSeenIdx, directIdx);
       continue;
     }
 
     if (message.role === 'user' && message.id.startsWith('user-')) {
-      const matchingBackendUser = takeMatchingBackendUser(message.content);
-      merged.push(matchingBackendUser ?? message);
+      const idx = findBackendUserByContent(message.content);
+      if (idx >= 0) {
+        matchedIdx.push(idx);
+        lastSeenIdx = Math.max(lastSeenIdx, idx);
+      } else {
+        matchedIdx.push(-1);
+      }
       continue;
     }
 
     if (isLiveStreamingAssistantMessage(message)) {
-      merged.push(message);
+      matchedIdx.push(-1);
       continue;
     }
 
     if (isLocalTerminalAssistantMessage(message)) {
-      const backendTerminal = backendMessages.find((backendMessage) =>
-        !usedBackendIds.has(backendMessage.id)
-        && shouldReplaceLocalTerminalWithBackend(message, backendMessage),
-      );
-      if (backendTerminal) {
-        pushBackendMessage(backendTerminal);
+      const adj = findAdjacentAssistant();
+      if (adj >= 0
+        && shouldReplaceLocalTerminalWithBackend(message, backendMessages[adj])) {
+        matchedIdx.push(adj);
+        consumed.add(adj);
+        lastSeenIdx = Math.max(lastSeenIdx, adj);
       } else {
-        merged.push(message);
+        if (adj >= 0) consumed.add(adj);
+        matchedIdx.push(-1);
       }
-      let lastUsedIdx = -1;
-      for (let i = 0; i < backendMessages.length; i++) {
-        if (usedBackendIds.has(backendMessages[i].id)) {
-          lastUsedIdx = i;
+      continue;
+    }
+
+    matchedIdx.push(-1);
+  }
+
+  const merged: Message[] = [];
+  const emitted = new Set<number>();
+  let cursor = 0;
+
+  for (let ci = 0; ci < cachedMessages.length; ci++) {
+    const bIdx = matchedIdx[ci];
+
+    if (bIdx >= 0 && bIdx >= cursor) {
+      for (let i = cursor; i < bIdx; i++) {
+        if (!consumed.has(i) && !emitted.has(i)) {
+          merged.push(backendMessages[i]);
+          emitted.add(i);
         }
       }
-      for (let i = lastUsedIdx + 1; i < backendMessages.length; i++) {
-        const backendMessage = backendMessages[i];
-        if (usedBackendIds.has(backendMessage.id)) continue;
-        if (backendMessage.role === 'user') break;
-        if (backendMessage.role === 'assistant') {
-          usedBackendIds.add(backendMessage.id);
-          break;
-        }
+      merged.push(backendMessages[bIdx]);
+      emitted.add(bIdx);
+      cursor = bIdx + 1;
+    } else if (bIdx >= 0) {
+      if (!emitted.has(bIdx)) {
+        merged.push(backendMessages[bIdx]);
+        emitted.add(bIdx);
       }
+    } else {
+      merged.push(cachedMessages[ci]);
     }
   }
 
-  for (const message of backendMessages) {
-    pushBackendMessage(message);
+  for (let i = cursor; i < backendMessages.length; i++) {
+    if (!consumed.has(i) && !emitted.has(i)) {
+      merged.push(backendMessages[i]);
+    }
   }
 
   return merged;

@@ -664,4 +664,182 @@ describe('ensureStreamingAssistantMessage', () => {
       'backend-assistant-2',
     ]);
   });
+
+  it('interleaves backend assistants when cancelled message is absent from cache', () => {
+    const backendMessages: Message[] = [
+      {
+        id: 'backend-user-1',
+        role: 'user',
+        content: 'First message',
+        timestamp: '2026-04-24T00:00:00.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-assistant-1',
+        role: 'assistant',
+        content: 'First reply',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-user-2',
+        role: 'user',
+        content: 'Second message',
+        timestamp: '2026-04-24T00:00:02.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-assistant-2',
+        role: 'assistant',
+        content: 'Cancelled partial reply',
+        timestamp: '2026-04-24T00:00:03.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-user-3',
+        role: 'user',
+        content: 'Third message',
+        timestamp: '2026-04-24T00:00:04.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-assistant-3',
+        role: 'assistant',
+        content: 'Third reply',
+        timestamp: '2026-04-24T00:00:05.000Z',
+        tool_calls: [],
+      },
+    ];
+    const cachedMessages: Message[] = [
+      backendMessages[0],
+      backendMessages[1],
+      {
+        id: 'user-1714003202000',
+        role: 'user',
+        content: 'Second message',
+        timestamp: '2026-04-24T00:00:02.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'user-1714003204000',
+        role: 'user',
+        content: 'Third message',
+        timestamp: '2026-04-24T00:00:04.000Z',
+        tool_calls: [],
+      },
+    ];
+
+    const merged = mergeBackendMessagesPreservingLocalStreamState(
+      backendMessages,
+      cachedMessages,
+    );
+
+    expect(merged.map((m) => m.id)).toEqual([
+      'backend-user-1',
+      'backend-assistant-1',
+      'backend-user-2',
+      'backend-assistant-2',
+      'backend-user-3',
+      'backend-assistant-3',
+    ]);
+  });
+
+  it('does not place a distant backend assistant at a cancelled message position', () => {
+    const backendMessages: Message[] = [
+      {
+        id: 'backend-user-1',
+        role: 'user',
+        content: 'First message',
+        timestamp: '2026-04-24T00:00:00.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-assistant-1',
+        role: 'assistant',
+        content: 'First reply',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-user-2',
+        role: 'user',
+        content: 'Second message',
+        timestamp: '2026-04-24T00:00:02.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-user-3',
+        role: 'user',
+        content: 'Third message',
+        timestamp: '2026-04-24T00:00:04.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-assistant-3',
+        role: 'assistant',
+        content: 'Third reply',
+        timestamp: '2026-04-24T00:00:05.000Z',
+        tool_calls: [],
+        metadata: {
+          tool_results: [
+            {
+              name: 'FileRead',
+              arguments: '{}',
+              success: true,
+              duration_ms: 30,
+              result_preview: 'file content',
+            },
+          ],
+        },
+      },
+    ];
+    const cachedMessages: Message[] = [
+      backendMessages[0],
+      backendMessages[1],
+      {
+        id: 'user-1714003202000',
+        role: 'user',
+        content: 'Second message',
+        timestamp: '2026-04-24T00:00:02.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'cancelled-run-1',
+        role: 'assistant',
+        content: 'Partial text before cancel',
+        timestamp: '2026-04-24T00:00:03.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'user-1714003204000',
+        role: 'user',
+        content: 'Third message',
+        timestamp: '2026-04-24T00:00:04.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'streaming-session-1',
+        role: 'assistant',
+        content: 'streaming content',
+        timestamp: '2026-04-24T00:00:05.000Z',
+        tool_calls: [],
+        _streaming: true,
+      } as Message,
+    ];
+
+    const merged = mergeBackendMessagesPreservingLocalStreamState(
+      backendMessages,
+      cachedMessages,
+    );
+
+    expect(merged.map((m) => m.id)).toEqual([
+      'backend-user-1',
+      'backend-assistant-1',
+      'backend-user-2',
+      'cancelled-run-1',
+      'backend-user-3',
+      'streaming-session-1',
+      'backend-assistant-3',
+    ]);
+  });
 });
