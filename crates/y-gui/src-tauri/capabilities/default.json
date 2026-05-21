@@ -17,6 +17,7 @@
     "core:window:allow-close",
     "dialog:allow-open",
     "dialog:allow-save",
+    "core:menu:default",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     {
