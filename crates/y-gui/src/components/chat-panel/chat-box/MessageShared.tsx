@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type { Message } from '../../../types';
 import { escapeThinkTags, extractThinkTags } from './messageUtils';
+import { formatMessageTime } from '../../../utils/formatMessageTime';
 import './MessageShared.css';
 import './AssistantBubble.css';
 
@@ -229,10 +230,7 @@ export function AssistantMessageShell({
 
         <div className="message-footer">
           <span className="message-time">
-            {new Date(message.timestamp).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
+            {formatMessageTime(message.timestamp)}
           </span>
           {message.tokens && (
             <span className="message-tokens">

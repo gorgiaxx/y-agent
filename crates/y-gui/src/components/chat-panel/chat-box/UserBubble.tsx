@@ -23,6 +23,7 @@ import type { Message, Attachment } from '../../../types';
 import { logger } from '../../../lib';
 import { Avatar } from './MessageShared';
 import { HighlightedText } from './HighlightedText';
+import { formatMessageTime } from '../../../utils/formatMessageTime';
 import './UserBubble.css';
 
 
@@ -205,10 +206,7 @@ export function UserBubble({ message, messageIndex, onEdit, onUndo, onResend, on
 
         <div className="message-footer">
           <span className="message-time">
-            {new Date(message.timestamp).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
+            {formatMessageTime(message.timestamp)}
           </span>
           {message.tokens && (
             <span className="message-tokens">
