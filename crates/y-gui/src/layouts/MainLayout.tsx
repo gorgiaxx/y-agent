@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { DiagnosticsPanel } from '../components/observation/DiagnosticsPanel';
 import { ObservabilityPanel } from '../components/observation/ObservabilityPanel';
-import { Activity, Eye } from 'lucide-react';
+import { InfoPanel } from '../components/observation/InfoPanel';
+import { Activity, Eye, Info } from 'lucide-react';
 
 import { WindowControls } from '../components/ui/WindowControls';
 
@@ -20,6 +21,7 @@ import type { SettingsTab } from '../components/settings/SettingsPanel';
 import { useViewRouting, usePanelContext, useAgentEditorContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext, useAgentSessionsContext } from '../providers/AppContexts';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useObservability, type TimeRange } from '../hooks/useObservability';
+import { useInfoPanel } from '../hooks/useInfoPanel';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
 
 export function MainLayout() {
@@ -51,6 +53,8 @@ export function MainLayout() {
     active: panelCtx.obsOpen,
     timeRange: obsTimeRange,
   });
+
+  const infoData = useInfoPanel();
 
   // Re-fetch skills whenever the skills view becomes active so newly
   // imported skills appear immediately (the import runs asynchronously
@@ -202,6 +206,14 @@ export function MainLayout() {
             >
               <Eye size={16} />
             </button>
+            <button
+              className={`btn-header ${panelCtx.infoOpen ? 'active' : ''}${infoData.hasActivity ? ' has-activity' : ''}`}
+              onClick={() => panelCtx.setInfoOpen(!panelCtx.infoOpen)}
+              title="Info"
+              id="btn-info"
+            >
+              <Info size={16} />
+            </button>
             <WindowControls />
           </div>
         </header>
@@ -258,6 +270,17 @@ export function MainLayout() {
           onClose={() => panelCtx.setObsOpen(false)}
           timeRange={obsTimeRange}
           onTimeRangeChange={(r: string) => setObsTimeRange(r as TimeRange)}
+        />
+      )}
+
+      {panelCtx.infoOpen && (
+        <InfoPanel
+          modifiedFiles={infoData.modifiedFiles}
+          planStatus={infoData.planStatus}
+          loopStatus={infoData.loopStatus}
+          expanded={panelCtx.infoExpanded}
+          onToggleExpand={() => panelCtx.setInfoExpanded(!panelCtx.infoExpanded)}
+          onClose={() => panelCtx.setInfoOpen(false)}
         />
       )}
     </div>

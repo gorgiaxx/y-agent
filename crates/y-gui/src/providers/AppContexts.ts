@@ -56,6 +56,10 @@ export interface PanelState {
   setObsOpen: (open: boolean) => void;
   obsExpanded: boolean;
   setObsExpanded: (expanded: boolean) => void;
+  infoOpen: boolean;
+  setInfoOpen: (open: boolean) => void;
+  infoExpanded: boolean;
+  setInfoExpanded: (expanded: boolean) => void;
 }
 
 export interface AgentEditorState {

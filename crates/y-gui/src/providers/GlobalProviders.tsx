@@ -74,6 +74,8 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
   const [diagExpanded, setDiagExpanded] = useState(false);
   const [obsOpen, setObsOpen] = useState(false);
   const [obsExpanded, setObsExpanded] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoExpanded, setInfoExpanded] = useState(false);
 
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -165,7 +167,9 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
     diagExpanded, setDiagExpanded,
     obsOpen, setObsOpen,
     obsExpanded, setObsExpanded,
-  }), [diagOpen, diagExpanded, obsOpen, obsExpanded]);
+    infoOpen, setInfoOpen,
+    infoExpanded, setInfoExpanded,
+  }), [diagOpen, diagExpanded, obsOpen, obsExpanded, infoOpen, infoExpanded]);
 
   const agentEditorState = useMemo<AgentEditorState>(() => ({
     activeAgentId, setActiveAgentId,

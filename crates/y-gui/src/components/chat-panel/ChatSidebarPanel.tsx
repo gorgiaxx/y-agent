@@ -13,7 +13,9 @@ import {
   GitBranch,
 } from 'lucide-react';
 import { platform } from '../../lib';
+import { isTauriEnvironment } from '../../lib/platform';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
+import { showSessionContextMenu, showWorkspaceContextMenu } from './nativeContextMenu';
 import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { PanelToolbar, type SortField, type PanelToolbarAction } from '../common/PanelToolbar';
@@ -477,6 +479,39 @@ export function ChatSidebarPanel({
     setRenameValue('');
   }, []);
 
+  const openNativeSessionMenu = useCallback((session: SessionInfo) => {
+    const isBatchMode = selectedIds.size > 1 && selectedIds.has(session.id);
+    const batchIds = isBatchMode ? [...selectedIds] : null;
+    const wsId = sessionWorkspaceMap[session.id] ?? null;
+    showSessionContextMenu({
+      session,
+      workspaces: sortedWorkspaces,
+      currentWorkspaceId: wsId,
+      hasFork: !!onForkSession,
+      batchIds,
+      onAssignSession,
+      onUnassignSession,
+      onRename: startRename,
+      onFork: onForkSession ?? (() => {}),
+      onDelete: onDeleteSession,
+      onBatchDelete: handleBatchDelete,
+    });
+  }, [
+    selectedIds, sessionWorkspaceMap, sortedWorkspaces,
+    onForkSession, onAssignSession, onUnassignSession,
+    onDeleteSession, handleBatchDelete, startRename,
+  ]);
+
+  const openNativeWorkspaceMenu = useCallback((workspace: WorkspaceInfo) => {
+    showWorkspaceContextMenu({
+      workspace,
+      canReveal: platform.capabilities.revealFileManager,
+      onEdit: (ws) => setEditingWorkspace(ws),
+      onReveal: (path) => platform.revealInFileManager(path),
+      onDelete: onDeleteWorkspace,
+    });
+  }, [onDeleteWorkspace]);
+
   const sessionById = useMemo(
     () => new Map(sessions.map((session) => [session.id, session])),
     [sessions],
@@ -578,14 +613,22 @@ export function ChatSidebarPanel({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            toggleMenu({ kind: 'session', id: session.id }, e.currentTarget as HTMLElement);
+            if (isTauriEnvironment()) {
+              openNativeSessionMenu(session);
+            } else {
+              toggleMenu({ kind: 'session', id: session.id }, e.currentTarget as HTMLElement);
+            }
           }}
           actions={
             <button
               className="btn-session-action"
               onClick={(e) => {
                 e.stopPropagation();
-                toggleMenu({ kind: 'session', id: session.id }, e.currentTarget as HTMLElement);
+                if (isTauriEnvironment()) {
+                  openNativeSessionMenu(session);
+                } else {
+                  toggleMenu({ kind: 'session', id: session.id }, e.currentTarget as HTMLElement);
+                }
               }}
               title="Session actions"
             >
@@ -825,7 +868,11 @@ export function ChatSidebarPanel({
                         onContextMenu={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
+                          if (isTauriEnvironment()) {
+                            openNativeWorkspaceMenu(workspace);
+                          } else {
+                            toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
+                          }
                         }}
                         style={{ cursor: 'pointer' }}
                       >
@@ -850,7 +897,11 @@ export function ChatSidebarPanel({
                           className="panel-group-action-btn"
                           onClick={(e) => {
                             e.stopPropagation();
-                            toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
+                            if (isTauriEnvironment()) {
+                              openNativeWorkspaceMenu(workspace);
+                            } else {
+                              toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
+                            }
                           }}
                           title="Workspace options"
                         >

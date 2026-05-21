@@ -1,9 +1,5 @@
 import { useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { isTauriEnvironment } from '../../../lib/platform';
-
-const isMacOS = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
-const TRAFFIC_LIGHT_ZONE = { width: 80, height: 40 };
 
 export interface ContextMenuItem {
   label: string;
@@ -33,13 +29,6 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     if (y + rect.height > vh) y = vh - rect.height - 8;
     if (x < 0) x = 8;
     if (y < 0) y = 8;
-    if (isMacOS && isTauriEnvironment()) {
-      const overlapX = x < TRAFFIC_LIGHT_ZONE.width && y < TRAFFIC_LIGHT_ZONE.height;
-      const overlapY = y < TRAFFIC_LIGHT_ZONE.height && x < TRAFFIC_LIGHT_ZONE.width;
-      if (overlapX || overlapY) {
-        y = TRAFFIC_LIGHT_ZONE.height + 4;
-      }
-    }
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;
   }, [position]);
