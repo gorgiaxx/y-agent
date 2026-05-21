@@ -16,6 +16,7 @@ const LIFECYCLE_NOOP_COMMANDS = new Set([
 const UNSUPPORTED_WEB_COMMANDS = new Set([
   'skill_open_folder',
   'open_path_in_ide',
+  'save_remote_image',
 ]);
 
 const GUI_CONFIG_KEY = 'y-agent-gui-config';

@@ -97,6 +97,7 @@ export function StreamingBubble({ message, toolResults, streamSegments }: Stream
           <ThinkContentBlock
             content={effectiveContent}
             markdownComponents={markdownComponents}
+            isStreaming
           />
         ) : null
       )}

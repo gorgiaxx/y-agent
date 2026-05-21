@@ -10,6 +10,7 @@ const WEB_LIFECYCLE_COMMANDS = new Set([
 const DESKTOP_ONLY_COMMANDS = new Set([
   'skill_open_folder',
   'open_path_in_ide',
+  'save_remote_image',
 ]);
 
 function readSource(path: string): string {

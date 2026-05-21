@@ -5,7 +5,6 @@ import type { InterleavedSegment } from '../../../hooks/useInterleavedSegments';
 import { ToolCallCard } from './ToolCallCard';
 import { ThinkingCard } from './ThinkingCard';
 import { ThinkContentBlock } from './ThinkContentBlock';
-import { extractThinkTags } from './messageUtils';
 
 type ToolStatus = 'running' | 'success' | 'error';
 
@@ -26,13 +25,12 @@ export function XmlSegmentList({ segments, toolResultsMap, markdownComponents, i
     <>
       {segments.map((seg, idx) => {
         if (seg.type === 'text') {
-          const think = isStreaming ? extractThinkTags(seg.text) : null;
           return (
             <ThinkContentBlock
               key={`text-${idx}`}
               content={seg.text}
               markdownComponents={markdownComponents}
-              isStreaming={think?.isThinkingIncomplete}
+              isStreaming={isStreaming}
               className="markdown-body"
             />
           );

@@ -349,3 +349,264 @@
 .code-block-copy:hover {
   color: var(--text-primary);
 }
+
+/* ==========================================================================
+   Markdown link renderers
+   ========================================================================== */
+
+.md-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+  cursor: pointer;
+}
+
+.md-link:hover {
+  border-bottom-color: var(--accent);
+}
+
+.md-link-plain {
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   File path tag (inline tag with actions)
+   ========================================================================== */
+
+.md-file-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-code);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  max-width: 100%;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.md-file-tag:hover {
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--border-active, rgba(255, 255, 255, 0.15));
+}
+
+.md-file-tag-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.md-file-tag:hover .md-file-tag-icon {
+  color: var(--accent);
+}
+
+.md-file-tag-name {
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.md-file-tag-path {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  padding-left: var(--space-xs);
+  border-left: 1px solid var(--border);
+}
+
+.md-file-tag-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding-left: var(--space-xs);
+  border-left: 1px solid var(--border);
+}
+
+.md-file-tag:hover .md-file-tag-actions {
+  display: flex;
+}
+
+.md-file-tag-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.md-file-tag-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-active, rgba(255, 255, 255, 0.15));
+  background: var(--toolcall-tag-background-hover, rgba(255, 255, 255, 0.06));
+}
+
+/* ==========================================================================
+   Markdown image renderers
+   ========================================================================== */
+
+.md-image-wrapper {
+  display: block;
+  margin: 0.6em 0;
+  position: relative;
+}
+
+.md-image {
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  object-fit: contain;
+  transition: opacity 0.3s ease;
+}
+
+.md-image-loading {
+  opacity: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.md-image-loaded {
+  opacity: 1;
+  position: relative;
+}
+
+.md-image-loaded:hover {
+  opacity: 0.92;
+}
+
+.md-image-skeleton {
+  display: block;
+  width: 320px;
+  height: 180px;
+  border-radius: var(--radius-md);
+  background: var(--surface-tertiary);
+  overflow: hidden;
+  position: relative;
+}
+
+.md-image-skeleton-shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--surface-hover) 50%,
+    transparent 100%
+  );
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.md-image-path {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-image-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+
+/* ==========================================================================
+   Context menu
+   ========================================================================== */
+
+.md-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--surface-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  animation: contextMenuIn 0.1s ease-out;
+}
+
+@keyframes contextMenuIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.md-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.md-context-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.md-context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.md-context-menu-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}

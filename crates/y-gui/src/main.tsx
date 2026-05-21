@@ -6,7 +6,9 @@ import './styles/index.css'
 import App from './App'
 
 if (!import.meta.env.DEV) {
-  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('contextmenu', (e) => {
+    if (!e.defaultPrevented) e.preventDefault();
+  });
 
   document.addEventListener('keydown', (e) => {
     const isDevToolsShortcut =

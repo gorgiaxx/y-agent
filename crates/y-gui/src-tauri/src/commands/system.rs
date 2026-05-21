@@ -473,6 +473,24 @@ pub async fn health_check() -> Result<String, String> {
     Ok("ok".to_string())
 }
 
+/// Download a remote image and save it to the specified local path.
+#[tauri::command]
+pub async fn save_remote_image(url: String, dest: String) -> Result<(), String> {
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Failed to fetch image: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
+    std::fs::write(&dest, &bytes)
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+    Ok(())
+}
+
 /// Heartbeat pong from the frontend webview.
 ///
 /// Called periodically by the frontend to signal that the `WKWebView` content

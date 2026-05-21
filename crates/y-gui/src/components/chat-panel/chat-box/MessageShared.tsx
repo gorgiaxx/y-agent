@@ -103,13 +103,17 @@ export const CodeBlock = memo(function CodeBlock({
 
 const REMARK_PLUGINS = [remarkGfm];
 
+function urlTransform(url: string): string {
+  return url;
+}
+
 /** Render a markdown text segment. */
 export const MarkdownSegment = memo(function MarkdownSegment(
   { text, components }: { text: string; components: Components },
 ) {
   if (!text.trim()) return null;
   return (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform} components={components}>
       {escapeThinkTags(text)}
     </ReactMarkdown>
   );

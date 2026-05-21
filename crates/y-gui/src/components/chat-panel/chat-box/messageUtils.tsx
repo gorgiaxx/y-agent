@@ -1,16 +1,11 @@
 import React from 'react';
 import type { Components } from 'react-markdown';
-import { logger } from '../../../lib';
-import { platform } from '../../../lib/platform';
 import { CodeBlock } from './MessageShared';
 import { MermaidBlock } from './MermaidBlock';
 import { HighlightedText } from './HighlightedText';
+import { MarkdownLink, MarkdownImage } from './MarkdownRenderers';
 
 /* ---- makeMarkdownComponents ---- */
-
-function isAbsoluteWebUrl(href: unknown): href is string {
-  return typeof href === 'string' && /^https?:\/\//i.test(href);
-}
 
 interface MarkdownAstNode {
   position?: {
@@ -63,29 +58,13 @@ export function makeMarkdownComponents(
     },
     a({ href, children, node, ...props }) {
       void node;
-
-      const isWebUrl = isAbsoluteWebUrl(href);
-      const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
-        if (!isWebUrl) return;
-
-        event.preventDefault();
-        event.stopPropagation();
-        platform.openUrl(href).catch((err) =>
-          logger.error('[MessageMarkdown] failed to open URL:', href, err),
-        );
-      };
-
-      return (
-        <a
-          {...props}
-          href={href}
-          target={isWebUrl ? '_blank' : undefined}
-          rel={isWebUrl ? 'noopener noreferrer' : undefined}
-          onClick={handleClick}
-        >
-          {children}
-        </a>
-      );
+      void props;
+      return <MarkdownLink href={href}>{children}</MarkdownLink>;
+    },
+    img({ src, alt, node, ...props }) {
+      void node;
+      void props;
+      return <MarkdownImage src={src} alt={alt} />;
     },
     code({ className, children, node, ...props }) {
       const astNode = toMarkdownAstNode(node);

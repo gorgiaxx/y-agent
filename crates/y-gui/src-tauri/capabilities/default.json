@@ -16,11 +16,12 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "dialog:allow-open",
+    "dialog:allow-save",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://**" }, { "url": "http://**" }]
+      "allow": [{ "url": "https://**" }, { "url": "http://**" }, { "url": "file://**" }]
     }
   ]
 }

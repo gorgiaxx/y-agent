@@ -38,6 +38,8 @@ export interface Platform {
   openUrl(url: string): Promise<void>;
   revealInFileManager(path: string): Promise<void>;
   openPathInIde(path: string): Promise<void>;
+  convertFileSrc(filePath: string): string;
+  saveRemoteImage(url: string): Promise<void>;
   getAppVersion(): Promise<string>;
   isTauri(): boolean;
 }
@@ -91,6 +93,27 @@ class TauriPlatform implements Platform {
   async openPathInIde(path: string): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('open_path_in_ide', { path });
+  }
+
+  convertFileSrc(filePath: string): string {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      return (window as unknown as { __TAURI_INTERNALS__: { convertFileSrc: (p: string, protocol?: string) => string } })
+        .__TAURI_INTERNALS__.convertFileSrc(filePath, 'asset');
+    }
+    const encoded = encodeURIComponent(filePath);
+    return `http://asset.localhost/${encoded}`;
+  }
+
+  async saveRemoteImage(url: string): Promise<void> {
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const { invoke } = await import('@tauri-apps/api/core');
+    const filename = url.split('/').pop()?.split('?')[0] || 'image';
+    const dest = await save({
+      defaultPath: filename,
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] }],
+    });
+    if (!dest) return;
+    await invoke('save_remote_image', { url, dest });
   }
 
   async getAppVersion(): Promise<string> {
@@ -182,6 +205,23 @@ class WebPlatform implements Platform {
 
   async openPathInIde(): Promise<void> {
     throw new Error('Opening files in a local IDE is not supported in the browser');
+  }
+
+  convertFileSrc(filePath: string): string {
+    return filePath;
+  }
+
+  async saveRemoteImage(url: string): Promise<void> {
+    const filename = url.split('/').pop()?.split('?')[0] || 'image';
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
   }
 
   async getAppVersion(): Promise<string> {

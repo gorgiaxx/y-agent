@@ -41,7 +41,7 @@ export const ThinkContentBlock = memo(function ThinkContentBlock({
       {think.thinkContent && (
         <ThinkingCard
           content={think.thinkContent}
-          isStreaming={isStreaming || think.isThinkingIncomplete}
+          isStreaming={isStreaming && think.isThinkingIncomplete}
         />
       )}
       {think.strippedContent.trim() && (

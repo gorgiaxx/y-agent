@@ -343,6 +343,7 @@ pub fn run() {
             // System
             commands::system::system_status,
             commands::system::health_check,
+            commands::system::save_remote_image,
             commands::system::provider_list,
             commands::system::show_window,
             commands::system::heartbeat_pong,
