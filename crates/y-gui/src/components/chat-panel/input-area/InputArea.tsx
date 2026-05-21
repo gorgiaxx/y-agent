@@ -446,6 +446,25 @@ export function InputArea(props: InputAreaProps) {
     }
   }, [onSessionPromptApplied, sessionId]);
 
+  const clearSessionPrompt = useCallback(async () => {
+    if (!sessionId) return;
+    setPromptTemplateApplying('__clear__');
+    try {
+      const config: SessionPromptConfig = {
+        system_prompt: null,
+        prompt_section_ids: [],
+        template_id: null,
+      };
+      await transport.invoke('session_set_prompt_config', { sessionId, config });
+      onSessionPromptApplied?.();
+      setPromptPickerOpen(false);
+    } catch (e) {
+      logger.error('[InputArea] prompt clear error:', e);
+    } finally {
+      setPromptTemplateApplying(null);
+    }
+  }, [onSessionPromptApplied, sessionId]);
+
   const handleSend = useCallback(() => {
     if (disabled) return;
     // Prevent double-send from rapid Enter key events (common on Windows).
@@ -968,6 +987,23 @@ export function InputArea(props: InputAreaProps) {
                       </button>
                     </div>
                     <div className="toolbar-prompt-items">
+                      {hasCustomPrompt && (
+                        <button
+                          className="toolbar-prompt-item toolbar-prompt-item--clear"
+                          onClick={() => void clearSessionPrompt()}
+                          disabled={promptTemplateApplying !== null}
+                        >
+                          <span className="toolbar-prompt-item-icon">
+                            <Eraser size={13} />
+                          </span>
+                          <span className="toolbar-prompt-item-body">
+                            <span className="toolbar-prompt-item-name">Use default prompt</span>
+                          </span>
+                          {promptTemplateApplying === '__clear__' && (
+                            <Loader2 size={12} className="compacting-spinner" />
+                          )}
+                        </button>
+                      )}
                       {promptTemplatesLoading ? (
                         <div className="toolbar-prompt-empty">Loading...</div>
                       ) : promptTemplates.length === 0 ? (
@@ -986,9 +1022,6 @@ export function InputArea(props: InputAreaProps) {
                             </span>
                             <span className="toolbar-prompt-item-body">
                               <span className="toolbar-prompt-item-name">{template.name}</span>
-                              <span className="toolbar-prompt-item-meta">
-                                {template.prompt_section_ids.length} sections
-                              </span>
                             </span>
                             {promptTemplateApplying === template.id && (
                               <Loader2 size={12} className="compacting-spinner" />
