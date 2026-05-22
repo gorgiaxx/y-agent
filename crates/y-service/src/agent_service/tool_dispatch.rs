@@ -590,6 +590,21 @@ pub(crate) async fn set_session_permission_mode(
     modes.insert(session_id.clone(), mode);
 }
 
+/// Resolve the root session ID for file history tracking.
+///
+/// Sub-agent file edits must be tracked under the root session's
+/// `FileHistoryManager` so that rewind operates correctly for
+/// Plan/Loop multi-agent executions.
+async fn resolve_root_session_for_history(
+    container: &ServiceContainer,
+    session_id: &SessionId,
+) -> SessionId {
+    match container.session_manager.get_session(session_id).await {
+        Ok(node) => node.root_id,
+        Err(_) => session_id.clone(),
+    }
+}
+
 /// Capture file state before mutating tools so rewind can restore it.
 async fn track_file_history(
     container: &ServiceContainer,
@@ -606,12 +621,9 @@ async fn track_file_history(
         _ => None,
     };
     if let Some(ref path) = file_path {
-        crate::rewind::RewindService::track_edit(
-            &container.file_history_managers,
-            session_id,
-            path,
-        )
-        .await;
+        let root_id = resolve_root_session_for_history(container, session_id).await;
+        crate::rewind::RewindService::track_edit(&container.file_history_managers, &root_id, path)
+            .await;
     }
 }
 

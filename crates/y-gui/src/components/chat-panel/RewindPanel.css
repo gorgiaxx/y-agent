@@ -201,3 +201,20 @@
 .rewind-stat--created {
   color: var(--success);
 }
+
+/* Synthetic phase/round points */
+.rewind-point--plan_phase,
+.rewind-point--loop_round {
+  border-left: 3px solid var(--accent);
+  padding-left: calc(var(--space-md) - 3px);
+}
+
+.rewind-point--plan_phase .rewind-point-turn,
+.rewind-point--loop_round .rewind-point-turn {
+  color: var(--text-secondary);
+}
+
+.rewind-point-type-icon {
+  margin-right: 4px;
+  vertical-align: -1px;
+}

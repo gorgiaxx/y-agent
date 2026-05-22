@@ -6,7 +6,7 @@
 // executes the rewind and reloads messages.
 
 import { useCallback, useEffect, useRef } from 'react';
-import { X, RotateCcw, FileEdit, FilePlus, Loader2 } from 'lucide-react';
+import { X, RotateCcw, FileEdit, FilePlus, Loader2, GitBranch } from 'lucide-react';
 import type { RewindPointInfo } from '../../hooks/useRewind';
 import './RewindPanel.css';
 
@@ -111,39 +111,47 @@ export function RewindPanel({
 
         {!isLoading && !isRewinding && points.length > 0 && (
           <div className="rewind-list">
-            {points.map((point) => (
-              <button
-                key={point.message_id}
-                className="rewind-point"
-                onClick={() => onSelect(point)}
-              >
-                <div className="rewind-point-header">
-                  <span className="rewind-point-turn">
-                    Turn {point.turn_number}
-                  </span>
-                  <span className="rewind-point-time">
-                    {formatTimestamp(point.timestamp)}
-                  </span>
-                </div>
-                <div className="rewind-point-preview">
-                  {point.message_preview}
-                </div>
-                <div className="rewind-point-stats">
-                  {point.diff_stats.files_changed > 0 && (
-                    <span className="rewind-stat rewind-stat--changed">
-                      <FileEdit size={12} />
-                      {point.diff_stats.files_changed} changed
+            {points.map((point) => {
+              const isSynthetic = point.point_type === 'plan_phase' || point.point_type === 'loop_round';
+              const pointClass = isSynthetic
+                ? `rewind-point rewind-point--${point.point_type}`
+                : 'rewind-point';
+
+              return (
+                <button
+                  key={point.message_id}
+                  className={pointClass}
+                  onClick={() => onSelect(point)}
+                >
+                  <div className="rewind-point-header">
+                    <span className="rewind-point-turn">
+                      {isSynthetic && <GitBranch size={11} className="rewind-point-type-icon" />}
+                      {point.turn_number > 0 ? `Turn ${point.turn_number}` : ''}
                     </span>
-                  )}
-                  {point.diff_stats.files_created > 0 && (
-                    <span className="rewind-stat rewind-stat--created">
-                      <FilePlus size={12} />
-                      {point.diff_stats.files_created} created
+                    <span className="rewind-point-time">
+                      {formatTimestamp(point.timestamp)}
                     </span>
-                  )}
-                </div>
-              </button>
-            ))}
+                  </div>
+                  <div className="rewind-point-preview">
+                    {point.message_preview}
+                  </div>
+                  <div className="rewind-point-stats">
+                    {point.diff_stats.files_changed > 0 && (
+                      <span className="rewind-stat rewind-stat--changed">
+                        <FileEdit size={12} />
+                        {point.diff_stats.files_changed} changed
+                      </span>
+                    )}
+                    {point.diff_stats.files_created > 0 && (
+                      <span className="rewind-stat rewind-stat--created">
+                        <FilePlus size={12} />
+                        {point.diff_stats.files_created} created
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

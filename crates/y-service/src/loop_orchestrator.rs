@@ -390,6 +390,25 @@ impl LoopOrchestrator {
             image_generation_options: None,
         };
 
+        // Create a per-round snapshot under the parent session's file history
+        // so that rewind can restore to individual round boundaries.
+        if let Err(e) = crate::rewind::RewindService::ensure_manager(
+            &container.file_history_managers,
+            parent_session_id,
+            &container.data_dir,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "failed to ensure file history manager for loop round");
+        }
+        let snapshot_id = format!("loop-round-{}-{}", round_num, child_session.id.as_str());
+        crate::rewind::RewindService::make_snapshot(
+            &container.file_history_managers,
+            parent_session_id,
+            &snapshot_id,
+        )
+        .await;
+
         AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
             .await
             .map_err(|e| map_loop_agent_error("loop-executor", &e))?;

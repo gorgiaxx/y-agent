@@ -1698,6 +1698,26 @@ impl PlanOrchestrator {
         );
 
         let phase_name = format!("phase-{phase_num}");
+
+        // Create a per-phase snapshot under the parent session's file history
+        // so that rewind can restore to individual phase boundaries.
+        if let Err(e) = crate::rewind::RewindService::ensure_manager(
+            &container.file_history_managers,
+            parent_session_id,
+            &container.data_dir,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "failed to ensure file history manager for plan phase");
+        }
+        let snapshot_id = format!("plan-phase-{}-{}", phase_num, child_session.id.as_str());
+        crate::rewind::RewindService::make_snapshot(
+            &container.file_history_managers,
+            parent_session_id,
+            &snapshot_id,
+        )
+        .await;
+
         let result =
             AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
                 .await

@@ -22,6 +22,7 @@ export interface RewindPointInfo {
   message_preview: string;
   timestamp: number;
   diff_stats: DiffStats;
+  point_type?: 'turn' | 'plan_phase' | 'loop_round';
 }
 
 export interface RewindConflict {

@@ -63,7 +63,7 @@ pub enum RewindError {
 pub struct RewindPointInfo {
     /// Message ID of the user message at this boundary.
     pub message_id: String,
-    /// Turn number (1-indexed).
+    /// Turn number (1-indexed). 0 for synthetic phase/round points.
     pub turn_number: u32,
     /// Preview of the user message.
     pub message_preview: String,
@@ -71,6 +71,8 @@ pub struct RewindPointInfo {
     pub timestamp: i64,
     /// Diff stats relative to the current state.
     pub diff_stats: DiffStats,
+    /// Type of rewind point: `turn`, `plan_phase`, or `loop_round`.
+    pub point_type: String,
 }
 
 /// Result of a completed rewind operation.
@@ -155,6 +157,11 @@ impl RewindService {
         let mut points: Vec<RewindPointInfo> = snapshot_data
             .iter()
             .filter_map(|(message_id, timestamp)| {
+                // Skip synthetic phase/round snapshots here; handled below.
+                if is_synthetic_snapshot_id(message_id) {
+                    return None;
+                }
+
                 let diff_stats = diff_map.get(message_id).unwrap_or(&empty_stats);
 
                 if diff_stats.files_changed == 0 && diff_stats.files_created == 0 {
@@ -185,12 +192,33 @@ impl RewindService {
                     message_preview: preview,
                     timestamp: *timestamp,
                     diff_stats: diff_stats.clone(),
+                    point_type: "turn".to_string(),
                 })
             })
             .collect();
 
-        // Reverse to show most recent first.
-        points.reverse();
+        // Include synthetic phase/round snapshots that have file changes.
+        for (message_id, timestamp) in &snapshot_data {
+            if !is_synthetic_snapshot_id(message_id) {
+                continue;
+            }
+            let diff_stats = diff_map.get(message_id).unwrap_or(&empty_stats);
+            if diff_stats.files_changed == 0 && diff_stats.files_created == 0 {
+                continue;
+            }
+            let (preview, point_type) = format_synthetic_snapshot(message_id);
+            points.push(RewindPointInfo {
+                message_id: message_id.clone(),
+                turn_number: 0,
+                message_preview: preview,
+                timestamp: *timestamp,
+                diff_stats: diff_stats.clone(),
+                point_type,
+            });
+        }
+
+        // Sort by timestamp descending (most recent first).
+        points.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
         Ok(points)
     }
@@ -211,6 +239,19 @@ impl RewindService {
             target = target_message_id,
             "executing rewind"
         );
+
+        // For synthetic phase/round snapshots, only restore files.
+        // Transcript and checkpoints stay intact (the user can still
+        // rewind the entire turn separately).
+        if is_synthetic_snapshot_id(target_message_id) {
+            let report = Self::restore_files_only(container, session_id, target_message_id).await?;
+            return Ok(RewindResult {
+                target_message_id: target_message_id.to_string(),
+                messages_removed: 0,
+                checkpoints_invalidated: 0,
+                file_report: report,
+            });
+        }
 
         // 1. Find the target checkpoint to determine truncation point.
         let checkpoints = container
@@ -429,11 +470,23 @@ impl RewindService {
             .await
             .unwrap_or_default();
 
-        let valid_ids: HashSet<String> = transcript
+        let mut valid_ids: HashSet<String> = transcript
             .iter()
             .filter(|m| m.role == Role::User)
             .map(|m| m.message_id.clone())
             .collect();
+
+        // Preserve synthetic phase/round snapshots -- they are not in the
+        // transcript but remain valid as long as the parent turn exists.
+        let managers_read = container.file_history_managers.read().await;
+        if let Some(mgr) = managers_read.get(session_id) {
+            for snap in mgr.snapshots() {
+                if is_synthetic_snapshot_id(&snap.message_id) {
+                    valid_ids.insert(snap.message_id.clone());
+                }
+            }
+        }
+        drop(managers_read);
 
         let mut managers = container.file_history_managers.write().await;
         if let Some(mgr) = managers.get_mut(session_id) {
@@ -503,5 +556,28 @@ impl RewindService {
             mgr.cleanup();
             info!(session = %session_id.0, "file history cleaned up");
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Synthetic snapshot helpers
+// ---------------------------------------------------------------------------
+
+const PLAN_PHASE_PREFIX: &str = "plan-phase-";
+const LOOP_ROUND_PREFIX: &str = "loop-round-";
+
+fn is_synthetic_snapshot_id(id: &str) -> bool {
+    id.starts_with(PLAN_PHASE_PREFIX) || id.starts_with(LOOP_ROUND_PREFIX)
+}
+
+fn format_synthetic_snapshot(snapshot_id: &str) -> (String, String) {
+    if let Some(rest) = snapshot_id.strip_prefix(PLAN_PHASE_PREFIX) {
+        let phase_num = rest.split('-').next().unwrap_or("?");
+        (format!("Plan phase {phase_num}"), "plan_phase".to_string())
+    } else if let Some(rest) = snapshot_id.strip_prefix(LOOP_ROUND_PREFIX) {
+        let round_num = rest.split('-').next().unwrap_or("?");
+        (format!("Loop round {round_num}"), "loop_round".to_string())
+    } else {
+        (snapshot_id.to_string(), "turn".to_string())
     }
 }
