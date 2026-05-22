@@ -310,6 +310,8 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
                          body: (a) => ({ request_id: arg(a, 'requestId', 'request_id'), decision: arg(a, 'decision') }) },
   chat_answer_plan_review: { method: 'POST', path: '/api/v1/chat/answer-plan-review',
                          body: (a) => ({ review_id: arg(a, 'reviewId', 'review_id'), decision: arg(a, 'decision'), feedback: arg(a, 'feedback') }) },
+  session_restore_pending_reviews: { method: 'POST', path: '/api/v1/chat/restore-pending-reviews',
+                         body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id') }) },
   session_last_turn_meta: { method: 'GET', path: pathWith('/api/v1/chat/last-turn-meta/{sessionId}', 'sessionId') },
   // -- Agents --
   agent_list:          { method: 'GET',  path: '/api/v1/agents' },
