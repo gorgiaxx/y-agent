@@ -3067,6 +3067,7 @@ mod tests {
         let meta = build_plan_execution_metadata(
             std::path::Path::new("/tmp/gui-plan.md"),
             &plan,
+            "test-run-id",
             1,
             0,
             &phase_results,
