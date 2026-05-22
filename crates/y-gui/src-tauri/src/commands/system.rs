@@ -486,8 +486,7 @@ pub async fn save_remote_image(url: String, dest: String) -> Result<(), String> 
         .bytes()
         .await
         .map_err(|e| format!("Failed to read response body: {e}"))?;
-    std::fs::write(&dest, &bytes)
-        .map_err(|e| format!("Failed to write file: {e}"))?;
+    std::fs::write(&dest, &bytes).map_err(|e| format!("Failed to write file: {e}"))?;
     Ok(())
 }
 
