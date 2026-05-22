@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -13,6 +13,8 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import { useResolvedTheme } from '../../../../hooks/useTheme';
+import { SessionsContext } from '../../../../providers/AppContexts';
+import { transport } from '../../../../lib';
 import { formatDuration } from '../../../../utils/formatDuration';
 import { MarkdownSegment } from '../MessageShared';
 import { makeMarkdownComponents } from '../messageUtils';
@@ -28,6 +30,7 @@ import {
 import { DetailSections } from './shared';
 import { PlanReviewInline } from './PlanReviewInline';
 import { usePlanReview } from '../../planReviewState';
+import { showPlanStepContextMenu } from './planStepContextMenu';
 import type { ToolRendererProps } from './types';
 
 function formatPlanTaskStatus(status: string): string {
@@ -79,14 +82,31 @@ function renderMultilineText(content: string): ReactNode {
 export function PlanTaskItem({
   task,
   defaultExpanded = false,
+  planRunId,
+  sessionId,
+  onRetryFromHere,
 }: {
   task: PlanTaskDisplay;
   defaultExpanded?: boolean;
+  planRunId?: string;
+  sessionId?: string;
+  onRetryFromHere?: (planRunId: string, taskId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const statusLabel = formatPlanTaskStatus(task.status);
   const hasDetail = !!task.description || task.keyFiles.length > 0
     || task.acceptanceCriteria.length > 0 || task.dependsOn.length > 0;
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (!planRunId || !sessionId || !onRetryFromHere || !task.id) return;
+    e.preventDefault();
+    showPlanStepContextMenu({
+      planRunId,
+      sessionId,
+      task,
+      onRetryFromHere,
+    });
+  }, [planRunId, sessionId, task, onRetryFromHere]);
 
   const headerContent = (
     <>
@@ -117,12 +137,13 @@ export function PlanTaskItem({
           type="button"
           className="tool-call-plan-task-toggle"
           onClick={() => setExpanded(!expanded)}
+          onContextMenu={handleContextMenu}
           aria-expanded={expanded}
         >
           {headerContent}
         </button>
       ) : (
-        <div className="tool-call-plan-task-static">{headerContent}</div>
+        <div className="tool-call-plan-task-static" onContextMenu={handleContextMenu}>{headerContent}</div>
       )}
       {expanded && hasDetail && (
         <div className="tool-call-plan-task-detail">
@@ -153,7 +174,17 @@ export function PlanTaskItem({
   );
 }
 
-function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
+function PlanTaskList({
+  tasks,
+  planRunId,
+  sessionId,
+  onRetryFromHere,
+}: {
+  tasks: PlanTaskDisplay[];
+  planRunId?: string;
+  sessionId?: string;
+  onRetryFromHere?: (planRunId: string, taskId: string) => void;
+}) {
   if (tasks.length === 0) {
     return <div className="tool-call-plan-empty">No tasks were extracted.</div>;
   }
@@ -171,6 +202,9 @@ function PlanTaskList({ tasks }: { tasks: PlanTaskDisplay[] }) {
         <PlanTaskItem
           key={task.id || `${task.phase}-${task.title}`}
           task={task}
+          planRunId={planRunId}
+          sessionId={sessionId}
+          onRetryFromHere={onRetryFromHere}
         />
       ))}
     </div>
@@ -288,6 +322,19 @@ export function PlanRenderer({
     [toolCall.arguments],
   );
 
+  const sessionsCtx = useContext(SessionsContext);
+  const activeSessionId = sessionsCtx?.activeSessionId ?? null;
+  const planRunId = meta?.kind === 'plan_execution' ? meta.planRunId : undefined;
+
+  const handleRetryFromHere = useCallback((runId: string, taskId: string) => {
+    if (!activeSessionId) return;
+    transport.invoke('resume_plan_execution', {
+      sessionId: activeSessionId,
+      planRunId: runId,
+      fromTaskId: taskId,
+    });
+  }, [activeSessionId]);
+
   const defaultExpanded = meta?.kind === 'plan_stage' || meta?.kind === 'plan_execution';
   const [showRaw, setShowRaw] = useState(false);
   const autoExpandKey = meta
@@ -360,7 +407,12 @@ export function PlanRenderer({
             </span>
           )}
         </div>
-        <PlanTaskList tasks={meta.tasks} />
+        <PlanTaskList
+          tasks={meta.tasks}
+          planRunId={planRunId}
+          sessionId={activeSessionId ?? undefined}
+          onRetryFromHere={handleRetryFromHere}
+        />
       </div>
     );
   }

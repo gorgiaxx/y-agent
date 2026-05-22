@@ -36,6 +36,7 @@ export interface PlanExecutionDisplay {
   kind: 'plan_execution';
   planTitle: string;
   planFile: string;
+  planRunId: string;
   totalPhases: number;
   completed: number;
   failed: number;
@@ -195,6 +196,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
       kind: 'plan_execution',
       planTitle: typeof obj.plan_title === 'string' ? obj.plan_title : '',
       planFile: typeof obj.plan_file === 'string' ? obj.plan_file : '',
+      planRunId: typeof obj.plan_run_id === 'string' ? obj.plan_run_id : '',
       totalPhases: typeof obj.total_phases === 'number' ? obj.total_phases : tasks.length,
       completed: typeof obj.completed === 'number' ? obj.completed : 0,
       failed: typeof obj.failed === 'number' ? obj.failed : 0,
