@@ -1064,6 +1064,150 @@ pub async fn chat_answer_plan_review(
     Ok(delivered)
 }
 
+/// Restore any plan reviews stuck in `awaiting_approval` for a session.
+///
+/// Called by the frontend when activating a session so that pending plan
+/// reviews survive application restarts. For each restored review, emits a
+/// `chat:PlanReview` event identical to the one emitted during the original
+/// plan creation flow.
+#[tauri::command]
+pub async fn session_restore_pending_reviews(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let sid = SessionId(session_id.clone());
+    let restored = state.container.restore_pending_plan_reviews(&sid).await;
+
+    for review in restored {
+        let plan_payload = review.build_review_payload();
+
+        let _ = app.emit(
+            "chat:PlanReview",
+            PlanReviewRequestPayload {
+                run_id: review.plan_run_id.clone(),
+                session_id: session_id.clone(),
+                review_id: review.review_id.clone(),
+                plan: plan_payload,
+            },
+        );
+
+        let container = state.container.clone();
+        let plan_run_id = review.plan_run_id;
+        tokio::spawn(async move {
+            match review.decision_rx.await {
+                Ok(PlanReviewDecision::Approve) => {
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "running")
+                        .await;
+                }
+                Ok(PlanReviewDecision::Reject { .. }) => {
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "rejected")
+                        .await;
+                }
+                Ok(PlanReviewDecision::Revise { .. }) => {
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "awaiting_approval")
+                        .await;
+                }
+                Err(_) => {
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "cancelled")
+                        .await;
+                }
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// Resume a plan execution from a specific task step.
+///
+/// Spawns background execution and emits progress events on the same
+/// `chat:progress` channel used by normal chat turns.
+#[tauri::command]
+pub async fn resume_plan_execution(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    plan_run_id: String,
+    from_task_id: String,
+) -> Result<String, String> {
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let cancel_token = CancellationToken::new();
+
+    if let Ok(mut runs) = state.pending_runs.lock() {
+        runs.insert(run_id.clone(), cancel_token.clone());
+    }
+
+    let _ = app.emit(
+        "chat:started",
+        ChatStartedPayload {
+            run_id: run_id.clone(),
+            session_id: session_id.clone(),
+        },
+    );
+
+    let container = state.container.clone();
+    let sid = SessionId(session_id.clone());
+    let run_id_clone = run_id.clone();
+    let pending_runs = Arc::clone(&state.pending_runs);
+
+    tokio::spawn(async move {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        let sink = TauriEventSink(app);
+
+        let progress_run_id = run_id_clone.clone();
+        let progress_task = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                sink.emit_progress(&progress_run_id, &event);
+            }
+        });
+
+        let result = y_service::plan_orchestrator::PlanOrchestrator::resume_plan(
+            &container,
+            &sid,
+            &plan_run_id,
+            &from_task_id,
+            Some(&tx),
+            Some(cancel_token),
+        )
+        .await;
+
+        drop(tx);
+        let _ = progress_task.await;
+
+        if let Ok(mut runs) = pending_runs.lock() {
+            runs.remove(&run_id_clone);
+        }
+
+        match result {
+            Ok(_output) => {
+                tracing::info!(
+                    plan_run_id = %plan_run_id,
+                    from_task_id = %from_task_id,
+                    "plan resume completed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    plan_run_id = %plan_run_id,
+                    error = %e,
+                    "plan resume failed"
+                );
+            }
+        }
+    });
+
+    Ok(run_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

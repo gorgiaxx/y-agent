@@ -298,6 +298,8 @@ pub fn run() {
             commands::chat::chat_answer_question,
             commands::chat::chat_answer_permission,
             commands::chat::chat_answer_plan_review,
+            commands::chat::session_restore_pending_reviews,
+            commands::chat::resume_plan_execution,
             // Sessions
             commands::session::session_list,
             commands::session::session_create,
