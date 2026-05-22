@@ -92,6 +92,13 @@ export function useSessionInteractions(activeSessionId: string | null) {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  useEffect(() => {
+    if (!activeSessionId) return;
+    transport.invoke('session_restore_pending_reviews', {
+      sessionId: activeSessionId,
+    }).catch(() => {});
+  }, [activeSessionId]);
+
   const handleAskUserSubmit = useCallback((interactionId: string, answers: Record<string, string>) => {
     setAskUserBySession((prev) => clearSessionInteractionByPredicate(
       prev,
