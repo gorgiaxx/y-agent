@@ -147,6 +147,11 @@ pub struct AnswerPlanReviewRequest {
     pub feedback: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RestorePendingReviewsRequest {
+    pub session_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // SseEventSink -- EventSink implementation for SSE transport
 // ---------------------------------------------------------------------------
@@ -792,6 +797,69 @@ async fn answer_plan_review(
     Ok(Json(serde_json::json!({ "delivered": delivered })))
 }
 
+/// `POST /api/v1/chat/restore-pending-reviews`
+async fn restore_pending_reviews(
+    State(state): State<AppState>,
+    Json(body): Json<RestorePendingReviewsRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(body.session_id.clone());
+    let restored = state.container.restore_pending_plan_reviews(&sid).await;
+
+    let mut reviews = Vec::with_capacity(restored.len());
+
+    for review in restored {
+        let plan_payload = review.build_review_payload();
+        reviews.push(serde_json::json!({
+            "review_id": review.review_id,
+            "plan_run_id": review.plan_run_id,
+            "session_id": body.session_id,
+            "plan": plan_payload,
+        }));
+
+        let _ = state
+            .event_tx
+            .send(crate::routes::events::SseEvent::PlanReviewRequest {
+                run_id: review.plan_run_id.clone(),
+                session_id: body.session_id.clone(),
+                review_id: review.review_id.clone(),
+                plan: plan_payload.clone(),
+            });
+
+        let container = state.container.clone();
+        let plan_run_id = review.plan_run_id;
+        tokio::spawn(async move {
+            match review.decision_rx.await {
+                Ok(PlanReviewDecision::Approve) => {
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "running")
+                        .await;
+                }
+                Ok(PlanReviewDecision::Reject { .. }) => {
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "rejected")
+                        .await;
+                }
+                Ok(PlanReviewDecision::Revise { .. }) => {
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "awaiting_approval")
+                        .await;
+                }
+                Err(_) => {
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "cancelled")
+                        .await;
+                }
+            }
+        });
+    }
+
+    Ok(Json(serde_json::json!({ "reviews": reviews })))
+}
+
 /// `GET /api/v1/chat/last-turn-meta/:session_id`
 async fn last_turn_meta(
     State(state): State<AppState>,
@@ -859,6 +927,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/chat/answer-question", post(answer_question))
         .route("/api/v1/chat/answer-permission", post(answer_permission))
         .route("/api/v1/chat/answer-plan-review", post(answer_plan_review))
+        .route(
+            "/api/v1/chat/restore-pending-reviews",
+            post(restore_pending_reviews),
+        )
         .route(
             "/api/v1/chat/last-turn-meta/{session_id}",
             get(last_turn_meta),
