@@ -17,6 +17,7 @@ pub mod checkpoint_chat;
 pub mod config;
 pub mod error;
 pub mod migration;
+pub mod plan_run_store;
 pub mod pool;
 pub mod provider_metrics_store;
 pub mod repository;
@@ -32,6 +33,7 @@ pub use checkpoint::SqliteCheckpointStorage;
 pub use checkpoint_chat::SqliteChatCheckpointStore;
 pub use config::StorageConfig;
 pub use error::StorageError;
+pub use plan_run_store::{PlanRunRow, PlanStepResultRow, SqlitePlanRunStore};
 pub use pool::create_pool;
 pub use provider_metrics_store::{
     AggregatedProviderMetrics, ProviderMetricsEvent, SqliteProviderMetricsStore,

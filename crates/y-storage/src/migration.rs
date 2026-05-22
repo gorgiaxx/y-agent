@@ -32,6 +32,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "diag_observations",
     "diag_scores",
     "provider_metrics_log",
+    "plan_runs",
+    "plan_step_results",
 ];
 
 const REQUIRED_SESSION_COLUMNS: &[&str] = &[

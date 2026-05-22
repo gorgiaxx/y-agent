@@ -262,3 +262,33 @@ CREATE INDEX IF NOT EXISTS idx_pml_provider_time
     ON provider_metrics_log(provider_id, recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pml_recorded_at
     ON provider_metrics_log(recorded_at);
+
+------------------------------------------------------------------------
+-- 8. Plan execution runs and step-level results (step-level resume)
+------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS plan_runs (
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL,
+    plan_json       TEXT NOT NULL,
+    plan_path       TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'running',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_runs_session
+    ON plan_runs(session_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS plan_step_results (
+    plan_run_id     TEXT NOT NULL REFERENCES plan_runs(id) ON DELETE CASCADE,
+    task_id         TEXT NOT NULL,
+    phase           INTEGER NOT NULL,
+    title           TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    output_json     TEXT,
+    completed_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (plan_run_id, task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_step_results_run
+    ON plan_step_results(plan_run_id);
