@@ -33,9 +33,6 @@ const PHASE_EXECUTOR_AGENT_ID: &str = "plan-phase-executor";
 const DEFAULT_MAX_PARALLEL_PHASES: usize = 4;
 /// Hard upper bound to protect against runaway concurrency from caller input.
 const MAX_PARALLEL_PHASES_CEILING: usize = 16;
-/// Maximum time to wait for the user to approve or reject a plan before
-/// giving up and returning a timeout outcome.
-const PLAN_REVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 const MAX_PLAN_REVISIONS: usize = 5;
 const PHASE_EXECUTOR_FALLBACK_ALLOWED_TOOLS: &[&str] = &[
     "ToolSearch",
@@ -112,6 +109,40 @@ pub struct StructuredPlan {
 }
 
 // ---------------------------------------------------------------------------
+// Restored plan review (for cross-restart persistence)
+// ---------------------------------------------------------------------------
+
+pub struct RestoredPlanReview {
+    pub review_id: String,
+    pub plan_run_id: String,
+    pub plan_path: String,
+    pub plan: StructuredPlan,
+    pub decision_rx: tokio::sync::oneshot::Receiver<PlanReviewDecision>,
+}
+
+impl RestoredPlanReview {
+    pub fn build_review_payload(&self) -> serde_json::Value {
+        let plan_content = structured_plan_to_markdown(&self.plan);
+        let tasks = serde_json::to_value(&self.plan.tasks).unwrap_or_default();
+        serde_json::json!({
+            "plan_title": self.plan.plan_title,
+            "plan_file": if self.plan.plan_file.is_empty() {
+                &self.plan_path
+            } else {
+                &self.plan.plan_file
+            },
+            "estimated_effort": self.plan.estimated_effort,
+            "overview": self.plan.overview,
+            "scope_in": self.plan.scope_in,
+            "scope_out": self.plan.scope_out,
+            "guardrails": self.plan.guardrails,
+            "plan_content": plan_content,
+            "tasks": tasks,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Plan orchestrator
 // ---------------------------------------------------------------------------
 
@@ -138,6 +169,7 @@ struct PlanReviewOutcome {
     approved: bool,
     status: String,
     feedback: String,
+    plan_run_id: Option<String>,
 }
 
 impl PlanOrchestrator {
@@ -232,6 +264,7 @@ impl PlanOrchestrator {
                 parent_session_id,
                 progress,
                 &container.pending_plan_reviews,
+                container,
             )
             .await;
 
@@ -246,6 +279,7 @@ impl PlanOrchestrator {
                         approved: false,
                         status: "max_revisions_exceeded".to_string(),
                         feedback: review.feedback,
+                        plan_run_id: review.plan_run_id,
                     };
                     break (structured_plan, exhausted);
                 }
@@ -272,16 +306,45 @@ impl PlanOrchestrator {
             max_parallel,
             "plan orchestrator: starting phase execution"
         );
+
+        let plan_run_id = if let Some(id) = review.plan_run_id {
+            id
+        } else {
+            let id = Uuid::new_v4().to_string();
+            let plan_json = serde_json::to_string(&structured_plan).unwrap_or_default();
+            let _ = container
+                .plan_run_store
+                .create_run(
+                    &id,
+                    parent_session_id.as_str(),
+                    &plan_json,
+                    &plan_path.display().to_string(),
+                )
+                .await;
+            id
+        };
+
         let phase_results = Self::execute_phases(
             container,
             parent_session_id,
             &structured_plan,
             &plan_path,
+            &plan_run_id,
             max_parallel,
             progress,
             cancel.as_ref(),
         )
         .await?;
+
+        let run_status = if phase_results.iter().any(|r| r["status"] == "failed") {
+            "partial_failure"
+        } else {
+            "completed"
+        };
+        let _ = container
+            .plan_run_store
+            .update_run_status(&plan_run_id, run_status)
+            .await;
 
         let completed = phase_results
             .iter()
@@ -294,6 +357,7 @@ impl PlanOrchestrator {
         let metadata = build_plan_execution_metadata(
             &plan_path,
             &structured_plan,
+            &plan_run_id,
             completed,
             failed,
             &phase_results,
@@ -304,6 +368,7 @@ impl PlanOrchestrator {
             content: serde_json::json!({
                 "plan_title": structured_plan.plan_title,
                 "plan_file": plan_path.display().to_string(),
+                "plan_run_id": plan_run_id,
                 "total_phases": total_tasks,
                 "completed": completed,
                 "failed": failed,
@@ -478,7 +543,7 @@ impl PlanOrchestrator {
     /// on a `oneshot::Receiver` until the presentation layer posts back via
     /// `deliver_review_decision`. The model only ever sees the final outcome
     /// (full execution results on approve, a short rejection `ToolOutput` on
-    /// reject / timeout).
+    /// reject).
     async fn resolve_plan_review(
         plan: &StructuredPlan,
         plan_path: &Path,
@@ -486,6 +551,7 @@ impl PlanOrchestrator {
         session_id: &SessionId,
         progress: Option<&TurnEventSender>,
         pending_plan_reviews: &PendingPlanReviews,
+        container: &ServiceContainer,
     ) -> PlanReviewOutcome {
         match review_mode {
             PlanReviewMode::Auto => {
@@ -496,13 +562,10 @@ impl PlanOrchestrator {
                     approved: true,
                     status: "auto_approved".to_string(),
                     feedback: String::new(),
+                    plan_run_id: None,
                 }
             }
             PlanReviewMode::Manual => {
-                // Non-interactive context (no progress channel): we cannot
-                // surface a dialog, so auto-approve and log a warning rather
-                // than hang forever. Matches the spirit of
-                // `UserInteractionOrchestrator::format_as_plain_text`.
                 let Some(tx) = progress else {
                     tracing::warn!(
                         plan_title = %plan.plan_title,
@@ -512,10 +575,31 @@ impl PlanOrchestrator {
                         approved: true,
                         status: "auto_approved_no_review_surface".to_string(),
                         feedback: String::new(),
+                        plan_run_id: None,
                     };
                 };
 
                 let review_id = Uuid::new_v4().to_string();
+                let plan_run_id = review_id.clone();
+
+                let plan_json = serde_json::to_string(plan).unwrap_or_default();
+                if let Err(e) = container
+                    .plan_run_store
+                    .create_run_with_status(
+                        &plan_run_id,
+                        session_id.as_str(),
+                        &plan_json,
+                        &plan_path.display().to_string(),
+                        "awaiting_approval",
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        "failed to persist plan run as awaiting_approval"
+                    );
+                }
+
                 let (decision_tx, decision_rx) = tokio::sync::oneshot::channel();
 
                 {
@@ -551,16 +635,17 @@ impl PlanOrchestrator {
                     tasks: tasks_json,
                 });
 
-                match tokio::time::timeout(PLAN_REVIEW_TIMEOUT, decision_rx).await {
-                    Ok(Ok(PlanReviewDecision::Approve)) => {
+                let outcome = match decision_rx.await {
+                    Ok(PlanReviewDecision::Approve) => {
                         emit_plan_review_progress(tx, plan_path, plan, "approved", "");
                         PlanReviewOutcome {
                             approved: true,
                             status: "approved".to_string(),
                             feedback: String::new(),
+                            plan_run_id: Some(plan_run_id.clone()),
                         }
                     }
-                    Ok(Ok(PlanReviewDecision::Revise { feedback })) => {
+                    Ok(PlanReviewDecision::Revise { feedback }) => {
                         emit_plan_review_progress(
                             tx,
                             plan_path,
@@ -572,35 +657,42 @@ impl PlanOrchestrator {
                             approved: false,
                             status: "revise".to_string(),
                             feedback,
+                            plan_run_id: Some(plan_run_id.clone()),
                         }
                     }
-                    Ok(Ok(PlanReviewDecision::Reject { feedback })) => {
+                    Ok(PlanReviewDecision::Reject { feedback }) => {
                         emit_plan_review_progress(tx, plan_path, plan, "rejected", &feedback);
                         PlanReviewOutcome {
                             approved: false,
                             status: "rejected".to_string(),
                             feedback,
+                            plan_run_id: Some(plan_run_id.clone()),
                         }
                     }
-                    Ok(Err(_)) => {
+                    Err(_) => {
                         Self::remove_pending_review(&review_id, pending_plan_reviews).await;
                         emit_plan_review_progress(tx, plan_path, plan, "review_cancelled", "");
                         PlanReviewOutcome {
                             approved: false,
                             status: "review_cancelled".to_string(),
                             feedback: String::new(),
+                            plan_run_id: Some(plan_run_id.clone()),
                         }
                     }
-                    Err(_) => {
-                        Self::remove_pending_review(&review_id, pending_plan_reviews).await;
-                        emit_plan_review_progress(tx, plan_path, plan, "review_timeout", "");
-                        PlanReviewOutcome {
-                            approved: false,
-                            status: "review_timeout".to_string(),
-                            feedback: String::new(),
-                        }
-                    }
-                }
+                };
+
+                let db_status = match outcome.status.as_str() {
+                    "approved" => "running",
+                    "revise" => "awaiting_approval",
+                    "rejected" => "rejected",
+                    _ => "cancelled",
+                };
+                let _ = container
+                    .plan_run_store
+                    .update_run_status(&plan_run_id, db_status)
+                    .await;
+
+                outcome
             }
         }
     }
@@ -647,6 +739,7 @@ impl PlanOrchestrator {
         parent_session_id: &SessionId,
         plan: &StructuredPlan,
         plan_path: &Path,
+        plan_run_id: &str,
         max_parallel: usize,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
@@ -670,6 +763,7 @@ impl PlanOrchestrator {
                     parent_session_id,
                     plan,
                     plan_path,
+                    plan_run_id,
                     progress,
                     cancel,
                 )
@@ -747,6 +841,17 @@ impl PlanOrchestrator {
                         "status": "skipped",
                         "error": "dependency failed",
                     }));
+                    let _ = container
+                        .plan_run_store
+                        .record_step_result(
+                            plan_run_id,
+                            &task.id,
+                            task.phase,
+                            &task.title,
+                            "skipped",
+                            Some("dependency failed"),
+                        )
+                        .await;
                 } else {
                     runnable.push(*task);
                 }
@@ -770,6 +875,7 @@ impl PlanOrchestrator {
                         tx,
                         plan_path,
                         plan,
+                        plan_run_id,
                         &snapshot,
                         format!("Executing phase {}: {}", task.phase, task.title),
                     );
@@ -811,11 +917,23 @@ impl PlanOrchestrator {
                                 "status": "completed",
                                 "summary": summary,
                             }));
+                            let _ = container
+                                .plan_run_store
+                                .record_step_result(
+                                    plan_run_id,
+                                    &task.id,
+                                    task.phase,
+                                    &task.title,
+                                    "completed",
+                                    Some(&summary),
+                                )
+                                .await;
                             if let Some(tx) = progress {
                                 emit_plan_execution_progress(
                                     tx,
                                     plan_path,
                                     plan,
+                                    plan_run_id,
                                     &phase_results,
                                     format!("Completed phase {}: {}", task.phase, task.title),
                                 );
@@ -831,18 +949,31 @@ impl PlanOrchestrator {
                                 "plan orchestrator: phase failed"
                             );
                             failed.insert(task.id.clone());
+                            let error_str = e.to_string();
                             phase_results.push(serde_json::json!({
                                 "task_id": task.id,
                                 "phase": task.phase,
                                 "title": task.title,
                                 "status": "failed",
-                                "error": e.to_string(),
+                                "error": error_str,
                             }));
+                            let _ = container
+                                .plan_run_store
+                                .record_step_result(
+                                    plan_run_id,
+                                    &task.id,
+                                    task.phase,
+                                    &task.title,
+                                    "failed",
+                                    Some(&error_str),
+                                )
+                                .await;
                             if let Some(tx) = progress {
                                 emit_plan_execution_progress(
                                     tx,
                                     plan_path,
                                     plan,
+                                    plan_run_id,
                                     &phase_results,
                                     format!("Failed phase {}: {}", task.phase, task.title),
                                 );
@@ -867,6 +998,7 @@ impl PlanOrchestrator {
         parent_session_id: &SessionId,
         plan: &StructuredPlan,
         plan_path: &Path,
+        plan_run_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
     ) -> Result<Vec<serde_json::Value>, ToolError> {
@@ -910,6 +1042,7 @@ impl PlanOrchestrator {
                     tx,
                     plan_path,
                     plan,
+                    plan_run_id,
                     &snapshot,
                     format!("Executing phase {}: {}", task.phase, task.title),
                 );
@@ -936,11 +1069,23 @@ impl PlanOrchestrator {
                         "status": "completed",
                         "summary": summary,
                     }));
+                    let _ = container
+                        .plan_run_store
+                        .record_step_result(
+                            plan_run_id,
+                            &task.id,
+                            task.phase,
+                            &task.title,
+                            "completed",
+                            Some(&summary),
+                        )
+                        .await;
                     if let Some(tx) = progress {
                         emit_plan_execution_progress(
                             tx,
                             plan_path,
                             plan,
+                            plan_run_id,
                             &phase_results,
                             format!("Completed phase {}: {}", task.phase, task.title),
                         );
@@ -955,18 +1100,31 @@ impl PlanOrchestrator {
                         error = %e,
                         "plan orchestrator: phase failed"
                     );
+                    let error_str = e.to_string();
                     phase_results.push(serde_json::json!({
                         "task_id": task.id,
                         "phase": task.phase,
                         "title": task.title,
                         "status": "failed",
-                        "error": e.to_string(),
+                        "error": error_str,
                     }));
+                    let _ = container
+                        .plan_run_store
+                        .record_step_result(
+                            plan_run_id,
+                            &task.id,
+                            task.phase,
+                            &task.title,
+                            "failed",
+                            Some(&error_str),
+                        )
+                        .await;
                     if let Some(tx) = progress {
                         emit_plan_execution_progress(
                             tx,
                             plan_path,
                             plan,
+                            plan_run_id,
                             &phase_results,
                             format!("Failed phase {}: {}", task.phase, task.title),
                         );
@@ -978,6 +1136,496 @@ impl PlanOrchestrator {
         heartbeat_cancel.cancel();
         if let Some(handle) = heartbeat_handle {
             let _ = handle.await;
+        }
+
+        Ok(phase_results)
+    }
+
+    /// Resume a plan execution from a specific task.
+    ///
+    /// Loads the persisted plan run, invalidates the target task and all its
+    /// transitive downstream dependents, then re-enters `execute_phases` with
+    /// the pre-seeded completed set. Works for both failed tasks (retry after
+    /// error) and completed tasks (retry after dissatisfaction).
+    pub async fn resume_plan(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        plan_run_id: &str,
+        from_task_id: &str,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<CancellationToken>,
+    ) -> Result<ToolOutput, ToolError> {
+        let run = container
+            .plan_run_store
+            .load_run(plan_run_id)
+            .await
+            .map_err(|e| ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("failed to load plan run: {e}"),
+            })?
+            .ok_or_else(|| ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("plan run '{plan_run_id}' not found"),
+            })?;
+
+        let structured_plan: StructuredPlan =
+            serde_json::from_str(&run.plan_json).map_err(|e| ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("failed to parse stored plan: {e}"),
+            })?;
+
+        let step_results = container
+            .plan_run_store
+            .load_step_results(plan_run_id)
+            .await
+            .map_err(|e| ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("failed to load step results: {e}"),
+            })?;
+
+        let plan_path = std::path::PathBuf::from(&run.plan_path);
+
+        // Compute the set of tasks to invalidate: from_task_id + all
+        // transitive downstream dependents.
+        let invalidated = compute_downstream_tasks(&structured_plan.tasks, from_task_id);
+
+        // Delete invalidated step results from store.
+        let invalidated_refs: Vec<&str> = invalidated
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
+        let _ = container
+            .plan_run_store
+            .delete_step_results(plan_run_id, &invalidated_refs)
+            .await;
+
+        // Mark the run as running again.
+        let _ = container
+            .plan_run_store
+            .update_run_status(plan_run_id, "running")
+            .await;
+
+        // Pre-seed completed set and phase_results from retained steps.
+        let mut pre_completed: HashSet<String> = HashSet::new();
+        let mut pre_phase_results: Vec<serde_json::Value> = Vec::new();
+        for step in &step_results {
+            if invalidated.contains(&step.task_id) {
+                continue;
+            }
+            if step.status == "completed" {
+                pre_completed.insert(step.task_id.clone());
+            }
+            let mut entry = serde_json::json!({
+                "task_id": step.task_id,
+                "phase": step.phase,
+                "title": step.title,
+                "status": step.status,
+            });
+            if let Some(ref output) = step.output_json {
+                if step.status == "completed" {
+                    entry["summary"] = serde_json::Value::String(output.clone());
+                } else {
+                    entry["error"] = serde_json::Value::String(output.clone());
+                }
+            }
+            pre_phase_results.push(entry);
+        }
+
+        // Re-execute with pre-seeded state.
+        let phase_results = Self::execute_phases_resumed(
+            container,
+            session_id,
+            &structured_plan,
+            &plan_path,
+            plan_run_id,
+            pre_completed,
+            pre_phase_results,
+            DEFAULT_MAX_PARALLEL_PHASES,
+            progress,
+            cancel.as_ref(),
+        )
+        .await?;
+
+        let completed = phase_results
+            .iter()
+            .filter(|r| r["status"] == "completed")
+            .count();
+        let failed = phase_results
+            .iter()
+            .filter(|r| r["status"] == "failed")
+            .count();
+
+        let run_status = if failed > 0 {
+            "partial_failure"
+        } else {
+            "completed"
+        };
+        let _ = container
+            .plan_run_store
+            .update_run_status(plan_run_id, run_status)
+            .await;
+
+        let metadata = build_plan_execution_metadata(
+            &plan_path,
+            &structured_plan,
+            plan_run_id,
+            completed,
+            failed,
+            &phase_results,
+        );
+
+        Ok(ToolOutput {
+            success: failed == 0,
+            content: serde_json::json!({
+                "plan_title": structured_plan.plan_title,
+                "plan_file": plan_path.display().to_string(),
+                "plan_run_id": plan_run_id,
+                "total_phases": structured_plan.tasks.len(),
+                "completed": completed,
+                "failed": failed,
+                "resumed_from": from_task_id,
+                "phases": phase_results,
+            }),
+            warnings: vec![],
+            metadata,
+        })
+    }
+
+    /// Execute phases with pre-seeded completed state (for resume).
+    async fn execute_phases_resumed(
+        container: &ServiceContainer,
+        parent_session_id: &SessionId,
+        plan: &StructuredPlan,
+        plan_path: &Path,
+        plan_run_id: &str,
+        mut completed: HashSet<String>,
+        mut phase_results: Vec<serde_json::Value>,
+        max_parallel: usize,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<Vec<serde_json::Value>, ToolError> {
+        let total_tasks = plan.tasks.len();
+        let task_map: std::collections::HashMap<&str, &PlanTask> =
+            plan.tasks.iter().map(|t| (t.id.as_str(), t)).collect();
+
+        let Ok(dag) = build_task_dag(&plan.tasks) else {
+            return Self::execute_phases_sequential_resumed(
+                container,
+                parent_session_id,
+                plan,
+                plan_path,
+                plan_run_id,
+                completed,
+                phase_results,
+                progress,
+                cancel,
+            )
+            .await;
+        };
+
+        let mut failed: HashSet<String> = HashSet::new();
+
+        // Emit initial state showing retained results.
+        if let Some(tx) = progress {
+            emit_plan_execution_progress(
+                tx,
+                plan_path,
+                plan,
+                plan_run_id,
+                &phase_results,
+                "Resuming plan execution".to_string(),
+            );
+        }
+
+        loop {
+            if is_cancelled(cancel) {
+                return Err(cancelled_tool_error());
+            }
+
+            let ready: Vec<&TaskNode> = dag
+                .ready_tasks(&completed)
+                .into_iter()
+                .filter(|n| !failed.contains(&n.id))
+                .collect();
+
+            if ready.is_empty() {
+                break;
+            }
+
+            let mut runnable = Vec::new();
+            for node in &ready {
+                let Some(task) = task_map.get(node.id.as_str()) else {
+                    continue;
+                };
+                let has_failed_dep = task
+                    .depends_on
+                    .iter()
+                    .any(|dep| failed.contains(dep.as_str()));
+                if has_failed_dep {
+                    failed.insert(task.id.clone());
+                    phase_results.push(serde_json::json!({
+                        "task_id": task.id,
+                        "phase": task.phase,
+                        "title": task.title,
+                        "status": "skipped",
+                        "error": "dependency failed",
+                    }));
+                    let _ = container
+                        .plan_run_store
+                        .record_step_result(
+                            plan_run_id,
+                            &task.id,
+                            task.phase,
+                            &task.title,
+                            "skipped",
+                            Some("dependency failed"),
+                        )
+                        .await;
+                } else {
+                    runnable.push(*task);
+                }
+            }
+
+            if runnable.is_empty() {
+                break;
+            }
+
+            for task in &runnable {
+                if let Some(tx) = progress {
+                    let mut snapshot = phase_results.clone();
+                    snapshot.push(serde_json::json!({
+                        "task_id": task.id,
+                        "phase": task.phase,
+                        "title": task.title,
+                        "status": "in_progress",
+                    }));
+                    emit_plan_execution_progress(
+                        tx,
+                        plan_path,
+                        plan,
+                        plan_run_id,
+                        &snapshot,
+                        format!("Executing phase {}: {}", task.phase, task.title),
+                    );
+                }
+            }
+
+            for chunk in runnable.chunks(max_parallel) {
+                let chunk_futures: Vec<_> = chunk
+                    .iter()
+                    .map(|task| async move {
+                        let result = Self::run_phase(
+                            container,
+                            parent_session_id,
+                            task,
+                            &plan.plan_title,
+                            plan_path,
+                            task.phase,
+                            total_tasks,
+                            progress,
+                            cancel,
+                        )
+                        .await;
+                        (*task, result)
+                    })
+                    .collect();
+
+                let chunk_results = futures::future::join_all(chunk_futures).await;
+
+                for (task, result) in chunk_results {
+                    match result {
+                        Ok(summary) => {
+                            completed.insert(task.id.clone());
+                            phase_results.push(serde_json::json!({
+                                "task_id": task.id,
+                                "phase": task.phase,
+                                "title": task.title,
+                                "status": "completed",
+                                "summary": summary,
+                            }));
+                            let _ = container
+                                .plan_run_store
+                                .record_step_result(
+                                    plan_run_id,
+                                    &task.id,
+                                    task.phase,
+                                    &task.title,
+                                    "completed",
+                                    Some(&summary),
+                                )
+                                .await;
+                            if let Some(tx) = progress {
+                                emit_plan_execution_progress(
+                                    tx,
+                                    plan_path,
+                                    plan,
+                                    plan_run_id,
+                                    &phase_results,
+                                    format!("Completed phase {}: {}", task.phase, task.title),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            if is_cancelled_tool_error(&e) {
+                                return Err(e);
+                            }
+                            failed.insert(task.id.clone());
+                            let error_str = e.to_string();
+                            phase_results.push(serde_json::json!({
+                                "task_id": task.id,
+                                "phase": task.phase,
+                                "title": task.title,
+                                "status": "failed",
+                                "error": error_str,
+                            }));
+                            let _ = container
+                                .plan_run_store
+                                .record_step_result(
+                                    plan_run_id,
+                                    &task.id,
+                                    task.phase,
+                                    &task.title,
+                                    "failed",
+                                    Some(&error_str),
+                                )
+                                .await;
+                            if let Some(tx) = progress {
+                                emit_plan_execution_progress(
+                                    tx,
+                                    plan_path,
+                                    plan,
+                                    plan_run_id,
+                                    &phase_results,
+                                    format!("Failed phase {}: {}", task.phase, task.title),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(phase_results)
+    }
+
+    /// Sequential fallback for resumed execution when DAG construction fails.
+    async fn execute_phases_sequential_resumed(
+        container: &ServiceContainer,
+        parent_session_id: &SessionId,
+        plan: &StructuredPlan,
+        plan_path: &Path,
+        plan_run_id: &str,
+        completed: HashSet<String>,
+        mut phase_results: Vec<serde_json::Value>,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<Vec<serde_json::Value>, ToolError> {
+        let total_tasks = plan.tasks.len();
+
+        for (idx, task) in plan.tasks.iter().enumerate() {
+            if completed.contains(&task.id) {
+                continue;
+            }
+            if is_cancelled(cancel) {
+                return Err(cancelled_tool_error());
+            }
+
+            if let Some(tx) = progress {
+                let mut snapshot = phase_results.clone();
+                snapshot.push(serde_json::json!({
+                    "task_id": task.id,
+                    "phase": task.phase,
+                    "title": task.title,
+                    "status": "in_progress",
+                }));
+                emit_plan_execution_progress(
+                    tx,
+                    plan_path,
+                    plan,
+                    plan_run_id,
+                    &snapshot,
+                    format!("Executing phase {}: {}", task.phase, task.title),
+                );
+            }
+
+            match Self::run_phase(
+                container,
+                parent_session_id,
+                task,
+                &plan.plan_title,
+                plan_path,
+                idx + 1,
+                total_tasks,
+                progress,
+                cancel,
+            )
+            .await
+            {
+                Ok(summary) => {
+                    phase_results.push(serde_json::json!({
+                        "task_id": task.id,
+                        "phase": task.phase,
+                        "title": task.title,
+                        "status": "completed",
+                        "summary": summary,
+                    }));
+                    let _ = container
+                        .plan_run_store
+                        .record_step_result(
+                            plan_run_id,
+                            &task.id,
+                            task.phase,
+                            &task.title,
+                            "completed",
+                            Some(&summary),
+                        )
+                        .await;
+                    if let Some(tx) = progress {
+                        emit_plan_execution_progress(
+                            tx,
+                            plan_path,
+                            plan,
+                            plan_run_id,
+                            &phase_results,
+                            format!("Completed phase {}: {}", task.phase, task.title),
+                        );
+                    }
+                }
+                Err(e) => {
+                    if is_cancelled_tool_error(&e) {
+                        return Err(e);
+                    }
+                    let error_str = e.to_string();
+                    phase_results.push(serde_json::json!({
+                        "task_id": task.id,
+                        "phase": task.phase,
+                        "title": task.title,
+                        "status": "failed",
+                        "error": error_str,
+                    }));
+                    let _ = container
+                        .plan_run_store
+                        .record_step_result(
+                            plan_run_id,
+                            &task.id,
+                            task.phase,
+                            &task.title,
+                            "failed",
+                            Some(&error_str),
+                        )
+                        .await;
+                    if let Some(tx) = progress {
+                        emit_plan_execution_progress(
+                            tx,
+                            plan_path,
+                            plan,
+                            plan_run_id,
+                            &phase_results,
+                            format!("Failed phase {}: {}", task.phase, task.title),
+                        );
+                    }
+                }
+            }
         }
 
         Ok(phase_results)
@@ -1598,7 +2246,7 @@ fn build_phase_execution_config(
 }
 
 /// Convert a [`StructuredPlan`] into a human-readable markdown document.
-fn structured_plan_to_markdown(plan: &StructuredPlan) -> String {
+pub(crate) fn structured_plan_to_markdown(plan: &StructuredPlan) -> String {
     use std::fmt::Write;
     let mut md = String::new();
     let _ = writeln!(md, "---");
@@ -1825,6 +2473,7 @@ fn build_plan_start_metadata(plan_path: &std::path::Path) -> serde_json::Value {
 fn build_plan_execution_metadata(
     plan_path: &Path,
     plan: &StructuredPlan,
+    plan_run_id: &str,
     completed: usize,
     failed: usize,
     phase_results: &[serde_json::Value],
@@ -1837,6 +2486,7 @@ fn build_plan_execution_metadata(
             "kind": "plan_execution",
             "plan_title": plan.plan_title,
             "plan_file": plan_path.display().to_string(),
+            "plan_run_id": plan_run_id,
             "total_phases": plan.tasks.len(),
             "completed": completed,
             "failed": failed,
@@ -1953,10 +2603,43 @@ fn count_phase_results(phase_results: &[serde_json::Value], status: &str) -> usi
         .count()
 }
 
+/// Compute the transitive downstream closure for a given `task_id`.
+///
+/// Returns a set containing `from_task_id` itself plus every task that
+/// transitively depends on it (directly or indirectly).
+fn compute_downstream_tasks(tasks: &[PlanTask], from_task_id: &str) -> HashSet<String> {
+    // Build reverse dependency map: task_id -> set of tasks that depend on it.
+    let mut dependents: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for task in tasks {
+        for dep in &task.depends_on {
+            dependents.entry(dep.as_str()).or_default().push(&task.id);
+        }
+    }
+
+    let mut invalidated = HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(from_task_id.to_string());
+    invalidated.insert(from_task_id.to_string());
+
+    while let Some(current) = queue.pop_front() {
+        if let Some(children) = dependents.get(current.as_str()) {
+            for &child in children {
+                if invalidated.insert(child.to_string()) {
+                    queue.push_back(child.to_string());
+                }
+            }
+        }
+    }
+
+    invalidated
+}
+
 fn emit_plan_execution_progress(
     tx: &TurnEventSender,
     plan_path: &Path,
     plan: &StructuredPlan,
+    plan_run_id: &str,
     phase_results: &[serde_json::Value],
     result_preview: String,
 ) {
@@ -1974,6 +2657,7 @@ fn emit_plan_execution_progress(
         metadata: Some(build_plan_execution_metadata(
             plan_path,
             plan,
+            plan_run_id,
             completed,
             failed,
             phase_results,

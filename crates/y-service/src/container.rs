@@ -33,8 +33,8 @@ use y_runtime::{RuntimeManager, VenvManager};
 use y_session::{ChatCheckpointManager, SessionManager};
 use y_skills::{SkillRegistryImpl, SkillSearch};
 use y_storage::{
-    SqliteChatCheckpointStore, SqliteChatMessageStore, SqliteProviderMetricsStore,
-    SqliteScheduleStore, SqliteSessionStore, SqliteWorkflowStore,
+    SqliteChatCheckpointStore, SqliteChatMessageStore, SqlitePlanRunStore,
+    SqliteProviderMetricsStore, SqliteScheduleStore, SqliteSessionStore, SqliteWorkflowStore,
 };
 use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
@@ -159,6 +159,9 @@ pub struct ServiceContainer {
     /// Schedule store for persistent schedule definitions.
     pub schedule_store: SqliteScheduleStore,
 
+    /// Plan run store for step-level plan execution persistence and resume.
+    pub plan_run_store: SqlitePlanRunStore,
+
     /// Scheduler manager for scheduled task management.
     pub scheduler_manager: y_scheduler::SchedulerManager,
 
@@ -241,6 +244,7 @@ struct ContextPipelineInit {
 struct SchedulerInit {
     workflow_store: SqliteWorkflowStore,
     schedule_store: SqliteScheduleStore,
+    plan_run_store: SqlitePlanRunStore,
     scheduler_manager: y_scheduler::SchedulerManager,
 }
 
@@ -352,6 +356,7 @@ impl ServiceContainer {
             delegation_tracker,
             workflow_store: sched.workflow_store,
             schedule_store: sched.schedule_store,
+            plan_run_store: sched.plan_run_store,
             scheduler_manager: sched.scheduler_manager,
             prompt_context: ctx.prompt_context,
             diagnostics: diag.diagnostics,
@@ -626,6 +631,7 @@ tools = ["ToolSearch"]
     async fn init_scheduler_services(pool: &y_storage::SqlitePool) -> SchedulerInit {
         let workflow_store = SqliteWorkflowStore::new(pool.clone());
         let schedule_store = SqliteScheduleStore::new(pool.clone());
+        let plan_run_store = SqlitePlanRunStore::new(pool.clone());
         let scheduler_manager = crate::scheduler_service::SchedulerService::create_manager();
         crate::scheduler_service::SchedulerService::attach_persistence(
             &scheduler_manager,
@@ -651,6 +657,7 @@ tools = ["ToolSearch"]
         SchedulerInit {
             workflow_store,
             schedule_store,
+            plan_run_store,
             scheduler_manager,
         }
     }
@@ -1013,7 +1020,83 @@ impl ServiceContainer {
             let mut reviews = self.pending_plan_reviews.lock().await;
             reviews.retain(|_, pending| pending.session_id() != session_id);
         }
+        if let Err(e) = self
+            .plan_run_store
+            .cancel_awaiting_runs_for_session(session_id.as_str())
+            .await
+        {
+            warn!(
+                error = %e,
+                session = %session_id.0,
+                "failed to cancel awaiting plan runs during cleanup"
+            );
+        }
         info!(session = %session_id.0, "cleaned up in-memory state for deleted session");
+    }
+
+    /// Restore any plan reviews that were persisted as `awaiting_approval`
+    /// for the given session. Creates fresh oneshot channels and inserts them
+    /// into `pending_plan_reviews` so the presentation layer can re-emit
+    /// `PlanReviewRequest` events to the frontend.
+    ///
+    /// Returns metadata for each restored review so the caller can emit the
+    /// appropriate events.
+    pub async fn restore_pending_plan_reviews(
+        &self,
+        session_id: &SessionId,
+    ) -> Vec<crate::plan_orchestrator::RestoredPlanReview> {
+        let runs = match self
+            .plan_run_store
+            .find_awaiting_runs_for_session(session_id.as_str())
+            .await
+        {
+            Ok(runs) => runs,
+            Err(e) => {
+                warn!(error = %e, "failed to query awaiting plan runs for restore");
+                return Vec::new();
+            }
+        };
+
+        let mut restored = Vec::with_capacity(runs.len());
+
+        for run in runs {
+            if self.pending_plan_reviews.lock().await.contains_key(&run.id) {
+                continue;
+            }
+
+            let plan: crate::plan_orchestrator::StructuredPlan =
+                match serde_json::from_str(&run.plan_json) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(
+                            plan_run_id = %run.id,
+                            error = %e,
+                            "failed to deserialize stored plan; skipping restore"
+                        );
+                        continue;
+                    }
+                };
+
+            let (decision_tx, decision_rx) = tokio::sync::oneshot::channel();
+
+            {
+                let mut map = self.pending_plan_reviews.lock().await;
+                map.insert(
+                    run.id.clone(),
+                    crate::chat_types::PendingPlanReview::new(session_id.clone(), decision_tx),
+                );
+            }
+
+            restored.push(crate::plan_orchestrator::RestoredPlanReview {
+                review_id: run.id.clone(),
+                plan_run_id: run.id,
+                plan_path: run.plan_path,
+                plan,
+                decision_rx,
+            });
+        }
+
+        restored
     }
 
     // -- Agent management (delegated to AgentManagementService) ----------------
