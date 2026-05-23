@@ -7,13 +7,18 @@ import {
   extractPlanDisplayMeta,
   extractLoopDisplayMeta,
 } from '../components/chat-panel/chat-box/toolCallUtils';
+import { collectModifiedFilesForInfoPanel } from '../hooks/useInfoPanel';
 import type { ToolResultRecord } from '../hooks/chatStreamTypes';
 import type { Message } from '../types';
 
-function makeFileEditRecord(filePath: string): ToolResultRecord {
+function makeFileEditRecord(
+  filePath: string,
+  oldString = 'a',
+  newString = 'b',
+): ToolResultRecord {
   return {
     name: 'FileEdit',
-    arguments: JSON.stringify({ file_path: filePath, old_string: 'a', new_string: 'b' }),
+    arguments: JSON.stringify({ file_path: filePath, old_string: oldString, new_string: newString }),
     success: true,
     durationMs: 10,
     resultPreview: 'ok',
@@ -188,6 +193,20 @@ describe('useInfoPanel utilities', () => {
   });
 
   describe('modified files collection logic', () => {
+    it('keeps every diff for repeated updates to the same file', () => {
+      const files = collectModifiedFilesForInfoPanel([
+        makeFileEditRecord('/src/main.rs', 'alpha = 1;\n', 'alpha = 2;\n'),
+        makeFileEditRecord('/src/main.rs', 'beta = 1;\n', 'beta = 2;\n'),
+      ]);
+
+      expect(files).toHaveLength(1);
+      expect(files[0].count).toBe(2);
+      expect(files[0].diffs).toEqual([
+        { oldString: 'alpha = 1;\n', newString: 'alpha = 2;\n' },
+        { oldString: 'beta = 1;\n', newString: 'beta = 2;\n' },
+      ]);
+    });
+
     it('groups multiple edits to same file', () => {
       const records: ToolResultRecord[] = [
         makeFileEditRecord('/src/main.rs'),

@@ -281,6 +281,103 @@ describe('Plan tool rendering', () => {
     expect(html).toContain('In Progress');
   });
 
+  it('does not render verbose phase summaries when plan execution fails', () => {
+    const verboseSummary = 'verbose completed phase output '.repeat(80);
+    const result = JSON.stringify({
+      plan_title: 'GUI Plan Stream Fix',
+      plan_file: '/tmp/gui-plan.md',
+      plan_run_id: 'plan-run-1',
+      total_phases: 8,
+      completed: 7,
+      failed: 1,
+      phases: [
+        {
+          task_id: 'task-1',
+          phase: 1,
+          title: 'Completed phase',
+          status: 'completed',
+          summary: verboseSummary,
+        },
+        {
+          task_id: 'task-8',
+          phase: 8,
+          title: 'Failing phase',
+          status: 'failed',
+          error: 'Phase failed while running tests',
+        },
+      ],
+    });
+
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-exec-failed-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Fix GUI Plan stream rendering' }),
+        }}
+        status="error"
+        result={result}
+        metadata={{
+          display: {
+            kind: 'plan_execution',
+            plan_title: 'GUI Plan Stream Fix',
+            plan_file: '/tmp/gui-plan.md',
+            plan_run_id: 'plan-run-1',
+            total_phases: 8,
+            completed: 7,
+            failed: 1,
+            tasks: [
+              {
+                id: 'task-1',
+                phase: 1,
+                title: 'Completed phase',
+                description: '',
+                depends_on: [],
+                status: 'completed',
+                estimated_iterations: 4,
+                key_files: [],
+                acceptance_criteria: [],
+              },
+              {
+                id: 'task-8',
+                phase: 8,
+                title: 'Failing phase',
+                description: '',
+                depends_on: ['task-1'],
+                status: 'failed',
+                estimated_iterations: 4,
+                key_files: [],
+                acceptance_criteria: [],
+              },
+            ],
+            phases: [
+              {
+                task_id: 'task-1',
+                phase: 1,
+                title: 'Completed phase',
+                status: 'completed',
+                summary: verboseSummary,
+              },
+              {
+                task_id: 'task-8',
+                phase: 8,
+                title: 'Failing phase',
+                status: 'failed',
+                error: 'Phase failed while running tests',
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('7/8 completed');
+    expect(html).toContain('1 failed');
+    expect(html).toContain('Failing phase');
+    expect(html).not.toContain('verbose completed phase output');
+    expect(html).not.toContain('&quot;phases&quot;');
+  });
+
   it('keeps execute-task details collapsed by default', () => {
     const html = renderToStaticMarkup(
       <ToolCallCard

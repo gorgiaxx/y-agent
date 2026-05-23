@@ -10,11 +10,25 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async () => []),
 }));
 
+const mockPlatform = vi.hoisted(() => ({
+  openUrl: vi.fn().mockResolvedValue(undefined),
+  revealInFileManager: vi.fn().mockResolvedValue(undefined),
+  capabilities: {
+    revealFileManager: true,
+  },
+}));
+
 vi.mock('../lib', () => ({
   transport: {
     invoke: vi.fn(async () => []),
     listen: vi.fn(async () => () => {}),
   },
+  platform: {
+    capabilities: mockPlatform.capabilities,
+    openUrl: mockPlatform.openUrl,
+    revealInFileManager: mockPlatform.revealInFileManager,
+  },
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock('../components/ui', async () => {
@@ -50,8 +64,8 @@ describe('InfoPanel', () => {
 
   it('renders modified files section with file cards', () => {
     const files: ModifiedFileEntry[] = [
-      { filePath: '/src/main.rs', toolType: 'edit', displayName: 'main.rs', count: 3 },
-      { filePath: '/src/lib.rs', toolType: 'write', displayName: 'lib.rs', count: 1 },
+      { filePath: '/src/main.rs', toolType: 'edit', displayName: 'main.rs', count: 3, diffs: [] },
+      { filePath: '/src/lib.rs', toolType: 'write', displayName: 'lib.rs', count: 1, diffs: [] },
     ];
     const html = renderToStaticMarkup(
       <InfoPanel
@@ -68,6 +82,56 @@ describe('InfoPanel', () => {
     expect(html).toContain('lib.rs');
     expect(html).toContain('3x');
     expect(html).not.toContain('1x');
+  });
+
+  it('renders all accumulated diffs for a modified file', () => {
+    const files: ModifiedFileEntry[] = [
+      {
+        filePath: '/src/main.rs',
+        toolType: 'edit',
+        displayName: 'main.rs',
+        count: 2,
+        diffs: [
+          { oldString: 'const first = 1;\n', newString: 'const first = 2;\n' },
+          { oldString: 'const second = 1;\n', newString: 'const second = 2;\n' },
+        ],
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <InfoPanel
+        modifiedFiles={files}
+        planStatus={null}
+        loopStatus={null}
+        expanded={false}
+        onToggleExpand={noopFn}
+        onClose={noopFn}
+      />,
+    );
+
+    expect(html).toContain('Diff 1');
+    expect(html).toContain('Diff 2');
+    expect(html).toContain('const first = 2;');
+    expect(html).toContain('const second = 2;');
+  });
+
+  it('marks modified file cards as context menu targets', () => {
+    const files: ModifiedFileEntry[] = [
+      { filePath: '/src/main.rs', toolType: 'edit', displayName: 'main.rs', count: 1, diffs: [] },
+    ];
+
+    const html = renderToStaticMarkup(
+      <InfoPanel
+        modifiedFiles={files}
+        planStatus={null}
+        loopStatus={null}
+        expanded={false}
+        onToggleExpand={noopFn}
+        onClose={noopFn}
+      />,
+    );
+
+    expect(html).toContain('data-file-context-menu="true"');
   });
 
   it('renders plan section with tasks and progress', () => {
