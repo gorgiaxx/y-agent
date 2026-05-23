@@ -109,6 +109,7 @@ impl ChatService {
             prune_tool_history: input.prune_tool_history,
             response_format: None,
             image_generation_options: input.image_generation_options.clone(),
+            inherited_constraints: None,
         }
     }
 

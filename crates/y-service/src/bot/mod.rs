@@ -165,9 +165,8 @@ impl BotService {
             prune_tool_history: false,
             response_format: None,
             image_generation_options: None,
+            inherited_constraints: None,
         };
-
-        // Execute the agent.
         let result = AgentService::execute(container, &exec_config, None, None)
             .await
             .map_err(|e| BotServiceError::TurnFailed(e.to_string()))?;

@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use y_context::pruning::IntraTurnPruner;
-use y_context::{AssembledContext, ContextRequest};
+use y_context::{AssembledContext, ContextCategory, ContextItem, ContextRequest};
 use y_core::provider::{ProviderPool, ToolCallingMode};
 use y_core::types::{Role, SessionId};
 use y_tools::parse_tool_calls;
@@ -38,11 +38,14 @@ pub(crate) async fn init_context_and_trace(
     container: &ServiceContainer,
     config: &AgentExecutionConfig,
 ) -> (AssembledContext, Option<Uuid>, bool) {
-    let assembled = if config.use_context_pipeline {
+    let mut assembled = if config.use_context_pipeline {
         // Update per-request tool protocol flag so the system prompt
         // includes/excludes XML tool protocol based on this request's mode.
         {
             let mut pctx = container.prompt_context.write().await;
+            if config.working_directory.is_some() {
+                pctx.working_directory.clone_from(&config.working_directory);
+            }
             if config.tool_calling_mode == ToolCallingMode::PromptBased {
                 pctx.config_flags
                     .insert("tool_calling.prompt_based".into(), true);
@@ -73,6 +76,7 @@ pub(crate) async fn init_context_and_trace(
     } else {
         AssembledContext::default()
     };
+    append_inherited_constraints_context(&mut assembled, config);
 
     // Diagnostics trace lifecycle.
     // If the caller already created a trace (external_trace_id), we reuse
@@ -102,6 +106,26 @@ pub(crate) async fn init_context_and_trace(
     let owns_trace = config.external_trace_id.is_none();
 
     (assembled, trace_id, owns_trace)
+}
+
+fn append_inherited_constraints_context(
+    assembled: &mut AssembledContext,
+    config: &AgentExecutionConfig,
+) {
+    let Some(constraints) = config
+        .inherited_constraints
+        .as_ref()
+        .filter(|constraints| !constraints.is_empty())
+    else {
+        return;
+    };
+    let content = constraints.to_system_prompt_section();
+    assembled.add(ContextItem {
+        category: ContextCategory::SystemPrompt,
+        token_estimate: y_prompt::estimate_tokens(&content),
+        priority: 95,
+        content,
+    });
 }
 
 pub(crate) async fn start_parent_subagent_observation(
@@ -591,6 +615,7 @@ mod tests {
             prune_tool_history: false,
             response_format: None,
             image_generation_options: None,
+            inherited_constraints: None,
         };
 
         let (_assembled, trace_id, owns_trace) = init_context_and_trace(&container, &config).await;
@@ -605,5 +630,95 @@ mod tests {
             .expect("trace should be readable");
 
         assert_eq!(trace.user_input.as_deref(), Some("real user question"));
+    }
+
+    #[test]
+    fn append_inherited_constraints_context_adds_system_prompt_item() {
+        let mut assembled = AssembledContext::default();
+        let config = AgentExecutionConfig {
+            agent_name: "phase-agent".to_string(),
+            system_prompt: String::new(),
+            max_iterations: 1,
+            max_tool_calls: 1,
+            tool_definitions: vec![],
+            tool_calling_mode: ToolCallingMode::Native,
+            messages: vec![],
+            provider_id: None,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            fallback_provider_tags: vec![],
+            request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: None,
+            additional_read_dirs: vec![],
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            session_id: Some(SessionId("phase-session".into())),
+            session_uuid: Uuid::new_v4(),
+            knowledge_collections: vec![],
+            use_context_pipeline: false,
+            user_query: "phase task".to_string(),
+            external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+            response_format: None,
+            image_generation_options: None,
+            inherited_constraints: Some(y_core::agent::InheritedConstraints {
+                scope_boundaries: vec!["crates/y-gui/".to_string()],
+                guardrails: vec!["Use the parent report format".to_string()],
+                output_format: None,
+            }),
+        };
+
+        append_inherited_constraints_context(&mut assembled, &config);
+
+        assert_eq!(assembled.items.len(), 1);
+        assert_eq!(assembled.items[0].category, ContextCategory::SystemPrompt);
+        assert!(assembled.items[0]
+            .content
+            .contains("## Inherited Constraints"));
+        assert!(assembled.items[0].content.contains("- crates/y-gui/"));
+    }
+
+    #[tokio::test]
+    async fn init_context_and_trace_syncs_explicit_working_directory_to_prompt_context() {
+        let (container, _tmpdir) = make_test_container().await;
+        let config = AgentExecutionConfig {
+            agent_name: "phase-agent".to_string(),
+            system_prompt: String::new(),
+            max_iterations: 1,
+            max_tool_calls: 1,
+            tool_definitions: vec![],
+            tool_calling_mode: ToolCallingMode::Native,
+            messages: vec![],
+            provider_id: None,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            fallback_provider_tags: vec![],
+            request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: Some("/repo/workspace".to_string()),
+            additional_read_dirs: vec![],
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            session_id: Some(SessionId("phase-session".into())),
+            session_uuid: Uuid::new_v4(),
+            knowledge_collections: vec![],
+            use_context_pipeline: true,
+            user_query: "phase task".to_string(),
+            external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+            response_format: None,
+            image_generation_options: None,
+            inherited_constraints: None,
+        };
+
+        let _ = init_context_and_trace(&container, &config).await;
+
+        let pctx = container.prompt_context.read().await;
+        assert_eq!(pctx.working_directory.as_deref(), Some("/repo/workspace"));
     }
 }

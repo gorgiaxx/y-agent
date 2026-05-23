@@ -128,6 +128,12 @@ pub struct AgentExecutionConfig {
     pub response_format: Option<ResponseFormat>,
     /// Image generation options (only used when `request_mode` is `ImageGeneration`).
     pub image_generation_options: Option<ImageGenerationOptions>,
+    /// Constraints inherited from a parent agent or orchestrator.
+    ///
+    /// When present and non-empty, the executor appends these constraints
+    /// to the system prompt so the sub-agent respects parent-specified
+    /// boundaries and conventions.
+    pub inherited_constraints: Option<y_core::agent::InheritedConstraints>,
 }
 
 /// Result of agent execution.

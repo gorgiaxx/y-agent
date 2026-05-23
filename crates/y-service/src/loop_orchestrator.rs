@@ -388,6 +388,7 @@ impl LoopOrchestrator {
             prune_tool_history: settings.prune_tool_history,
             response_format: None,
             image_generation_options: None,
+            inherited_constraints: None,
         };
 
         // Create a per-round snapshot under the parent session's file history
@@ -506,6 +507,7 @@ impl LoopOrchestrator {
             prune_tool_history: settings.prune_tool_history,
             response_format: None,
             image_generation_options: None,
+            inherited_constraints: None,
         };
 
         AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())

@@ -713,6 +713,7 @@ mod tests {
             prune_tool_history: false,
             response_format: None,
             image_generation_options: None,
+            inherited_constraints: None,
         }
     }
 

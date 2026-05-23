@@ -7,6 +7,7 @@
 //! `Plan` tool calls and routes them here.
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use tokio_util::sync::CancellationToken;
@@ -14,6 +15,7 @@ use uuid::Uuid;
 
 use y_agent::orchestrator::dag::{DagError, TaskDag, TaskNode, TaskPriority};
 use y_agent::AgentDefinition;
+use y_core::agent::InheritedConstraints;
 use y_core::provider::ResponseFormat;
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::tool::{ToolError, ToolOutput};
@@ -105,7 +107,19 @@ pub struct StructuredPlan {
     pub scope_out: Vec<String>,
     #[serde(default)]
     pub guardrails: Vec<String>,
+    #[serde(default)]
+    execution_contract: PlanExecutionContract,
     pub tasks: Vec<PlanTask>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct PlanExecutionContract {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    working_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    additional_read_dirs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inherited_constraints: Option<InheritedConstraints>,
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +184,14 @@ struct PlanReviewOutcome {
     status: String,
     feedback: String,
     plan_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RetainedPhaseContext {
+    task_id: String,
+    phase: usize,
+    title: String,
+    summary: String,
 }
 
 impl PlanOrchestrator {
@@ -307,7 +329,7 @@ impl PlanOrchestrator {
             "plan orchestrator: starting phase execution"
         );
 
-        let plan_run_id = if let Some(id) = review.plan_run_id {
+        let plan_run_id = if let Some(id) = review.plan_run_id.clone() {
             id
         } else {
             let id = Uuid::new_v4().to_string();
@@ -365,20 +387,16 @@ impl PlanOrchestrator {
 
         Ok(ToolOutput {
             success: failed == 0,
-            content: serde_json::json!({
-                "plan_title": structured_plan.plan_title,
-                "plan_file": plan_path.display().to_string(),
-                "plan_run_id": plan_run_id,
-                "total_phases": total_tasks,
-                "completed": completed,
-                "failed": failed,
-                "review": {
-                    "status": review.status,
-                    "approved": review.approved,
-                    "feedback": review.feedback,
-                },
-                "phases": phase_results,
-            }),
+            content: build_plan_execution_tool_content(
+                &plan_path,
+                &structured_plan,
+                &plan_run_id,
+                completed,
+                failed,
+                &phase_results,
+                Some(&review),
+                None,
+            ),
             warnings: vec![],
             metadata,
         })
@@ -472,6 +490,7 @@ impl PlanOrchestrator {
             prune_tool_history: settings.prune_tool_history,
             response_format: settings.response_format.clone(),
             image_generation_options: None,
+            inherited_constraints: None,
         };
 
         let result =
@@ -505,6 +524,7 @@ impl PlanOrchestrator {
         if plan.plan_file.is_empty() {
             plan.plan_file = plan_path.display().to_string();
         }
+        plan.execution_contract = build_plan_execution_contract(container, plan_path, &plan).await;
 
         // Persist a markdown representation for human review.
         let plan_content = structured_plan_to_markdown(&plan);
@@ -896,6 +916,8 @@ impl PlanOrchestrator {
                             plan_path,
                             task.phase,
                             total_tasks,
+                            &plan.execution_contract,
+                            &[],
                             progress,
                             cancel,
                         )
@@ -1056,6 +1078,8 @@ impl PlanOrchestrator {
                 plan_path,
                 idx + 1,
                 total_tasks,
+                &plan.execution_contract,
+                &[],
                 progress,
                 cancel,
             )
@@ -1152,6 +1176,7 @@ impl PlanOrchestrator {
         session_id: &SessionId,
         plan_run_id: &str,
         from_task_id: &str,
+        working_directory: Option<String>,
         progress: Option<&TurnEventSender>,
         cancel: Option<CancellationToken>,
     ) -> Result<ToolOutput, ToolError> {
@@ -1168,11 +1193,16 @@ impl PlanOrchestrator {
                 message: format!("plan run '{plan_run_id}' not found"),
             })?;
 
-        let structured_plan: StructuredPlan =
+        let mut structured_plan: StructuredPlan =
             serde_json::from_str(&run.plan_json).map_err(|e| ToolError::RuntimeError {
                 name: "Plan".into(),
                 message: format!("failed to parse stored plan: {e}"),
             })?;
+        hydrate_plan_execution_contract(
+            &mut structured_plan,
+            std::path::Path::new(&run.plan_path),
+            working_directory,
+        );
 
         let step_results = container
             .plan_run_store
@@ -1276,16 +1306,16 @@ impl PlanOrchestrator {
 
         Ok(ToolOutput {
             success: failed == 0,
-            content: serde_json::json!({
-                "plan_title": structured_plan.plan_title,
-                "plan_file": plan_path.display().to_string(),
-                "plan_run_id": plan_run_id,
-                "total_phases": structured_plan.tasks.len(),
-                "completed": completed,
-                "failed": failed,
-                "resumed_from": from_task_id,
-                "phases": phase_results,
-            }),
+            content: build_plan_execution_tool_content(
+                &plan_path,
+                &structured_plan,
+                plan_run_id,
+                completed,
+                failed,
+                &phase_results,
+                None,
+                Some(from_task_id),
+            ),
             warnings: vec![],
             metadata,
         })
@@ -1411,6 +1441,8 @@ impl PlanOrchestrator {
             }
 
             for chunk in runnable.chunks(max_parallel) {
+                let retained_phase_context = retained_phase_context_from_results(&phase_results);
+                let retained_phase_context = &retained_phase_context;
                 let chunk_futures: Vec<_> = chunk
                     .iter()
                     .map(|task| async move {
@@ -1422,6 +1454,8 @@ impl PlanOrchestrator {
                             plan_path,
                             task.phase,
                             total_tasks,
+                            &plan.execution_contract,
+                            retained_phase_context,
                             progress,
                             cancel,
                         )
@@ -1548,6 +1582,8 @@ impl PlanOrchestrator {
                 );
             }
 
+            let retained_phase_context = retained_phase_context_from_results(&phase_results);
+
             match Self::run_phase(
                 container,
                 parent_session_id,
@@ -1556,6 +1592,8 @@ impl PlanOrchestrator {
                 plan_path,
                 idx + 1,
                 total_tasks,
+                &plan.execution_contract,
+                &retained_phase_context,
                 progress,
                 cancel,
             )
@@ -1640,6 +1678,8 @@ impl PlanOrchestrator {
         plan_path: &Path,
         phase_num: usize,
         total_phases: usize,
+        execution_contract: &PlanExecutionContract,
+        retained_phase_context: &[RetainedPhaseContext],
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
     ) -> Result<String, ToolError> {
@@ -1695,6 +1735,8 @@ impl PlanOrchestrator {
             phase_num,
             total_phases,
             tool_defs,
+            execution_contract,
+            retained_phase_context,
         );
 
         let phase_name = format!("phase-{phase_num}");
@@ -2054,6 +2096,7 @@ fn parse_structured_plan(json_text: &str) -> Result<StructuredPlan, String> {
         scope_out,
         guardrails,
         tasks,
+        execution_contract: PlanExecutionContract::default(),
     })
 }
 
@@ -2068,6 +2111,7 @@ fn parse_structured_plan_from_tasks(arr: &[serde_json::Value]) -> StructuredPlan
         scope_in: vec![],
         scope_out: vec![],
         guardrails: vec![],
+        execution_contract: PlanExecutionContract::default(),
         tasks,
     }
 }
@@ -2193,15 +2237,166 @@ async fn persist_plan_content(plan_path: &Path, plan_content: &str) -> std::io::
     tokio::fs::write(plan_path, plan_content).await
 }
 
+async fn build_plan_execution_contract(
+    container: &ServiceContainer,
+    plan_path: &Path,
+    plan: &StructuredPlan,
+) -> PlanExecutionContract {
+    let working_directory = {
+        let pctx = container.prompt_context.read().await;
+        pctx.working_directory.clone()
+    };
+    let additional_read_dirs = vec![plan_path.display().to_string()];
+    let inherited_constraints = inherited_constraints_from_plan(plan);
+
+    PlanExecutionContract {
+        working_directory,
+        additional_read_dirs,
+        inherited_constraints,
+    }
+}
+
+fn plan_execution_contract_for_phase(
+    contract: &PlanExecutionContract,
+    plan_path: &Path,
+    scope_out: &[String],
+    guardrails: &[String],
+) -> PlanExecutionContract {
+    let mut effective = contract.clone();
+    if effective.additional_read_dirs.is_empty() {
+        effective
+            .additional_read_dirs
+            .push(plan_path.display().to_string());
+    }
+    if effective.inherited_constraints.is_none() {
+        effective.inherited_constraints = inherited_constraints_from_parts(scope_out, guardrails);
+    }
+    effective
+}
+
+fn hydrate_plan_execution_contract(
+    plan: &mut StructuredPlan,
+    plan_path: &Path,
+    working_directory: Option<String>,
+) {
+    if plan.execution_contract.working_directory.is_none() {
+        plan.execution_contract.working_directory = working_directory;
+    }
+    if plan.execution_contract.additional_read_dirs.is_empty() {
+        plan.execution_contract
+            .additional_read_dirs
+            .push(plan_path.display().to_string());
+    }
+    if plan.execution_contract.inherited_constraints.is_none() {
+        plan.execution_contract.inherited_constraints = inherited_constraints_from_plan(plan);
+    }
+}
+
+fn inherited_constraints_from_plan(plan: &StructuredPlan) -> Option<InheritedConstraints> {
+    inherited_constraints_from_parts(&plan.scope_out, &plan.guardrails)
+}
+
+fn inherited_constraints_from_parts(
+    scope_out: &[String],
+    guardrails: &[String],
+) -> Option<InheritedConstraints> {
+    let constraints = InheritedConstraints {
+        scope_boundaries: scope_out.to_vec(),
+        guardrails: guardrails.to_vec(),
+        output_format: None,
+    };
+    (!constraints.is_empty()).then_some(constraints)
+}
+
+fn retained_phase_context_from_results(
+    phase_results: &[serde_json::Value],
+) -> Vec<RetainedPhaseContext> {
+    phase_results
+        .iter()
+        .filter(|result| {
+            result.get("status").and_then(serde_json::Value::as_str) == Some("completed")
+        })
+        .filter_map(|result| {
+            let summary = result
+                .get("summary")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if summary.is_empty() {
+                return None;
+            }
+            Some(RetainedPhaseContext {
+                task_id: result
+                    .get("task_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                phase: result
+                    .get("phase")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|phase| usize::try_from(phase).ok())
+                    .unwrap_or_default(),
+                title: result
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                summary: summary.to_string(),
+            })
+        })
+        .collect()
+}
+
 fn build_phase_user_message(
     task: &PlanTask,
     plan_title: &str,
     phase_num: usize,
     total_phases: usize,
+    inherited_constraints: Option<&InheritedConstraints>,
+    retained_phase_context: &[RetainedPhaseContext],
 ) -> String {
-    format!(
-        "You are executing phase {phase_num} of {total_phases} of the plan \"{plan_title}\".\n\n\
-         ## Phase {phase_num}: {}\n\n\
+    let mut msg = format!(
+        "You are executing phase {phase_num} of {total_phases} of the plan \"{plan_title}\".\n\n"
+    );
+
+    if let Some(constraints) = inherited_constraints.filter(|constraints| !constraints.is_empty()) {
+        msg.push_str("## Constraints\n\n");
+        if !constraints.scope_boundaries.is_empty() {
+            msg.push_str("### Out of Scope (Do NOT touch)\n");
+            for item in &constraints.scope_boundaries {
+                let _ = writeln!(msg, "- {item}");
+            }
+            msg.push('\n');
+        }
+        if !constraints.guardrails.is_empty() {
+            msg.push_str("### Guardrails\n");
+            for item in &constraints.guardrails {
+                let _ = writeln!(msg, "- {item}");
+            }
+            msg.push('\n');
+        }
+        if let Some(format) = &constraints.output_format {
+            let _ = writeln!(msg, "### Output Format\n{format}\n");
+        }
+    }
+
+    if !retained_phase_context.is_empty() {
+        msg.push_str("## Retained Completed Phase Context\n\n");
+        msg.push_str(
+            "Use these retained results as already-established context. Do not rediscover them unless verification is required.\n\n",
+        );
+        for retained in retained_phase_context {
+            let _ = writeln!(
+                msg,
+                "### Phase {}: {} ({})\n{}\n",
+                retained.phase, retained.title, retained.task_id, retained.summary
+            );
+        }
+    }
+
+    let _ = write!(
+        msg,
+        "## Phase {phase_num}: {}\n\n\
          {}\n\n\
          Key files: {}\n\n\
          Acceptance criteria:\n{}\n\n\
@@ -2214,7 +2409,9 @@ fn build_phase_user_message(
             .map(|c| format!("- {c}"))
             .collect::<Vec<_>>()
             .join("\n"),
-    )
+    );
+
+    msg
 }
 
 fn build_phase_execution_config(
@@ -2227,12 +2424,33 @@ fn build_phase_execution_config(
     phase_num: usize,
     total_phases: usize,
     tool_definitions: Vec<serde_json::Value>,
+    execution_contract: &PlanExecutionContract,
+    retained_phase_context: &[RetainedPhaseContext],
 ) -> AgentExecutionConfig {
-    let user_msg = build_phase_user_message(task, plan_title, phase_num, total_phases);
+    let execution_contract = plan_execution_contract_for_phase(
+        execution_contract,
+        plan_path,
+        &execution_contract
+            .inherited_constraints
+            .as_ref()
+            .map_or_else(Vec::new, |constraints| constraints.scope_boundaries.clone()),
+        &execution_contract
+            .inherited_constraints
+            .as_ref()
+            .map_or_else(Vec::new, |constraints| constraints.guardrails.clone()),
+    );
+    let user_msg = build_phase_user_message(
+        task,
+        plan_title,
+        phase_num,
+        total_phases,
+        execution_contract.inherited_constraints.as_ref(),
+        retained_phase_context,
+    );
     let messages = build_subagent_messages(&settings.system_prompt, user_msg);
 
     AgentExecutionConfig {
-        agent_name: PHASE_EXECUTOR_AGENT_ID.to_string(),
+        agent_name: format!("{PHASE_EXECUTOR_AGENT_ID}:phase-{phase_num}"),
         system_prompt: settings.system_prompt.clone(),
         max_iterations: settings.max_iterations,
         max_tool_calls: settings.max_tool_calls,
@@ -2244,8 +2462,8 @@ fn build_phase_execution_config(
         provider_tags: settings.provider_tags.clone(),
         fallback_provider_tags: vec![],
         request_mode: y_core::provider::RequestMode::TextChat,
-        working_directory: None,
-        additional_read_dirs: vec![plan_path.display().to_string()],
+        working_directory: execution_contract.working_directory.clone(),
+        additional_read_dirs: execution_contract.additional_read_dirs.clone(),
         temperature: settings.temperature,
         max_tokens: settings.max_tokens,
         thinking: None,
@@ -2262,6 +2480,7 @@ fn build_phase_execution_config(
         prune_tool_history: settings.prune_tool_history,
         response_format: None,
         image_generation_options: None,
+        inherited_constraints: execution_contract.inherited_constraints.clone(),
     }
 }
 
@@ -2499,6 +2718,7 @@ fn build_plan_execution_metadata(
     phase_results: &[serde_json::Value],
 ) -> serde_json::Value {
     let tasks = build_execution_tasks(plan, phase_results);
+    let phases = compact_plan_phase_results(phase_results);
 
     serde_json::json!({
         "action": "plan_executed",
@@ -2511,9 +2731,66 @@ fn build_plan_execution_metadata(
             "completed": completed,
             "failed": failed,
             "tasks": tasks,
-            "phases": phase_results,
+            "phases": phases,
         }
     })
+}
+
+fn build_plan_execution_tool_content(
+    plan_path: &Path,
+    plan: &StructuredPlan,
+    plan_run_id: &str,
+    completed: usize,
+    failed: usize,
+    phase_results: &[serde_json::Value],
+    review: Option<&PlanReviewOutcome>,
+    resumed_from: Option<&str>,
+) -> serde_json::Value {
+    let mut content = serde_json::json!({
+        "plan_title": plan.plan_title,
+        "plan_file": plan_path.display().to_string(),
+        "plan_run_id": plan_run_id,
+        "total_phases": plan.tasks.len(),
+        "completed": completed,
+        "failed": failed,
+        "phases": compact_plan_phase_results(phase_results),
+    });
+
+    if let Some(review) = review {
+        content["review"] = serde_json::json!({
+            "status": review.status,
+            "approved": review.approved,
+            "feedback": review.feedback,
+        });
+    }
+    if let Some(from_task_id) = resumed_from {
+        content["resumed_from"] = serde_json::Value::String(from_task_id.to_string());
+    }
+    if phase_results
+        .iter()
+        .any(|phase| phase.get("summary").is_some())
+    {
+        content["phase_summaries_omitted"] = serde_json::Value::Bool(true);
+    }
+
+    content
+}
+
+fn compact_plan_phase_results(phase_results: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    phase_results
+        .iter()
+        .map(compact_plan_phase_result)
+        .collect()
+}
+
+fn compact_plan_phase_result(phase: &serde_json::Value) -> serde_json::Value {
+    let mut compact = serde_json::Map::new();
+    for key in ["task_id", "phase", "title", "status", "error"] {
+        if let Some(value) = phase.get(key) {
+            compact.insert(key.to_string(), value.clone());
+        }
+    }
+    serde_json::Value::Object(compact)
 }
 
 fn build_execution_tasks(
@@ -2811,6 +3088,7 @@ pub async fn assess_complexity(
         prune_tool_history,
         response_format: None,
         image_generation_options: None,
+        inherited_constraints: None,
     };
 
     match AgentService::execute(container, &exec_config, None, None).await {
@@ -2934,6 +3212,7 @@ mod tests {
             scope_in: vec!["Initial structure".into()],
             scope_out: vec!["Deployment".into()],
             guardrails: vec!["Stay within src/".into()],
+            execution_contract: PlanExecutionContract::default(),
             tasks: vec![PlanTask {
                 id: "phase-1".into(),
                 phase: 1,
@@ -3002,6 +3281,7 @@ mod tests {
             scope_in: vec!["Plan renderer".into()],
             scope_out: vec!["Execution policy".into()],
             guardrails: vec!["Avoid raw JSON in the GUI".into()],
+            execution_contract: PlanExecutionContract::default(),
             tasks: vec![PlanTask {
                 id: "task-1".into(),
                 phase: 1,
@@ -3048,6 +3328,7 @@ mod tests {
             scope_in: vec![],
             scope_out: vec![],
             guardrails: vec![],
+            execution_contract: PlanExecutionContract::default(),
             tasks: vec![
                 PlanTask {
                     id: "task-1".into(),
@@ -3098,6 +3379,98 @@ mod tests {
     }
 
     #[test]
+    fn test_build_plan_execution_metadata_omits_verbose_phase_summaries() {
+        let plan = StructuredPlan {
+            plan_title: "GUI Plan Stream Fix".into(),
+            plan_file: "/tmp/gui-plan.md".into(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec![],
+            guardrails: vec![],
+            execution_contract: PlanExecutionContract::default(),
+            tasks: vec![PlanTask {
+                id: "task-1".into(),
+                phase: 1,
+                title: "Render markdown output".into(),
+                description: "Use markdown rendering for plan output.".into(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 8,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            }],
+        };
+        let verbose_summary = "verbose completed phase output ".repeat(80);
+        let phase_results = vec![serde_json::json!({
+            "task_id": "task-1",
+            "phase": 1,
+            "title": "Render markdown output",
+            "status": "completed",
+            "summary": verbose_summary,
+        })];
+
+        let meta = build_plan_execution_metadata(
+            std::path::Path::new("/tmp/gui-plan.md"),
+            &plan,
+            "test-run-id",
+            1,
+            0,
+            &phase_results,
+        );
+
+        assert_eq!(meta["display"]["phases"][0]["status"], "completed");
+        assert!(meta["display"]["phases"][0].get("summary").is_none());
+    }
+
+    #[test]
+    fn test_build_plan_execution_tool_content_omits_verbose_phase_summaries() {
+        let plan = StructuredPlan {
+            plan_title: "GUI Plan Stream Fix".into(),
+            plan_file: "/tmp/gui-plan.md".into(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec![],
+            guardrails: vec![],
+            execution_contract: PlanExecutionContract::default(),
+            tasks: vec![PlanTask {
+                id: "task-1".into(),
+                phase: 1,
+                title: "Render markdown output".into(),
+                description: "Use markdown rendering for plan output.".into(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 8,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            }],
+        };
+        let verbose_summary = "verbose completed phase output ".repeat(80);
+        let phase_results = vec![serde_json::json!({
+            "task_id": "task-1",
+            "phase": 1,
+            "title": "Render markdown output",
+            "status": "completed",
+            "summary": verbose_summary,
+        })];
+
+        let content = build_plan_execution_tool_content(
+            std::path::Path::new("/tmp/gui-plan.md"),
+            &plan,
+            "test-run-id",
+            1,
+            0,
+            &phase_results,
+            None,
+            None,
+        );
+
+        assert_eq!(content["phases"][0]["status"], "completed");
+        assert!(content["phases"][0].get("summary").is_none());
+    }
+
+    #[test]
     fn test_build_phase_execution_config_uses_registry_limits() {
         let settings = ResolvedAgentConfig {
             system_prompt: "Execute the phase".into(),
@@ -3134,9 +3507,11 @@ mod tests {
             1,
             3,
             vec![],
+            &PlanExecutionContract::default(),
+            &[],
         );
 
-        assert_eq!(config.agent_name, PHASE_EXECUTOR_AGENT_ID);
+        assert_eq!(config.agent_name, "plan-phase-executor:phase-1");
         assert_eq!(config.max_iterations, 30);
         assert_eq!(config.max_tool_calls, 60);
         assert_eq!(
@@ -3147,6 +3522,280 @@ mod tests {
         assert_eq!(config.messages[0].role, y_core::types::Role::System);
         assert!(config.messages[1].content.contains("phase 1 of 3"));
         assert_eq!(config.additional_read_dirs, vec!["/tmp/gui-plan.md"]);
+    }
+
+    #[test]
+    fn test_build_phase_user_message_includes_plan_constraints() {
+        let task = PlanTask {
+            id: "task-1".into(),
+            phase: 1,
+            title: "Implement execution path".into(),
+            description: "Wire the phase executor through the agent registry.".into(),
+            depends_on: vec![],
+            status: TaskStatus::Pending,
+            estimated_iterations: 12,
+            key_files: vec!["crates/y-service/src/plan_orchestrator.rs".into()],
+            acceptance_criteria: vec!["Phase executor sees inherited constraints".into()],
+        };
+        let scope_out = vec!["crates/y-gui/".to_string(), "docs/".to_string()];
+        let guardrails = vec!["Report findings before summary".to_string()];
+
+        let constraints =
+            inherited_constraints_from_parts(&scope_out, &guardrails).expect("constraints");
+        let message = build_phase_user_message(
+            &task,
+            "Constrained Phase Execution",
+            1,
+            2,
+            Some(&constraints),
+            &[],
+        );
+
+        assert!(message.contains("## Constraints"));
+        assert!(message.contains("### Out of Scope (Do NOT touch)"));
+        assert!(message.contains("- crates/y-gui/"));
+        assert!(message.contains("- docs/"));
+        assert!(message.contains("### Guardrails"));
+        assert!(message.contains("- Report findings before summary"));
+        assert!(message.contains("## Phase 1: Implement execution path"));
+    }
+
+    #[test]
+    fn test_build_phase_execution_config_threads_plan_constraints_into_user_message() {
+        let settings = ResolvedAgentConfig {
+            system_prompt: "Execute the phase".into(),
+            max_iterations: 30,
+            max_tool_calls: 60,
+            preferred_models: vec!["test-model".into()],
+            provider_tags: vec!["coding".into()],
+            temperature: Some(0.7),
+            max_tokens: Some(2048),
+            trust_tier: Some(TrustTier::BuiltIn),
+            allowed_tools: vec!["FileWrite".into(), "ShellExec".into()],
+            prune_tool_history: false,
+            response_format: None,
+        };
+        let task = PlanTask {
+            id: "task-1".into(),
+            phase: 1,
+            title: "Implement execution path".into(),
+            description: "Wire the phase executor through the agent registry.".into(),
+            depends_on: vec![],
+            status: TaskStatus::Pending,
+            estimated_iterations: 12,
+            key_files: vec!["crates/y-service/src/plan_orchestrator.rs".into()],
+            acceptance_criteria: vec!["Phase executor sees inherited constraints".into()],
+        };
+        let execution_contract = PlanExecutionContract {
+            inherited_constraints: inherited_constraints_from_parts(
+                &["crates/y-gui/".to_string()],
+                &["Use the parent report format".to_string()],
+            ),
+            ..Default::default()
+        };
+
+        let config = build_phase_execution_config(
+            &settings,
+            &SessionId::new(),
+            Uuid::new_v4(),
+            &task,
+            "Constrained Phase Execution",
+            Path::new("/tmp/gui-plan.md"),
+            1,
+            2,
+            vec![],
+            &execution_contract,
+            &[],
+        );
+
+        assert_eq!(config.messages.len(), 2);
+        assert!(config.messages[1].content.contains("- crates/y-gui/"));
+        assert!(config.messages[1]
+            .content
+            .contains("- Use the parent report format"));
+    }
+
+    #[test]
+    fn test_build_phase_execution_config_preserves_execution_contract() {
+        let settings = ResolvedAgentConfig {
+            system_prompt: "Execute the phase".into(),
+            max_iterations: 30,
+            max_tool_calls: 60,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            temperature: Some(0.7),
+            max_tokens: None,
+            trust_tier: Some(TrustTier::BuiltIn),
+            allowed_tools: vec!["FileRead".into(), "FileWrite".into()],
+            prune_tool_history: false,
+            response_format: None,
+        };
+        let task = PlanTask {
+            id: "task-1".into(),
+            phase: 1,
+            title: "Retry-safe phase".into(),
+            description: "Preserve workspace permissions on retry.".into(),
+            depends_on: vec![],
+            status: TaskStatus::Pending,
+            estimated_iterations: 12,
+            key_files: vec!["crates/y-service/src/plan_orchestrator.rs".into()],
+            acceptance_criteria: vec!["Retry keeps workspace roots".into()],
+        };
+        let inherited_constraints = inherited_constraints_from_parts(
+            &["crates/y-gui/".to_string()],
+            &["Use the agreed report format".to_string()],
+        );
+        let execution_contract = PlanExecutionContract {
+            working_directory: Some("/repo/workspace".to_string()),
+            additional_read_dirs: vec!["/repo/.y-agent/plan.md".to_string()],
+            inherited_constraints: inherited_constraints.clone(),
+        };
+
+        let config = build_phase_execution_config(
+            &settings,
+            &SessionId::new(),
+            Uuid::new_v4(),
+            &task,
+            "Retry Permissions",
+            Path::new("/tmp/fallback-plan.md"),
+            1,
+            1,
+            vec![],
+            &execution_contract,
+            &[],
+        );
+
+        assert_eq!(config.working_directory.as_deref(), Some("/repo/workspace"));
+        assert_eq!(
+            config.additional_read_dirs,
+            vec!["/repo/.y-agent/plan.md".to_string()]
+        );
+        assert_eq!(config.inherited_constraints, inherited_constraints);
+    }
+
+    #[test]
+    fn test_hydrate_plan_execution_contract_recovers_legacy_plan_scope() {
+        let mut plan = StructuredPlan {
+            plan_title: "Legacy Retry".into(),
+            plan_file: "/tmp/gui-plan.md".into(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec!["crates/y-gui/".into()],
+            guardrails: vec!["Use parent format".into()],
+            execution_contract: PlanExecutionContract::default(),
+            tasks: vec![],
+        };
+
+        hydrate_plan_execution_contract(
+            &mut plan,
+            Path::new("/tmp/gui-plan.md"),
+            Some("/repo/workspace".to_string()),
+        );
+
+        assert_eq!(
+            plan.execution_contract.working_directory.as_deref(),
+            Some("/repo/workspace")
+        );
+        assert_eq!(
+            plan.execution_contract.additional_read_dirs,
+            vec!["/tmp/gui-plan.md".to_string()]
+        );
+        let constraints = plan
+            .execution_contract
+            .inherited_constraints
+            .as_ref()
+            .expect("constraints should be recovered");
+        assert_eq!(constraints.scope_boundaries, vec!["crates/y-gui/"]);
+        assert_eq!(constraints.guardrails, vec!["Use parent format"]);
+    }
+
+    #[test]
+    fn test_build_phase_execution_config_includes_retained_phase_context() {
+        let settings = ResolvedAgentConfig {
+            system_prompt: "Execute the phase".into(),
+            max_iterations: 30,
+            max_tool_calls: 60,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            temperature: Some(0.7),
+            max_tokens: None,
+            trust_tier: Some(TrustTier::BuiltIn),
+            allowed_tools: vec!["FileRead".into()],
+            prune_tool_history: false,
+            response_format: None,
+        };
+        let task = PlanTask {
+            id: "task-2".into(),
+            phase: 2,
+            title: "Continue implementation".into(),
+            description: "Use prior phase output instead of global rediscovery.".into(),
+            depends_on: vec!["task-1".into()],
+            status: TaskStatus::Pending,
+            estimated_iterations: 12,
+            key_files: vec!["crates/y-service/src/plan_orchestrator.rs".into()],
+            acceptance_criteria: vec!["Prior summary is visible".into()],
+        };
+        let retained = vec![RetainedPhaseContext {
+            task_id: "task-1".to_string(),
+            phase: 1,
+            title: "Locate executor".to_string(),
+            summary: "Executor code lives in crates/y-service/src/agent_service/executor.rs"
+                .to_string(),
+        }];
+
+        let config = build_phase_execution_config(
+            &settings,
+            &SessionId::new(),
+            Uuid::new_v4(),
+            &task,
+            "Retry Context",
+            Path::new("/tmp/gui-plan.md"),
+            2,
+            2,
+            vec![],
+            &PlanExecutionContract::default(),
+            &retained,
+        );
+
+        assert!(config.messages[1]
+            .content
+            .contains("## Retained Completed Phase Context"));
+        assert!(config.messages[1]
+            .content
+            .contains("Phase 1: Locate executor"));
+        assert!(config.messages[1]
+            .content
+            .contains("Executor code lives in crates/y-service/src/agent_service/executor.rs"));
+    }
+
+    #[test]
+    fn test_retained_phase_context_from_results_keeps_completed_summaries() {
+        let phase_results = vec![
+            serde_json::json!({
+                "task_id": "task-1",
+                "phase": 1,
+                "title": "Discover files",
+                "status": "completed",
+                "summary": "Use crates/y-service/src/plan_orchestrator.rs",
+            }),
+            serde_json::json!({
+                "task_id": "task-2",
+                "phase": 2,
+                "title": "Failed phase",
+                "status": "failed",
+                "error": "blocked",
+            }),
+        ];
+
+        let retained = retained_phase_context_from_results(&phase_results);
+
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].task_id, "task-1");
+        assert_eq!(
+            retained[0].summary,
+            "Use crates/y-service/src/plan_orchestrator.rs"
+        );
     }
 
     #[test]
@@ -3243,8 +3892,8 @@ mod tests {
         .await;
 
         assert!(config.system_prompt.contains("plan phase executor"));
-        assert_eq!(config.max_iterations, 60);
-        assert_eq!(config.max_tool_calls, 100);
+        assert_eq!(config.max_iterations, 120);
+        assert_eq!(config.max_tool_calls, 160);
         assert!(config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
         assert!(config.allowed_tools.iter().any(|tool| tool == "ToolSearch"));
         assert!(!config.prune_tool_history);

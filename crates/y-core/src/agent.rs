@@ -8,7 +8,7 @@
 //! `y-agent`'s `AgentPool` implements this trait and is injected into
 //! modules that need it (e.g., `y-context`, `y-session`, `y-skills`).
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -211,6 +211,62 @@ pub struct AgentRunOutput {
     pub duration_ms: u64,
 }
 
+// ---------------------------------------------------------------------------
+// InheritedConstraints
+// ---------------------------------------------------------------------------
+
+/// Constraints inherited from a parent agent or orchestrator.
+///
+/// Propagated through delegation chains so that sub-agents respect
+/// behavioral boundaries and format conventions established by the parent.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InheritedConstraints {
+    /// Directories, modules, or subsystems that are off-limits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope_boundaries: Vec<String>,
+
+    /// Behavioral constraints (e.g., format rules, tool restrictions).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guardrails: Vec<String>,
+
+    /// Output format conventions agreed with the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<String>,
+}
+
+impl InheritedConstraints {
+    pub fn is_empty(&self) -> bool {
+        self.scope_boundaries.is_empty()
+            && self.guardrails.is_empty()
+            && self.output_format.is_none()
+    }
+
+    pub fn to_system_prompt_section(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+        let mut section = String::from("\n\n## Inherited Constraints\n\n");
+        if !self.scope_boundaries.is_empty() {
+            section.push_str("### Off-Limits (Do NOT modify)\n");
+            for boundary in &self.scope_boundaries {
+                let _ = writeln!(section, "- {boundary}");
+            }
+            section.push('\n');
+        }
+        if !self.guardrails.is_empty() {
+            section.push_str("### Behavioral Guardrails\n");
+            for g in &self.guardrails {
+                let _ = writeln!(section, "- {g}");
+            }
+            section.push('\n');
+        }
+        if let Some(fmt) = &self.output_format {
+            let _ = writeln!(section, "### Output Format\n{fmt}\n");
+        }
+        section
+    }
+}
+
 /// Executes an agent's LLM reasoning given its configuration and input.
 ///
 /// Implementations bridge agent definitions to actual `ProviderPool` calls.
@@ -377,5 +433,62 @@ mod tests {
         let parsed: AgentRunOutput = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.text, output.text);
         assert_eq!(parsed.model_used, output.model_used);
+    }
+
+    #[test]
+    fn test_inherited_constraints_is_empty() {
+        let c = InheritedConstraints::default();
+        assert!(c.is_empty());
+
+        let c = InheritedConstraints {
+            scope_boundaries: vec!["auth/".to_string()],
+            ..Default::default()
+        };
+        assert!(!c.is_empty());
+    }
+
+    #[test]
+    fn test_inherited_constraints_to_system_prompt_section_empty() {
+        let c = InheritedConstraints::default();
+        assert_eq!(c.to_system_prompt_section(), "");
+    }
+
+    #[test]
+    fn test_inherited_constraints_to_system_prompt_section_full() {
+        let c = InheritedConstraints {
+            scope_boundaries: vec!["auth/".to_string(), "payments/".to_string()],
+            guardrails: vec!["No inline lint suppression".to_string()],
+            output_format: Some("Report in markdown bullet points".to_string()),
+        };
+        let section = c.to_system_prompt_section();
+        assert!(section.contains("## Inherited Constraints"));
+        assert!(section.contains("### Off-Limits (Do NOT modify)"));
+        assert!(section.contains("- auth/"));
+        assert!(section.contains("- payments/"));
+        assert!(section.contains("### Behavioral Guardrails"));
+        assert!(section.contains("- No inline lint suppression"));
+        assert!(section.contains("### Output Format"));
+        assert!(section.contains("Report in markdown bullet points"));
+    }
+
+    #[test]
+    fn test_inherited_constraints_serde_roundtrip() {
+        let c = InheritedConstraints {
+            scope_boundaries: vec!["auth/".to_string()],
+            guardrails: vec!["English only".to_string()],
+            output_format: Some("JSON".to_string()),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let parsed: InheritedConstraints = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, c);
+    }
+
+    #[test]
+    fn test_inherited_constraints_serde_skip_empty_fields() {
+        let c = InheritedConstraints::default();
+        let json = serde_json::to_string(&c).unwrap();
+        assert_eq!(json, "{}");
+        let parsed: InheritedConstraints = serde_json::from_str(&json).unwrap();
+        assert!(parsed.is_empty());
     }
 }

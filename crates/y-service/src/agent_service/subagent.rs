@@ -200,6 +200,7 @@ impl AgentRunner for ServiceAgentRunner {
             prune_tool_history: config.prune_tool_history,
             response_format: config.response_format.clone(),
             image_generation_options: None,
+            inherited_constraints: None,
         };
 
         let result = AgentService::execute(&self.container, &exec_config, None, None)
