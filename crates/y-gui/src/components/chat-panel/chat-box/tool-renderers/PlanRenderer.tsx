@@ -79,6 +79,22 @@ function renderMultilineText(content: string): ReactNode {
   ));
 }
 
+function isStructuredPlanExecutionResult(result: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(result);
+    return parsed != null
+      && typeof parsed === 'object'
+      && (
+        Object.hasOwn(parsed, 'total_phases')
+        || Object.hasOwn(parsed, 'completed')
+        || Object.hasOwn(parsed, 'failed')
+        || Object.hasOwn(parsed, 'phases')
+      );
+  } catch {
+    return false;
+  }
+}
+
 export function PlanTaskItem({
   task,
   defaultExpanded = false,
@@ -425,7 +441,9 @@ export function PlanRenderer({
       onToggleRaw={() => setShowRaw(!showRaw)}
     />
   );
-  const errorNotice = status === 'error' && result ? (
+  const errorNotice = status === 'error' && result && !(
+    meta?.kind === 'plan_execution' && isStructuredPlanExecutionResult(result)
+  ) ? (
     <div className="tool-call-plan-error">
       <AlertCircle size={14} />
       <span>{result}</span>

@@ -110,6 +110,16 @@ function parseStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
 
+function compactExecutionPhase(phase: Record<string, unknown>): Record<string, unknown> {
+  const compact: Record<string, unknown> = {};
+  for (const key of ['task_id', 'phase', 'title', 'status', 'error']) {
+    if (Object.hasOwn(phase, key)) {
+      compact[key] = phase[key];
+    }
+  }
+  return compact;
+}
+
 function mergeExecutionTaskStatuses(
   tasks: PlanTaskDisplay[],
   phases: Array<Record<string, unknown>>,
@@ -188,7 +198,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
     const phases = Array.isArray(obj.phases)
       ? obj.phases.filter((phase): phase is Record<string, unknown> => (
         phase != null && typeof phase === 'object'
-      ))
+      )).map(compactExecutionPhase)
       : [];
     const mergedTasks = mergeExecutionTaskStatuses(tasks, phases);
 

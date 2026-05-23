@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use y_core::provider::{ImageGenerationOptions, RequestMode};
+use y_core::tool::ToolOutput;
 use y_core::types::SessionId;
 use y_service::chat_types::OperationMode;
 use y_service::chat_types::PlanReviewDecision;
@@ -1156,17 +1157,20 @@ pub async fn resume_plan_execution(
 
     let container = state.container.clone();
     let sid = SessionId(session_id.clone());
+    let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &session_id);
+    let working_directory = resolve_turn_working_directory(None, workspace_path, &state.state_dir);
     let run_id_clone = run_id.clone();
     let pending_runs = Arc::clone(&state.pending_runs);
 
     tokio::spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
-        let sink = TauriEventSink(app);
+        let sink = Arc::new(TauriEventSink(app));
 
         let progress_run_id = run_id_clone.clone();
+        let progress_sink = Arc::clone(&sink);
         let progress_task = tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
-                sink.emit_progress(&progress_run_id, &event);
+                progress_sink.emit_progress(&progress_run_id, &event);
             }
         });
 
@@ -1175,6 +1179,7 @@ pub async fn resume_plan_execution(
             &sid,
             &plan_run_id,
             &from_task_id,
+            working_directory,
             Some(&tx),
             Some(cancel_token),
         )
@@ -1188,7 +1193,12 @@ pub async fn resume_plan_execution(
         }
 
         match result {
-            Ok(_output) => {
+            Ok(output) => {
+                sink.emit_complete(&build_plan_resume_complete_payload(
+                    &run_id_clone,
+                    &sid.0,
+                    &output,
+                ));
                 tracing::info!(
                     plan_run_id = %plan_run_id,
                     from_task_id = %from_task_id,
@@ -1201,11 +1211,37 @@ pub async fn resume_plan_execution(
                     error = %e,
                     "plan resume failed"
                 );
+                sink.emit_error(&run_id_clone, &sid.0, &e.to_string());
             }
         }
     });
 
     Ok(run_id)
+}
+
+fn build_plan_resume_complete_payload(
+    run_id: &str,
+    session_id: &str,
+    output: &ToolOutput,
+) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": run_id,
+        "session_id": session_id,
+        "content": output.content.to_string(),
+        "model": "",
+        "provider_id": null,
+        "input_tokens": 0_u64,
+        "output_tokens": 0_u64,
+        "cost_usd": 0.0_f64,
+        "tool_calls": [{
+            "name": "Plan",
+            "success": output.success,
+            "duration_ms": 0_u64,
+        }],
+        "iterations": 0_usize,
+        "context_window": 0_usize,
+        "context_tokens_used": 0_u64,
+    })
 }
 
 #[cfg(test)]
@@ -1241,5 +1277,33 @@ mod tests {
                 .as_deref(),
             Some("/tmp/workspace")
         );
+    }
+
+    #[test]
+    fn build_plan_resume_complete_payload_matches_chat_complete_shape() {
+        let output = ToolOutput {
+            success: true,
+            content: serde_json::json!({
+                "plan_run_id": "plan-run-1",
+                "completed": 2,
+                "failed": 0,
+            }),
+            warnings: vec![],
+            metadata: serde_json::Value::Null,
+        };
+
+        let payload = build_plan_resume_complete_payload("run-1", "session-1", &output);
+        let typed: ChatCompletePayload =
+            serde_json::from_value(payload).expect("payload should match chat complete shape");
+
+        assert_eq!(typed.run_id, "run-1");
+        assert_eq!(typed.session_id, "session-1");
+        assert_eq!(typed.model, "");
+        assert_eq!(typed.input_tokens, 0);
+        assert_eq!(typed.output_tokens, 0);
+        assert_eq!(typed.tool_calls.len(), 1);
+        assert_eq!(typed.tool_calls[0].name, "Plan");
+        assert!(typed.tool_calls[0].success);
+        assert!(typed.content.contains("plan-run-1"));
     }
 }

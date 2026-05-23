@@ -12,6 +12,8 @@ export type InterleavedSegment =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; record: ToolResultRecord }
   | { type: 'reasoning'; content: string; durationMs?: number; isStreaming?: boolean;
+      /** Stable source for concurrent streams (for example a plan phase executor). */
+      sourceKey?: string;
       /** Client-side timestamp (ms) when this reasoning segment started streaming.
        *  Used to compute durationMs when the segment completes. Not rendered. */
       _startTs?: number };
@@ -19,10 +21,14 @@ export type InterleavedSegment =
 export function completeStreamingReasoningSegments(
   segments: InterleavedSegment[],
   now = Date.now(),
+  sourceKey?: string,
 ): InterleavedSegment[] {
   let changed = false;
   const completed = segments.map((segment) => {
     if (segment.type !== 'reasoning' || !segment.isStreaming) {
+      return segment;
+    }
+    if (sourceKey !== undefined && segment.sourceKey !== sourceKey) {
       return segment;
     }
 
@@ -39,6 +45,46 @@ export function completeStreamingReasoningSegments(
   });
 
   return changed ? completed : segments;
+}
+
+export function appendStreamingReasoningDelta(
+  segments: InterleavedSegment[],
+  content: string,
+  sourceKey?: string,
+  now = Date.now(),
+): InterleavedSegment[] {
+  const next = [...segments];
+  let existingIdx = -1;
+  for (let idx = next.length - 1; idx >= 0; idx--) {
+    const segment = next[idx];
+    if (segment.type !== 'reasoning' || !segment.isStreaming) {
+      continue;
+    }
+    if (sourceKey === undefined || segment.sourceKey === sourceKey) {
+      existingIdx = idx;
+      break;
+    }
+  }
+
+  if (existingIdx >= 0) {
+    const segment = next[existingIdx];
+    if (segment.type === 'reasoning') {
+      next[existingIdx] = {
+        ...segment,
+        content: segment.content + content,
+      };
+    }
+    return next;
+  }
+
+  next.push({
+    type: 'reasoning',
+    content,
+    isStreaming: true,
+    ...(sourceKey !== undefined ? { sourceKey } : {}),
+    _startTs: now,
+  });
+  return next;
 }
 
 /**

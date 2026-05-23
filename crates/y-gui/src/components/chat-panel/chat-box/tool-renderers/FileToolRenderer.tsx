@@ -8,6 +8,8 @@ import type { FileToolType } from '../toolCallUtils';
 import { useResolvedTheme } from '../../../../hooks/useTheme';
 import { platform, logger } from '../../../../lib';
 import { CodeBlock } from '../MessageShared';
+import { buildFileContextMenuItems } from '../fileContextMenu';
+import { useContextMenu } from '../useContextMenu';
 import { FileDiffView, DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -30,6 +32,7 @@ export function FileToolRenderer({
 }: ToolRendererProps) {
   const [expanded, setExpanded] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
+  const contextMenu = useContextMenu();
 
   const fileMeta = extractFileToolMeta(toolCall.name, toolCall.arguments);
 
@@ -61,6 +64,8 @@ export function FileToolRenderer({
   const hasExpandable = displayArgs || displayResult;
   const canExpand = showDiff || !!fileContent || hasExpandable || status === 'error';
   const canOpenInIde = !!fileMeta && toolType !== 'read' && platform.capabilities.openInIde;
+  const canOpenFile = !!fileMeta;
+  const canRevealInFileManager = !!fileMeta && platform.capabilities.revealFileManager;
 
   const handleOpenInIde = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -73,11 +78,25 @@ export function FileToolRenderer({
     }
   };
 
+  const handleContextMenu = (event: React.MouseEvent) => {
+    if (!fileMeta) return;
+
+    const items = buildFileContextMenuItems(fileMeta.filePath, {
+      openInIde: canOpenInIde,
+      openFile: canOpenFile,
+      revealInFileManager: canRevealInFileManager,
+      copyPath: true,
+    });
+    contextMenu.show(event, items);
+  };
+
   return (
     <div className={`tool-call-file-wrapper ${statusClass}`}>
       <div
         className="tool-call-tag"
+        data-file-context-menu={fileMeta ? 'true' : undefined}
         onClick={() => canExpand && setExpanded(!expanded)}
+        onContextMenu={handleContextMenu}
         title={fileMeta?.filePath ?? toolCall.name}
       >
         <span className="tool-call-action-group">
@@ -131,6 +150,7 @@ export function FileToolRenderer({
           )}
         </div>
       )}
+      {contextMenu.rendered}
     </div>
   );
 }

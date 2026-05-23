@@ -14,23 +14,61 @@ import {
 import { Button } from '../ui';
 
 import type { ModifiedFileEntry } from '../../hooks/useInfoPanel';
+import { buildFileContextMenuItems } from '../chat-panel/chat-box/fileContextMenu';
+import { useContextMenu } from '../chat-panel/chat-box/useContextMenu';
+import { FileDiffView } from '../chat-panel/chat-box/tool-renderers/shared';
 import type { PlanDisplayMeta, PlanTaskDisplay } from '../chat-panel/chat-box/planToolDisplay';
 import type { LoopDisplayMeta } from '../chat-panel/chat-box/toolCallUtils';
+import { platform } from '../../lib';
 import './InfoPanel.css';
 
 function FileCard({ file }: { file: ModifiedFileEntry }) {
+  const contextMenu = useContextMenu();
+  const canRevealInFileManager = platform.capabilities.revealFileManager;
+  const hasDiffs = file.diffs.length > 0;
+
+  const handleContextMenu = (event: React.MouseEvent) => {
+    const items = buildFileContextMenuItems(file.filePath, {
+      openFile: true,
+      revealInFileManager: canRevealInFileManager,
+      copyPath: true,
+    });
+    contextMenu.show(event, items);
+  };
+
   return (
-    <div className="info-file-card" title={file.filePath}>
-      <div className={`info-file-icon type-${file.toolType}`}>
-        {file.toolType === 'edit' ? <FileEdit size={12} /> : <FilePlus2 size={12} />}
+    <div className="info-file-block">
+      <div
+        className="info-file-card"
+        title={file.filePath}
+        data-file-context-menu="true"
+        onContextMenu={handleContextMenu}
+      >
+        <div className={`info-file-icon type-${file.toolType}`}>
+          {file.toolType === 'edit' ? <FileEdit size={12} /> : <FilePlus2 size={12} />}
+        </div>
+        <div className="info-file-details">
+          <div className="info-file-name">{file.displayName}</div>
+          <div className="info-file-path">{file.filePath}</div>
+        </div>
+        {file.count > 1 && (
+          <span className="info-file-count">{file.count}x</span>
+        )}
       </div>
-      <div className="info-file-details">
-        <div className="info-file-name">{file.displayName}</div>
-        <div className="info-file-path">{file.filePath}</div>
-      </div>
-      {file.count > 1 && (
-        <span className="info-file-count">{file.count}x</span>
+      {hasDiffs && (
+        <div className="info-file-diffs">
+          {file.diffs.map((diff, index) => (
+            <div
+              key={`${file.filePath}-${index}-${diff.oldString.length}-${diff.newString.length}`}
+              className="info-file-diff"
+            >
+              <div className="info-file-diff-label">Diff {index + 1}</div>
+              <FileDiffView oldString={diff.oldString} newString={diff.newString} />
+            </div>
+          ))}
+        </div>
       )}
+      {contextMenu.rendered}
     </div>
   );
 }

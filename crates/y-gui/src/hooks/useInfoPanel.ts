@@ -18,6 +18,7 @@ export interface ModifiedFileEntry {
   toolType: 'edit' | 'write';
   displayName: string;
   count: number;
+  diffs: Array<{ oldString: string; newString: string }>;
 }
 
 export interface UseInfoPanelReturn {
@@ -50,7 +51,7 @@ function parseMetaToolResults(messages: Message[]): ToolResultRecord[] {
   return results;
 }
 
-function collectModifiedFiles(records: ToolResultRecord[]): ModifiedFileEntry[] {
+export function collectModifiedFilesForInfoPanel(records: ToolResultRecord[]): ModifiedFileEntry[] {
   const map = new Map<string, ModifiedFileEntry>();
   for (const rec of records) {
     const name = canonicalToolName(rec.name);
@@ -60,12 +61,21 @@ function collectModifiedFiles(records: ToolResultRecord[]): ModifiedFileEntry[] 
     const existing = map.get(meta.filePath);
     if (existing) {
       existing.count += 1;
+      if (meta.toolType === 'edit' && meta.oldString !== undefined && meta.newString !== undefined) {
+        existing.diffs.push({
+          oldString: meta.oldString,
+          newString: meta.newString,
+        });
+      }
     } else {
       map.set(meta.filePath, {
         filePath: meta.filePath,
         toolType: meta.toolType as 'edit' | 'write',
         displayName: basename(meta.filePath),
         count: 1,
+        diffs: meta.toolType === 'edit' && meta.oldString !== undefined && meta.newString !== undefined
+          ? [{ oldString: meta.oldString, newString: meta.newString }]
+          : [],
       });
     }
   }
@@ -99,7 +109,7 @@ export function useInfoPanel(): UseInfoPanelReturn {
     const historical = parseMetaToolResults(messages);
     const allRecords = [...historical, ...toolResults];
 
-    const modifiedFiles = collectModifiedFiles(allRecords);
+    const modifiedFiles = collectModifiedFilesForInfoPanel(allRecords);
     const planStatus = findLatestPlan(allRecords);
     const loopStatus = findLatestLoop(allRecords);
 

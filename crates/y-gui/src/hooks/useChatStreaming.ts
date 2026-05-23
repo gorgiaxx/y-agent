@@ -44,6 +44,7 @@ import {
 import { mergeToolResultMetadata } from './toolResultMetadata';
 import { upsertToolResultRecord, upsertToolResultSegment } from './toolResultUpdates';
 import {
+  appendStreamingReasoningDelta,
   completeStreamingReasoningSegments,
   type InterleavedSegment,
 } from './useInterleavedSegments';
@@ -124,11 +125,16 @@ export function useChatStreaming(
           return;
         }
         const sid = event.session_id;
+        const sourceKey = event.agent_name;
         markSessionActivity(sid);
         // Append to event-ordered segments (text segment).
         const segs = refs.streamSegsRef.current.get(sid);
         if (segs) {
-          const preparedSegs = completeStreamingReasoningSegments(segs);
+          const preparedSegs = completeStreamingReasoningSegments(
+            segs,
+            Date.now(),
+            sourceKey,
+          );
           const lastSeg = preparedSegs[preparedSegs.length - 1];
           // Append text.
           if (lastSeg && lastSeg.type === 'text') {
@@ -183,20 +189,13 @@ export function useChatStreaming(
         // Push/extend a reasoning segment in event-ordered segments.
         const segs = refs.streamSegsRef.current.get(sid);
         if (segs) {
-          const lastSeg = segs[segs.length - 1];
-          if (lastSeg && lastSeg.type === 'reasoning' && lastSeg.isStreaming) {
-            // Extend existing in-progress reasoning segment.
-            lastSeg.content += event.content;
-          } else {
-            // New reasoning segment (new iteration's reasoning).
-            segs.push({
-              type: 'reasoning',
-              content: event.content,
-              isStreaming: true,
-              _startTs: Date.now(),
-            });
-            setStreamSegsVersion((v) => v + 1);
-          }
+          const nextSegs = appendStreamingReasoningDelta(
+            segs,
+            event.content,
+            event.agent_name,
+          );
+          refs.streamSegsRef.current.set(sid, nextSegs);
+          setStreamSegsVersion((v) => v + 1);
         }
         // Also merge into metadata for backward compat (copy, etc.).
         setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) => {

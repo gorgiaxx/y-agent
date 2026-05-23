@@ -169,8 +169,11 @@
 }
 
 /* ---- File card ---- */
-.info-file-card {
+.info-file-block {
   margin-bottom: 3px;
+}
+
+.info-file-card {
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface-primary);
@@ -236,6 +239,45 @@
   border-radius: var(--radius-sm);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+}
+
+.info-file-diffs {
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--surface-primary);
+  overflow: hidden;
+}
+
+.info-file-card:has(+ .info-file-diffs) {
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.info-file-diff + .info-file-diff {
+  border-top: 1px solid var(--border);
+}
+
+.info-file-diff-label {
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--surface-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.info-file-diff .tool-call-diff {
+  font-size: 11px;
+}
+
+.info-file-diff .tool-call-diff-summary {
+  padding: 3px 10px;
+}
+
+.info-file-diff .tool-call-diff-line {
+  padding: 0 10px;
 }
 
 /* ---- Plan card ---- */
