@@ -35,6 +35,7 @@ export type { ChatBusEvent } from './chatBus';
 export interface PendingEdit {
   messageId: string;
   content: string;
+  sessionId?: string;
 }
 
 /** Options for the sendMessage call (replaces positional parameters). */

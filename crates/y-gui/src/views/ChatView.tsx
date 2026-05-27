@@ -13,6 +13,7 @@ import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsCont
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
+import { getVisiblePendingEdit } from '../hooks/chatEditState';
 import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
@@ -95,6 +96,10 @@ export function ChatView() {
 
   const diagnosticsScope = resolveDiagnosticsScope(viewRouting.activeView, sessionHooks.activeSessionId);
   const { entries, isActive, addUserMessage } = useDiagnostics(diagnosticsScope.sessionId);
+  const visiblePendingEdit = getVisiblePendingEdit(
+    chatHooks.pendingEdit,
+    sessionHooks.activeSessionId,
+  );
 
   const {
     handleSend,
@@ -124,7 +129,7 @@ export function ChatView() {
       undoToMessage: chatHooks.undoToMessage,
       resendLastTurn: chatHooks.resendLastTurn,
       restoreBranch: chatHooks.restoreBranch,
-      pendingEdit: chatHooks.pendingEdit,
+      pendingEdit: visiblePendingEdit,
       loadMessages: chatHooks.loadMessages,
       messages: chatHooks.messages,
       addCompactPoint: chatHooks.addCompactPoint,
@@ -171,7 +176,6 @@ export function ChatView() {
   const backgroundTaskTotal = backgroundTasks.tasks.length;
   const backgroundTaskRunning = backgroundTasks.tasks.filter((task) => task.status === 'running').length;
   const backgroundTaskFailed = backgroundTasks.tasks.filter((task) => task.status === 'failed').length;
-
   const handleForkMessage = useCallback(async (messageIndex: number) => {
     if (!sessionHooks.activeSessionId) return;
     const fork = await sessionHooks.forkSession(sessionHooks.activeSessionId, messageIndex);
@@ -276,7 +280,7 @@ export function ChatView() {
           onPermissionAllowAllForSession: handlePermissionAllowAllForSession,
         }}
         edit={{
-          pendingEdit: chatHooks.pendingEdit,
+          pendingEdit: visiblePendingEdit,
           onCancelEdit: handleCancelEdit,
           rewindDraft,
           onRewindDraftConsumed: () => setRewindDraft(null),

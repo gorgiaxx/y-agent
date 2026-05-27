@@ -20,6 +20,7 @@ import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
+import { getVisiblePendingEdit } from '../hooks/chatEditState';
 import { useAgentEditor } from '../hooks/useAgentEditor';
 import type { AgentDetail } from '../hooks/useAgents';
 import type { PlanMode, ThinkingEffort, McpMode } from '../types';
@@ -228,6 +229,10 @@ export function AgentsView() {
     || agentChatHooks.isStreaming
     || agentChatHooks.opStatus === 'compacting'
     || (agentChatHooks.opStatus !== 'idle' && agentChatHooks.opStatus !== 'sending');
+  const visiblePendingEdit = getVisiblePendingEdit(
+    agentChatHooks.pendingEdit,
+    sessionHooks.activeSessionId,
+  );
 
   const chatHandlers = useChatHandlers({
     session: {
@@ -247,7 +252,7 @@ export function AgentsView() {
       undoToMessage: agentChatHooks.undoToMessage,
       resendLastTurn: agentChatHooks.resendLastTurn,
       restoreBranch: agentChatHooks.restoreBranch,
-      pendingEdit: agentChatHooks.pendingEdit,
+      pendingEdit: visiblePendingEdit,
       loadMessages: agentChatHooks.loadMessages,
       messages: agentChatHooks.messages,
       addCompactPoint: agentChatHooks.addCompactPoint,
@@ -426,7 +431,7 @@ export function AgentsView() {
                     onPermissionAllowAllForSession: interactions.handlePermissionAllowAllForSession,
                   }}
                   edit={{
-                    pendingEdit: agentChatHooks.pendingEdit,
+                    pendingEdit: visiblePendingEdit,
                     onCancelEdit: chatHandlers.handleCancelEdit,
                     rewindDraft,
                     onRewindDraftConsumed: () => setRewindDraft(null),

@@ -220,8 +220,12 @@ export function useChatOperations(
   // ------------------------------------------------------------------
 
   const editMessage = useCallback((messageId: string, content: string) => {
-    setPendingEdit({ messageId, content });
-  }, [setPendingEdit]);
+    setPendingEdit({
+      messageId,
+      content,
+      sessionId: refs.activeSessionIdRef.current ?? undefined,
+    });
+  }, [refs.activeSessionIdRef, setPendingEdit]);
 
   const cancelEdit = useCallback(() => {
     setPendingEdit(null);
@@ -241,16 +245,17 @@ export function useChatOperations(
       operationMode?: OperationMode,
       requestMode?: RequestMode,
     ): Promise<ChatStarted | null> => {
+      const edit = pendingEdit;
+      if (!edit) {
+        logger.warn('[chat] editAndResend called without pending edit');
+        return null;
+      }
+      setPendingEdit(null);
+
       if (refs.opStatusRef.current !== 'idle') {
         logger.warn(
           `[chat] editAndResend blocked: opStatus=${refs.opStatusRef.current}`,
         );
-        return null;
-      }
-
-      const edit = pendingEdit;
-      if (!edit) {
-        logger.warn('[chat] editAndResend called without pending edit');
         return null;
       }
 
@@ -302,8 +307,6 @@ export function useChatOperations(
               );
               invalidateStaleContextResets(sessionId, keptMsgs.length);
               syncVisible(sessionId);
-              setPendingEdit(null);
-
               const userMsg: Message = {
                 id: `user-${Date.now()}`,
                 role: 'user' as const,
@@ -333,7 +336,6 @@ export function useChatOperations(
             logger.warn(
               '[chat] editAndResend: fallback failed, user message not found',
             );
-            setPendingEdit(null);
             setOp('idle');
             return null;
           }
@@ -353,10 +355,7 @@ export function useChatOperations(
           invalidateStaleContextResets(sessionId, msgs.length);
           syncVisible(sessionId);
 
-          // 4. Clear edit state.
-          setPendingEdit(null);
-
-          // 5. Send new content.
+          // 4. Send new content.
           const userMsg: Message = {
             id: `user-${Date.now()}`,
             role: 'user' as const,
