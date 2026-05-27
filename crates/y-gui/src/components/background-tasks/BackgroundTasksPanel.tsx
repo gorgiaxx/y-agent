@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ArrowLeft, Loader2, RefreshCw, Square, SquareTerminal } from 'lucide-react';
+import { ArrowLeft, Clock3, RefreshCw, Square, SquareTerminal } from 'lucide-react';
 
 import type { BackgroundTaskInfo, BackgroundTaskLogEntry } from '../../hooks/useBackgroundTasks';
 import { formatDuration } from '../../utils/formatDuration';
@@ -89,7 +89,7 @@ export function BackgroundTasksSidebarPanel({
             title="Refresh"
             aria-label="Refresh background tasks"
           >
-            {loading ? <Loader2 size={13} className="background-tasks-spin" /> : <RefreshCw size={13} />}
+            {loading ? <Clock3 size={13} className="background-tasks-busy-icon" /> : <RefreshCw size={13} />}
           </Button>
         </div>
       </div>
@@ -172,7 +172,7 @@ export function BackgroundTasksOutputPanel({
             title="Poll"
             aria-label={`Poll task ${task.process_id}`}
           >
-            {busy ? <Loader2 size={14} className="background-tasks-spin" /> : <RefreshCw size={14} />}
+            {busy ? <Clock3 size={14} className="background-tasks-busy-icon" /> : <RefreshCw size={14} />}
           </Button>
           {isRunning && (
             <Button

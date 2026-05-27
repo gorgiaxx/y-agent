@@ -4,7 +4,7 @@ import {
   Plus,
   Search,
   Puzzle,
-  Loader2,
+  Clock3,
   CheckCircle2,
   AlertCircle,
   ChevronRight,
@@ -142,7 +142,7 @@ export function SkillsSidebarPanel({
           <div className="import-status-row">
             {importStatus === 'importing' && (
               <>
-                <Loader2 size={14} className="import-status-spinner" />
+                <Clock3 size={14} className="import-status-busy-icon" />
                 <span className={`import-status-msg ${importStatusExpanded ? 'import-status-msg--expanded' : ''}`}>Importing skill…</span>
               </>
             )}

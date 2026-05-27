@@ -27,24 +27,18 @@
   border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
 }
 
-/* Spinner */
-@keyframes session-item-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.session-item-spinner {
+.session-item-activity {
   flex-shrink: 0;
   width: 12px;
   height: 12px;
-  border: 1.5px solid var(--border);
-  border-top-color: var(--text-primary);
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--border));
   border-radius: 50%;
-  animation: session-item-spin 0.7s linear infinite;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  animation: busyDotBreathe 1.8s ease-in-out infinite;
 }
 
-.session-item-spinner-placeholder {
+.session-item-leading-placeholder {
   display: none;
 }
 

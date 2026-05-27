@@ -745,9 +745,10 @@
   to   { opacity: 1; transform: translateX(0); }
 }
 
-.translating-spinner {
-  animation: compactSpin 1s linear infinite;
+.translating-busy-icon {
+  color: rgba(74, 222, 128, 0.9);
   flex-shrink: 0;
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 .translating-label {
@@ -755,7 +756,7 @@
   letter-spacing: 0.01em;
 }
 
-/* ---- Compacting spinner ---- */
+/* ---- Compacting busy indicator ---- */
 
 .btn-compacting {
   position: absolute;
@@ -769,13 +770,9 @@
   color: rgba(74, 222, 128, 0.8);
 }
 
-.compacting-spinner {
-  animation: compactSpin 1s linear infinite;
-}
-
-@keyframes compactSpin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.compacting-busy-icon {
+  color: rgba(74, 222, 128, 0.9);
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 /* ---- Plan mode selector ---- */

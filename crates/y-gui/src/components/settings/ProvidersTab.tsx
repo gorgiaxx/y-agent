@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react';
-import { Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search } from 'lucide-react';
+import { Clock3, Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search } from 'lucide-react';
 import { transport } from '../../lib';
 import type { AppConfigResponse } from '../../types';
 import './ProvidersTab.css';
@@ -274,7 +274,7 @@ function ProviderTabPanel({
         </SettingsItem>
         <SettingsItem title="Test Connection" wide>
           <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
-            {testing ? <span className="pf-spinner" /> : null}
+            {testing ? <Clock3 size={12} className="pf-busy-icon" /> : null}
             {testing ? 'Testing...' : 'Test Connection'}
           </Button>
         </SettingsItem>

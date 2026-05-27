@@ -216,7 +216,7 @@ export function AgentsPanel({ agentId, onGetDetail, onSave, onReset, onReload }:
               disabled={reloading}
               title="Reload from Disk"
             >
-              <RefreshCw size={14} className={reloading ? 'agent-spin' : ''} />
+              <RefreshCw size={14} className={reloading ? 'agent-busy-icon' : ''} />
               {reloading ? 'Reloading…' : 'Reload'}
             </Button>
           </div>

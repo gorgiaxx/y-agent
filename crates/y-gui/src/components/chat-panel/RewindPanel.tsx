@@ -6,7 +6,7 @@
 // executes the rewind and reloads messages.
 
 import { useCallback, useEffect, useRef } from 'react';
-import { X, RotateCcw, FileEdit, FilePlus, Loader2, GitBranch } from 'lucide-react';
+import { X, RotateCcw, FileEdit, FilePlus, Clock3, GitBranch } from 'lucide-react';
 import type { RewindPointInfo } from '../../hooks/useRewind';
 import './RewindPanel.css';
 
@@ -88,7 +88,7 @@ export function RewindPanel({
         {/* Loading */}
         {isLoading && (
           <div className="rewind-loading">
-            <Loader2 size={20} className="rewind-spinner" />
+            <Clock3 size={20} className="rewind-busy-icon" />
             <span>Loading rewind points...</span>
           </div>
         )}
@@ -96,7 +96,7 @@ export function RewindPanel({
         {/* Rewinding overlay */}
         {isRewinding && (
           <div className="rewind-loading">
-            <Loader2 size={20} className="rewind-spinner" />
+            <Clock3 size={20} className="rewind-busy-icon" />
             <span>Rewinding...</span>
           </div>
         )}

@@ -560,7 +560,7 @@ export function ChatSidebarPanel({
           data-session-id={session.id}
           className="session-item session-item--renaming"
         >
-          <span className="session-item-spinner-placeholder" />
+          <span className="session-item-leading-placeholder" />
           <input
             ref={renameInputRef}
             className="session-rename-input"

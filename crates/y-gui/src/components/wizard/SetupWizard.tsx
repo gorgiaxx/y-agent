@@ -19,6 +19,7 @@ import {
   Eye,
   EyeOff,
   AlertTriangle,
+  Clock3,
   Settings,
   Zap,
   Search,
@@ -446,7 +447,7 @@ export function SetupWizard({
               onClick={handleTestProvider}
               disabled={testing || !provider.model}
             >
-              {testing ? <span className="wizard-spinner" /> : <Zap size={12} />}
+              {testing ? <Clock3 size={12} className="wizard-busy-icon" /> : <Zap size={12} />}
               {testing ? 'Testing...' : 'Test Connection'}
             </Button>
             {testResult && (

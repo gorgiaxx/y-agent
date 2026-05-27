@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ArrowLeft, Loader2, Plus, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Clock3, Plus, Settings2, Trash2 } from 'lucide-react';
 import { NavSidebar, NavItem, NavDivider } from '../common/NavSidebar';
 import { SessionItem } from '../shared/SessionItem';
 import { Badge } from '../ui/Badge';
@@ -83,7 +83,7 @@ export function AgentStudioSidebarNav({
             <div className="agent-session-toolbar-meta">
               {loading && (
                 <span className="agent-session-toolbar-loading" aria-label="Loading sessions">
-                  <Loader2 size={12} className="agents-spin" />
+                  <Clock3 size={12} className="agents-busy-icon" />
                 </span>
               )}
               <Badge variant="outline">{sessions.length}</Badge>
@@ -97,7 +97,7 @@ export function AgentStudioSidebarNav({
         <div className="session-pane">
           {loading && sessions.length === 0 && (
             <div className="session-empty">
-              <Loader2 size={14} className="agents-spin" />
+              <Clock3 size={14} className="agents-busy-icon" />
               <span>Loading sessions...</span>
             </div>
           )}

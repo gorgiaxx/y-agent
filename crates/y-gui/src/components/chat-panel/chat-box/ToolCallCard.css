@@ -32,23 +32,9 @@
 .tool-status-running.tool-call-status,
 .tool-status-running.tool-call-status-icon { color: var(--text-muted); }
 
-.tool-status-running .tool-call-status,
-.tool-status-running.tool-call-status {
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.35; }
-}
-
-.tool-call-spinner {
-  animation: tool-call-spin 1s linear infinite;
-}
-
-@keyframes tool-call-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+.tool-call-busy-icon {
+  color: var(--text-muted);
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 .tool-call-duration {
@@ -653,7 +639,7 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--warning, #e5a100);
-  animation: pulse 1.4s ease-in-out infinite;
+  animation: busyBreathe 1.8s ease-in-out infinite;
   flex-shrink: 0;
 }
 
@@ -1015,8 +1001,9 @@
   white-space: nowrap;
 }
 
-.tool-call-plan-task-status-icon--spinning {
-  animation: rotate 1s linear infinite;
+.tool-call-plan-task-status-icon--busy {
+  color: var(--accent);
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 .tool-call-plan-task-chevron {
@@ -1038,16 +1025,6 @@
   background: color-mix(in srgb, var(--surface-secondary) 60%, transparent);
   border-radius: var(--radius-md);
   animation: thinking-body-in 0.15s ease;
-}
-
-@keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .tool-call-plan-task-desc {

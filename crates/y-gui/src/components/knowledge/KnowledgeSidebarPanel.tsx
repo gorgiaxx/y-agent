@@ -4,7 +4,7 @@ import {
   Plus,
   Search,
   Database,
-  Loader2,
+  Clock3,
   CheckCircle2,
   AlertCircle,
   ChevronRight,
@@ -214,7 +214,7 @@ export function KnowledgeSidebarPanel({
           <div className="import-status-row">
             {kbIngestStatus === 'ingesting' && (
               <>
-                <Loader2 size={14} className="import-status-spinner" />
+                <Clock3 size={14} className="import-status-busy-icon" />
                 <span className={`import-status-msg ${ingestStatusExpanded ? 'import-status-msg--expanded' : ''}`}>
                   {kbBatchProgress
                     ? `Importing ${kbBatchProgress.current}/${kbBatchProgress.total}…`

@@ -164,12 +164,8 @@ body.y-gui-diag-resizing * {
   height: 6px;
   border-radius: 50%;
   background: var(--success);
-  animation: diag-pulse 2s ease-in-out infinite;
-}
-
-@keyframes diag-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.25; }
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 14%, transparent);
+  animation: busyDotBreathe 2s ease-in-out infinite;
 }
 
 .diag-header-actions {
@@ -489,13 +485,9 @@ body.y-gui-diag-resizing * {
   color: var(--accent);
 }
 
-@keyframes diag-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
-.diag-spin {
-  animation: diag-spin 1s linear infinite;
+.diag-busy-icon {
+  color: var(--accent);
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 .diag-expand-icon {

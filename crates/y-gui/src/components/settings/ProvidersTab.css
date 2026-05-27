@@ -145,16 +145,10 @@
   border: 1px solid rgba(229, 115, 115, 0.2);
 }
 
-/* Spinner for test-in-progress */
-.pf-spinner {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--border);
-  border-top-color: var(--text-secondary);
-  border-radius: 50%;
-  animation: settings-spin 0.7s linear infinite;
+.pf-busy-icon {
+  color: var(--text-secondary);
   flex-shrink: 0;
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 /* ---- Sub-list layout is now in ui/SubListLayout.css ---- */

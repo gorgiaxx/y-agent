@@ -4,7 +4,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Circle,
-  Loader2,
+  Clock3,
   RefreshCw,
   Search,
 } from 'lucide-react';
@@ -26,7 +26,7 @@ function RoundStatusIcon({ status }: { status: string }) {
   if (status === 'failed' || status === 'cancelled') {
     return <AlertCircle size={14} className="tool-call-loop-round-icon" />;
   }
-  return <Loader2 size={14} className="tool-call-loop-round-icon tool-call-loop-round-icon--spinning" />;
+  return <Clock3 size={14} className="tool-call-loop-round-icon tool-call-loop-round-icon--busy" />;
 }
 
 function RoundTimeline({ rounds, maxRounds }: { rounds: LoopRoundDisplay[]; maxRounds: number }) {
@@ -116,7 +116,7 @@ export function LoopRenderer({
         ? 'running'
         : status;
   const effectiveStatusIcon = {
-    running: <Loader2 size={13} className="tool-call-spinner" />,
+    running: <Clock3 size={13} className="tool-call-busy-icon" />,
     success: <CheckCircle2 size={13} />,
     error: <AlertCircle size={13} />,
   }[effectiveStatus];

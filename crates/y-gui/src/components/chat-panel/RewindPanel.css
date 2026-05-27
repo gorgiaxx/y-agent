@@ -103,13 +103,9 @@
   font-size: 13px;
 }
 
-.rewind-spinner {
-  animation: rewind-spin 1s linear infinite;
-}
-
-@keyframes rewind-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.rewind-busy-icon {
+  color: var(--accent);
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 .rewind-empty {

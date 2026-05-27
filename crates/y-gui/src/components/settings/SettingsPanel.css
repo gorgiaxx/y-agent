@@ -549,13 +549,3 @@ html.custom-decorations .settings-action-bar-actions {
   font-size: 13px;
   color: var(--text-muted);
 }
-
-@keyframes settings-spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}

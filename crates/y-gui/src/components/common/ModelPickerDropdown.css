@@ -97,11 +97,12 @@
   flex-shrink: 0;
 }
 
-.model-picker-spinner {
-  animation: modelPickerSpin 1s linear infinite;
-}
-
-@keyframes modelPickerSpin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+.model-picker-busy-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  flex-shrink: 0;
+  animation: busyDotBreathe 1.8s ease-in-out infinite;
 }

@@ -44,7 +44,7 @@ export function SessionItem({
       onContextMenu={onContextMenu}
     >
       {isStreaming ? (
-        <span className="session-item-spinner" aria-hidden="true" />
+        <span className="session-item-activity" aria-hidden="true" />
       ) : isPinned || onPinToggle ? (
         <button
           className={`session-item-pin${isPinned ? ' session-item-pin--pinned' : ''}`}
@@ -57,7 +57,7 @@ export function SessionItem({
           <Pin size={12} />
         </button>
       ) : (
-        <span className="session-item-spinner-placeholder" aria-hidden="true" />
+        <span className="session-item-leading-placeholder" aria-hidden="true" />
       )}
 
       <div className="session-item-content">

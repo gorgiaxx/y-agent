@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Clock, Pencil, Trash2, Save, X, Play, Pause, RotateCw } from 'lucide-react';
+import { Clock, Pencil, Trash2, Save, X, Play, Pause, RotateCw, Clock3 } from 'lucide-react';
 import { Button, Badge, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui';
 import { ExecutionHistorySection } from './ExecutionHistorySection';
 import type { WorkflowInfo, ScheduleInfo, ExecutionRecord } from './types';
@@ -135,7 +135,7 @@ export function ScheduleDetail({
               onClick={handleTriggerNow}
               disabled={triggering}
             >
-              <RotateCw size={14} className={triggering ? 'spin-animation' : ''} />
+              {triggering ? <Clock3 size={14} /> : <RotateCw size={14} />}
               {triggering ? 'Triggering...' : 'Trigger Now'}
             </Button>
             {sc.enabled ? (

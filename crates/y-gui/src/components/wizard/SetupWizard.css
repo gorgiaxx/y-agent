@@ -482,19 +482,10 @@ html.custom-decorations .wizard-header [role="button"] {
   color: var(--error);
 }
 
-/* ---- Spinner ---- */
-.wizard-spinner {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: wizard-spin 0.6s linear infinite;
-}
-
-@keyframes wizard-spin {
-  to { transform: rotate(360deg); }
+.wizard-busy-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 /* ---- Final step (completion) ---- */

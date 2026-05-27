@@ -1,5 +1,5 @@
 import { useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
-import { X, Loader2 } from 'lucide-react';
+import { Clock3, X } from 'lucide-react';
 import type { Attachment } from '../../../types';
 import './InputArea.css';
 
@@ -240,7 +240,7 @@ export const ContentEditableInput = forwardRef<ContentEditableInputHandle, Conte
 
         {translating && (
           <div className="translating-overlay" title="Translating...">
-            <Loader2 size={14} className="translating-spinner" />
+            <Clock3 size={14} className="translating-busy-icon" />
             <span className="translating-label">Translating...</span>
           </div>
         )}

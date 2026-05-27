@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState, useMemo } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { Activity, X, Cpu, Wrench, AlertTriangle, ChevronDown, ChevronRight, Trash2, Maximize2, Minimize2, User, Copy, Check, Filter, Loader } from 'lucide-react';
+import { Activity, X, Cpu, Wrench, AlertTriangle, ChevronDown, ChevronRight, Trash2, Maximize2, Minimize2, User, Copy, Check, Filter, Clock3 } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -341,7 +341,7 @@ function ToolStartEntry({ event, timestamp }: { event: ToolStartEvent; timestamp
     <div className="diag-entry diag-tool diag-tool-running">
       <div className="diag-entry-header">
         <div className="diag-entry-icon">
-          <Loader size={14} className="diag-spin" />
+          <Clock3 size={14} className="diag-busy-icon" />
         </div>
         <div className="diag-entry-main">
           <span className="diag-entry-title">{event.name}</span>

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Loader2, Cpu, Image as ImageIcon, SlidersHorizontal, Shield, ShieldCheck, Unlock, Settings } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Clock3, Cpu, Image as ImageIcon, SlidersHorizontal, Shield, ShieldCheck, Unlock, Settings } from 'lucide-react';
 import { logger, transport, platform } from '../../../lib';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
@@ -731,7 +731,7 @@ export function InputArea(props: InputAreaProps) {
 
         {isCompacting && (
           <div className="btn-compacting" title="Compacting context...">
-            <Loader2 size={16} className="compacting-spinner" />
+            <Clock3 size={16} className="compacting-busy-icon" />
           </div>
         )}
 
@@ -1000,7 +1000,7 @@ export function InputArea(props: InputAreaProps) {
                             <span className="toolbar-prompt-item-name">Use default prompt</span>
                           </span>
                           {promptTemplateApplying === '__clear__' && (
-                            <Loader2 size={12} className="compacting-spinner" />
+                            <Clock3 size={12} className="compacting-busy-icon" />
                           )}
                         </button>
                       )}
@@ -1024,7 +1024,7 @@ export function InputArea(props: InputAreaProps) {
                               <span className="toolbar-prompt-item-name">{template.name}</span>
                             </span>
                             {promptTemplateApplying === template.id && (
-                              <Loader2 size={12} className="compacting-spinner" />
+                              <Clock3 size={12} className="compacting-busy-icon" />
                             )}
                           </button>
                         ))

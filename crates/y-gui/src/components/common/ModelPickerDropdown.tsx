@@ -73,7 +73,7 @@ export function ModelPickerDropdown({
         </div>
         {loading && (
           <div className="model-picker-status">
-            <span className="model-picker-spinner" /> Fetching models...
+            <span className="model-picker-busy-indicator" /> Fetching models...
           </div>
         )}
         {error && (

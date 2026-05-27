@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { GitBranch, Pencil, Trash2, Play, CheckCircle, AlertCircle, RotateCw } from 'lucide-react';
+import { GitBranch, Pencil, Trash2, Play, CheckCircle, AlertCircle, RotateCw, Clock3 } from 'lucide-react';
 import { DagGraph } from './DagGraph';
 import { ExecutionHistorySection } from './ExecutionHistorySection';
 import { WorkflowEditor } from './WorkflowEditor';
@@ -152,7 +152,7 @@ export function WorkflowDetail({
                   disabled={running}
                 >
                   {running ? (
-                    <><RotateCw size={14} className="spin-animation" /> Running...</>
+                    <><Clock3 size={14} /> Running...</>
                   ) : (
                     <><Play size={14} /> Run</>
                   )}

@@ -57,7 +57,7 @@ export function AgentOverview({
                 disabled={reloading}
                 title="Reload"
               >
-                <RefreshCw size={14} className={reloading ? 'agents-spin' : ''} />
+                <RefreshCw size={14} className={reloading ? 'agents-busy-icon' : ''} />
               </Button>
             )}
             {onNewAgent && (

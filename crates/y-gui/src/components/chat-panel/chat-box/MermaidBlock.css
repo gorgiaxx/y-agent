@@ -84,17 +84,6 @@
   width: 60%;
   height: 80px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(
-    90deg,
-    var(--surface-tertiary) 25%,
-    var(--surface-hover) 50%,
-    var(--surface-tertiary) 75%
-  );
-  background-size: 200% 100%;
-  animation: mermaid-skeleton-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes mermaid-skeleton-pulse {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  background: var(--surface-tertiary);
+  animation: busySkeletonBreathe 1.8s ease-in-out infinite;
 }

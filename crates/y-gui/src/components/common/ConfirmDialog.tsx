@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle, Clock3 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -91,7 +91,7 @@ export function ConfirmDialog({
           >
             {loading ? (
               <span className="inline-flex items-center gap-1.5">
-                <Loader2 size={14} className="animate-spin" />
+                <Clock3 size={14} />
                 Deleting...
               </span>
             ) : (

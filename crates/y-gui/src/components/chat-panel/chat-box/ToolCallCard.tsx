@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { CheckCircle, XCircle, Loader } from 'lucide-react';
+import { CheckCircle, Clock3, XCircle } from 'lucide-react';
 import type { ToolCallBrief } from '../../../types';
 import {
   canonicalToolName,
@@ -39,7 +39,7 @@ export function ToolCallCard({
   );
 
   const statusIcon = {
-    running: <Loader size={13} className="tool-call-spinner" />,
+    running: <Clock3 size={13} className="tool-call-busy-icon" />,
     success: <CheckCircle size={13} />,
     error: <XCircle size={13} />,
   }[status];

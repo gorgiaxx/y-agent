@@ -242,12 +242,7 @@
 
 /* Button classes removed -- now uses shared Button component */
 
-/* ----- Reload spin animation ----- */
-
-@keyframes agent-spin {
-  to { transform: rotate(360deg); }
-}
-
-.agent-spin {
-  animation: agent-spin 0.8s linear infinite;
+.agent-busy-icon {
+  color: var(--accent);
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }

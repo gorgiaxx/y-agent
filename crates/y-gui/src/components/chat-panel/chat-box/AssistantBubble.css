@@ -67,6 +67,7 @@
 .tool-call-pending-dots {
   display: flex;
   gap: 3px;
+  animation: busyBreathe 1.8s ease-in-out infinite;
 }
 
 .tool-call-pending-dots span {
@@ -74,20 +75,7 @@
   height: 4px;
   border-radius: 50%;
   background: var(--text-muted);
-  animation: tool-pending-bounce 1.2s infinite ease-in-out;
-}
-
-.tool-call-pending-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.tool-call-pending-dots span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
-@keyframes tool-pending-bounce {
-  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-  40% { opacity: 1; transform: scale(1); }
+  opacity: 0.65;
 }
 
 .tool-call-pending-text {

@@ -5,8 +5,8 @@ import {
   ClipboardList,
   ChevronRight,
   Circle,
+  Clock3,
   ListTodo,
-  Loader2,
   Play,
 } from 'lucide-react';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -48,7 +48,7 @@ function PlanTaskStatusIcon({ status }: { status: string }) {
     return <AlertCircle size={14} className="tool-call-plan-task-status-icon" />;
   }
   if (status === 'in_progress') {
-    return <Loader2 size={14} className="tool-call-plan-task-status-icon tool-call-plan-task-status-icon--spinning" />;
+    return <Clock3 size={14} className="tool-call-plan-task-status-icon tool-call-plan-task-status-icon--busy" />;
   }
   return <Circle size={14} className="tool-call-plan-task-status-icon" />;
 }
@@ -382,7 +382,7 @@ export function PlanRenderer({
         ? 'running'
         : status;
   const effectiveStatusIcon = {
-    running: <Loader2 size={13} className="tool-call-spinner" />,
+    running: <Clock3 size={13} className="tool-call-busy-icon" />,
     success: <CheckCircle2 size={13} />,
     error: <AlertCircle size={13} />,
   }[effectiveStatus];

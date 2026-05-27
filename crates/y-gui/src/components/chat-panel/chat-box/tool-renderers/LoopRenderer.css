@@ -88,8 +88,9 @@
   color: var(--error);
 }
 
-.tool-call-loop-round-icon--spinning {
-  animation: rotate 1s linear infinite;
+.tool-call-loop-round-icon--busy {
+  color: var(--accent);
+  animation: busyBreathe 1.6s ease-in-out infinite;
 }
 
 .tool-call-loop-round-label {
