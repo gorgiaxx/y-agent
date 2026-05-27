@@ -384,6 +384,8 @@ impl Tool for GlobTool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use y_core::types::SessionId;
 
     use super::*;
@@ -404,6 +406,13 @@ mod tests {
         let mut input = make_input(args);
         input.working_dir = Some(working_dir.display().to_string());
         input
+    }
+
+    fn target_test_dir() -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/y-tools-tests/glob-outside");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[tokio::test]
@@ -505,7 +514,10 @@ mod tests {
     #[tokio::test]
     async fn test_glob_rejects_search_outside_working_dir() {
         let workspace = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let outside = tempfile::Builder::new()
+            .prefix("outside-")
+            .tempdir_in(target_test_dir())
+            .unwrap();
         let outside_file = outside.path().join("__glob_outside_unique__.tsx");
         std::fs::write(&outside_file, "export const outside = true;").unwrap();
 

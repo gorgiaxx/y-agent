@@ -604,6 +604,7 @@ fn truncate_content(content: &str) -> (String, bool) {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::path::PathBuf;
     use y_core::types::SessionId;
 
     fn make_input(args: serde_json::Value) -> ToolInput {
@@ -635,6 +636,13 @@ mod tests {
         let mut input = make_input_with_working_dir(args, working_dir);
         input.additional_read_dirs = vec![additional_read_root.display().to_string()];
         input
+    }
+
+    fn target_test_dir() -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/y-tools-tests/file-read-outside");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[tokio::test]
@@ -708,7 +716,10 @@ mod tests {
     #[tokio::test]
     async fn test_file_read_rejects_path_outside_working_dir() {
         let workspace = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let outside = tempfile::Builder::new()
+            .prefix("outside-")
+            .tempdir_in(target_test_dir())
+            .unwrap();
         let outside_file = outside.path().join("__file_read_outside__.txt");
         std::fs::write(&outside_file, "outside").unwrap();
 

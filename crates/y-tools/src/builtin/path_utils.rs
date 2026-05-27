@@ -61,21 +61,29 @@ fn resolve_path_with_read_dirs(
         .filter(|value| !value.is_empty())
         .map(|value| normalize_lexically(Path::new(value)))
         .collect::<Vec<_>>();
+    let has_workspace_root = workspace_root.is_some();
     let has_additional_roots = !additional_roots.is_empty();
+    let temporary_roots = if has_workspace_root || has_additional_roots {
+        system_temporary_roots()
+    } else {
+        Vec::new()
+    };
 
-    let mut allowed_roots =
-        Vec::with_capacity(workspace_root.as_ref().map_or(0, |_| 1) + additional_roots.len());
+    let mut allowed_roots = Vec::with_capacity(
+        workspace_root.as_ref().map_or(0, |_| 1) + additional_roots.len() + temporary_roots.len(),
+    );
     if let Some(workspace) = workspace_root {
         allowed_roots.push(workspace);
     }
     allowed_roots.extend(additional_roots);
+    allowed_roots.extend(temporary_roots);
 
     if !allowed_roots.is_empty() {
         let is_allowed = allowed_roots
             .iter()
             .any(|root| path_is_within_root(&resolved, root));
         if !is_allowed {
-            if allowed_roots.len() == 1 && !has_additional_roots {
+            if has_workspace_root && !has_additional_roots {
                 return Err(ToolError::PermissionDenied {
                     name: tool_name.to_string(),
                     reason: format!(
@@ -102,6 +110,28 @@ fn resolve_path_with_read_dirs(
     }
 
     Ok(resolved)
+}
+
+fn system_temporary_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let temp_dir = std::env::temp_dir();
+    push_unique_root(&mut roots, &temp_dir);
+
+    #[cfg(unix)]
+    {
+        push_unique_root(&mut roots, Path::new("/tmp"));
+        push_unique_root(&mut roots, Path::new("/var/tmp"));
+        push_unique_root(&mut roots, Path::new("/private/tmp"));
+    }
+
+    roots
+}
+
+fn push_unique_root(roots: &mut Vec<PathBuf>, root: &Path) {
+    let root = normalize_lexically(root);
+    if !roots.iter().any(|existing| existing == &root) {
+        roots.push(root);
+    }
 }
 
 fn path_is_within_root(path: &Path, root: &Path) -> bool {

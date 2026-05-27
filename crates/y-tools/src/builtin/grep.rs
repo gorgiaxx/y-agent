@@ -650,6 +650,7 @@ impl Tool for GrepTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use y_core::types::SessionId;
 
     fn make_input(args: serde_json::Value) -> ToolInput {
@@ -668,6 +669,13 @@ mod tests {
         let mut input = make_input(args);
         input.working_dir = Some(working_dir.display().to_string());
         input
+    }
+
+    fn target_test_dir() -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/y-tools-tests/grep-outside");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[tokio::test]
@@ -744,7 +752,10 @@ mod tests {
     #[tokio::test]
     async fn test_grep_rejects_search_outside_working_dir() {
         let workspace = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let outside = tempfile::Builder::new()
+            .prefix("outside-")
+            .tempdir_in(target_test_dir())
+            .unwrap();
         let outside_file = outside.path().join("__grep_outside_unique__.txt");
         std::fs::write(&outside_file, "needle_outside_workspace").unwrap();
 
