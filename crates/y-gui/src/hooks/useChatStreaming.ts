@@ -18,7 +18,10 @@ import {
   type ChatBusSubscriber,
 } from './chatBus';
 import { CHAT_STUCK_TIMEOUT_MS, hasSessionActivityTimedOut } from './chatActivity';
-import { hasPendingRunForSession } from './chatRunState';
+import {
+  hasAwaitingInteractionForSession,
+  hasPendingRunForSession,
+} from './chatRunState';
 import {
   getCachedMessages,
   setCachedMessages,
@@ -120,6 +123,12 @@ export function useChatStreaming(
           setVisibleToolResults([]);
         }
         logger.debug('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
+      } else if (event.type === 'awaiting_interaction') {
+        markSessionActivity(event.session_id);
+        setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+      } else if (event.type === 'interaction_resolved') {
+        markSessionActivity(event.session_id);
+        setStreamingSessionIds(new Set(chatBusState.streamingSessions));
       } else if (event.type === 'stream_delta') {
         if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
@@ -689,6 +698,10 @@ export function useChatStreaming(
       if (
         !hasSessionActivityTimedOut(lastActivityAt, Date.now(), CHAT_STUCK_TIMEOUT_MS)
       ) {
+        return;
+      }
+
+      if (hasAwaitingInteractionForSession(chatBusState, sid)) {
         return;
       }
 

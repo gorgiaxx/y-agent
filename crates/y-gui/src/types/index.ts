@@ -219,6 +219,35 @@ export interface LlmErrorEvent {
   agent_name?: string;
 }
 
+export interface UserInteractionRequestEvent {
+  type: 'user_interaction_request';
+  interaction_id: string;
+  questions: unknown;
+}
+
+export interface PermissionRequestEvent {
+  type: 'permission_request';
+  request_id: string;
+  tool_name: string;
+  action_description: string;
+  reason: string;
+  content_preview?: string | null;
+}
+
+export interface PlanReviewRequestEvent {
+  type: 'plan_review_request';
+  review_id: string;
+  plan_title: string;
+  plan_file: string;
+  estimated_effort: string;
+  overview: string;
+  scope_in: string[];
+  scope_out: string[];
+  guardrails: string[];
+  plan_content: string;
+  tasks: unknown;
+}
+
 export interface HeartbeatEvent {
   type: 'heartbeat';
   agent_name?: string;
@@ -235,6 +264,9 @@ export type TurnEvent =
   | StreamImageDeltaEvent
   | StreamImageCompleteEvent
   | LlmErrorEvent
+  | UserInteractionRequestEvent
+  | PermissionRequestEvent
+  | PlanReviewRequestEvent
   | HeartbeatEvent;
 
 export interface ProgressPayload {

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { transport } from '../lib';
+import {
+  markChatRunAwaitingInteraction,
+  resolveChatRunInteraction,
+} from './chatBus';
 
 import {
   clearSessionInteractionByPredicate,
@@ -26,7 +30,29 @@ export interface PermissionDialogState {
 
 export interface PlanReviewDialogState {
   reviewId: string;
+  runId: string;
+  sessionId: string;
   plan: Record<string, unknown>;
+}
+
+function clearPlanReviewAndResumeRun(
+  reviewBySession: Record<string, PlanReviewDialogState>,
+  reviewId: string,
+): Record<string, PlanReviewDialogState> {
+  const sessionId = Object.keys(reviewBySession).find(
+    (key) => reviewBySession[key].reviewId === reviewId,
+  );
+  if (!sessionId) {
+    return reviewBySession;
+  }
+
+  const review = reviewBySession[sessionId];
+  const next = { ...reviewBySession };
+  delete next[sessionId];
+
+  resolveChatRunInteraction(review.runId, review.sessionId);
+
+  return next;
 }
 
 export function useSessionInteractions(activeSessionId: string | null) {
@@ -83,9 +109,12 @@ export function useSessionInteractions(activeSessionId: string | null) {
       review_id: string;
       plan: Record<string, unknown>;
     }>('chat:PlanReview', (event) => {
-      const { session_id, review_id, plan } = event.payload;
+      const { run_id, session_id, review_id, plan } = event.payload;
+      markChatRunAwaitingInteraction(run_id, session_id);
       setPlanReviewBySession((prev) => setSessionInteraction(prev, session_id, {
         reviewId: review_id,
+        runId: run_id,
+        sessionId: session_id,
         plan,
       }));
     });
@@ -155,10 +184,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePlanReviewApprove = useCallback((reviewId: string) => {
-    setPlanReviewBySession((prev) => clearSessionInteractionByPredicate(
-      prev,
-      (interaction) => interaction.reviewId === reviewId,
-    ));
+    setPlanReviewBySession((prev) => clearPlanReviewAndResumeRun(prev, reviewId));
     transport.invoke('chat_answer_plan_review', {
       reviewId,
       decision: 'approve',
@@ -166,10 +192,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePlanReviewRevise = useCallback((reviewId: string, feedback: string) => {
-    setPlanReviewBySession((prev) => clearSessionInteractionByPredicate(
-      prev,
-      (interaction) => interaction.reviewId === reviewId,
-    ));
+    setPlanReviewBySession((prev) => clearPlanReviewAndResumeRun(prev, reviewId));
     transport.invoke('chat_answer_plan_review', {
       reviewId,
       decision: 'revise',
@@ -178,10 +201,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
   }, []);
 
   const handlePlanReviewReject = useCallback((reviewId: string, feedback: string) => {
-    setPlanReviewBySession((prev) => clearSessionInteractionByPredicate(
-      prev,
-      (interaction) => interaction.reviewId === reviewId,
-    ));
+    setPlanReviewBySession((prev) => clearPlanReviewAndResumeRun(prev, reviewId));
     transport.invoke('chat_answer_plan_review', {
       reviewId,
       decision: 'reject',

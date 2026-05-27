@@ -9,7 +9,10 @@ import { useState, useCallback, useEffect, type Dispatch, type SetStateAction, t
 import { transport } from '../lib';
 import type { RequestMode } from '../types';
 import { chatBusState } from './chatBus';
-import { getPendingRunIdForSession } from './chatRunState';
+import {
+  getPendingRunIdForSession,
+  hasAwaitingInteractionForSession,
+} from './chatRunState';
 import { getCachedMessages } from './chatHelpers';
 import type { ChatSharedRefs } from './chatSharedState';
 import type { ChatOpStatus, CompactInfo, PendingEdit } from './useChat';
@@ -115,7 +118,12 @@ export function useChatSessionState(
     let restoredOp = activeSessionId
       ? (refs.opStatusMapRef.current.get(activeSessionId) ?? 'idle')
       : 'idle';
-    if (activeSessionId && pendingRunId && restoredOp === 'idle') {
+    if (
+      activeSessionId
+      && pendingRunId
+      && restoredOp === 'idle'
+      && !hasAwaitingInteractionForSession(chatBusState, activeSessionId)
+    ) {
       restoredOp = 'sending';
       refs.opStatusMapRef.current.set(activeSessionId, restoredOp);
     }

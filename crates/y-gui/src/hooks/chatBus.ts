@@ -16,6 +16,8 @@ import type {
   ProgressPayload,
 } from '../types';
 import {
+  applyAwaitingInteraction,
+  applyInteractionResolved,
   applyRunStarted,
   applyRunTerminal,
   createChatRunState,
@@ -29,12 +31,15 @@ export interface ChatBusState {
   runToSession: Record<string, string>;
   streamingSessions: Set<string>;
   pendingRuns: Set<string>;
+  awaitingInteractionRuns: Set<string>;
 }
 
 export type ChatBusSubscriber = (event: ChatBusEvent) => void;
 
 export type ChatBusEvent =
   | { type: 'started'; run_id: string; session_id: string }
+  | { type: 'awaiting_interaction'; run_id: string; session_id: string }
+  | { type: 'interaction_resolved'; run_id: string; session_id: string }
   | { type: 'complete'; payload: ChatCompletePayload }
   | { type: 'error'; payload: ChatErrorPayload }
   | { type: 'stream_delta'; run_id: string; session_id: string; content: string; agent_name?: string }
@@ -69,6 +74,30 @@ function notifyChatSubscribers(event: ChatBusEvent) {
   for (const cb of chatBusSubscribers) {
     cb(event);
   }
+}
+
+export function markChatRunAwaitingInteraction(runId: string, sessionId: string) {
+  Object.assign(
+    chatBusState,
+    applyAwaitingInteraction(chatBusState, runId, sessionId),
+  );
+  notifyChatSubscribers({
+    type: 'awaiting_interaction',
+    run_id: runId,
+    session_id: sessionId,
+  });
+}
+
+export function resolveChatRunInteraction(runId: string, sessionId: string) {
+  Object.assign(
+    chatBusState,
+    applyInteractionResolved(chatBusState, runId, sessionId),
+  );
+  notifyChatSubscribers({
+    type: 'interaction_resolved',
+    run_id: runId,
+    session_id: sessionId,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +137,17 @@ async function initialiseChatBus() {
 
   const u3 = await transport.listen<ProgressPayload>('chat:progress', (e) => {
     const { run_id, event } = e.payload;
+    if (
+      event.type === 'user_interaction_request'
+      || event.type === 'permission_request'
+      || event.type === 'plan_review_request'
+    ) {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        markChatRunAwaitingInteraction(run_id, session_id);
+      }
+    }
+
     if (event.type === 'stream_delta') {
       const session_id = chatBusState.runToSession[run_id];
       if (session_id) {

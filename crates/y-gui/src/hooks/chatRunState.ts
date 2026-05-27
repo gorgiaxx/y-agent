@@ -2,6 +2,7 @@ export interface ChatRunState {
   runToSession: Record<string, string>;
   streamingSessions: Set<string>;
   pendingRuns: Set<string>;
+  awaitingInteractionRuns: Set<string>;
 }
 
 export function createChatRunState(): ChatRunState {
@@ -9,6 +10,7 @@ export function createChatRunState(): ChatRunState {
     runToSession: {},
     streamingSessions: new Set(),
     pendingRuns: new Set(),
+    awaitingInteractionRuns: new Set(),
   };
 }
 
@@ -17,6 +19,19 @@ export function hasPendingRunForSession(
   sessionId: string,
 ): boolean {
   return getPendingRunIdForSession(state, sessionId) !== null;
+}
+
+export function hasAwaitingInteractionForSession(
+  state: ChatRunState,
+  sessionId: string,
+): boolean {
+  for (const runId of state.awaitingInteractionRuns) {
+    if (state.runToSession[runId] === sessionId) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function getPendingRunIdForSession(
@@ -40,6 +55,9 @@ export function applyRunStarted(
   const pendingRuns = new Set(state.pendingRuns);
   pendingRuns.add(runId);
 
+  const awaitingInteractionRuns = new Set(state.awaitingInteractionRuns);
+  awaitingInteractionRuns.delete(runId);
+
   const streamingSessions = new Set(state.streamingSessions);
   streamingSessions.add(sessionId);
 
@@ -50,6 +68,7 @@ export function applyRunStarted(
     },
     pendingRuns,
     streamingSessions,
+    awaitingInteractionRuns,
   };
 }
 
@@ -60,6 +79,9 @@ export function applyRunTerminal(
 ): ChatRunState {
   const pendingRuns = new Set(state.pendingRuns);
   pendingRuns.delete(runId);
+
+  const awaitingInteractionRuns = new Set(state.awaitingInteractionRuns);
+  awaitingInteractionRuns.delete(runId);
 
   const sessionId = explicitSessionId || state.runToSession[runId];
   const streamingSessions = new Set(state.streamingSessions);
@@ -81,5 +103,55 @@ export function applyRunTerminal(
     runToSession: remainingRunToSession,
     pendingRuns,
     streamingSessions,
+    awaitingInteractionRuns,
+  };
+}
+
+export function applyAwaitingInteraction(
+  state: ChatRunState,
+  runId: string,
+  sessionId: string,
+): ChatRunState {
+  const pendingRuns = new Set(state.pendingRuns);
+  pendingRuns.add(runId);
+
+  const awaitingInteractionRuns = new Set(state.awaitingInteractionRuns);
+  awaitingInteractionRuns.add(runId);
+
+  const streamingSessions = new Set(state.streamingSessions);
+  streamingSessions.add(sessionId);
+
+  return {
+    runToSession: {
+      ...state.runToSession,
+      [runId]: sessionId,
+    },
+    pendingRuns,
+    streamingSessions,
+    awaitingInteractionRuns,
+  };
+}
+
+export function applyInteractionResolved(
+  state: ChatRunState,
+  runId: string,
+  sessionId: string,
+): ChatRunState {
+  const awaitingInteractionRuns = new Set(state.awaitingInteractionRuns);
+  awaitingInteractionRuns.delete(runId);
+
+  const streamingSessions = new Set(state.streamingSessions);
+  if (state.pendingRuns.has(runId)) {
+    streamingSessions.add(sessionId);
+  }
+
+  return {
+    ...state,
+    runToSession: {
+      ...state.runToSession,
+      [runId]: sessionId,
+    },
+    streamingSessions,
+    awaitingInteractionRuns,
   };
 }
