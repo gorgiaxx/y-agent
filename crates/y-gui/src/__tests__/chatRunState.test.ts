@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyAwaitingInteraction,
+  applyInteractionResolved,
   applyRunStarted,
   applyRunTerminal,
   createChatRunState,
@@ -44,5 +46,34 @@ describe('chatRunState', () => {
     expect(getPendingRunIdForSession(state, 'session-1')).toBe('run-1');
     expect(hasPendingRunForSession(state, 'session-1')).toBe(true);
     expect(state.streamingSessions.has('session-1')).toBe(false);
+  });
+
+  it('keeps a session running while a plan review waits for user approval', () => {
+    let state = createChatRunState();
+
+    state = applyRunStarted(state, 'run-1', 'session-1');
+    state = applyAwaitingInteraction(state, 'run-1', 'session-1');
+    state = {
+      ...state,
+      streamingSessions: new Set(),
+    };
+
+    expect(hasPendingRunForSession(state, 'session-1')).toBe(true);
+    expect(state.awaitingInteractionRuns.has('run-1')).toBe(true);
+  });
+
+  it('restores running state when a pending plan review is approved', () => {
+    let state = createChatRunState();
+
+    state = applyRunStarted(state, 'run-1', 'session-1');
+    state = applyAwaitingInteraction(state, 'run-1', 'session-1');
+    state = {
+      ...state,
+      streamingSessions: new Set(),
+    };
+    state = applyInteractionResolved(state, 'run-1', 'session-1');
+
+    expect(state.awaitingInteractionRuns.has('run-1')).toBe(false);
+    expect(state.streamingSessions.has('session-1')).toBe(true);
   });
 });
