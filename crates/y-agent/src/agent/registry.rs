@@ -1104,7 +1104,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
         let def = registry.get("plan-phase-executor").unwrap();
         assert_eq!(def.mode, AgentMode::Build);
         assert_eq!(def.trust_tier, TrustTier::BuiltIn);
-        assert_eq!(def.max_iterations, 60);
+        assert_eq!(def.max_iterations, 120);
         assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
         assert!(def.allowed_tools.contains(&"ToolSearch".to_string()));
         assert!(!def.allowed_tools.contains(&"Task".to_string()));
