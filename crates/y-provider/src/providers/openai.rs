@@ -35,6 +35,11 @@ pub struct OpenAiProvider {
     /// Defaults to `false` because many OpenAI-compatible backends reject
     /// the `stream_options` field. See [`crate::config::ProviderConfig`].
     include_usage: bool,
+    /// Send the output-token limit as `max_completion_tokens` instead of the
+    /// legacy `max_tokens` field. Required by newer `OpenAI` reasoning models
+    /// (`o1`, `o3`, `gpt-5`, ...). Defaults to `false`. See
+    /// [`crate::config::ProviderConfig::use_max_completion_tokens`].
+    use_max_completion_tokens: bool,
 }
 
 impl OpenAiProvider {
@@ -110,6 +115,7 @@ impl OpenAiProvider {
                 tool_calling_mode,
             },
             include_usage: false,
+            use_max_completion_tokens: false,
         }
     }
 
@@ -119,6 +125,15 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_include_usage(mut self, include_usage: bool) -> Self {
         self.include_usage = include_usage;
+        self
+    }
+
+    /// Builder-style setter: opt in to sending the output-token limit as
+    /// `max_completion_tokens` instead of `max_tokens`. Pool wiring reads this
+    /// from [`crate::config::ProviderConfig::use_max_completion_tokens`].
+    #[must_use]
+    pub fn with_use_max_completion_tokens(mut self, use_max_completion_tokens: bool) -> Self {
+        self.use_max_completion_tokens = use_max_completion_tokens;
         self
     }
 
@@ -464,10 +479,17 @@ impl OpenAiProvider {
             }
         };
 
+        let (max_tokens, max_completion_tokens) = if self.use_max_completion_tokens {
+            (None, request.max_tokens)
+        } else {
+            (request.max_tokens, None)
+        };
+
         OpenAiRequest {
             model: model.to_string(),
             messages: Self::build_messages(request),
-            max_tokens: request.max_tokens,
+            max_tokens,
+            max_completion_tokens,
             temperature: request.temperature,
             top_p: request.top_p,
             stream,
@@ -920,6 +942,11 @@ struct OpenAiRequest {
     messages: Vec<OpenAiMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    /// Newer `OpenAI` reasoning models (o1, o3, gpt-5, ...) reject `max_tokens`
+    /// and require this field instead. The two are mutually exclusive: providers
+    /// populate exactly one based on `use_max_completion_tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1269,6 +1296,7 @@ mod tests {
                 tool_calls: None,
             }],
             max_tokens: Some(100),
+            max_completion_tokens: None,
             temperature: Some(0.7),
             top_p: None,
             stream: false,
@@ -1295,6 +1323,7 @@ mod tests {
             model: "gpt-4o".into(),
             messages: vec![],
             max_tokens: None,
+            max_completion_tokens: None,
             temperature: None,
             top_p: None,
             stream: true,
@@ -1406,6 +1435,169 @@ mod tests {
         let body = provider.build_request_body(&request, true);
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(json["stream_options"]["include_usage"], true);
+    }
+
+    /// `use_max_completion_tokens = false` (default) keeps the legacy
+    /// `max_tokens` wire field and omits `max_completion_tokens`.
+    #[test]
+    fn request_body_uses_max_tokens_by_default() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        );
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: Some(512),
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let body = provider.build_request_body(&request, false);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["max_tokens"], 512);
+        assert!(
+            json.get("max_completion_tokens").is_none(),
+            "max_completion_tokens must not be sent in legacy mode: {json}"
+        );
+    }
+
+    /// `use_max_completion_tokens = true` sends `max_completion_tokens`
+    /// instead of `max_tokens`. Required by newer OpenAI reasoning models
+    /// (o1, o3, gpt-5) which reject `max_tokens` with HTTP 400.
+    #[test]
+    fn request_body_uses_max_completion_tokens_when_opted_in() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "o3",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_use_max_completion_tokens(true);
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: Some(512),
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let body = provider.build_request_body(&request, false);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["max_completion_tokens"], 512);
+        assert!(
+            json.get("max_tokens").is_none(),
+            "max_tokens must not be sent when use_max_completion_tokens=true: {json}"
+        );
+    }
+
+    /// `max_tokens = None` on the request must not surface either wire field,
+    /// regardless of the `use_max_completion_tokens` switch.
+    #[test]
+    fn request_body_omits_both_fields_when_request_has_no_limit() {
+        let provider_legacy = OpenAiProvider::new(
+            "legacy",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        );
+        let provider_modern = OpenAiProvider::new(
+            "modern",
+            "o3",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_use_max_completion_tokens(true);
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        for provider in [provider_legacy, provider_modern] {
+            let json = serde_json::to_value(provider.build_request_body(&request, false)).unwrap();
+            assert!(json.get("max_tokens").is_none(), "{json}");
+            assert!(json.get("max_completion_tokens").is_none(), "{json}");
+        }
     }
 
     #[test]

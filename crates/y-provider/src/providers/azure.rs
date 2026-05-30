@@ -47,6 +47,12 @@ pub struct AzureOpenAiProvider {
     /// Defaults to `false`; opt in via
     /// [`crate::config::ProviderConfig::include_usage`].
     include_usage: bool,
+    /// Send the output-token limit as `max_completion_tokens` instead of the
+    /// legacy `max_tokens` field. Required by newer Azure deployments backed
+    /// by `OpenAI` reasoning models (`o1`, `o3`, `gpt-5`, ...). Defaults to
+    /// `false`; opt in via
+    /// [`crate::config::ProviderConfig::use_max_completion_tokens`].
+    use_max_completion_tokens: bool,
 }
 
 impl AzureOpenAiProvider {
@@ -126,6 +132,7 @@ impl AzureOpenAiProvider {
                 tool_calling_mode,
             },
             include_usage: false,
+            use_max_completion_tokens: false,
         }
     }
 
@@ -134,6 +141,14 @@ impl AzureOpenAiProvider {
     #[must_use]
     pub fn with_include_usage(mut self, include_usage: bool) -> Self {
         self.include_usage = include_usage;
+        self
+    }
+
+    /// Builder-style setter: opt in to sending the output-token limit as
+    /// `max_completion_tokens` instead of `max_tokens`.
+    #[must_use]
+    pub fn with_use_max_completion_tokens(mut self, use_max_completion_tokens: bool) -> Self {
+        self.use_max_completion_tokens = use_max_completion_tokens;
         self
     }
 
@@ -400,9 +415,16 @@ impl AzureOpenAiProvider {
             }
         };
 
+        let (max_tokens, max_completion_tokens) = if self.use_max_completion_tokens {
+            (None, request.max_tokens)
+        } else {
+            (request.max_tokens, None)
+        };
+
         AzureRequest {
             messages: Self::build_messages(request),
-            max_tokens: request.max_tokens,
+            max_tokens,
+            max_completion_tokens,
             temperature: request.temperature,
             top_p: request.top_p,
             stream,
@@ -801,6 +823,12 @@ struct AzureRequest {
     messages: Vec<AzureMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    /// Newer Azure-hosted `OpenAI` reasoning models (o1, o3, gpt-5) reject
+    /// `max_tokens` and require this field instead. Mutually exclusive with
+    /// `max_tokens` -- providers populate exactly one based on
+    /// `use_max_completion_tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -996,6 +1024,7 @@ mod tests {
                 tool_calls: None,
             }],
             max_tokens: Some(100),
+            max_completion_tokens: None,
             temperature: Some(0.7),
             top_p: None,
             stream: false,
@@ -1088,5 +1117,81 @@ mod tests {
 
         let response: AzureResponse = serde_json::from_value(json).expect("deserialize");
         assert!(response.model.is_none());
+    }
+
+    fn azure_chat_request(max_tokens: Option<u32>) -> ChatRequest {
+        ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        }
+    }
+
+    /// Default Azure behavior: send `max_tokens`, omit `max_completion_tokens`.
+    #[test]
+    fn azure_request_body_uses_max_tokens_by_default() {
+        let provider = AzureOpenAiProvider::new(
+            "azure-test",
+            "gpt-4o",
+            "key".into(),
+            Some("https://res.openai.azure.com/openai/deployments/gpt-4o".into()),
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        );
+
+        let json = serde_json::to_value(
+            provider.build_request_body(&azure_chat_request(Some(256)), false),
+        )
+        .unwrap();
+        assert_eq!(json["max_tokens"], 256);
+        assert!(json.get("max_completion_tokens").is_none(), "{json}");
+    }
+
+    /// Opt-in Azure behavior: send `max_completion_tokens`, omit `max_tokens`.
+    /// Required by newer Azure-hosted OpenAI reasoning deployments.
+    #[test]
+    fn azure_request_body_uses_max_completion_tokens_when_opted_in() {
+        let provider = AzureOpenAiProvider::new(
+            "azure-o3",
+            "o3",
+            "key".into(),
+            Some("https://res.openai.azure.com/openai/deployments/o3".into()),
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_use_max_completion_tokens(true);
+
+        let json = serde_json::to_value(
+            provider.build_request_body(&azure_chat_request(Some(256)), false),
+        )
+        .unwrap();
+        assert_eq!(json["max_completion_tokens"], 256);
+        assert!(json.get("max_tokens").is_none(), "{json}");
     }
 }

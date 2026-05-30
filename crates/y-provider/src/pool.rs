@@ -203,6 +203,11 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
         // providers, stricter proxies) reject the `stream_options` field
         // with HTTP 400.
         let include_usage = cfg.include_usage.unwrap_or(false);
+        // `use_max_completion_tokens` selects between the legacy `max_tokens`
+        // wire field and the `max_completion_tokens` field required by newer
+        // OpenAI reasoning models (o1, o3, gpt-5). Default `false` preserves
+        // compatibility with the broader OpenAI-compatible ecosystem.
+        let use_max_completion_tokens = cfg.use_max_completion_tokens.unwrap_or(false);
         let make_openai = |base: Option<String>| -> Arc<dyn LlmProvider> {
             Arc::new(
                 crate::providers::openai::OpenAiProvider::with_headers(
@@ -219,7 +224,8 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     &cfg.headers,
                     cfg.http_protocol,
                 )
-                .with_include_usage(include_usage),
+                .with_include_usage(include_usage)
+                .with_use_max_completion_tokens(use_max_completion_tokens),
             ) as Arc<dyn LlmProvider>
         };
         let make_azure = || -> Arc<dyn LlmProvider> {
@@ -238,7 +244,8 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     &cfg.headers,
                     cfg.http_protocol,
                 )
-                .with_include_usage(include_usage),
+                .with_include_usage(include_usage)
+                .with_use_max_completion_tokens(use_max_completion_tokens),
             ) as Arc<dyn LlmProvider>
         };
 
@@ -758,6 +765,7 @@ mod tests {
                 icon: None,
                 http_protocol: crate::config::HttpProtocol::Http1,
                 include_usage: None,
+                use_max_completion_tokens: None,
             }],
             ..test_config()
         }
@@ -990,6 +998,7 @@ mod tests {
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
                     include_usage: None,
+                    use_max_completion_tokens: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1012,6 +1021,7 @@ mod tests {
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
                     include_usage: None,
+                    use_max_completion_tokens: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1034,6 +1044,7 @@ mod tests {
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
                     include_usage: None,
+                    use_max_completion_tokens: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1056,6 +1067,7 @@ mod tests {
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
                     include_usage: None,
+                    use_max_completion_tokens: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1078,6 +1090,7 @@ mod tests {
                     headers: std::collections::HashMap::new(),
                     http_protocol: crate::config::HttpProtocol::Http1,
                     include_usage: None,
+                    use_max_completion_tokens: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -1151,6 +1164,7 @@ mod tests {
                 headers: std::collections::HashMap::new(),
                 http_protocol: crate::config::HttpProtocol::Http1,
                 include_usage: None,
+                use_max_completion_tokens: None,
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,

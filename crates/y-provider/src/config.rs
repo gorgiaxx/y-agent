@@ -144,6 +144,22 @@ pub struct ProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_usage: Option<bool>,
 
+    /// For `OpenAI` Response API and OpenAI-compatible providers: send the
+    /// output-token limit as `max_completion_tokens` instead of the legacy
+    /// `max_tokens` field. Required by newer `OpenAI` reasoning models
+    /// (`o1`, `o3`, `gpt-5`, etc.) which reject `max_tokens` with HTTP 400
+    /// `unsupported_parameter`.
+    ///
+    /// Defaults to `false` for backward compatibility with the broader
+    /// OpenAI-compatible ecosystem (vLLM, `LiteLLM`, older relays, Ollama)
+    /// where only `max_tokens` is recognized. Set to `true` for `OpenAI`
+    /// Response API providers serving newer reasoning models.
+    ///
+    /// Ignored by providers that do not use the `OpenAI` chat-compatible wire
+    /// shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_max_completion_tokens: Option<bool>,
+
     /// Default sampling temperature for this provider (0.0 - 2.0).
     /// Applied to requests that do not specify a temperature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -712,6 +728,33 @@ mod tests {
         assert_eq!(drain_config_load_errors().len(), 2);
     }
 
+    /// The new `use_max_completion_tokens` field must deserialize from TOML
+    /// (as `Some(true)`) and default to `None` when absent. `None` is treated
+    /// as `false` by the providers, preserving legacy `max_tokens` behavior.
+    #[test]
+    fn use_max_completion_tokens_round_trips_through_toml() {
+        let toml_str = r#"
+            [[providers]]
+            id = "o3-reasoning"
+            provider_type = "openai"
+            model = "o3"
+            api_key = "k"
+            use_max_completion_tokens = true
+
+            [[providers]]
+            id = "legacy"
+            provider_type = "openai"
+            model = "gpt-4o"
+            api_key = "k"
+        "#;
+        let cfg: ProviderPoolConfig = toml::from_str(toml_str).expect("parse");
+        assert_eq!(cfg.providers[0].use_max_completion_tokens, Some(true));
+        assert_eq!(
+            cfg.providers[1].use_max_completion_tokens, None,
+            "absence keeps the field None so legacy max_tokens path stays the default"
+        );
+    }
+
     #[test]
     fn test_config_deserialize_from_toml() {
         let toml_str = r#"
@@ -767,6 +810,7 @@ mod tests {
                     headers: HashMap::new(),
                     http_protocol: HttpProtocol::Http1,
                     include_usage: None,
+                    use_max_completion_tokens: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -789,6 +833,7 @@ mod tests {
                     headers: HashMap::new(),
                     http_protocol: HttpProtocol::Http1,
                     include_usage: None,
+                    use_max_completion_tokens: None,
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
@@ -833,6 +878,7 @@ mod tests {
             headers: HashMap::new(),
             http_protocol: HttpProtocol::Http1,
             include_usage: None,
+            use_max_completion_tokens: None,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
@@ -867,6 +913,7 @@ mod tests {
             headers: HashMap::new(),
             http_protocol: HttpProtocol::Http1,
             include_usage: None,
+            use_max_completion_tokens: None,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
@@ -1220,6 +1267,7 @@ mod tests {
             headers: HashMap::new(),
             http_protocol: HttpProtocol::Http1,
             include_usage: None,
+            use_max_completion_tokens: None,
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
