@@ -832,12 +832,8 @@ pub fn should_initialize_db(db_path: &Path, force: bool, prompter: &dyn Prompter
 /// Always uses `~/.config/y-agent` regardless of platform, matching the
 /// convention used by `ConfigLoader::dirs_user_config()`.
 fn default_config_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map_or_else(
-            || PathBuf::from("."),
-            |h| PathBuf::from(h).join(".config").join("y-agent"),
-        )
+    crate::config::home_dir()
+        .map_or_else(|| PathBuf::from("."), |h| h.join(".config").join("y-agent"))
 }
 
 /// Get the default state data directory.
@@ -847,12 +843,9 @@ fn default_config_dir() -> PathBuf {
 /// is not configuration.
 pub fn default_state_data_dir() -> PathBuf {
     let state_home = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(|h| PathBuf::from(h).join(".local").join("state"))
-        });
+        .or_else(|| crate::config::home_dir().map(|h| h.join(".local").join("state")));
     state_home.map_or_else(|| PathBuf::from("data"), |s| s.join("y-agent").join("data"))
 }
 

@@ -435,15 +435,12 @@ pub fn resolve_storage_paths(config: &mut YAgentConfig) {
 
 /// Expand `~` to the user's home directory.
 fn expand_tilde(path: &str) -> String {
+    let resolve_home =
+        || home_dir().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
     if let Some(stripped) = path.strip_prefix("~/") {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        format!("{home}/{stripped}")
+        format!("{}/{stripped}", resolve_home())
     } else if path == "~" {
-        std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string())
+        resolve_home()
     } else {
         path.to_string()
     }
@@ -502,6 +499,7 @@ pub fn dirs_log() -> Option<PathBuf> {
 /// Both log and data directories live under this path.
 pub fn dirs_state() -> Option<PathBuf> {
     let state_home = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| home_dir().map(|h| h.join(".local").join("state")));
     state_home.map(|s| s.join("y-agent"))
@@ -551,9 +549,19 @@ pub fn cleanup_old_logs(log_dir: &std::path::Path, retention_days: u32) -> std::
 }
 
 /// Simple home directory resolution.
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+///
+/// On Windows, prefer `USERPROFILE` over `HOME` because shells such as Git Bash,
+/// MSYS, and Cygwin commonly set `HOME` to a POSIX-style path (e.g.
+/// `/c/Users/foo`) that Windows-native file APIs cannot resolve. Empty values
+/// are treated as unset.
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    fn non_empty(name: &str) -> Option<std::ffi::OsString> {
+        std::env::var_os(name).filter(|v| !v.is_empty())
+    }
+    let primary = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let fallback = if cfg!(windows) { "HOME" } else { "USERPROFILE" };
+    non_empty(primary)
+        .or_else(|| non_empty(fallback))
         .map(PathBuf::from)
 }
 
