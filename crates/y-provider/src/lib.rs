@@ -39,7 +39,9 @@ mod tool_call_accumulator;
 
 // Re-export primary types.
 pub use agent_runner::SingleTurnRunner;
-pub use config::{HttpProtocol, ProviderConfig, ProviderPoolConfig, ProxySpec};
+pub use config::{
+    drain_config_load_errors, HttpProtocol, ProviderConfig, ProviderPoolConfig, ProxySpec,
+};
 pub use embedding::{EmbeddingConfig, OpenAiEmbeddingProvider};
 pub use error::ProviderPoolError;
 pub use error_classifier::{classify, classify_provider_error, StandardError};

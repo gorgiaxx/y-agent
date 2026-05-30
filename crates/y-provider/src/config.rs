@@ -1,5 +1,6 @@
 //! Provider pool and individual provider configuration.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,10 @@ pub enum HttpProtocol {
 #[serde(deny_unknown_fields)]
 pub struct ProviderPoolConfig {
     /// Individual provider configurations.
+    ///
+    /// Deserialized leniently: malformed `[[providers]]` blocks are skipped
+    /// with a recorded diagnostic rather than failing the whole file.
+    #[serde(default, deserialize_with = "deserialize_providers_lenient")]
     pub providers: Vec<ProviderConfig>,
 
     /// Multi-level proxy configuration (provider > tag > global cascade).
@@ -77,7 +82,14 @@ pub struct ProviderConfig {
     ///
     /// When empty, capabilities are derived from legacy configuration hints
     /// (primarily routing tags) for backward compatibility.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ///
+    /// Deserialized leniently: unknown values are dropped with a recorded
+    /// diagnostic rather than failing the parse of the entire file.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_capabilities_lenient"
+    )]
     pub capabilities: Vec<ProviderCapability>,
 
     /// Maximum concurrent requests to this provider.
@@ -226,6 +238,99 @@ where
     } else {
         Ok(tags)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Config-load fault tolerance
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// Diagnostics collected while parsing provider configuration on the
+    /// current thread. Drained by the loader via [`drain_config_load_errors`]
+    /// and surfaced to users (e.g. written to `<state_dir>/last-startup.txt`).
+    ///
+    /// Thread-local because `serde::Deserialize` has no out-of-band channel
+    /// for non-fatal warnings, and the loader runs synchronously on a single
+    /// thread, so we don't need cross-thread visibility.
+    static CONFIG_LOAD_ERRORS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record a non-fatal config-load diagnostic. Also emits a `tracing::warn!`
+/// so debug builds with a subscriber installed see it immediately.
+pub(crate) fn record_config_load_error(msg: impl Into<String>) {
+    let s = msg.into();
+    tracing::warn!(target: "y_provider::config", "{}", s);
+    CONFIG_LOAD_ERRORS.with(|errs| errs.borrow_mut().push(s));
+}
+
+/// Drain and return any diagnostics recorded since the last drain.
+///
+/// Callers (the service-layer config loader) write these to a user-visible
+/// location so release builds without a tracing subscriber still surface
+/// "your config parsed but here's what got dropped".
+pub fn drain_config_load_errors() -> Vec<String> {
+    CONFIG_LOAD_ERRORS.with(|errs| std::mem::take(&mut *errs.borrow_mut()))
+}
+
+/// Deserialize `capabilities = [...]` leniently.
+///
+/// Each entry is parsed independently. Unknown values (typos like `"vison"`,
+/// or capability names from a newer y-agent that this binary doesn't know)
+/// are dropped with a recorded diagnostic, rather than failing the whole
+/// `[[providers]]` block and — because of how TOML parsing aborts on first
+/// error — wiping out every provider in the file.
+fn deserialize_capabilities_lenient<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ProviderCapability>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::IntoDeserializer;
+    let raw: Vec<String> = Vec::deserialize(deserializer)?;
+    let mut out = Vec::with_capacity(raw.len());
+    for s in raw {
+        let parsed: Result<ProviderCapability, serde::de::value::Error> =
+            ProviderCapability::deserialize(s.clone().into_deserializer());
+        match parsed {
+            Ok(cap) => out.push(cap),
+            Err(_) => {
+                record_config_load_error(format!(
+                    "providers.toml: unknown capability {s:?} \
+                     (valid: text, vision, image_generation) -- ignoring this entry"
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Deserialize `[[providers]]` array leniently.
+///
+/// Each element is parsed independently into [`ProviderConfig`]. If one
+/// element fails (missing required field, malformed value), it is dropped
+/// with a recorded diagnostic and the remaining providers still load. This
+/// prevents one bad config block from emptying the pool.
+fn deserialize_providers_lenient<'de, D>(deserializer: D) -> Result<Vec<ProviderConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    let mut out = Vec::with_capacity(raw.len());
+    for (index, value) in raw.into_iter().enumerate() {
+        let id_hint = value
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| format!("#{index}"), str::to_string);
+        match serde_json::from_value::<ProviderConfig>(value) {
+            Ok(cfg) => out.push(cfg),
+            Err(e) => {
+                record_config_load_error(format!(
+                    "providers.toml: skipping provider {id_hint:?}: {e}"
+                ));
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn default_proxy_scheme() -> String {
@@ -492,6 +597,120 @@ impl ProviderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each fault-tolerance test must drain the thread-local at the top so
+    /// diagnostics from previous tests in the same thread don't bleed in.
+    fn reset_collector() {
+        let _ = drain_config_load_errors();
+    }
+
+    #[test]
+    fn lenient_capabilities_drop_unknown_keep_valid() {
+        reset_collector();
+        let toml_str = r#"
+            [[providers]]
+            id = "x"
+            provider_type = "openai-compat"
+            model = "m"
+            api_key = "k"
+            capabilities = ["text", "vison", "image_generation"]
+        "#;
+        let cfg: ProviderPoolConfig = toml::from_str(toml_str).expect("parse should succeed");
+        assert_eq!(
+            cfg.providers.len(),
+            1,
+            "provider should survive bad capability"
+        );
+        let p = &cfg.providers[0];
+        assert_eq!(
+            p.capabilities,
+            vec![
+                ProviderCapability::Text,
+                ProviderCapability::ImageGeneration
+            ],
+            "unknown capability should be silently dropped, valid ones preserved",
+        );
+        let errors = drain_config_load_errors();
+        assert!(
+            errors.iter().any(|e| e.contains("vison")),
+            "diagnostic should mention the dropped value: got {errors:?}",
+        );
+    }
+
+    #[test]
+    fn lenient_providers_skip_bad_block_keep_good_ones() {
+        reset_collector();
+        let toml_str = r#"
+            [[providers]]
+            id = "good1"
+            provider_type = "openai-compat"
+            model = "m"
+            api_key = "k"
+
+            [[providers]]
+            # Missing required `id` field — this whole block must be skipped,
+            # not abort the file.
+            provider_type = "openai-compat"
+            model = "m"
+            api_key = "k"
+
+            [[providers]]
+            id = "good2"
+            provider_type = "openai-compat"
+            model = "m"
+            api_key = "k"
+        "#;
+        let cfg: ProviderPoolConfig = toml::from_str(toml_str).expect("parse should succeed");
+        let ids: Vec<&str> = cfg.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["good1", "good2"],
+            "good providers should load despite a malformed sibling block",
+        );
+        let errors = drain_config_load_errors();
+        assert!(
+            errors.iter().any(|e| e.contains("skipping provider")),
+            "diagnostic should mention the skipped block: got {errors:?}",
+        );
+    }
+
+    #[test]
+    fn lenient_providers_id_hint_uses_index_when_id_missing() {
+        reset_collector();
+        let toml_str = r#"
+            [[providers]]
+            provider_type = "openai-compat"
+            # no id, no model — invalid
+        "#;
+        let cfg: ProviderPoolConfig = toml::from_str(toml_str).expect("parse should succeed");
+        assert!(cfg.providers.is_empty());
+        let errors = drain_config_load_errors();
+        assert!(
+            errors.iter().any(|e| e.contains("#0")),
+            "without an id, diagnostic should fall back to positional hint: got {errors:?}",
+        );
+    }
+
+    #[test]
+    fn lenient_capabilities_all_unknown_yields_empty_vec() {
+        reset_collector();
+        let toml_str = r#"
+            [[providers]]
+            id = "x"
+            provider_type = "openai-compat"
+            model = "m"
+            api_key = "k"
+            capabilities = ["nonsense", "alsobad"]
+        "#;
+        let cfg: ProviderPoolConfig = toml::from_str(toml_str).expect("parse should succeed");
+        assert_eq!(cfg.providers.len(), 1);
+        assert!(
+            cfg.providers[0].capabilities.is_empty(),
+            "no valid capability ⇒ empty Vec; provider should still load and \
+             use legacy tag-based capability inference",
+        );
+        assert_eq!(drain_config_load_errors().len(), 2);
+    }
 
     #[test]
     fn test_config_deserialize_from_toml() {
