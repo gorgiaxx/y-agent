@@ -33,6 +33,10 @@ export interface ProviderFormData {
   temperature: number | null;
   top_p: number | null;
   tool_calling_mode: string | null;
+  /** Send the output-token limit as `max_completion_tokens` instead of the
+   * legacy `max_tokens` field. Required by newer OpenAI reasoning models
+   * (`o1`, `o3`, `gpt-5`, ...). Null = follow Rust default (`false`). */
+  use_max_completion_tokens: boolean | null;
   icon: string | null;
 }
 
@@ -222,6 +226,7 @@ export function emptyProvider(): ProviderFormData {
     temperature: null,
     top_p: null,
     tool_calling_mode: null,
+    use_max_completion_tokens: null,
     icon: null,
   };
 }
@@ -414,6 +419,9 @@ export function providersToToml(providers: ProviderFormData[]): string {
     if (p.temperature !== null) lines.push(`temperature = ${p.temperature}`);
     if (p.top_p !== null) lines.push(`top_p = ${p.top_p}`);
     if (p.tool_calling_mode) lines.push(`tool_calling_mode = "${escapeTomlString(p.tool_calling_mode)}"`);
+    if (p.use_max_completion_tokens !== null) {
+      lines.push(`use_max_completion_tokens = ${p.use_max_completion_tokens ? 'true' : 'false'}`);
+    }
     if (p.icon) lines.push(`icon = "${escapeTomlString(p.icon)}"`);
     const headerEntries = Object.entries(p.headers ?? {}).filter(([key]) => key.trim() !== '');
     if (headerEntries.length > 0) {
@@ -466,6 +474,9 @@ export function jsonToProviders(json: unknown): ProviderFormData[] {
     temperature: (p.temperature as number) ?? null,
     top_p: (p.top_p as number) ?? null,
     tool_calling_mode: (p.tool_calling_mode as string) ?? null,
+    use_max_completion_tokens: typeof p.use_max_completion_tokens === 'boolean'
+      ? (p.use_max_completion_tokens as boolean)
+      : null,
     icon: (p.icon as string) ?? null,
   }));
 }

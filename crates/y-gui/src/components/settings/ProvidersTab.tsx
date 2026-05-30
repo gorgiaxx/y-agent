@@ -343,6 +343,33 @@ function ProviderTabPanel({
             placeholder="--"
           />
         </SettingsItem>
+        {(() => {
+          const openaiShaped = ['openai', 'openai-compat', 'custom', 'deepseek', 'azure'];
+          if (!openaiShaped.includes(provider.provider_type)) return null;
+          const useMaxCompletion = provider.use_max_completion_tokens === true;
+          return (
+            <SettingsItem
+              title="Output Token Field"
+              description={
+                useMaxCompletion
+                  ? 'Sends max_completion_tokens (required by o1, o3, gpt-5 reasoning models)'
+                  : 'Sends max_tokens (legacy field; default for most OpenAI-compatible backends)'
+              }
+            >
+              <label className="pf-enable-toggle">
+                <Switch
+                  checked={useMaxCompletion}
+                  onCheckedChange={(checked) =>
+                    update({ use_max_completion_tokens: checked ? true : null })
+                  }
+                />
+                <span className={`pf-enable-label ${useMaxCompletion ? 'pf-enable-label--on' : ''}`}>
+                  {useMaxCompletion ? 'max_completion_tokens' : 'max_tokens'}
+                </span>
+              </label>
+            </SettingsItem>
+          );
+        })()}
       </SettingsGroup>
 
       <SettingsGroup title="Cost">
