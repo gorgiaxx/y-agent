@@ -330,13 +330,7 @@ impl ServiceContainer {
 
         // 14. Provider metrics.
         let provider_metrics_store = SqliteProviderMetricsStore::new(pool.clone());
-        {
-            let receivers = provider_pool.attach_event_senders();
-            let pms = provider_metrics_store.clone();
-            tokio::spawn(async move {
-                Self::run_metrics_event_consumers(receivers, pms).await;
-            });
-        }
+        Self::spawn_metrics_event_consumers(&provider_pool, provider_metrics_store.clone());
 
         // 15. MCP connection manager (connections started later via
         //     start_background_services).
@@ -924,6 +918,7 @@ impl ServiceContainer {
     pub async fn reload_providers(&self, pool_config: &y_provider::ProviderPoolConfig) {
         let providers = y_provider::build_providers(pool_config);
         let new_pool = Arc::new(ProviderPoolImpl::from_providers(providers, pool_config));
+        Self::spawn_metrics_event_consumers(&new_pool, self.provider_metrics_store.clone());
         let mut guard = self.provider_pool.write().await;
         *guard = new_pool;
 
@@ -1348,6 +1343,21 @@ impl ServiceContainer {
         tracing::info!("Knowledge LLM services wired (tagger, metadata, summarizer)");
     }
 
+    /// Attach event senders to the pool and spawn persistence consumers.
+    ///
+    /// Each provider gets its own channel; the consumer task drains events
+    /// and writes them to the metrics store. Consumers exit automatically
+    /// when the pool (and its senders) is dropped.
+    fn spawn_metrics_event_consumers(
+        pool: &ProviderPoolImpl,
+        store: y_storage::SqliteProviderMetricsStore,
+    ) {
+        let receivers = pool.attach_event_senders();
+        tokio::spawn(async move {
+            Self::run_metrics_event_consumers(receivers, store).await;
+        });
+    }
+
     /// Spawn per-provider tasks that drain metrics events and persist them.
     ///
     /// Each provider gets its own channel; we spawn one task per provider
@@ -1705,6 +1715,70 @@ mod tests {
                 "openai-compat should build exactly one provider"
             );
         });
+    }
+
+    #[tokio::test]
+    async fn test_reload_providers_reattaches_metrics_consumers() {
+        // Regression: previously, reload_providers swapped in a fresh pool
+        // without calling attach_event_senders, so subsequent requests on the
+        // new pool fired MetricsEvents with no listener and the SQL-backed
+        // observability panel showed zero in/out tokens until restart.
+        let mut config = ServiceConfig::default();
+        config.storage = y_storage::StorageConfig::in_memory();
+        let container = ServiceContainer::from_config(&config).await.unwrap();
+
+        let make_pool_config = |id: &str| y_provider::config::ProviderPoolConfig {
+            providers: vec![y_provider::config::ProviderConfig {
+                id: id.into(),
+                provider_type: "openai-compat".into(),
+                model: "local-model".into(),
+                enabled: true,
+                tags: vec![],
+                capabilities: vec![],
+                max_concurrency: 1,
+                context_window: 32_000,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                api_key: Some("sk-test".into()),
+                api_key_env: None,
+                base_url: Some("http://localhost:8080/v1".into()),
+                headers: std::collections::HashMap::new(),
+                http_protocol: y_provider::config::HttpProtocol::Http1,
+                include_usage: None,
+                temperature: None,
+                top_p: None,
+                tool_calling_mode: None,
+                icon: None,
+            }],
+            ..Default::default()
+        };
+
+        container
+            .reload_providers(&make_pool_config("reloaded-provider"))
+            .await;
+
+        let pool = container.provider_pool().await;
+        let provider_id = y_core::types::ProviderId::from_string("reloaded-provider");
+        let metrics = pool
+            .provider_metrics(&provider_id)
+            .expect("provider should exist after reload");
+        metrics.record_success_with_cost(123, 45, 0.0, 0.0);
+
+        // Allow the spawned consumer task to drain the event.
+        for _ in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let agg = container
+                .provider_metrics_store
+                .query_aggregated(None, None)
+                .await
+                .unwrap();
+            if let Some(row) = agg.iter().find(|r| r.provider_id == "reloaded-provider") {
+                assert_eq!(row.total_input_tokens, 123);
+                assert_eq!(row.total_output_tokens, 45);
+                return;
+            }
+        }
+        panic!("reloaded provider metrics never reached the persistent store");
     }
 
     #[test]
