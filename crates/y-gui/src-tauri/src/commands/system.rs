@@ -156,12 +156,9 @@ pub async fn open_path_in_ide(state: State<'_, AppState>, path: String) -> Resul
 /// Mirrors the `state_dir()` helper in `lib.rs`.
 fn data_dir() -> Option<PathBuf> {
     let state_home = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(|h| PathBuf::from(h).join(".local").join("state"))
-        });
+        .or_else(|| crate::home_dir().map(|h| h.join(".local").join("state")));
     state_home.map(|s| s.join("y-agent"))
 }
 

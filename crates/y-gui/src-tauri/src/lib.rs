@@ -7,6 +7,7 @@
 mod commands;
 mod state;
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -17,25 +18,109 @@ use y_service::{ServiceConfig, ServiceContainer};
 
 use crate::state::AppState;
 
+/// Resolve the user's home directory.
+///
+/// On Windows, prefer `USERPROFILE` (the OS-native variable) over `HOME`,
+/// because Git Bash / MSYS / Cygwin commonly set `HOME` to a POSIX-style
+/// path (e.g. `/c/Users/foo`) that Windows native file APIs cannot resolve.
+/// On other platforms, prefer `HOME`.
+///
+/// Empty values are treated as unset.
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    fn non_empty(name: &str) -> Option<OsString> {
+        std::env::var_os(name).filter(|v| !v.is_empty())
+    }
+    let primary = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let fallback = if cfg!(windows) { "HOME" } else { "USERPROFILE" };
+    non_empty(primary)
+        .or_else(|| non_empty(fallback))
+        .map(PathBuf::from)
+}
+
 /// Resolve the user config directory (`~/.config/y-agent/`).
 fn config_dir() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .expect("HOME not set");
-    home.join(".config").join("y-agent")
+    home_dir()
+        .expect("Neither HOME nor USERPROFILE is set")
+        .join(".config")
+        .join("y-agent")
 }
 
 /// Get the XDG state base directory for y-agent (`~/.local/state/y-agent/`).
 fn state_dir() -> Option<PathBuf> {
     let state_home = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(|h| PathBuf::from(h).join(".local").join("state"))
-        });
+        .or_else(|| home_dir().map(|h| h.join(".local").join("state")));
     state_home.map(|s| s.join("y-agent"))
+}
+
+/// Write a small startup record to `<state_dir>/last-startup.txt` (or, if
+/// that's unavailable, `<config_dir>/last-startup.txt`).
+///
+/// Captures: resolved config dir, state dir, process CWD, HOME and
+/// USERPROFILE env-var values. This is the only diagnostic available in
+/// release builds where `tracing_subscriber` is not initialized.
+fn write_startup_banner(config_dir: &std::path::Path, state_dir: Option<&std::path::Path>) {
+    use std::fmt::Write as _;
+    let mut buf = String::new();
+    let _ = writeln!(buf, "pid             = {}", std::process::id());
+    let _ = writeln!(buf, "cwd             = {:?}", std::env::current_dir().ok());
+    let _ = writeln!(buf, "config_dir      = {}", config_dir.display());
+    let _ = writeln!(
+        buf,
+        "state_dir       = {}",
+        state_dir.map_or_else(|| "<unset>".to_string(), |p| p.display().to_string()),
+    );
+    let _ = writeln!(buf, "env.HOME        = {:?}", std::env::var_os("HOME"));
+    let _ = writeln!(
+        buf,
+        "env.USERPROFILE = {:?}",
+        std::env::var_os("USERPROFILE")
+    );
+    let _ = writeln!(
+        buf,
+        "env.XDG_STATE_HOME = {:?}",
+        std::env::var_os("XDG_STATE_HOME")
+    );
+
+    let dest = state_dir.map_or_else(
+        || config_dir.join("last-startup.txt"),
+        |p| p.join("last-startup.txt"),
+    );
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&dest, buf);
+}
+
+/// Append non-fatal config-load diagnostics to the startup banner.
+///
+/// Pairs with [`write_startup_banner`]: the banner is written first with
+/// path/env info, and after the service container is constructed we append
+/// any per-section / per-provider / per-capability parse warnings that the
+/// lenient loader recorded. Users on release builds can read this file to
+/// see exactly which entries were dropped without rebuilding with debug
+/// logging.
+fn append_config_errors_to_banner(
+    config_dir: &std::path::Path,
+    state_dir: Option<&std::path::Path>,
+    errors: &[String],
+) {
+    use std::fmt::Write as _;
+    let dest = state_dir.map_or_else(
+        || config_dir.join("last-startup.txt"),
+        |p| p.join("last-startup.txt"),
+    );
+    let mut buf = String::new();
+    buf.push_str("\n[config-load diagnostics]\n");
+    for (i, err) in errors.iter().enumerate() {
+        let _ = writeln!(buf, "{:>3}. {}", i + 1, err);
+    }
+    let _ = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&dest)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, buf.as_bytes()));
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -55,6 +140,13 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = state_dir();
     let state_path = data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+    // Always write a startup banner to a known-stable path so users (and we)
+    // can confirm post-install which config dir the running binary resolved
+    // to. Release builds otherwise have no logging — without this trail,
+    // diagnosing path/config mismatches on user machines requires a debug
+    // rebuild.
+    write_startup_banner(&config_path, data_dir.as_deref());
 
     // First-run auto-init: seed configs, prompts, skills, agents
     // if they don't already exist. This makes the GUI work
@@ -76,7 +168,14 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let container = rt.block_on(async {
-        let config = ServiceConfig::load_from_directory(&config_path, data_dir.as_deref());
+        let (config, config_errors) =
+            ServiceConfig::load_from_directory_with_diagnostics(&config_path, data_dir.as_deref());
+        if !config_errors.is_empty() {
+            // Append to last-startup.txt so users on release builds (where no
+            // tracing subscriber is wired up) can see exactly which
+            // providers / capabilities / sections were dropped.
+            append_config_errors_to_banner(&config_path, data_dir.as_deref(), &config_errors);
+        }
         let container = ServiceContainer::from_config(&config)
             .await
             .expect("Failed to initialize ServiceContainer");
